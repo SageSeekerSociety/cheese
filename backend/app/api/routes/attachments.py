@@ -98,6 +98,7 @@ async def upload_attachment(
     type: str = Form(...),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
+    db=Depends(get_db),
 ) -> dict:
     if type not in VALID_TYPES:
         raise BadRequestError(f"Invalid type: {type}")
@@ -117,6 +118,10 @@ async def upload_attachment(
         uploader_id=auth_user.user_id,
         attachment_type=type,
     )
+    # Commit before answering: the id handed back is attached to a task on the
+    # client's next request, which must find the row. ``get_db`` commits in its
+    # teardown, which FastAPI runs after the response has gone out.
+    await db.commit()
     return {
         "code": 201,
         "message": "Attachment uploaded successfully",

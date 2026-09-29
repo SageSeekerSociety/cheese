@@ -1,8 +1,12 @@
 """Expose the room executor's tool schemas and receipts to app-server."""
 
 import asyncio
+import base64
+import contextlib
 import importlib.resources
 import json
+import posixpath
+import shutil
 import types
 from pathlib import Path
 
@@ -11,7 +15,9 @@ from app.domain.agent.executor_transport import (
     MachineOutOfReach,
     PlatformHost,
     RemoteClient,
+    session_path,
 )
+from app.domain.agent.harness.driven.runner import reply_owed
 
 # The executor implements these tools. The platform's own tools are not the
 # executor's to list: they are the constant table (`platform_tools`).
@@ -28,8 +34,22 @@ NATIVE_TOOLS = {
 }
 
 
+#: How often a running Bash looks for a person having written.
+YIELD_POLL_S = 0.2
+
 #: The route a platform tool takes: not a server on the executor, the backend.
 PLATFORM = "platform"
+
+#: Where Codex finds a repository's skills, relative to the project root: the
+#: `.agents/skills` directory and the `skills` folder of the project's `.codex`
+#: config layer (`codex-rs/ext/skills/src/host_roots.rs` at rust-v0.154.0).
+SKILL_ROOTS = (".agents/skills", ".codex/skills")
+
+#: The arguments of an executor tool that name a path or run a command.
+PATH_ARGUMENTS = ("file_path", "path", "notebook_path", "command")
+
+#: How much of one skill file a single context read asks the machine for.
+SKILL_READ_BYTES = 1024 * 1024
 
 
 def platform_tools():
@@ -48,11 +68,123 @@ def platform_tools():
 
 
 class RemoteTools:
-    def __init__(self, target: dict):
+    def __init__(
+        self,
+        target: dict,
+        mirror: Path | None = None,
+        reply_file: Path | None = None,
+    ):
         self.client = RemoteClient(target)
         self.routes: dict[str, tuple[str, str]] = {}
         self.platform = platform_tools()
         self.doc_versions: dict[str, int] = {}
+        # The project's skills, where the session's Codex can read them. It
+        # has no environment of its own (`session.py`), so it finds none in
+        # the project; it finds these as extra roots (`skill_roots`).
+        self.mirror = mirror
+        # What the mirror holds: its path -> the (size, mtime) it was read at.
+        self.mirrored: dict[str, tuple[int, int]] | None = None
+        # Where the runner says a person is waiting on an answer
+        # (`driven/runner.py`), the thread that owes it — a subagent's thread
+        # reports to its parent, not to the room — and the debt already
+        # answered: a reply and the next call can come in one step, and the
+        # reply's call arrives here first.
+        self.reply_file = reply_file
+        self.main_thread: str | None = None
+        self.answered: str | None = None
+
+    def skill_roots(self) -> list[str]:
+        assert self.mirror is not None
+        return [str(self.mirror / root) for root in SKILL_ROOTS]
+
+    def sync_skills(self) -> bool:
+        """The mirror holds the project's skills as the machine has them now.
+
+        Plain Codex scans the project's skill roots itself and watches them.
+        A room's Codex reads them from the mirror, which this brings up to
+        date from the executor's context tree before every turn. Whether
+        anything changed.
+        """
+        assert self.mirror is not None
+        if self.mirrored is None:
+            # A mirror left by an earlier process may hold what the project
+            # has since dropped.
+            shutil.rmtree(self.mirror, ignore_errors=True)
+            self.mirrored = {}
+        entries = self.client.call("context_fs", {"operation": "tree"}).get(
+            "entries", {}
+        )
+        wanted: dict[str, str] = {}
+
+        def collect(held: str, source: str, depth: int = 0) -> None:
+            # `held` is where the project shows `source`; a link to a
+            # directory elsewhere in the project shows that directory's files
+            # at the link's own path, as reading through it on the machine does.
+            for name, entry in entries.items():
+                if name != source and not name.startswith(source + "/"):
+                    continue
+                place = held + name[len(source) :]
+                if entry["kind"] == "file":
+                    wanted[place] = name
+                elif entry["kind"] == "symlink" and depth < 8:
+                    target = posixpath.normpath(
+                        posixpath.join(posixpath.dirname(name), entry["target"])
+                    )
+                    if target not in (".", "") and not target.startswith(("..", "/")):
+                        collect(place, target, depth + 1)
+
+        for root in SKILL_ROOTS:
+            collect(root, root)
+        changed = False
+        for place in [place for place in self.mirrored if place not in wanted]:
+            (self.mirror / place).unlink(missing_ok=True)
+            del self.mirrored[place]
+            changed = True
+        for place, name in wanted.items():
+            entry = entries[name]
+            stamp = (entry["size"], entry["mtime_ns"])
+            if self.mirrored.get(place) == stamp:
+                continue
+            data = b""
+            while len(data) < entry["size"]:
+                piece = base64.b64decode(
+                    self.client.call(
+                        "context_fs",
+                        {
+                            "operation": "read",
+                            "path": name,
+                            "offset": len(data),
+                            "size": min(SKILL_READ_BYTES, entry["size"] - len(data)),
+                        },
+                    )["data"]
+                )
+                if not piece:
+                    break
+                data += piece
+            path = self.mirror / place
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            self.mirrored[place] = stamp
+            changed = True
+        for directory in sorted(self.mirror.rglob("*"), reverse=True):
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+        return changed
+
+    def on_the_machine(self, arguments: dict) -> dict:
+        """`arguments` with each path in the mirror named where the machine
+        holds it: the model reads a skill's files, and runs its scripts, at
+        the paths the skill list gave it, which are the mirror's."""
+        workspace = self.client.config.get("workspace")
+        if self.mirror is None or not workspace:
+            return arguments
+        mirror, project = str(self.mirror), session_path(workspace)
+        return {
+            key: value.replace(mirror, project)
+            if key in PATH_ARGUMENTS and isinstance(value, str)
+            else value
+            for key, value in arguments.items()
+        }
 
     async def discover(self, servers: list[str]) -> list[dict]:
         tools = []
@@ -98,6 +230,33 @@ class RemoteTools:
         self.routes = routes
         return tools
 
+    async def _yield_when_spoken_to(
+        self, call_id: str, invoked: asyncio.Future
+    ) -> None:
+        """While the session's Bash runs, watch for a person writing.
+
+        A message reaches Codex only between tool calls, so one written during
+        a long command waited for it to end. When the runner writes down a new
+        debt (`driven/runner.py`), the executor stops waiting on this call's
+        command and returns it as a background task that goes on running
+        (`runtime.bash`) — Claude Code's Ctrl+B, for a Bash that is the
+        executor's."""
+        while not invoked.done():
+            await asyncio.wait({invoked}, timeout=YIELD_POLL_S)
+            owed = reply_owed(self.reply_file)
+            # Unanswered: no tool starts while one is (`__call__`), so this
+            # command was already running when the person wrote.
+            if not invoked.done() and owed is not None and owed["id"] != self.answered:
+                # An executor that cannot do this leaves the command waiting,
+                # which is what it did before; the call itself must not fail.
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(
+                        self.client.call,
+                        "control",
+                        {"subtype": "background", "id": call_id},
+                    )
+                return
+
     def _platform_call(self, tool: str, call_id: str, arguments: dict) -> dict:
         def invoke(payload, args):
             return self.client.call(
@@ -121,12 +280,26 @@ class RemoteTools:
     async def __call__(self, method: str, params: dict) -> dict:
         if method != "item/tool/call":
             raise ValueError(f"Unsupported Codex server request: {method}")
+        session_call = self.main_thread in (None, params.get("threadId"))
+        if session_call:
+            owed = reply_owed(self.reply_file)
+            if owed is not None and owed["id"] != self.answered:
+                if params["tool"] not in owed["answers"]:
+                    return {
+                        "success": False,
+                        "contentItems": [{"type": "inputText", "text": owed["reason"]}],
+                    }
+                self.answered = owed["id"]
+                # And where the runner reads it, to know the turn may end.
+                Path(owed["answered"]).write_text(owed["id"])
         server, tool = self.routes[params["tool"]]
         if server == PLATFORM:
             return await asyncio.to_thread(
                 self._platform_call, tool, params["callId"], params["arguments"]
             )
         receipt: dict
+        if server == "native":
+            params = {**params, "arguments": self.on_the_machine(params["arguments"])}
         if server in self.client.remote_servers():
             # Codex fires no project hooks, and a remote server's call never
             # reaches the machine that would run them around it.
@@ -141,16 +314,21 @@ class RemoteTools:
             except MachineOutOfReach:
                 receipt = {"error": MACHINE_OUT_OF_REACH}
         else:
-            receipt = await asyncio.to_thread(
-                self.client.call,
-                "invoke",
-                {
-                    "id": params["callId"],
-                    "server": server,
-                    "tool": tool,
-                    "args": params["arguments"],
-                },
+            invoked = asyncio.ensure_future(
+                asyncio.to_thread(
+                    self.client.call,
+                    "invoke",
+                    {
+                        "id": params["callId"],
+                        "server": server,
+                        "tool": tool,
+                        "args": params["arguments"],
+                    },
+                )
             )
+            if session_call and server == "native" and tool == "Bash":
+                await self._yield_when_spoken_to(params["callId"], invoked)
+            receipt = await invoked
         if "error" in receipt:
             return {
                 "success": False,

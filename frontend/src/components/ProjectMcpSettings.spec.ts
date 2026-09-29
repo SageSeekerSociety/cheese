@@ -15,7 +15,7 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../api', () => api)
 
-import { setLocale } from '../i18n'
+import i18n, { setLocale } from '../i18n'
 
 import ProjectMcpSettings from './ProjectMcpSettings.vue'
 
@@ -55,7 +55,7 @@ async function mount(url = '/projects/p/settings') {
   await router.push(url)
   const view = render(ProjectMcpSettings, {
     props: { projectId: 'p' },
-    global: { plugins: [createVuetify({ components, directives }), router] },
+    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
   })
   return { view, router }
 }
@@ -78,7 +78,9 @@ it('a connected server says whose account it acts as, and any member can disconn
   })
   api.disconnectMcpServer.mockResolvedValue(null)
   const { view } = await mount()
-  expect(await view.findByText(/由 alice 授权/)).toBeTruthy()
+  // 授权人是一颗 @chip：和对话里 @ 到他长得一样，点了去他的成员页。
+  await waitFor(() => expect(view.container.textContent).toMatch(/由\s*@alice\s*授权/))
+  expect(view.container.querySelector('.mcp-row__state .mention')?.getAttribute('data-handle')).toBe('alice')
   await fireEvent.click(view.getByRole('button', { name: '断开' }))
   await waitFor(() => expect(api.disconnectMcpServer).toHaveBeenCalledWith('p', 'tracker'))
 })

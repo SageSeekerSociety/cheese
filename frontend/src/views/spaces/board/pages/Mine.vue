@@ -103,8 +103,27 @@ const COMPLETION_LABEL: Record<AnalyticsCompletionType, string> = {
   SUCCESS: '已通过',
 }
 
+/** 「什么算已通过」—— 唯一的开关，与后端 `member_participating_service.get_overview`
+ *  里的 `SUCCESS_INCLUDES_PENDING_REVIEW` 是同一个判据的两半，**两处一起改**：
+ *
+ *  - `false`（现在的答案、暂且的默认）：**判通过才算** —— 待判的仍读作「待判」；
+ *  - `true`：**交了就算** —— `PENDING_REVIEW` 并进「已通过」那一档（后端那份概览的
+ *    `successfulCount` 同时把它算了进去，`pendingReviewCount` 归零）。
+ *
+ *  这条轴本身（`backend/app/domain/task/submission_state.py`）两种答案下完全一样，
+ *  差别只在这一行标签与那份计数 —— 别把判断散回各个状态分支里。 */
+const SUCCESS_INCLUDES_PENDING_REVIEW = false
+
+function isSuccessStatus(status: AnalyticsCompletionType): boolean {
+  return status === 'SUCCESS' || (SUCCESS_INCLUDES_PENDING_REVIEW && status === 'PENDING_REVIEW')
+}
+
+function completionLabel(status: AnalyticsCompletionType): string {
+  return isSuccessStatus(status) ? '已通过' : COMPLETION_LABEL[status]
+}
+
 function completionClass(status: AnalyticsCompletionType) {
-  if (status === 'SUCCESS') return 'claim-passed'
+  if (isSuccessStatus(status)) return 'claim-passed'
   if (status === 'NOT_SUBMITTED') return 'claim-in_progress'
   if (status === 'PENDING_REVIEW') return 'claim-submitted'
   return 'claim-rejected'
@@ -233,7 +252,7 @@ function homeTo() {
             <v-spacer />
             <span v-if="p.teamName" class="claim-list__team">{{ p.teamName }}</span>
             <v-chip size="x-small" label variant="tonal" :class="completionClass(p.completionStatus)">
-              {{ COMPLETION_LABEL[p.completionStatus] }}
+              {{ completionLabel(p.completionStatus) }}
             </v-chip>
             <span class="claim-list__due">{{ deadlineText(p.deadline) }}</span>
           </li>

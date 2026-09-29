@@ -209,6 +209,7 @@
         "acting": "{verb}",
         "retrying": "Retrying",
         "retryingCount": "Retrying (attempt {attempt})",
+        "compacting": "Compacting context",
         "waiting": "Waiting for the machine",
         "stopped": "Stopped",
         "idle": "Idle",

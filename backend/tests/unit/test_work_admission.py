@@ -758,3 +758,38 @@ async def test_image_only_message_can_merge_into_live_session():
         str(topic), {"type": "turn_finished", "turn_id": "already-running"}
     )
     await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_only_a_message_to_the_agent_owes_the_running_turn_an_answer():
+    """Both reach the running session; only the one addressed to the agent
+    holds it to answering before anything else (`driven/runner.py`). The
+    other was said to somebody else in the room."""
+
+    class MergeIntoLive(FakeChat):
+        def __init__(self):
+            super().__init__(None)
+            self.owed: dict[str, bool] = {}
+
+        async def work_policy(self, topic_id):
+            raise AssertionError("a delivered mid-turn message needs no new turn")
+
+        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
+            self.owed[content] = kwargs.get("owes_reply", True)
+            return True
+
+    chat = MergeIntoLive()
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    await broker.publish(
+        str(topic), {"type": "turn_started", "turn_id": "already-running"}
+    )
+    await broker.receive_message(chat, topic, author="u", content="<@cheese-seat> 停")
+    await broker.receive_message(chat, topic, author="u", content="我先去吃饭")
+    await _until(lambda: len(chat.owed) == 2)
+
+    assert chat.owed == {"<@cheese-seat> 停": True, "我先去吃饭": False}
+    await broker.publish(
+        str(topic), {"type": "turn_finished", "turn_id": "already-running"}
+    )
+    await _until(lambda: runner.active_work_count() == 0)

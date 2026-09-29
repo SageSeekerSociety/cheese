@@ -45,6 +45,8 @@ steps:
 
 ## 一个出口：计量代理 {#one-exit}
 
+计量代理内部怎么鉴权、计量、拒绝、换凭证，以及它的前身 ccproxy，见[计量代理](/dev/metering-proxy)。
+
 所有会话的模型流量都经过计量代理（mitmproxy，`deploy/metering-proxy/`）。它有两个入口：
 
 | 入口 | 谁用 | 怎么把流量引过来 |
@@ -66,6 +68,8 @@ blocks: sandbox/budget, bare/budget, cloud/budget, codex/budget
 ```
 
 ## 每个请求先问准入 {#admission}
+
+准入怎么判预算、怎么解析供给，见[准入与供给](/dev/admission)。
 
 计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌鉴权。这是唯一的控制点，回答三件事：
 
@@ -146,6 +150,8 @@ blocks: sandbox/binding, bare/binding
 ```
 
 ## 两条路 {#routes}
+
+网关那一侧（虚拟 key、预算刹车、补丁）见[模型网关](/dev/gateway)。
 
 - **订阅路**：计量代理把请求转给模型厂商，把会话里的占位凭证换成平台的订阅凭证，并按准入结果把模型名写进请求体，正文其余部分不改（订阅要求客户端就是 Claude Code 本身）。
 - **网关路**：计量代理把请求改写到 LiteLLM 网关，换上这个项目的虚拟 key。网关按 key 记账，超过 `max_budget` 就拒绝。

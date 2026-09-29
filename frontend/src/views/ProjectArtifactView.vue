@@ -15,6 +15,8 @@ import { t } from '../i18n'
 import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 const props = defineProps<{ projectId: string; artifactId: string }>()
 
 const artifact = ref<ProjectArtifactDetail | null>(null)
@@ -235,7 +237,7 @@ watch(
               <div class="t-body version-row__subject">{{ version.subject || '这次交付没有留下说明' }}</div>
               <div class="t-meta c-faint">
                 <template v-if="when(version)">{{ when(version) }}</template>
-                <template v-if="version.decided_by"> · {{ version.decided_by }} 采纳</template>
+                <template v-if="version.decided_by"> · <UserRef :handle="version.decided_by" /> 采纳</template>
               </div>
             </div>
             <v-btn

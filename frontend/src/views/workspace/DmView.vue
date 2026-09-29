@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 import { getPrivateChat, listProjectAgents } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import { agentHandleOf } from '@/lib/dm'
+import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -111,7 +112,7 @@ function openTopic(topicId: string) {
 }
 
 function handleMentionClick(handle: string) {
-  void router.push({ name: 'member', params: { projectId: props.projectId, handle } })
+  void router.push(userRefRoute(handle, props.projectId))
 }
 
 function handleOpenResource(resource: string) {

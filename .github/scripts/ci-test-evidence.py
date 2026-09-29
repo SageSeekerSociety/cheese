@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -18,6 +19,18 @@ REMOTE_CASES = {
     "resident-release",
     "backend-regressions",
 }
+
+# One Playwright shard of the E2E suite, named `e2e-<index>-of-<total>`.
+E2E_SHARD = re.compile(r"e2e-[1-9][0-9]*-of-[1-9][0-9]*")
+
+
+def _suite(value: str) -> str:
+    if value in ("remote-acceptance", "private-chat") or E2E_SHARD.fullmatch(value):
+        return value
+    raise argparse.ArgumentTypeError(
+        f"unknown suite {value!r}: expected e2e-<i>-of-<n>, remote-acceptance"
+        " or private-chat"
+    )
 
 
 def _steps(raw: str, required: list[str]) -> tuple[bool, str]:
@@ -141,11 +154,7 @@ def _junit(path: Path, at_least: int) -> tuple[int, int, int, list[str]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--suite",
-        required=True,
-        choices=("e2e", "remote-acceptance", "private-chat"),
-    )
+    parser.add_argument("--suite", required=True, type=_suite)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run-id", type=int, required=True)
@@ -161,7 +170,7 @@ def main() -> None:
     tests = retries = skipped = 0
     problems: list[str] = []
     try:
-        if args.suite == "e2e":
+        if E2E_SHARD.fullmatch(args.suite):
             tests, retries, skipped, problems = _playwright(args.source)
         elif args.suite == "remote-acceptance":
             tests, retries, skipped, problems = _remote(args.source)

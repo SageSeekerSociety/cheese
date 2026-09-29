@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -13,7 +14,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+from app.core.sandbox_auth import bind_resource_token
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -26,6 +27,7 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
+from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
@@ -432,8 +434,10 @@ async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) 
     """Push the session's work to its branches on the machine it is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
-    --all``): every task checkout's commits go to its branch, and what is not
-    committed is backed up as a snapshot ``cheese recover`` restores. Raises
+    --all``): every task checkout's unpushed commits go to its branch, and
+    what is not committed is backed up as a snapshot ``cheese recover``
+    restores; a checkout with neither is not touched, so the push costs what
+    is unpushed rather than how many tasks the room has opened. Raises
     ``WorkComputerUnreachable`` when the command could not run at all, and a
     ``ConflictError`` with the machine's own words when it ran and failed.
 
@@ -467,8 +471,35 @@ async def push_before_switch(lease: dict, start: Callable[[], Awaitable[dict]]) 
         raise ConflictError("推送两分钟内没有完成，没有更换；稍后重试")
     said = output.get("stdout") or ""
     if said.startswith("Exit code "):
-        detail = said.partition("\n")[2].strip()[-600:] or said
+        printed = said.partition("\n")[2]
+        detail = "\n".join(_failed_tasks(printed)) or printed.strip()[-600:] or said
         raise ConflictError(f"推送失败，没有更换：{detail}")
+
+
+# The line ``cheese sync --all`` ends each task it could not sync with.
+_TASK_FAILED = re.compile(r"^\[cheese\] 任务 (\S+) 同步失败：(.*)$")
+
+
+def _failed_tasks(printed: str) -> list[str]:
+    """Each task the push could not sync, with the first line said about why.
+
+    ``cheese sync --all`` prints nothing for a task it synced, and for one it
+    could not, what went wrong and then a line naming the task; that line's own
+    reason is only an exit status when the failure was an API call's. So the
+    first line printed since the previous task's is where this task's reason
+    starts. Every task gets its line: a failure that hits them all (a refused
+    credential) otherwise showed only the last one or two."""
+    failed, first = [], None
+    for line in printed.splitlines():
+        ended = _TASK_FAILED.match(line)
+        if ended is None:
+            if first is None and line.strip():
+                first = line.strip().removeprefix("[cheese] ")
+            continue
+        task, reason = ended.groups()
+        failed.append(f"任务 {task}：{first or reason}")
+        first = None
+    return failed
 
 
 def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
@@ -531,16 +562,15 @@ async def _start_executor(hub, lease, *, device_id, project_id, work_resource, s
 
 async def _restart_executor(db, row, lease):
     """How to start again the executor of the session ``row`` on the machine
-    its ``lease`` is on, as a tool call there would: with a credential minted
-    for the session now, since the one it last ran with may have expired."""
+    its ``lease`` is on, as a tool call there would: with the credential a
+    session launches with, minted now, since the one it last ran with may have
+    expired."""
     topic = await TopicService(db).get_or_404(row.topic_id)
     project = await ProjectService(db).get_or_404(topic.project_id)
     author = await _session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
     token = bind_resource_token(
-        mint_scoped_token(
-            project_id=str(project.id), topic_id=str(topic.id), agent_handle=author
-        ),
+        mint_session_token(project.id, topic.id, author),
         resource,
         session_id=str(row.id),
         lease_generation=lease.get("generation"),

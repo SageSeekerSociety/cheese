@@ -937,6 +937,10 @@ button:not(.v-btn) {
 .mention:hover {
   text-decoration: underline;
 }
+/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
+.mention--static {
+  cursor: default;
+}
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {
   margin-right: 3px;

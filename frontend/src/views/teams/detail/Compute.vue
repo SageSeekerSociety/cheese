@@ -19,6 +19,7 @@ import {
   registerDeviceForTeam,
   unregisterDeviceFromTeam,
 } from '@/api'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -452,13 +453,13 @@ onBeforeUnmount(() => {
                   :key="`${use.topic_id}:${use.agent_handle}`"
                   class="mt-2 device-user"
                 >
-                  {{
-                    t('work.deviceInUse.line', {
-                      project: use.project_name,
-                      room: use.topic_title,
-                      agent: use.agent_name,
-                    })
-                  }}
+                  <i18n-t keypath="work.deviceInUse.line" tag="span">
+                    <template #project>{{ use.project_name }}</template>
+                    <template #room>{{ use.topic_title }}</template>
+                    <template #agent>
+                      <UserRef :handle="use.agent_handle" :name="use.agent_name" :project-id="use.project_id" />
+                    </template>
+                  </i18n-t>
                 </div>
                 <div
                   v-if="myDeviceIds.has(device.device_id) && device.team_ids.includes(teamId)"

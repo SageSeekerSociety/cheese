@@ -18,6 +18,7 @@ import type { ProjectSiteInfo } from '@/cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { ApiError, getProjectSite, publishProjectSite } from '@/api'
+import UserRef from '@/components/common/UserRef.vue'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{ projectId: string }>()
@@ -147,7 +148,7 @@ watch(
     </div>
     <p v-if="info.site" class="site-row__when t-meta c-faint">
       <code :title="info.site.source_revision">{{ info.site.source_revision.slice(0, 8) }}</code>
-      · {{ info.site.published_by }} · {{ relTime(info.site.published_at) }}
+      · <UserRef :handle="info.site.published_by" /> · {{ relTime(info.site.published_at) }}
     </p>
     <p v-if="publishError" role="alert" class="site__error t-meta">{{ publishError }}</p>
 

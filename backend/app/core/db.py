@@ -37,11 +37,11 @@ if _db_url.startswith("postgresql://"):
 elif _db_url.startswith("postgresql+psycopg2://"):
     _db_url = _db_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
 
-# Under pytest one worker process runs MANY event loops (anyio function scope,
-# blocking portals), and a pooled asyncpg connection must never hop loops — so
-# the test conftest forces NullPool (fresh connection per checkout) via this
-# env var BEFORE any app import. Production keeps the default QueuePool: one
-# process, one loop, one pool.
+# CHEESEX_TEST_NULLPOOL, set before any app import, gives this process a
+# NullPool (a fresh connection per checkout) instead of the QueuePool below.
+# Only a test's own child process sets it; the pytest suite runs the
+# production pool shape and closes each event loop's connections itself
+# (tests/conftest.py, tests/integration/conftest.py).
 _engine_kwargs: dict[str, Any] = (
     {"poolclass": NullPool}
     if os.environ.get("CHEESEX_TEST_NULLPOOL")
