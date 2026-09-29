@@ -2,13 +2,15 @@
 //
 // The panel used to render every block a topic ever had — 2226 rows / 2.1 MB on
 // a real topic, which is what wedged the browser. Now it holds a WINDOW: the
-// newest page, extended upwards as the user scrolls back.
+// newest page, extended upwards as the user scrolls back — or, opened at an old
+// message, a stretch from the middle that grows both ways until it meets the
+// newest page (see components/room/composables/useTimeline).
 //
-// The tricky parts are all pure functions, so they can actually be tested (the
-// repo has no @vue/test-utils, so component-level tests don't run):
+// The tricky parts are pure functions, so they can be tested on their own:
 //   - where to put scrollTop after prepending older rows (the "scroll jump"),
-//   - when a scroll position means "fetch the previous page",
-//   - how a background cache refresh merges into a window the user paged back.
+//   - when a scroll position means "fetch the previous / next page",
+//   - how a background cache refresh merges into a window the user paged back,
+//   - when a middle stretch has met the newest page.
 import type { Block } from '../cx_types'
 
 // One page. Big enough that a normal topic never pages at all, small enough
@@ -20,8 +22,8 @@ export const PAGE_SIZE = 50
 export const LOAD_OLDER_THRESHOLD = 400
 
 // A slice of a topic's timeline, oldest-first, plus whether older blocks exist
-// above it. `hasMore` is about OLDER blocks only — the window always ends at
-// the newest block, so "more" can only lie above.
+// above it. `hasMore` is about OLDER blocks only; whether a middle stretch has
+// newer blocks below it is the timeline's `hasNewer`, not part of a window.
 export interface BlockWindow {
   blocks: Block[]
   hasMore: boolean
@@ -36,6 +38,16 @@ export interface ScrollState {
 export function shouldLoadOlder(scrollTop: number, state: { hasMore: boolean; loading: boolean }): boolean {
   if (!state.hasMore || state.loading) return false
   return scrollTop <= LOAD_OLDER_THRESHOLD
+}
+
+/**
+ * Whether this scroll position should fetch the next newer page: a window opened
+ * in the middle of the history grows downwards the way it grows upwards.
+ * `fromBottom` is how far the viewport's bottom edge is from the content's.
+ */
+export function shouldLoadNewer(fromBottom: number, state: { hasNewer: boolean; loading: boolean }): boolean {
+  if (!state.hasNewer || state.loading) return false
+  return fromBottom <= LOAD_OLDER_THRESHOLD
 }
 
 /**
@@ -93,4 +105,31 @@ export function mergeRefreshedTail(cached: BlockWindow, fresh: BlockWindow): Blo
     // The top of the window did not move, so what lies above it did not change.
     hasMore: cached.hasMore,
   }
+}
+
+/**
+ * A window opened in the middle of the history (`around` a message), and the
+ * newest window kept live beside it: if the two meet, one continuous window
+ * that ends at the newest block; otherwise null.
+ *
+ * They meet when the middle window already holds the newest window's first
+ * block, or the newest window holds the middle one's last block. Either way
+ * the newest window's copy wins from the seam on, since live frames (edits,
+ * retractions, arrivals) have been landing there, not in the middle window.
+ * A middle window that reached the newest block on its own (`reachedNewest`)
+ * meets any newest window: nothing can lie between them.
+ */
+export function joinNewest(middle: BlockWindow, newest: BlockWindow, reachedNewest = false): BlockWindow | null {
+  if (!newest.blocks.length) return reachedNewest ? middle : null
+  const seam = middle.blocks.findIndex((b) => b.id === newest.blocks[0].id)
+  if (seam >= 0) return { blocks: [...middle.blocks.slice(0, seam), ...newest.blocks], hasMore: middle.hasMore }
+  const last = middle.blocks.at(-1)
+  const overlap = last ? newest.blocks.findIndex((b) => b.id === last.id) : -1
+  if (overlap >= 0)
+    return { blocks: [...middle.blocks.slice(0, -1), ...newest.blocks.slice(overlap)], hasMore: middle.hasMore }
+  if (!reachedNewest) return null
+  // The middle window reached the newest block when it was fetched; anything the
+  // live window holds that it lacks arrived after that.
+  const known = new Set(middle.blocks.map((b) => b.id))
+  return { blocks: [...middle.blocks, ...newest.blocks.filter((b) => !known.has(b.id))], hasMore: middle.hasMore }
 }

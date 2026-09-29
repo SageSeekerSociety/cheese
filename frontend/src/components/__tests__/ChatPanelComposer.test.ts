@@ -191,6 +191,8 @@ describe('对话栏自己的输入栏', () => {
       total: 1,
       has_more: false,
       oldest_id: 'm1',
+      has_newer: false,
+      newest_id: null,
     })
     const { rerender, queryByRole } = mountPanel({}, 'starter-talked')
     await rerender({ topic: { ...topic('starter-talked'), kind: 'root' } })
@@ -215,6 +217,8 @@ describe('对话栏自己的输入栏', () => {
       total: 1,
       has_more: false,
       oldest_id: 'm2',
+      has_newer: false,
+      newest_id: null,
     })
     const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
     await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
@@ -385,6 +389,8 @@ describe('对话栏自己的输入栏', () => {
       total: 1,
       has_more: false,
       oldest_id: 'doc-1',
+      has_newer: false,
+      newest_id: null,
     })
     const { container } = mountPanel({}, 'topic-download')
     await flush()

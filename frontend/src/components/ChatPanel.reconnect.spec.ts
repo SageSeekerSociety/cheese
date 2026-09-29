@@ -61,7 +61,9 @@ beforeEach(() => {
       json: async () => ({ code: 200, data: { data: [], total: 0 } }),
     })
   )
-  vi.mocked(listBlocks).mockReset().mockResolvedValue({ data: [], has_more: false, total: 0, oldest_id: null })
+  vi.mocked(listBlocks)
+    .mockReset()
+    .mockResolvedValue({ data: [], has_more: false, total: 0, oldest_id: null, has_newer: false, newest_id: null })
 })
 afterEach(() => {
   cleanup()
@@ -140,6 +142,8 @@ describe('chat recovery after history errors', () => {
       has_more: false,
       total: 1,
       oldest_id: null,
+      has_newer: false,
+      newest_id: null,
     })
 
     await vi.advanceTimersByTimeAsync(30_000)
@@ -235,7 +239,7 @@ it('can send while initial history is pending and preserves live messages when i
     created_at: new Date().toISOString(),
   } as Block
   sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
-  resolve({ data: [], has_more: false, total: 0, oldest_id: null })
+  resolve({ data: [], has_more: false, total: 0, oldest_id: null, has_newer: false, newest_id: null })
   await flushPromises()
   expect(view.container.textContent).toContain('hello before history')
   expect(view.container.querySelector('.im-row--pending')).toBeNull()
@@ -267,6 +271,8 @@ it('a delayed history snapshot cannot restore a retracted live block', async () 
     has_more: false,
     total: 1,
     oldest_id: null,
+    has_newer: false,
+    newest_id: null,
   })
   await flushPromises()
   expect(view.container.textContent).not.toContain('stale removed message')
@@ -306,6 +312,8 @@ it('keeps a reaction received before its message arrives in history', async () =
     has_more: false,
     total: 1,
     oldest_id: null,
+    has_newer: false,
+    newest_id: null,
   })
   await flushPromises()
   expect(view.container.querySelector('.rx-emoji')?.textContent).toBe('👍')

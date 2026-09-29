@@ -36,9 +36,12 @@ export interface SplitMarkerPlacement {
 // 标记必须按时间落在正确的两条消息之间，所以窗口顶部那一段要特别小心：一个比
 // 窗口最老那条还早的标记，真实位置在窗口**上面**，此刻放在顶端是错的位置。
 // hasMore 为真时就先不显示，等用户滚回去、更早的消息加载进来，它自己会归位。
+// 窗口也可能停在历史中间（从一条旧消息打开，见 blockPaging.ts）：hasNewer 为真时，
+// 比窗口最新那条还新的标记真实位置在窗口**下面**，同样先不显示。
 export interface TimelineWindow {
   blocks: readonly Block[]
   hasMore: boolean
+  hasNewer?: boolean
 }
 
 // 每次现造一个，不共享一个常量：返回值里带着可变的 Map 和数组，共享出去等于把它们
@@ -78,10 +81,10 @@ export function placeSplitMarkers(tasks: readonly RoomTask[], timeline: Timeline
   const markers = dispatchedTasks(tasks)
   if (!markers.length) return empty()
 
-  const { blocks, hasMore } = timeline
+  const { blocks, hasMore, hasNewer = false } = timeline
   // 空窗口：还没有任何消息在屏幕上。整段历史都在手里（hasMore=false）时，标记就是
   // 仅有的几行；否则位置未知，先不显示。
-  if (!blocks.length) return { before: new Map(), tail: hasMore ? [] : markers.slice() }
+  if (!blocks.length) return { before: new Map(), tail: hasMore || hasNewer ? [] : markers.slice() }
 
   const before = new Map<string, SplitMarker[]>()
   const tail: SplitMarker[] = []
@@ -89,7 +92,7 @@ export function placeSplitMarkers(tasks: readonly RoomTask[], timeline: Timeline
     const t = at(marker.createdAt)
     const anchor = blocks.find((b) => at(b.created_at) >= t)
     if (!anchor) {
-      tail.push(marker)
+      if (!hasNewer) tail.push(marker)
       continue
     }
     // 锚在窗口第一条上，而上面还有没加载的历史 —— 真实位置可能更靠上，先不显示。

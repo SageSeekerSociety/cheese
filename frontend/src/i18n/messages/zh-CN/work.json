@@ -353,7 +353,10 @@
       "updatedAt": "清单更新于 {time}"
     },
     "backToChat": "返回对话",
-    "unselected": "选择一个话题"
+    "unselected": "选择一个话题",
+    "backToLatest": "回到最新",
+    "loadFailed": "加载消息失败",
+    "messageGone": "这条消息已不存在"
   },
   "members": {
     "leave": "退出项目",

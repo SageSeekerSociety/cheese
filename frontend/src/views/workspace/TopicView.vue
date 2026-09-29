@@ -71,6 +71,12 @@ function onReview() {
   onPanelTab('changes')
 }
 
+// 地址点名的一条消息（搜索结果、别人发来的链接）：对话栏打开时停在它上面。
+const focusBlock = computed(() => {
+  const q = route.query.block
+  return typeof q === 'string' && q ? q : null
+})
+
 function onOpenCard(taskId: string | null) {
   if (openCardId.value === taskId) return
   // 桌面上是 push：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
@@ -382,6 +388,7 @@ void openPlace()
             :members="store.members"
             :topic-list="store.topics"
             :unread-on-open="unreadOnOpen"
+            :focus-block="focusBlock"
             v-on="chatEvents"
           />
         </Transition>
@@ -426,6 +433,7 @@ void openPlace()
               :members="store.members"
               :topic-list="store.topics"
               :unread-on-open="unreadOnOpen"
+              :focus-block="focusBlock"
               v-on="chatEvents"
             />
           </template>
