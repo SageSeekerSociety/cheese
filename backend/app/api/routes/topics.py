@@ -3767,14 +3767,8 @@ async def upload_attachment(
             path = f"uploads/{uuid.uuid4().hex}/{name}"
             library.write_room_file(topic.project_id, topic_id, path, data)
             return ok({"path": path, "mime": mime, "bytes": len(data)})
-        # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
         name = await library_records.add(
-            db,
-            project_id=topic.project_id,
-            filename=name,
-            data=data,
-            added_by=actor.handle,
-            room_id=topic_id,
+            db, topic.project_id, name, data, actor.handle, topic_id
         )
     return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
 

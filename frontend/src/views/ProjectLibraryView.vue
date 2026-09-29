@@ -19,15 +19,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
-import {
-  deleteLibraryFile,
-  downloadFile,
-  libraryFileBytes,
-  libraryFileRawUrl,
-  listProjectLibrary,
-  replaceLibraryFile,
-  uploadLibraryFile,
-} from '../api'
+import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
+import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 
 import { useCommands } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'

@@ -28,6 +28,7 @@ from pathlib import Path
 import httpx
 
 from app.core.config import settings
+from app.core.errors import SystemBusyError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -200,3 +201,17 @@ def prewarm(raw: bytes, path: str) -> None:
         return
     _warming.add(task)
     task.add_done_callback(_warming.discard)
+
+
+async def preview_pdf(data: bytes, filename: str) -> bytes:
+    """一份 Office 文档转成 PDF，给页面预览：交付的某一版、资料库里的一份。"""
+    if len(data) > 10 * 1024 * 1024:
+        raise ValidationError("文件超过 10 MB，无法生成预览")
+    if not is_renderable(filename):
+        raise ValidationError("这个格式不能转换为预览")
+    try:
+        return await render_to_pdf(data, filename, settings.office_render_endpoint)
+    except OfficeRenderUnavailable as exc:
+        raise SystemBusyError(str(exc)) from exc
+    except OfficeRenderFailed as exc:
+        raise ValidationError(str(exc)) from exc

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.block.models import Block, BlockKind
 from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord
 
@@ -37,7 +38,6 @@ def _row(
 
 async def add(
     session: AsyncSession,
-    *,
     project_id: uuid.UUID,
     filename: str,
     data: bytes,
@@ -128,3 +128,64 @@ async def replaced_counts(
         .group_by(LibraryFileRecord.name)
     )
     return {name: n for name, n in rows}
+
+
+async def describe(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    files: list[dict],
+    room_titles: dict[uuid.UUID, str],
+) -> list[dict]:
+    """资料库清单上每一份的来源：谁、什么时候、在哪个房间，被几条消息引用、替换过
+    几次。
+
+    `room_titles` 是读者读得了的那些房间：房间名只写这些，引用也只数这些房间里的。
+    记录表之前就在的文件没有行，来源取第一条带上它的附件消息。"""
+    refs = [service.library_ref(f["path"]) for f in files]
+    recorded = await current(session, project_id)
+    replaced = await replaced_counts(session, project_id)
+    first_sent: dict[str, Block] = {}
+    for block in await session.scalars(
+        select(Block)
+        .where(
+            Block.project_id == project_id,
+            Block.kind == BlockKind.attachment,
+            Block.content.in_(refs),
+        )
+        .order_by(Block.created_at)
+    ):
+        first_sent.setdefault(block.content, block)
+    counts: dict[str, int] = {}
+    if room_titles:
+        for content, n in await session.execute(
+            select(Block.content, func.count())
+            .where(
+                Block.project_id == project_id,
+                Block.kind == BlockKind.attachment,
+                Block.content.in_(refs),
+                Block.topic_id.in_(list(room_titles)),
+            )
+            .group_by(Block.content)
+        ):
+            counts[content] = n
+
+    def one(f: dict) -> dict:
+        ref = service.library_ref(f["path"])
+        row = recorded.get(f["path"])
+        sent = first_sent.get(ref)
+        room_id = row.room_id if row else (sent.topic_id if sent else None)
+        added_at = row.created_at if row else (sent.created_at if sent else None)
+        return {
+            **f,
+            "added_by": row.added_by if row else (sent.author if sent else None),
+            "added_at": added_at.isoformat() if added_at else None,
+            "room": (
+                {"id": str(room_id), "title": room_titles[room_id]}
+                if room_id is not None and room_id in room_titles
+                else None
+            ),
+            "replaced": replaced.get(f["path"], 0),
+            "references": counts.get(ref, 0),
+        }
+
+    return [one(f) for f in files]

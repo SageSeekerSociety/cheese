@@ -8,6 +8,7 @@ covers:
   - backend/app/domain/project/artifacts.py
   - backend/app/domain/project/room_files.py
   - backend/app/api/routes/projects.py
+  - backend/app/api/routes/library.py
   - backend/app/api/routes/topics.py
   - backend/sandbox/cheese
 ---

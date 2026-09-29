@@ -7,9 +7,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -27,7 +26,6 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
-    SystemBusyError,
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
@@ -57,24 +55,18 @@ from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
 )
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.documents.text import delivered_comparison
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
-from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
-from app.domain.preview.office import (
-    OfficeRenderFailed,
-    OfficeRenderUnavailable,
-    is_renderable,
-    render_to_pdf,
-)
+from app.domain.preview import office
 from app.domain.project import artifacts
 from app.domain.project.models import Project
 from app.domain.project.protection import (
@@ -106,7 +98,6 @@ from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
 from app.domain.team.services import team_service
 from app.domain.topic import naming
-from app.domain.topic.models import Topic
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -114,8 +105,7 @@ from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
 
-#: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线。
-MAX_LIBRARY_UPLOAD_BYTES = 10 * 1024 * 1024
+
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -542,193 +532,6 @@ async def set_project_default_agent(
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
-async def _preview_pdf(data: bytes, filename: str) -> bytes:
-    """一份 Office 文档转成 PDF，给页面预览。"""
-    if len(data) > 10 * 1024 * 1024:
-        raise ValidationError("文件超过 10 MB，无法生成预览")
-    if not is_renderable(filename):
-        raise ValidationError("这个格式不能转换为预览")
-    try:
-        return await render_to_pdf(data, filename, settings.office_render_endpoint)
-    except OfficeRenderUnavailable as exc:
-        raise SystemBusyError(str(exc)) from exc
-    except OfficeRenderFailed as exc:
-        raise ValidationError(str(exc)) from exc
-
-
-@router.get("/{project_id}/library/raw")
-async def library_file_raw(
-    project_id: uuid.UUID,
-    path: str,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    topic: str = "",
-    preview_pdf: bool = False,
-) -> Response:
-    """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
-    消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `authorized_place`）。
-
-    `preview_pdf`：Office 文档转成 PDF，给资料库页预览。
-
-    不让浏览器凭缓存直接用：一份资料可以被「替换为新版本」，同一个地址下的字节会
-    变。"""
-    await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    name = _library_path(path)
-    data = library.read_library_file(project_id, name)
-    if preview_pdf:
-        data = await _preview_pdf(data, name)
-    filename = quote(name.rsplit("/", 1)[-1], safe="")
-    return Response(
-        content=data,
-        media_type="application/pdf" if preview_pdf else "application/octet-stream",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, no-cache",
-        },
-    )
-
-
-def _library_path(raw: str) -> str:
-    """资料库里那一份的名字——它就是地址，所以这里只挡不是名字的东西。"""
-    name = (raw or "").strip()
-    if not name or name.startswith("/") or ".." in name.split("/"):
-        raise ValidationError("path 必须是资料库里的相对路径")
-    return name
-
-
-@router.get("/{project_id}/library")
-async def list_library(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
-) -> dict:
-    """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
-
-    Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
-    room that has never seen that file."""
-    await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
-    files = library.list_library_files(project_id)
-    refs = [library.library_ref(f["path"]) for f in files]
-    recorded = await library_records.current(db, project_id)
-    replaced = await library_records.replaced_counts(db, project_id)
-    # 记录表之前就在的文件：来源是第一条带上它的消息。
-    first_sent: dict[str, Block] = {}
-    for block in await db.scalars(
-        select(Block)
-        .where(
-            Block.project_id == project_id,
-            Block.kind == BlockKind.attachment,
-            Block.content.in_(refs),
-        )
-        .order_by(Block.created_at)
-    ):
-        first_sent.setdefault(block.content, block)
-    # 房间名只给读得了那个房间的人；引用数也只数这些房间里的。
-    rooms = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
-    readable = await resolver.readable_topic_ids(
-        actor, project_id=project_id, topics=rooms
-    )
-    titles = {room.id: room.title for room in rooms if room.id in readable}
-    counts: dict[str, int] = {}
-    if readable:
-        for content, n in await db.execute(
-            select(Block.content, func.count())
-            .where(
-                Block.project_id == project_id,
-                Block.kind == BlockKind.attachment,
-                Block.content.in_(refs),
-                Block.topic_id.in_(readable),
-            )
-            .group_by(Block.content)
-        ):
-            counts[content] = n
-
-    def described(f: dict) -> dict:
-        ref = library.library_ref(f["path"])
-        row = recorded.get(f["path"])
-        sent = first_sent.get(ref)
-        room_id = row.room_id if row else (sent.topic_id if sent else None)
-        added_at = row.created_at if row else (sent.created_at if sent else None)
-        return {
-            **f,
-            "added_by": row.added_by if row else (sent.author if sent else None),
-            "added_at": added_at.isoformat() if added_at else None,
-            "room": (
-                {"id": str(room_id), "title": titles[room_id]}
-                if room_id is not None and room_id in titles
-                else None
-            ),
-            "replaced": replaced.get(f["path"], 0),
-            "references": counts.get(ref, 0),
-        }
-
-    listed = [described(f) for f in files]
-    return ok(page(listed, len(listed)))
-
-
-async def _library_keeper(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> Actor:
-    """往资料库里放、换、扔东西的只有人：一轮里铸出来的凭据过不了
-    `authorize_project`。"""
-    await ProjectService(db).get_or_404(project_id)
-    actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    return actor
-
-
-async def _upload_bytes(file: UploadFile) -> bytes:
-    data = await file.read(MAX_LIBRARY_UPLOAD_BYTES + 1)
-    if not data:
-        raise ValidationError("空文件")
-    if len(data) > MAX_LIBRARY_UPLOAD_BYTES:
-        raise ValidationError("文件太大（上限 10 MB）")
-    return data
-
-
-@router.post("/{project_id}/library")
-async def upload_library_file(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    file: UploadFile = File(...),
-) -> dict:
-    """在资料库页上直接放进一份文件。撞名不覆盖：拿下一个 `(n)`。"""
-    actor = await _library_keeper(project_id, db, resolver)
-    data = await _upload_bytes(file)
-    name = await library_records.add(
-        db,
-        project_id=project_id,
-        filename=library.clean_upload_name(file.filename),
-        data=data,
-        added_by=actor.handle,
-        room_id=None,
-    )
-    await db.commit()
-    return ok({"path": name, "bytes": len(data)})
-
-
-@router.put("/{project_id}/library")
-async def replace_library_file(
-    project_id: uuid.UUID,
-    path: str,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    file: UploadFile = File(...),
-) -> dict:
-    """把一份资料换成新版本。旧的那一份留着；引用这个名字的消息读到的是新的。"""
-    actor = await _library_keeper(project_id, db, resolver)
-    data = await _upload_bytes(file)
-    name = _library_path(path)
-    await library_records.replace(
-        db, project_id=project_id, name=name, data=data, by=actor.handle
-    )
-    await db.commit()
-    return ok({"path": name, "bytes": len(data)})
-
-
 @router.get("/{project_id}/artifacts")
 async def list_artifacts(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
@@ -885,7 +688,7 @@ async def download_artifact_version(
         raise NotFoundError("这一版交出去的不是一份文件")
     data = library.read_artifact_snapshot(project_id, card_id, version.filename)
     if preview_pdf:
-        data = await _preview_pdf(data, version.filename)
+        data = await office.preview_pdf(data, version.filename)
     filename = quote(version.filename, safe="")
     return Response(
         content=data,
@@ -977,20 +780,6 @@ def _artifact_ref(raw: object) -> uuid.UUID:
         return uuid.UUID(str(raw or ""))
     except ValueError as exc:
         raise ValidationError("into 必须是清单上另一项的 id") from exc
-
-
-@router.delete("/{project_id}/library")
-async def delete_library_file(
-    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """扔掉一份资料。
-
-    这条路不收 `topic`：读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据
-    过不了 `authorize_project`，所以 芝士 连同它自己正在读的那一份都删不掉。"""
-    await _library_keeper(project_id, db, resolver)
-    await library_records.remove(db, project_id=project_id, name=_library_path(path))
-    await db.commit()
-    return ok({"deleted": True})
 
 
 @router.get("/{project_id}/decisions")

@@ -24,14 +24,17 @@ vi.mock('../api', () => ({
   listProjectLibrary: vi.fn(),
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
-  uploadLibraryFile: vi.fn(),
-  replaceLibraryFile: vi.fn(),
-  libraryFileBytes: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
-const { deleteLibraryFile, downloadFile, libraryFileBytes, listProjectLibrary, replaceLibraryFile, uploadLibraryFile } =
-  await import('../api')
+vi.mock('../lib/libraryApi', () => ({
+  uploadLibraryFile: vi.fn(),
+  replaceLibraryFile: vi.fn(),
+  libraryFileBytes: vi.fn(),
+}))
+
+const { deleteLibraryFile, downloadFile, listProjectLibrary } = await import('../api')
+const { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } = await import('../lib/libraryApi')
 
 afterEach(cleanup)
 

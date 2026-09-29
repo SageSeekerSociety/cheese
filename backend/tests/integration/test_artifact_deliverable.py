@@ -367,7 +367,7 @@ def test_an_address_is_recorded_as_a_pointer_and_has_no_file(client):
 
 
 def test_office_preview_converts_the_selected_retained_file(client, monkeypatch):
-    from app.api.routes import projects
+    from app.domain.preview import office
     from app.domain.preview.office import OfficeRenderUnavailable
 
     project_id = _project(client)
@@ -385,7 +385,7 @@ def test_office_preview_converts_the_selected_retained_file(client, monkeypatch)
         assert name == "report.docx"
         return b"%PDF-preview of the first document"
 
-    monkeypatch.setattr(projects, "render_to_pdf", render)
+    monkeypatch.setattr(office, "render_to_pdf", render)
     preview = client.get(url, params={"preview_pdf": True})
     assert preview.status_code == 200, preview.text
     assert preview.headers["content-type"] == "application/pdf"
@@ -395,7 +395,7 @@ def test_office_preview_converts_the_selected_retained_file(client, monkeypatch)
     async def unavailable(*args):
         raise OfficeRenderUnavailable("文档预览服务暂时无法访问")
 
-    monkeypatch.setattr(projects, "render_to_pdf", unavailable)
+    monkeypatch.setattr(office, "render_to_pdf", unavailable)
     assert client.get(url, params={"preview_pdf": True}).status_code == 503
     assert client.get(url).content == b"first document"
 
