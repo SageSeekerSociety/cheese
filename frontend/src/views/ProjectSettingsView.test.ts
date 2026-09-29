@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
@@ -51,7 +51,7 @@ async function openSettings() {
   const element = document.createElement('div')
   const app = createApp(ProjectSettingsView, { projectId: 'project' })
   app.use(createVuetify())
-  app.use(useWorkspaceStore().$pinia)
+  app.use(getActivePinia()!)
   app.mount(element)
   // 设置读完之后才画出各组；「工作电脑」那一组标题出现，就是这一页可以操作了。
   await vi.waitFor(() => expect(element.textContent).toContain('工作电脑'))
