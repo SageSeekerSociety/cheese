@@ -159,9 +159,19 @@ jobs:
       - name: Parallel session failure window
         # Read only. Fixed UTC window and topic, without a tail that can drop the event.
         run: |
+          docker inspect -f 'backend_started={{.State.StartedAt}} log_driver={{.HostConfig.LogConfig.Type}}' cheese-backend-1
           docker logs --since '2026-09-29T11:48:20Z' --until '2026-09-29T11:49:10Z' --timestamps cheese-backend-1 2>&1 \
-            | grep -E '115ee22f-ffba-4d69-a579-0ce6033c8e84|device_screen_retired|device_screen_timing|session_not_alive|tunnel_helper_down|orphan' \
+            | grep -E '115ee22f|device_screen_retired|device_screen_timing|session_not_alive|tunnel_helper_down|orphan' \
             || true
+          for window in '05:39:25 05:39:50' '08:06:15 08:07:00' '11:48:25 11:48:50'; do
+            read -r start end <<< "$window"
+            echo "===== $start to $end UTC ====="
+            sudo -n journalctl CONTAINER_NAME=cheese-backend-1 \
+              --since="2026-09-29T${start}+00:00" --until="2026-09-29T${end}+00:00" \
+              --utc --no-pager -o short-iso-precise 2>&1 \
+              | grep -E '115ee22f|device_screen_retired|device_screen_timing|session_not_alive|tunnel_helper_down|orphan|permission denied|sudo:' \
+              || true
+          done
       - name: Device connection log tail
         # The owner of the DeviceHub is a SEPARATE process on a separate release
         # boundary (deploy/release-device-connection.sh), and every executor call,
