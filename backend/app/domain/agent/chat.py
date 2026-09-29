@@ -2140,9 +2140,25 @@ class ChatService:
         """Platform tools back for this room; True when they had been gone."""
         return await self._compute.recover_native_tools(topic_id, agent_handle)
 
-    def has_running_turn(self, topic_id: uuid.UUID) -> bool:
-        """Whether this process currently owns live work for the topic."""
-        return topic_id in self._active_turn_ids
+    def has_running_turn(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
+        """Whether this process currently owns live work for the topic.
+
+        With ``agent_handle``, work of that agent's: teammates in one room run
+        side by side, so another seat working leaves this one free. A turn
+        whose agent is not known yet counts as anybody's.
+        """
+        active = self._active_turn_ids.get(topic_id)
+        if not active:
+            return False
+        if agent_handle is None:
+            return True
+        for work_id in active:
+            state = self._hook_work.get((topic_id, work_id))
+            if state is None or state.agent_instance_handle in (None, agent_handle):
+                return True
+        return False
 
     async def has_unread_input(self, topic_id: uuid.UUID) -> bool:
         """Whether anything said in the room is still waiting to reach 芝士.
@@ -2417,10 +2433,16 @@ class ChatService:
             logger.exception("could not read credits-refused stamp for %s", turn_id)
             return False
 
-    def has_live_screen(self, topic_id: uuid.UUID) -> bool:
+    def has_live_screen(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         """Is a session for this topic still reachable? The orphan sweep's first
-        question, and the one that used to be unanswerable."""
-        return self._compute.holds(topic_id)
+        question, and the one that used to be unanswerable.
+
+        With ``agent_handle`` it is that agent's session: a room seats several
+        teammates, and one of them still answering says nothing about another.
+        """
+        return self._compute.holds(topic_id, agent_handle)
 
     def worker_live(self, topic_id: uuid.UUID, agent_id: str | None) -> bool | None:
         """Is the worker bound to this task still doing it?
@@ -2842,7 +2864,11 @@ class ChatService:
                 row = await AgentTurnRepository(session).get(turn_id)
             if not opened:
                 await get_work_runner().open_turn_the_session_started(
-                    self, topic_id, turn_id, author=acting_agent
+                    self,
+                    topic_id,
+                    turn_id,
+                    author=acting_agent,
+                    agent_handle=agent.handle,
                 )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
@@ -2929,17 +2955,23 @@ class ChatService:
         )
 
     async def _note_turn_context(
-        self, turn_id: uuid.UUID, *, route: str, reply_to: uuid.UUID | None
+        self,
+        turn_id: uuid.UUID,
+        *,
+        route: str,
+        reply_to: uuid.UUID | None,
+        agent_handle: str,
     ) -> None:
         """Best-effort, like the delivery stamp: losing it costs a turn picked
         up by another backend its reply link and the accuracy of one route
-        label, never the turn."""
+        label, and the sweeps judge it by its room rather than its seat —
+        never the turn."""
         from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
                 await AgentTurnRepository(session).note_context(
-                    turn_id, route=route, reply_to=reply_to
+                    turn_id, route=route, reply_to=reply_to, agent_handle=agent_handle
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
@@ -6288,7 +6320,12 @@ class ChatService:
             del self._session_model[next(iter(self._session_model))]
         # And on the turn itself: the backend that ends this turn may not be
         # this one (`_begin_self_started_turn`), and it remembers neither.
-        await self._note_turn_context(turn_id, route=route, reply_to=user_block_id)
+        await self._note_turn_context(
+            turn_id,
+            route=route,
+            reply_to=user_block_id,
+            agent_handle=prepared.agent.handle,
+        )
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.

@@ -980,6 +980,7 @@ class AgentWorkRunner:
         turn_id: uuid.UUID,
         *,
         author: str,
+        agent_handle: str,
     ) -> None:
         """Register an interval for work the SESSION started on its own.
 
@@ -1046,6 +1047,7 @@ class AgentWorkRunner:
             # its output can reach a process that never opened this turn after
             # one that did. That turn has its row already.
             exists_ok=True,
+            agent_handle=agent_handle,
         )
 
     def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None:
@@ -1109,7 +1111,11 @@ class AgentWorkRunner:
         if record.turn_id in wedged or not record.delivered:
             return False
         try:
-            return bool(chat_service.has_live_screen(record.topic_id))
+            # This turn's own seat: another teammate's session answering in the
+            # same room is not this turn's work going on.
+            return bool(
+                chat_service.has_live_screen(record.topic_id, record.agent_handle)
+            )
         except Exception:  # noqa: BLE001 — an unanswerable probe is not a yes
             logger.exception("live-screen probe failed for %s", record.topic_id)
             return False
@@ -1197,7 +1203,7 @@ class AgentWorkRunner:
 
     async def resume_lost_messages(self, chat_service) -> int:
         """Start the turns a previous owner accepted a message for and never
-        began. Returns how many rooms it started one in.
+        began. Returns how many turns it started.
 
         Between a message being stored and its turn opening, the turn exists
         only in the memory of the process that accepted it: waiting for this
@@ -1207,9 +1213,11 @@ class AgentWorkRunner:
 
         What counts: a message that named an agent, has not been read into any
         prompt, is recent, and has nothing about its turn in the room — no
-        interval, no reply, no refusal. Its room must have no turn running, or
-        the message is that turn's to pick up. One turn per room: it carries
-        every message the room has waiting, the way any turn does.
+        interval, no reply, no refusal. The agent it named must have no turn
+        running, or the message is that turn's to pick up. One turn per agent
+        in a room: it carries every message waiting for that agent, the way any
+        turn does, and teammates in one room run side by side, so another
+        agent's turn neither picks this message up nor holds it back.
         """
         from app.domain.agent.models import AgentTurn
         from app.domain.block.models import (
@@ -1243,11 +1251,15 @@ class AgentWorkRunner:
             begun = set(
                 await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
             )
-            busy = set(
-                await session.scalars(
-                    select(AgentTurn.topic_id).where(AgentTurn.stopped_at.is_(None))
+            # Whose turns are running, by room. A turn not yet assembled has
+            # no agent (None) and may still turn out to be anybody's.
+            busy: dict[uuid.UUID, set[str | None]] = {}
+            for topic_id, agent_handle in await session.execute(
+                select(AgentTurn.topic_id, AgentTurn.agent_handle).where(
+                    AgentTurn.stopped_at.is_(None)
                 )
-            )
+            ):
+                busy.setdefault(topic_id, set()).add(agent_handle)
             answered = {
                 block.turn_id
                 for block in await session.scalars(
@@ -1255,7 +1267,7 @@ class AgentWorkRunner:
                 )
                 if (block.meta or {}).get("event_type") not in _WAITING
             }
-        rooms: dict[uuid.UUID, Block] = {}
+        seats: dict[tuple[uuid.UUID, str | None], Block] = {}
         for block in mentioned:
             if block.id in begun or block.id in answered:
                 continue
@@ -1263,10 +1275,16 @@ class AgentWorkRunner:
             # already on its way here, and a second one would race it.
             if self.turn_pending(block.id):
                 continue
-            if block.topic_id in busy or chat_service.has_running_turn(block.topic_id):
+            seat = ((block.meta or {}).get("agent_recipient") or {}).get("handle")
+            running = busy.get(block.topic_id, set())
+            if (
+                None in running
+                or seat in running
+                or chat_service.has_running_turn(block.topic_id, seat)
+            ):
                 continue
-            rooms.setdefault(block.topic_id, block)
-        for topic_id, block in rooms.items():
+            seats.setdefault((block.topic_id, seat), block)
+        for (topic_id, _), block in seats.items():
             recipient = (block.meta or {}).get("agent_recipient") or {}
             logger.info(
                 "starting the turn a previous backend never began topic=%s block=%s",
@@ -1289,7 +1307,7 @@ class AgentWorkRunner:
                 live_delivery_expected=False,
                 recipient_handle=recipient.get("handle"),
             )
-        return len(rooms)
+        return len(seats)
 
     async def sweep_orphans(
         self,

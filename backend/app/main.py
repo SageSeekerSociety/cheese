@@ -213,7 +213,7 @@ async def lifespan(_: FastAPI):
         try:
             n = await get_work_runner().resume_lost_messages(get_chat_service())
             if n:
-                get_logger("cheesex.runtime").info("lost_messages_resumed", rooms=n)
+                get_logger("cheesex.runtime").info("lost_messages_resumed", turns=n)
         except Exception:  # noqa: BLE001 — never block startup
             get_logger("cheesex.runtime").exception("lost message sweep failed")
 

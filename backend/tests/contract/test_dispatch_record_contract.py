@@ -89,7 +89,7 @@ class _Chat:
         self.events.append((topic_id, text, meta or {}))
         return {"id": "b1", "content": text}
 
-    def has_live_screen(self, topic_id):
+    def has_live_screen(self, topic_id, agent_handle=None):
         # 屏幕还在，但它从没听到这条消息 —— 这正是平台今天会原样重发的那一档。
         return True
 

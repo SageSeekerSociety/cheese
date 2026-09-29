@@ -62,7 +62,7 @@ class _Chat:
         self.retryable.append(bool((meta or {}).get("retryable")))
         return {"id": "b1", "content": text}
 
-    def has_live_screen(self, topic_id):
+    def has_live_screen(self, topic_id, agent_handle=None):
         return self._live_screen
 
     async def turns_that_produced_something(self, turn_ids):
