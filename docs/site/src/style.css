@@ -429,6 +429,16 @@ html.dark .wy-ghost path{fill:rgba(255,214,150,.07)}
 .typing i{width:6px;height:6px;border-radius:50%;background:var(--faint);animation:dot 1.2s infinite}
 .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
 @keyframes dot{30%{transform:translateY(-5px);background:var(--accent)}}
+/* What 问芝士 looked at on the way: open while it works, one folded line after. */
+.walk{margin:0 0 10px;font-size:13px;color:var(--muted)}
+.walk>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px;color:var(--faint);font-size:12.5px;padding:2px 0}
+.walk>summary::-webkit-details-marker{display:none}
+.walk>summary::before{content:"\25B8";font-size:10px;transition:transform .2s var(--out)}
+.walk[open]>summary::before{transform:rotate(90deg)}
+.walk-item{display:flex;align-items:center;gap:7px;padding:3px 0;color:var(--muted);animation:rise .4s var(--out) both}
+.walk-item .ico{width:14px;height:14px;color:var(--faint);flex:none}
+.walk-item.live{color:var(--accent-ink)}
+.walk-item.live .ico{color:var(--accent);animation:blink 1.1s steps(1) infinite}
 .cite{display:flex;align-items:center;gap:8px;border:1px solid var(--line-2);border-radius:12px;padding:8px 10px;font-size:13px;color:var(--text);background:var(--surface);margin-top:6px;animation:rise .6s var(--out) both;transition:border-color .2s,transform .3s var(--out)}
 .cite:hover{border-color:var(--accent);transform:translateX(3px)}
 .cite small{color:var(--faint);font:11.5px var(--mono);margin-left:auto}
