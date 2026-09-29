@@ -49,12 +49,19 @@ async def control(
     # prepared before the last move still has its client and its session marker
     # where that launcher put them, and a command that names one root only goes
     # quietly nowhere on it.
-    roots = " ".join(session_platform_dirs())
+    # Within a root, the session that prepared the scratch is one seat among the
+    # room's (`place.seat_dir`), and a room prepared before seats existed keeps
+    # its one execution config at the room level. Any of them names the same
+    # private executor: a private executor is one container per topic, not per
+    # seat, so which config is found first does not matter.
+    roots = " ".join(f'"{home}/{d}"' for d in session_platform_dirs())
     command = (
-        f"for d in {roots}; do "
-        f'if test -f "{home}/$d/remote-session/execution.json"; then '
-        f'exec python3 "{home}/$d/remote-execution/client.py" control '
-        f'"{home}/$d/remote-session/execution.json"; fi; done; '
+        f"for root in {roots}; do "
+        'for config in "$root/remote-session/execution.json" '
+        '"$root/seats"/*/remote-session/execution.json; do '
+        'if test -f "$config"; then '
+        'exec python3 "$root/remote-execution/client.py" control "$config"; fi; '
+        "done; done; "
         'echo "no private executor is installed for this room" >&2; exit 1'
     )
     result = await (hub or device_hub).exec(
@@ -70,15 +77,22 @@ async def control(
 
 async def release(project_id, topic_id, device_id, hub):
     home = device_home_dir(project_id, topic_id)
+    # The target is written by the launcher into the seat that owns the session
+    # (`place.seat_dir`), at the room level only for a room prepared before
+    # seats existed. Every seat of the room names the same container: a private
+    # executor is one container per topic, so removing it once is removing it.
+    roots = " ".join(f'"{home}/{d}"' for d in session_platform_dirs())
     result = await hub.exec(
         device_id,
         [
             "sh",
             "-c",
-            f"for d in {' '.join(session_platform_dirs())}; do "
-            f'if test -f "{home}/$d/remote-target.json"; then '
-            f'exec python3 "{home}/$d/remote-execution/client.py" release '
-            f'"{home}/$d/remote-target.json"; fi; done',
+            f"for root in {roots}; do "
+            'for config in "$root/remote-target.json" '
+            '"$root/seats"/*/remote-target.json; do '
+            'if test -f "$config"; then '
+            'exec python3 "$root/remote-execution/client.py" release "$config"; '
+            "fi; done; done",
         ],
         timeout=45,
     )

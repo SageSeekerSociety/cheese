@@ -35,6 +35,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent.place import seat_dir
 
 
 @pytest.fixture(autouse=True)
@@ -455,7 +456,12 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
             room.arguments["project_id"], room.arguments["topic_id"]
         ).replace("$HOME", str(tmp_path))
     )
-    token = home / ".cheese/remote-session/execution.token"
+    # The token lives in THIS seat's directory, the room's other teammates
+    # having one of their own (`place.seat_dir`).
+    token = (
+        Path(seat_dir(str(home), room.arguments["agent_handle"]))
+        / "remote-session/execution.token"
+    )
     assert token.read_text() == "first"
     settings_path = home / ".claude/settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -922,6 +928,10 @@ async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
     provider = DeviceChannel(hub=hub)
     topic = uuid.uuid4()
     home = tmp_path / "room-home"
+    # The token is the SEAT's (`place.seat_dir`): the session that reads it is
+    # one teammate's, and a room-mate writing here is what used to swap a
+    # running turn's credential for its own.
+    seat = Path(seat_dir(str(home), "cheese"))
     for value in ("first", "rotated"):
         await provider._ship_launcher(
             "device",
@@ -929,8 +939,9 @@ async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
             ["bash", "-lc", "printf launcher"],
             str(home),
             execution_token=value,
+            agent_handle="cheese",
         )
-        token = home / ".cheese/remote-session/execution.token"
+        token = seat / "remote-session/execution.token"
         assert token.read_text() == value
         assert token.stat().st_mode & 0o777 == 0o600
     assert hub.calls == 2

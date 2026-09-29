@@ -203,15 +203,18 @@ def case(folder, options):
         executor, target = setup(
             folder, options, f"http://127.0.0.1:{server.server_port}"
         )
-        # The session home, laid out as a room's is: the helpers and the target
-        # under `.cheese`, and `bootstrap` preparing `.cheese/remote-session`.
+        # The session home, laid out as a room's is: the helpers under
+        # `.cheese`, the target and everything the client prepares from it in
+        # the SEAT that owns this session (`place.seat_dir`, `runner_fixture`),
+        # and the config dir the room shares.
         home = folder / ("device-home" if options.launcher == "device" else "home")
-        center = home / ".cheese/remote-session/forwarded-project"
+        session = runner_fixture.session_dir(home)
+        center = session / "remote-session/forwarded-project"
         center.mkdir(parents=True)
         # Held open from before the mount, so the directory beneath it can be
         # checked for writes that went there instead of to the executor.
         center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
-        execution_file = home / ".cheese/remote-session/execution.json"
+        execution_file = session / "remote-session/execution.json"
         # Where the session sees the project: at the executor's own path
         # (`client.py enter`); `center` is this host's view of it.
         seen = Path(executor.call("ping")["workspace"])
@@ -535,6 +538,13 @@ def case(folder, options):
         if session is not None:
             session.stop(folder / "journal.jsonl")
         for mountpoint in (
+            *(
+                runner_fixture.session_dir(folder / name)
+                / "remote-session/forwarded-project"
+                for name in ("home", "device-home")
+            ),
+            # The room-level pair a run under the layout before seats mounted,
+            # so a machine that still carries one of those is cleared too.
             folder / "home/.cheese/remote-session/forwarded-project",
             folder / "device-home/.cheese/remote-session/forwarded-project",
         ):

@@ -163,11 +163,25 @@ def replace(path, content):
     temporary.replace(path)
 
 
-def stage(home, sources):
+def stage(home, sources, seat=""):
+    """Install a release into the session that asked for it.
+
+    ``seat`` is that session's own directory inside the room's home
+    (``place.seat_dir``), where its execution target and everything the client
+    prepared beside it live; empty is a caller with no seat to name, which
+    resolves to the room-level directory files sat in before seats existed.
+    The helpers and the config dir are the ROOM's either way: one release per
+    machine, one conversation per room, and the busy check below reads the
+    room's transcripts whichever seat asked.
+    """
     config = Path(os.path.expandvars(home)) / ".claude"
     platform_dir = Path(os.path.expandvars(home)) / ".cheese"
     helpers = platform_dir / "remote-execution"
-    directory = platform_dir / "remote-session"
+    directory = (
+        Path(os.path.expandvars(seat)) / "remote-session"
+        if seat
+        else platform_dir / "remote-session"
+    )
     target = json.loads((directory / "execution.json").read_text())
     settings_path = config / "settings.json"
     settings = json.loads(settings_path.read_text())
