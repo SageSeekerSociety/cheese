@@ -1844,10 +1844,15 @@ def _chatgpt_account_on_disk(tmp_path, name="work", *, expires_in_s=86400, **ext
 
 
 def _gateway_request(
-    path="/chatgpt/work/responses", *, bearer=GATEWAY_KEY, server_conn=None
+    path="/chatgpt/work/responses",
+    *,
+    bearer=GATEWAY_KEY,
+    server_conn=None,
+    method="POST",
 ):
-    """What LiteLLM sends: plain HTTP on the docker bridge, its own headers."""
+    """What LiteLLM sends: plain HTTP on the private network, its own headers."""
     request = SimpleNamespace(
+        method=method,
         path=path,
         host="chatgpt.com",
         port=443,
@@ -1920,7 +1925,14 @@ def test_a_gateway_request_goes_to_chatgpt_on_the_accounts_credential(
         assert gone not in headers, gone
     assert GATEWAY_KEY not in json.dumps(headers)
     assert flow.server_conn.via is None
-    assert flow.request.stream is True
+    # Codex refuses a body without store: false or with max_output_tokens, and
+    # the gateway's translation writes it that way; it changes length, so it
+    # goes out chunked.
+    assert "content-length" not in headers
+    assert headers["transfer-encoding"] == "chunked"
+    body = b'{"input":[],"max_output_tokens":64,"model":"gpt-6-astra"}'
+    sent = flow.request.stream(body) + flow.request.stream(b"")
+    assert json.loads(sent) == {"store": False, "input": [], "model": "gpt-6-astra"}
 
 
 def test_the_model_list_is_forwarded_with_its_query(monkeypatch, tmp_path):
