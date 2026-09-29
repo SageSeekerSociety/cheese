@@ -28,6 +28,7 @@ covers:
 | `.room-files/<project>/<room>/` | 一个房间 | 房间内相对路径 |
 | `.room-file-history/<project>/<room>/` | 一个房间 | 内容 sha256，房间路径够不着 |
 | `.artifacts/<project>/<card>/` | 一次交付 | 文件名，卡分目录 |
+| `.library-history/<project>/<记录 id>/` | 资料库里被替换下来的一份 | 记录 id |
 
 `_safe_path` 只有包含关系这一条检查——和仓库那侧的同名检查不是一条规则，那边还要挡 `.git`，因为那边的根是一棵 git 树，这两个根里没有 git。房间文件里 `library/` 这个前缀被留着：`write_room_file` 见到它以「`library/` 留给资料库」拒掉，否则读的人会拿到房间那份、以为看的是资料库里的原件。
 
@@ -40,6 +41,14 @@ covers:
 上传这条路上有一个岔口（`POST /topics/{id}/attachments`）：用户挑出来或拖进来的文件进资料库；剪贴板里贴进来的那张图**不进**（`origin="clipboard"`），落在房间文件区一个 `uploads/<随机串>/` 里。理由是资料库的前提是「名字就是身份」，而截图没有名字，`image.png` 是浏览器替它编的，它只属于那条消息。已经是资料库里那一份被当附件再选一次时，一个字节都不写，直接回它自己的地址。
 
 「扔掉一份资料」（`delete_library_file`）不找替代品：旧消息里那枚 chip 随之打不开，这是对的——那条引用指的就是这一份，在它的位置上摆一份别的东西，才是把读者读到的内容换掉。`read_attachment_text` 遇到「资料已经不在」与「地址写错了」给的是两句不同的话。
+
+## 资料库的记录表 {#library-records}
+
+字节在磁盘上按名字寻址，磁盘记不住的事记在 `library_files`（`domain/library/models.py`，读写在 `records.py`）：谁放进来的、在哪个房间、什么时候、多大、sha256。三条放进来的路都经过 `records.add`：话题里上传（`POST /topics/{id}/attachments`）、从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再动磁盘，请求结束时一起提交。
+
+「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，字节拷进 `.library-history/<project>/<记录 id>/`，新字节覆盖原名，再记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和历史字节一起扔掉。
+
+记录表之前就在的文件没有行，列表时的来源取第一条带上它（`content == library/<名字>`）的附件消息。列表上的房间名只给读得了那个房间的人（`readable_topic_ids`），「被几条消息引用」也只数这些房间里的。放进、替换、删除都只有人能做：一轮里铸出来的凭据过不了 `authorize_project`。
 
 ## 写回资料库：一个动作 {#save-to-library}
 
