@@ -39,10 +39,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # On the cheese-ci pool, not ubuntu-latest: the org's Actions billing lapsed on
-  # 2026-08-13 and every hosted job is refused before it starts.
   review-gate:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

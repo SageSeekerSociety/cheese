@@ -18,14 +18,13 @@ defaults:
   run:
     working-directory: backend
 
-# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
-# each merge in its own group (see the long comment in build.yml): every main
-# push shares the one ref, so a ref-only key let a second merge cancel the
-# previous commit's still-running suite and left main with no result for that
-# commit. A cancelled run is not a red run — main would carry code this
-# workflow never finished checking, with nothing on the commit to say so.
-# Required CI selects this suite from each main push's changed paths and runs
-# it against the merged commit, including changes since the PR was tested.
+# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
+# by sha gives each queued commit its own group, so one entry cannot cancel
+# another's run and leave the commit that lands on main with no result — a
+# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other.
+# Required CI selects this suite from the queued commit's changed paths
+# and runs it against that commit, including changes since the PR was tested.
 concurrency:
   group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

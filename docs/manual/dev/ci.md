@@ -81,17 +81,14 @@ scenarios:
 
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-后端、前端、端到端和 guards 默认用 GitHub 托管的 `ubuntu-latest`：每台机器一次只跑一件事，没有时长上限。
+`Required CI` 选中的套件全部用 GitHub 托管的 `ubuntu-latest`，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个公开仓库实际不受它约束：2026-09-28 光 `Required CI` 就同时占了 41 台托管 runner，托管 job 排队的 90 分位是 1.2 分钟。
 
-自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上跑两类：
-
-- 本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
-- 2026-08-13 组织的 Actions 计费失效后，托管 job 一度全部被拒，于是 cli 套件、远端执行验收和 `CLAUDE.md` 审批门也搬到了 `cheese-ci` 池。
+自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
 
 ## 合并之后 {#after-merge}
 
 1. `build.yml`：main 上的每个提交构建一整套镜像，以提交号为标签；没变的镜像直接给旧镜像加上新标签。这一步也把文档站构建进前端镜像。
-2. `deploy-dev.yml`：镜像构建和这个提交的 `Required CI` 都成功后，自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。
+2. `deploy-dev.yml`：镜像构建结束时触发，确认这个提交的镜像构建成功、它在合并队列里跑的 `Required CI` 也成功，就自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。`Required CI` 不在 main 上重跑：队列把 PR squash 到测试过的基底上再快进 main，队列里测的就是落到 main 的那个提交。
 3. `deploy-prod.yml`：只在发布 GitHub Release 或手动指定提交时触发，并且要有人批准才会执行。
 
 ## PR 上的两个机器人 {#bots}
