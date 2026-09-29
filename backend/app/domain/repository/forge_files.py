@@ -211,19 +211,13 @@ class ProjectFiles:
                 ):
                     continue
                 path = prefix + name
-                was_dir = was is not None and was["type"] == "tree"
-                now_dir = now is not None and now["type"] == "tree"
+                was_dir = was["sha"] if was and was["type"] == "tree" else None
+                now_dir = now["sha"] if now and now["type"] == "tree" else None
                 if was_dir or now_dir:
-                    pending.append(
-                        (
-                            path + "/",
-                            was["sha"] if was_dir else None,
-                            now["sha"] if now_dir else None,
-                        )
-                    )
-                if was is not None and not was_dir:
+                    pending.append((path + "/", was_dir, now_dir))
+                if was and not was_dir:
                     old[path] = _file_entry(path, was)
-                if now is not None and not now_dir:
+                if now and not now_dir:
                     new[path] = _file_entry(path, now)
         return old, new
 
