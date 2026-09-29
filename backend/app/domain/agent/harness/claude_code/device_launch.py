@@ -474,7 +474,8 @@ cheese_launch_phase credentials_selected
     # release puts into a running session are left out too, since changing
     # one is a release and not a relaunch. Everything
     # else here is read once by a process that keeps it for its life — the
-    # binary, the argv, the seat's base settings, the skills, the runner, the environment,
+    # binary, the argv, the seat's base settings, the skills, the runner,
+    # the environment,
     # and everything `client.prepare` writes — so any change to it has to
     # reach a live session as a new one.
     configured, prepared = holes("", release.launch_only(helper_sources))
