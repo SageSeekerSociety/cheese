@@ -19,7 +19,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const catalogue = vi.fn()
-vi.mock('@/api', () => ({ getFeatureCatalogue: (...args: unknown[]) => catalogue(...args) }))
+vi.mock('@/views/admin/features/featureApi', () => ({
+  getFeatureCatalogue: (...args: unknown[]) => catalogue(...args),
+}))
 
 // 键名透传 + 参数照抄：断言直接写键名，插值也看得到（「占访客 {percent}」这类句子
 // 里，那个数才是要断言的东西）。

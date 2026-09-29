@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import type { DocsAssistantReport, FeatureDays } from '@/api'
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
+import type { DocsAssistantReport, FeatureDays } from '@/views/admin/features/featureApi'
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getDocsAssistantReport } from '@/api'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminHistogram from '@/components/admin/AdminHistogram.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
@@ -16,6 +15,7 @@ import AdminQuestionTable from '@/components/admin/AdminQuestionTable.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import { fmtCost, fmtMs, fmtNum, fmtPercent } from '@/lib/usageFormat'
+import { getDocsAssistantReport } from '@/views/admin/features/featureApi'
 
 // 功能数据的第一页：**问芝士**（文档站的问答助手，`/admin/feature-stats/docs-assistant`）。
 //

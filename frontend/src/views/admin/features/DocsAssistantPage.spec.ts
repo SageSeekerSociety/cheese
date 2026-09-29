@@ -19,7 +19,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const report = vi.fn()
-vi.mock('@/api', () => ({ getDocsAssistantReport: (...args: unknown[]) => report(...args) }))
+vi.mock('@/views/admin/features/featureApi', () => ({
+  getDocsAssistantReport: (...args: unknown[]) => report(...args),
+}))
 
 // 键名透传 + 参数照抄：句子里那个数（占比、人均）才是要断言的东西。
 vi.mock('vue-i18n', async (importOriginal) => {

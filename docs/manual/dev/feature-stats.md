@@ -104,6 +104,6 @@ covers:
 
 报告里有什么：访客（其中登录的）、提问的人（占登录访客的比例）、提问次数（人均）、回答成功率（已答 / 总数）、花费与每题均摊；逐日的访客 / 提问者 / 提问次数；每题的 token 分布（平均、中位、最小、p90、最大 + 直方图）；结果三档（答上 / 没找到 / 失败）与耗时分布；「答不上来的问题」表。
 
-前端是 `frontend/src/views/admin/features/DocsAssistantPage.vue`，注册一项在 `frontend/src/views/admin/features/registry.ts`。**整页没有一句 `fetch`**，取数走 `api.ts` 的 `getDocsAssistantReport(days)`。
+前端是 `frontend/src/views/admin/features/DocsAssistantPage.vue`，注册一项在 `frontend/src/views/admin/features/registry.ts`。**整页没有一句 `fetch`**，取数走同一目录下 `featureApi.ts` 的 `getDocsAssistantReport(days)`。
 
 这一页踩过的两个坑，加新页时也会踩：`AdminTabs` 是字符串泛型，切窗口要把值转回数字再发给接口；组件忘了 `import` 不报错，只是那一块什么都不画——测试也就断言不到东西。

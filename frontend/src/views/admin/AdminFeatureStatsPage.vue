@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import type { FeatureCatalogueEntry } from '@/api'
+import type { FeatureCatalogueEntry } from '@/views/admin/features/featureApi'
 
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
-import { getFeatureCatalogue } from '@/api'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import { getFeatureCatalogue } from '@/views/admin/features/featureApi'
 import { findFeatureView } from '@/views/admin/features/registry'
 
 // 后台的「功能数据」（`/admin/feature-stats`）：**一扇门，不是一块看板**。
