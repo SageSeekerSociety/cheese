@@ -98,6 +98,7 @@ defineExpose({
       <template #above-composer>
         <TopicAcceptCard
           ref="acceptRef"
+          class="chat-dock"
           docked
           :topic-id="topic.id"
           :topic-status="topic.status"
@@ -129,6 +130,15 @@ defineExpose({
 <style scoped>
 .archived-chip {
   font-size: 12px;
+}
+/* 和对话同一栏：ChatPanel 在手机外壳里把时间线和输入框收到 --page-w 居中，贴在输
+   入框上的这一条跟着收，不然它比上下两块都宽。 */
+@media (max-width: 959.98px) {
+  .chat-dock {
+    width: 100%;
+    max-width: var(--page-w);
+    margin-inline: auto;
+  }
 }
 .chat-col {
   /* 对话栏那条错误提示（ChatPanel 的 .chat-error-toast）是 absolute，定位的就是

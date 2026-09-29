@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 
 import { pageMotion } from './pageMotion'
 
+import { workspaceRoutes } from '@/router/workspaceRoutes'
+
 const blank = { template: '<div />' }
 
 function makeRouter() {
@@ -52,5 +54,30 @@ describe('pageMotion', () => {
   it('只改 query 或 hash 不算换页', async () => {
     expect(await motion('/projects/p/topics/t', '/projects/p/topics/t?tab=changes')).toBeNull()
     expect(await motion('/work', '/work#top')).toBeNull()
+  })
+})
+
+// 平板上话题列表和房间并排：打开、换、关掉一个房间都只是右边那一栏换了内容，整屏不往
+// 里挪。项目的其余各页仍是一整页，走进去照旧是往里走。
+describe('pageMotion 在两栏（平板）时', () => {
+  function workspaceRouter() {
+    return createRouter({ history: createMemoryHistory(), routes: [workspaceRoutes] })
+  }
+
+  // resolve 而不是 push：只要匹配结果，不把工作区里每一页的代码都拉进来。
+  function splitMotion(fromPath: string, toPath: string) {
+    const router = workspaceRouter()
+    return pageMotion(router.resolve(toPath), router.resolve(fromPath), router, true)
+  }
+
+  it('打开、换、关掉一个房间只淡入', () => {
+    expect(splitMotion('/projects/p', '/projects/p/topics/t')).toBe('fade')
+    expect(splitMotion('/projects/p/topics/t', '/projects/p/topics/u')).toBe('fade')
+    expect(splitMotion('/projects/p/topics/t', '/projects/p')).toBe('fade')
+  })
+
+  it('从列表走进项目的其余各页照旧往里走', () => {
+    expect(splitMotion('/projects/p', '/projects/p/running')).toBe('forward')
+    expect(splitMotion('/projects/p/running', '/projects/p')).toBe('back')
   })
 })
