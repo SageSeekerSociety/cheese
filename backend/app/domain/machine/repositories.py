@@ -365,8 +365,16 @@ class ProjectMachineRepository:
                 ProjectMachine.topic_id.is_not(None),
             )
         )
+        # Recorded as gone but still unreleased: the provider has already
+        # answered, so these need no poll either, only to be let go.
+        gone = await self._session.scalars(
+            select(ProjectMachine).where(
+                ProjectMachine.status.in_(GONE),
+                ProjectMachine.released_at.is_(None),
+            )
+        )
         # Dormant machines need no provider poll and must not consume the poll budget.
-        return moving + list(suspended)
+        return moving + list(suspended) + list(gone)
 
     # `is_provisioned_device` lived here until #282 决定 2. It answered "was this
     # device provisioned by the platform" by asking whether any row in THIS table

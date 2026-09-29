@@ -328,8 +328,7 @@ class GatewayAdmin:
 
         ``api_key`` 只进请求体,绝不回显、绝不落日志——它是上游凭据。上游单价「两向
         都要有」这条不变式由服务层守,这里只如实传网关。``extra_headers`` 是随每次
-        调用透传给上游的额外头(订阅型上游的账号三件套),非空时才写进
-        ``litellm_params``。
+        调用透传给上游的额外头,非空时才写进 ``litellm_params``。
         """
         params: dict[str, object] = {"model": upstream_model}
         if api_base:

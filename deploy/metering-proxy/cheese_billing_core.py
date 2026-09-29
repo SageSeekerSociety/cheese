@@ -1242,12 +1242,12 @@ class PlatformCredential:
 # seconds) and account_id. chatgpt-login.sh writes it; the proxy re-reads it on
 # every request and writes the renewed pair back.
 #
-# Endpoints, client id, form fields and the failure classes are the backend's
-# (backend/app/domain/subscription/openai_codex.py), ported rather than
-# imported: this file is stdlib only and ships alone in the proxy image.
+# The refresh is OpenAI's token endpoint with the Codex client id, and the
+# answers below that mean the pair is dead are OpenAI's. Stdlib only: this file
+# ships alone in the proxy image.
 OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token"
 OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-# The backend's subscription_refresh_margin_s.
+# Refresh this many seconds before the access token expires.
 CHATGPT_REFRESH_MARGIN_S = 600
 # Refresh answers that mean the pair is dead and someone has to log in again.
 # Anything else that is not a 200 (5xx, an unrecognised 4xx, no answer) is

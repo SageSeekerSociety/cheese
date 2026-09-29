@@ -10,11 +10,11 @@
 
 | 结论 | 接口数 |
 | --- | --- |
-| 可优化 | 381 |
-| 暂无 | 305 |
+| 可优化 | 380 |
+| 暂无 | 298 |
 | 待确认 | 6 |
 | 待分析 | 0 |
-| **合计** | **692** |
+| **合计** | **684** |
 
 另有 3 个 WebSocket 通道（`/topics/{topic_id}/chat`、`/preview/tunnel`、`/tunnel`）和 1 个条件注册的上传路由（`uploads.py`，仅 local 存储时挂载）；`routes/activities.py` 是有意停用的模块（无路由挂载），不在清单内。
 
@@ -597,14 +597,6 @@
 | 27 | GET | `/admin/stats/pipeline` | `pipeline_stats` | 暂无 | 十几个 `count(*)`，但都在 `accept_cards`/`questions` 这类小表上，代价可接受（模式见模块级第 4 条） |
 | 28 | GET | `/admin/stats/product` | `product_stats` | 暂无 | 三组都是按天 GROUP BY，窗口必填，无 N+1 |
 | 29 | GET | `/admin/stats/integrations` | `integrations_stats` | 暂无 | 四个 `count(*)`（凭据表量级），无窗口是刻意的 |
-| 30 | POST | `/admin/subscriptions/device-flows` | `start_device_flow` | 暂无 | 「一座一订阅」409 在服务层兑现，审计落 `subscription.start` |
-| 31 | POST | `/admin/subscriptions/device-flows/{flow_id}/poll` | `poll_device_flow` | 可优化 | 前端每次轮询都 `SELECT … FOR UPDATE` + 写 `flow_last_poll_at` + 提交，被节流的那次也照写 |
-| 32 | POST | `/admin/subscriptions/device-flows/{flow_id}/cancel` | `cancel_device_flow` | 暂无 | 行锁 + `subscription.cancel` 审计 |
-| 33 | GET | `/admin/subscriptions` | `list_subscriptions` | 暂无 | 无分页，但这张表天然是「一座一订阅」的个位数量级（`list_all` 仍是全量，见模块级第 5 条） |
-| 34 | POST | `/admin/subscriptions/{subscription_id}/refresh` | `refresh_subscription` | 暂无 | 行锁内完成，三类结局各自落审计 |
-| 35 | GET | `/admin/subscriptions/{subscription_id}/quota` | `subscription_quota` | 暂无 | 传输错误回旧快照（`stale: true`），无快照才 503 |
-| 36 | PATCH | `/admin/subscriptions/{subscription_id}/upstream-model` | `update_upstream_model` | 暂无 | 显式 null 与「没提」靠 `model_fields_set` 区分，审计落 failed |
-| 37 | DELETE | `/admin/subscriptions/{subscription_id}` | `revoke_subscription` | 暂无 | 终态必落库、网关失败只影响这次响应，审计落 failed |
 | 38 | GET | `/ai/quota` | `get_ai_quota` | 可优化 | 读路径会 INSERT（懒建额度行），而 `user_ai_quota.user_id` **没有唯一约束**——并发首次访问会插两行，之后每次 `scalar_one_or_none()` 直接 500 |
 | 39 | GET | `/ai/models` | `list_ai_models` | 待确认 | 全模块唯一**没有**任何鉴权依赖的端点（静态列表，风险低，但同模块不一致） |
 | 40 | GET | `/ai/conversations` | `list_conversations` | 可优化 | 参数名驼峰 `pageStart`/`pageSize`（本模块外一律下划线），且这里的 `pageStart` 是**游标 id**，与 `/admin/feedback` 的同名参数（offset）语义相反 |
