@@ -9,6 +9,11 @@
 
 路径上仍然叫 ``alerts``：URL 是对外的契约，而读写的表已经是 `notification` ——
 平台报告自己的那些和人对人的那些同住一张收件箱（结论 58）。
+
+Every route here that writes commits before it answers. ``get_db`` commits in
+its teardown, which FastAPI runs after the response has been sent, so a client
+that reads the inbox as soon as it hears "done" can still see the old row: a
+reminder collapsed with 收起 comes straight back on the next inbox read.
 """
 
 import uuid
@@ -93,8 +98,8 @@ async def create_notification(
         topic_id=topic_id,
         payload=body.payload,
     )
+    await db.commit()
     if topic_id is not None:
-        await db.commit()
         await announce_stale(topic_id, "notify")
     return ok(page([_dump(row) for row in rows], len(rows)))
 
@@ -169,6 +174,7 @@ async def mark_all_notifications_read(
     marked = await ProjectNotificationService(db).mark_all_read(
         project_id, target_handle=handle
     )
+    await db.commit()
     return ok({"marked": marked})
 
 
@@ -179,7 +185,9 @@ async def mark_notification_read(
     service = ProjectNotificationService(db)
     row = await service.get_or_404(notification_id)
     await _acting_recipient(resolver, row)
-    return ok(_dump(await service.mark_read(notification_id)))
+    read = await service.mark_read(notification_id)
+    await db.commit()
+    return ok(_dump(read))
 
 
 @router.post("/alerts/{notification_id}/feedback")
@@ -192,7 +200,9 @@ async def set_notification_feedback(
     service = ProjectNotificationService(db)
     row = await service.get_or_404(notification_id)
     await _acting_recipient(resolver, row)
-    return ok(_dump(await service.set_feedback(notification_id, body.feedback)))
+    marked = await service.set_feedback(notification_id, body.feedback)
+    await db.commit()
+    return ok(_dump(marked))
 
 
 @router.post("/alerts/{notification_id}/resolve")
@@ -213,6 +223,7 @@ async def resolve_notification(
     resolved = await service.resolve(
         notification_id, chosen=body.chosen, decided_by=handle
     )
+    await db.commit()
     return ok(_dump(resolved))
 
 

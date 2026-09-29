@@ -9,9 +9,10 @@
 1. **机器闸门已退役**（#296）。`create_card` 不再铸 `pending_gate`，`gate_failed` /
    `gate_blocked` / `pr_open` 都是死写入 —— 库里只剩历史行。所以「闸门」那一段只能
    历史注释，不能画成活的漏斗一级。
-2. **`void` 不是一个状态**。人工作废走 `AcceptService.void()`，落的是
-   `status=revoked` + `note_code=NoteCode.voided`。而 `revoked` 一共盖着三件互不相
-   干的事（采纳后撤销 / 人工作废 / 归档扫尾），**不能直接画成一档**。
+2. **`void` 不是一个状态**。作废（人工走 `AcceptService.void()`，PR 在 GitHub 上关闭
+   且没有合并时由轮询器自动作废）落的是 `status=revoked` + `note_code=NoteCode.voided`。
+   而 `revoked` 一共盖着三件互不相干的事（采纳后撤销 / 作废 / 归档扫尾），**不能直
+   接画成一档**。
 3. **`decided_at` 是最后一次决议的时刻**，`revoke()` 会把它覆写掉 —— 一张先采纳后
    撤销的卡会丢掉采纳那一刻。按周数「采纳了多少」时要么接受这个限制，要么退回
    `created_at` 分桶，并在页面上写明。
@@ -53,7 +54,7 @@ SETTLED_STATUSES: tuple[AcceptStatus, ...] = (
     AcceptStatus.gate_blocked,
 )
 
-#: 人工作废的判据：**`note_code`，不是 `status`**（见 docstring 第 2 条）。
+#: 作废的判据：**`note_code`，不是 `status`**（见 docstring 第 2 条）。
 VOIDED = NoteCode.voided
 
 #: 停住了的 note 码 —— 从 `notes._STUCK` 读，**不在这里再抄一份名单**。抄两份的症状

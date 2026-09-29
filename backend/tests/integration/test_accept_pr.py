@@ -1956,7 +1956,7 @@ def test_poll_ignores_settled_and_prless_cards(client, app_world):
     assert result["errors"] == []
 
 
-def test_a_closed_unmerged_pr_notes_once_and_the_poller_idles(client, app_world):
+def test_a_pr_closed_without_merging_voids_its_card(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.close_unmerged(number)
@@ -1964,13 +1964,31 @@ def test_a_closed_unmerged_pr_notes_once_and_the_poller_idles(client, app_world)
     result = _poll(client)
     assert result["errors"] == []
     card = _cards(client, tid)[0]
-    assert card["status"] == "pending"
-    assert "关闭" in card["note"] and "没有合并" in card["note"]
+    assert card["status"] == "revoked"
+    assert f"PR #{number} 已在 GitHub 关闭且没有合并" in card["note"]
+    assert "作废" in card["note"]
     assert fake.merge_calls == []
 
-    note = card["note"]
-    _poll(client)  # 60s 轮询：说一次就够
-    assert _cards(client, tid)[0]["note"] == note
+    fake.status_calls.clear()
+    assert _poll(client)["cards_checked"] == 0
+    assert fake.status_calls == []  # a voided card is not followed any more
+    assert _cards(client, tid)[0]["note"] == card["note"]
+
+
+def test_a_task_can_be_submitted_again_after_its_pr_was_closed(client, app_world):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.close_unmerged(number)
+    _poll(client)
+
+    response = _make_card_response(client, tid)
+
+    assert response.status_code == 200, response.text
+    fresh = response.json()["data"]
+    assert fresh["id"] != cid
+    assert fresh["status"] == "pending"
+    statuses = {card["id"]: card["status"] for card in _cards(client, tid)}
+    assert statuses == {cid: "revoked", fresh["id"]: "pending"}
 
 
 def test_poll_settles_an_externally_merged_pr(client, app_world):

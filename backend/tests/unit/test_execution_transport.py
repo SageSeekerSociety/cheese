@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import cli_worker, execution, executor_transport
+from app.domain.agent import cli_worker, execution, executor_transport, project_hooks
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import runtime
@@ -164,6 +164,7 @@ def executor(tmp_path, request):
     helper.parent.mkdir(parents=True)
     shutil.copyfile(runtime.__file__, helper)
     shutil.copyfile(cli_worker.__file__, helper.parent / "cli_worker.py")
+    shutil.copyfile(project_hooks.__file__, helper.parent / "project_hooks.py")
     shutil.copyfile(
         Path(__file__).resolve().parents[2] / "sandbox/cheese",
         home / ".cheese/cheese",

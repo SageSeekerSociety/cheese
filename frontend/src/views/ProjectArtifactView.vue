@@ -16,6 +16,8 @@ import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
 import { usePageTitleStore } from '../stores/title'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 const props = defineProps<{ projectId: string; artifactId: string }>()
 
 // 这一项的名字就是这一页的标题：手机上它只写在顶栏里（页内的 h1 在手机上不画）。
@@ -240,7 +242,7 @@ watch(
               <div class="t-body version-row__subject">{{ version.subject || '这次交付没有留下说明' }}</div>
               <div class="t-meta c-faint">
                 <template v-if="when(version)">{{ when(version) }}</template>
-                <template v-if="version.decided_by"> · {{ version.decided_by }} 采纳</template>
+                <template v-if="version.decided_by"> · <UserRef :handle="version.decided_by" /> 采纳</template>
               </div>
             </div>
             <v-btn

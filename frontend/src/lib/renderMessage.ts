@@ -8,6 +8,7 @@ import type { Block } from '../cx_types'
 
 import { isAgentBlock } from './authorship'
 import { markdown, sanitizeRendered } from './markdown'
+import { userRefHtml } from './userRef'
 
 export interface RefMaps {
   mentionNames: Record<string, string>
@@ -20,8 +21,7 @@ export function escapeHtml(s: string): string {
 
 function tokenChip(kind: string, id: string, maps: RefMaps): string {
   if (kind === '@') {
-    const name = maps.mentionNames[id] || id
-    return `<span class="mention" data-handle="${id}">@${escapeHtml(name)}</span>`
+    return userRefHtml(id, maps.mentionNames[id] || id)
   }
   if (kind === '&') {
     // 文件引用: <&backend/app/main.py> → 一枚文件图标 + main.py 的 chip，点开文件。

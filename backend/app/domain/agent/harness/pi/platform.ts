@@ -11,6 +11,7 @@
 // `--extension`, the same way the room's skills and system prompt are: they
 // are assembled per room, and the machine has no copy to point at.
 
+import { createBashTool, createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -30,6 +31,7 @@ type Manifest = {
   jobs: string;
   tools: ToolSpec[];
   unavailable: string;
+  mcp: ToolSpec[];
   notice: string;
 };
 
@@ -44,6 +46,7 @@ function manifest(): Manifest {
     jobs: "",
     tools: [],
     unavailable: "the runner wrote no manifest",
+    mcp: [],
     notice: "",
   };
   if (!HOME) return empty;
@@ -87,7 +90,7 @@ function text(body: string) {
 
 // --- the platform's own tools ------------------------------------------------
 //
-// pi has no MCP, so these arrive as extension tools instead. The catalog is
+// pi has no MCP client, so these arrive as extension tools. The catalog is
 // read from the platform file installed on this machine by the runner: the
 // platform's own tool table (the same one the other harnesses serve) plus the
 // CLI commands that have to run here as a process.
@@ -115,6 +118,104 @@ function registerPlatformTools(pi: any, spec: Manifest) {
       },
     });
   }
+}
+
+// --- the project's MCP servers ----------------------------------------------
+//
+// The runner is pi's MCP client (mcp.py): it started the checkout's stdio
+// servers, asked the platform for the remote ones, and listed their tools under
+// the name the other harnesses give them, `mcp__<server>__<tool>`. A call goes
+// back to the runner, which sends it to the server that owns the tool.
+//
+// The runner also runs the project's PreToolUse and PostToolUse hooks around
+// each call (hooks.py), as the executor does on the other harnesses; the call
+// id and working directory it hands them come from here.
+//
+// A failed call is thrown, not returned: pi marks a tool result as an error
+// only when `execute` throws, whatever the returned object says.
+
+function registerMcpTools(pi: any, spec: Manifest) {
+  for (const tool of spec.mcp ?? []) {
+    pi.registerTool({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+      async execute(id: string, params: any, _signal: any, _update: any, ctx: any) {
+        const result = await ask(spec.socket, "mcp", {
+          id,
+          tool: tool.name,
+          arguments: params ?? {},
+          cwd: ctx?.cwd,
+        });
+        if (result.isError) {
+          const said = result.content
+            .map((item: any) => (item.type === "text" ? item.text : `[${item.type}]`))
+            .join("\n")
+            .trim();
+          throw new Error(said || `${tool.name} failed`);
+        }
+        return { content: result.content };
+      },
+    });
+  }
+}
+
+// --- the project's hooks around pi's own tools --------------------------------
+//
+// Claude Code fires the project's PreToolUse and PostToolUse hooks around every
+// tool call, and on Codex the executor runs them around every call it makes. pi
+// fires none, so every call of pi's own (read, bash, edit, write, the
+// background shell) asks the runner before it runs and after it returns, and
+// the runner runs the hooks under the name each one is written for (hooks.py).
+//
+// Two kinds of call are not asked about here. An MCP tool's hooks run in the
+// runner around the call itself (mcp.py). A platform tool runs none, as on the
+// executor, which runs no project hook around the platform's own tools.
+//
+// A PreToolUse block stops the call and pi hands the model its reason as the
+// tool's error; an `updatedInput` is written into the call's input, which pi
+// runs as mutated. A handler that throws — the runner unreachable — blocks
+// the call too: pi's rule, and the one a guard needs. PostToolUse runs only
+// after a call that succeeded, as Claude Code's does, and a block from it is
+// added to the result, since the call has already happened.
+
+function applyProjectHooks(pi: any, spec: Manifest) {
+  const skipped = new Set([...spec.tools, ...(spec.mcp ?? [])].map((tool) => tool.name));
+
+  pi.on("tool_call", async (event: any, ctx: any) => {
+    if (skipped.has(event.toolName)) return;
+    const answer = await ask(spec.socket, "hooks", {
+      event: "PreToolUse",
+      tool: event.toolName,
+      id: event.toolCallId,
+      input: event.input,
+      cwd: ctx?.cwd,
+    });
+    if (answer.denied !== undefined) return { block: true, reason: answer.denied };
+    for (const key of Object.keys(event.input)) {
+      if (!(key in answer.input)) delete event.input[key];
+    }
+    Object.assign(event.input, answer.input);
+  });
+
+  pi.on("tool_result", async (event: any, ctx: any) => {
+    if (skipped.has(event.toolName) || event.isError) return;
+    const answer = await ask(spec.socket, "hooks", {
+      event: "PostToolUse",
+      tool: event.toolName,
+      id: event.toolCallId,
+      input: event.input,
+      cwd: ctx?.cwd,
+      result: { content: event.content },
+    });
+    if (answer.denied === undefined) return;
+    return {
+      content: [
+        ...event.content,
+        { type: "text", text: `PostToolUse hook: ${answer.denied}` },
+      ],
+    };
+  });
 }
 
 // --- what the repository says about itself -----------------------------------
@@ -559,6 +660,12 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       required: ["id", "text"],
     },
     async execute(_call: string, params: any) {
+      if (adopted.has(params.id)) {
+        return {
+          ...text(`${params.id} 是从前台转到后台的命令，没有终端可以输入。`),
+          isError: true,
+        };
+      }
       const body = params.newline === false ? params.text : `${params.text}\n`;
       await tell(spec, params.id, { write: body });
       await new Promise((done) => setTimeout(done, SETTLE_MS));
@@ -579,6 +686,11 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       required: ["id"],
     },
     async execute(_call: string, params: any) {
+      const moved = adopted.get(params.id);
+      if (moved) {
+        moved.abort();
+        return text(`${params.id} 已收到停止信号`);
+      }
       await tell(spec, params.id, { signal: params.force ? 9 : 15 });
       return text(`${params.id} 已收到停止信号`);
     },
@@ -660,9 +772,159 @@ function announceExits(pi: any, spec: Manifest) {
   });
 }
 
+// --- a person waiting for an answer ------------------------------------------
+//
+// The runner writes down when a person's message is waiting on an answer
+// (driven/runner.py, which owns the rule: what owes one, what answers it, what
+// the refusal says, when it lapses) and names the file in this variable. Until
+// the session has answered, every other tool is refused with the runner's
+// words. pi runs no subagents, so every call here is the session's own.
+
+const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
+
+type Debt = { id: string; answers: string[]; reason: string; answered: string };
+
+// What the runner's file says is owed right now, answered or not.
+function debtOnFile(): Debt | null {
+  const file = process.env[REPLY_OWED_ENV] ?? "";
+  if (!file) return null;
+  try {
+    const debt = JSON.parse(fs.readFileSync(file, "utf8"));
+    return debt?.id ? debt : null;
+  } catch {
+    return null;
+  }
+}
+
+// Kept in this process: a reply and the next call can be siblings in one
+// message, and pi preflights them in order, so the reply's call is seen here
+// before the runner could hear of it.
+let answered: string | null = null;
+
+// A debt on file that the session has not answered yet.
+function unanswered(): Debt | null {
+  const debt = debtOnFile();
+  return debt && debt.id !== answered ? debt : null;
+}
+
+function holdToAnswering(pi: any) {
+  pi.on("tool_call", async (event: any) => {
+    const debt = unanswered();
+    if (!debt) return;
+    if (!debt.answers.includes(event.toolName)) {
+      return { block: true, reason: debt.reason };
+    }
+    answered = debt.id;
+    // And where the runner reads it, to know the turn may end (`insist`).
+    fs.writeFileSync(debt.answered, debt.id);
+  });
+}
+
+// --- a message while a command runs -----------------------------------------
+//
+// pi hands the model a message only between tool calls, and its bash waits for
+// its command to end — so a person writing during a twenty-minute build waited
+// twenty minutes. This is pi's bash with one thing added, the Ctrl+B of the
+// other harnesses: when the runner writes down a new debt (a person has just
+// written, `driven/runner.py`), the call returns what the command printed so
+// far and the command goes on as a background job, read with bash_read and
+// stopped with bash_kill like any other. It lives only as long as pi does, as a
+// backgrounded command does in Claude Code; a job meant to outlive the session
+// is still bash_start's.
+
+const YIELD_POLL_MS = 200;
+// Foreground commands moved to the background, by job id: stopping one aborts
+// the call pi's own shell is still running it under.
+const adopted = new Map<string, AbortController>();
+
+function registerYieldingBash(pi: any, spec: Manifest) {
+  const local = createLocalBashOperations();
+  let counter = 0;
+  pi.registerTool({
+    ...createBashTool(process.cwd()),
+    async execute(id: string, params: any, signal: any, onUpdate: any, ctx: any) {
+      const own = new AbortController();
+      const forward = () => own.abort();
+      signal?.addEventListener?.("abort", forward, { once: true });
+      const printed: Buffer[] = [];
+      let sink: fs.WriteStream | null = null;
+      let ended: { status: number | null } | null = null;
+      let onEnd: ((status: number | null) => void) | null = null;
+      const operations = {
+        exec: (command: string, cwd: string, options: any) =>
+          local
+            .exec(command, cwd, {
+              ...options,
+              signal: own.signal,
+              onData: (data: Buffer) => {
+                options.onData(data);
+                if (sink) sink.write(data);
+                else printed.push(data);
+              },
+            })
+            .then((outcome: any) => {
+              ended = { status: outcome.exitCode };
+              onEnd?.(outcome.exitCode);
+              return outcome;
+            }),
+      };
+      const running = createBashTool(ctx?.cwd ?? process.cwd(), { operations }).execute(
+        id,
+        params,
+        own.signal,
+        onUpdate,
+      );
+      // Unanswered: no tool starts while one is (`holdToAnswering`), so this
+      // command was already running when the person wrote.
+      let timer: any = null;
+      const spoken = new Promise<null>((resolve) => {
+        timer = setInterval(() => {
+          if (unanswered()) resolve(null);
+        }, YIELD_POLL_MS);
+      });
+      try {
+        const done = await Promise.race([running.then((result: any) => ({ result })), spoken]);
+        if (done) return done.result;
+      } finally {
+        clearInterval(timer);
+      }
+      // The model no longer waits on it; its ending is written down instead.
+      signal?.removeEventListener?.("abort", forward);
+      running.catch(() => {});
+      const job = `job-fg-${++counter}-${Date.now().toString(36)}`;
+      const dir = jobDir(spec, job);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "meta.json"),
+        JSON.stringify({ command: params.command, label: "", pid: process.pid }),
+      );
+      fs.writeFileSync(path.join(dir, "output"), Buffer.concat(printed));
+      sink = fs.createWriteStream(path.join(dir, "output"), { flags: "a" });
+      adopted.set(job, own);
+      onEnd = (status) => {
+        adopted.delete(job);
+        sink?.end(() =>
+          fs.writeFileSync(
+            path.join(dir, "exit"),
+            JSON.stringify({ status: status ?? -1, at: Date.now() / 1000 }),
+          ),
+        );
+      };
+      if (ended) onEnd((ended as { status: number | null }).status);
+      const { body } = drain(dir, 0);
+      return text(
+        (body ? `${body}\n\n` : "") +
+          `[有人在房间里发来了消息，这条命令转到后台继续跑，任务 ${job}。` +
+          "先看那条消息；输出用 bash_read 读，用 bash_kill 停掉。]",
+      );
+    },
+  });
+}
+
 export default function (pi: any) {
   const spec = manifest();
   carryRepositoryContext(pi);
+  holdToAnswering(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
   else if (spec.unavailable) {
     // Said where a launch failure is read, not swallowed: a room whose platform
@@ -670,9 +932,12 @@ export default function (pi: any) {
     // never given any, and the agent will conclude it must shell out.
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
+  registerMcpTools(pi, spec);
+  if (spec.socket) applyProjectHooks(pi, spec);
   if (spec.background && spec.python) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);
+    registerYieldingBash(pi, spec);
   }
   // No reminder to publish lives here. A room that has heard nothing for a while
   // is reminded by the platform (ChatService.remind_silent_turns), which steers

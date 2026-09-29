@@ -127,7 +127,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [模型调用流程](/dev/llm) | 准入对每个请求回答的三件事 | `demo-sim` | 这一页的准入 JSON 和两条路 |
 | [模型调用流程](/dev/llm) | 一次请求经过哪几站，被拦在哪 | `demo-steps` + `embed: llm` | 这一页各节；画面是剧本 `scenes/llm.json` |
 | [CI 设计](/dev/ci) | 改到哪些路径就跑哪些套件，谁被跳过 | `demo-ci` | `.github/scripts/required-ci-paths.json`，加 `required-ci.yml` 里的套件→工作流；结果和真跑一遍 `required-ci.py` 对过 |
-| [预览与项目网站](/dev/preview) | 凭证、cookie、房间访问权三步怎么换，谁在哪一步被挡 | `demo-flow` | `backend/app/api/preview_host.py` 与 `domain/site/hosting.py` 里的 TTL、cookie 属性和每个请求的检查 |
+| [话题预览](/dev/preview) | 凭证、cookie、房间访问权三步怎么换，谁在哪一步被挡 | `demo-flow` | `backend/app/api/preview_host.py` 与 `domain/site/hosting.py` 里的 TTL、cookie 属性和每个请求的检查 |
 | [部署拓扑](/dev/topology) | 滚动发版时正在跑的轮怎么交接，常驻那层为什么不断 | `demo-flow` | `backend/app/core/ownership.py`、`main.py` 的交接顺序、`handover_timeout_s` |
 | [记忆](/dev/memory#limits) | 三个上限分别在哪一步拦住什么 | `demo-memory` | `domain/memory/files.py` 的常数，`gen/memory_limits.py` 读出来，和 `fit_index` / `limit_breach` 对过 |
 | [记忆](/dev/memory) | 一轮里记忆怎么流转 | `demo-steps` + `embed: memory` | 这一页各节；画面是剧本 `scenes/memory.json` |

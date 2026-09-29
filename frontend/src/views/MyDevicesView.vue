@@ -18,6 +18,7 @@ import {
   thisComputer,
 } from '../lib/desktop'
 
+import { t } from '@/i18n'
 import accountService from '@/services/account'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
@@ -382,7 +383,7 @@ onMounted(load)
               prepend-icon="mdi-download"
               :href="d.href"
             >
-              {{ d.label }}
+              {{ t(d.labelKey) }}
             </v-btn>
           </div>
           <div class="t-caption c-muted mt-2">

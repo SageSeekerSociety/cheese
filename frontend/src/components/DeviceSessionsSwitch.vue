@@ -11,6 +11,8 @@ import { t } from '../i18n'
 import { choiceKey, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
 
+import UserRef from '@/components/common/UserRef.vue'
+
 const props = defineProps<{
   projectId: string
   device: { device_id: string; name: string }
@@ -185,8 +187,11 @@ watch(open, (value) => {
                 <div class="bs-body">
                   <div class="bs-room">{{ session.topic_title }}</div>
                   <div class="bs-meta">
-                    {{ t('work.bulkSwitch.meta', { agent: session.agent_name, time: relTime(session.last_active) })
-                    }}<template v-if="session.working"> · {{ t('work.bulkSwitch.working') }}</template>
+                    <i18n-t keypath="work.bulkSwitch.meta" tag="span">
+                      <template #agent><UserRef :handle="session.agent_handle" :name="session.agent_name" /></template>
+                      <template #time>{{ relTime(session.last_active) }}</template>
+                    </i18n-t>
+                    <template v-if="session.working"> · {{ t('work.bulkSwitch.working') }}</template>
                   </div>
                   <p
                     v-if="outcomes[session.id]"

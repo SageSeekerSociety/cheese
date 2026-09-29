@@ -135,65 +135,28 @@ def test_archiving_a_card_riding_an_open_pr_revokes_it_and_leaves_the_pr(
     assert f"停止跟进 PR #{number}" not in room_text(room_line)
 
 
-def test_archiving_a_card_whose_pr_was_closed_does_not_ask_anyone_to_close_it(
+def test_archiving_after_a_pr_was_closed_does_not_ask_anyone_to_close_it(
     client, app_world
 ):
-    """The PR was closed on GitHub without merging and the poller saw it. Archiving
-    the room must not tell the reviewer that PR is still open and needs closing."""
+    """The PR was closed on GitHub without merging and the poller voided the card.
+    Archiving the room leaves that card as it is and does not tell the reviewer
+    the PR is still open and needs closing."""
     fake = app_world["fake"]
     _pid, tid, _cid, number, _head = _ready_card(client, app_world)
     fake.close_unmerged(number)
     _poll(client)
+    voided = _cards(client, tid)[0]
 
     _archive(client, tid, by="bob")
 
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
+    assert card["note"] == voided["note"]
     assert "仍在 GitHub 上打开" not in card["note"]
-    assert f"PR #{number} 已关闭且没有合并" in card["note"]
     card_line = client.get(
         f"/topics/{tid}/history", params={"task_id": card["task_id"], "limit": 200}
     ).json()["data"]["data"]
     assert f"停止跟进 PR #{number}" not in room_text(card_line)
-
-
-def test_a_reopened_pr_is_open_again_when_the_room_is_archived(client, app_world):
-    fake = app_world["fake"]
-    _pid, tid, _cid, number, _head = _ready_card(client, app_world)
-    fake.close_unmerged(number)
-    _poll(client)
-    fake.prs[number].update(state="open")
-    _poll(client)
-
-    assert "已关闭且没有合并" not in _cards(client, tid)[0]["note"]
-
-    _archive(client, tid, by="bob")
-
-    card = _cards(client, tid)[0]
-    assert "仍在 GitHub 上打开" in card["note"]
-    card_line = client.get(
-        f"/topics/{tid}/history", params={"task_id": card["task_id"], "limit": 200}
-    ).json()["data"]["data"]
-    assert f"停止跟进 PR #{number}" in room_text(card_line)
-
-
-def test_voiding_a_card_whose_pr_was_closed_does_not_call_it_open(client, app_world):
-    fake = app_world["fake"]
-    _pid, tid, cid, number, _head = _ready_card(client, app_world)
-    fake.close_unmerged(number)
-    _poll(client)
-
-    response = client.post(
-        f"/accept-cards/{cid}/void",
-        json={"note": ""},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert response.status_code == 200, response.text
-    card = _cards(client, tid)[0]
-    assert card["status"] == "revoked"
-    assert "仍在 GitHub 上打开" not in card["note"]
-    assert f"PR #{number} 已关闭且没有合并" in card["note"]
 
 
 def test_archiving_revokes_a_pending_card(client):

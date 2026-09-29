@@ -7,12 +7,14 @@ import { toast } from 'vuetify-sonner'
 
 import { connectDevice, deviceProposedName, listMyDevices } from '../api'
 
-// Where the desktop build is published (.github/workflows/desktop.yml).
-const RELEASE = 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest'
+// The site serves the desktop build itself: build.yml copies the `desktop-latest`
+// release (.github/workflows/desktop.yml) into the frontend image, because GitHub
+// release downloads are unreliable from mainland networks.
+const RELEASE = '/downloads/desktop'
 export const DOWNLOADS = [
-  { os: 'mac', label: 'Mac（Apple 芯片）', href: `${RELEASE}/Cheese-arm64.dmg` },
-  { os: 'mac', label: 'Mac（Intel 芯片）', href: `${RELEASE}/Cheese-x64.dmg` },
-  { os: 'windows', label: 'Windows', href: `${RELEASE}/Cheese-Setup-x64.exe` },
+  { os: 'mac', labelKey: 'global.desktop.macAppleSilicon', href: `${RELEASE}/Cheese-arm64.dmg` },
+  { os: 'mac', labelKey: 'global.desktop.macIntel', href: `${RELEASE}/Cheese-x64.dmg` },
+  { os: 'windows', labelKey: 'global.desktop.windows', href: `${RELEASE}/Cheese-Setup-x64.exe` },
 ] as const
 
 // The visitor's own system goes first; a browser does not say which Mac chip it runs on.

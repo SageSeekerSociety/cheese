@@ -30,6 +30,7 @@ from datetime import datetime
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
+    AgentCompacting,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -112,6 +113,21 @@ def _retrying(record: dict, label: str | None) -> AgentRetrying:
         status=_count(record.get("error_status")),
         thread_label=label,
     )
+
+
+def _compacting(record: dict, label: str | None) -> list[AgentEvent]:
+    """``system/status``, as the pinned build writes it around a compaction:
+    ``status: "compacting"`` when it starts, then ``status: null`` with
+    ``compact_result`` (``"success"`` / ``"failed"``) and, on failure,
+    ``compact_error``. The same record also reports other status changes
+    (a permission mode), which carry neither and say nothing to the room."""
+    if record.get("status") == "compacting":
+        return [AgentCompacting(thread_label=label)]
+    result = record.get("compact_result")
+    if result not in ("success", "failed"):
+        return []
+    error = str(record.get("compact_error") or "failed") if result == "failed" else ""
+    return [AgentCompacting(done=True, error=error, thread_label=label)]
 
 
 def _message(record: dict) -> tuple[dict, str | None]:
@@ -322,6 +338,8 @@ class Assembler:
         subtype = record.get("subtype")
         if subtype == "api_retry":
             return [_retrying(record, self._label(_message(record)[1]))]
+        if subtype == "status":
+            return _compacting(record, self._label(_message(record)[1]))
         task = str(record.get("task_id") or "")
         # Only an agent is a worker the room tracks: a background command or a
         # workflow reports its tasks here too.

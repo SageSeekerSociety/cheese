@@ -19,7 +19,6 @@ def test_a_stuck_card_is_error():
         NoteCode.checks_failed,
         NoteCode.merge_refused,
         NoteCode.merge_withheld,
-        NoteCode.pr_closed_unmerged,
         NoteCode.pr_open_failed,
         NoteCode.accept_pr_open_failed,
         NoteCode.accept_pr_stalled,

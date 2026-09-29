@@ -1,6 +1,7 @@
 """Persistence failures replay stable event IDs before advancing the cursor."""
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,7 +17,7 @@ async def test_failed_persistence_replays_reply_without_restarting_model_work(tm
     rows = [
         {
             "sequence": i,
-            "at": "2026-09-12T00:00:00+00:00",
+            "at": datetime.now(UTC).isoformat(),
             "record": {
                 "method": method,
                 "params": params,

@@ -1,6 +1,7 @@
 """Codex item identity must survive delivery into the real room timeline."""
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -234,7 +235,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
             "events": [
                 {
                     "sequence": 1,
-                    "at": "2026-09-12T00:00:00+00:00",
+                    "at": datetime.now(UTC).isoformat(),
                     "record": {
                         "method": "item/completed",
                         "params": {
@@ -288,7 +289,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
         "events": [
             {
                 "sequence": 2,
-                "at": "2026-09-12T00:00:01+00:00",
+                "at": datetime.now(UTC).isoformat(),
                 "record": {
                     "method": "item/completed",
                     "params": {

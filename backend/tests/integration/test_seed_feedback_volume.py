@@ -72,8 +72,9 @@ DRY: tuple[str, ...] = (
 def _run(portal: BlockingPortal, *argv: str) -> int:
     """跑一次脚本（它自己 `asyncio.run` 那条路之外的那个入口）。
 
-    走 portal 而不是自己起一个循环：脚本用的引擎在测试里是 NullPool，但 `db_session`
-    的连接活在这个 portal 的循环上，两个循环不能互相碰。
+    走 portal 而不是自己起一个循环：`db_session` 的连接活在这个 portal 的循环上，
+    两个循环不能互相碰。脚本借的是应用的连接池，它在 portal 上还回去的连接由
+    `_app_engine_off_the_portal` 在用例结束时关掉。
     """
     return portal.call(seed.main, list(argv))
 

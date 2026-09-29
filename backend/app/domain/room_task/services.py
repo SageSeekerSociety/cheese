@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import Block
+from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
     LockKind,
@@ -225,6 +226,7 @@ class TaskService:
         if task.status is not TaskStatus.closed:
             task.status = TaskStatus.closed
             task.closed_at = datetime.now(UTC)
+            after_close(self._session, task.room_id)
         await self._session.flush()
         return task
 
