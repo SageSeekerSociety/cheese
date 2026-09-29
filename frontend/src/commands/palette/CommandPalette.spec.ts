@@ -287,7 +287,7 @@ describe('命令面板', () => {
     expect(router.currentRoute.value.query.card).toBe('k9')
   })
 
-  it('说在一件活卡片里的消息，选中就打开那张卡', async () => {
+  it('说在一件活卡片里的消息，选中就打开那张卡，停在那一条上', async () => {
     searchProject.mockResolvedValue(hits({ records: [{ ...MESSAGE, snippet: '卡片里说过的缓存方案', task_id: 'k2' }] }))
     const { router } = await mount()
     await open()
@@ -296,6 +296,7 @@ describe('命令面板', () => {
     const row = screen.getAllByRole('option').find((el) => el.textContent?.includes('卡片里说过的缓存方案'))!
     await fireEvent.click(row)
     await waitFor(() => expect(router.currentRoute.value.query.card).toBe('k2'))
+    expect(router.currentRoute.value.query.block).toBe('b1')
     expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3')
   })
 

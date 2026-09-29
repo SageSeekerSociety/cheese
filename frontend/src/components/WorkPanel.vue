@@ -67,6 +67,8 @@ const props = withDefaults(
     withChat?: boolean
     // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
     openCardId?: string | null
+    // 地址里的 `?block=`，而且开着一张卡：卡打开时停在它里面的这一条。
+    cardFocusBlock?: string | null
     // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
     // 报错，只是那一格里写的是 handle。
     memberNames?: Record<string, string>
@@ -82,6 +84,7 @@ const props = withDefaults(
     siteTurns: () => ({}),
     topicList: () => [],
     openCardId: null,
+    cardFocusBlock: null,
     memberNames: () => ({}),
     tab: undefined,
     phase: undefined,
@@ -682,6 +685,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
           :open-card-id="openCardId"
+          :card-focus-block="cardFocusBlock"
           :member-names="memberNames"
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
