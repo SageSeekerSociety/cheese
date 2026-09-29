@@ -705,6 +705,20 @@ export function listTopics(
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
+/** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
+export interface TopicName {
+  id: string
+  project_id: string
+  title: string
+  kind: string
+  status: string
+}
+
+/** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
+export async function listTopicNames(): Promise<TopicName[]> {
+  return (await request<{ topics: TopicName[] }>('/topics/names')).topics
+}
+
 /** 项目里一次搜索的结果：只搜这个人能看的房间，每组最相关的在前。 */
 export interface ProjectSearchHits {
   records: {

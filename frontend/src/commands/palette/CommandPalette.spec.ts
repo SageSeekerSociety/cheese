@@ -28,12 +28,20 @@ const archiveTopic = vi.hoisted(() => vi.fn())
 const setTopicTitle = vi.hoisted(() => vi.fn())
 // 归档之后 store 会重新拉一次话题表。
 const listTopics = vi.hoisted(() => vi.fn(async () => ({ data: [], total: 0 })))
+// 别的项目里的话题只有名字。
+const listTopicNames = vi.hoisted(() =>
+  vi.fn(async () => [
+    { id: 't1', project_id: 'p1', title: '登录页改成深色', kind: 'topic', status: 'active' },
+    { id: 'q1', project_id: 'p2', title: '第三周作业批改', kind: 'topic', status: 'active' },
+  ])
+)
 vi.mock('@/api', async (original) => ({
   ...(await original<object>()),
   searchProject,
   archiveTopic,
   setTopicTitle,
   listTopics,
+  listTopicNames,
 }))
 
 const NOTHING: ProjectSearchHits = { records: [], tasks: [], library: [] }
@@ -434,5 +442,51 @@ describe('命令面板：更多操作', () => {
     await choose(t('navigation.palette.openRoom'))
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/topics/t3'))
     expect(router.currentRoute.value.query.block).toBeUndefined()
+  })
+})
+
+// 范围：默认在当前项目里。输入框空着按退格去掉范围，跨项目只找名字（话题、项目），
+// 不搜内容；在一个项目上按 Tab，就进到那个项目里搜。重新打开回到当前项目。
+describe('命令面板：范围', () => {
+  it('空着按退格，别的项目里的话题也找得到，内容不搜', async () => {
+    const { router } = await mount()
+    await open()
+    await type('作业')
+    await waitFor(() => expect(options()).toHaveLength(0))
+    await type('')
+    await press('Backspace')
+    await type('作业')
+    await waitFor(() => expect(options().some((text) => text.includes('第三周作业批改'))).toBe(true))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(searchProject).not.toHaveBeenCalledWith(expect.anything(), '作业')
+    await press('Enter')
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p2/topics/q1'))
+  })
+
+  it('在一个项目上按 Tab，接着打的字在那个项目里搜', async () => {
+    await mount()
+    await open()
+    await type('课程')
+    await waitFor(() => expect(options().some((text) => text.includes('课程助教'))).toBe(true))
+    await press('Tab')
+    await waitFor(() => expect(field()?.value).toBe(''))
+    await type('批改')
+    await waitFor(() => expect(options().some((text) => text.includes('第三周作业批改'))).toBe(true))
+    // 当前项目的话题不再列出来。
+    await type('原型')
+    await waitFor(() => expect(searchProject).toHaveBeenCalledWith('p2', '原型'))
+    expect(options().some((text) => text.includes('搭建第一个原型'))).toBe(false)
+  })
+
+  it('重新打开回到当前项目', async () => {
+    await mount()
+    await open()
+    await press('Backspace')
+    await fireEvent.keyDown(window, { key: 'k', code: 'KeyK', ctrlKey: true })
+    await waitFor(() => expect(field()).toBeNull())
+    await open()
+    await type('作业')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(options().some((text) => text.includes('第三周作业批改'))).toBe(false)
   })
 })

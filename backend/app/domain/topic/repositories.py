@@ -198,6 +198,18 @@ class TopicRepository:
             stmt = stmt.where(_last_activity() >= active_since)
         return stmt.order_by(_order_by(sort, order))
 
+    async def names_in_projects(self, project_ids: list[uuid.UUID]) -> list[Topic]:
+        """Every topic of these projects, private chats left out, newest activity
+        first — the rows the sidebar would list, for a name search across them."""
+        if not project_ids:
+            return []
+        stmt = (
+            select(Topic)
+            .where(Topic.project_id.in_(project_ids), Topic.is_private.is_(False))
+            .order_by(_last_activity().desc())
+        )
+        return list(await self._session.scalars(stmt))
+
     async def list_for_project_with_activity(
         self,
         project_id: uuid.UUID,

@@ -96,6 +96,8 @@
     "dm": "Message",
     "openRoom": "Open topic",
     "copyHandle": "Copy {'@'}{handle}",
+    "searchIn": "Search in project",
+    "leaveScope": "Remove project scope and search names across projects",
     "weekly": "Weekly report"
   }
 }

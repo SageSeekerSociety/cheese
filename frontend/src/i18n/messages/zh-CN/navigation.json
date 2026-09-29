@@ -96,6 +96,8 @@
     "dm": "发私信",
     "openRoom": "打开所在话题",
     "copyHandle": "复制 {'@'}{handle}",
+    "searchIn": "项目内搜索",
+    "leaveScope": "移除项目范围，跨项目搜索名称",
     "weekly": "周报"
   }
 }

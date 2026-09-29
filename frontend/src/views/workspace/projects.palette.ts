@@ -10,6 +10,7 @@ function itemOf(project: Project): PaletteItem {
     title: project.name,
     icon: 'mdi-folder-outline',
     to: { name: 'workspace-project', params: { projectId: project.id } },
+    scope: project.id,
   }
 }
 

@@ -131,6 +131,7 @@ from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
+    TopicRepository,
     TopicSortField,
 )
 from app.domain.topic.schemas import (
@@ -459,6 +460,45 @@ async def list_topics(
         for t in topics
     ]
     return ok(page(items, total))
+
+
+@router.get("/names")
+async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
+    """The names of the topics in every project the caller can see.
+
+    The command palette matches topic names locally (pinyin initials included),
+    so leaving the current project it needs the candidates themselves, not a
+    search. Names only: the sidebar's per-row state is computed per project and
+    stays on ``GET /topics``.
+
+    The projects are those ``GET /projects`` lists, and the topics per project
+    are those ``GET /topics`` lists, so this never names a room the caller could
+    not already find in a sidebar.
+    """
+    who = await resolver.resolve(fallback_handle=None)
+    if not who.authenticated:
+        # Same answer as ``GET /projects``: a failed credential is told so, and
+        # nobody at all is owed nothing.
+        resolver.reject_failed_credential(who)
+        return ok({"topics": []})
+    projects = await ProjectRepository(db).list_visible_to(
+        handle=who.handle, user_id=who.user_id
+    )
+    topics = await TopicRepository(db).names_in_projects([p.id for p in projects])
+    return ok(
+        {
+            "topics": [
+                {
+                    "id": str(t.id),
+                    "project_id": str(t.project_id),
+                    "title": t.title,
+                    "kind": t.kind,
+                    "status": t.status,
+                }
+                for t in topics
+            ]
+        }
+    )
 
 
 @router.get("/{topic_id}")

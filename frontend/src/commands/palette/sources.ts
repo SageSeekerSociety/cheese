@@ -32,12 +32,17 @@ export interface PaletteItem {
   run?: () => void
   /** 回车做的那件事叫什么，写在底栏上。不给就按有没有地址说「打开」或「执行」。 */
   verb?: string
+  /** 这一条是一个项目：按 Tab 不列操作，而是进到这个项目里搜。值是项目 id。 */
+  scope?: string
   /** 按 Tab（手机上长按）列出来的：回车那一件之外，对它还能做什么。用到时才算。 */
   actions?: () => MenuCommand[]
 }
 
 export interface SourceContext {
-  /** 当前在哪个项目里；不在项目里时是 null，只在项目里有的几类就不出现。 */
+  /**
+   * 在哪个项目里找：默认是当前页所在的项目，也可以是在面板里换进去的别的项目。
+   * null 是不限项目：只找名字，只在项目里有的几类（成员、内容）不出现。
+   */
   projectId: string | null
   router: Router
 }
