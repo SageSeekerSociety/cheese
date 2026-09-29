@@ -289,3 +289,61 @@ async def test_entities_resolved_from_metadata(authed_client: AsyncClient) -> No
     assert entities["actor"]["type"] == "user"
     assert entities["actor"]["id"] == str(actor_id)
     assert entities["actor"]["name"] == "Mochi"
+
+
+# --- the push feed: what a browser push would have said, for the desktop app ---
+
+
+@pytest.mark.anyio
+async def test_push_feed_starts_from_now_and_then_hands_over_what_is_new(
+    authed_client: AsyncClient,
+) -> None:
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    await _seed(
+        factory,
+        type_=NotificationType.ROOM_NOTICE,
+        metadata={"content": "旧的一条", "projectId": "p", "topicId": "t"},
+    )
+
+    # A first call only says where "now" is: someone who just installed the app
+    # is not shown everything that happened before.
+    first = (await authed_client.get("/notifications/push-feed")).json()["data"]
+    assert first["items"] == []
+
+    question = await _seed(
+        factory,
+        type_=NotificationType.CHEESE_QUESTION,
+        metadata={
+            "question": "用哪个数据库？",
+            "topicTitle": "迁移",
+            "projectId": "p1",
+            "topicId": "t1",
+        },
+    )
+    notice = await _seed(
+        factory,
+        type_=NotificationType.ROOM_NOTICE,
+        metadata={"content": "改动已就绪，待你审阅"},
+    )
+    await _seed(factory, type_=NotificationType.MENTION)  # never pushed, so never here
+    await _seed(factory, type_=NotificationType.ROOM_NOTICE, read=True)  # already seen
+
+    resp = await authed_client.get(
+        "/notifications/push-feed", params={"after": first["latest"]}
+    )
+    data = resp.json()["data"]
+    assert [i["id"] for i in data["items"]] == [question, notice]
+    assert data["items"][0] == {
+        "id": question,
+        "title": "用哪个数据库？",
+        "body": "在「迁移」",
+        "url": "/projects/p1/topics/t1",
+    }
+    assert data["items"][1]["title"] == "改动已就绪，待你审阅"
+    assert data["items"][1]["url"] == "/inbox"
+
+    # Asked again from where it left off: nothing is handed over twice.
+    again = await authed_client.get(
+        "/notifications/push-feed", params={"after": data["latest"]}
+    )
+    assert again.json()["data"]["items"] == []

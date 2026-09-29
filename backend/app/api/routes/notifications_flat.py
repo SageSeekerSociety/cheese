@@ -35,6 +35,7 @@ from app.domain.notification.entity_resolvers import (
     UserEntityResolver,
 )
 from app.domain.notification.models import NotificationType
+from app.domain.notification.push import PUSHABLE, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.notification.services import NotificationQueryService
 from app.domain.project.services import ProjectService
@@ -44,6 +45,9 @@ from app.domain.user.repositories import UserProfileRepository
 from app.domain.user.services import UserService
 
 router = APIRouter(prefix="", tags=["notifications"])
+
+#: 一次最多补几条：离线一整天回来，系统通知栏里也只该冒出这么多。
+_PUSH_FEED_LIMIT = 10
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
@@ -150,6 +154,33 @@ async def get_unread_count(user: AuthUser, db: DbSession) -> dict:
     service = _read_service(db)
     count = await service.get_unread_notification_count_for_current_user(user.user_id)
     return ok({"count": count})
+
+
+@router.get("/notifications/push-feed")
+async def push_feed(
+    user: AuthUser,
+    db: DbSession,
+    after: Annotated[int | None, Query(ge=0)] = None,
+) -> dict:
+    """浏览器推送的那几条，给收不到推送的地方来取 —— 桌面 app 就是这样弹系统通知的。
+
+    `after` 是上一次取到的 `latest`；带着它来，拿到比它新、还没读的那几条，标题和
+    正文与推送上的一字不差。第一次不带：只拿回 `latest`，不拿条目 —— 刚装上 app 的
+    人不该被一整串旧事淹没。
+    """
+    repo = NotificationRepository(db)
+    latest = await repo.latest_id_for_user(user.user_id, PUSHABLE)
+    if after is None:
+        return ok({"latest": latest, "items": []})
+    rows = await repo.pushable_after(user.user_id, PUSHABLE, after, _PUSH_FEED_LIMIT)
+    items = []
+    for row in rows:
+        payload = row.metadata_payload or {}
+        title, body = push_text(NotificationType(row.type), payload)
+        items.append(
+            {"id": row.id, "title": title, "body": body, "url": push_link(payload)}
+        )
+    return ok({"latest": max(latest or after, after), "items": items})
 
 
 @router.get("/notifications")
