@@ -1817,10 +1817,13 @@ def _sync_task(task_id: str) -> None:
             record.write(
                 f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
             )
+            if closed and isinstance(exc, Exception):
+                # No room message from here: a closed task has no turn whose
+                # work went missing, and when a room leaves this machine the
+                # platform tells the room which task stayed behind and why.
+                raise _ClosedTaskNotBackedUp(str(exc)) from exc
             queued = exc.pr if isinstance(exc, _BranchQueued) else None
             _report_sync_failure(task_id, branch, queued)
-            if closed and isinstance(exc, Exception):
-                raise _ClosedTaskNotBackedUp(str(exc)) from exc
             raise
 
 

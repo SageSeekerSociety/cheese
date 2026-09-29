@@ -710,3 +710,29 @@ def test_sync_all_names_a_closed_task_it_could_not_back_up_as_closed(device, cap
     printed = capsys.readouterr().err
     assert f"[cheese] 已结束的任务 {closed} 同步失败：" in printed
     assert f"[cheese] 任务 {open_task} 同步失败：" in printed
+
+
+def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
+    device,
+):
+    """A closed task has no turn whose work went missing. When its backup
+    fails as a room leaves this machine, the platform tells the room which
+    task stayed behind and why; a second message from the machine saying the
+    turn's work was not pushed would only repeat it, and wrongly."""
+    cli, tasks, _remote, home = device
+    closed, open_task = tasks
+    for task in tasks:
+        (cli._task_worktree(task) / "draft.txt").write_text(f"{task}\n")
+    tasks[closed]["closed"] = True
+    (home / "upload-limit").write_text("1")
+
+    with pytest.raises(SystemExit):
+        cli._sync_all_tasks()
+
+    told = [
+        json.loads(line)["body"]["content"]
+        for line in (home / "posted.jsonl").read_text().splitlines()
+    ]
+    assert len(told) == 1
+    assert open_task in told[0]
+    assert closed not in told[0]
