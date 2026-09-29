@@ -11,7 +11,8 @@ which stacked five zombie turns on one topic in a single day. The contract now:
 - nobody heard it → re-send the ORIGINAL prompt text, once, whoever started the
   turn — a person's message and 平台's own work (分身开工, 验收卡被驳回, CI 红了)
   evaporate identically when the prompt never lands;
-- one topic gets at most one remedial prompt, however many orphans it holds.
+- one agent in a topic gets at most one remedial prompt, however many
+  orphans it holds.
 
 Whether the screen survived used to be unanswerable, so the sweep inferred it:
 an AI block bearing the turn's id, an unread record the session left. The
