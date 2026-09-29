@@ -54,6 +54,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: .pre-commit-config.yaml
           prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
 
       # Each guard proves itself before it is trusted to judge the tree: a guard
       # that silently stopped matching would otherwise look identical to a clean
