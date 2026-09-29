@@ -131,14 +131,6 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '市场', isFullPage: true },
   },
   {
-    name: 'Search',
-    path: '/search',
-    component: () => import('@/views/searches/Index.vue'),
-    meta: {
-      title: '搜索',
-    },
-  },
-  {
     name: 'NotFound',
     path: '/:pathMatch(.*)*',
     component: () => import('@/views/404.vue'),
