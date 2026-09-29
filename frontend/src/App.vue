@@ -209,6 +209,7 @@
 
     <!-- 有新版本: shows while a new service worker waits for the user to click. -->
     <UpdateBanner />
+    <CommandPalette />
   </my-app>
 </template>
 
@@ -235,11 +236,12 @@ import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
-import { DEFAULT_SHELL, shellFor } from './lib/shell'
+import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
+import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts } from '@/commands/shortcuts'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
@@ -273,7 +275,7 @@ import { useAppTheme } from '@/theme'
 // this composable — and the only other caller, ThemeToggle, sits inside the
 // logged-in user menu. Without this line a signed-out visitor sitting on the
 // login page would not follow their machine switching to dark at sunset.
-useAppTheme()
+const appTheme = useAppTheme()
 
 // 软键盘盖住多少，写进 --keyboard-inset 供布局减掉 (style.css)。
 trackKeyboardInset()
@@ -480,7 +482,9 @@ defineCommands(() =>
     const to = shortcutTarget(rail.value, digit)
     const item = rail.value.find((it) => it.type === 'item' && it.to === to)
     const title = item?.type === 'item' ? item.title : to
-    return to ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to }] : []
+    return to
+      ? [{ id: `rail.${digit}`, title: title ?? to, shortcut: `mod+${digit}`, to, palette: false as const }]
+      : []
   })
 )
 let stopShortcuts: (() => void) | undefined
@@ -514,6 +518,26 @@ function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to 个人.
   showNewProjectDialog(teamHandleInPath(currentRoute.path))
 }
+
+// 不属于哪一页、在哪都能做的事：命令面板的「操作」里有它们。
+defineCommands(() => [
+  {
+    id: 'project.new',
+    title: t('navigation.newProject', termParams(navShell.value)),
+    icon: 'mdi-plus',
+    run: createNewProject,
+  },
+  // 外观只列另外两种：当前这种不用选。
+  ...appTheme.options
+    .filter((mode) => mode !== appTheme.preference.value)
+    .map((mode) => ({
+      id: `theme.${mode}`,
+      title: t('navigation.palette.theme', { mode: t(`navigation.userMenu.theme.${mode}`) }),
+      icon:
+        mode === 'dark' ? 'mdi-weather-night' : mode === 'light' ? 'mdi-white-balance-sunny' : 'mdi-theme-light-dark',
+      run: () => appTheme.setPreference(mode),
+    })),
+])
 
 async function loadProjectTeams() {
   loadingTeams.value = true

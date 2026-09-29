@@ -34,6 +34,7 @@ import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { menuActionOf } from '@/commands'
+import { openPalette } from '@/commands/palette/state'
 import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -628,6 +629,11 @@ function setActionsMenu(topicId: string, open: boolean) {
 //
 // 一个 useLongPress 挂在滚动的那一段上，按下去的是哪一行由 data-row-actions 说：
 // 每一行各挂一个的话，折叠、分组、归档那几段模板都得各接一遍。
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+const searchTitle = computed(() =>
+  props.page ? t('navigation.palette.open') : `${t('navigation.palette.open')}（${isMac ? '⌘K' : 'Ctrl K'}）`
+)
+
 const railScroll = ref<HTMLElement | null>(null)
 const rowSheetOpen = ref(false)
 const rowSheetTopicId = ref<string | null>(null)
@@ -719,6 +725,19 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
                它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->
           <span v-if="privateUnreadTotal > 0" class="unread-badge me-1">{{ countLabel(privateUnreadTotal) }}</span>
+          <!-- 命令面板的入口。桌面上 ⌘K / Ctrl K 也能叫出来，快捷键写在 title 里，不常驻
+               界面；手机上没有键盘快捷键，这颗就是唯一的入口。 -->
+          <button
+            type="button"
+            class="rail-header__more"
+            :class="{ 'tap-target': page }"
+            :title="searchTitle"
+            :aria-label="t('navigation.palette.open')"
+            aria-haspopup="dialog"
+            @click="openPalette()"
+          >
+            <v-icon class="rail-header__caret" size="18" icon="mdi-magnify" />
+          </button>
           <!-- 整页形态（手机）：同一个入口从底部升起一张面板，见下面的 MobileActionSheet。 -->
           <button
             v-if="page"
@@ -1279,8 +1298,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   position: relative;
   margin-inline-start: 0;
 }
+/* 这里挨着两颗（搜索、项目菜单）：各自只有 26 宽、靠 .tap-target 撑到 44 的话，
+   两块撑出来的范围叠在一起，按在搜索右半边点到的是后面那颗。所以顶栏里它们本身
+   就是 44 见方。 */
 .rail-header--bar .rail-header__more {
   position: relative;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
 }
 /* 两栏（平板）时这一行留在左栏顶上，高度和底线照桌面那一条（手机外壳里是 56，和
    右边的顶栏接成一条线）。两颗按钮一样由 .tap-target 撑到 44，所以一样要有定位。 */

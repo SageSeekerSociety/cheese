@@ -218,7 +218,15 @@ async function save() {
 onMounted(load)
 
 useCommands(() => [
-  { id: 'connections.refresh', title: '刷新', icon: 'mdi-refresh', loading: loading.value, header: {}, run: load },
+  {
+    id: 'connections.refresh',
+    title: '刷新',
+    palette: false,
+    icon: 'mdi-refresh',
+    loading: loading.value,
+    header: {},
+    run: load,
+  },
 ])
 </script>
 

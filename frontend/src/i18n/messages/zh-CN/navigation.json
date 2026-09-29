@@ -54,5 +54,23 @@
   "shell": {
     "close": "关闭",
     "more": "更多操作"
+  },
+  "palette": {
+    "open": "搜索和跳转",
+    "placeholder": "搜索或跳转",
+    "empty": "暂无结果",
+    "awaiting": "等你处理",
+    "archived": "已归档",
+    "recent": "最近去过",
+    "best": "最匹配",
+    "topics": "话题",
+    "projects": "项目",
+    "members": "成员",
+    "pages": "页面",
+    "commands": "操作",
+    "close": "关闭",
+    "theme": "外观：{mode}",
+    "showTab": "切到{tab}",
+    "newTopic": "新建话题"
   }
 }
