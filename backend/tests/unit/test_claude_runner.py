@@ -28,7 +28,7 @@ import pytest
 
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
-from app.domain.agent.harness.claude_code.runner import Runner
+from app.domain.agent.harness.claude_code.runner import Runner, end, sessions_on
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from tests.pinned_claude import claude_binary
@@ -443,6 +443,34 @@ def test_an_interrupt_marks_the_result_it_ends(screen, contract):
 # --- 6-8: the class itself, where the archive exposes no knob --------------------
 
 
+def test_replacing_one_seat_does_not_stop_a_room_mates_claude(tmp_path):
+    """Two teammates can keep Claude processes alive in one room home."""
+    if not Path("/proc").is_dir():
+        pytest.skip("requires the Linux process table used by the session host")
+    stand_in = tmp_path / "bin/claude"
+    stand_in.parent.mkdir()
+    stand_in.symlink_to(sys.executable)
+    command = [str(stand_in), "-c", "import time; time.sleep(120)"]
+    config = tmp_path / ".claude"
+    first = subprocess.Popen(
+        command,
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(config), "CHEESE_AUTHOR": "seat-a"},
+    )
+    second = subprocess.Popen(
+        command,
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(config), "CHEESE_AUTHOR": "seat-b"},
+    )
+    try:
+        end(sessions_on(config, "seat-b"))
+        assert second.wait(timeout=10) is not None
+        assert first.poll() is None
+    finally:
+        for process in (first, second):
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+
 async def _started(machine, monkeypatch, **options) -> Runner:
     # The build runs where it was started: the isolated workspace, not the repo.
     monkeypatch.chdir(machine.workspace)
@@ -454,30 +482,49 @@ async def _started(machine, monkeypatch, **options) -> Runner:
 
 
 @pytest.mark.anyio
-async def test_a_session_already_on_this_config_dir_is_ended_first(
+async def test_starting_one_seat_does_not_end_another_seat_on_the_same_config_dir(
     machine, monkeypatch, tmp_path
 ):
-    """Two sessions appending to one transcript corrupt it."""
+    """Only a previous process for this seat may be replaced at startup."""
     stand_in = tmp_path / "bin/claude"
     stand_in.parent.mkdir()
     # A symlink keeps Python's libraries reachable under the process name.
     stand_in.symlink_to(sys.executable)
     sleep = [str(stand_in), "-c", "import time; time.sleep(120)"]
     same = subprocess.Popen(
-        sleep, env={**os.environ, "CLAUDE_CONFIG_DIR": str(machine.config)}
+        sleep,
+        env={
+            **os.environ,
+            "CLAUDE_CONFIG_DIR": str(machine.config),
+            "CHEESE_AUTHOR": AGENT,
+        },
+    )
+    room_mate = subprocess.Popen(
+        sleep,
+        env={
+            **os.environ,
+            "CLAUDE_CONFIG_DIR": str(machine.config),
+            "CHEESE_AUTHOR": "cheese-room-mate",
+        },
     )
     other = subprocess.Popen(
-        sleep, env={**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "elsewhere")}
+        sleep,
+        env={
+            **os.environ,
+            "CLAUDE_CONFIG_DIR": str(tmp_path / "elsewhere"),
+            "CHEESE_AUTHOR": AGENT,
+        },
     )
     try:
         runner = await _started(machine, monkeypatch)
         try:
             assert same.wait(timeout=10) is not None
+            assert room_mate.poll() is None
             assert other.poll() is None
         finally:
             await runner.close()
     finally:
-        for process in (same, other):
+        for process in (same, room_mate, other):
             process.kill()
             process.wait()
 
