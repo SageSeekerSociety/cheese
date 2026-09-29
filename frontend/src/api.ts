@@ -67,7 +67,7 @@ import type {
   WorkspaceFile,
 } from './cx_types'
 
-import { authorizeInAppHeaders } from './lib/desktopApp'
+import { desktopAppHeaders } from './lib/desktopApp'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -96,7 +96,7 @@ export function authToken(): string {
 
 function authHeaders(): Record<string, string> {
   const token = authToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return { ...desktopAppHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
 }
 
 // Retried on GET: the edge's own statuses. nginx answers 502–504 for an app it
@@ -1171,7 +1171,6 @@ export function getMcpServers(projectId: string): Promise<McpServerList> {
 export function connectMcpServer(projectId: string, name: string): Promise<{ authorization_url: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connect`, {
     method: 'POST',
-    headers: authorizeInAppHeaders(),
   })
 }
 export function disconnectMcpServer(projectId: string, name: string): Promise<null> {
@@ -1255,20 +1254,14 @@ export function getGithubInstallUrl(projectId: string): Promise<{ url: string }>
 export function connectGithubRepo(
   projectId: string
 ): Promise<{ connected: boolean; repo?: string; account?: string; install_url?: string }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, {
-    method: 'POST',
-    headers: authorizeInAppHeaders(),
-  })
+  return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, { method: 'POST' })
 }
 export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: string }> {
-  return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`, {
-    headers: authorizeInAppHeaders(),
-  })
+  return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
 }
 
-// Personal OAuth/App connections (1.0 router, single `/api` prefix — see
-// legacyRequest). Includes every provider the user has linked, not just
-// github_app; callers filter by providerId.
+// Personal OAuth/App connections (1.0 router, see legacyRequest): every
+// provider the user has linked, not just github_app; callers filter by providerId.
 export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {
   return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections`)
 }
@@ -1528,9 +1521,7 @@ export function deleteIntegration(id: string): Promise<{ deleted: string }> {
 }
 
 export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
-  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`, {
-    headers: authorizeInAppHeaders(),
-  })
+  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
 }
 
 export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {

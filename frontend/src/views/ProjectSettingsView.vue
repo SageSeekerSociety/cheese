@@ -298,8 +298,7 @@ async function saveUpstream() {
   }
 }
 
-// Send the browser to GitHub's install page; the callback (github_install.py)
-// bounces back here with ?github_install=success|pending|error afterward.
+// To GitHub's install page; its callback (github_install.py) comes back here with ?github_install=<result>.
 async function connectGithubRepo() {
   connectingGithubRepo.value = true
   try {
@@ -314,7 +313,6 @@ async function connectGithubRepo() {
       return
     }
     if (res.install_url) {
-      // In the app this goes to the browser, and the result comes back as a new visit to this page.
       if (goAuthorize(res.install_url)) connectingGithubRepo.value = false
       return
     }

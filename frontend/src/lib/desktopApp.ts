@@ -119,8 +119,8 @@ export async function setDesktopOpensAtLogin(on: boolean): Promise<void> {
 // (desktop/src-tauri/src/links.rs). An app too old to take those links keeps
 // the old way.
 
-/** Sent with a request that starts an authorization, so its result comes back to the app (backend/app/api/app_return.py). */
-export function authorizeInAppHeaders(): Record<string, string> {
+/** Sent with every request from the app: an authorization started there comes back to it (backend/app/api/app_return.py). */
+export function desktopAppHeaders(): Record<string, string> {
   return desktopCan('links') ? { 'X-Cheese-App': '1' } : {}
 }
 
