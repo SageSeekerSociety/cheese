@@ -44,12 +44,12 @@ def _configure(home, system_prompt: str) -> None:
 
 def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
     """Each is read exactly once, at exec: the settings, the WebFetch transport
-    it preloads, and the platform's own skills — all in the config dir the
-    ROOM holds — plus the system prompt, in the seat that owns this session,
+    it preloads, and the platform's own skills — all in the seat's config dir
+    — plus the system prompt, in the seat that owns this session,
     because one teammate's prompt is not another's."""
     _configure(tmp_path, "你是芝士。")
 
-    config = tmp_path / ".claude"
+    config = _seat(tmp_path) / ".claude"
     planted = {
         str(path.relative_to(config)) for path in config.rglob("*") if path.is_file()
     }
@@ -59,10 +59,11 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
     # that named only SKILL.md would pass while the script never left the
     # building.
     assert planted == {
-        "settings.json",
         "webfetch_transport.cjs",
         *native_skill_files(),
     }
+    assert (_seat(tmp_path) / "remote-session/base-settings.json").is_file()
+    assert (config / "projects").resolve() == (tmp_path / ".claude/projects").resolve()
     assert (_seat(tmp_path) / "cheese-system-prompt.md").read_text() == "你是芝士。\n"
     for name, content in native_skill_files().items():
         assert (config / name).read_text() == content, name

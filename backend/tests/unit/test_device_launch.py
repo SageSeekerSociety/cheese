@@ -1380,7 +1380,7 @@ def test_the_tunnel_password_stays_the_scoped_token():
 def test_the_launcher_exports_the_config_dir():
     """CLAUDE_CONFIG_DIR is the isolation boundary itself, exported before the
     runner starts so the session it launches inherits it."""
-    assert 'export CLAUDE_CONFIG_DIR="$HOME/.claude"' in _script()
+    assert 'export CLAUDE_CONFIG_DIR="$SEAT/.claude"' in _script()
 
 
 # --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------
@@ -1753,6 +1753,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     else in the script would say why."""
     script = _script(system_prompt="x")
 
-    assert script.index('export CLAUDE_CONFIG_DIR="$HOME/.claude"') < script.index(
+    assert script.index('export CLAUDE_CONFIG_DIR="$SEAT/.claude"') < script.index(
         'CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap'
     )

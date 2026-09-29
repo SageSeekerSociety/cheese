@@ -73,7 +73,10 @@ def room_home(home, target, seat=""):
     (room_config / "projects").mkdir(parents=True, exist_ok=True)
     config = session / ".claude"
     config.mkdir(exist_ok=True)
-    (config / "projects").symlink_to(room_config / "projects", target_is_directory=True)
+    if not (config / "projects").exists():
+        (config / "projects").symlink_to(
+            room_config / "projects", target_is_directory=True
+        )
     (session / "remote-session/base-settings.json").write_text(
         json.dumps(session_settings())
     )

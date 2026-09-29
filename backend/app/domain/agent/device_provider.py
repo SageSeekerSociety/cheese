@@ -1415,8 +1415,6 @@ class DeviceChannel(Channel):
                 agent_handle=agent_handle,
             )
         else:
-            # These device requests are independent. Finish all three before
-            # adopting or replacing the screen, without adding their round trips.
             execution_token = (
                 screen_env["CHEESE_TOKEN"] if execution_target is not None else None
             )
@@ -1447,13 +1445,7 @@ class DeviceChannel(Channel):
                 if "unknown" in status:
                     retire_reason = "resident_release_unreachable"
                 elif status.get("working") or status.get("tasks"):
-                    # The room transcript scan can see a newer idle peer. The
-                    # target runner's own state decides whether its files may
-                    # be replaced while it is still using them.
-                    logger.info(
-                        "resident release deferred topic=%s reason=seat_busy",
-                        topic_id,
-                    )
+                    pass
                 else:
                     try:
                         await self._refresh_resident(
