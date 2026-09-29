@@ -723,7 +723,7 @@ async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
             self.retryable.append(bool((meta or {}).get("retryable")))
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -784,7 +784,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -857,7 +857,7 @@ async def test_stale_orphan_is_dropped_loudly(db_factory, monkeypatch):
             self.retryable.append(bool((meta or {}).get("retryable")))
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -1012,7 +1012,7 @@ class _SweepChat:
         self._live_screen = live_screen
         self.texts: list[str] = []
 
-    def has_live_screen(self, topic_id):
+    def has_live_screen(self, topic_id, agent_handle=None):
         del topic_id
         return self._live_screen
 
@@ -1039,7 +1039,11 @@ async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_fac
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
     await runner.open_turn_the_session_started(
-        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
     )
 
     row = await turn_row(db_factory, turn_id)
@@ -1063,13 +1067,21 @@ async def test_a_self_started_turn_outlives_the_backend_that_opened_it(db_factor
     topic = await a_topic(db_factory)
     turn_id = uuid.uuid4()
     await AgentWorkRunner(InProcessBroker()).open_turn_the_session_started(
-        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
     )
     first = await turn_row(db_factory, turn_id)
 
     replacement = AgentWorkRunner(InProcessBroker())
     await replacement.open_turn_the_session_started(
-        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
     )
 
     row = await turn_row(db_factory, turn_id)
@@ -1094,7 +1106,7 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     # 屏幕还活着 —— 这正是老路放过它的原因。
     chat = _SweepChat(db_factory, live_screen=True)
     await runner.open_turn_the_session_started(
-        chat, topic, turn_id, author=_SESSION_SEAT
+        chat, topic, turn_id, author=_SESSION_SEAT, agent_handle="cheese"
     )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 3 * 3600
 
@@ -1123,7 +1135,7 @@ async def test_a_self_started_turn_still_working_is_left_alone(db_factory):
     runner = AgentWorkRunner(InProcessBroker())
     chat = _SweepChat(db_factory, live_screen=True)
     await runner.open_turn_the_session_started(
-        chat, topic, turn_id, author=_SESSION_SEAT
+        chat, topic, turn_id, author=_SESSION_SEAT, agent_handle="cheese"
     )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 5
 
@@ -1145,7 +1157,11 @@ async def test_closing_a_self_started_turn_drops_the_marks_it_left(db_factory):
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
     await runner.open_turn_the_session_started(
-        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+        _SweepChat(db_factory),
+        topic,
+        turn_id,
+        author=_SESSION_SEAT,
+        agent_handle="cheese",
     )
     assert runner.live_work_for_topic(topic) is None, "没有协程在跑它，别说成在跑"
 
@@ -1428,7 +1444,7 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -1528,7 +1544,7 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
@@ -1570,7 +1586,7 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        def has_live_screen(self, topic_id):
+        def has_live_screen(self, topic_id, agent_handle=None):
             return False  # the container went with the deploy
 
         async def turns_that_produced_something(self, turn_ids):
