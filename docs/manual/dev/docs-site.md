@@ -39,9 +39,10 @@ covers:
 
 ### 用产品里的真组件演 {#demos-embed}
 
-`demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和现场（`PanelSite`）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
+`demo-steps` 多写一行 `embed: <名字>`，步骤列表上方就多一块画面：前端的公开页 `/demo/<名字>?embed=1` 嵌在 iframe 里，用产品自己的消息行（`RoomMessage`）和右边的工作面板（页签条 `PanelTabs` 加 `PanelOverview` / `PanelChanges` / `PanelPreview` / `PanelSite` 这四格）按剧本演，做法和首页的 `LandingRoom.vue` 一样。
 
 - **剧本**在 `frontend/src/views/demo/scenes/<名字>.json`：每一步一串带毫秒时刻的事件（有人说话、一位队友开一轮、现场里一步工具调用、一轮结束、座位卡和机器栏换字）。`demoScene.ts` 把「第几步的第几毫秒」从头重放成一帧，所以往回跳和顺着放得到同一帧。
+- **右边停在哪一格**：某一步想让人看别处，就写一行 `panel:`（`overview` / `changes` / `preview` / `site`），再把那一格里的东西写在同一步的 `overview:` / `changes:` / `preview:` 上（改动只写文件路径和那几行 diff，文件头和 hunk 头由 `demoPanels.ts` 补）。写一次就留在那儿，后面几步只说 `panel:` 就行；哪一步都不写就是现场（`site`）。`checkScene` 会挡下「停在一格却没人写它的内容」。
 - **谁数步数**：文档的步骤条。它发 `{cheeseDemo: 'go', step, play}` 给画面，画面放完这一步回 `{cheeseDemo: 'done', step}`，步骤条才走下一步。步骤条停下、拖动、点某一步，画面都跟着跳。
 - **两份对齐**：构建时读剧本，步数和每一步的标题必须和 fence 里一字不差，不一致就构建失败。改一边就得改另一边。
 - **文字版照旧**：`.md`、`llms.txt`、搜索索引里还是 fence 的那几步文字；画面不进文字版。离线的 `manual.zip` 里没有前端，只剩文字。

@@ -26,6 +26,10 @@ function reply(status: number, body: unknown): Response {
 }
 
 // 装过了就不再套一层；但若有人（测试替身）换掉了 globalThis.fetch，就在它外面重新装上。
+//
+// 换上的是 `globalThis.fetch` 本身：产品里那几个真组件（验收卡、改动、预览……）拿数
+// 据走的就是这个全局的 fetch，不换掉它，页面里的请求会真的出到后端去 —— 演示页嵌在
+// 文档的 iframe 里，后端不在也要能看，出的那几条请求还会把「假数据」这件事变成假话。
 export function installDemoBackend(): void {
   if (ours && globalThis.fetch === ours) return
   const passThrough = globalThis.fetch.bind(globalThis)
@@ -42,4 +46,5 @@ export function installDemoBackend(): void {
       error: { name: 'NotFound', message: '演示页没有后端', retryable: false },
     })
   }
+  globalThis.fetch = ours
 }

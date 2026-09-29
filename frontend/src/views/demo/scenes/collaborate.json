@@ -45,10 +45,30 @@
       "label": "看结果：说明加改动",
       "focus": "chat",
       "tag": "别只看它说了什么，点「查看改动」核对文件",
+      "panel": "changes",
+      "changes": {
+        "files": [
+          {
+            "path": "报名说明.md",
+            "status": "added",
+            "diff": [
+              "+# 新生报名须知",
+              "+",
+              "+招新面向全校在读学生，报名前请先读完这一页。",
+              "+",
+              "+报名截止时间：",
+              "+- 初选：10 月 8 日",
+              "+- 补录：10 月 15 日",
+              "+",
+              "+填完报名表即算报名成功，名单会在学院主页公布。"
+            ]
+          }
+        ]
+      },
       "events": [
-        { "at": 300, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "报名说明.docx" },
+        { "at": 300, "do": "act", "who": "cheese", "turn": "t1", "tool": "Edit", "arg": "报名说明.md" },
         { "at": 1000, "do": "say", "who": "cheese", "text": "报名说明写好了：标题「新生报名须知」，一页，结尾列了初选和补录两个截止时间。" },
-        { "at": 1300, "do": "notice", "who": "cheese", "turn": "t1", "text": "这一轮改了 1 个文件（+1 -0）", "meta": { "platform": true, "changeset": { "commit": "7c1e0a2", "commits": ["7c1e0a2"], "files_total": 1, "added": 1, "removed": 0, "files": [{ "path": "报名说明.docx", "added": 1, "removed": 0 }], "files_omitted": 0 } } },
+        { "at": 1300, "do": "notice", "who": "cheese", "turn": "t1", "text": "这一轮改了 1 个文件（+9 -0）", "meta": { "platform": true, "changeset": { "commit": "7c1e0a2", "commits": ["7c1e0a2"], "files_total": 1, "added": 9, "removed": 0, "files": [{ "path": "报名说明.md", "added": 9, "removed": 0 }], "files_omitted": 0 } } },
         { "at": 1400, "do": "end", "turn": "t1" }
       ]
     }

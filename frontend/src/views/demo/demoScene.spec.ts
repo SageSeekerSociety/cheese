@@ -1,3 +1,5 @@
+import type { Scene } from './demoScene'
+
 import { describe, expect, it } from 'vitest'
 
 import { checkScene, frameAt, stepDuration } from './demoScene'
@@ -46,5 +48,57 @@ describe('frameAt', () => {
     const note = f.site.find((b) => b.meta?.progress === true)
     expect(note?.author).toBe('cheese')
     expect(note?.turn_id).toBe('t1')
+  })
+})
+
+// 右侧停在哪一格由剧本一步一句地说，格子里的东西写一次就留在那儿。
+describe('the right-hand panel', () => {
+  const changes = { files: [{ path: 'README.md', status: 'added' as const, diff: ['+# 课程资料'] }] }
+
+  function scene(steps: Scene['steps']): Scene {
+    return {
+      title: 't',
+      project: 'p',
+      topic: '话题',
+      machine: '',
+      people: { wang: { name: '王长鑫' }, cheese: { name: '芝士', agent: true } },
+      steps,
+    }
+  }
+
+  it('stays on 现场 when the step does not say anything', () => {
+    const s = scene([{ label: '一步', events: [] }])
+    expect(frameAt(s, 0, 0).panel).toBe('site')
+    expect(frameAt(s, 0, 0).changes).toBeNull()
+  })
+
+  it('shows the tab a step declares, and keeps its content for the steps after it', () => {
+    const s = scene([
+      { label: '一', events: [] },
+      { label: '二', panel: 'changes', changes, events: [] },
+      { label: '三', panel: 'changes', events: [] },
+      { label: '四', events: [] },
+    ])
+    expect(frameAt(s, 1, 0).panel).toBe('changes')
+    expect(frameAt(s, 1, 0).changes?.files[0].path).toBe('README.md')
+    // 第三步没再抄一遍那份 diff，重放出来的还是它，选的也还是那一格。
+    expect(frameAt(s, 2, 0).changes?.files[0].path).toBe('README.md')
+    expect(frameAt(s, 2, 0).panel).toBe('changes')
+    // 第四步不说，就回到现场——「别的剧本一步都不改」靠的就是这一条。
+    expect(frameAt(s, 3, 0).panel).toBe('site')
+  })
+
+  it('refuses a step that stops on a tab nothing ever fills', () => {
+    const s = scene([
+      { label: '一', events: [] },
+      { label: '二', panel: 'changes', events: [] },
+      { label: '三', panel: 'preview', events: [] },
+      { label: '四', changes: { files: [] }, panel: 'changes', events: [] },
+    ])
+    expect(checkScene(s)).toEqual([
+      'step 2「二」: panel is changes, but no step declares changes',
+      'step 3「三」: panel is preview, but no step declares preview',
+      'step 4「四」: changes has no files',
+    ])
   })
 })
