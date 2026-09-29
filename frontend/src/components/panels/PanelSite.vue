@@ -110,10 +110,7 @@ async function loadOlder() {
 // 和对话栏同一个判据：离顶还有一屏就开始拉上一页，已经有的人不用等。
 function onSiteScroll() {
   const el = scrollRef.value
-  if (
-    el &&
-    shouldLoadOlder(el.scrollTop, { hasMore: hasOlder.value, loading: loadingOlder.value })
-  ) {
+  if (el && shouldLoadOlder(el.scrollTop, { hasMore: hasOlder.value, loading: loadingOlder.value })) {
     void loadOlder()
   }
 }
@@ -211,9 +208,7 @@ function mergeSite(page: Block[], held: Block[], switched = false): Block[] {
   const ids = new Set(page.map((b) => b.id))
   const first = Date.parse(page[0].created_at)
   const last = Date.parse(page[page.length - 1].created_at)
-  const older = switched
-    ? []
-    : held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) < first)
+  const older = switched ? [] : held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) < first)
   const newer = held.filter((b) => !ids.has(b.id) && Date.parse(b.created_at) >= last)
   return [...older, ...page, ...newer]
 }

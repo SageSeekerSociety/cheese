@@ -28,9 +28,10 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { SITE_PAGE_SIZE } from '../../api'
+
 import PanelSite from './PanelSite.vue'
 
-import { SITE_PAGE_SIZE } from '../../api'
 import { setLocale } from '@/i18n'
 
 const Site = PanelSite as unknown as Component
@@ -125,9 +126,7 @@ async function settle() {
 }
 
 function args(pane: Element): string[] {
-  return Array.from(pane.querySelectorAll('[data-testid="site-act-arg"]')).map(
-    (e) => e.textContent?.trim() ?? ''
-  )
+  return Array.from(pane.querySelectorAll('[data-testid="site-act-arg"]')).map((e) => e.textContent?.trim() ?? '')
 }
 
 function optsOf(call: number): Record<string, unknown> {
