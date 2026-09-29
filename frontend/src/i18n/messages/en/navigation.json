@@ -56,6 +56,10 @@
     "close": "Close",
     "more": "More actions"
   },
+  "copy": {
+    "linkCopied": "Link copied",
+    "failed": "Couldn’t copy"
+  },
   "palette": {
     "open": "Search and jump",
     "placeholder": "Search or jump to",
@@ -81,8 +85,6 @@
     "comment": "Comment",
     "decision": "Decision",
     "copyLink": "Copy link to this page",
-    "linkCopied": "Link copied",
-    "copyLinkFailed": "Couldn’t copy the link",
     "weekly": "Weekly report"
   }
 }

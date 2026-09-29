@@ -222,7 +222,6 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import { avatarColor } from '@/utils/avatar'
 import { pendingSudo } from '@/utils/sudo'
@@ -242,6 +241,7 @@ import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
+import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts } from '@/commands/shortcuts'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
@@ -544,7 +544,7 @@ defineCommands(() => [
     id: 'page.copyLink',
     title: t('navigation.palette.copyLink'),
     icon: 'mdi-link-variant',
-    run: () => void copyPageLink(),
+    run: () => void copyLink(window.location.href),
   },
   // 外观只列另外两种：当前这种不用选。
   ...appTheme.options
@@ -557,15 +557,6 @@ defineCommands(() => [
       run: () => appTheme.setPreference(mode),
     })),
 ])
-
-async function copyPageLink() {
-  try {
-    await navigator.clipboard.writeText(window.location.href)
-    toast(t('navigation.palette.linkCopied'))
-  } catch {
-    toast.error(t('navigation.palette.copyLinkFailed'))
-  }
-}
 
 async function loadProjectTeams() {
   loadingTeams.value = true
