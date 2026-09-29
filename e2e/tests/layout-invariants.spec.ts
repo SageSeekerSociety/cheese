@@ -485,7 +485,7 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
 
   for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library', 'settings', 'calendar']) {
     await page.goto(`${projectPath}/${sub}`);
-    const head = page.locator('.project-page__head');
+    const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();
     const [side, main] = await Promise.all([page.locator('.rail-header').boundingBox(), head.boundingBox()]);
     expect(side, sub).not.toBeNull();

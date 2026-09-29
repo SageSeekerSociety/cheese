@@ -20,6 +20,8 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
+import { menuActionOf } from '@/commands'
+import { topicActions } from '@/commands/topicActions'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
@@ -100,7 +102,7 @@ function toggleFocus() {
 }
 
 // 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
-// 放同一份，和侧栏那一行的操作一致：已归档的只有「取消归档」。
+// 放的是同一份（topicActions），只是这里重命名另起一页。
 const renaming = ref(false)
 const draftTitle = ref('')
 
@@ -115,35 +117,13 @@ function saveRename() {
   if (next) emit('rename', next)
 }
 
-const topicActions = computed<MenuAction[]>(() => {
-  if (!isWorkTopic.value) return []
-  const archived = props.topic.status === 'archived'
-  const actions: MenuAction[] = []
-  if (!archived)
-    actions.push({
-      key: 'rename',
-      label: t('work.room.menu.rename'),
-      icon: 'mdi-pencil-outline',
-      onSelect: startRename,
-    })
-  if (props.topic.can_archive)
-    actions.push(
-      archived
-        ? {
-            key: 'unarchive',
-            label: t('work.room.menu.unarchive'),
-            icon: 'mdi-archive-arrow-up-outline',
-            onSelect: () => emit('unarchive'),
-          }
-        : {
-            key: 'archive',
-            label: t('work.room.menu.archive'),
-            icon: 'mdi-archive-arrow-down-outline',
-            onSelect: () => emit('archive'),
-          }
-    )
-  return actions
-})
+const roomActions = computed<MenuAction[]>(() =>
+  topicActions(props.topic, {
+    rename: startRename,
+    archive: () => emit('archive'),
+    unarchive: () => emit('unarchive'),
+  }).map(menuActionOf)
+)
 </script>
 
 <template>
@@ -236,7 +216,7 @@ const topicActions = computed<MenuAction[]>(() => {
           :aria-label="t('work.room.menu.more')"
           @click="usageOpen = true"
         />
-        <MobileActionSheet v-model="usageOpen" :actions="topicActions">
+        <MobileActionSheet v-model="usageOpen" :actions="roomActions">
           <TopicUsageSummary
             :loading="usageLoading"
             :topic-usage="topicUsage"

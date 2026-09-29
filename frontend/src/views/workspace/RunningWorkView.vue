@@ -22,6 +22,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
@@ -29,7 +30,6 @@ import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTask
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import ProjectPage from '@/views/workspace/ProjectPage.vue'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -282,7 +282,7 @@ function openTask(task: RoomTask) {
 <template>
   <!-- 这一页是项目的落点，页头写的是它是什么（看板），项目名在侧栏顶上那一行——那一
        行点下去就回到这里。统计和「只看我的」归在页头上：它们说的是整块板。 -->
-  <ProjectPage :title="t('navigation.project.board')" width="full">
+  <AppPage :title="t('navigation.project.board')" width="full">
     <template #meta>
       <span class="board__tally">
         <template v-if="tally.length">
@@ -297,7 +297,7 @@ function openTask(task: RoomTask) {
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
          登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
-    <template v-if="mineHandle" #actions>
+    <template v-if="mineHandle" #controls>
       <button type="button" class="board__mine t-meta tap-target" :aria-pressed="mine" @click="toggleMine">
         <span class="board__sw" aria-hidden="true" />
         只看我的
@@ -441,7 +441,7 @@ function openTask(task: RoomTask) {
         </div>
       </template>
     </div>
-  </ProjectPage>
+  </AppPage>
 </template>
 
 <style scoped>

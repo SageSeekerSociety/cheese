@@ -9,7 +9,7 @@ export interface TopBarBack {
 
 // 顶栏的 ← 平常按路由声明的上一层走（`meta.backTo`）。页面里还有一层比路由更近的
 // 「上一步」时（话题里从别的页签回到对话），由页面接管这一下。整个应用只有一条顶
-// 栏，所以和 topBarActions 一样是模块级的一格。
+// 栏，所以和命令表（@/commands）一样是模块级的一格。
 export const topBarBack = shallowRef<TopBarBack | null>(null)
 
 /**
