@@ -20,6 +20,9 @@ import pytest
 from app.domain.agent import machine_launcher, place
 from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS, LAUNCH_ARGS
+from app.domain.agent.harness.claude_code.remote_execution import (
+    release as resident_release,
+)
 from app.domain.agent.harness.claude_code.session_launch import (
     ClaudeLaunch,
     session_settings,
@@ -754,6 +757,9 @@ def test_the_settings_file_written_is_the_sessions_settings(tmp_path):
     assert result.returncode == 0, result.stderr
     written = json.loads((session / ".claude/settings.json").read_text())
     assert written == session_settings()
+    assert (
+        seat_of(session) / "remote-session/release-ready"
+    ).read_text() == resident_release.digest(resident_release.sources())
 
 
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):

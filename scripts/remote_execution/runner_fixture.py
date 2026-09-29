@@ -54,20 +54,20 @@ def session_dir(home, seat=""):
 def room_home(home, target, seat=""):
     """Lay out a session home as the device launcher does; return its environment.
 
-    The helpers go where the launcher writes them (`.cheese/remote-execution`,
-    with the release marker it writes) and the room's settings into the config
-    dir, which `bootstrap` extends. The target is the SESSION's (`session_dir`),
-    as the launcher writes it, and the client prepares its own `remote-session/`
-    beside it from `CHEESE_EXECUTION_CONFIG`.
+    The helpers go where the launcher writes them (`.cheese/remote-execution`)
+    and the room's settings into the config dir, which `bootstrap` extends.
+    The target and release marker are the SESSION's (`session_dir`), as the
+    launcher writes them. The client prepares its own `remote-session/` beside
+    the target from `CHEESE_EXECUTION_CONFIG`.
     """
     helpers = home / ".cheese/remote-execution"
     helpers.mkdir(parents=True, exist_ok=True)
     sources = release.sources()
     for name, source in sources.items():
         (helpers / name).write_text(source)
-    (helpers / "release-ready").write_text(release.digest(sources))
     session = session_dir(home, seat)
     (session / "remote-session").mkdir(parents=True, exist_ok=True)
+    (session / "remote-session/release-ready").write_text(release.digest(sources))
     (session / "remote-target.json").write_text(json.dumps(target))
     config = home / ".claude"
     config.mkdir(exist_ok=True)

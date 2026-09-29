@@ -263,10 +263,6 @@ CHEESE_SKILLS"""
                 + ("" if source.endswith("\n") else "\n")
                 + "CHEESE_EXECUTION_SOURCE\n"
             )
-        execution_setup += (
-            f"printf %s {release.digest(helper_sources)} "
-            '> "$HOME/.cheese/remote-execution/release-ready"\n'
-        )
         execution_setup += """mkdir -p "$SEAT"
 printf '%s' "$CHEESE_EXECUTION_TARGET" \\
   > "$SEAT/remote-target.json"
@@ -275,6 +271,11 @@ EXECUTOR_TARGET="$SEAT/remote-target.json"
 export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
+        execution_setup += (
+            'mkdir -p "$SEAT/remote-session"\n'
+            f"printf %s {release.digest(helper_sources)} "
+            '> "$SEAT/remote-session/release-ready"\n'
+        )
         configure = f"""\
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under

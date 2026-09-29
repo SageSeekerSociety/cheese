@@ -455,8 +455,6 @@ def prepare(
         enableArtifact=False,
         attribution={"sessionUrl": False},
     )
-    # Hooks name this seat's execution target. Claude may reload them while
-    # another seat starts, so they cannot live in the room's config directory.
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
     gates = {
@@ -545,15 +543,8 @@ def prepare(
     env["CLAUDE_CODE_SHELL_PREFIX"] = str(prefix)
     command = [
         claude,
-        # The directories above the session's working directory are the session
-        # host's, and Claude Code reads CLAUDE.md, CLAUDE.local.md,
-        # .claude/CLAUDE.md and .claude/rules from every one of them up to `/`.
-        # This flag limits it to the user source, which is our config dir, so
-        # none of the host owner's files reach the room. Nothing else keeps them
-        # out: dropping it puts them back into every session's prompt without
-        # any error. The room's own instructions arrive through the config dir
-        # (`link_forwarded_user_context`). Guarded by
-        # tests/unit/test_session_host_files_stay_out_of_the_prompt.py.
+        # Exclude host ancestor instructions while retaining the room's user
+        # context; test_session_host_files_stay_out_of_the_prompt guards this.
         "--setting-sources",
         "user",
         "--settings",

@@ -486,6 +486,24 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     assert settings_path.read_text() == '{"keep":true}'
 
 
+def test_release_marker_is_read_from_the_requested_seat(tmp_path):
+    home = tmp_path / "room"
+    for name in ("first", "second"):
+        session = Path(seat_dir(str(home), name)) / "remote-session"
+        session.mkdir(parents=True)
+        (session / "release-ready").write_text(name)
+
+    for name in ("first", "second"):
+        command, env = DeviceChannel._screen_file_refresh(
+            str(home), release_state={}, execution_token=None, agent_handle=name
+        )
+        result = subprocess.run(
+            ["sh", "-c", command], capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0
+        assert result.stdout == name
+
+
 async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
     """一个话题两个座位，各写各的凭据文件（docs/manual/dev/turn.md #seats-session）。
 

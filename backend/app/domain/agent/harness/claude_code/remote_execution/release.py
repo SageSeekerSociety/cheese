@@ -187,7 +187,7 @@ def stage(home, sources, seat=""):
     settings_path = directory / "settings.json"
     settings = json.loads(settings_path.read_text())
     version = digest(sources)
-    ready = helpers / "release-ready"
+    ready = directory / "release-ready"
     if ready.exists() and ready.read_text() == version:
         return {"changed": False, "version": version}
     transcripts = list((config / "projects").glob("*/*.jsonl"))
@@ -268,9 +268,14 @@ def stage(home, sources, seat=""):
     return {"changed": True, "version": version}
 
 
-def acknowledge(home, version):
+def acknowledge(home, version, seat=""):
+    directory = (
+        Path(os.path.expandvars(seat)) / "remote-session"
+        if seat
+        else Path(os.path.expandvars(home)) / ".cheese/remote-session"
+    )
     replace(
-        Path(os.path.expandvars(home)) / ".cheese/remote-execution/release-ready",
+        directory / "release-ready",
         version,
     )
 

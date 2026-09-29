@@ -69,7 +69,7 @@ def test_staged_release_preserves_context_and_is_acknowledged_once(tmp_path):
     }
     staged = release.stage(str(tmp_path), sources)
     assert staged == {"changed": True, "version": release.digest(sources)}
-    assert not (helpers / "release-ready").exists()
+    assert not (directory / "release-ready").exists()
     current = json.loads((directory / "settings.json").read_text())
     assert current["customSetting"] is True
     assert current["permissions"]["deny"] == ["Bash(rm *)"]
@@ -122,8 +122,13 @@ def test_releasing_one_seat_keeps_the_other_seats_hooks(tmp_path):
         "cheese.py": CHEESE,
     }
 
-    release.stage(str(tmp_path), sources, seat=str(second.parent))
+    first_stage = release.stage(str(tmp_path), sources, seat=str(first.parent))
+    release.acknowledge(str(tmp_path), first_stage["version"], seat=str(first.parent))
+    second_stage = release.stage(str(tmp_path), sources, seat=str(second.parent))
 
+    assert first_stage["changed"]
+    assert second_stage["changed"]
+    assert not release.stage(str(tmp_path), sources, seat=str(first.parent))["changed"]
     assert (first / "settings.json").read_text() == original
     assert json.loads((config / "settings.json").read_text()) == base
     updated = json.loads((second / "settings.json").read_text())
@@ -284,9 +289,7 @@ def test_emitted_release_runs_without_backend_imports(tmp_path):
         check=True,
     )
     assert json.loads(result.stdout) is None
-    assert (
-        tmp_path / ".cheese/remote-execution/release-ready"
-    ).read_text() == "released"
+    assert (tmp_path / ".cheese/remote-session/release-ready").read_text() == "released"
 
 
 def test_release_bundles_locked_fuse_adapter_with_license():
@@ -386,7 +389,6 @@ class _Runner:
 def _released_home(tmp_path, monkeypatch):
     config = tmp_path / ".claude"
     config.mkdir(exist_ok=True)
-    platform_dir = tmp_path / ".cheese"
     # The screen's own seat, not the room: a release is that session's target
     # and that session's plugin.
     session = (
@@ -404,7 +406,7 @@ def _released_home(tmp_path, monkeypatch):
             "cheese.py": CHEESE,
         },
     )
-    return platform_dir / "remote-execution/release-ready"
+    return session / "release-ready"
 
 
 def _channel(hub):
