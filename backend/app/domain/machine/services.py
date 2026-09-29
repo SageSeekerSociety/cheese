@@ -44,7 +44,7 @@ from app.domain.machine.models import (
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.machine.progress import startup_progress
+from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
@@ -278,7 +278,9 @@ class MachineService:
                 owner_user_id=owner_user_id,
             )
             if warm is not None:
-                await startup_progress(topic_id, "已选中预热机器，正在分配给本话题")
+                await startup_progress(
+                    topic_id, "已选中预热机器，正在分配给本话题", machine_id=warm.id
+                )
                 return warm
         # The platform needs its own way in to enroll the machine later. The
         # operator's key too: the bootstrap key is erased at enrollment, and a
@@ -319,13 +321,16 @@ class MachineService:
         )
         async with _create_locks.setdefault(session_id or topic_id, asyncio.Lock()):
             await self._session.commit()
-            await startup_progress(topic_id, "正在请求创建机器")
+            await startup_progress(topic_id, "正在请求创建机器", machine_id=machine.id)
             try:
                 created = await self._client.create_machine(body)
             except BaseException:
                 # Nothing was created, so nothing is owed: give the slot back.
                 await startup_progress(
-                    topic_id, "创建请求未完成，无法确认机器状态", failed=True
+                    topic_id,
+                    "创建请求未完成，无法确认机器状态",
+                    machine_id=machine.id,
+                    failed=True,
                 )
                 await self._repo.delete(machine)
                 await self._session.commit()
@@ -339,7 +344,9 @@ class MachineService:
                 machine_id=int(created["id"]),
             )
             await self._session.commit()
-            await startup_progress(topic_id, "创建请求已受理，等待机器启动")
+            await startup_progress(
+                topic_id, "创建请求已受理，等待机器启动", machine_id=machine.id
+            )
         return machine
 
     async def settle_reservations(self) -> int:
@@ -637,6 +644,15 @@ class MachineService:
     ) -> list[tuple[uuid.UUID, str]]:
         return await self._repo.list_ready_topic_devices(device_id)
 
+    async def unsettled_startups(
+        self, now: datetime | None = None
+    ) -> list[ProjectMachine]:
+        """Session allocations whose room may still be waiting to hear how
+        their startup ended (``progress.settle_startups``)."""
+        return await self._repo.list_session_startups(
+            (now or datetime.now(UTC)) - SETTLE_WINDOW
+        )
+
     async def failed_topic_leases(self) -> list[FailedLease]:
         """Topic leases that will never become ready, with the reason in words."""
         out: list[FailedLease] = []
@@ -704,7 +720,10 @@ class MachineService:
                 }.get(status)
                 if text:
                     await startup_progress(
-                        machine.topic_id, text, failed=status == MachineStatus.error
+                        machine.topic_id,
+                        text,
+                        machine_id=machine.id,
+                        failed=status == MachineStatus.error,
                     )
         return await self._repo.set_state(
             machine,
@@ -869,7 +888,7 @@ class MachineService:
         )
 
         async def progress(text: str) -> None:
-            await startup_progress(machine.topic_id, text)
+            await startup_progress(machine.topic_id, text, machine_id=machine.id)
 
         await progress(
             f"机器已启动，开始接入（第 {(machine.enroll_attempts or 0) + 1} 次尝试）"
@@ -902,6 +921,7 @@ class MachineService:
                     if (machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS
                     else "等待自动重试"
                 ),
+                machine_id=machine.id,
                 failed=(machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS,
             )
             return await self._repo.mark_enroll_failed(machine, error=reason)
