@@ -182,7 +182,7 @@
       "upstreamModel": "Upstream model",
       "upstreamModelHint": "For example anthropic/glm-4.7",
       "apiBase": "Upstream host",
-      "apiBaseHint": "Must start with https://; leave empty for the upstream default endpoint",
+      "apiBaseHint": "Must start with https:// (except the metering proxy's ChatGPT entry, http://metering-proxy:8445/chatgpt/<account>); leave empty for the upstream default endpoint",
       "apiKey": "Upstream key",
       "apiKeyHint": "The upstream service's key, stored on the gateway and never shown here.",
       "apiKeyKeep": "Leave empty to keep the saved upstream key.",
