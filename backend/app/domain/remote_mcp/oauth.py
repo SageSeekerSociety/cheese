@@ -381,16 +381,11 @@ async def revoke(
     client_id: str,
     client_secret: str | None,
     auth_method: str,
-) -> bool:
-    """RFC 7009. True when the authorization server accepted the revocation."""
+) -> int:
+    """RFC 7009. The authorization server's HTTP status; 200 means it accepted."""
     headers: dict[str, str] = {}
     body = {"token": token, "token_type_hint": hint}
     _authenticate(body, headers, client_id, client_secret, auth_method)
     async with http.client() as client:
-        try:
-            response = await client.post(
-                revocation_endpoint, data=body, headers=headers
-            )
-        except httpx.HTTPError:
-            return False
-    return response.status_code == 200
+        response = await client.post(revocation_endpoint, data=body, headers=headers)
+    return response.status_code
