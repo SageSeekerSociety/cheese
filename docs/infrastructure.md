@@ -429,10 +429,29 @@ sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
 only their own messages, and the command returns empty rather than refusing,
 which reads exactly like "there are no logs".
 
-Retention is journald's default, `SystemMaxUse` = min(10% of the filesystem,
-4 GB). Measured on dev, the backend writes ~61 MB/day, so 4 GB is on the order
-of two months; the journal also gives back space automatically when the disk
-runs low (`SystemKeepFree`), so it cannot be the thing that fills a box.
+Retention is set by `deploy/journald-cheese.conf`, which every deploy installs
+as `/etc/systemd/journald.conf.d/cheese.conf`: up to 40 GB and a month, and
+never below 40 GB free on the disk, whichever is tighter. At journald's own
+default (a tenth of the filesystem, at most 4 GB) dev kept about thirteen hours
+on 2026-09-29, and the evidence for a failure was gone before anyone looked.
+`sudo journalctl --disk-usage` and
+`sudo journalctl -t cheese-backend-1 -o short-iso | head -1` (the oldest line)
+say how far back a box reaches now.
+
+How long that is depends on what the app tier writes, so some lines are not
+written at all:
+
+- The HTTP clients' own request lines (`httpx`, `httpcore`) are logged only at
+  WARNING. The backend calls the device connection tens of times a second, and
+  those lines were nine in ten of its output.
+- The device connection's access log skips internal calls and health probes
+  that succeeded; a failed one is still logged.
+- The backend runs without uvicorn's access log, because its own `req` line
+  already records every request.
+
+The nginx access logs (`cheese-api-front`, `cheese-app-router`, the frontend)
+record the path and never the query string, because several URLs carry a
+credential in it (the room chat socket's `?token=`, `/llm/tunnel?token=`).
 
 The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
 covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
