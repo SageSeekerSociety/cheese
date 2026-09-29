@@ -98,7 +98,23 @@ target="$os-$arch"
 dest="$HOME/.local/bin"
 mkdir -p "$dest"
 echo "downloading cheesehost ($target)…"
-curl -fsSL "$ORIGIN/connector/latest/$target/cheesehost" -o "$dest/cheesehost"
+# A download through a relay can be cut mid-transfer, and plain --retry does
+# not retry a cut one (curl 56). Each attempt resumes the partial file (-C -);
+# --retry-all-errors would do this in one call but curl before 7.71 rejects it.
+partial="$dest/cheesehost.part"
+rm -f "$partial"
+attempt=1
+until curl -fsSL -C - -o "$partial" "$ORIGIN/connector/latest/$target/cheesehost"; do
+  if [ "$attempt" -ge 5 ]; then
+    rm -f "$partial"
+    echo "download failed after $attempt attempts"
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  echo "download interrupted; resuming (attempt $attempt)…"
+  sleep 2
+done
+mv "$partial" "$dest/cheesehost"
 chmod +x "$dest/cheesehost"
 echo "installed to $dest/cheesehost"
 case ":$PATH:" in *":$dest:"*) : ;; *) echo "add $dest to your PATH" ;; esac
@@ -151,8 +167,19 @@ $exe = Join-Path $dir 'cheesehost.exe'
 New-Item -ItemType Directory -Force $dir | Out-Null
 Write-Host "downloading cheesehost (windows-$arch)..."
 $partial = "$exe.part"
-& curl.exe -fsSL -o $partial "$origin/connector/latest/windows-$arch/cheesehost.exe"
-if ($LASTEXITCODE -ne 0) { throw "download failed ($LASTEXITCODE)" }
+Remove-Item -Force -ErrorAction SilentlyContinue $partial
+$url = "$origin/connector/latest/windows-$arch/cheesehost.exe"
+# Resume a download cut mid-transfer, as install.sh does.
+for ($attempt = 1; ; $attempt++) {
+  & curl.exe -fsSL -C - -o $partial $url
+  if ($LASTEXITCODE -eq 0) { break }
+  if ($attempt -ge 5) {
+    Remove-Item -Force -ErrorAction SilentlyContinue $partial
+    throw "download failed ($LASTEXITCODE)"
+  }
+  Write-Host "download interrupted; resuming (attempt $($attempt + 1))..."
+  Start-Sleep -Seconds 2
+}
 try {
   Move-Item -Force $partial $exe
 } catch {
