@@ -13,6 +13,7 @@ from app.domain.agent import (
     forge_cli,
     machine_tunnel,
     preview_tunnel,
+    project_hooks,
     toolchain,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -27,7 +28,7 @@ from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetch
 from app.domain.project_skill.service import project_skill_names, session_skill_files
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
-# every task checkout backed up and pushed.
+# every task checkout with something unpushed backed up and pushed.
 CHEESE_SYNC_SCRIPT = """#!/bin/sh
 exec cheese sync --all
 """
@@ -51,6 +52,7 @@ def file_sources():
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
         "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
+        "remote-execution/project_hooks.py": Path(project_hooks.__file__).read_text(),
         "remote-execution/portable.py": (
             Path(runtime.__file__).with_name("portable.py").read_text()
         ),

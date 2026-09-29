@@ -1080,7 +1080,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
     in_flight = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_deliver(tid, text, images=None, agent_handle=None):
+    async def slow_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
         in_flight.set()
         await release.wait()
         return True
@@ -1134,9 +1134,11 @@ async def test_midturn_message_stays_pending_until_its_receipt(
     )
 
     delivered_texts: list[str] = []
+    owed: list[bool] = []
 
-    async def fake_deliver(tid, text, images=None, agent_handle=None):
+    async def fake_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
         delivered_texts.append(text)
+        owed.append(owes_reply)
         return True
 
     monkeypatch.setattr(svc._compute, "deliver", fake_deliver)
@@ -1148,6 +1150,8 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         is True
     )
     assert len(delivered_texts) == 1
+    # A person's message: the session answers it before it does anything else.
+    assert owed == [True]
 
     async def _consumed() -> bool:
         async with factory() as session:

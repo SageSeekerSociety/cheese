@@ -24,6 +24,7 @@ import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import AdminSubscriptionImportDialog from '@/components/admin/AdminSubscriptionImportDialog.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { relTime } from '@/lib/relTime'
 import { fmtCost, fmtNum, fmtPercent, fmtSI } from '@/lib/usageFormat'
 
@@ -888,7 +889,7 @@ onMounted(load)
               <li v-for="(item, i) in audit" :key="i" class="amd__auditRow">
                 <div class="amd__auditLine">
                   <span class="amd__auditTime t-meta-read t-num">{{ relTime(item.created_at) }}</span>
-                  <span class="amd__auditWho t-body">{{ item.actor_handle }}</span>
+                  <span class="amd__auditWho t-body"><UserRef :handle="item.actor_handle" /></span>
                   <span class="amd__auditWhat t-body">
                     {{ auditActionLabel(item.action) }}
                     <span class="amd__auditTarget t-num">{{ item.target }}</span>

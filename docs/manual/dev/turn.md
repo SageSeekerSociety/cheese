@@ -6,7 +6,7 @@ covers:
   - backend/app/domain/agent/chat.py
   - backend/app/domain/agent/runtime.py
   - backend/app/domain/agent/compute.py
-  - backend/app/domain/agent/harness/
+  - backend/app/domain/machine/session_work.py
   - backend/app/domain/agent/host_failure.py
   - backend/app/domain/agent/dispatch_log.py
   - backend/app/domain/topic/naming.py
@@ -16,7 +16,7 @@ covers:
 
 从有人在话题里点名 AI 队友，到结果回到房间。
 
-> 讲：一轮的生命周期和各环节的模块。不讲：模型请求本身，见[模型调用流程](/dev/llm)；机器怎么接进来，见[设备与机器接入](/dev/machines)。
+> 讲：一轮经过哪几步、每步在路径上做什么。不讲：每一步的内部实现，各节链到那一页；模型请求本身见[模型调用流程](/dev/llm)，机器怎么接进来见[设备与机器接入](/dev/machines)。
 
 下面把这个过程放一遍。每一步下面的链接指到本节对应的那一段。
 
@@ -50,50 +50,43 @@ steps:
 
 ## 1. 发消息与寻址 {#address}
 
-用户消息由 `ChatService.post_user_message` 在一个短事务里落库，并同时写好点名通知（`backend/app/domain/agent/chat.py`）。浏览器重试同一条消息时按 `client_id` 去重，不会发两遍。
-
-跑不跑一轮只看寻址结果：`runtime._a_turn_was_addressed` 判断这条消息点到的人里，有没有谁是「靠一轮收到」的，也就是 AI 队友。没点名 AI 队友，房间里人和人的对话不会触发一轮。平台自己的投递也一样，只能点名，不能凭空起一轮。
+用户消息由 `ChatService.post_user_message` 在一个短事务里落库，并同时写好点名通知；浏览器重试同一条消息时按 `client_id` 去重。跑不跑一轮只看寻址结果：`runtime._a_turn_was_addressed` 判断这条消息点到的人里有没有 AI 队友。没点名 AI 队友，房间里人和人的对话不会触发一轮；平台自己的投递也一样，只能点名，不能凭空起一轮。一轮在库里是什么、后台谁推着走，见[会话与轮次](/dev/session)。
 
 ## 2. 排队还是插话 {#serialize}
 
-`ChatService.converse` 先把人的消息持久化并广播，再进这位队友在这个话题上的串行锁（座位锁，见[同一话题里的几个 AI 队友](#seats)）。所以发消息永远不会被正在跑的一轮挡住。
-
-- 这位队友在这个话题上没有在跑的一轮：开一轮新的。
-- 它已经有一轮在跑：`merge_into_running_turn` 把新消息直接送进正在运行的会话。芝士在下一步之前读到它，读到的格式和开场时的消息一样。
-- 在跑的是另一位队友：不等它，在这位队友自己的座位上并行开一轮。
+`ChatService.converse` 先把人的消息持久化并广播，再进这位队友在这个话题上的串行锁（座位锁）。所以发消息永远不会被正在跑的一轮挡住：没有在跑的一轮就开一轮新的；已经有一轮在跑就把消息并进正在运行的会话（`merge_into_running_turn`），芝士要先回话（见[芝士怎么说话](#publish)）；在跑的是另一位队友就不等它，在这位自己的座位上并行开一轮。座位是什么、锁按什么加，见下面[同一话题里的几个 AI 队友](#seats)。
 
 ## 3. 找到会话、选机器 {#compute}
 
-`ComputePool`（`compute.py`）回答「这一轮在哪跑」，有几种供给：
+`ComputePool`（`compute.py`）回答「这一轮在哪跑」，有四种供给：本机沙盒容器、中心会话加远端执行（`central_provider.py`）、设备（`device_provider.py`）、云机器（`cloud_provider.py`）。每种都保持一个可以重连的长会话，而不是一次性子进程。
 
-- **本机沙盒容器**：主 API 通过 docker.sock 起的兄弟容器。
-- **中心会话 + 远端执行**（`central_provider.py`）：会话进程在中心主机上，文件和命令经执行器落到租用的机器上。需要把会话重新落到那台机器上时（没有会话在跑，或该重启了），开跑前最多花 15 秒（`MACHINE_PROBE_TIMEOUT_S`）问一下租用的机器还在不在。
-- **设备**（`device_provider.py`）：用户接入的电脑，会话直接开在那台机器的「屏幕」里。
-- **云机器**（`cloud_provider.py`）：每个话题一台 MicroCloud 机器。
-
-每种供给都保持一个可以重连的长会话，而不是一次性子进程。
-
-一个话题只用一台工作电脑，见下一节。
+会话进程和干活的那台机器是两层，见[「会话机」这一层](/dev/overview#session-machine)；四种机器怎么被选中和准备见[设备与机器接入](/dev/machines#kinds)；一个工具调用怎么从会话机落到工作机器上见[执行通道](/dev/execution)。
 
 ## 4. 启动或续跑骨架 {#harness}
 
-骨架有三种：Claude Code、Codex、Pi（`backend/app/domain/agent/harness/`）。每种骨架在自己的目录下把协议翻译成统一的事件，由 `backend/app/domain/agent/service.py` 接住。会话 id 存在话题上，下一轮续跑同一个会话。
-
-注入给芝士的操作说明按话题当前所处的阶段决定（`stages.py` 的 `TopicStage`）：任务执行、闸门、等采纳、合并冲突、已归档，五个阶段各注入各的那一段。「拆活」和「干活」是同一段：分开注入会让房间在派活时读不到该怎么交付。
+骨架是 Claude Code、Codex、Pi 三种之一。会话 id 存在话题上，下一轮续跑同一个会话。本次跑哪个由部署和项目设置决定，怎么把协议翻译成统一的事件见[骨架](/dev/harness)。按话题所处阶段注入哪一段操作说明，见[技能](/dev/skills#stage)和[提示词注入与上下文管理](/dev/context)。
 
 ## 5. 芝士怎么说话 {#publish}
 
-芝士的普通输出不进房间。要发言必须调用平台工具 `chat_send`；平台的其他动作（任务卡、验收、记忆等）也是会话侧的 MCP 工具，只有必须在机器上跑的动作才走 `cheese` 命令行，见 [cheese CLI 原理](/dev/cli)。
+芝士的普通输出不进房间，要发言必须调用平台工具 `chat_send`。工具调用、施工现场的进度作为活动块记录下来；一轮很久没有发言时，平台会给它投一条内部提醒。平台工具表怎么送到每种骨架手里、机器够不着时哪些工具还在，见[平台工具与会话侧 MCP](/dev/mcp)；只有必须在机器上跑的动作才走 `cheese` 命令行，见[cheese CLI 原理](/dev/cli#sandbox)。
 
-工具调用、施工现场的进度作为活动块记录下来。一轮很久没有发言时，平台会给它投一条内部提醒（`remind_silent_turns`）。
+人点名芝士说的话，芝士先在房间里回一句，再做别的：开这一轮的那条消息，和一轮进行中插进来的那条，都一样。从这条消息送进会话起，会话调 `chat_send` 或 `cheese_ask` 之前，别的工具一律被拒，拒绝的原因会告诉它先回话。平台自己的通知、巡检、没有点名芝士的消息不算；分身向启动它的会话汇报，不受这条约束。规则写在所有骨架共用的 runner 里（`harness/driven/runner.py`），每种骨架只负责在自己的工具路径上照它拒绝：Claude Code 的函数钩子（`remote_execution/proxy.js`）、Codex 的动态工具（`codex/tools.py`）、pi 的扩展（`pi/platform.ts`）。
+
+一轮也不能在这时候结束：模型不调任何工具、只在自己那边写完就停，会话会被拦下一次，要它先在房间里回话。怎么拦是各骨架自己的：Claude Code 用 Stop 钩子把这一轮接着跑下去；Codex 没有能让一轮继续的东西，于是 runner 先不交出这一轮的结束，在同一件事里再开一轮带着提醒；pi 已经把最后一条写下了，于是 runner 给会话开一轮它自己的（房间照看后台任务唤醒的那种轮次记账）。只拦一次：拦过之后还是不回话，这一轮照常结束，runner 的日志记下这件事。
+
+消息只能在两次工具调用之间送到模型面前，所以人说话时如果芝士正卡在一条长命令上，这条命令会被转到后台继续跑，调用立刻返回，芝士马上读到消息（相当于在终端里按 Ctrl+B）：Claude Code 由 runner 发 `background_tasks` 控制请求，前台的 Bash 和分身一起转；Codex 的 Bash 在执行器上跑，由执行器停止等待、把命令交还成后台任务（`runtime.bash`）；pi 的 bash 由平台扩展接管，转成后台任务后用 `bash_read` / `bash_kill` 读和停。文件读写和 MCP 调用转不了，它们本来就短。
 
 ## 6. 失败、超时与发版 {#failure}
 
-- **机器的错**：记在设备上而不是话题上。同一台机器连续两次同类失败会被隔离一段时间；话题不会被悄悄换到另一台机器，由人决定怎么处理（`host_failure.py`）。
-- **结果未知的副作用**：带幂等 id 的执行器调用会先在平台侧记一行（`dispatch_log.py`），机器突然没了之后，重派时能分清「确定没做」和「可能做过」。
-- **会话没起来**：会话（Claude Code、pi 或 Codex）在启动时就退出了（拿不到工作电脑、缺程序、执行容器建不起来、另一个会话进程还占着目录等），房间里只有平台的一句话，按 runner 日志里的记录归类（`platform_failures.classify_session_start`），认不出的原因也只说「原因没能识别」；那次启动打印的原文在现场同一行下面，点开可看全文。
-- **额度用完**：准入拒绝，房间里出现平台提示。
-- **发版**：旧的主 API 进程把正在跑的轮交给新进程；新进程用 `recover_sessions` 重新监听这些会话，并补上没人监听那段时间里它们说过的话。
+- **机器的错**：记在设备上而不是话题上，同一台机器连续两次同类失败会被隔离一段时间（`host_failure.py`）；话题不会被悄悄换到另一台机器，由人决定怎么处理。见[设备与机器接入](/dev/machines#failure)。
+- **结果未知的副作用**：带幂等 id 的执行器调用会先在平台侧记一行（`dispatch_log.py`），机器突然没了之后，重派时能分清「确定没做」和「可能做过」。见[会话与轮次](/dev/session#dispatch)。
+- **会话没起来**：按 runner 日志里的记录归类（`platform_failures.classify_session_start`），认不出的原因也只说「原因没能识别」；那次启动打印的原文在现场同一行下面，点开可看全文。
+- **额度用完**：准入拒绝，房间里出现平台提示。见[准入与供给](/dev/admission)。
+- **发版**：旧的主 API 进程把正在跑的轮交给新进程，见下面「发版时的交接」。
+
+### 发版时的交接 {#resume}
+
+交接时新旧两个进程同时连着同一个数据库：新进程重新监听活过这个进程的会话，补上没人监听那段时间里它们说过的话；开会头的轮被收掉（`resume_orphans`），消息收了却没开跑的轮补上（`resume_lost_messages`）。谁在跑哪些轮、哪些会话归谁监听由一把数据库锁决定，细节见[会话与轮次](/dev/session#handover)和[部署拓扑](/dev/topology#handover)。
 
 ## 同一话题里的几个 AI 队友 {#seats}
 

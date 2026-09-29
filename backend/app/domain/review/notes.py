@@ -54,8 +54,6 @@ class NoteCode(enum.StrEnum):
     merge_refused = "merge_refused"
     #: 检查全绿，但改动超出了人当初授权的范围，平台扣住不合。
     merge_withheld = "merge_withheld"
-    #: PR 在 GitHub 上被关掉且没有合并。
-    pr_closed_unmerged = "pr_closed_unmerged"
     #: 递卡时开 PR 失败，这张卡还没有 PR。
     pr_open_failed = "pr_open_failed"
     #: 采纳现场补开 PR 失败，采纳已停下。
@@ -98,7 +96,6 @@ _STUCK = frozenset(
         NoteCode.checks_failed,
         NoteCode.merge_refused,
         NoteCode.merge_withheld,
-        NoteCode.pr_closed_unmerged,
         NoteCode.pr_open_failed,
         NoteCode.accept_pr_open_failed,
         NoteCode.accept_no_branch,

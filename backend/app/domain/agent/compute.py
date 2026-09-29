@@ -98,6 +98,7 @@ class ComputeProvider(Protocol):
         *,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         """Inject text into the session already running on this topic, if this
         backend has one. False = "nothing live here" — the caller queues instead.
@@ -190,6 +191,7 @@ class ComputePool:
         *,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
+        owes_reply: bool = False,
     ) -> bool:
         """Deliver to the owner selected when starting or recovering the work.
 
@@ -214,6 +216,7 @@ class ComputePool:
                 images=images,
                 expected_work_id=expected_work_id,
                 agent_handle=agent_handle,
+                owes_reply=owes_reply,
             )
             if delivered:
                 return True

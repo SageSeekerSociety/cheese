@@ -9,14 +9,16 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatus } from '../../lib/siteStatus'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
   blocks: Block[]
   working: boolean
   turns: Record<string, number>
-  /** 房间里不止一个队友时，这一行说的是哪一个。 */
+  /** 房间里不止一个队友时，这一行说的是哪一个：名字，和点它要去的 handle。 */
   agent?: string
+  agentHandle?: string | null
 }>()
 
 // 一轮在跑的时候每秒走一格，「已用」和「最近活动」才是活的；闲着的时候没有要走的
@@ -42,6 +44,7 @@ const status = computed(() => siteStatus(props.blocks, props.working, props.turn
 // 键名写全，不拼：拼出来的键谁也搜不到，目录那道闸门会把它们当成没人用的。
 const PLAIN: Record<Exclude<SiteState, 'acting' | 'retrying'>, string> = {
   thinking: 'work.room.site.status.thinking',
+  compacting: 'work.room.site.status.compacting',
   waiting: 'work.room.site.status.waiting',
   stopped: 'work.room.site.status.stopped',
   idle: 'work.room.site.status.idle',
@@ -65,6 +68,7 @@ const TONE: Record<SiteState, string> = {
   thinking: 'ok',
   acting: 'ok',
   retrying: 'warn',
+  compacting: 'ok',
   waiting: 'warn',
   stopped: 'danger',
   idle: 'muted',
@@ -96,7 +100,7 @@ const shown = computed(() => props.working || status.value.lastAt !== null)
       class="status-dot site-status__dot"
       :class="[`status-dot--${TONE[status.state]}`, { 'site-status__dot--live': working }]"
     />
-    <span v-if="agent" class="site-status__agent">{{ agent }}</span>
+    <span v-if="agent" class="site-status__agent"><UserRef :handle="agentHandle" :name="agent" /></span>
     <span class="site-status__state" aria-live="polite">{{ label }}</span>
     <span v-if="elapsed !== null" class="t-meta">{{
       t('work.room.site.status.elapsed', { span: formatSpan(elapsed) })
@@ -123,8 +127,6 @@ const shown = computed(() => props.working || status.value.lastAt !== null)
 }
 .site-status__agent {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
 }
 .site-status__state {
   font-size: 13px;

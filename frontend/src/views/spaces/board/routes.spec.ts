@@ -40,7 +40,9 @@ vi.mock('./pages/Announcements.vue', () => ({ default: blank }))
 vi.mock('./pages/Review.vue', () => ({ default: blank }))
 vi.mock('./pages/Members.vue', () => ({ default: blank }))
 vi.mock('./pages/TaskInsights.vue', () => ({ default: blank }))
-// 第五批收进来的三处（底下都是老页面，包一层挂上来）。
+// 三处子页的替身：详情、发题、看板都各自按原型重画过了（第八、第十、第七批），
+// 底下早已不再有老页面 —— 它们在这儿只剩一个理由：这一份测的是地址接没接住，
+// 不是页面长什么样。
 vi.mock('./pages/TaskDetail.vue', () => ({ default: blank }))
 vi.mock('./pages/TaskPublish.vue', () => ({ default: blank }))
 vi.mock('./pages/Analytics.vue', () => ({ default: blank }))

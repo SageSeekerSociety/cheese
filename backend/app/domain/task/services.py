@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 
 if TYPE_CHECKING:
@@ -28,6 +30,11 @@ from app.domain.task.repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
+)
+from app.domain.task.submission_state import (
+    COMPLETION_STATUS_NOT_SUBMITTED,
+    refresh_completion_status,
+    refresh_completion_status_for_submission,
 )
 from app.domain.user.repositories import UserRealNameRepository
 
@@ -245,7 +252,7 @@ class TaskMembershipService:
             is_team=is_team,
             email=email or "",
             phone=phone or "",
-            completion_status="NOT_SUBMITTED",
+            completion_status=COMPLETION_STATUS_NOT_SUBMITTED,
             created_at=now,
             updated_at=now,
             deadline=deadline,
@@ -640,11 +647,16 @@ class TaskSubmissionService:
         entry_repo: TaskSubmissionEntryRepository,
         review_repo: TaskSubmissionReviewRepository,
         membership_repo: TaskMembershipRepository,
+        session: AsyncSession | None = None,
     ) -> None:
         self._submission_repo = submission_repo
         self._entry_repo = entry_repo
         self._review_repo = review_repo
         self._membership_repo = membership_repo
+        # 推进完成状态要在同一个事务里读提交表、写领取行 —— 仓库共用这一个 session，
+        # 路由的工厂（``get_task_submission_service``）永远把它传进来。为 None 只有
+        # 单元测试那种「四个仓库全是 AsyncMock」的构造：那里没有库可写，也就不推。
+        self._session = session
 
     async def _build_member_summary(self, membership: TaskMembership) -> dict:
         """Build a minimal TaskParticipantSummaryDTO-like dict."""
@@ -786,6 +798,11 @@ class TaskSubmissionService:
         )
         review = await self._review_repo.get_by_submission_id(submission.id)
 
+        # 交了这一版之后，这条领取的完成状态就该是「待评审」了 —— 推一次，别等
+        # 看板自己去猜（以前这条路一个状态都不写，看板于是永远显示「未提交」）。
+        if self._session is not None:
+            await refresh_completion_status(self._session, participant)
+
         return await self._build_submission_dto(
             submission=submission,
             membership=participant,
@@ -851,6 +868,11 @@ class TaskSubmissionService:
             await self._entry_repo.list_by_submission_id(submission_id=submission.id)
         )
         review = await self._review_repo.get_by_submission_id(submission.id)
+
+        # 改一版本身不动评审，但这条领取的状态可能是历史存量里的错值（这条轴以前
+        # 没人推进），顺手按同一口径纠正一次。
+        if self._session is not None:
+            await refresh_completion_status(self._session, participant)
 
         return await self._build_submission_dto(
             submission=submission,
@@ -1014,12 +1036,17 @@ class TaskSubmissionReviewService:
         membership_repo: TaskMembershipRepository | None = None,
         task_repo: TaskRepository | None = None,
         rank_service: SpaceRankService | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._review_repo = review_repo
         self._submission_repo = submission_repo
         self._membership_repo = membership_repo
         self._task_repo = task_repo
         self._rank_service = rank_service
+        # 同 TaskSubmissionService：推进完成状态要在这个事务里读提交与评审、写领取
+        # 行。路由工厂永远传 session；为 None 只在单元测试那种全 AsyncMock 的构造里
+        # 出现，那里没有库可写。
+        self._session = session
 
     async def get_review_dto(self, submission_id: int) -> dict:
         review = await self._review_repo.get_by_submission_id(submission_id)
@@ -1053,6 +1080,8 @@ class TaskSubmissionReviewService:
             previous_accepted=None,
             new_accepted=accepted,
         )
+        # 判通过就该是 SUCCESS，驳回就该是「可重交」—— 这一步是这条轴真正的推进者。
+        await self._refresh_membership_status(submission_id)
         dto = await self.get_review_dto(review.submission_id)
         dto["hasUpgradedParticipantRank"] = has_upgraded
         return dto
@@ -1082,6 +1111,8 @@ class TaskSubmissionReviewService:
             previous_accepted=previous_accepted,
             new_accepted=review.accepted,
         )
+        # 改判也要跟上：通过改成驳回，这条领取就从 SUCCESS 退回「可重交」。
+        await self._refresh_membership_status(submission_id)
         dto = await self.get_review_dto(submission_id)
         dto["hasUpgradedParticipantRank"] = has_upgraded
         return dto
@@ -1091,6 +1122,19 @@ class TaskSubmissionReviewService:
         if review is None:
             return
         await self._review_repo.soft_delete(review)
+        # 撤销评审是「把话收回去」：没有评审了，这一版就回到队列里，状态必须跟着退回
+        # 去，不能留在 SUCCESS 上。
+        await self._refresh_membership_status(submission_id)
+
+    async def _refresh_membership_status(self, submission_id: int) -> None:
+        """这次评审写入之后，重推那条领取的完成状态。
+
+        三条评审路由（POST / PATCH / PUT / DELETE）都落在上面三个方法里，所以推进
+        这条轴只有一个入口，与 ``app.domain.task.submission_state`` 同一口径。
+        """
+        if self._session is None:
+            return
+        await refresh_completion_status_for_submission(self._session, submission_id)
 
     async def _maybe_award_rank(
         self,

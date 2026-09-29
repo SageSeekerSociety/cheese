@@ -101,6 +101,16 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
+  it('offers the desktop app from this site, not from GitHub', async () => {
+    const view = await mount()
+    expect(view.getByRole('link', { name: '下载' }).getAttribute('href')).toBe('#download')
+    const mac = view.getByRole('link', { name: /Mac（Apple 芯片）/ })
+    expect(mac.getAttribute('href')).toBe('/downloads/desktop/Cheese-arm64.dmg')
+    expect(view.getByRole('link', { name: /Windows/ }).getAttribute('href')).toBe(
+      '/downloads/desktop/Cheese-Setup-x64.exe'
+    )
+  })
+
   it('keeps the introduction open to signed-in users and links back to work', async () => {
     AccountService.loggedIn = true
     const view = await mount('/about')

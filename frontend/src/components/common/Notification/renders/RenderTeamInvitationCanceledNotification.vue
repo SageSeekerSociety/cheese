@@ -1,7 +1,13 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
+    <div class="text-body-2 text-medium-emphasis mt-1">
+      <i18n-t v-if="canceler" keypath="notifications.TEAM_INVITATION_CANCELED.body" tag="span">
+        <template #canceler><UserRef :handle="canceler.handle" :name="canceler.name" :project-id="null" /></template>
+        <template #team>{{ team?.name || t('notifications.common.unknownTeam') }}</template>
+      </i18n-t>
+      <template v-else>{{ body }}</template>
+    </div>
   </div>
 </template>
 
@@ -12,6 +18,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getEntity, getStringMetadata } from './NotificationRenderUtils'
+
+import UserRef from '@/components/common/UserRef.vue'
 
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()

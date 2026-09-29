@@ -1,4 +1,5 @@
 // Plugins
+import os from 'node:os'
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
@@ -10,6 +11,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
+
+// 每个 fork 常驻约 3–5 GB（happy-dom 加上各自编一遍 Vuetify/SCSS），所以按内存算上限：每 6 GB 一个、封顶 16，VITEST_MAX_FORKS 可覆盖。
+const envMaxForks = Number.parseInt(process.env.VITEST_MAX_FORKS ?? '', 10)
+const maxForks = envMaxForks > 0 ? envMaxForks : Math.max(1, Math.min(16, Math.floor(os.totalmem() / 6 / 1024 ** 3)))
 
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
@@ -493,7 +498,7 @@ export default defineConfig({
     // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
     // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
     poolOptions: {
-      forks: { minForks: 1, maxForks: 16 },
+      forks: { minForks: 1, maxForks },
       threads: { minThreads: 1, maxThreads: 16 },
     },
   },
