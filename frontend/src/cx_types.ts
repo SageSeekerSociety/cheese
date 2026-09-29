@@ -1304,7 +1304,8 @@ export interface AgentType {
   // The system prompt this type runs under (角色设定).
   body: string
   skills: string[]
-  mcp_servers: string[]
+  // Claude Code's subagent `mcpServers`: a server name, or { name: definition }.
+  mcp_servers: (string | Record<string, Record<string, unknown>>)[]
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1317,7 +1318,6 @@ export interface AgentType {
 export interface AgentConfiguration {
   body: string
   skills: string[]
-  mcp_servers: string[]
   model?: string | null
 }
 

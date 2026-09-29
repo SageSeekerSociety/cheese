@@ -701,6 +701,37 @@ class RemoteClient:
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
+    def agent_servers(self):
+        """The teammate's type's own stdio servers (`agent_mcp`): they run on
+        the room's machine, which is handed each one's definition with the
+        call. A name the checkout's `.mcp.json` or a remote server already uses
+        stays that server's, as committed configuration decides."""
+        taken = {*self.config.get("mcp_servers", []), *self.remote_servers()}
+        return [
+            name for name in self.config.get("agent_mcp") or {} if name not in taken
+        ]
+
+    def session_servers(self):
+        """Every MCP server a session lists: the machine's stdio servers and the
+        type's, once the session is on the machine, and the remote ones.
+
+        Before then (a session at the placeholder) it lists no stdio server at
+        all, the checkout's or the type's: listing one would take the machine
+        for a turn that may never need it. The session is relaunched onto the
+        machine once it has one, and lists them then."""
+        on_machine = not (
+            self.config.get("kind") == "deferred"
+            and self.config.get("workspace") == DEFERRED_WORKSPACE
+        )
+        return [
+            *(
+                [*self.config.get("mcp_servers", []), *self.agent_servers()]
+                if on_machine
+                else []
+            ),
+            *self.remote_servers(),
+        ]
+
     def call(self, method, params=None, *, abandoned=None, preparing=None):
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
@@ -805,13 +836,11 @@ class RemoteClient:
             params = params or {}
             server = params.get("server")
             if not server:
-                return {
-                    "servers": [
-                        *self.config.get("mcp_servers", []),
-                        *self.remote_servers(),
-                    ]
-                }
-            if server not in self.config.get("mcp_servers", []):
+                return {"servers": self.session_servers()}
+            if server not in [
+                *self.config.get("mcp_servers", []),
+                *self.agent_servers(),
+            ]:
                 raise ValueError("Unknown project MCP server")
             tool = params.get("name")
             method = "mcp"
@@ -827,6 +856,12 @@ class RemoteClient:
                     else {}
                 ),
             }
+        if (
+            method in {"invoke", "mcp"}
+            and params
+            and params.get("server") in self.agent_servers()
+        ):
+            params = {**params, "spec": self.config["agent_mcp"][params["server"]]}
         if self.config.get("kind") == "device":
             deadline = min(
                 operation_deadline, time.monotonic() + CONNECT_RETRY_WINDOW_S

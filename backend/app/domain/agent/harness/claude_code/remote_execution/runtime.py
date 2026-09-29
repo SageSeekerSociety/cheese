@@ -499,10 +499,22 @@ class Executor:
             )
             output.flush()
 
-    def client(self, server):
+    def client(self, server, spec=None):
+        """The process serving ``server``. ``spec`` is a definition the call
+        brought with it — an agent type's own server, which no `.mcp.json` on
+        this machine names — and the process is kept under the definition as
+        well as the name, so two teammates' types never share one."""
+        key = (
+            server
+            if spec is None
+            else "agent:"
+            + server
+            + ":"
+            + hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
+        )
         with self.client_lock:
-            if server not in self.clients:
-                if server == "native":
+            if key not in self.clients:
+                if server == "native" and spec is None:
                     config_dir = self.state / "native-config"
                     config_dir.mkdir(exist_ok=True)
                     command = [
@@ -533,7 +545,8 @@ class Executor:
                         env.pop(key, None)
                     cwd = self.root
                 else:
-                    spec = self.config["mcp_servers"][server]
+                    if spec is None:
+                        spec = self.config["mcp_servers"][server]
                     if spec.get("type", "stdio") != "stdio":
                         raise ValueError(
                             "Remote process servers require stdio transport"
@@ -543,17 +556,13 @@ class Executor:
                     cwd = spec.get("cwd", str(self.root))
                 log = (
                     self.state
-                    / (
-                        "mcp-"
-                        + hashlib.sha256(server.encode()).hexdigest()[:12]
-                        + ".log"
-                    )
+                    / ("mcp-" + hashlib.sha256(key.encode()).hexdigest()[:12] + ".log")
                 ).open("a")
                 try:
-                    self.clients[server] = MCPProcess(command, cwd, env, log)
+                    self.clients[key] = MCPProcess(command, cwd, env, log)
                 finally:
                     log.close()
-            return self.clients[server]
+            return self.clients[key]
 
     def _ready_cli_worker(self):
         if self.cli_worker is None:
@@ -603,6 +612,7 @@ class Executor:
                     params.get("server", "native"),
                     params.get("cwd"),
                     tool_hooks=not params.get("platform"),
+                    spec=params.get("spec"),
                 )
             }
         except Exception as exc:
@@ -615,11 +625,13 @@ class Executor:
         self.log(key, "failed" if "error" in result else "completed", result=result)
         return result
 
-    def execute(self, tool, args, key, server="native", cwd=None, tool_hooks=True):
+    def execute(
+        self, tool, args, key, server="native", cwd=None, tool_hooks=True, spec=None
+    ):
         name = tool if server == "native" else f"mcp__{server}__{tool}"
         if tool_hooks:
             args = self.hooks("PreToolUse", name, args, key, cwd=cwd)
-        result = self.execute_core(tool, args, key, server)
+        result = self.execute_core(tool, args, key, server, spec)
         if tool_hooks:
             self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
         return result
@@ -661,11 +673,11 @@ class Executor:
             return {"denied": str(denied)}
         return {"args": args}
 
-    def execute_core(self, tool, args, key, server="native"):
+    def execute_core(self, tool, args, key, server="native", spec=None):
         if tool in self.config.get("deny_tools", []):
             raise PermissionError(f"Remote execution policy denies {tool}")
-        if server != "native":
-            return self.client(server).call(
+        if server != "native" or spec is not None:
+            return self.client(server, spec).call(
                 "tools/call", {"name": tool, "arguments": args}
             )
         if tool not in NATIVE_TOOLS:
@@ -1995,7 +2007,7 @@ class Executor:
         if method == "repo_search":
             return self.repo_search(params)
         if method == "mcp":
-            return self.client(params["server"]).call(
+            return self.client(params["server"], params.get("spec")).call(
                 params["method"], params.get("params")
             )
         raise ValueError("Unknown executor method")

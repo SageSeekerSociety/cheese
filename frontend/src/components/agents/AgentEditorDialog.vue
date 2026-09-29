@@ -20,7 +20,7 @@ const isNew = computed(() => props.agent === null)
 const displayName = ref('')
 const handle = ref('')
 const presetName = ref<string | null>(null)
-const draft = ref<AgentConfiguration>({ body: '', skills: [], mcp_servers: [] })
+const draft = ref<AgentConfiguration>({ body: '', skills: [] })
 const saving = ref(false)
 const error = ref<string | null>(null)
 const submitted = ref(false)
@@ -51,7 +51,6 @@ function applyPreset(name: string | null) {
   draft.value = {
     body: preset?.body ?? '',
     skills: [...(preset?.skills ?? [])],
-    mcp_servers: [...(preset?.mcp_servers ?? [])],
     model: draft.value.model ?? null,
   }
 }
