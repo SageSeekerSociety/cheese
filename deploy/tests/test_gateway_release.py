@@ -71,8 +71,17 @@ class GatewayReleaseTest(unittest.TestCase):
         rollout = [c for c in calls if c["args"][0] == "compose"]
         self.assertEqual(len(rollout), 1)
         self.assertEqual(
-            rollout[0]["args"][-7:],
-            ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "150", "litellm"],
+            rollout[0]["args"][-8:],
+            [
+                "up",
+                "-d",
+                "--no-deps",
+                "--remove-orphans",
+                "--wait",
+                "--wait-timeout",
+                "150",
+                "litellm",
+            ],
         )
 
     def test_unhealthy_release_restores_old_image_and_config(self):
@@ -81,6 +90,8 @@ class GatewayReleaseTest(unittest.TestCase):
         rollout = [c for c in calls if c["args"][0] == "compose"]
         self.assertEqual(len(rollout), 2)
         self.assertEqual(rollout[-1]["image"], "sha256:previous")
+        # The rollback also drops containers of services no longer in the file.
+        self.assertIn("--remove-orphans", rollout[-1]["args"])
         self.assertTrue(rollout[-1]["config"].endswith("/previous.yaml"))
 
     def test_the_network_shared_with_the_metering_proxy_exists_before_rollout(self):

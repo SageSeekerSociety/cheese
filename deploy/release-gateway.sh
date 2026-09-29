@@ -40,11 +40,12 @@ docker network inspect cheese-meter-gateway >/dev/null 2>&1 \
   || docker network create --internal cheese-meter-gateway >/dev/null \
   || docker network inspect cheese-meter-gateway >/dev/null
 echo "Releasing gateway image=$GATEWAY_IMAGE revision=$revision; active streams may be interrupted."
-if "${compose[@]}" up -d --no-deps --wait --wait-timeout 150 litellm; then
+# --remove-orphans: a service dropped from the compose file (openai-egress) must not keep running.
+if "${compose[@]}" up -d --no-deps --remove-orphans --wait --wait-timeout 150 litellm; then
   echo "Gateway healthy: $GATEWAY_IMAGE"
 else
   echo 'Gateway failed health verification; restoring the previous image and configuration.' >&2
   export GATEWAY_IMAGE="$previous_image" GATEWAY_CONFIG="$release_dir/previous.yaml"
-  "${compose[@]}" up -d --no-deps --wait --wait-timeout 150 litellm
+  "${compose[@]}" up -d --no-deps --remove-orphans --wait --wait-timeout 150 litellm
   exit 1
 fi
