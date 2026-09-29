@@ -8,9 +8,9 @@
 // 屏幕上每一个状态词都是后端 `presentation` 算好的，这一段一个都不推。
 import type { Block, RoomTask, TodoItem } from '../../cx_types'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
+import { ApiError, editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
@@ -37,6 +37,8 @@ const props = withDefaults(
     cardId: string | null
     /** 这一格在屏幕上。折起来的时候不去拉。 */
     active?: boolean
+    /** 打开时停在这一条（搜索结果、链接里的 `?block=`）。 */
+    focusBlock?: string | null
     /** 每有一轮动静就加一 —— 分身干活的每一步都记在这张卡上。 */
     refreshTick?: number
     /** handle → 名字。简报里的 `<@handle>` 和对话里谁说的，都照它换成名字。 */
@@ -44,7 +46,7 @@ const props = withDefaults(
     /** 名册上查不到的 AI 座位叫什么（做这条活的分身不一定坐在名册上）。 */
     agentName?: string
   }>(),
-  { active: false, refreshTick: 0, memberNames: () => ({}), agentName: '芝士' }
+  { active: false, focusBlock: null, refreshTick: 0, memberNames: () => ({}), agentName: '芝士' }
 )
 
 const emit = defineEmits<{
@@ -75,11 +77,24 @@ async function load(silent = false) {
   errorMsg.value = null
   try {
     // limit：卡下的对话是一个分身干活的全过程，一条跑久了的活能有上千块。底部对齐
-    // 的窗口和聊天面板同一个道理——先给最近的，够看「它现在在干什么」。
-    const payload = await getRoomTask(room, id, { limit: 200 })
+    // 的窗口和聊天面板同一个道理——先给最近的，够看「它现在在干什么」。点名了一条
+    // 的话，窗口往上拉到它为止。
+    const focus = props.focusBlock ?? undefined
+    // 跟着动静重取时，停在底部的人继续跟着最新的；翻上去在看的人不被拽走。
+    const followNewest = !silent && !focus ? true : atBottom()
+    let payload: RoomTask & { blocks: Block[] }
+    try {
+      payload = await getRoomTask(room, id, { limit: 200, through: focus })
+    } catch (e) {
+      // 链接点名的那一条不在这张卡里：照常打开这张卡。
+      if (!(focus && e instanceof ApiError && e.status === 404)) throw e
+      payload = await getRoomTask(room, id, { limit: 200 })
+    }
     if (props.roomId !== room || props.cardId !== id) return
     card.value = payload
-    void nextTick(scrollToBottom)
+    await nextTick()
+    if (!silent && focus && showBlock(focus)) return
+    if (followNewest) scrollToBottom()
   } catch {
     if (props.roomId !== room || props.cardId !== id) return
     errorMsg.value = '无法加载这个任务'
@@ -93,6 +108,36 @@ function scrollToBottom() {
   const el = timelineRef.value
   if (el) el.scrollTop = el.scrollHeight
 }
+
+function atBottom(): boolean {
+  const el = timelineRef.value
+  return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+// 停到一条上，并让它闪一下：滚动停下来的那一刻，眼睛要知道落在哪一行。
+const flashId = ref<string | null>(null)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+function showBlock(id: string): boolean {
+  const row = timelineRef.value?.querySelector(`[data-mid="${id}"]`)
+  if (!row) return false
+  row.scrollIntoView({ block: 'center' })
+  clearTimeout(flashTimer)
+  flashId.value = id
+  flashTimer = setTimeout(() => (flashId.value = null), 1600)
+  return true
+}
+onBeforeUnmount(() => clearTimeout(flashTimer))
+
+// 同一张卡上换了点名的那一条（又从面板跳了一次）：在就滚过去，不在就重取到它。
+watch(
+  () => props.focusBlock,
+  (id, was) => {
+    if (!id || id === was || !card.value) return
+    void nextTick(() => {
+      if (!showBlock(id)) void load()
+    })
+  }
+)
 
 watch(
   () => [props.roomId, props.cardId, props.active, props.refreshTick] as const,
@@ -332,7 +377,12 @@ async function send() {
       <div ref="timelineRef" class="panel-card__timeline">
         <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">暂无消息</div>
         <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
-          <div v-if="e.kind === 'say'" class="card-msg">
+          <div
+            v-if="e.kind === 'say'"
+            class="card-msg"
+            :class="{ 'card-msg--flash': flashId === e.block.id }"
+            :data-mid="e.block.id"
+          >
             <div class="card-msg__head">
               <span class="card-msg__who t-meta">{{ whoSaid(e.block) }}</span>
               <button
@@ -507,6 +557,16 @@ async function send() {
   flex-direction: column;
   gap: 1px;
   padding: 4px 0;
+}
+.card-msg--flash {
+  border-radius: var(--radius-sm);
+  animation: card-msg-flash 1.6s var(--ease-out);
+}
+@keyframes card-msg-flash {
+  from,
+  25% {
+    background-color: var(--accent-wash);
+  }
 }
 .card-msg__head {
   display: flex;

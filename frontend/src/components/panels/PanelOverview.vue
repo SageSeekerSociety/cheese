@@ -30,12 +30,22 @@ const props = withDefaults(
     refreshTick?: number
     /** 地址里的 `?card=` —— 非空就是在看这一张卡，而不是看板加文档。 */
     openCardId?: string | null
+    /** 开着的那张卡打开时停在哪一条。 */
+    cardFocusBlock?: string | null
     /** 项目 AI 队友的名字，传给文档那一格。 */
     agentName?: string
     /** handle → 名字，给钻进去的那张卡换点名和说话人。 */
     memberNames?: Record<string, string>
   }>(),
-  { topicList: () => [], active: false, refreshTick: 0, openCardId: null, agentName: '芝士', memberNames: () => ({}) }
+  {
+    topicList: () => [],
+    active: false,
+    refreshTick: 0,
+    openCardId: null,
+    cardFocusBlock: null,
+    agentName: '芝士',
+    memberNames: () => ({}),
+  }
 )
 
 const emit = defineEmits<{
@@ -69,6 +79,7 @@ defineExpose({
         key="card"
         :room-id="props.topic?.id ?? null"
         :card-id="props.openCardId"
+        :focus-block="props.cardFocusBlock"
         :active="props.active"
         :refresh-tick="props.refreshTick"
         :member-names="props.memberNames"

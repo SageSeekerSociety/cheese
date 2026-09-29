@@ -844,6 +844,7 @@ async def get_room_task(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+    through: uuid.UUID | None = None,
 ) -> dict:
     """One card, with its conversation — the same shape `/tasks` lists.
 
@@ -854,6 +855,8 @@ async def get_room_task(
     `limit` caps the timeline at its newest N blocks; with none it comes back
     whole. Same default as `/blocks` and for the same reason — an invented
     window truncates an agent reading history with no way to notice.
+    `through=<block_id>` stretches that window back to the named block (a card
+    opened at one of its messages); a block of another conversation is a 404.
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
@@ -861,7 +864,9 @@ async def get_room_task(
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError("这个房间里没有这个任务")
-    blocks = await tasks.blocks_for_thread(task_id, limit=limit)
+    blocks = await tasks.blocks_for_thread(task_id, limit=limit, through=through)
+    if blocks is None:
+        raise NotFoundError("这条消息不在这个任务里")
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")

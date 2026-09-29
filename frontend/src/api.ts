@@ -2414,10 +2414,11 @@ export function getTopic(topicId: string): Promise<Topic> {
 export function getRoomTask(
   roomId: string,
   taskId: string,
-  opts?: { limit?: number }
+  opts?: { limit?: number; through?: string }
 ): Promise<RoomTask & { blocks: Block[] }> {
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
+  if (opts?.through) q.set('through', opts.through)
   const query = q.toString() ? `?${q.toString()}` : ''
   return request<RoomTask & { blocks: Block[] }>(
     `/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}${query}`

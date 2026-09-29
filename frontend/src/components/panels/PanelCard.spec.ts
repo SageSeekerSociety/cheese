@@ -541,3 +541,34 @@ describe('改自己在卡上说过的话', () => {
     expect(view.queryByText('这条先别动 routes')).toBeNull()
   })
 })
+
+describe('从一条消息打开这张卡', () => {
+  it('停在点名的那一条上：取卡时拉到它为止，打开后滚到那一行', async () => {
+    const scrolled: Element[] = []
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    getRoomTask.mockResolvedValue(
+      card({ blocks: [block({ id: 'old', content: '缓存方案定成两级' }), block({ id: 'new', content: '最新一条' })] })
+    )
+    render(Panel, {
+      props: { roomId: 'room-1', cardId: 'task-1', active: true, focusBlock: 'old' },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => expect(scrolled.some((el) => el.textContent?.includes('缓存方案定成两级'))).toBe(true))
+    expect(getRoomTask.mock.calls[0][2]).toMatchObject({ through: 'old' })
+  })
+
+  it('点名的那一条不在这张卡里：照常打开这张卡', async () => {
+    const { ApiError } = await vi.importActual<typeof import('@/api')>('@/api')
+    getRoomTask.mockImplementation(async (_room: string, _card: string, opts?: { through?: string }) => {
+      if (opts?.through) throw new ApiError(404, '这条消息不在这个任务里')
+      return card()
+    })
+    const { getByText } = render(Panel, {
+      props: { roomId: 'room-1', cardId: 'task-1', active: true, focusBlock: 'elsewhere' },
+      global: { plugins: [vuetify] },
+    })
+    await waitFor(() => expect(getByText('这条先别动 routes')).toBeTruthy())
+  })
+})

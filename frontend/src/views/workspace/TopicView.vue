@@ -76,6 +76,9 @@ const focusBlock = computed(() => {
   const q = route.query.block
   return typeof q === 'string' && q ? q : null
 })
+// 同时开着一张卡时，点名的是卡里的那一条（卡里的对话不在房间的对话里）。
+const chatFocusBlock = computed(() => (openCardId.value ? null : focusBlock.value))
+const cardFocusBlock = computed(() => (openCardId.value ? focusBlock.value : null))
 
 function onOpenCard(taskId: string | null) {
   if (openCardId.value === taskId) return
@@ -388,7 +391,7 @@ void openPlace()
             :members="store.members"
             :topic-list="store.topics"
             :unread-on-open="unreadOnOpen"
-            :focus-block="focusBlock"
+            :focus-block="chatFocusBlock"
             v-on="chatEvents"
           />
         </Transition>
@@ -415,6 +418,7 @@ void openPlace()
           :phase="phase"
           :with-chat="!mdAndUp"
           :open-card-id="openCardId"
+          :card-focus-block="cardFocusBlock"
           :member-names="memberNames"
           @open-topic="openTopic"
           @open-card="onOpenCard"
@@ -433,7 +437,7 @@ void openPlace()
               :members="store.members"
               :topic-list="store.topics"
               :unread-on-open="unreadOnOpen"
-              :focus-block="focusBlock"
+              :focus-block="chatFocusBlock"
               v-on="chatEvents"
             />
           </template>
