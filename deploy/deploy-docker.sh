@@ -206,6 +206,20 @@ migrate_project_repositories() {
   log "project repositories migrated; backups and migration.log are in the persistent app home under forge-migration"
 }
 
+ensure_journal_retention() {
+  local target=/etc/systemd/journald.conf.d/cheese.conf
+  sudo -n cmp -s "$HERE/journald-cheese.conf" "$target" 2>/dev/null && return 0
+  # A box whose deploy user cannot write the journal's config still gets its
+  # release: retention decides how far back logs reach, not whether the app
+  # runs. Said loudly, since the journal then keeps its default of hours.
+  if ! sudo -n install -D -m 0644 "$HERE/journald-cheese.conf" "$target" \
+    || ! sudo -n systemctl restart systemd-journald; then
+    log "WARNING: journal retention not applied; this box keeps journald's default"
+    return 0
+  fi
+  log "journal retention applied from journald-cheese.conf"
+}
+
 ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
   local config backup frontend_backup changed=false router_changed=false port
@@ -878,6 +892,7 @@ rollout_frontend() {
 # verified. Once running, ensure_device_connection_owner deliberately leaves it
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
+ensure_journal_retention
 ensure_device_connection_owner
 ensure_application_router
 check_session_base_survives_release

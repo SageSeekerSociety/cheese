@@ -2,7 +2,7 @@
 set -euo pipefail
 [ -z "${APP_TIER_DOCKER_LOG:-}" ] || echo "systemctl $*" >> "$APP_TIER_DOCKER_LOG"
 case "$*" in
-  daemon-reload|*cheese-room-cleanup.timer*) exit 0 ;;
+  daemon-reload|*cheese-room-cleanup.timer*|"restart systemd-journald") exit 0 ;;
 esac
 case "${1:-}" in
   is-active) [ "${APP_TIER_HOST_EXECUTOR:-inactive}" = active ] ;;

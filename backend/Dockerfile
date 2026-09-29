@@ -205,4 +205,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # the running work to the next backend (app/core/ownership.py). Unbounded, one
 # long-lived stream would hold the handover back until the container's
 # stop_grace_period ran out and SIGKILL cut it off.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--timeout-graceful-shutdown", "10"]
+# No uvicorn access log: the app logs every request itself (`req` in main.py,
+# with user, client and request id), and a second line per request doubled it.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--timeout-graceful-shutdown", "10", "--no-access-log"]
