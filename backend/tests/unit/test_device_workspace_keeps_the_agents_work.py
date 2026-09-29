@@ -589,3 +589,32 @@ def test_a_checkout_behind_its_branch_has_nothing_to_push(device):
 
     assert git(remote, "rev-parse", branch) == theirs
     assert not (home / "posted.jsonl").exists()
+
+
+def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device):
+    """The forge locks a branch whose PR is in the merge queue. Commits made
+    after that are backed up, and the room is told why they are not in the
+    PR, rather than asked to retry a push that cannot land."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    accepted = _commit(work, "a.txt", "accepted\n")
+    cli._sync_task(task)
+    tasks[task]["merge_queued_pr"] = 17
+
+    cli._sync_all_tasks()
+    assert not (home / "posted.jsonl").exists()
+
+    later = _commit(work, "b.txt", "after the accept\n")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert git(remote, "rev-parse", branch) == accepted
+    (told,) = (home / "posted.jsonl").read_text().splitlines()
+    assert "#17" in json.loads(told)["body"]["content"]
+    bundle = home / "backups" / task / f"{later}.bundle"
+    recovered = home / "recovered"
+    git(home, "clone", "-q", str(remote), str(recovered))
+    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert git(recovered, "rev-parse", "FETCH_HEAD") == later

@@ -1681,7 +1681,20 @@ def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
     return task_dir
 
 
-def _report_sync_failure(task_id: str, branch: str | None) -> None:
+class _BranchQueued(RuntimeError):
+    """The task's PR is in the merge queue, which locks its branch."""
+
+    def __init__(self, branch: str, pr: int):
+        super().__init__(
+            f"{branch} is locked: PR #{pr} is in the merge queue, so commits "
+            "made since it was accepted cannot join it"
+        )
+        self.pr = pr
+
+
+def _report_sync_failure(
+    task_id: str, branch: str | None, queued_pr: int | None = None
+) -> None:
     """Tell the room that a task's work did not reach its branch.
 
     Only the failure: a turn that ends with its work still on the machine looks
@@ -1693,11 +1706,19 @@ def _report_sync_failure(task_id: str, branch: str | None) -> None:
     if not (API and TOPIC and TOKEN):
         return  # A human using the CLI directly already receives its exit status.
     where = branch or f"任务 {task_id}"
+    content = (
+        f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
+        "看不到它。请重试本轮；若机器被回收，改动会丢失。"
+    )
+    if queued_pr:
+        # Retrying cannot help: the branch stays locked until the queue is done.
+        content = (
+            f"⚠️ {where} 上采纳之后的新提交进不了 PR #{queued_pr}——它已在合并"
+            "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
+            "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
+        )
     body = {
-        "content": (
-            f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
-            "看不到它。请重试本轮；若机器被回收，改动会丢失。"
-        ),
+        "content": content,
         "request_id": str(uuid.uuid4()),
     }
     req = urllib.request.Request(
@@ -1779,7 +1800,9 @@ def _sync_task(task_id: str) -> None:
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
-            _deliver_task_branch(worktree, branch, head)
+            _deliver_task_branch(
+                worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+            )
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
@@ -1788,11 +1811,14 @@ def _sync_task(task_id: str) -> None:
             record.write(
                 f"{datetime.now(UTC).isoformat()} failed {type(exc).__name__}: {exc}\n"
             )
-            _report_sync_failure(task_id, branch)
+            queued = exc.pr if isinstance(exc, _BranchQueued) else None
+            _report_sync_failure(task_id, branch, queued)
             raise
 
 
-def _deliver_task_branch(worktree: Path, branch: str, head: str) -> None:
+def _deliver_task_branch(
+    worktree: Path, branch: str, head: str, *, queued_pr: int | None = None
+) -> None:
     """Make the task's branch on the forge carry `head`.
 
     The branch has more than one writer: every checkout of the task (a
@@ -1809,6 +1835,9 @@ def _deliver_task_branch(worktree: Path, branch: str, head: str) -> None:
       task's commits is part of the work (dropping a dependency asks for it).
     - neither, and the tip carries commits this checkout never had: refuse.
       Replacing them would delete someone else's work from the PR.
+
+    Anything to push while the PR is in the merge queue (`queued_pr`) is
+    refused up front: the forge locks a queued branch.
     """
     remote = f"refs/remotes/origin/{branch}"
     if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
@@ -1824,6 +1853,8 @@ def _deliver_task_branch(worktree: Path, branch: str, head: str) -> None:
     tip = _git_task(worktree, "rev-parse", remote)
     if _is_ancestor(worktree, head, tip):
         return
+    if queued_pr:
+        raise _BranchQueued(branch, queued_pr)
     if _is_ancestor(worktree, tip, head):
         _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
         return
