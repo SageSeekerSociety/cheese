@@ -19,10 +19,11 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_return import back_in_app, started_in_app
 from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -63,12 +64,15 @@ def _link_redirect(
 
 @router.get("/authorize-url")
 async def get_github_account_authorize_url(
+    request: Request,
     return_project_id: uuid.UUID | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(_oauth_service),
 ) -> dict:
     minted = mint_account_link_state(
-        auth_user.user_id, return_project_id=return_project_id
+        auth_user.user_id,
+        return_project_id=return_project_id,
+        in_app=started_in_app(request),
     )
     try:
         await reserve(_LINK_SCOPE, minted.jti, ttl_s=ACCOUNT_LINK_TTL_S)
@@ -89,6 +93,14 @@ async def github_account_link_callback(
     code: str = Query(...),
     state: str = Query(...),
     oauth_service: OAuthService = Depends(_oauth_service),
+) -> RedirectResponse:
+    landing = await _link_account(code, state, oauth_service)
+    claims = verify_account_link_state(state)
+    return back_in_app(landing) if claims and claims.in_app else landing
+
+
+async def _link_account(
+    code: str, state: str, oauth_service: OAuthService
 ) -> RedirectResponse:
     # Every exit below logs its outcome with the state's uid and (once known)
     # the arriving GitHub id. The callback 302s on success AND failure, and

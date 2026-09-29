@@ -67,6 +67,7 @@ import type {
   WorkspaceFile,
 } from './cx_types'
 
+import { desktopAppHeaders } from './lib/desktopApp'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -95,7 +96,7 @@ export function authToken(): string {
 
 function authHeaders(): Record<string, string> {
   const token = authToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return { ...desktopAppHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
 }
 
 // Retried on GET: the edge's own statuses. nginx answers 502–504 for an app it
@@ -271,7 +272,7 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
 }
@@ -1259,9 +1260,8 @@ export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: 
   return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
 }
 
-// Personal OAuth/App connections (1.0 router, single `/api` prefix — see
-// legacyRequest). Includes every provider the user has linked, not just
-// github_app; callers filter by providerId.
+// Personal OAuth/App connections (1.0 router, see legacyRequest): every
+// provider the user has linked, not just github_app; callers filter by providerId.
 export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {
   return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections`)
 }

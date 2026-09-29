@@ -17,7 +17,8 @@ tokio = { version = "1", features = ["process", "io-util", "time"] }
 url = "2"
 tauri-plugin-window-state = "2.4.1"
 notify-rust = "4.18.1"
-tauri-plugin-single-instance = "2.4.5"
+tauri-plugin-single-instance = { version = "2.4.5", features = ["deep-link"] }
+tauri-plugin-deep-link = "2.4.10"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tauri-plugin-autostart = "2.5.1"

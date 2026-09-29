@@ -242,7 +242,12 @@ async def _declared_server(
 
 
 async def begin_connect(
-    db: AsyncSession, project_id: uuid.UUID, name: str, handle: str
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    name: str,
+    handle: str,
+    *,
+    in_app: bool = False,
 ) -> str:
     """Start the authorization; returns the URL the browser goes to."""
     server = await _declared_server(db, project_id, name, fresh=True)
@@ -270,6 +275,7 @@ async def begin_connect(
                 "url": url,
                 "resource": resource,
                 "handle": handle,
+                "app": in_app,
                 "verifier": verifier,
                 "issuer": found.issuer,
                 "token_endpoint": found.token_endpoint,

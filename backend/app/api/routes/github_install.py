@@ -8,10 +8,11 @@ import logging
 import uuid
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.auth.project_access import may_read_project
@@ -26,6 +27,7 @@ from app.core.errors import (
 )
 from app.core.github_install_state import (
     INSTALL_TTL_S,
+    InstallClaims,
     mint_install_state,
     verify_install_state,
 )
@@ -88,8 +90,12 @@ async def _user_token(db: AsyncSession, actor: Actor) -> tuple[int, str]:
     return user.id, token
 
 
-async def _install_url(project_id: uuid.UUID, actor: Actor, user_id: int) -> str:
-    state = mint_install_state(project_id, user_id=user_id, handle=actor.handle)
+async def _install_url(
+    project_id: uuid.UUID, actor: Actor, user_id: int, *, in_app: bool
+) -> str:
+    state = mint_install_state(
+        project_id, user_id=user_id, handle=actor.handle, in_app=in_app
+    )
     claims = verify_install_state(state)
     assert claims is not None
     try:
@@ -178,6 +184,7 @@ async def get_github_connection(
 @router.post("/projects/{project_id}/github/connect")
 async def connect_github_repo(
     project_id: uuid.UUID,
+    request: Request,
     resolver: ActorResolverDep,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -212,7 +219,9 @@ async def connect_github_repo(
     return ok(
         {
             "connected": False,
-            "install_url": await _install_url(project_id, actor, user_id),
+            "install_url": await _install_url(
+                project_id, actor, user_id, in_app=started_in_app(request)
+            ),
         }
     )
 
@@ -220,12 +229,14 @@ async def connect_github_repo(
 @router.get("/projects/{project_id}/github/install-url")
 async def get_github_install_url(
     project_id: uuid.UUID,
+    request: Request,
     resolver: ActorResolverDep,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     actor = await _manager(project_id, resolver, db)
     user_id, _ = await _user_token(db, actor)
-    return ok({"url": await _install_url(project_id, actor, user_id)})
+    url = await _install_url(project_id, actor, user_id, in_app=started_in_app(request))
+    return ok({"url": url})
 
 
 @router.get("/github/app/callback")
@@ -236,6 +247,16 @@ async def github_app_install_callback(
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     claims = verify_install_state(state) if state else None
+    landing = await _install(installation_id, setup_action, claims, db)
+    return back_in_app(landing) if claims and claims.in_app else landing
+
+
+async def _install(
+    installation_id: int | None,
+    setup_action: str | None,
+    claims: InstallClaims | None,
+    db: AsyncSession,
+) -> RedirectResponse:
     if claims is None:
         return _settings_redirect(None, github_install="error", reason="invalid_state")
     project_id = claims.project_id

@@ -112,7 +112,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import { attemptMessage, useAttemptWait } from './attemptWait'
 import { lastSignIn, rememberSignIn } from './lastSignIn'
-import { oauthProviderIcon } from './oauthProvider'
+import { oauthProviderIcon, oauthProviderName } from './oauthProvider'
 import { firstStepAccepted, landingAfterSignIn, takeFirstStep, upgradeAfterPasswordSignIn } from './passkeyEnrollment'
 import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
@@ -122,6 +122,7 @@ import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import { t } from '@/i18n'
+import { desktopCan, signInInBrowser } from '@/lib/desktopApp'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
@@ -148,7 +149,9 @@ const [password, passwordProps] = defineField('password', vuetifyConfig)
 
 const errorMessage = ref('')
 const { waiting, waitFor } = useAttemptWait()
-const notice = computed(() => signInNotice(route.query.message))
+// Set once the provider's page has opened in the browser (in the desktop app).
+const inBrowser = ref('')
+const notice = computed(() => inBrowser.value || signInNotice(route.query.message))
 const webAuthnSupported = browserSupportsWebAuthn()
 const last = lastSignIn()
 /** The way in progress, so the others wait for it. */
@@ -318,8 +321,18 @@ const fetchOAuthProviders = async () => {
   }
 }
 
-const handleOAuthLogin = (providerId: string) => {
+const handleOAuthLogin = async (providerId: string) => {
   errorMessage.value = ''
+  if (desktopCan('links')) {
+    // In the app the provider's page opens in the browser, and the sign-in comes back here from there.
+    try {
+      await signInInBrowser(providerId, postLoginTarget(route.query))
+      inBrowser.value = t('account.signIn.continueInBrowser', { provider: oauthProviderName(providerId) })
+    } catch {
+      errorMessage.value = t('account.signIn.providerFailed')
+    }
+    return
+  }
   busy.value = `oauth:${providerId}`
   try {
     // 生成随机 state 参数用于防止 CSRF 攻击，存下来供回来时核对

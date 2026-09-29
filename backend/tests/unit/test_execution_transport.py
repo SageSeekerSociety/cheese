@@ -1311,7 +1311,9 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     assert Path(target["token_file"]).read_text() == "execution-only"
     assert Path(target["central_config"]) == config
     assert (config / "CLAUDE.md").read_text() == f"@{work}/CLAUDE.md\n"
-    hooks = json.loads((config / "settings.json").read_text())["hooks"]
+    hooks = json.loads(
+        (Path(started["execution"]).parent / "settings.json").read_text()
+    )["hooks"]
     assert {"command": ": project-hook", "type": "command"} in [
         hook for group in hooks["PreToolUse"] for hook in group["hooks"]
     ]

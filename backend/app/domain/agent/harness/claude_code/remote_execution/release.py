@@ -163,33 +163,41 @@ def replace(path, content):
     temporary.replace(path)
 
 
-def stage(home, sources, seat=""):
+def stage(home, sources, seat="", session_id=""):
     """Install a release into the session that asked for it.
 
     ``seat`` is that session's own directory inside the room's home
     (``place.seat_dir``), where its execution target and everything the client
     prepared beside it live; empty is a caller with no seat to name, which
     resolves to the room-level directory files sat in before seats existed.
-    The helpers and the config dir are the ROOM's either way: one release per
-    machine, one conversation per room, and the busy check below reads the
-    room's transcripts whichever seat asked.
+    The transcript config dir is the room's. A named seat owns its helpers and
+    hook settings, so releasing it cannot replace another seat's tool code or
+    redirect its hooks. The busy check still reads room transcripts.
     """
     config = Path(os.path.expandvars(home)) / ".claude"
     platform_dir = Path(os.path.expandvars(home)) / ".cheese"
-    helpers = platform_dir / "remote-execution"
+    helpers = (
+        Path(os.path.expandvars(seat)) / "remote-execution"
+        if seat
+        else platform_dir / "remote-execution"
+    )
     directory = (
         Path(os.path.expandvars(seat)) / "remote-session"
         if seat
         else platform_dir / "remote-session"
     )
     target = json.loads((directory / "execution.json").read_text())
-    settings_path = config / "settings.json"
+    settings_path = directory / "settings.json"
     settings = json.loads(settings_path.read_text())
     version = digest(sources)
-    ready = helpers / "release-ready"
+    ready = directory / "release-ready"
     if ready.exists() and ready.read_text() == version:
         return {"changed": False, "version": version}
-    transcripts = list((config / "projects").glob("*/*.jsonl"))
+    transcripts = list(
+        (config / "projects").glob(
+            f"*/{session_id}.jsonl" if session_id else "*/*.jsonl"
+        )
+    )
     if transcripts:
         busy = False
         latest = max(transcripts, key=lambda path: path.stat().st_mtime_ns)
@@ -267,9 +275,14 @@ def stage(home, sources, seat=""):
     return {"changed": True, "version": version}
 
 
-def acknowledge(home, version):
+def acknowledge(home, version, seat=""):
+    directory = (
+        Path(os.path.expandvars(seat)) / "remote-session"
+        if seat
+        else Path(os.path.expandvars(home)) / ".cheese/remote-session"
+    )
     replace(
-        Path(os.path.expandvars(home)) / ".cheese/remote-execution/release-ready",
+        directory / "release-ready",
         version,
     )
 
