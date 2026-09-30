@@ -58,7 +58,7 @@ vi.mock('@/api', async () => {
   }
 })
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshProjects: vi.fn(), refreshMembers: vi.fn() }),
+  useWorkspaceStore: () => ({ refreshProjects: vi.fn(), refreshMembers: vi.fn(), projects: [] }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 vi.mock('vue-router', async () => ({
@@ -166,7 +166,7 @@ describe('English settings copy', () => {
     await screen.findByText('No members can take it over')
     await fireEvent.update(screen.getByLabelText('Full username or email'), 'bob')
     await fireEvent.click(await screen.findByText('Bob', {}, { timeout: 2000 }))
-    await screen.findByText(/isn't on this project's team/)
+    await screen.findByText(/The whole project moves to/)
     await fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
     await screen.findByRole('button', { name: 'Confirm transfer' })
     expectNoChinese()
