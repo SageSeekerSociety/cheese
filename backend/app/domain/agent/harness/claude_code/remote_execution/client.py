@@ -1312,7 +1312,7 @@ MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
 # What the tool result promises the caller about the file: `isImage` for the
 # suffixes that are pictures, `media_type` for what the bytes are. The room
 # types the artifact off the path on `POST /topics/{id}/shown`
-# (`topics._ARTIFACT_MIME`); this tool never declares `as`, so that table is
+# (`room_files.ARTIFACT_MIME`); this tool never declares `as`, so that table is
 # the only one that names a kind. These two fields describe the file to the
 # caller — they are not a second copy of the room's kind table.
 _SEND_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}

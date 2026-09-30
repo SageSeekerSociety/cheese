@@ -94,6 +94,22 @@ class TaskService:
             raise NotFoundError("这个房间里没有这条任务")
         return task
 
+    async def require_source_in_room(
+        self, room_id: uuid.UUID, task_id: uuid.UUID
+    ) -> None:
+        """这份来源要是这个房间的一条「已经开了分支」的活。
+
+        和 `require_in_room` 分开，因为**答复不一样**：一个是「这个房间里没有这
+        条任务」，一个是「这不是一条能读文件的活」。读文件的那几个接口对外发的是
+        后者，措辞不能跟着一个更严的同名检查走样 —— 卡在、房间也对、只是还没开
+        分支，那是另一件事。
+
+        `room_id` 是房间（也就是话题）：一份来源不是一个自由填的 id，要指名某个
+        房间的某条活。"""
+        task = await self.get(task_id)
+        if task is None or task.room_id != room_id or task.branch_name is None:
+            raise NotFoundError("Task not found")
+
     async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
         """这个项目里的活，最老的在前。
 
