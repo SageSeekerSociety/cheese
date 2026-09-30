@@ -112,7 +112,7 @@ export function homePage(ctx, { releases, faq, WHO, doors, pages, dev, full, nav
    <div class="d-popular"><small>常看</small>${POPULAR.filter((s) => pages[s]).map((s) => `<a href="${pages[s].url}">${esc(pages[s].title)}</a>`).join('')}</div>
    <p class="d-count">${count} 篇使用文档 · 每一页都有 Markdown 原文 · 跟着代码一起更新</p>
    </div>
-   <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：一轮带孔的芝士，前面站着一只小老鼠" title="点一下重播"><img src="${ctx.assets.logo}" alt=""></div>
+   <div class="x-mark" id="heroLogo" role="img" aria-label="知是的标志：老鼠从月亮前探出头，三个孔从它鼻尖前冒出来" title="点一下重播"><img src="${ctx.assets.logo}" alt=""></div>
   </section>
 
   <section class="tour" id="tour" style="--n:${steps.length}">

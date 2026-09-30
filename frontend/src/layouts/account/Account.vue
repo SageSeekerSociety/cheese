@@ -7,9 +7,7 @@
     <aside class="account-art" :data-tauri-drag-region="titleBarInset ? 'deep' : undefined">
       <BrandScene :narrow="narrow" />
       <router-link to="/" class="account-brand account-art__brand" :aria-label="t('account.layout.home')">
-        <span class="account-brand__mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
-        <span class="account-brand__word">cheese</span>
-        <span v-if="locale === 'zh-CN'" class="account-brand__cn">{{ t('global.cheese') }}</span>
+        <BrandLockup />
       </router-link>
       <p class="account-art__fine">{{ t('global.copyright', { year }) }}</p>
     </aside>
@@ -38,13 +36,12 @@
 import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import logo from '@/assets/logo-plain.svg?url'
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
+import BrandLockup from '@/components/common/BrandLockup.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
-import i18n, { t } from '@/i18n'
+import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
 
-const locale = i18n.global.locale
 const year = new Date().getFullYear()
 const titleBarInset = titleBarOverlay()
 const { mdAndUp } = useDisplay()
@@ -115,37 +112,12 @@ const defaults = {
 }
 
 .account-brand {
+  --brand-h: 24px;
+
   display: flex;
-  align-items: center;
   align-self: flex-start;
-  gap: 8px;
   color: var(--ink);
   text-decoration: none;
-}
-
-.account-brand__mark {
-  display: block;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-  background: var(--ink);
-}
-
-.account-brand__word {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 800;
-  line-height: var(--lh-18);
-  letter-spacing: -0.04em;
-}
-
-.account-brand__cn {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
 }
 
 /* ---- The form side ---- */

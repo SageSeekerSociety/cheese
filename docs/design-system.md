@@ -15,6 +15,8 @@
 | [`frontend/src/style.css`](../frontend/src/style.css) | CSS 变量（手写 CSS 用） |
 | [`frontend/src/plugins/vuetify.ts`](../frontend/src/plugins/vuetify.ts) | Vuetify 主题（组件用） |
 
+标志（图形标、字标与组合）怎么用，见 [`brand.md`](brand.md)。
+
 ---
 
 ## 0. 风格与原则
