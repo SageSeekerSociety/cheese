@@ -49,4 +49,16 @@ Source: `64d4e4ec0dd83dff11a7b2eb75d1778c6433b655`.
 
 This proves the hold query is process-independent. It does not restart ChatService, its runtime, a journal reader or a native executor; it does not exercise full prompt assembly, concurrent registration of overlapping batches or explicit safe re-admission after a never-sent outcome. Those gates remain open.
 
-The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete group effects, native echo → commit → journal cursor fault tests, and full new-process recovery remain incomplete. The migration and this draft PR are not independently releasable.
+## Persisted echo identity and new-process settlement reader
+
+Source: `aa65abcd4928e00eeea4a0e44e4c5a42a3a2998d`.
+
+`echo-recovery-routing.txt` and its manifest record 16 passed, one test-JWT key-length warning, exit 0. Six new correlation cases use native-shaped records, SQLite and a child interpreter. They preserve the input's session/work identity after runner replacement and a substituted stdin drain failure, even when active work changes; unknown, other-session and child echoes cannot borrow it; failed local identity persistence writes no stdin. Recovery does not resend.
+
+One new integration case uses the real registrar, runner stamping, mirror/subscription and PostgreSQL ChatService settlement. Stdin and the echo are substitutes, not a live Claude binary/model. A `before_commit` hook flushes and executes `SELECT 1 / 0`: delivery, two consumption markers and two seen reactions all roll back, and received=1/landed=0. A child interpreter reconstructs the settlement-only ChatService and subscription, commits those same-input effects and advances landed=1. Its channel allows only events, never send/steer. A second drain adds no duplicate reactions. The child does not restart ComputePool, the full executor or converse.
+
+Nine existing drain/retention cases were migrated to the structured callback and explicit receiver/session/work fields because the protocol changed. They are not nine new cases or a repeat request for the previously approved narrow review.
+
+`echo-recovery-first.txt` records six passed and one failed at `90e62d0b`: the integration fault predicate checked ORM dirty membership after effects had already autoflushed. The commit abort did not fire, and the test rejected that outcome. The corrected fixed-source run above supersedes it; the first run is not a product negative control.
+
+The staged runtime/ChatService code registers before RPC and settles structured identities. Live native echo/model evidence, all harness/caller cutovers, complete Ask group effects, overlapping holds/safe release, full converse recovery and original executor continuation remain incomplete. The migration and this draft PR are not independently releasable.
