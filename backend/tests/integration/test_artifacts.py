@@ -416,7 +416,7 @@ def test_a_word_report_is_converted_so_a_browser_can_show_it(client, monkeypatch
     """
     import base64
 
-    from app.api.routes import topics as topics_routes
+    from app.api.routes import topics_attachments
 
     _pid, tid = _topic(client)
     raw = b"PK\x03\x04a word file"
@@ -432,7 +432,7 @@ def test_a_word_report_is_converted_so_a_browser_can_show_it(client, monkeypatch
         return b"%PDF-1.7 converted"
 
     monkeypatch.setattr(settings, "office_render_endpoint", "http://renderer:8901")
-    monkeypatch.setattr(topics_routes, "render_to_pdf", fake_render)
+    monkeypatch.setattr(topics_attachments, "render_to_pdf", fake_render)
 
     r = client.get(f"/topics/{tid}/attachments/pdf", params={"path": "评审简报.docx"})
 

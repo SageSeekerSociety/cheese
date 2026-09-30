@@ -44,6 +44,8 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
     git("add", ".")
     git("commit", "-m", "Base")
     git("update-ref", "refs/remotes/origin/main", "HEAD")
+    forge = tmp_path / "forge.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(work), str(forge)], check=True)
     git("switch", "-c", "task/report")
     (work / "report.txt").write_text("committed\n")
     git("commit", "-am", "Report")
@@ -58,7 +60,7 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
         branch="task/report",
         base="main",
         closed=True,
-        remote="https://forge.invalid/project/repo.git",
+        remote=str(forge),
     )
     monkeypatch.setattr(cli, "PROJECT", "project")
     monkeypatch.setattr(cli, "TOPIC", "room")
@@ -78,9 +80,12 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
     assert git("show", ":report.txt") == "staged"
     assert (work / "report.txt").read_text() == "unstaged\n"
     monkeypatch.setattr(
-        cli, "_call", lambda *args: {"data": {**captured, "id": "snapshot"}}
+        cli,
+        "_call",
+        lambda method, path: {
+            "data": metadata if path.endswith(task) else {**captured, "id": "snapshot"}
+        },
     )
-    monkeypatch.setattr(cli, "_task_worktree", lambda *args, **kwargs: work)
     monkeypatch.setattr(
         cli,
         "_raw_request",

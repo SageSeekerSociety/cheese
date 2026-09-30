@@ -226,15 +226,9 @@ async def create_project(
             owner_handle,
         )
     project = await ProjectService(db).create(
-        name=body.name,
+        **body.model_dump(exclude={"id", "owner_handle"}),
+        project_id=body.id,
         owner_handle=owner_handle,
-        ai_mode=body.ai_mode,
-        agent_type=body.agent_type,
-        agent_name=body.agent_name,
-        team_id=body.team_id,
-        external_task_id=body.external_task_id,
-        forge_kind=body.forge_kind,
-        intent=body.intent,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.

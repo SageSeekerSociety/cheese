@@ -70,6 +70,37 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
+        # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
+        # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
+        # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
+        # 那条注释讲的是同一件事），一条读话题表（和 `app.domain.mentions` 的
+        # `canonicalize_refs` 是同一种读法）。拆模块没有新增跨包的边，只是发起
+        # 方从 chat.py 换成了 mentions.py，所以按同一笔债入账。
+        ("app.domain.agent.mentions", "app.domain.block.repositories"),
+        ("app.domain.agent.mentions", "app.domain.topic.repositories"),
+        # agent.queries 是从 agent.chat 里拆出来的那一块（不碰实例状态的问答：
+        # 这一轮谁答、项目 key 带多少额度、这条记忆改动说进哪间房）。它摸的三个
+        # repository 正是原先 chat.py 那一组里跟着它走的：读 block（block 领域
+        # 没有 service 层，`platform_stats.pipeline` 那条注释讲的是同一件事）、
+        # 读项目表、读额度（网关额度那一处本来就是 READ path，见
+        # `queries._gateway_budget_target` 的 docstring）。拆模块没有新增跨包的
+        # 边，只是发起方从 chat.py 换成了 queries.py，所以按同一笔债入账。
+        ("app.domain.agent.queries", "app.domain.block.repositories"),
+        ("app.domain.agent.queries", "app.domain.project.repositories"),
+        ("app.domain.agent.queries", "app.domain.usage.repositories"),
+        # agent.room_events 是从 agent.chat 里拆出来的那一块（这一轮往房间里落下
+        # 的那些行：事件块、步骤的判决、变更汇总）。它摸的 repository 只有 block
+        # 一个，正是原先 chat.py 那一组里跟着它走的：block 领域没有 service 层，
+        # `platform_stats.pipeline` 那条注释讲的是同一件事。拆模块没有新增跨包的
+        # 边，只是发起方从 chat.py 换成了 room_events.py，所以按同一笔债入账。
+        ("app.domain.agent.room_events", "app.domain.block.repositories"),
+        # agent.hook_stream 是从 agent.chat 里拆出来的那一块（屏幕订阅送进来的
+        # 那一条线：读一条事件、落块、重试与整理的提示、关这一轮的书）。它摸的
+        # repository 只有 block 一个，正是原先 chat.py 那一组里跟着它走的：block
+        # 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。
+        # 拆模块没有新增跨包的边，只是发起方从 chat.py 换成了 hook_stream.py，
+        # 所以按同一笔债入账。
+        ("app.domain.agent.hook_stream", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),

@@ -113,6 +113,22 @@ def device(tmp_path, monkeypatch):
             self.wfile.write(json.dumps({"data": {"digest": digest}}).encode())
 
         def do_GET(self):
+            if "/snapshots/" in self.path:
+                # What `cheese recover` reads: a task's backup, described or whole.
+                task, _, which = self.path.rsplit("/", 3)[1:]
+                (bundle,) = (home / "backups" / task).glob("*.bundle")
+                body = bundle.read_bytes()
+                if which == "latest":
+                    latest = {
+                        "id": bundle.stem,
+                        "snapshot_sha": bundle.stem,
+                        "digest": hashlib.sha256(body).hexdigest(),
+                    }
+                    body = json.dumps({"data": latest}).encode()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+                return
             task = self.path.rsplit("/", 1)[-1]
             self.send_response(200)
             self.end_headers()
@@ -693,6 +709,47 @@ def test_a_closed_task_whose_base_branch_is_gone_is_still_backed_up(device, left
     assert git(recovered, "show", "FETCH_HEAD:draft.txt") == "never committed"
 
 
+@pytest.mark.parametrize("deleted", ["before the backup", "after the backup"])
+def test_a_closed_tasks_backup_recovers_on_another_machine_once_its_base_is_gone(
+    device, monkeypatch, tmp_path, deleted
+):
+    """A task stacked on another task's branch outlives that branch. Its backup
+    holds only what the forge lacks, and recovering it on a machine that never
+    had the task must not need the deleted branch: the forge still has its
+    commits (a merged PR keeps its head), just under no branch name."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    parent = "task/parent"
+    git(remote, "branch", parent, "main")
+    below = _push_from_elsewhere(home, remote, parent, "parent.txt")
+    git(remote, "update-ref", "refs/pull/1/head", below)
+    git(remote, "branch", "-f", tasks[task]["branch"], parent)
+    tasks[task]["base"] = parent
+    work = cli._task_worktree(task)
+    tasks[task]["closed"] = True
+    _commit(work, "late.txt", "committed after the task closed\n")
+    (work / "draft.txt").write_text("never committed\n")
+    if deleted == "before the backup":
+        git(remote, "branch", "-D", parent)
+        git(work, "fetch", "-q", "--prune", "origin")
+        cli._sync_all_tasks()
+    else:
+        cli._sync_all_tasks()
+        git(remote, "branch", "-D", parent)
+        git(remote, "branch", "-D", tasks[task]["branch"])
+    assert not (home / "posted.jsonl").exists()
+
+    elsewhere = tmp_path / "another-machine"
+    elsewhere.mkdir()
+    monkeypatch.setenv("HOME", str(elsewhere))
+    cli._recover_task(task)
+
+    (recovered,) = (elsewhere / ".cheese" / "recovered").iterdir()
+    assert (recovered / "late.txt").read_text() == "committed after the task closed\n"
+    assert (recovered / "draft.txt").read_text() == "never committed\n"
+    assert (recovered / "parent.txt").read_text() == "theirs\n"
+
+
 def test_sync_all_names_a_closed_task_it_could_not_back_up_as_closed(device, capsys):
     """The platform weighs a closed task's failed backup differently from an
     open task's failed push when a room leaves this machine, so the line that
@@ -710,3 +767,29 @@ def test_sync_all_names_a_closed_task_it_could_not_back_up_as_closed(device, cap
     printed = capsys.readouterr().err
     assert f"[cheese] 已结束的任务 {closed} 同步失败：" in printed
     assert f"[cheese] 任务 {open_task} 同步失败：" in printed
+
+
+def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
+    device,
+):
+    """A closed task has no turn whose work went missing. When its backup
+    fails as a room leaves this machine, the platform tells the room which
+    task stayed behind and why; a second message from the machine saying the
+    turn's work was not pushed would only repeat it, and wrongly."""
+    cli, tasks, _remote, home = device
+    closed, open_task = tasks
+    for task in tasks:
+        (cli._task_worktree(task) / "draft.txt").write_text(f"{task}\n")
+    tasks[closed]["closed"] = True
+    (home / "upload-limit").write_text("1")
+
+    with pytest.raises(SystemExit):
+        cli._sync_all_tasks()
+
+    told = [
+        json.loads(line)["body"]["content"]
+        for line in (home / "posted.jsonl").read_text().splitlines()
+    ]
+    assert len(told) == 1
+    assert open_task in told[0]
+    assert closed not in told[0]

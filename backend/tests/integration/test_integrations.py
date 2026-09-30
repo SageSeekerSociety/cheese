@@ -5,8 +5,11 @@ The IMAP/SMTP layer is replaced by a recording stand-in here; the protocol
 itself is exercised against a real mail server in `test_mail_server.py`.
 """
 
+import asyncio
 import json
+import time
 import uuid
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -14,11 +17,19 @@ import pytest
 from app.core.config import settings
 from app.domain.integration import feishu, mail
 from app.domain.integration.mail import IntegrationError
+from app.domain.integration.models import Integration
+from app.domain.integration.service import seal, unseal
 from app.domain.library import service as library
+from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "user-1"
+#: The platform administrator of these tests. Handle-only: the admin page's gate
+#: reads the allow-list, and the tests that need a DB user make their own.
+ADMIN = "admin-1"
+#: The one secret an administrator types; it must never come back out.
+PLATFORM_SECRET = "platform-secret-9"
 
 
 @pytest.fixture(autouse=True)
@@ -226,13 +237,60 @@ class FeishuStub:
         self.docs = {"doc-ok": ["第一段", "第二段"]}
         self.calls = []
         self.no_drive_scope = False
+        #: Every OAuth token exchange this stub was asked for, in order.
+        self.tokens: list[dict] = []
+        #: The bearer token each document call carried, in order. The first one
+        #: is the app's tenant token when the connection has no user
+        #: authorization of its own, and the member's token when it has.
+        self.bearers: list[str] = []
+        #: The (app_id, app_secret) each tenant-token call carried.
+        self.app_credentials: list[tuple[str, str]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.calls.append((request.method, path))
         if path.endswith("/tenant_access_token/internal"):
+            body = json.loads(request.content)
+            self.app_credentials.append((body["app_id"], body["app_secret"]))
             return httpx.Response(
                 200, json={"code": 0, "tenant_access_token": "t", "expire": 7200}
+            )
+        if path == "/open-apis/authen/v2/oauth/token":
+            body = json.loads(request.content)
+            self.tokens.append(body)
+            # A different token each time, so "the refreshed one came back and was
+            # used" is visible in the document calls rather than identical strings.
+            fresh = "u1" if body.get("grant_type") == "authorization_code" else "u2"
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "access_token": fresh,
+                    "refresh_token": f"r-{fresh}",
+                    "expires_in": 7200,
+                },
+            )
+        if path.startswith("/open-apis/docx") or path.endswith(
+            ("/metas/batch_query", "/suite/docs-api/search/object", "/drive/v1/files")
+        ):
+            self.bearers.append(
+                request.headers["Authorization"].removeprefix("Bearer ")
+            )
+        if path.endswith("/suite/docs-api/search/object"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "docs_entities": [
+                            {
+                                "docs_token": "doc-ok",
+                                "docs_type": "docx",
+                                "title": "项目周报",
+                            }
+                        ]
+                    },
+                },
             )
         if "/docx/v1/documents/doc-secret" in path:
             return httpx.Response(403, json={"code": 1770032, "msg": "forbidden"})
@@ -293,15 +351,299 @@ def feishu_stub(monkeypatch):
     return stub
 
 
-def test_feishu_read_create_edit_and_refusals(client, feishu_stub):
-    person, project, room = _setup(client)
-    r = client.post(
-        "/me/integrations/feishu",
-        json={"app_id": "cli_x", "app_secret": "s", "grants": [project]},
-        headers=person,
+def _configure_platform_app(client, secret=PLATFORM_SECRET, admin=ADMIN):
+    """平台管理员在后台填一次应用（`PUT /admin/integrations/feishu`）。"""
+    r = client.put(
+        "/admin/integrations/feishu",
+        json={"app_id": "cli_platform", "app_secret": secret, "domain": "feishu"},
+        headers=session_auth_headers(admin),
     )
     assert r.status_code == 200, r.text
-    fid = r.json()["data"]["id"]
+    return r.json()["data"]
+
+
+def _authorize(client, person, row_id, code="the-code"):
+    """「连接飞书」的第二步：拿授权地址、走回调，把 token 存进自己那一行。"""
+    url = client.get(
+        f"/me/integrations/{row_id}/feishu/authorize", headers=person
+    ).json()["data"]["url"]
+    state = parse_qs(urlparse(url).query)["state"][0]
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": code, "state": state},
+        follow_redirects=False,
+    )
+    assert back.status_code == 302, back.text
+    assert "feishu=ok" in back.headers["location"], back.headers["location"]
+    return url
+
+
+def _shared_app_connection(client, person, project, *, admin=ADMIN, monkeypatch=None):
+    """一个人的连接：管理员配应用 → 成员点「连接飞书」→ 回调 → 勾选项目。"""
+    if monkeypatch is not None:
+        monkeypatch.setattr(settings, "platform_admin_handles", [admin])
+    _configure_platform_app(client, admin=admin)
+    r = client.post("/me/integrations/feishu", headers=person)
+    assert r.status_code == 200, r.text
+    row = r.json()["data"]
+    _authorize(client, person, row["id"])
+    client.patch(
+        f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
+    )
+    return row
+
+
+def _seed_own_app_connection(
+    client, handle, grants, *, app_id="cli_own", app_secret="own-secret", token=None
+):
+    """一条自带凭据的连接，就是「每个人自己建应用」那个年代留在库里的行。
+
+    它是**数据**，不是某个接口还能建出来的东西：新流程下没人再写这样的行，而库里
+    已有的照旧要能用。所以这里直接落库，不经过任何路由。
+    """
+
+    async def _seed() -> str:
+        user = None
+        async with client.test_factory() as s:
+            user = await UserRepository(s).get_by_username(handle)
+            assert user is not None
+            row = Integration(
+                id=uuid.uuid4(),
+                owner_user_id=user.id,
+                owner_handle=handle,
+                provider="feishu",
+                label="飞书",
+                config={"app_id": app_id, "domain": "feishu", "folders": []},
+                grants=[str(g) for g in grants],
+                status="ok",
+            )
+            secret: dict = {"app_secret": app_secret}
+            if token:
+                secret |= {
+                    "user_access_token": token,
+                    "user_token_expires_at": time.time() + 3600,
+                    "refresh_token": "own-refresh",
+                }
+            seal(row, secret)
+            s.add(row)
+            await s.commit()
+            return str(row.id)
+
+    return asyncio.run(_seed())
+
+
+def _expire_user_token(client, row_id):
+    """把本人那份 token 的到期时间推到过去，逼出一次 refresh。"""
+
+    async def _expire() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(Integration, uuid.UUID(row_id))
+            assert row is not None
+            secret = unseal(row)
+            secret["user_token_expires_at"] = time.time() - 10
+            seal(row, secret)
+            await s.commit()
+
+    asyncio.run(_expire())
+
+
+# ── 平台管理员配的那一个应用 ───────────────────────────────────────────────
+
+
+def test_only_a_platform_admin_reads_or_writes_the_app(
+    client, monkeypatch, feishu_stub
+):
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    person, _project, _room = _setup(client)
+    body = {"app_id": "cli_platform", "app_secret": PLATFORM_SECRET}
+
+    assert client.get("/admin/integrations/feishu", headers=person).status_code == 403
+    assert (
+        client.put(
+            "/admin/integrations/feishu",
+            json=body,
+            headers=person,
+        ).status_code
+        == 403
+    )
+
+    saved = _configure_platform_app(client)
+    assert saved["configured"] is True and saved["app_id"] == "cli_platform"
+    assert client.get("/admin/integrations/feishu").status_code in (401, 403)
+
+
+def test_the_app_secret_is_written_but_never_read_back(
+    client, monkeypatch, feishu_stub
+):
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    person, _project, _room = _setup(client)
+    _configure_platform_app(client)
+
+    read = client.get("/admin/integrations/feishu", headers=session_auth_headers(ADMIN))
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["configured"] is True
+    assert PLATFORM_SECRET not in read.text, "the secret came back on the page"
+
+    # Saving without retyping the secret keeps the one already stored — it is a
+    # write-only field, so an administrator changing only the domain never has to
+    # paste it again. Whether it kept it is checked where the value is used: the
+    # token exchange below.
+    again = client.put(
+        "/admin/integrations/feishu",
+        json={"app_id": "cli_platform", "domain": "lark"},
+        headers=session_auth_headers(ADMIN),
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["data"]["domain"] == "lark"
+
+    row = client.post("/me/integrations/feishu", headers=person).json()["data"]
+    url = _authorize(client, person, row["id"])
+    assert "cli_platform" in url and "open.larksuite.com" in url
+    assert feishu_stub.tokens[-1]["grant_type"] == "authorization_code"
+    assert feishu_stub.tokens[-1]["client_id"] == "cli_platform"
+    assert feishu_stub.tokens[-1]["client_secret"] == PLATFORM_SECRET
+
+
+def test_authorizing_before_an_administrator_configures_says_so(client, feishu_stub):
+    person, _project, _room = _setup(client)
+    availability = client.get("/me/integrations/feishu", headers=person)
+    assert availability.status_code == 200, availability.text
+    assert availability.json()["data"]["configured"] is False
+
+    r = client.post("/me/integrations/feishu", headers=person)
+    assert r.status_code == 422, r.text
+    assert "管理员还没配置飞书应用" in r.text
+    assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
+
+
+def test_the_callback_keeps_the_members_own_tokens(client, feishu_stub, monkeypatch):
+    person, project, room = _setup(client)
+    row = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)
+    assert row["shared_app"] is True
+
+    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
+    assert listed[0]["user_authorized"] is True
+    assert PLATFORM_SECRET not in str(listed)
+
+    read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+    assert feishu_stub.bearers[-1] == "u1", "the member's token was not the one used"
+
+
+def test_an_expired_member_token_is_refreshed_before_use(
+    client, feishu_stub, monkeypatch
+):
+    person, project, room = _setup(client)
+    row = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)
+    _expire_user_token(client, row["id"])
+
+    read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+    assert [t["grant_type"] for t in feishu_stub.tokens[-2:]] == [
+        "authorization_code",
+        "refresh_token",
+    ]
+    assert feishu_stub.bearers[-1] == "u2", "the refreshed token was not the one used"
+
+    # Written back: a second call does not refresh again, and the refresh token
+    # from the exchange (a one-time value at Feishu) is the one it would send.
+    client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert [t["grant_type"] for t in feishu_stub.tokens] == [
+        "authorization_code",
+        "refresh_token",
+    ]
+    assert feishu_stub.tokens[-1]["refresh_token"] == "own-refresh" or (
+        feishu_stub.tokens[-1]["refresh_token"] == "r-u1"
+    )
+
+
+def test_a_member_token_that_cannot_be_refreshed_names_the_way_back(
+    client, feishu_stub, monkeypatch
+):
+    person, project, room = _setup(client)
+    row = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)
+
+    async def _drop_refresh_token() -> None:
+        async with client.test_factory() as s:
+            fresh = await s.get(Integration, uuid.UUID(row["id"]))
+            secret = unseal(fresh)
+            secret["user_token_expires_at"] = time.time() - 10
+            secret["refresh_token"] = None
+            seal(fresh, secret)
+            await s.commit()
+
+    asyncio.run(_drop_refresh_token())
+    r = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert r.status_code == 401, r.text
+    assert "授权已失效，到「我的连接」里重新授权" in r.text
+
+
+def test_a_connection_with_its_own_app_credentials_still_works(
+    client, feishu_stub, monkeypatch
+):
+    """没有平台应用，老式连接照样读、写、搜 —— 它自带的那套凭据说了算。"""
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    person, project, room = _setup(client)
+    assert (
+        client.get("/me/integrations/feishu", headers=person).json()["data"][
+            "configured"
+        ]
+        is False
+    )
+    fid = _seed_own_app_connection(
+        client,
+        OWNER,
+        [project],
+        app_id="cli_own",
+        app_secret="own-secret",
+        token="own-token",
+    )
+
+    read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+    assert [b["text"] for b in read.json()["data"]["blocks"]] == ["第一段", "第二段"]
+    assert feishu_stub.bearers[-1] == "own-token"
+
+    found = client.post(
+        f"/integrations/{fid}/feishu/search?topic={room}", json={"query": "周报"}
+    )
+    assert found.status_code == 200, found.text
+    assert found.json()["data"]["documents"][0]["document_id"] == "doc-ok"
+
+    listed = [
+        r
+        for r in client.get("/me/integrations", headers=person).json()["data"]["data"]
+        if r["id"] == fid
+    ]
+    assert listed[0]["shared_app"] is False
+
+
+def test_an_app_only_connection_cannot_search_and_says_which_way(
+    client, feishu_stub, monkeypatch
+):
+    """只用应用凭据、主人又还没授权个人账号：读得了、搜不了。
+
+    这不是回归 —— 飞书的搜索接口只认用户 token，拿应用凭据去搜只会得到空结果，
+    所以这里宁可回一句「差的是个人授权」。连接照旧能用（读、写、按文件夹列）。
+    """
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    _person, project, room = _setup(client)
+    fid = _seed_own_app_connection(client, OWNER, [project])
+
+    read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+
+    r = client.post(
+        f"/integrations/{fid}/feishu/search?topic={room}", json={"query": "周报"}
+    )
+    assert r.status_code == 403, r.text
+    assert "授权个人账号" in r.text
+    assert feishu_stub.bearers[-1] == "t", "a user token was used without one"
+
+
+def test_feishu_read_create_edit_and_refusals(client, feishu_stub, monkeypatch):
+    person, project, room = _setup(client)
+    fid = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)["id"]
 
     read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text
@@ -324,22 +666,15 @@ def test_feishu_read_create_edit_and_refusals(client, feishu_stub):
     assert refused.status_code == 403
     assert refused.json()["error"]["data"]["kind"] == "forbidden"
 
-    no_search = client.post(
-        f"/integrations/{fid}/feishu/search?topic={room}", json={"query": "周报"}
-    )
-    assert no_search.status_code == 403, "app-only credentials pretended to search"
 
-
-def test_an_app_without_the_drive_scope_still_reads_and_writes(client, feishu_stub):
+def test_an_app_without_the_drive_scope_still_reads_and_writes(
+    client, feishu_stub, monkeypatch
+):
     """dev, 2026-09-27: the document scopes were granted, the drive metadata one
     was not, and the whole read failed on the link lookup at the end."""
     feishu_stub.no_drive_scope = True
     person, project, room = _setup(client)
-    fid = client.post(
-        "/me/integrations/feishu",
-        json={"app_id": "cli_x", "app_secret": "s", "grants": [project]},
-        headers=person,
-    ).json()["data"]["id"]
+    fid = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)["id"]
 
     read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text

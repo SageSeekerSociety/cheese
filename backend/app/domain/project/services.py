@@ -73,6 +73,7 @@ class ProjectService:
         external_task_id: int | None = None,
         forge_kind: str = "forgejo",
         intent: str = "",
+        project_id: uuid.UUID | None = None,
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -86,6 +87,11 @@ class ProjectService:
         into the newborn room's document — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
+        if project_id is not None and (earlier := await self._repo.get(project_id)):
+            # An earlier attempt committed but its answer never reached the client.
+            if earlier.owner_handle != owner_handle:
+                raise ConflictError("这个项目编号已被使用")
+            return earlier
         if team_id is None and owner_handle:
             team_id = await self._resolve_personal_team_id(owner_handle)
         if team_id is None:
@@ -97,6 +103,7 @@ class ProjectService:
             team_id=team_id,
             external_task_id=external_task_id,
             intent=intent,
+            project_id=project_id,
         )
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         root = await self._topics.add(

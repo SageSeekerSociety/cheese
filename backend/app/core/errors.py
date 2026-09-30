@@ -2,6 +2,7 @@ import contextlib
 from typing import Any
 
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -244,7 +245,11 @@ async def validation_exception_handler(
             status_code=HTTP_400_BAD_REQUEST,
             media_type="text/event-stream",
         )
-    data = {"details": exc.errors()}
+    # A validator's own `raise ValueError(...)` travels in `ctx["error"]` as the
+    # exception object, which `JSONResponse` cannot serialize: the handler then
+    # raised, and any body refused by a custom validator answered 500. Its
+    # sentence is what the caller needs, so it goes out as text.
+    data = {"details": jsonable_encoder(exc.errors(), custom_encoder={Exception: str})}
     body = BadRequestError(message, data=data).to_response_body()
     return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=body)
 

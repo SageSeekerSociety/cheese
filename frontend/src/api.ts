@@ -272,6 +272,7 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
+/** 这个文件里的每个端点都过它。飞书那一块在 `api/feishu.ts`，也用这一个（见那儿的说明）。 */
 export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
@@ -560,11 +561,13 @@ export function createProject(
   externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
   intent?: string,
-  agentName?: string
+  agentName?: string,
+  id?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
     body: JSON.stringify({
+      id,
       name,
       owner_handle: ownerHandle,
       team_id: teamId,
@@ -1273,12 +1276,6 @@ export function deleteOAuthConnection(userId: string, connectionId: number, sudo
   })
 }
 
-// The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
-// project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
-export function getProjectForTeam(teamId: number): Promise<Project | null> {
-  return request<Project | null>(`/projects/by-team/${teamId}`)
-}
-
 export function getInbox(projectId: string, targetHandle: string): Promise<ListPayload<InboxItem>> {
   return request<ListPayload<InboxItem>>(
     `/projects/${encodeURIComponent(projectId)}/inbox?target_handle=${encodeURIComponent(targetHandle)}`
@@ -1470,6 +1467,8 @@ export interface Integration {
   last_error: string
   last_checked_at: string | null
   user_authorized: boolean
+  /** 用的是平台管理员配的那一个应用，而不是这条连接自己带的凭据。 */
+  shared_app: boolean
 }
 
 export interface MailDraft {
@@ -1497,10 +1496,6 @@ export function connectMail(body: Record<string, unknown>): Promise<Integration>
   return request<Integration>('/me/integrations/mail', { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function connectFeishu(body: Record<string, unknown>): Promise<Integration> {
-  return request<Integration>('/me/integrations/feishu', { method: 'POST', body: JSON.stringify(body) })
-}
-
 export function updateIntegration(id: string, body: Record<string, unknown>): Promise<Integration> {
   return request<Integration>(`/me/integrations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -1514,10 +1509,6 @@ export function checkIntegration(id: string): Promise<Integration> {
 
 export function deleteIntegration(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/me/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-}
-
-export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
-  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
 }
 
 export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {
@@ -3299,21 +3290,6 @@ export interface GatewayModelInfo {
   config_yaml?: string
   /** 行内 sparkline 的逐日 token（与详情折线同源同账）；窗口内没用过是逐日 0。 */
   series?: number[]
-  /** 这条模型由一条导入的订阅喂养时的 overlay（终态订阅不给）：列表「订阅」徽章
-   *  与详情抽屉订阅块的数据。 */
-  subscription?: GatewaySubscriptionOverlay | null
-}
-
-/** 列表/详情里模型项上的订阅 overlay。 */
-export interface GatewaySubscriptionOverlay {
-  id: string
-  status: string
-  account_email: string | null
-  /** 这条订阅显式选的上游模型；null = 跟随部署默认。 */
-  upstream_model?: string | null
-  token_expires_at?: string | null
-  last_refresh_error?: string | null
-  quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
 }
 
 export interface GatewayModelsPayload {
@@ -3469,115 +3445,6 @@ export function setGatewayProjectBudget(projectId: string, maxBudgetUsd: number 
 
 export function getGatewayAudit(limit: number): Promise<GatewayAuditPayload> {
   return request<GatewayAuditPayload>(`/admin/gateway/audit${gatewayQuery({ limit })}`)
-}
-
-/* ---- 管理端（LLM 订阅导入）----
- *
- * 「网关池里的订阅型上游」的平台侧一半：device flow 四步（开、轮询、取消）加凭据
- * 生命周期（列表、手动刷新、按需额度、移除）。凭据永不出现 —— 服务端 DTO 已经
- * 脱敏，这里也没有一个 token 字段。 */
-
-/** 一个速率窗口的额度读数（wham/usage 的解析结果）。`utilization` 是 0–100。 */
-export interface SubscriptionQuotaTier {
-  name: string
-  utilization: number
-  resets_at: string | null
-}
-
-/** 一条平台级 LLM 订阅（契约 §3.3 的 DTO）。token 与密文字段一个字母都不在。 */
-export interface LlmSubscription {
-  id: string
-  provider: string
-  label: string
-  status: string
-  account_email: string | null
-  chatgpt_account_id: string | null
-  token_expires_at: string | null
-  last_refresh_at: string | null
-  last_refresh_error: string | null
-  linked_model_name: string | null
-  /** 显式选的上游模型；null = 跟随部署默认（settings.subscription_upstream_model）。 */
-  upstream_model: string | null
-  quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
-  created_by_handle: string
-  created_at: string
-}
-
-export interface DeviceFlowStartResponse {
-  flow_id: string
-  user_code: string
-  verification_uri: string
-  expires_in: number
-  interval: number
-}
-
-/** 轮询一次的三态：`pending` 继续等；`complete` 带订阅 DTO；`expired` 要重开一个。 */
-export type DeviceFlowPollResponse =
-  | { state: 'pending' }
-  | { state: 'complete'; subscription: LlmSubscription }
-  | { state: 'expired' }
-
-/** 开一次导入（或定向重授权：`targetSubscriptionId` 非空时服务端校验同一身份）。 */
-export function startSubscriptionDeviceFlow(body: {
-  provider?: 'openai_codex'
-  label?: string | null
-  target_subscription_id?: string | null
-  /** 显式指定上游模型（如 openai/gpt-5.6-luna）；空 = 跟随部署默认。 */
-  upstream_model?: string | null
-}): Promise<DeviceFlowStartResponse> {
-  return request<DeviceFlowStartResponse>('/admin/subscriptions/device-flows', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function pollSubscriptionDeviceFlow(flowId: string): Promise<DeviceFlowPollResponse> {
-  return request<DeviceFlowPollResponse>(`/admin/subscriptions/device-flows/${encodeURIComponent(flowId)}/poll`, {
-    method: 'POST',
-  })
-}
-
-export function cancelSubscriptionDeviceFlow(flowId: string): Promise<{ cancelled: boolean }> {
-  return request<{ cancelled: boolean }>(`/admin/subscriptions/device-flows/${encodeURIComponent(flowId)}/cancel`, {
-    method: 'POST',
-  })
-}
-
-export function listSubscriptions(): Promise<{ items: LlmSubscription[] }> {
-  return request<{ items: LlmSubscription[] }>('/admin/subscriptions')
-}
-
-/** 手动刷新一次并推进网关。凭据被判死时回 `reauth_required` 状态（不是报错）。 */
-export function refreshSubscription(id: string): Promise<{
-  status: string
-  token_expires_at: string | null
-  last_refresh_error: string | null
-}> {
-  return request(`/admin/subscriptions/${encodeURIComponent(id)}/refresh`, { method: 'POST' })
-}
-
-/** 按需查一次额度。传输错误时服务端回旧快照（`stale: true`）。 */
-export function getSubscriptionQuota(id: string): Promise<{
-  tiers: SubscriptionQuotaTier[]
-  queried_at: string | null
-  stale: boolean
-}> {
-  return request(`/admin/subscriptions/${encodeURIComponent(id)}/quota`)
-}
-
-/** 改一条订阅的上游模型并推进网关；`upstream_model` 为 null = 清除显式选择、回落部署默认。 */
-export function updateSubscriptionUpstreamModel(id: string, upstreamModel: string | null): Promise<LlmSubscription> {
-  return request<LlmSubscription>(`/admin/subscriptions/${encodeURIComponent(id)}/upstream-model`, {
-    method: 'PATCH',
-    body: JSON.stringify({ upstream_model: upstreamModel }),
-  })
-}
-
-/** 移除一条订阅：置终态，并 best-effort 停用挂在网关上的模型。 */
-export function revokeSubscription(id: string): Promise<{ revoked: boolean }> {
-  return request<{ revoked: boolean }>(`/admin/subscriptions/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
 }
 
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */

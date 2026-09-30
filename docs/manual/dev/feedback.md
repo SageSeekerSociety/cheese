@@ -99,7 +99,7 @@ covers:
 Fixes-feedback: FB-12, FB-15
 ```
 
-`FB-` 前缀不能省：在 GitHub 上 `#12` 是第 12 号 issue 或 PR，`Fixes #12` 还会把那个 issue 关掉。行首的键大小写都认，同一行可以列多条。**写在提交信息里，不写在 PR 描述里**：main 是 squash 合并，squash 提交的正文是这个 PR 里各个提交的信息拼起来的，PR 描述进不了 main 的历史。
+这一行要顶格写，和 git 的 trailer 一样；缩进的行算引用，不生效，所以在提交信息里举例说明这个写法时要缩进。`FB-` 前缀不能省：在 GitHub 上 `#12` 是第 12 号 issue 或 PR，`Fixes #12` 还会把那个 issue 关掉。行首的键大小写都认，同一行可以列多条。**写在提交信息里，不写在 PR 描述里**：main 是 squash 合并，squash 提交的正文是这个 PR 里各个提交的信息拼起来的，PR 描述进不了 main 的历史。
 
 测试环境的部署（`deploy-dev.yml`）在部署前记下正在跑的版本，最后一步（前面每一步都成功之后）用 GitHub 的 compare 取出「被替换的版本 → 这次的版本」之间的提交，交给正在跑的后端容器里的 `scripts/ship_feedback.py`。它按上面那行找到每条反馈（`shipping.py`），通过 `set_status` 推到 `deployed`——和管理员按按钮是同一条路，所以时间线照写、提交者的未读数照涨。这一步没有推它的人（`by_handle` 为 NULL），时间线那一步的 `note` 写「已由 PR #N 修复并上线」加 PR 链接，PR 号取自 squash 标题末尾的 `(#N)`，没有就链到提交。
 

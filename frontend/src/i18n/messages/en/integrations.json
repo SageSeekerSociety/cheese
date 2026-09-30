@@ -1,0 +1,23 @@
+{
+  "member": {
+    "connect": "Connect Feishu",
+    "notConfigured": "An administrator has not configured the Feishu app",
+    "notConnected": "Not connected to Feishu yet"
+  },
+  "admin": {
+    "title": "Feishu app",
+    "sub": "Members no longer build a Feishu app of their own. Fill this in once and each member connects with one click in My connections.",
+    "appId": "App ID",
+    "appSecret": "App Secret",
+    "domain": "Domain",
+    "secretHint": "Leave empty to keep the saved one",
+    "save": "Save",
+    "saved": "Saved",
+    "saveFailed": "Could not save",
+    "loadFailed": "Could not load",
+    "configured": "Configured",
+    "notConfigured": "Not configured",
+    "updatedBy": "Last updated by {handle}",
+    "appIdRequired": "Enter the App ID first"
+  }
+}
