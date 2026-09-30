@@ -32,11 +32,11 @@ covers:
 
 ## 一共多少 {#totals}
 
-2026-09-30 在 `feat/scene-ratchet`（`main@bdff0822`）上数出来的：**130 个路由页 + 27 个工作面板 SFC**，其中 **10 个（6%）今天就能单独渲染**；目录里现在有 20 项，其中 4 项是工作面板（`panel-tabs` 加上三个拆出来的视图），剩下 16 项是更小的零件（卡片、导航项、图表……），**一个路由页都没有**。
+2026-09-30 在 `feat/scene-ratchet`（rebase 到当时的 `main` 之后）上数出来的：`main` 上的 #2152 / #2154 删掉了 24 个旧场景（旧 `courses`、`board/pages/*`、`discussions` 等，功能下线，不是改名），基线里因此不再有它们：**111 个路由页 + 27 个工作面板 SFC**，其中 **10 个（7%）今天就能单独渲染**；目录里现在有 20 项，其中 4 项是工作面板（`panel-tabs` 加上三个拆出来的视图），剩下 16 项是更小的零件（卡片、导航项、图表……），**一个路由页都没有**。
 
 | 场景 | 一共 | A 今天就能单独跑 | C 卡在取数 | D 卡在路由 / `$parent` / `inject` |
 |---|---|---|---|---|
-| 路由页（`src/views/`，router 表里挂上去的每一页） | 130 | 2 | 40 | 88 |
+| 路由页（`src/views/`，router 表里挂上去的每一页） | 111 | 2 | 38 | 71 |
 | 工作面板（`src/components/panels/` 下的 SFC） | 27 | 8 | 19 | 0 |
 
 和上一版（2026-09-30 早先的 20 个）差十个，原因是判据修了一处**过宽**：传递依赖原来只跟 `.ts` 边，父页面 import 一个自己去取数的子组件（`.vue`）不算「到了接口层」，于是「自己干净、子组件在取数」的十个场景被当成能单独跑。`.` 这条边现在也跟（[原因](#how)），数字按修完的结果写在这里。修之前报出去的 20 是错的，不是这一版退步。
@@ -51,10 +51,10 @@ covers:
 | `views/account/` | 17 | 0 | 1 | 16 |
 | `views/admin/` | 9 | 0 | 4 | 5 |
 | `views/feedback/` | 5 | 0 | 2 | 3 |
-| `views/home/` | 4 | 0 | 3 | 1 |
+| `views/home/` | 5 | 0 | 4 | 1 |
 | `views/legal/` | 1 | 0 | 0 | 1 |
 | `views/question/` | 4 | 0 | 1 | 3 |
-| `views/spaces/` | 43 | 0 | 13 | 30 |
+| `views/spaces/` | 23 | 0 | 10 | 13 |
 | `views/tasks/` | 7 | 0 | 3 | 4 |
 | `views/teams/` | 9 | 0 | 3 | 6 |
 | `views/user/` | 5 | 1 | 4 | 0 |
@@ -71,7 +71,7 @@ covers:
 | 名单 | 是什么 | 只能 |
 |---|---|---|
 | `ready` | 今天就能单独跑的场景（10 个） | 增（掉档就红） |
-| `debt` | 仓库里本来就跑不起来的场景（137 个） | 减（变 A 会提示你收紧） |
+| `debt` | 仓库里本来就跑不起来的场景（128 个） | 减（变 A 会提示你收紧） |
 
 不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。五种结果：
 
@@ -321,4 +321,4 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 16 个没挂的（7 个页面 + 9 个面板：`ChangesFileTree`、`PanelOverview`、`SiteStatusBar`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/`、`views/workspace/`、`views/spaces/` 三块各要一个方案，动哪块由产品定。
-5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：137 → 0。
+5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：128 → 0。
