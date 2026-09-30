@@ -34,7 +34,10 @@
       class="bg-background h-100"
       :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
     >
-      <div class="border-t-sm bg-background h-100 overflow-hidden">
+      <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
+           左边那条线就是侧栏和内容的分界；没有侧栏的页面，这块面挨着一级导航，左上角
+           拐成和侧栏一样的圆角。 -->
+      <div class="app-pane h-100 overflow-hidden" :class="{ 'app-pane--alone': !hasSidebar }">
         <div id="app-scrollable" ref="contentRef" class="app-content h-100" @animationend="endPageMotion">
           <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
                「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
@@ -361,6 +364,8 @@ const hideAppBar = computed(() => {
 
 // 页面栈的末端（话题页、私聊页）收起底栏：它们是栈里的一层，不是一级目的地。
 const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
+/** 这一页有没有侧栏：侧栏是路由上的 `sidebar` 命名视图，渲染它的是上面那个 router-view。 */
+const hasSidebar = computed(() => currentRoute.matched.some((record) => record.components?.sidebar))
 
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区

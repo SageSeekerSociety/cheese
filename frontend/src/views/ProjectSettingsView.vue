@@ -402,7 +402,7 @@ useCommands(() => [
 </script>
 
 <template>
-  <AppPage class="settings-page" :title="t('navigation.project.settings')">
+  <AppPage :title="t('navigation.project.settings')">
     <div v-if="loading" class="d-flex justify-center py-10">
       <v-progress-circular indeterminate color="primary" />
     </div>
@@ -910,10 +910,6 @@ useCommands(() => [
 </template>
 
 <style scoped>
-/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
-.settings-page {
-  background: var(--surface);
-}
 /* 这一页各块的窄屏排法按内容列有多宽决定，不按窗口（docs/design-system.md §3.5）：
    子组件（队友、环境变量）里的 @container 也量的是这一格。 */
 .settings-body {
