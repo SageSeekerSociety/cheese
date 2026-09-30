@@ -76,7 +76,7 @@ function check(points: RatchetPoint[], direction: RatchetCheck['direction']): Ra
 
 function mount(entry: RatchetCheck) {
   return render(AdminRatchetArea as unknown as Component, {
-    props: { area: '边界', checks: [entry], collections: entry.points.length },
+    props: { area: '边界', checks: [entry] },
     global: { stubs: { AdminRatchetSparkline: true } },
   })
 }

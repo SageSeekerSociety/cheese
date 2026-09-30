@@ -188,13 +188,7 @@ const collectionFailedLine = computed(() => {
             <li>{{ t('ratchet.legend.failed') }}</li>
           </ul>
 
-          <AdminRatchetArea
-            v-for="area in areas"
-            :key="area.area"
-            :area="area.area"
-            :checks="area.checks"
-            :collections="collections"
-          />
+          <AdminRatchetArea v-for="area in areas" :key="area.area" :area="area.area" :checks="area.checks" />
 
           <p class="arc__foot t-meta">
             {{ t('ratchet.foot.source', { repo: board.repo, checks }) }}

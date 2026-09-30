@@ -16,8 +16,6 @@ defineOptions({ name: 'AdminRatchetArea' })
 const props = defineProps<{
   area: string
   checks: RatchetCheck[]
-  /** 归档里有几次采集。它决定表里「较同口径起点」那一列是数还是「还没有第二个点」。 */
-  collections: number
 }>()
 
 const { t } = useI18n()
