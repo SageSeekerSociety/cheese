@@ -9,8 +9,11 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
+import pytest
 from sqlalchemy import event, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -67,7 +70,19 @@ asyncio.run(run())
 """
 
 
-def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp_path):
+@pytest.mark.parametrize("native", [False, True])
+def test_echo_commit_abort_replays_same_identity_in_new_chat_process(
+    client, tmp_path, native
+):
+    machine = None
+    if native:
+        from tests.unit.test_claude_runner import Machine
+
+        scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
+        sys.path.insert(0, scripts)
+        import headless_contract
+
+        machine = Machine(headless_contract, tmp_path)
     project = uuid.UUID(_project(client, "echo cursor recovery"))
     topic = uuid.UUID(_room(client, str(project), "native echo recovery"))
 
@@ -83,6 +98,19 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
             uuid.uuid4(),
             uuid.uuid4(),
         )
+        runner = Runner(machine.state if machine else tmp_path / "runner")
+        if machine:
+            identity = replace(
+                identity,
+                native_session_id=await runner.start(
+                    command=machine.command,
+                    env=machine.env,
+                    resume=None,
+                    agent_handle=identity.recipient_handle,
+                ),
+            )
+        else:
+            runner.session_id = identity.native_session_id
         delivery_id, attempt_id = uuid.uuid4(), uuid.uuid4()
         block_ids = (uuid.uuid4(), uuid.uuid4())
         async with factory() as session:
@@ -127,9 +155,8 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
             )
         )(identity)
 
-        runner = Runner(tmp_path / "runner")
-        runner.session_id = identity.native_session_id
         writes = []
+        original_write = runner._write
 
         async def write(record):
             # This observation is before the external boundary.
@@ -139,14 +166,47 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
                 )
                 assert row is not None and row.settled_at is None
             writes.append(record)
+            if machine:
+                await original_write(record)
 
         runner._write = write
         await runner.send(
             str(identity.input_id), "answer", work_id=str(identity.work_id)
         )
-        runner.observe({**writes[0], "isReplay": True})
-        runner.journal.close()
-        runner_path = tmp_path / "runner" / "records.sqlite"
+        if machine:
+            async with asyncio.timeout(90):
+                while not any(
+                    row["record"].get("type") == "result"
+                    for row in runner.journal.read()
+                ):
+                    await asyncio.sleep(0.05)
+            records = runner.journal.read()
+            echoes = [
+                row
+                for row in records
+                if row["record"].get("uuid") == str(identity.input_id)
+                and row["record"].get("isReplay")
+            ]
+            assert len(echoes) == 1
+            assert echoes[0]["record"]["cheese"]["receipt_work_id"] == str(
+                identity.work_id
+            )
+            # Only this isolated test's process is closed; no existing service.
+            await runner.close()
+        else:
+            runner.observe({**writes[0], "isReplay": True})
+            runner.journal.close()
+        runner_path = runner.state / "records.sqlite"
+        journal = Journal(runner_path)
+        try:
+            echo_sequence = next(
+                row["sequence"]
+                for row in journal.read()
+                if row["record"].get("cheese", {}).get("receipt")
+            )
+            last_sequence = journal.read()[-1]["sequence"]
+        finally:
+            journal.close()
         mirror_path = tmp_path / "mirror.sqlite"
         ref = SessionRef(project, topic, identity.recipient_handle, harness=CLAUDE_CODE)
 
@@ -195,8 +255,8 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
         assert injected == ["echo settlement"]
         journal = Journal(mirror_path)
         try:
-            assert journal.recall("received") == "1"
-            assert int(journal.recall("landed") or 0) == 0
+            assert journal.recall("received") == str(last_sequence)
+            assert int(journal.recall("landed") or 0) < echo_sequence
         finally:
             journal.close()
         async with factory() as session:
@@ -229,7 +289,7 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
         )
         stdout, stderr = await child.communicate()
         assert child.returncode == 0, stderr.decode()
-        assert json.loads(stdout)["landed"] == "1"
+        assert json.loads(stdout)["landed"] == str(last_sequence)
         async with factory() as session:
             row = await session.scalar(
                 select(NativeInput).where(NativeInput.input_id == identity.input_id)
@@ -245,4 +305,9 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
                 ] == str(identity.work_id)
         assert len(writes) == 1
 
-    client.portal.call(run)
+    try:
+        client.portal.call(run)
+    finally:
+        if machine:
+            machine.close()
+            sys.path.remove(scripts)
