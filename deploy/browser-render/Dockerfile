@@ -51,7 +51,7 @@ exe = pathlib.Path(p.chromium.executable_path); \
 p.stop(); \
 sys.exit(f'chromium missing at {exe}') if not exe.exists() else print(f'chromium ok: {exe}')"
 
-COPY server.py /app/server.py
+COPY server.py egress.py /app/
 
 # Root is the default and Chromium refuses to run as root without --no-sandbox.
 # The service passes --no-sandbox already, but dropping privileges is the part
