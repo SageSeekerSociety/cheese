@@ -23,18 +23,6 @@ from app.domain.agent.service import AgentEvent
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
-def said(record: dict) -> str:
-    """The text of a user message as it was written to stdin."""
-    content = (record.get("message") or {}).get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                return str(part.get("text") or "")
-    return ""
-
-
 class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
     def __init__(
         self,

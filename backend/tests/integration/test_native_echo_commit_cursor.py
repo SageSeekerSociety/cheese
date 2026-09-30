@@ -1,7 +1,8 @@
 """Real PostgreSQL commit abort keeps a runner echo replayable by a new reader.
 
-The runner handles a native-shaped echo after stdin substitution, not a running
-Claude/model. The child uses a new ChatService and real mirror/subscription.
+Cases use either a native-shaped substitute or the pinned Claude binary against
+a local deterministic Messages API. Recovery rebuilds the settlement-only
+ChatService and mirror/subscription, not a full executor/converse.
 """
 
 import asyncio

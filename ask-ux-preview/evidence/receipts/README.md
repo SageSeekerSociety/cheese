@@ -61,4 +61,12 @@ Nine existing drain/retention cases were migrated to the structured callback and
 
 `echo-recovery-first.txt` records six passed and one failed at `90e62d0b`: the integration fault predicate checked ORM dirty membership after effects had already autoflushed. The commit abort did not fire, and the test rejected that outcome. The corrected fixed-source run above supersedes it; the first run is not a product negative control.
 
-The staged runtime/ChatService code registers before RPC and settles structured identities. Live native echo/model evidence, all harness/caller cutovers, complete Ask group effects, overlapping holds/safe release, full converse recovery and original executor continuation remain incomplete. The migration and this draft PR are not independently releasable.
+## Pinned Claude echo through the settlement chain
+
+Source: `bdbe461d0b0534751915ed521f57935a9d83d65c`.
+
+`echo-native-first.txt` and its manifest record 2 passed, two test-JWT key-length warnings, exit 0: the substituted case and a new native case. Claude Code 2.1.282 runs in an isolated HOME/workspace with the existing deterministic localhost Messages API fixture. The stdin wrapper checks PostgreSQL registration before forwarding to real stdin; it does not manufacture the native echo. The runner journals exactly one `isReplay` record for the original input UUID and persisted work. The binary SHA256 is `3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3`, matched against the official release manifest. Existing binaries and services were not replaced.
+
+The same real PostgreSQL commit-path abort leaves the landing cursor before that echo and rolls back receipt/delivery/two consumed blocks/two seen reactions. A new Python interpreter reopens the existing journal, reconstructs the settlement-only ChatService/subscription and commits those effects without send/steer. Only the isolated test runner is closed after it produces its result. The native process is not restarted, no external live-model reasoning is tested, and neither full converse nor original-executor recovery is exercised. This is not COMMIT-success/confirmation-loss evidence.
+
+The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete Ask group effects, overlapping holds/safe release, full converse recovery and original executor continuation remain incomplete. The migration and this draft PR are not independently releasable.
