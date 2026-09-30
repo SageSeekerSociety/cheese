@@ -203,14 +203,17 @@ const descCount = computed(() => LOAD.filter((s) => s.rawFate.startsWith('直接
           （一页里有几段就编几个号，不按页数算），<strong>全部有「重试」按钮</strong>。
         </li>
         <li>
-          服务端原话去向：<strong>丢了 {{ lostCount }}</strong>（#4 #8 #10）·
-          <strong>当标题 {{ titleIsRawCount }}</strong>（#5 #6 #7 #9）·
-          <strong>只在悬停 {{ shellCount }}</strong>（#1 #2）·
-          <strong>作说明行 {{ descCount }}</strong>（#3）。四类相加
-          {{ lostCount + titleIsRawCount + shellCount + descCount }}，与 {{ loadCount }} 对得上。
+          服务端原话去向：<strong>丢了 {{ lostCount }}</strong
+          >（#4 #8 #10）· <strong>当标题 {{ titleIsRawCount }}</strong
+          >（#5 #6 #7 #9）· <strong>只在悬停 {{ shellCount }}</strong
+          >（#1 #2）· <strong>作说明行 {{ descCount }}</strong
+          >（#3）。四类相加 {{ lostCount + titleIsRawCount + shellCount + descCount }}，与 {{ loadCount }} 对得上。
         </li>
         <li>只有<strong>看板 #3</strong> 一处是「中性标题 + 原话作说明 + 按钮」，它是别处照着改的样板。</li>
-        <li>写失败横幅 <strong>{{ WRITE.length }}</strong> 处编号 <strong>W1–W{{ WRITE.length }}</strong>，<strong>没有按钮</strong>，不新加入口，也不与读失败混算。</li>
+        <li>
+          写失败横幅 <strong>{{ WRITE.length }}</strong> 处编号 <strong>W1–W{{ WRITE.length }}</strong
+          >，<strong>没有按钮</strong>，不新加入口，也不与读失败混算。
+        </li>
       </ul>
     </header>
 
@@ -254,7 +257,13 @@ const descCount = computed(() => LOAD.filter((s) => s.rawFate.startsWith('直接
     <h2 class="cp__h2 t-title">二、写失败横幅（没有按钮，不新加入口）</h2>
     <table class="cp__table">
       <thead>
-        <tr><th>编号</th><th>位置</th><th>现状</th><th>建议</th><th>变化</th></tr>
+        <tr>
+          <th>编号</th>
+          <th>位置</th>
+          <th>现状</th>
+          <th>建议</th>
+          <th>变化</th>
+        </tr>
       </thead>
       <tbody>
         <tr v-for="w in WRITE" :key="w.id">
