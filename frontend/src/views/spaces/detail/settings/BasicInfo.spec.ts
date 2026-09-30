@@ -43,6 +43,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import Detail from '../../Detail.vue'
+
 import BasicInfo from './BasicInfo.vue'
 
 import DialogContainer from '@/components/common/DialogContainer.vue'
