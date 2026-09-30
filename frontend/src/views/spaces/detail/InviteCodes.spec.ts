@@ -58,6 +58,7 @@ vi.mock('@/components/common/PageHeader.vue', async () => {
 import { toast } from 'vuetify-sonner'
 
 import InviteCodes from './InviteCodes.vue'
+
 import i18n, { setLocale } from '@/i18n'
 
 const SPACE_ID = 11
