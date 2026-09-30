@@ -193,7 +193,7 @@ useCommands(() => {
 </script>
 
 <template>
-  <AppPage class="docs-page" :title="t('navigation.project.docs')">
+  <AppPage :title="t('navigation.project.docs')">
     <!-- 没有状态时不给这一格：手机上页头只为状态画（AppPage），空着也画会留一条白带。 -->
     <template v-if="kind === 'charter' && (saving || savedAt || charterDirty)" #meta>
       <span v-if="saving">保存中…</span>
@@ -361,11 +361,6 @@ useCommands(() => {
 </template>
 
 <style scoped>
-/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
-.docs-page {
-  background: var(--surface);
-}
-
 /* 四种文档的切换带。它以前是侧栏里四行常驻的一级导航，占着黄金位养的却是四个
    二级页面；收成这一条 tab 带之后，侧栏只留一行「项目文档」。 */
 .docs-tabs {

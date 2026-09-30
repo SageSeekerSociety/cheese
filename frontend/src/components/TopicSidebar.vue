@@ -569,11 +569,11 @@ const onDocs = computed(() => !!props.activeDocs)
 
 <style scoped>
 /* Right-edge resize handle (sits on top of the drawer's border). */
-/* 整页形态：占满内容区，不画抽屉那条右边线。 */
+/* 整页形态（手机上的话题列表）：占满内容区，不画抽屉那条右边线。这时它是内容，
+   不是侧栏，底色跟着内容区走（design-system §1.4）。 */
 .topic-rail--page {
   width: 100%;
   height: 100%;
-  background: var(--canvas);
 }
 .rail-resizer {
   position: absolute;

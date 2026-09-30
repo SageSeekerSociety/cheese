@@ -11,7 +11,7 @@
 <template>
   <v-app class="bg-background h-100">
     <v-main class="bg-background h-100">
-      <div class="border-t-sm bg-background h-100 overflow-hidden">
+      <div class="app-pane app-pane--alone h-100 overflow-hidden">
         <div id="app-scrollable" class="app-content h-100">
           <router-view />
         </div>

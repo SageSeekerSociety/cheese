@@ -579,23 +579,37 @@ function openTask(task: RoomTask) {
     max-height: none;
   }
 }
+/* 三列「该谁动」是 --fill 的泳道，卡片白底描边：卡比泳道亮，列和卡一眼分得开。
+   内容区本身是 surface，所以列不能再是白框。 */
 .board-col {
   display: flex;
   flex-direction: column;
   min-height: 0;
   max-height: 100%;
   min-width: 0;
-  border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--fill);
+}
+/* 「做出了什么」不是一列状态，是那三列干完吐出来的东西，所以它不是泳道：没有底色，
+   靠一条线和三列隔开。窄屏上它摞在板的最上面，线就画在它底下。 */
+.board-col--made {
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+}
+@container (min-width: 1000px) {
+  .board-col--made {
+    padding-left: 10px;
+    border-bottom: 0;
+    border-left: 1px solid var(--line);
+  }
 }
 .board-col__head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
+  padding: 10px 12px 4px;
 }
 .board-col__name {
   color: var(--ink);
@@ -643,7 +657,7 @@ function openTask(task: RoomTask) {
   margin-bottom: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--canvas);
+  background: var(--surface);
   text-align: left;
   cursor: pointer;
 }
