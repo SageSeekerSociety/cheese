@@ -1,4 +1,4 @@
-// 「编辑题目板信息」弹窗底部的危险区（删除题目板）钉三件事：
+// 设置「基本信息」这一栏。底部的危险区（删除空间）钉三件事：
 //   1. 只有创建者（OWNER）看得到它 —— 后端 delete_space 走的是 allow_admin=False
 //      那道闸，管理员点下去只会拿到 403，摆一颗必然失败的按钮比不摆更糟；
 //   2. 点下去先问一句，人没确认之前一个请求都不发；
@@ -6,7 +6,7 @@
 //      push，「返回」不该把人送回一块已经没了的板。
 import type { Component } from 'vue'
 
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -18,12 +18,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const spacesDetail = vi.fn()
 const listCategories = vi.fn()
 const delSpace = vi.fn()
+const updateSpace = vi.fn()
 
 vi.mock('@/network/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spacesDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
     del: (...a: unknown[]) => delSpace(...a),
+    update: (...a: unknown[]) => updateSpace(...a),
   },
 }))
 
@@ -40,7 +42,8 @@ vi.mock('vue-i18n', async () => {
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
 
-import Detail from './Detail.vue'
+import Detail from '../../Detail.vue'
+import BasicInfo from './BasicInfo.vue'
 
 import DialogContainer from '@/components/common/DialogContainer.vue'
 import { dialogs } from '@/plugins/dialog'
@@ -77,12 +80,16 @@ async function mountPage(currentUserId: number | null) {
     routes: [
       { path: '/', name: 'root', component: { render: () => h('div') } },
       { path: '/spaces', name: 'HomeSpaces', component: { render: () => h('div') } },
-      // Detail 走真的那一格路由，而不是被直接 h() 出来：它自己注册了
-      // onBeforeRouteUpdate，挂在 router-view 外面会招来一句 Vue Router 警告。
-      { path: '/spaces/:spaceId', name: 'SpacesDetail', component: Detail as Component },
+      // 空间外壳（Detail）读回空间，这一栏挂在它下面，和真的路由树一样。
+      {
+        path: '/spaces/:spaceId',
+        name: 'SpacesDetail',
+        component: Detail as Component,
+        children: [{ path: 'manage/settings', name: 'SpacesDetailSettingsBasic', component: BasicInfo as Component }],
+      },
     ],
   })
-  await router.push(`/spaces/${SPACE_ID}`)
+  await router.push(`/spaces/${SPACE_ID}/manage/settings`)
   await router.isReady()
 
   const pinia = createPinia()
@@ -92,13 +99,6 @@ async function mountPage(currentUserId: number | null) {
   })
   await waitFor(() => expect(spacesDetail).toHaveBeenCalled())
   return { ...utils, router, store: useSpaceStore(pinia) }
-}
-
-/** 打开「编辑题目板信息」弹窗 —— 危险区住在它里面。 */
-async function openEditDialog(store: ReturnType<typeof useSpaceStore>) {
-  store.openEditProfile()
-  await nextTick()
-  await nextTick()
 }
 
 function buttonWith(text: string, base: HTMLElement | Document = document) {
@@ -139,26 +139,22 @@ describe('题目板删除入口', () => {
     vi.clearAllMocks()
   })
 
-  it('创建者在编辑弹窗里看到危险区的那颗红按钮', async () => {
-    const { store } = await mountPage(OWNER_ID)
-    await openEditDialog(store)
+  it('创建者看得到删除空间的按钮', async () => {
+    await mountPage(OWNER_ID)
 
-    await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.dangerZone'))
-    expect(buttonWith('spaces.detail.deleteSpace').className).toContain('bg-error')
+    await waitFor(() => expect(buttonWith('spaces.detail.deleteSpace')).toBeTruthy())
   })
 
   it('不是创建者的人看不到这颗按钮', async () => {
-    const { store } = await mountPage(999)
-    await openEditDialog(store)
+    await mountPage(999)
 
-    await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.editSpaceInfo'))
+    await waitFor(() => expect(document.body.textContent).toContain('spaces.settings.basic.save'))
     expect(document.body.textContent).not.toContain('spaces.detail.dangerZone')
     expect(document.body.textContent).not.toContain('spaces.detail.deleteSpaceHint')
   })
 
   it('先问一句：没点确定之前一个请求都不发', async () => {
-    const { store } = await mountPage(OWNER_ID)
-    await openEditDialog(store)
+    await mountPage(OWNER_ID)
     await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.dangerZone'))
 
     await fireEvent.click(buttonWith('spaces.detail.deleteSpace'))
@@ -168,8 +164,7 @@ describe('题目板删除入口', () => {
   })
 
   it('确认之后删掉它，并把人送到题目板列表', async () => {
-    const { store, router } = await mountPage(OWNER_ID)
-    await openEditDialog(store)
+    const { router } = await mountPage(OWNER_ID)
     await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.dangerZone'))
 
     await fireEvent.click(buttonWith('spaces.detail.deleteSpace'))
@@ -181,5 +176,48 @@ describe('题目板删除入口', () => {
 
     await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
     expect(router.currentRoute.value.name).not.toBe('SpacesDetail')
+  })
+})
+
+// 保存：改了什么就把什么发出去；没存上时，填好的内容还留在表单里。
+describe('基本信息的保存', () => {
+  beforeEach(() => {
+    spacesDetail.mockResolvedValue({ data: { space: SPACE } })
+    listCategories.mockResolvedValue({ data: { categories: [] } })
+  })
+
+  afterEach(() => {
+    cleanup()
+    AccountService.user = null
+    vi.clearAllMocks()
+  })
+
+  async function rename(getByLabelText: (text: string) => HTMLElement, value: string) {
+    const input = getByLabelText('spaces.settings.basic.name') as HTMLInputElement
+    await waitFor(() => expect(input.value).toBe(SPACE.name))
+    await fireEvent.update(input, value)
+    await fireEvent.click(buttonWith('spaces.settings.basic.save'))
+    return input
+  }
+
+  it('改过的名字发给服务端', async () => {
+    updateSpace.mockResolvedValue({ data: { space: SPACE } })
+    const { getByLabelText } = await mountPage(OWNER_ID)
+
+    await rename(getByLabelText, '算法题板')
+
+    await waitFor(() =>
+      expect(updateSpace).toHaveBeenCalledWith(SPACE_ID, expect.objectContaining({ name: '算法题板' }))
+    )
+  })
+
+  it('没存上时，改过的名字还在', async () => {
+    updateSpace.mockRejectedValue(new Error('boom'))
+    const { getByLabelText } = await mountPage(OWNER_ID)
+
+    const input = await rename(getByLabelText, '算法题板')
+
+    await waitFor(() => expect(updateSpace).toHaveBeenCalled())
+    expect(input.value).toBe('算法题板')
   })
 })

@@ -1,11 +1,9 @@
 <template>
-  <PageHeader :title="t('spaces.domainGroups.title')" show-on-mobile>
-    <template #actions>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-        {{ t('spaces.domainGroups.createGroup') }}
-      </v-btn>
-    </template>
-  </PageHeader>
+  <SettingsToolbar>
+    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+      {{ t('spaces.domainGroups.createGroup') }}
+    </v-btn>
+  </SettingsToolbar>
   <v-sheet flat rounded="lg">
     <div v-if="loading" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -113,7 +111,7 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
-import PageHeader from '@/components/common/PageHeader.vue'
+import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'

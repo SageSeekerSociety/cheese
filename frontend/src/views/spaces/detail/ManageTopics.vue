@@ -1,30 +1,28 @@
 <template>
-  <PageHeader :title="t('spaces.detail.manageTopics.title')" show-on-mobile>
-    <template #actions>
-      <v-btn color="primary" prepend-icon="mdi-plus">
-        {{ t('spaces.detail.manageTopics.addTopics') }}
+  <SettingsToolbar :title="t('spaces.settings.sections.topics')">
+    <v-btn color="primary" prepend-icon="mdi-plus">
+      {{ t('spaces.detail.manageTopics.addTopics') }}
 
-        <v-dialog v-model="addTopicsDialog" activator="parent" width="800">
-          <template #default="{ isActive }">
-            <v-card>
-              <v-card-title>{{ t('spaces.detail.manageTopics.addTopics') }}</v-card-title>
-              <v-card-text>
-                <topic-selector v-model="selectedTopics" always-adding />
-              </v-card-text>
-              <v-card-actions>
-                <v-btn color="primary" @click="isActive.value = false">
-                  {{ t('spaces.detail.manageTopics.cancel') }}
-                </v-btn>
-                <v-btn color="primary" @click="confirmAddTopics">
-                  {{ t('spaces.detail.manageTopics.add') }}
-                </v-btn>
-              </v-card-actions>
-            </v-card>
-          </template>
-        </v-dialog>
-      </v-btn>
-    </template>
-  </PageHeader>
+      <v-dialog v-model="addTopicsDialog" activator="parent" width="800">
+        <template #default="{ isActive }">
+          <v-card>
+            <v-card-title>{{ t('spaces.detail.manageTopics.addTopics') }}</v-card-title>
+            <v-card-text>
+              <topic-selector v-model="selectedTopics" always-adding />
+            </v-card-text>
+            <v-card-actions>
+              <v-btn color="primary" @click="isActive.value = false">
+                {{ t('spaces.detail.manageTopics.cancel') }}
+              </v-btn>
+              <v-btn color="primary" @click="confirmAddTopics">
+                {{ t('spaces.detail.manageTopics.add') }}
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </template>
+      </v-dialog>
+    </v-btn>
+  </SettingsToolbar>
   <v-sheet flat rounded="lg">
     <v-list v-if="classificationTopics.length > 0" rounded="lg">
       <v-list-item v-for="(topic, index) in classificationTopics" :key="index" :title="topic.name">
@@ -46,8 +44,8 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
-import PageHeader from '@/components/common/PageHeader.vue'
 import TopicSelector from '@/components/common/TopicSelector.vue'
+import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useSpaceStore } from '@/stores/space'
 import { Topic } from '@/types'
 

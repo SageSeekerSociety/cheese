@@ -1,11 +1,9 @@
 <template>
-  <PageHeader :title="t('spaces.detail.manageCategories.title')" show-on-mobile>
-    <template #actions>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-        {{ t('spaces.detail.manageCategories.addCategory') }}
-      </v-btn>
-    </template>
-  </PageHeader>
+  <SettingsToolbar :title="t('spaces.settings.sections.categories')">
+    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+      {{ t('spaces.detail.manageCategories.addCategory') }}
+    </v-btn>
+  </SettingsToolbar>
   <v-sheet flat rounded="lg">
     <div v-if="loadingCategories" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -149,7 +147,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
 
-import PageHeader from '@/components/common/PageHeader.vue'
+import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 import { SpaceCategory } from '@/types'

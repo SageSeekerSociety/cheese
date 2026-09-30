@@ -109,7 +109,7 @@ function makeRouter() {
     routes: [
       { path: '/spaces/:spaceId/tasks/publish', name: 'SpacesDetailPublishTask', component: stub },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: stub },
-      { path: '/spaces/:spaceId/tasks/audit', name: 'SpacesDetailAuditTasks', component: stub },
+      { path: '/spaces/:spaceId/manage/audit', name: 'SpacesDetailAuditTasks', component: stub },
       { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: stub },
     ],
   })
@@ -581,7 +581,7 @@ describe('发题页：从 PDF 生成', () => {
     // 就地给回执，回执里两个去处都指向新外壳那棵树。
     expect(textOf(view.container, 'pdf-receipt') ?? '').toContain('刚发的 1 道题已经进了待审核队列')
     const hrefs = Array.from(view.container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
-    expect(hrefs).toContain(`/spaces/${SPACE_ID}/tasks/audit`)
+    expect(hrefs).toContain(`/spaces/${SPACE_ID}/manage/audit`)
     expect(hrefs).toContain(`/spaces/${SPACE_ID}/tasks?filter=publishing`)
   })
 

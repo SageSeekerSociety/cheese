@@ -42,12 +42,6 @@
           :to="{ name: cell.route, params: { spaceId } }"
           :title="t(cell.label)"
         />
-        <v-list-item
-          rounded="lg"
-          prepend-icon="mdi-pencil-outline"
-          :title="t('spaces.detail.editInfo')"
-          @click="openEditProfile"
-        />
       </template>
     </v-list>
   </SecondaryNavigation>
@@ -67,7 +61,6 @@ import { useSpaceStore } from '@/stores/space'
 const { t } = useI18n()
 const route = useRoute()
 const spaceStore = useSpaceStore()
-const { openEditProfile } = spaceStore
 const { currentSpace: space, categories, isManager } = storeToRefs(spaceStore)
 
 /** 管理那一段：只有所有者与管理员看得见（接口对别人也不开）。 */
@@ -75,19 +68,7 @@ const manageCells = [
   { route: 'SpacesDetailAuditTasks', icon: 'mdi-check-decagram-outline', label: 'spaces.detail.auditContests' },
   { route: 'SpacesDetailMembers', icon: 'mdi-account-multiple-outline', label: 'spaces.members.title' },
   { route: 'SpacesDetailAnalytics', icon: 'mdi-chart-line', label: 'spaces.detail.analytics.title' },
-  {
-    route: 'SpacesDetailManageTemplates',
-    icon: 'mdi-file-document-outline',
-    label: 'spaces.detail.manageTemplates.title',
-  },
-  { route: 'SpacesDetailManageCategories', icon: 'mdi-shape-outline', label: 'spaces.detail.manageCategories.title' },
-  { route: 'SpacesDetailManageTopics', icon: 'mdi-tag-multiple-outline', label: 'spaces.detail.manageTopics.title' },
-  { route: 'SpacesDetailManageDomainGroups', icon: 'mdi-web', label: 'spaces.domainGroups.title' },
-  {
-    route: 'SpacesDetailManageInviteCodes',
-    icon: 'mdi-ticket-confirmation-outline',
-    label: 'spaces.inviteCodes.title',
-  },
+  { route: 'SpacesDetailSettings', icon: 'mdi-cog-outline', label: 'spaces.settings.title' },
 ]
 
 /** 侧栏里的分类：未归档的，按显示顺序。 */

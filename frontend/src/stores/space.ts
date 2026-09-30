@@ -23,16 +23,6 @@ export const useSpaceStore = defineStore('space', () => {
   const loadingCategories = ref(false)
   const domainGroups = ref<DomainGroup[]>([])
 
-  const isEditingProfile = ref<boolean>(false)
-
-  const openEditProfile = () => {
-    isEditingProfile.value = true
-  }
-
-  const closeEditProfile = () => {
-    isEditingProfile.value = false
-  }
-
   /** 我在这个空间里的角色：管理员名单（含所有者）里有我就是那个角色，否则是成员。 */
   const myRole = computed<SpaceAdminRoleType | 'MEMBER'>(() => {
     const me = AccountService._user.value?.id
@@ -339,7 +329,6 @@ export const useSpaceStore = defineStore('space', () => {
     loadingCategories,
     domainGroups,
     fetchDomainGroups,
-    isEditingProfile,
     myRole,
     isManager,
     isOwner,
@@ -365,7 +354,5 @@ export const useSpaceStore = defineStore('space', () => {
     addAdmin,
     updateAdmin,
     removeAdmin,
-    openEditProfile,
-    closeEditProfile,
   }
 })
