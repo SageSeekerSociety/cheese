@@ -235,6 +235,13 @@ describe('题目详情', () => {
     expect(hrefs(container)).not.toContain(`${BASE}/submit`)
   })
 
+  it('题目已结束：不再给交作业的入口', async () => {
+    const { container } = await mount({ endedAt: Date.now() - DAY }, APPROVED_ME)
+
+    await waitFor(() => expect(listSubmissions).toHaveBeenCalled())
+    expect(hrefs(container)).not.toContain(`${BASE}/submit`)
+  })
+
   it('我的进度按我那一份最新一版提交与它的评审算', async () => {
     listSubmissions.mockImplementation(async () => ({
       data: { submissions: [{ id: 88, version: 3, review: { reviewed: true, detail: { accepted: true } } }], page: {} },

@@ -163,9 +163,13 @@ async function loadMine() {
   }
 }
 
-/** 领了之后的主操作：交第一版或再交一版。只能交一次且已经交过，就不再给这颗按钮。 */
+/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：题目已结束，
+ *  或者只能交一次而且已经交过。 */
 const submitAction = computed(() => {
   if (!joined.value || !taskData.value) return null
+  // 已经在交作业的表单上：表单自己有「提交」，这一行不再给第二颗。
+  if (route.name === routeNames.submit) return null
+  if (taskData.value.endedAt) return null
   if (myLatest.value && !taskData.value.resubmittable) return null
   return myLatest.value ? t('tasks.page.submit.again') : t('tasks.page.submit.first')
 })
