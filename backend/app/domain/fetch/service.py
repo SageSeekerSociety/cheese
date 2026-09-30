@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.domain.fetch import layers
+from app.domain.fetch import guard, layers
+from app.domain.fetch.guard import NotPublic
 from app.domain.fetch.layers import Attempt
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,16 @@ async def _distill(
         return None
 
 
+def _refused(
+    url: str, exc: NotPublic, attempts: list[Attempt] | None = None
+) -> FetchOutcome:
+    return FetchOutcome(
+        url=url,
+        ok=False,
+        attempts=[*(attempts or []), Attempt("guard", False, note=str(exc))],
+    )
+
+
 async def fetch(
     url: str,
     prompt: str | None = None,
@@ -141,6 +152,14 @@ async def fetch(
     the last rung rather than the first.
     """
     attempts: list[Attempt] = []
+
+    # Only public addresses, checked before anything is read and again by every
+    # connection a rung opens. A refusal ends the fetch: the rungs further down
+    # would hand the same URL to a third party or a browser.
+    try:
+        await guard.check(url)
+    except NotPublic as exc:
+        return _refused(url, exc)
 
     async def climb() -> Attempt | None:
         for rung in (layers.rung_markdown_native, layers.rung_plain_http):
@@ -165,7 +184,10 @@ async def fetch(
                 return got
         return None
 
-    won = await climb()
+    try:
+        won = await climb()
+    except NotPublic as exc:
+        return _refused(url, exc, attempts)
     if won is None:
         # No rung cleared the bar, but "not much prose" and "nothing" are
         # different answers. A short page that is genuinely short — a Q&A with
