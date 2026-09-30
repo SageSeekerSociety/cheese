@@ -277,6 +277,65 @@ it('does not let background metadata cancel an explicit refresh grant', async ()
   expect(submissions[1].body).toBe('grant=manual-refresh-grant')
 })
 
+it('preserves a named HTML browsing context on a known unchanged version', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>same</p>', version: 'v1' })
+  const { container, rerender } = mountFile('site/index.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const frame = container.querySelector('iframe')
+  await rerender({ refreshTick: 1 })
+  await waitFor(() => expect(readPreviewFile).toHaveBeenCalledTimes(2))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(requestPreviewSession).toHaveBeenCalledTimes(1)
+  expect(submissions).toHaveLength(1)
+  expect(container.querySelector('iframe')).toBe(frame)
+})
+
+it.each(['v2', null])('reloads named HTML when its version changes or is unknown (%s)', async (version) => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>first</p>', version: 'v1' })
+  const { rerender } = mountFile('site/index.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>second</p>', version })
+  await rerender({ refreshTick: 1 })
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  expect(requestPreviewSession).toHaveBeenCalledTimes(2)
+})
+
+it('does not treat two unknown named HTML versions as unchanged', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>mutable</p>' })
+  const { rerender } = mountFile('site/index.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  await rerender({ refreshTick: 1 })
+  await waitFor(() => expect(submissions).toHaveLength(2))
+})
+
+it('does not reuse a known version across different named files', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'a.html', content: '<p>A</p>', version: 'v1' })
+  const { rerender } = mountFile('a.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  readPreviewFile.mockResolvedValue({ path: 'b.html', content: '<p>B</p>', version: 'v1' })
+  await rerender({ path: 'b.html' })
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  expect(new URLSearchParams(submissions[1].body).get('path')).toBe('/_cheese/room/b.html')
+})
+
+it('ignores a grant from a prior topic without requiring remount', async () => {
+  let finish: (value: { url: string; grant: string }) => void = () => {}
+  requestPreviewSession.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const { rerender } = mountFile('site/index.html')
+  await waitFor(() => expect(requestPreviewSession).toHaveBeenCalledWith('topic-a'))
+  await rerender({ topicId: 'topic-b' })
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  finish({ url: `${url}_cheese/session`, grant: 'stale-grant' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(submissions).toHaveLength(1)
+  expect(requestPreviewSession).toHaveBeenLastCalledWith('topic-b')
+})
+
 it.each([false, true])('refreshes changed static content and preserves the same version (large=%s)', async (large) => {
   getPreview.mockResolvedValue({ ...artifact('file'), version: 'content-a' })
   if (large) readPreviewFile.mockResolvedValue({ path: 'report.html', content: null, too_large: true, version: null })

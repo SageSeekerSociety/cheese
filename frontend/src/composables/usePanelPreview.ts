@@ -81,22 +81,23 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   // 消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件都在这里，芝士
   // 点名的当前预览也只是其中一份，所以看其中任何一份都是同一套显示，只是不跟着当前
   // 预览走。
-  async function loadFile(path: string, opts: { silent?: boolean } = {}) {
+  async function loadFile(path: string, opts: { silent?: boolean; reload?: boolean } = {}) {
     const tid = props.topicId
     if (!tid) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
     const current = ++generation
     if (opts.silent) refreshing.value = true
     else loading.value = true
     try {
       const content = await readPreviewFile(tid, path)
       if (current !== generation) return
-      previewUrl.value = null
+      if (!isWebPage(path)) previewUrl.value = null
       previewAppNote.value = ''
       previewError.value = null
       previewReadError.value = null
       previewNamed.value = true
       previewNamedPath.value = path
-      previewMime.value = ''
+      if (!isWebPage(path)) previewMime.value = ''
       loadedArtifact = null
       previewFile.value = content
       if (isWebPage(path)) await mountWebPage(tid, path, content, current, opts)
@@ -118,18 +119,19 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   //
   // 网页不由展示组件渲染：`readPreviewFile` 拿回来的只有那几行源码，挂上去读者看到的
   // 是标签本身。字节交给 iframe。
-  const webMountedVersion = ref<string | null>(null)
+  let webMountedIdentity: string | null = null
 
   async function mountWebPage(
     tid: string,
     path: string,
     content: FileContent,
     current: number,
-    opts: { silent?: boolean }
+    opts: { silent?: boolean; reload?: boolean }
   ) {
-    // 已经画着这一份、而它没变（一轮收工的重读）：不动它。重新 POST 一次是让 iframe
-    // 整个重新导航，读者在这个页面里的状态会没掉。
-    if (opts.silent && previewUrl.value && webMountedVersion.value === (content.version ?? null)) return
+    // Only a known version proves unchanged bytes; path and topic also belong to
+    // the identity. Explicit reload always navigates, even at the same version.
+    const identity = content.version ? JSON.stringify([tid, path, content.version]) : null
+    if (opts.silent && !opts.reload && previewUrl.value && identity && identity === webMountedIdentity) return
     let session: Awaited<ReturnType<typeof requestPreviewSession>>
     try {
       session = await requestPreviewSession(tid)
@@ -142,12 +144,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     if (current !== generation) return
     previewMime.value = webMimeOf(suffixOf(path))
     previewUrl.value = session.url
-    webMountedVersion.value = content.version ?? null
     // Mount the named frame before POSTing: a missing target opens a new tab.
     loading.value = false
     await nextTick()
     if (current !== generation) return
     postPreviewSession(session, { target: options.frameName, path: roomFileDestination(path) })
+    webMountedIdentity = identity
   }
 
   async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
@@ -265,8 +267,19 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     { immediate: true }
   )
   watch(
-    () => props.path,
+    () => [props.topicId, props.path],
     () => {
+      generation += 1
+      previewUrl.value = null
+      previewFile.value = null
+      previewError.value = null
+      previewReadError.value = null
+      previewNamed.value = false
+      previewAppNote.value = ''
+      loadedArtifact = null
+      webMountedIdentity = null
+      loading.value = false
+      refreshing.value = false
       if (props.active) void load()
     }
   )
