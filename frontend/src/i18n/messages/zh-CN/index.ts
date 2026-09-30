@@ -14,6 +14,7 @@ import notifications from './notifications.json'
 import publicSite from './publicSite.json'
 import questions from './questions.json'
 import ratchet from './ratchet.json'
+import roomNotice from './roomNotice.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import toolLabels from './toolLabels.json'
@@ -40,6 +41,7 @@ export default {
   spaces,
   tasks,
   notifications,
+  roomNotice,
   toolLabels,
   work,
 }

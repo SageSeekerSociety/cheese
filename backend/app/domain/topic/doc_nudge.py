@@ -46,6 +46,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -63,7 +64,7 @@ MIN_TOOL_EVENTS = 5
 #: 一轮刚结束时，它最后那几次写入（包括也许正是 `cheese_doc_set`）可能还没落库。
 SETTLE_S = 8.0
 
-EVENT_LINE = "本话题已有进展但还没有实况文档，已请 AI 队友补上"
+EVENT_LINE = say("docMissing")
 PROMPT = (
     "本话题已经有了实质进展，但实况文档还是空的。它是给没参与讨论的人和下一轮的你"
     "看的，由在这里干活的 AI 队友维护，不论你是哪个队友。\n"

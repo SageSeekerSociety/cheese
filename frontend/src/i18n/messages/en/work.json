@@ -356,7 +356,37 @@
       "platform": "Platform",
       "changedFiles": "Changed files",
       "moreFiles": "{n} more files",
-      "goConfirm": "Review and confirm"
+      "goConfirm": "Review and confirm",
+      "who": {
+        "platform": "Handled by the platform",
+        "cheese": "Cheese is on it",
+        "human": "Needs a person"
+      },
+      "working": "{name} is on it",
+      "machineReady": "Work computer ready",
+      "machinePreparing": "Preparing the work computer",
+      "incident": {
+        "title": "Work computer temporarily unavailable",
+        "cleaning": "Cleaning up automatically",
+        "recovering": "Recovering",
+        "retryable": "Can retry",
+        "needsAdmin": "Needs an admin"
+      },
+      "action": {
+        "doc": "View doc",
+        "decision": "View decisions",
+        "split": "View task",
+        "undo": "Undo",
+        "milestone": "View calendar",
+        "accept": "Review"
+      },
+      "filesChanged": "Changed files: {n}",
+      "viewChanges": "View changes",
+      "showDetail": "Show details",
+      "detail": "Details",
+      "docDiff": "Document changes",
+      "added": "Added",
+      "removed": "Removed"
     },
     "message": {
       "copy": "Copy",

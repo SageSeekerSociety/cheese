@@ -58,6 +58,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import Event as Addressee
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut, UpgradeBlockIn
@@ -190,14 +191,20 @@ async def upgrade_block(
             db,
             place_id=room.id,
             content=(
-                "一条消息已转为任务" if thread is not None else "一条消息已转为话题"
+                say("blockUpgradedToTask")
+                if thread is not None
+                else say("blockUpgradedToRoom")
             ),
             meta=notice(
                 EVENT_BLOCK_UPGRADED,
                 severity=SEVERITY_INFO,
                 who=WHO_HUMAN,
-                detail=f"活 {thread.id}" if thread is not None else f"房间 {room.id}",
-                detail_label="升级成了什么",
+                detail=(
+                    say("blockUpgradedTaskId", id=thread.id)
+                    if thread is not None
+                    else say("blockUpgradedRoomId", id=room.id)
+                ),
+                detail_label=say("labelUpgradedTo"),
             ),
             points_at=Addressee(reviewers=(owner,) if owner else ()),
         )

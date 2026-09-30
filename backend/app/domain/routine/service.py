@@ -33,6 +33,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -213,6 +214,7 @@ class RoutineService:
         self._session.add(row)
         await self._session.flush()
         if by_agent:
+            line = say("routineProposed", title=row.title)
             self._session.add(
                 Block(
                     id=uuid.uuid4(),
@@ -221,17 +223,21 @@ class RoutineService:
                     author="system",
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
-                    content=f"芝士起草了「{row.title}」，要你确认后才会执行",
-                    meta={
-                        **notice(
-                            EVENT_ROUTINE_PROPOSED,
-                            severity=SEVERITY_INFO,
-                            who=WHO_CHEESE,
-                            detail=self.summary_text(row),
-                            detail_label="待确认的配置",
-                        ),
-                        "routine_id": str(row.id),
-                    },
+                    content=line,
+                    # A row, not `BlockRepository.add`: the key is recorded here.
+                    meta=with_keys(
+                        {
+                            **notice(
+                                EVENT_ROUTINE_PROPOSED,
+                                severity=SEVERITY_INFO,
+                                who=WHO_CHEESE,
+                                detail=self.summary_text(row),
+                                detail_label=say("labelRoutineToConfirm"),
+                            ),
+                            "routine_id": str(row.id),
+                        },
+                        content=line,
+                    ),
                 )
             )
         else:
@@ -241,16 +247,16 @@ class RoutineService:
 
     @staticmethod
     def summary_text(row: Routine) -> str:
-        lines = [
-            f"名称：{row.title}",
-            f"触发：{describe_trigger(row)}",
-            f"工作内容：{row.instructions}",
-            f"资料范围：{row.context_scope or '（未限定）'}",
-            f"结果保存到：房间 {row.output_dir or '根目录'}",
-            f"执行者：{row.agent_handle}",
-            f"结果通知：{row.owner_handle}",
-        ]
-        return "\n".join(lines)
+        return say(
+            "routineSummary",
+            title=row.title,
+            trigger=describe_trigger(row),
+            instructions=row.instructions,
+            scope=row.context_scope or say("routineScopeUnset"),
+            output=row.output_dir or say("routineOutputRoot"),
+            agent=row.agent_handle,
+            owner=row.owner_handle,
+        )
 
     def _activate(self, row: Routine, *, confirmed_by: str | None = None) -> None:
         stamp = now()
@@ -433,6 +439,7 @@ async def _fire(
         return run
     content = run_prompt(routine, run)
     event_id = uuid.uuid4()
+    line = say("routineRunStarted", title=routine.title)
     session.add(
         Block(
             id=event_id,
@@ -441,18 +448,22 @@ async def _fire(
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
-            content=f"开始执行「{routine.title}」",
-            meta={
-                **notice(
-                    EVENT_ROUTINE_RUN,
-                    severity=SEVERITY_INFO,
-                    who=WHO_PLATFORM,
-                    detail=content,
-                    detail_label="交给芝士的工作",
-                ),
-                "routine_id": str(routine.id),
-                "routine_run_id": str(run.id),
-            },
+            content=line,
+            # A row, not `BlockRepository.add`: the key is recorded here.
+            meta=with_keys(
+                {
+                    **notice(
+                        EVENT_ROUTINE_RUN,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=content,
+                        detail_label=say("labelRoutineWork"),
+                    ),
+                    "routine_id": str(routine.id),
+                    "routine_run_id": str(run.id),
+                },
+                content=line,
+            ),
         )
     )
     await record_agent(
@@ -745,12 +756,18 @@ async def _announce_finished(session: AsyncSession) -> None:
         if topic is None or topic.status == TopicStatus.archived:
             continue
         ok_ = run.status == RunStatus.succeeded.value
-        verdict = {"succeeded": "已完成", "failed": "失败", "skipped": "未执行"}[
-            run.status
-        ]
-        body = run.summary if ok_ else (run.error or run.summary)
-        if run.outputs:
-            body += "\n结果文件：" + "、".join(run.outputs)
+        verdict = {
+            "succeeded": say("routineSucceeded"),
+            "failed": say("routineFailed"),
+            "skipped": say("routineSkipped"),
+        }[run.status]
+        said = run.summary if ok_ else (run.error or run.summary)
+        body = (
+            say("routineResultWithFiles", body=said, files="、".join(run.outputs))
+            if run.outputs
+            else said
+        )
+        line = say("routineResult", title=routine.title, verdict=verdict)
         session.add(
             Block(
                 id=uuid.uuid4(),
@@ -759,19 +776,25 @@ async def _announce_finished(session: AsyncSession) -> None:
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,
-                content=f"「{routine.title}」{verdict}",
-                meta={
-                    **notice(
-                        EVENT_ROUTINE_RESULT,
-                        severity=SEVERITY_INFO if ok_ else SEVERITY_ERROR,
-                        who=WHO_PLATFORM,
-                        detail=body,
-                        detail_label="结果" if ok_ else "原因",
-                    ),
-                    "routine_id": str(routine.id),
-                    "routine_run_id": str(run.id),
-                    "outputs": run.outputs,
-                },
+                content=line,
+                # A row, not `BlockRepository.add`: the key is recorded here.
+                meta=with_keys(
+                    {
+                        **notice(
+                            EVENT_ROUTINE_RESULT,
+                            severity=SEVERITY_INFO if ok_ else SEVERITY_ERROR,
+                            who=WHO_PLATFORM,
+                            detail=body,
+                            detail_label=(
+                                say("labelResult") if ok_ else say("labelReason")
+                            ),
+                        ),
+                        "routine_id": str(routine.id),
+                        "routine_run_id": str(run.id),
+                        "outputs": run.outputs,
+                    },
+                    content=line,
+                ),
             )
         )
         await ProjectNotificationService(session).create(

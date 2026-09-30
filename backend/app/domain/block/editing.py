@@ -30,6 +30,7 @@ from app.domain.block.models import (
     BlockKind,
     consumed_turn,
 )
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.room_task.services import TaskService
@@ -129,7 +130,7 @@ async def _tell_the_room(blocks: BlockRepository, block: Block, editor: str) -> 
         task_id=landed.task_id,
         author=editor,
         author_type=AuthorType.participant,
-        content=f"<@{editor}> 改了一条之前的消息",
+        content=say("messageEdited", actor=f"<@{editor}>"),
         kind=BlockKind.event,
         meta={
             "in_room": False,

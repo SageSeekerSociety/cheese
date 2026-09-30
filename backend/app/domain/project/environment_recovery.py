@@ -15,6 +15,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
@@ -62,9 +63,9 @@ async def report_failure(
             author_type=AuthorType.platform,
             kind=BlockKind.event,
             content=(
-                "环境准备失败，已交给项目总览处理。"
+                say("environmentFailedHandedOver")
                 if available
-                else "环境准备失败，项目总览暂时无法处理，可以查看安装日志。"
+                else say("environmentFailedNoOverview")
             ),
             meta={
                 "event_type": "environment_recovery",
@@ -94,7 +95,7 @@ async def report_failure(
             root,
             author="system",
             addressed=addressed_to_agent(seat),
-            nudge_event="房间环境准备失败，已交给项目总览检查",
+            nudge_event=say("environmentRecoveryRequest"),
             nudge_meta={
                 **notice(
                     EVENT_ENVIRONMENT_RECOVERY_REQUEST,

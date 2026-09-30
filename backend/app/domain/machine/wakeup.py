@@ -20,6 +20,8 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 
+from app.domain.block.notice_text import say
+
 logger = logging.getLogger("cheese.machine.wakeup")
 
 #: 送过去的那一句。**它不是平台起的一轮**：房间扣着的那条人写的消息才是这一轮的
@@ -29,7 +31,7 @@ WAKE_PROMPT = "Cloud machine is ready; continue the pending input."
 #: 房间里看得见的那一行 —— 送达这一轮的开场白，同时是这个房间的 Cloud 生命周期
 #: 转出「正在创建」的那条记录。一件事一条记录：由投递这一步写，写完才投递，所以
 #: 「这个房间已经叫醒过了」在下一次扫描到来之前就已经是库里的事实。
-WAKE_NOTICE = "云端工作电脑已接入，正在继续刚才的消息"
+WAKE_NOTICE = say("cloudWakeNotice")
 
 ReadyLeases = Callable[[str], Awaitable[list[tuple[uuid.UUID, str]]]]
 WaitingTopics = Callable[[list[uuid.UUID]], Awaitable[list[uuid.UUID]]]
@@ -81,7 +83,8 @@ class CloudWakeup:
         for topic_id in await self._waiting_topics(list(by_topic)):
             lease = by_topic[topic_id]
             await self._announce_failure(
-                topic_id, f"云端工作电脑「{lease.hostname}」没有启动：{lease.reason}"
+                topic_id,
+                say("cloudLeaseFailed", host=lease.hostname, reason=lease.reason),
             )
             logger.warning(
                 "cloud topic %s told its machine %s failed: %s",

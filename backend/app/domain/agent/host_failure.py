@@ -33,23 +33,26 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import NoticeText, say
 from app.domain.device.service import DeviceService, device_service_for_session
 from app.domain.device.supply import Supply
 
 logger = logging.getLogger(__name__)
 
 
-def _failure_meta(failure: PlatformFailure, verdict, detail: str) -> dict:
+def _failure_meta(failure: PlatformFailure, verdict, detail: NoticeText) -> dict:
     """机器连续失败事件的 `meta`。失败次数和原因是**展开区**的内容，不是那一行。"""
     return notice(
         EVENT_HOST_FAILURE,
         severity=SEVERITY_WARN,
         who=WHO_HUMAN,
-        detail=(
-            f"连续 {verdict.consecutive_failures} 轮因「{failure.title}」失败。\n"
-            f"{detail}"
+        detail=say(
+            "hostFailureDetail",
+            count=verdict.consecutive_failures,
+            title=failure.title,
+            then=detail,
         ),
-        detail_label="原因",
+        detail_label=say("labelReason"),
         retryable=True,
     )
 
@@ -102,24 +105,14 @@ async def judge_host_failure(
         return HostVerdict(
             quarantined=True,
             device_id=device_id,
-            message=f"云端工作电脑「{name}」连续失败",
-            event_meta=_failure_meta(
-                failure,
-                verdict,
-                "话题会留在这台机器上，不会换到其他机器。"
-                "需要有人检查这台机器上的连接器和会话，修复后可以重试。",
-            ),
+            message=say("cloudMachineFailing", name=name),
+            event_meta=_failure_meta(failure, verdict, say("cloudMachineFailingNext")),
         )
     return HostVerdict(
         quarantined=True,
         device_id=device_id,
-        message=f"机器「{name}」连续失败，已暂停使用",
-        event_meta=_failure_meta(
-            failure,
-            verdict,
-            "话题仍留在这台机器上，平台会等它恢复，不会换到其他机器。"
-            "机器恢复后可以重试。",
-        ),
+        message=say("machineQuarantined", name=name),
+        event_meta=_failure_meta(failure, verdict, say("machineQuarantinedNext")),
     )
 
 

@@ -3,6 +3,8 @@ import type { Block } from '../cx_types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { noticeText } from '../lib/noticeText'
+
 const props = defineProps<{ events: Block[] }>()
 const now = ref(Date.now())
 const lifecycle = computed(() =>
@@ -15,8 +17,9 @@ const latest = computed(() => props.events.at(-1)!)
 const steps = computed(() => props.events.filter((event) => event.meta?.event_type === 'cloud_startup'))
 const title = computed(() => {
   if (lifecycle.value?.meta?.state === 'ready') return '工作电脑已就绪'
-  if (lifecycle.value?.meta?.state === 'failed') return lifecycle.value.content
-  return steps.value.at(-1)?.content || '正在准备工作电脑'
+  if (lifecycle.value?.meta?.state === 'failed') return noticeText(lifecycle.value)
+  const step = steps.value.at(-1)
+  return (step && noticeText(step)) || '正在准备工作电脑'
 })
 const end = computed(() => (finished.value ? Date.parse(lifecycle.value!.created_at) : now.value))
 function duration(start: string, until = end.value) {
@@ -66,7 +69,7 @@ onBeforeUnmount(() => clearInterval(timer))
         <li v-for="(event, index) in events" :key="event.id">
           <time :datetime="event.created_at">{{ time(event.created_at) }}</time>
           <span
-            >{{ event.content }}<small v-if="event.meta?.detail">{{ event.meta.detail }}</small></span
+            >{{ noticeText(event) }}<small v-if="event.meta?.detail">{{ noticeText(event, 'detail') }}</small></span
           >
           <span v-if="event.meta?.event_type === 'cloud_startup'" class="cloud-startup-duration">{{
             duration(event.created_at, stepEnd(index))

@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 
 #: 项目设置里的两个键。允许的档位缺席 = 不限档；处置缺席 = 拒绝。
 ALLOWED_TIERS_KEY: Final = "allowed_tiers"
@@ -169,15 +170,19 @@ def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
 
 
 _WHAT: Final[dict[Resource, str]] = {
-    Resource.model: "模型",
-    Resource.machine: "工作电脑",
+    Resource.model: say("policyResourceModel"),
+    Resource.machine: say("policyResourceMachine"),
 }
 
 
 def _proposal_line(call: Call, actor: str) -> str:
-    return (
-        f"{actor} 要用{_WHAT[call.resource]}「{call.label}」，"
-        f"超出本项目允许的档位（{call.tier}）；这一步等 @{call.approver} 点头。"
+    return say(
+        "policyProposal",
+        actor=actor,
+        what=_WHAT[call.resource],
+        label=call.label,
+        tier=call.tier,
+        approver=f"@{call.approver}",
     )
 
 

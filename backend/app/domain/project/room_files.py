@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -83,13 +84,13 @@ async def save_to_library(
     await announce(
         session,
         place_id=room_id,
-        content=f"{name} 已存进资料库",
+        content=say("librarySaved", name=name),
         meta=notice(
             EVENT_LIBRARY_SAVED,
             severity=SEVERITY_INFO,
             who=WHO_HUMAN,
-            detail=f"{by} 把这个房间里的 {leaf} 留进了资料库，每个房间都引用得到",
-            detail_label="保存到资料库",
+            detail=say("librarySavedDetail", actor=by, file=leaf),
+            detail_label=say("labelSaveToLibrary"),
         ),
     )
     return name
