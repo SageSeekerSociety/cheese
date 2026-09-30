@@ -45,6 +45,7 @@ from app.domain.block.models import (
     consumed_turn,
 )
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.library import service as library
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.overview import (
@@ -277,6 +278,31 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
+
+
+def offered_attachments(
+    pending: list[Block], project_id: uuid.UUID, room_id: uuid.UUID
+) -> tuple[list[dict], set[uuid.UUID]]:
+    """The images a turn hands the session, and the attachments whose file is gone.
+
+    A message outlives its file: a library file can be deleted while a message
+    still references it. Offering that file fails the read, the turn ends
+    unfinished, the message stays unconsumed, and every later turn replays it
+    and fails the same way. So a missing file is not offered; its prompt line
+    says it is gone (`prompt_line(gone=True)`) and the turn goes on.
+    """
+    attachments = [b for b in pending if b.kind == BlockKind.attachment and b.content]
+    gone = {
+        b.id
+        for b in attachments
+        if not library.attachment_exists(project_id, room_id, b.content)
+    }
+    images = [
+        {"path": b.content, "media_type": b.mime_type or "image/png"}
+        for b in attachments
+        if b.id not in gone
+    ]
+    return images, gone
 
 
 def _addressed_to(block: Block, handle: str) -> bool:
