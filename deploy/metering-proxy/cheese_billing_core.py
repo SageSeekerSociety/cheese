@@ -591,11 +591,13 @@ class CodexBody:
     """Reshape a streamed Responses body into what ChatGPT's Codex backend takes.
 
     The backend refuses a request that does not say ``store: false`` ("Store
-    must be set to false") and one that carries ``max_output_tokens``
-    ("Unsupported parameter"), and the gateway's translation from Anthropic's
-    Messages writes the second and never the first. So the body goes out
-    opening with ``"store":false``, and any top-level ``store`` or
-    ``max_output_tokens`` member of its own is left out.
+    must be set to false") and one that carries ``max_output_tokens`` or
+    ``user`` ("Unsupported parameter"). The gateway's translation from
+    Anthropic's Messages never writes the first, always writes
+    ``max_output_tokens``, and writes ``user`` whenever the caller sent
+    ``metadata.user_id``. So the body goes out opening with ``"store":false``,
+    and any top-level ``store``, ``max_output_tokens`` or ``user`` member of its
+    own is left out.
 
     Streamed, never buffered (see `_write_bound_model` for why that matters):
     only a member's key is held, while the member it opens is decided on; its
@@ -603,7 +605,7 @@ class CodexBody:
     start with an object passes untouched.
     """
 
-    DROPPED = frozenset({"store", "max_output_tokens"})
+    DROPPED = frozenset({"store", "max_output_tokens", "user"})
     _OPENING = b'{"store":false'
 
     def __init__(self) -> None:
