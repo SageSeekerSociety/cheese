@@ -7,7 +7,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 const props = defineProps<{ projectId: string }>()
 const info = ref<ProjectEnvironmentInfo | null>(null)
@@ -245,9 +245,15 @@ onBeforeUnmount(() => {
               }}
             </p>
             <p v-if="status.started_at">
-              {{ t('work.projectSettings.environment.started', { at: new Date(status.started_at).toLocaleString() }) }}
+              {{
+                t('work.projectSettings.environment.started', {
+                  at: new Date(status.started_at).toLocaleString(i18n.global.locale.value),
+                })
+              }}
               <span v-if="status.finished_at">{{
-                t('work.projectSettings.environment.finished', { at: new Date(status.finished_at).toLocaleString() })
+                t('work.projectSettings.environment.finished', {
+                  at: new Date(status.finished_at).toLocaleString(i18n.global.locale.value),
+                })
               }}</span>
             </p>
             <p>{{ t('work.projectSettings.environment.logNote') }}</p>

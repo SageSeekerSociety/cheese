@@ -49,7 +49,9 @@ export function useBranchProtection(projectId: () => string) {
     bpMembers.value
       .filter((m) => !m.agent)
       .map((m) => ({
-        title: m.name ? `${m.name}（${m.user_handle}）` : m.user_handle,
+        title: m.name
+          ? t('work.projectSettings.merge.memberOption', { name: m.name, handle: m.user_handle })
+          : m.user_handle,
         value: m.user_handle,
       }))
   )

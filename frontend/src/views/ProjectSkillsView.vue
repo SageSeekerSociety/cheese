@@ -25,7 +25,7 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 
 const props = defineProps<{ projectId: string }>()
@@ -45,13 +45,18 @@ const confirmingDelete = ref<ProjectSkill | null>(null)
 // 行里——那是这一行唯一要紧的事。
 const { mdAndUp } = useDisplay()
 function draftActions(s: ProjectSkill): MenuAction[] {
-  const edit: MenuAction = { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) }
+  const edit: MenuAction = {
+    key: 'edit',
+    label: t('work.skills.edit'),
+    icon: 'mdi-pencil-outline',
+    onSelect: () => startEdit(s),
+  }
   if (s.shipped_revision)
     return [
       edit,
       {
         key: 'discard',
-        label: '放弃改动',
+        label: t('work.skills.discard'),
         icon: 'mdi-undo',
         loading: busy.value === `${s.id}:discard`,
         onSelect: () => void discard(s),
@@ -61,7 +66,7 @@ function draftActions(s: ProjectSkill): MenuAction[] {
     edit,
     {
       key: 'drop',
-      label: '不要了',
+      label: t('work.skills.drop'),
       icon: 'mdi-delete-outline',
       danger: true,
       onSelect: () => (confirmingDelete.value = s),
@@ -70,11 +75,11 @@ function draftActions(s: ProjectSkill): MenuAction[] {
 }
 function activeActions(s: ProjectSkill): MenuAction[] {
   return [
-    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) },
-    { key: 'history', label: '历史版本', icon: 'mdi-history', onSelect: () => void openHistory(s) },
+    { key: 'edit', label: t('work.skills.edit'), icon: 'mdi-pencil-outline', onSelect: () => startEdit(s) },
+    { key: 'history', label: t('work.skills.history'), icon: 'mdi-history', onSelect: () => void openHistory(s) },
     {
       key: 'delete',
-      label: '删除',
+      label: t('work.skills.delete'),
       icon: 'mdi-delete-outline',
       danger: true,
       onSelect: () => (confirmingDelete.value = s),
@@ -86,7 +91,7 @@ const drafts = computed(() => skills.value.filter((s) => s.state === 'draft'))
 const active = computed(() => skills.value.filter((s) => s.state === 'active'))
 
 function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '—'
+  return iso ? new Date(iso).toLocaleString(i18n.global.locale.value, { hour12: false }) : '—'
 }
 
 async function load() {
@@ -103,7 +108,7 @@ async function load() {
     if (focus) void focusRow(`[data-skill="${CSS.escape(focus)}"]`)
   } catch (e) {
     if (props.projectId !== projectId) return
-    loadError.value = e instanceof Error ? e.message : '未能读取工作方法'
+    loadError.value = e instanceof Error ? e.message : t('work.skills.loadFailed')
   } finally {
     if (props.projectId === projectId) loading.value = false
   }
@@ -119,7 +124,7 @@ async function confirm(s: ProjectSkill) {
   try {
     replace(await confirmProjectSkill(s.id))
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '没有确认成功'
+    actionError.value = e instanceof Error ? e.message : t('work.skills.confirmFailed')
   } finally {
     busy.value = ''
   }
@@ -132,7 +137,7 @@ async function discard(s: ProjectSkill) {
   try {
     replace(await restoreProjectSkill(s.id, s.shipped_revision))
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '没有放弃成功'
+    actionError.value = e instanceof Error ? e.message : t('work.skills.discardFailed')
   } finally {
     busy.value = ''
   }
@@ -145,7 +150,7 @@ async function openHistory(s: ProjectSkill) {
     replace(fresh)
     history.value = { skill: fresh, revisions }
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '未能读取历史版本'
+    actionError.value = e instanceof Error ? e.message : t('work.skills.historyFailed')
   }
 }
 
@@ -159,7 +164,7 @@ async function restore(revision: number) {
     replace(fresh)
     history.value = { skill: fresh, revisions }
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '没有恢复成功'
+    actionError.value = e instanceof Error ? e.message : t('work.skills.restoreFailed')
   } finally {
     busy.value = ''
   }
@@ -173,7 +178,7 @@ async function remove(s: ProjectSkill) {
     await deleteProjectSkill(s.id)
     skills.value = skills.value.filter((x) => x.id !== s.id)
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '未能删除'
+    actionError.value = e instanceof Error ? e.message : t('work.skills.deleteFailed')
   } finally {
     busy.value = ''
   }
@@ -184,7 +189,9 @@ const editing = ref<ProjectSkill | 'new' | null>(null)
 // 关上的那一下 editing 已经是 null，标题还要照着刚才那一条画完收起的动画。
 const editingTitle = ref('')
 watch(editing, (value) => {
-  if (value) editingTitle.value = value === 'new' ? '新建工作方法' : `修改「${value.title}」`
+  if (value)
+    editingTitle.value =
+      value === 'new' ? t('work.skills.newTitle') : t('work.skills.editTitle', { title: value.title })
 })
 const saving = ref(false)
 const formError = ref('')
@@ -245,7 +252,7 @@ async function save() {
   formError.value = ''
   try {
     if (editing.value === 'new') {
-      if (!form.room) throw new Error('先选一个房间：工作方法记在它名下，整个项目都能用')
+      if (!form.room) throw new Error(t('work.skills.roomRequired'))
       const created = await createProjectSkill(form.room, { name: form.name.trim(), ...content() })
       skills.value = [...skills.value, created]
     } else if (editing.value) {
@@ -253,7 +260,7 @@ async function save() {
     }
     editing.value = null
   } catch (e) {
-    formError.value = e instanceof Error ? e.message : '没有保存成功'
+    formError.value = e instanceof Error ? e.message : t('work.skills.saveFailed')
   } finally {
     saving.value = false
   }
@@ -272,7 +279,7 @@ watch(
 useCommands(() => [
   {
     id: 'skills.refresh',
-    title: '刷新',
+    title: t('work.skills.refresh'),
     palette: false,
     icon: 'mdi-refresh',
     loading: loading.value,
@@ -281,7 +288,7 @@ useCommands(() => [
   },
   {
     id: 'skills.new',
-    title: '新建',
+    title: t('work.skills.create'),
     icon: 'mdi-plus',
     disabled: !rooms.value.length,
     header: { primary: true, accent: true },
@@ -294,31 +301,40 @@ useCommands(() => [
   <AppPage :title="t('navigation.project.skills')">
     <div>
       <p class="t-body c-muted mb-6">
-        一次做得满意的工作，可以让芝士整理成工作方法：要什么输入、按什么步骤和规则做、交出什么。确认过的版本会带进这个项目之后的每个房间，
-        在房间里说「按周报方法做一份」就能用
+        {{ t('work.skills.intro') }}
       </p>
 
       <p v-if="loadError" role="alert" class="t-body c-danger mb-4">{{ loadError }}</p>
       <p v-if="actionError" role="alert" class="t-body c-danger mb-4">{{ actionError }}</p>
 
-      <div v-if="loading && !skills.length" class="py-8 text-center" role="status" aria-label="读取工作方法">
+      <div
+        v-if="loading && !skills.length"
+        class="py-8 text-center"
+        role="status"
+        :aria-label="t('work.skills.loading')"
+      >
         <v-progress-circular indeterminate size="28" color="primary" />
       </div>
 
       <template v-else>
         <section v-if="drafts.length" class="mb-6">
-          <h2 class="t-section mb-2">等你确认</h2>
+          <h2 class="t-section mb-2">{{ t('work.skills.awaiting') }}</h2>
           <ul class="skill-list">
             <li v-for="s in drafts" :key="s.id" class="skill-row skill-row--draft" :data-skill="s.id">
               <div class="skill-row__head">
                 <div class="skill-row__id">
                   <div class="t-body skill-row__title">{{ s.title }}</div>
                   <div class="t-meta c-faint">
-                    {{ s.name }} · 由 <UserRef :handle="s.proposed_by" /> 整理
-                    <template v-if="s.shipped_revision">· 正在用的是第 {{ s.shipped_revision }} 版，这是改动</template>
+                    <i18n-t keypath="work.skills.proposedBy" tag="span">
+                      <template #name>{{ s.name }}</template>
+                      <template #user><UserRef :handle="s.proposed_by" /></template>
+                    </i18n-t>
+                    <template v-if="s.shipped_revision">
+                      {{ t('work.skills.changeOf', { revision: s.shipped_revision }) }}
+                    </template>
                   </div>
                 </div>
-                <v-chip size="small" color="warning" variant="tonal">待确认</v-chip>
+                <v-chip size="small" color="warning" variant="tonal">{{ t('work.skills.pending') }}</v-chip>
                 <AdaptiveMenu v-if="!mdAndUp" :actions="draftActions(s)" :title="s.title">
                   <template #activator="{ props: menuProps }">
                     <v-btn
@@ -328,23 +344,23 @@ useCommands(() => [
                       variant="text"
                       color="on-surface-variant"
                       class="tap-target"
-                      aria-label="更多操作"
+                      :aria-label="t('work.skills.more')"
                     />
                   </template>
                 </AdaptiveMenu>
               </div>
               <dl class="skill-row__spec t-meta">
-                <dt>用途</dt>
+                <dt>{{ t('work.skills.fields.description') }}</dt>
                 <dd>{{ s.description }}</dd>
-                <dt>需要的输入</dt>
+                <dt>{{ t('work.skills.fields.inputs') }}</dt>
                 <dd>{{ s.inputs || '—' }}</dd>
-                <dt>步骤与规则</dt>
+                <dt>{{ t('work.skills.fields.steps') }}</dt>
                 <dd>{{ s.steps }}</dd>
-                <dt>输出要求</dt>
+                <dt>{{ t('work.skills.fields.outputs') }}</dt>
                 <dd>{{ s.outputs || '—' }}</dd>
                 <template v-if="Object.keys(s.files).length">
-                  <dt>配套文件</dt>
-                  <dd>{{ Object.keys(s.files).join('、') }}</dd>
+                  <dt>{{ t('work.skills.fields.files') }}</dt>
+                  <dd>{{ Object.keys(s.files).join(t('work.skills.listSeparator')) }}</dd>
                 </template>
               </dl>
               <div class="skill-row__actions">
@@ -355,9 +371,11 @@ useCommands(() => [
                   :loading="busy === `${s.id}:confirm`"
                   @click="confirm(s)"
                 >
-                  确认保存
+                  {{ t('work.skills.confirm') }}
                 </v-btn>
-                <v-btn v-if="mdAndUp" size="small" variant="text" @click="startEdit(s)">修改</v-btn>
+                <v-btn v-if="mdAndUp" size="small" variant="text" @click="startEdit(s)">{{
+                  t('work.skills.edit')
+                }}</v-btn>
                 <v-btn
                   v-if="mdAndUp && s.shipped_revision"
                   size="small"
@@ -366,7 +384,7 @@ useCommands(() => [
                   :loading="busy === `${s.id}:discard`"
                   @click="discard(s)"
                 >
-                  放弃改动
+                  {{ t('work.skills.discard') }}
                 </v-btn>
                 <v-btn
                   v-if="mdAndUp && !s.shipped_revision"
@@ -375,7 +393,7 @@ useCommands(() => [
                   color="on-surface-variant"
                   @click="confirmingDelete = s"
                 >
-                  不要了
+                  {{ t('work.skills.drop') }}
                 </v-btn>
               </div>
             </li>
@@ -388,8 +406,12 @@ useCommands(() => [
               <div class="skill-row__id">
                 <div class="t-body skill-row__title">{{ s.title }}</div>
                 <div class="t-meta c-faint">
-                  {{ s.name }} · 第 {{ s.shipped_revision }} 版 · <UserRef :handle="s.confirmed_by" /> 确认于
-                  {{ fmt(s.confirmed_at) }}
+                  <i18n-t keypath="work.skills.confirmedBy" tag="span">
+                    <template #name>{{ s.name }}</template>
+                    <template #revision>{{ s.shipped_revision }}</template>
+                    <template #user><UserRef :handle="s.confirmed_by" /></template>
+                    <template #time>{{ fmt(s.confirmed_at) }}</template>
+                  </i18n-t>
                 </div>
                 <div class="t-meta c-muted mt-1">{{ s.description }}</div>
               </div>
@@ -402,22 +424,24 @@ useCommands(() => [
                     variant="text"
                     color="on-surface-variant"
                     class="tap-target"
-                    aria-label="更多操作"
+                    :aria-label="t('work.skills.more')"
                   />
                 </template>
               </AdaptiveMenu>
             </div>
             <div v-if="mdAndUp" class="skill-row__actions">
-              <v-btn size="small" variant="text" @click="startEdit(s)">修改</v-btn>
-              <v-btn size="small" variant="text" @click="openHistory(s)">历史版本</v-btn>
-              <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = s">删除</v-btn>
+              <v-btn size="small" variant="text" @click="startEdit(s)">{{ t('work.skills.edit') }}</v-btn>
+              <v-btn size="small" variant="text" @click="openHistory(s)">{{ t('work.skills.history') }}</v-btn>
+              <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = s">{{
+                t('work.skills.delete')
+              }}</v-btn>
             </div>
           </li>
         </ul>
 
         <div v-if="!skills.length && !loadError" class="py-8 text-center">
-          <p class="t-body c-muted">还没有存下来的工作方法</p>
-          <p class="t-meta c-faint mt-1">做完一次满意的工作后，在房间里说「把这次的做法存成工作方法」</p>
+          <p class="t-body c-muted">{{ t('work.skills.empty') }}</p>
+          <p class="t-meta c-faint mt-1">{{ t('work.skills.emptyHint') }}</p>
         </div>
       </template>
     </div>
@@ -426,7 +450,7 @@ useCommands(() => [
     <AdaptiveDialog
       :model-value="!!editing"
       :title="editingTitle"
-      primary-label="保存"
+      :primary-label="t('work.skills.save')"
       :primary-loading="saving"
       :max-width="640"
       @update:model-value="editing = null"
@@ -440,40 +464,86 @@ useCommands(() => [
             :items="rooms"
             item-title="title"
             item-value="id"
-            label="记在哪个房间名下"
+            :label="t('work.skills.form.room')"
           />
           <v-text-field
             v-model="form.name"
             autocomplete="off"
-            label="英文名（小写、连字符）"
-            placeholder="例如 weekly-report"
+            :label="t('work.skills.form.name')"
+            :placeholder="t('work.skills.form.namePlaceholder')"
           />
         </template>
-        <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：项目周报" />
-        <v-textarea v-model="form.description" autocomplete="off" label="用途：什么时候用它" rows="2" auto-grow />
-        <v-textarea v-model="form.inputs" autocomplete="off" label="需要的输入" rows="2" auto-grow />
-        <v-textarea v-model="form.steps" autocomplete="off" label="步骤与规则" rows="5" auto-grow />
-        <v-textarea v-model="form.outputs" autocomplete="off" label="输出要求" rows="2" auto-grow />
-        <div class="t-meta c-muted mb-2">配套文件（脚本、模板说明等文本文件）</div>
+        <v-text-field
+          v-model="form.title"
+          autocomplete="off"
+          :label="t('work.skills.form.title')"
+          :placeholder="t('work.skills.form.titlePlaceholder')"
+        />
+        <v-textarea
+          v-model="form.description"
+          autocomplete="off"
+          :label="t('work.skills.form.description')"
+          rows="2"
+          auto-grow
+        />
+        <v-textarea
+          v-model="form.inputs"
+          autocomplete="off"
+          :label="t('work.skills.fields.inputs')"
+          rows="2"
+          auto-grow
+        />
+        <v-textarea v-model="form.steps" autocomplete="off" :label="t('work.skills.fields.steps')" rows="5" auto-grow />
+        <v-textarea
+          v-model="form.outputs"
+          autocomplete="off"
+          :label="t('work.skills.fields.outputs')"
+          rows="2"
+          auto-grow
+        />
+        <div class="t-meta c-muted mb-2">{{ t('work.skills.form.files') }}</div>
         <div v-for="(f, i) in form.files" :key="i" class="skill-file">
-          <v-text-field v-model="f.path" autocomplete="off" label="路径" placeholder="scripts/check.py" />
-          <v-textarea v-model="f.content" autocomplete="off" label="内容" rows="3" auto-grow class="skill-file__body" />
-          <v-btn size="small" variant="text" color="on-surface-variant" @click="form.files.splice(i, 1)">移除</v-btn>
+          <v-text-field
+            v-model="f.path"
+            autocomplete="off"
+            :label="t('work.skills.form.path')"
+            placeholder="scripts/check.py"
+          />
+          <v-textarea
+            v-model="f.content"
+            autocomplete="off"
+            :label="t('work.skills.form.content')"
+            rows="3"
+            auto-grow
+            class="skill-file__body"
+          />
+          <v-btn size="small" variant="text" color="on-surface-variant" @click="form.files.splice(i, 1)">{{
+            t('work.skills.form.removeFile')
+          }}</v-btn>
         </div>
-        <v-btn size="small" variant="text" @click="form.files.push({ path: '', content: '' })">添加文件</v-btn>
+        <v-btn size="small" variant="text" @click="form.files.push({ path: '', content: '' })">{{
+          t('work.skills.form.addFile')
+        }}</v-btn>
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
     </AdaptiveDialog>
 
     <v-dialog :model-value="!!history" max-width="640" @update:model-value="history = null">
       <v-card v-if="history">
-        <v-card-title class="t-dialog-title">「{{ history.skill.title }}」的历史版本</v-card-title>
+        <v-card-title class="t-dialog-title">{{
+          t('work.skills.historyTitle', { title: history.skill.title })
+        }}</v-card-title>
         <v-card-text>
           <ol class="skill-list">
             <li v-for="r in history.revisions" :key="r.revision" class="skill-row" :data-revision="r.revision">
               <div class="skill-row__head">
                 <div class="skill-row__id t-meta">
-                  第 {{ r.revision }} 版 · {{ r.note }} · <UserRef :handle="r.confirmed_by" /> · {{ fmt(r.created_at) }}
+                  <i18n-t keypath="work.skills.revisionLine" tag="span">
+                    <template #revision>{{ r.revision }}</template>
+                    <template #note>{{ r.note }}</template>
+                    <template #user><UserRef :handle="r.confirmed_by" /></template>
+                    <template #time>{{ fmt(r.created_at) }}</template>
+                  </i18n-t>
                 </div>
                 <v-chip
                   v-if="r.revision === history.skill.shipped_revision"
@@ -481,12 +551,12 @@ useCommands(() => [
                   color="success"
                   variant="tonal"
                 >
-                  正在用
+                  {{ t('work.skills.inUse') }}
                 </v-chip>
               </div>
               <div class="skill-row__actions">
                 <v-btn size="small" variant="text" @click="viewing = viewing === r ? null : r">
-                  {{ viewing === r ? '收起' : '查看' }}
+                  {{ viewing === r ? t('work.skills.collapse') : t('work.skills.view') }}
                 </v-btn>
                 <v-btn
                   v-if="r.revision !== history.skill.shipped_revision"
@@ -495,17 +565,17 @@ useCommands(() => [
                   :loading="busy === `${history.skill.id}:restore:${r.revision}`"
                   @click="restore(r.revision)"
                 >
-                  恢复到这一版
+                  {{ t('work.skills.restore') }}
                 </v-btn>
               </div>
               <dl v-if="viewing === r" class="skill-row__spec t-meta">
-                <dt>用途</dt>
+                <dt>{{ t('work.skills.fields.description') }}</dt>
                 <dd>{{ r.content.description }}</dd>
-                <dt>需要的输入</dt>
+                <dt>{{ t('work.skills.fields.inputs') }}</dt>
                 <dd>{{ r.content.inputs || '—' }}</dd>
-                <dt>步骤与规则</dt>
+                <dt>{{ t('work.skills.fields.steps') }}</dt>
                 <dd>{{ r.content.steps }}</dd>
-                <dt>输出要求</dt>
+                <dt>{{ t('work.skills.fields.outputs') }}</dt>
                 <dd>{{ r.content.outputs || '—' }}</dd>
               </dl>
             </li>
@@ -513,19 +583,23 @@ useCommands(() => [
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="history = null">关闭</v-btn>
+          <v-btn variant="text" @click="history = null">{{ t('work.skills.close') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog :model-value="!!confirmingDelete" max-width="420" @update:model-value="confirmingDelete = null">
       <v-card v-if="confirmingDelete">
-        <v-card-title class="t-dialog-title">删除「{{ confirmingDelete.title }}」</v-card-title>
-        <v-card-text class="t-body">删除后之后的房间不再带着它，历史版本也一起删除</v-card-text>
+        <v-card-title class="t-dialog-title">{{
+          t('work.skills.deleteTitle', { title: confirmingDelete.title })
+        }}</v-card-title>
+        <v-card-text class="t-body">{{ t('work.skills.deleteHint') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirmingDelete = null">取消</v-btn>
-          <v-btn variant="text" color="error" @click="remove(confirmingDelete)">删除</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="confirmingDelete = null">{{
+            t('work.skills.cancel')
+          }}</v-btn>
+          <v-btn variant="text" color="error" @click="remove(confirmingDelete)">{{ t('work.skills.delete') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
