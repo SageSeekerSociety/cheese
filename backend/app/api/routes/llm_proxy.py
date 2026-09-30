@@ -40,7 +40,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
 from app.domain.agent.supply import GATEWAY
@@ -184,6 +184,7 @@ async def admission(
     The metering proxy calls this BEFORE forwarding a ``/v1/messages`` request;
     the Bearer is the sandbox's per-session scoped cheese token (#198), so the
     project comes from verified claims rather than a spoofable header. The
+    gateway key rides along only when the proxy's own credential does too. The
     decision reads the same compute-grant balance the gateway brake prices in
     USD — one budget, two enforcement points. Refusing is this endpoint's only
     job: the proxy fails OPEN on transport errors (a broken brake must not be
@@ -327,7 +328,16 @@ async def admission(
                 place_uuid = None
             if place_uuid is not None:
                 await chat.note_credits_refusal(place_uuid)
-    if pool == GATEWAY and decision.allow:
+    # The key goes only to the metering proxy, which proves itself with its
+    # own credential beside the session's bearer. The bearer alone names the
+    # room, and the session holds that same token: answering it with the key
+    # would put a shared pool credential inside every room that can reach this
+    # route. Anyone else (a pi runner admitting a subagent) gets the decision.
+    if (
+        pool == GATEWAY
+        and decision.allow
+        and is_global_sandbox_token(request.headers.get("x-cheese-token") or "")
+    ):
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         supply["key"] = await chat.project_gateway_key(project_uuid)

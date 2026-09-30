@@ -71,7 +71,7 @@ blocks: sandbox/budget, bare/budget, cloud/budget, codex/budget
 
 准入怎么判预算、怎么解析供给，见[准入与供给](/dev/admission)。
 
-计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌鉴权。这是唯一的控制点，回答三件事：
+计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌说明是哪个房间，再附上代理自己的凭据（`X-Cheese-Token`）——只有带着它，网关池的答复里才有项目 key。这是唯一的控制点，回答三件事：
 
 ```demo-sim
 title: 每个请求先问准入
