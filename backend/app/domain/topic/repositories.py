@@ -31,6 +31,7 @@ from app.domain.topic.models import (
     TopicMembership,
     TopicProgress,
     TopicReadState,
+    TopicStatus,
 )
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
@@ -333,6 +334,21 @@ class TopicRepository:
         What the storage sweep reconciles the disk against."""
         stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
         return dict((await self._session.execute(stmt)).tuples().all())
+
+    async def archived_ids(self, topic_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these topics are archived, in ONE query.
+
+        Asked about a batch by the routine list: a rule's own row does not record
+        that its room went away (archiving writes no rule), so「已随话题归档停止」
+        can only be answered by the room — and asking it one rule at a time is a
+        round trip per row.
+        """
+        if not topic_ids:
+            return set()
+        stmt = select(Topic.id).where(
+            Topic.id.in_(topic_ids), Topic.status == TopicStatus.archived
+        )
+        return set((await self._session.scalars(stmt)).all())
 
     async def count_for_project(self, project_id: uuid.UUID) -> int:
         stmt = (

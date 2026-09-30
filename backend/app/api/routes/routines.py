@@ -72,10 +72,13 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _routine(row: Routine, *, can_manage: bool = False) -> dict:
+def _routine(
+    row: Routine, *, can_manage: bool = False, room_archived: bool = False
+) -> dict:
     return {
         "id": str(row.id),
         "can_manage": can_manage,
+        "room_archived": room_archived,
         "project_id": str(row.project_id),
         "topic_id": str(row.topic_id),
         "title": row.title,
@@ -213,6 +216,33 @@ async def _can_manage(db: AsyncSession, actor: Actor, row: Routine) -> bool:
     )
 
 
+async def _present(
+    db: AsyncSession, actor: Actor, rows: list[Routine], *, admin: bool
+) -> list[dict]:
+    """The rows as this caller gets them, carrying the two flags the frontend
+    draws buttons from: ``can_manage`` (may this caller act on it) and
+    ``room_archived`` (its room went away — the rule is not running now, and
+    that is the room's fact, not the rule's).
+
+    归档不写规则那一行（结论：规则状态不变，取消归档后从下一个时刻继续），所以
+    「已随话题归档停止」只能由房间答，一次问完这一批。
+    """
+    archived = await TopicService(db).archived_ids([r.topic_id for r in rows])
+    return [
+        _routine(
+            r,
+            can_manage=_may_manage(r, actor, admin=admin),
+            room_archived=r.topic_id in archived,
+        )
+        for r in rows
+    ]
+
+
+async def _present_one(db: AsyncSession, actor: Actor, row: Routine) -> dict:
+    admin = await _manages_project(db, actor, row.project_id)
+    return (await _present(db, actor, [row], admin=admin))[0]
+
+
 async def _speaker(db: AsyncSession, actor: Actor, room_id: uuid.UUID) -> str:
     """The handle a caller acts under here: a person, or the room's teammate."""
     if actor.authenticated:
@@ -266,7 +296,7 @@ async def list_routines(
         await resolver.authorize_project(actor, project_id=project_id)
         rows = await RoutineService(db).list(project_id)
     rows, admin = await _readable_rules(db, resolver, actor, project_id, rows)
-    items = [_routine(r, can_manage=_may_manage(r, actor, admin=admin)) for r in rows]
+    items = await _present(db, actor, rows, admin=admin)
     return ok(page(items, len(items)))
 
 
@@ -293,9 +323,9 @@ async def create_routine(
         owner_handle=body.owner_handle,
         agent_handle=body.agent_handle,
     )
-    manage = await _can_manage(db, actor, row)
+    presented = await _present_one(db, actor, row)
     await db.commit()
-    return ok(_routine(row, can_manage=manage))
+    return ok(presented)
 
 
 @router.get("/routines/{routine_id}")
@@ -303,14 +333,9 @@ async def get_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    manage = await _can_manage(db, actor, row)
+    presented = await _present_one(db, actor, row)
     runs = await RoutineService(db).runs(row.id)
-    return ok(
-        {
-            **_routine(row, can_manage=manage),
-            "runs": [_run(r) for r in runs],
-        }
-    )
+    return ok({**presented, "runs": [_run(r) for r in runs]})
 
 
 @router.patch("/routines/{routine_id}")
@@ -325,9 +350,9 @@ async def update_routine(
         by_agent=not _is_person(actor),
         changes=body.model_dump(exclude_unset=True),
     )
-    manage = await _can_manage(db, actor, row)
+    presented = await _present_one(db, actor, row)
     await db.commit()
-    return ok(_routine(row, can_manage=manage))
+    return ok(presented)
 
 
 @router.post("/routines/{routine_id}/confirm")
@@ -338,9 +363,9 @@ async def confirm_routine(
     _person(actor, "确认启用")
     await _require_manage(db, actor, row, "确认启用")
     row = await RoutineService(db).confirm(row, by=actor.handle)
-    manage = await _can_manage(db, actor, row)
+    presented = await _present_one(db, actor, row)
     await db.commit()
-    return ok(_routine(row, can_manage=manage))
+    return ok(presented)
 
 
 @router.post("/routines/{routine_id}/pause")
@@ -353,9 +378,9 @@ async def pause_routine(
     if _is_person(actor):
         await _require_manage(db, actor, row, "暂停")
     row = await RoutineService(db).pause(row)
-    manage = await _can_manage(db, actor, row)
+    presented = await _present_one(db, actor, row)
     await db.commit()
-    return ok(_routine(row, can_manage=manage))
+    return ok(presented)
 
 
 @router.post("/routines/{routine_id}/resume")
@@ -366,9 +391,9 @@ async def resume_routine(
     _person(actor, "恢复执行")
     await _require_manage(db, actor, row, "恢复执行")
     row = await RoutineService(db).resume(row)
-    manage = await _can_manage(db, actor, row)
+    presented = await _present_one(db, actor, row)
     await db.commit()
-    return ok(_routine(row, can_manage=manage))
+    return ok(presented)
 
 
 @router.post("/routines/{routine_id}/run-now")

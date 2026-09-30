@@ -162,6 +162,9 @@ EVENT_ROUTINE_RUN: Final = "routine_run"
 EVENT_ROUTINE_RESULT: Final = "routine_result"
 #: 芝士起草了一条周期任务/触发规则，等人确认后才会执行。
 EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
+#: 房间归档了，它里面还在执行的规则随之停下。规则自己的状态不变（取消归档后从下一
+#: 个时刻继续），所以这一行说的是房间带走了什么，不是规则被改成了什么。
+EVENT_ROUTINE_STOPPED: Final = "routine_stopped"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
@@ -241,6 +244,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROUTINE_RUN,
         EVENT_ROUTINE_RESULT,
         EVENT_ROUTINE_PROPOSED,
+        EVENT_ROUTINE_STOPPED,
         EVENT_API_RETRY,
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,

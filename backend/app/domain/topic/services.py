@@ -449,6 +449,14 @@ class TopicService:
             raise NotFoundError("Topic not found")
         return topic
 
+    async def archived_ids(self, topic_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these rooms are archived, in ONE query.
+
+        规则列表要标「已随话题归档停止」：归档不写规则那一行，所以这一档只有房间
+        答得出来 —— 挨条去问就是每行一次往返。
+        """
+        return await self._repo.archived_ids(topic_ids)
+
     async def list_for_project(
         self,
         project_id: uuid.UUID,

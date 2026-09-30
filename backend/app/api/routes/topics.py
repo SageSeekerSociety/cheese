@@ -95,6 +95,7 @@ from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
+from app.domain.routine.service import RoutineService
 from app.domain.topic import naming
 from app.domain.topic.doc_checks import living_doc_warnings
 from app.domain.topic.models import Topic, TopicKind
@@ -2740,6 +2741,11 @@ async def archive_topic(
         raise ForbiddenError("归档需要登录")
     await TopicMemberService(db).require_archive_manager(topic_id, actor.handle)
     topic = await TopicService(db).archive(topic_id, by=actor.handle)
+    # 归档带走的执行要说出来：房间里落一行「N 条规则已随归档停止」，并通知每条
+    # 规则的主人。规则自己的状态不变，取消归档后从下一个时刻继续。
+    await RoutineService(db).stop_with_archived_rooms(
+        topic_ids=[topic.id], by=actor.handle
+    )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 

@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
     EVENT_ROUTINE_RESULT,
     EVENT_ROUTINE_RUN,
+    EVENT_ROUTINE_STOPPED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
@@ -333,6 +334,111 @@ class RoutineService:
     async def delete(self, row: Routine) -> None:
         await self._session.delete(row)
         await self._session.flush()
+
+    async def stop_with_archived_rooms(
+        self, *, topic_ids: list[uuid.UUID], by: str
+    ) -> int:
+        """A room (or a project) just went away: say so where its rules live.
+
+        规则自己的状态**不动** —— 归档带走的是执行，不是规则本身，取消归档之后它
+        从下一个时刻继续（``_fire_schedules`` 一直是这么挑房间的）。所以要写的是
+        房间里的一行「N 条规则已随归档停止」，加上给每条规则主人的一条通知。
+
+        Idempotent per archive episode: the room's own ``archived_at`` is stamped
+        into the line, and a room that already carries the line for ITS CURRENT
+        archived_at is skipped. That is what lets a caller hand over a superset
+        (a whole project's rooms) without re-telling a room that was archived by
+        hand earlier — while a room archived a SECOND time, after being brought
+        back, gets its line again.
+
+        Returns how many rules were announced as stopped.
+        """
+        from app.domain.notification.services import ProjectNotificationService
+
+        rooms = list(
+            await self._session.scalars(
+                select(Topic).where(
+                    Topic.id.in_(topic_ids),
+                    Topic.status == TopicStatus.archived,
+                )
+            )
+        )
+        stopped = 0
+        for room in rooms:
+            rules = list(
+                await self._session.scalars(
+                    select(Routine).where(
+                        Routine.topic_id == room.id,
+                        Routine.state == RoutineState.active.value,
+                    )
+                )
+            )
+            if not rules:
+                continue
+            stamp = (room.archived_at or now()).isoformat()
+            already = await self._session.scalar(
+                select(Block.id)
+                .where(
+                    Block.topic_id == room.id,
+                    Block.meta["event_type"].as_string() == EVENT_ROUTINE_STOPPED,
+                    Block.meta["archived_at"].as_string() == stamp,
+                )
+                .limit(1)
+            )
+            if already is not None:
+                continue
+            self._session.add(
+                Block(
+                    id=uuid.uuid4(),
+                    project_id=room.project_id,
+                    topic_id=room.id,
+                    author=by,
+                    author_type=AuthorType.platform,
+                    kind=BlockKind.event,
+                    content=f"{len(rules)} 条规则已随归档停止",
+                    meta={
+                        **notice(
+                            EVENT_ROUTINE_STOPPED,
+                            severity=SEVERITY_INFO,
+                            who=WHO_PLATFORM,
+                            detail="\n".join(f"「{r.title}」" for r in rules),
+                            detail_label="规则",
+                        ),
+                        "routine_ids": [str(r.id) for r in rules],
+                        "archived_at": stamp,
+                    },
+                )
+            )
+            for rule in rules:
+                await ProjectNotificationService(self._session).create(
+                    project_id=rule.project_id,
+                    level=NotificationLevel.light,
+                    kind=NotificationType.CHANGE_ALERT,
+                    title=f"周期任务「{rule.title}」已随话题归档停止",
+                    body=(
+                        f"房间「{room.title}」归档了，这条规则随之停下。"
+                        "取消归档后它会从下一个时刻继续，不用重新设置。"
+                    ),
+                    target_handle=rule.owner_handle,
+                    topic_id=room.id,
+                    payload={"routine_id": str(rule.id)},
+                )
+            stopped += len(rules)
+        await self._session.flush()
+        return stopped
+
+    async def stop_with_archived_project(
+        self, *, project_id: uuid.UUID, by: str
+    ) -> int:
+        """归档一个项目：它每个房间各自收到手工归档同一行（见
+        :meth:`stop_with_archived_rooms`）。"""
+        rooms = await self._session.scalars(
+            select(Topic.id).where(
+                Topic.project_id == project_id,
+                Topic.status == TopicStatus.archived,
+            )
+        )
+        return await self.stop_with_archived_rooms(topic_ids=list(rooms), by=by)
 
     async def report(
         self,
