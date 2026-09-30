@@ -707,6 +707,20 @@
       "copied": "Copied",
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
+      "format": {
+        "label": "Document formatting",
+        "unavailable": "This format is unavailable for the selection",
+        "bold": "Bold",
+        "italic": "Italic",
+        "strike": "Strikethrough",
+        "code": "Inline code",
+        "h1": "Heading 1",
+        "h2": "Heading 2",
+        "bullet": "Bulleted list",
+        "ordered": "Numbered list",
+        "task": "Task list",
+        "quote": "Quote"
+      },
       "slash": {
         "text": "Text",
         "h1": "Heading 1",

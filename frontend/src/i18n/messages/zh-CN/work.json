@@ -707,6 +707,20 @@
       "copied": "已复制",
       "copyCode": "复制代码",
       "emptyPlaceholder": "AI 队友会在这里维护文档，你也可以直接编辑",
+      "format": {
+        "label": "文档格式",
+        "unavailable": "当前选区不支持此格式",
+        "bold": "加粗",
+        "italic": "斜体",
+        "strike": "删除线",
+        "code": "行内代码",
+        "h1": "标题 1",
+        "h2": "标题 2",
+        "bullet": "无序列表",
+        "ordered": "有序列表",
+        "task": "任务列表",
+        "quote": "引用"
+      },
       "slash": {
         "text": "正文",
         "h1": "标题 1",
