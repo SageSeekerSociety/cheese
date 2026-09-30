@@ -1,11 +1,9 @@
 <template>
-  <PageHeader :title="t('spaces.domainGroups.title')" show-on-mobile>
-    <template #actions>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-        {{ t('spaces.domainGroups.createGroup') }}
-      </v-btn>
-    </template>
-  </PageHeader>
+  <SettingsToolbar>
+    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+      {{ t('spaces.domainGroups.createGroup') }}
+    </v-btn>
+  </SettingsToolbar>
   <v-sheet flat rounded="lg">
     <div v-if="loading" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -113,7 +111,9 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
-import PageHeader from '@/components/common/PageHeader.vue'
+import { useSpaceData } from '@/composables/useSpaceData'
+
+import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -125,6 +125,7 @@ const { confirm } = useDialog()
 const spaceId = Number(route.params.spaceId)
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { domainGroups } = storeToRefs(spaceStore)
 
 const loading = ref(false)
@@ -181,7 +182,7 @@ function removeDomain(index: number) {
 async function fetchDomainGroups() {
   loading.value = true
   try {
-    await spaceStore.fetchDomainGroups(spaceId)
+    await spaceData.fetchDomainGroups(spaceId)
   } catch {
     // handled silently
   } finally {

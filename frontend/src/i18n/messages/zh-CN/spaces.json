@@ -36,22 +36,13 @@
     "dismiss": "关闭这条提示"
   },
   "detail": {
-    "editInfo": "编辑信息",
-    "editSpaceInfo": "编辑空间信息",
-    "spaceName": "空间名称",
-    "intro": "个人简介",
-    "cancel": "取消",
-    "update": "更新",
-    "announcements": "公告板",
+    "announcements": "公告",
     "showMore": "查看更多",
     "showLess": "收起",
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
     "contests": "题目",
     "allContests": "全部题目",
-    "myPublishedContests": "我发布的题目",
-    "myJoinedContests": "我参与的题目",
-    "auditContests": "审核题目",
     "deleteAnnouncement": "删除公告",
     "publishedAt": "发布于 {time}",
     "updateSuccess": "更新成功",
@@ -86,14 +77,12 @@
       "rejectReasonRequired": "请输入驳回理由"
     },
     "manageTemplates": {
-      "title": "管理题目模板",
       "back": "返回",
       "createTemplate": "创建模板",
       "noTemplates": "暂无任务模板",
       "deleteConfirm": "确定要删除这个模板吗？"
     },
     "manageTopics": {
-      "title": "管理分类话题",
       "addTopics": "添加话题",
       "noTopics": "暂无话题",
       "add": "添加",
@@ -102,7 +91,6 @@
       "addFailed": "添加话题失败"
     },
     "manageCategories": {
-      "title": "管理内容分类",
       "noCategories": "暂无分类",
       "addCategory": "添加分类",
       "createCategory": "创建分类",
@@ -154,9 +142,6 @@
         "listHint": "用逗号分隔"
       }
     },
-    "analytics": {
-      "title": "数据分析"
-    },
     "publishTask": {
       "title": "发布题目",
       "back": "返回",
@@ -200,7 +185,14 @@
       "category": "所属分类",
       "noCategory": "无分类",
       "allTopics": "全部话题",
-      "moreTopics": "更多话题"
+      "moreTopics": "更多话题",
+      "scope": {
+        "all": "全部",
+        "participating": "我参与的",
+        "publishing": "我发布的"
+      },
+      "loadFailed": "无法加载题目",
+      "pendingOnly": "只看待处理"
     },
     "templateForm": {
       "editTitle": "编辑题目模板",
@@ -218,7 +210,6 @@
     }
   },
   "domainGroups": {
-    "title": "域名组管理",
     "noGroups": "暂无域名组",
     "createGroup": "创建域名组",
     "editGroup": "编辑域名组",
@@ -239,7 +230,6 @@
     "invalidDomain": "请输入有效的域名格式"
   },
   "inviteCodes": {
-    "title": "邀请码",
     "copy": "复制",
     "createdTitle": "这是你的邀请码",
     "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。",
@@ -256,7 +246,12 @@
   "sidebar": {
     "back": "回到首页",
     "tasks": "题目",
-    "manage": "管理"
+    "manage": "管理",
+    "announcements": "公告",
+    "audit": "待审核",
+    "members": "成员",
+    "analytics": "数据",
+    "settings": "设置"
   },
   "members": {
     "title": "成员",
@@ -280,5 +275,70 @@
       "admin": "管理员",
       "member": "成员"
     }
+  },
+  "settings": {
+    "title": "设置",
+    "tabs": {
+      "basic": "基本信息",
+      "categories": "分类与话题",
+      "templates": "题目模板",
+      "inviteCodes": "邀请码",
+      "domainGroups": "邮箱域名组"
+    },
+    "sections": {
+      "categories": "分类",
+      "topics": "话题"
+    },
+    "basic": {
+      "name": "名称",
+      "intro": "简介",
+      "save": "保存",
+      "visibleLimit": "每位发布者对成员可见的已通过、未结项题目上限",
+      "visibleLimitUnlimited": "不限制",
+      "visibleLimitLimited": "限制数量",
+      "visibleLimitInput": "数量上限",
+      "visibleLimitRequired": "填写数量上限",
+      "visibleLimitInvalid": "数量上限需为大于等于 0 的整数"
+    }
+  },
+  "announcements": {
+    "publish": "发布公告",
+    "editTitle": "编辑公告",
+    "empty": "暂无公告",
+    "pinnedTag": "置顶",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "edit": "编辑",
+    "delete": "删除",
+    "day": "{month} 月 {date} 日",
+    "dayWithYear": "{year} 年 {month} 月 {date} 日",
+    "publishedOn": "{day}发布",
+    "edited": "已编辑",
+    "expiresOn": "{day}到期",
+    "expiredFold": "已到期 · {count} 条",
+    "confirmDelete": "删除这条公告？",
+    "form": {
+      "title": "标题",
+      "content": "正文",
+      "pinned": "置顶",
+      "expiry": "到期日（选填）",
+      "notifyHint": "发布后通知空间内 {count} 位成员，后续修改不再通知",
+      "cancel": "取消",
+      "publish": "发布",
+      "save": "保存"
+    },
+    "toast": {
+      "published": "已发布",
+      "saved": "已保存",
+      "deleted": "已删除",
+      "pinned": "已置顶",
+      "unpinned": "已取消置顶",
+      "publishFailed": "发布失败",
+      "saveFailed": "保存失败",
+      "deleteFailed": "删除失败",
+      "pinFailed": "置顶失败",
+      "unpinFailed": "取消置顶失败"
+    },
+    "morePinned": "另有 {count} 条置顶公告"
   }
 }

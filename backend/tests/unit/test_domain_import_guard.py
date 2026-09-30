@@ -101,6 +101,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 拆模块没有新增跨包的边，只是发起方从 chat.py 换成了 hook_stream.py，
         # 所以按同一笔债入账。
         ("app.domain.agent.hook_stream", "app.domain.block.repositories"),
+        # agent.gateway_usage 是从 agent.chat 里拆出来的那一块（这一轮的模型与
+        # 它的用量账：准入前解析模型、环境与项目的网关 key，轮次结束后把网关的
+        # 用量落成行、扣掉额度）。它摸的三个 repository 正是原先 chat.py 那一组
+        # 里跟着它走的：读项目表、读话题表、读额度与用量。拆模块没有新增跨包的
+        # 边，只是发起方从 chat.py 换成了 gateway_usage.py，所以按同一笔债入账。
+        ("app.domain.agent.gateway_usage", "app.domain.project.repositories"),
+        ("app.domain.agent.gateway_usage", "app.domain.topic.repositories"),
+        ("app.domain.agent.gateway_usage", "app.domain.usage.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
@@ -163,10 +171,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 按 id /（课, 小队）取项目。搬不出来，和 dashboard 那条「横跨多领域聚合的读
         # 模型」同形，按存量入账。
         ("app.domain.space.learning_service", "app.domain.project.repositories"),
-        (
-            "app.domain.space.member_participating_service",
-            "app.domain.user.repositories",
-        ),
         ("app.domain.space.services", "app.domain.task.repositories"),
         # --- task ---
         ("app.domain.task.services", "app.domain.space.repositories"),
@@ -261,18 +265,30 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.agent.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
-        ("app.api.routes.topics", "app.domain.machine.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.review.repositories"),
         ("app.api.routes.topics", "app.domain.room_task.repositories"),
         ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
+        # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
+        # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有
+        # machine 一个，正是原先 topics.py 里跟着它走的那条边：`ProjectRepository`
+        # 它从 topics.py 拿（那是另一笔债，仍在 topics.py 名下），名字也跟着从
+        # topics.py 的 import 里读；`ProjectMachineRepository` 只在
+        # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
+        # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
+        ("app.api.routes.topics_compute", "app.domain.machine.repositories"),
         ("app.api.routes.users", "app.domain.answers.repositories"),
         ("app.api.routes.users", "app.domain.oauth.repositories"),
         ("app.api.routes.users", "app.domain.passkey.repositories"),
         ("app.api.routes.users", "app.domain.questions.repositories"),
-        ("app.api.routes.users", "app.domain.team.repositories"),
         ("app.api.routes.users", "app.domain.user.repositories"),
+        # --- users_team --- (#2143) the six /users/me/team* routes left
+        # users.py; `leave_team` still builds a TeamRepository itself and the
+        # `get_team_membership_service` dependency that moved with them builds
+        # TeamMembershipApplicationRepository. The same debt as the users.py
+        # lines above, re-attributed to the module the code now lives in.
+        ("app.api.routes.users_team", "app.domain.team.repositories"),
         ("app.api.routes.webhooks", "app.domain.topic.repositories"),
     }
 )

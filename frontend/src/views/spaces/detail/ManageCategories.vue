@@ -1,11 +1,9 @@
 <template>
-  <PageHeader :title="t('spaces.detail.manageCategories.title')" show-on-mobile>
-    <template #actions>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-        {{ t('spaces.detail.manageCategories.addCategory') }}
-      </v-btn>
-    </template>
-  </PageHeader>
+  <SettingsToolbar :title="t('spaces.settings.sections.categories')">
+    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+      {{ t('spaces.detail.manageCategories.addCategory') }}
+    </v-btn>
+  </SettingsToolbar>
   <v-sheet flat rounded="lg">
     <div v-if="loadingCategories" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -147,14 +145,17 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
 
-import PageHeader from '@/components/common/PageHeader.vue'
+import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 import { SpaceCategory } from '@/types'
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpace, categories, loadingCategories } = storeToRefs(spaceStore)
 const { t } = useI18n()
 const { confirm } = useDialog()
@@ -195,7 +196,7 @@ const formData = reactive({
 
 // 生命周期钩子
 onMounted(async () => {
-  await spaceStore.fetchCategories(true)
+  await spaceData.fetchCategories(true)
 })
 
 // 方法
@@ -226,13 +227,13 @@ const openEditDialog = (category: SpaceCategory) => {
 const submitForm = handleSubmit(async (values) => {
   try {
     if (editingCategory.value) {
-      await spaceStore.updateCategory(editingCategory.value.id, {
+      await spaceData.updateCategory(editingCategory.value.id, {
         name: values.name,
         description: values.description,
         displayOrder: values.displayOrder,
       })
     } else {
-      await spaceStore.createCategory(values.name, values.description, values.displayOrder)
+      await spaceData.createCategory(values.name, values.description, values.displayOrder)
     }
     dialogOpen.value = false
   } catch (error) {
@@ -245,7 +246,7 @@ const deleteCategory = async (categoryId: number) => {
   if (!confirmed) return
 
   try {
-    await spaceStore.deleteCategory(categoryId)
+    await spaceData.deleteCategory(categoryId)
   } catch (error) {
     console.error('删除分类失败:', error)
   }
@@ -256,7 +257,7 @@ const archiveCategory = async (categoryId: number) => {
   if (!confirmed) return
 
   try {
-    await spaceStore.archiveCategory(categoryId)
+    await spaceData.archiveCategory(categoryId)
   } catch (error) {
     console.error('归档分类失败:', error)
   }
@@ -264,7 +265,7 @@ const archiveCategory = async (categoryId: number) => {
 
 const unarchiveCategory = async (categoryId: number) => {
   try {
-    await spaceStore.unarchiveCategory(categoryId)
+    await spaceData.unarchiveCategory(categoryId)
   } catch (error) {
     console.error('恢复分类失败:', error)
   }
@@ -272,7 +273,7 @@ const unarchiveCategory = async (categoryId: number) => {
 
 const setAsDefault = async (categoryId: number) => {
   try {
-    await spaceStore.setDefaultCategory(categoryId)
+    await spaceData.setDefaultCategory(categoryId)
   } catch (error) {
     console.error('设置默认分类失败:', error)
   }

@@ -66,13 +66,19 @@ jobs:
           bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
+          python3 .claude/scripts/scene-ratchet.py --self-test
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).
       - name: dev-db.sh tests
         run: bash .claude/scripts/test-dev-db.sh
 
+      # This discover also picks up test_ci_fast.py, which drives real
+      # pre-commit against fixture repos — hand it the same uvx invocation
+      # the guard hooks below use (uv is installed above).
       - name: CI helper tests
+        env:
+          CI_FAST_PRECOMMIT: uvx pre-commit
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
       # Run through pre-commit rather than calling the scripts directly, so

@@ -162,6 +162,8 @@ import { storeToRefs } from 'pinia'
 import { getAvatarUrl } from '@/utils/materials'
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -178,6 +180,7 @@ interface AuditTask extends Task {
 }
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpaceId } = storeToRefs(spaceStore)
 
 const expandedTaskId = ref<number | null>(null)
@@ -224,6 +227,7 @@ const approveTask = async (taskId: number) => {
     toast.error(t('spaces.detail.auditTasks.operationFailed'))
   } finally {
     await refresh()
+    spaceData.fetchPendingAuditCount()
   }
 }
 
@@ -251,6 +255,7 @@ const rejectTask = async (taskId: number) => {
     toast.error(t('spaces.detail.auditTasks.operationFailed'))
   } finally {
     await refresh()
+    spaceData.fetchPendingAuditCount()
   }
 }
 

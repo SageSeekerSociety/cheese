@@ -207,6 +207,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import { useSpaceStore } from '@/stores/space'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
@@ -217,6 +219,7 @@ const spaceId = Number(route.params.spaceId)
 const templateIndex = route.params.templateIndex ? Number(route.params.templateIndex) : undefined
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpace, templates } = storeToRefs(spaceStore)
 
 const isEditing = computed(() => templateIndex !== undefined)
@@ -285,12 +288,12 @@ const saveTemplate = async () => {
       updatedTemplates.push(updatedTemplate)
     }
 
-    await spaceStore.updateTemplates(updatedTemplates)
+    await spaceData.updateTemplates(updatedTemplates)
 
     toast.success(
       isEditing.value ? t('spaces.detail.templateForm.updateSuccess') : t('spaces.detail.templateForm.createSuccess')
     )
-    router.push({ name: 'SpacesDetailManageTemplates', params: { spaceId } })
+    router.push({ name: 'SpacesDetailSettingsTemplates', params: { spaceId } })
   } catch (error) {
     console.error(t('spaces.detail.templateForm.saveTemplateFailed'), error)
     toast.error(t('spaces.detail.templateForm.saveTemplateFailed'))

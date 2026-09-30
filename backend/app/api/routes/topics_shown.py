@@ -1,0 +1,231 @@
+"""The room's artifacts on show: publish one, list them, keep one.
+
+Seventh slice of `app/api/routes/topics.py` (arch review C-backend.md section
+3.3), after `topics_attachments.py` (#2171), `topics_documents.py` +
+`topics_preview.py` (#2175), `topics_side_routes.py` (#2190),
+`topics_compute.py` (#2197) and `topics_title.py` (#2201). topics.py is 2,915
+lines against a 1,500-line cap that only ratchets down.
+
+What moves: `POST /topics/{topic_id}/shown` (芝士 摆一份东西出来给这个房间看的那个
+接口，`cheese show` 用它), `GET /topics/{topic_id}/shown` (everything the room has
+shown, newest first) and `POST /topics/{topic_id}/shown/save` (a person keeping one
+of them in the project's 资料库), plus the two names only these three read --
+`_reject_unreachable_app` and `_PREVIEW_ATTACH_WAIT_S`, the grace window it gives a
+machine's tunnel.
+
+What stays behind, and why. `record_shown` (what actually writes the card) stays in
+topics.py: `room_files.py` writes through it too, and a helper two groups read stays
+where both read it -- the shape `topics_attachments.py` uses for
+`_clean_artifact_path` and `artifact_kind_for`, which stay for the same reason, along
+with `_source_bytes` and `_bind_source_task` (read by `topics_attachments.py`,
+`topics_documents.py`, `topics_preview.py` and `tests/forgejo/test_live.py`).
+`_ARTIFACT_MIME` and `MAX_ARTIFACT_BYTES` stay there as well, read here and by those
+three modules, and are imported from topics.py. Moving any of them here would mean
+topics.py importing this module back -- a cycle, and topics.py imports nothing from
+any `topics_*` module today. `BlockRepository` is imported from topics.py rather than
+from `app.domain.block.repositories` on purpose, the shape `topics_side_routes.py`
+uses, for the same reason: the guard in `tests/unit/test_domain_import_guard.py`
+ratchets (route module, repository module) pairs, and topics.py still reads
+`BlockRepository` in a dozen handlers, so this move adds no exemption to any
+boundary. Nothing here imports an `app.domain.*.models` module, so `.importlinter`
+and its C2 baseline do not move either.
+
+Ordering. This module sorts after `topics.py` and after every other `topics_*`
+module (`_` > `.`, and `shown` > `preview`), so its three paths mount later in the
+route table than they did inside topics.py. No route registered before them has a
+parameter where `shown` sits, so none of the three loses its first full match;
+resolving every path in the table confirms each still reaches the handler it did
+before, now under `app.api.routes.topics_shown`.
+
+One integration test monkeypatches `_PREVIEW_ATTACH_WAIT_S` and now points at this
+module (the shape #2171 and #2197 used): that is the module the handler reading it
+moved to, and without the repoint the patch no longer takes effect.
+
+The new module mounts itself: `app.main._discover_routers` includes every
+module-level `APIRouter` under `app.api.routes`, so the declaration below, with the
+same prefix and tags, is all it takes.
+"""
+
+import base64
+import binascii
+import uuid
+
+from fastapi import APIRouter
+
+from app.api.auth import ActorResolverDep
+from app.api.response import ok, page
+from app.api.routes.topics import (
+    _ARTIFACT_MIME,
+    MAX_ARTIFACT_BYTES,
+    BlockRepository,
+    DbSession,
+    _actor_in_place,
+    _clean_artifact_path,
+    artifact_kind_for,
+    record_shown,
+)
+from app.core.errors import ValidationError
+from app.domain.agent.preview_hub import preview_hub
+from app.domain.project import room_files
+from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
+
+router = APIRouter(prefix="/topics", tags=["topics"])
+
+
+# How long ``cheese serve`` may wait for the helper it just started to finish its
+# upgrade. It declares the preview in the same breath as starting the tunnel, so
+# without this the platform would refuse a preview that is one round trip away.
+_PREVIEW_ATTACH_WAIT_S = 8.0
+
+
+async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
+    """Refuse an app artifact the platform provably cannot render (``cheese serve``).
+
+    Setting it used to always succeed, so 芝士 announced 「预览已就绪」 while the
+    panel showed 「应用暂时不在线」. Two separate things can be missing and they
+    read differently to whoever has to fix them: the tunnel (nothing on that
+    machine is carrying a preview out) and the app behind it (the tunnel is up and
+    the declared port answers nothing).
+    """
+    if not await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S):
+        raise ValidationError(
+            "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
+            "用 cheese serve <端口> 登记（它会把通道带起来）；"
+            "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
+            "或报告、表格这类文档。"
+        )
+    if not await preview_hub.probe(topic_id, seat):
+        raise ValidationError(
+            "登记的端口上没有服务在应答，预览会是一个白框。"
+            "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"
+        )
+
+
+@router.post("/{topic_id}/shown")
+async def show_in_room(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
+
+    摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
+    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    # The teammate that showed it, when a teammate did. A room may seat several,
+    # and for an app the author is also WHICH app: each teammate serves from its
+    # own checkout through its own tunnel, and the preview follows the author.
+    # Taken from the credential, because the helper's tunnel is keyed by the
+    # same claim of the same credential.
+    seat = resolver.credential_agent() if actor.via == "cheese" else None
+    author = seat or await TopicMemberService(db).resolve_agent_handle(
+        topic_id, room_id=place.room_id
+    )
+    declared = (body.get("as") or "").strip().lower()
+    if declared == "app":
+        # An app artifact points at the running server, not a file — the stored
+        # content is a human note ("Vue dev server"), not a path.
+        path = (body.get("path") or "app").strip()[:120]
+        await _reject_unreachable_app(topic_id, author)
+    else:
+        path = _clean_artifact_path(body.get("path") or "")
+    as_ = declared or artifact_kind_for(path)
+    mime = _ARTIFACT_MIME.get(as_)
+    if mime is None:
+        allowed = "、".join(_ARTIFACT_MIME)
+        raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
+    if as_ != "app" and ("content" in body or "content_b64" in body):
+        # A remote machine's file is not in the backend worktree until published.
+        # Office files and PDFs are not text, so they travel base64-encoded; a
+        # caller that sends them as `content` would either fail to read them or
+        # corrupt them on the way, which is why the two fields are separate
+        # rather than one field that guesses.
+        if "content_b64" in body:
+            encoded = body["content_b64"]
+            if not isinstance(encoded, str):
+                raise ValidationError("content_b64 必须是文本")
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValidationError("content_b64 不是合法的 base64") from exc
+        else:
+            content = body["content"]
+            if not isinstance(content, str):
+                raise ValidationError("content 必须是文本")
+            raw = content.encode()
+        if len(raw) > MAX_ARTIFACT_BYTES:
+            raise ValidationError(
+                f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
+            )
+    if as_ != "app" and ("content" in body or "content_b64" in body):
+        # Through the draft history: the state this replaces stays restorable,
+        # and `base_version` (the version `cheese pull` read) turns an overwrite
+        # of somebody's newer save into a 409.
+        base = body.get("base_version")
+        note = body.get("note")
+        await room_files.save_room_file(
+            db,
+            project_id=place.project_id,
+            room_id=place.room_id,
+            path=path,
+            data=raw,
+            author=author if actor.via == "cheese" else actor.handle,
+            author_kind="agent" if actor.via == "cheese" else "human",
+            source="ai" if actor.via == "cheese" else "upload",
+            note=note if isinstance(note, str) else None,
+            base_version=base if isinstance(base, str) and base else None,
+        )
+    return ok(await record_shown(db, place, path, author=author, mime=mime))
+
+
+@router.get("/{topic_id}/shown")
+async def list_shown(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """这个房间里摆出来过的东西 (#1085 结论四)。
+
+    一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    shown = await BlockRepository(db).shown_in_room(place.room_id)
+    items = [
+        {
+            "path": block.content,
+            "mime": block.mime_type,
+            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
+            "shown_at": block.created_at.isoformat(),
+        }
+        for block in shown
+    ]
+    return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/shown/save")
+async def save_shown_to_library(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
+
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
+    它：这份东西以后还用不用得上，是人的判断。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.require_verified_caller(project_id=place.project_id)
+    await resolver.authorize_project(actor, project_id=place.project_id)
+    name = await room_files.save_to_library(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=_clean_artifact_path(str(body.get("path") or "")),
+        by=actor.handle,
+    )
+    await db.commit()
+    return ok({"name": name})

@@ -68,7 +68,6 @@ def _new_board(user_client: UserCreator, api_client: TestClient, label: str):
             "description": "一块题目板。" * 20,
             "avatarId": 1,
             "enableRank": False,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(owner.token),

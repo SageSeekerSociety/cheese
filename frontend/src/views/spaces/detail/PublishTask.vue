@@ -17,12 +17,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import PdfGenerate from './PdfGenerate.vue'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
 import PageHeader from '@/components/common/PageHeader.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
-import { PUBLISH_DONE_ROUTE } from '@/lib/spaceRouteNames'
+import { publishDoneRoute } from '@/lib/spaceRouteNames'
 import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
@@ -36,6 +38,7 @@ const router = useRouter()
 const { t } = useI18n()
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups, isManager } = storeToRefs(spaceStore)
 
 const spaceId = computed(() => Number(route.params.spaceId))
@@ -55,13 +58,13 @@ const ready = ref(false)
 async function loadSpace(id: number) {
   if (!Number.isFinite(id) || id <= 0) return
   ready.value = false
-  await spaceStore.fetchSpace(id)
+  await spaceData.fetchSpace(id)
   // 空间换了（或者用户直接输地址进来）：下面这几样都挂在 `currentSpaceId` 上，顺序有意义。
   if (currentSpaceId.value !== id) return
   const ok = await errorHandler.withErrorHandling(
     async () => {
-      await spaceStore.fetchCategories()
-      await spaceStore.fetchDomainGroups()
+      await spaceData.fetchCategories()
+      await spaceData.fetchDomainGroups()
       await loadTemplate()
       // 回调的返回值就是「装完没有」：`withErrorHandling` 栽了给的是 `undefined`，
       // 所以这里必须回一个真东西，不能靠 `undefined` 判成败（回调什么都不返回时
@@ -201,7 +204,7 @@ async function submitTask(taskData: TaskFormSubmitData) {
         toast.success(t('spaces.detail.publishTask.createSuccess'))
       }
 
-      router.replace({ name: PUBLISH_DONE_ROUTE, params: { spaceId: id } })
+      router.replace(publishDoneRoute(id))
       return approved
     },
     {
@@ -323,7 +326,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
     quickDrafts.value = []
     quickTokens.value = null
     initialTaskData.value = {}
-    router.replace({ name: PUBLISH_DONE_ROUTE, params: { spaceId: id } })
+    router.replace(publishDoneRoute(id))
     return true
   } catch (error) {
     console.error('PDF 批量发布失败:', error)

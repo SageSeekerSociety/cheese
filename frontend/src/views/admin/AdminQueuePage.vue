@@ -1,747 +1,94 @@
 <script setup lang="ts">
-import type { FeedbackCard, FeedbackStatus } from '@/cx_types'
-import type { AdminTab } from '@/stores/feedback'
+import { ref } from 'vue'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useAdminQueue } from '@/composables/useAdminQueue'
 
-import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFeedbackTable from '@/components/admin/AdminFeedbackTable.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
 import AdminQueueFoot from '@/components/admin/AdminQueueFoot.vue'
 import AdminQueueList from '@/components/admin/AdminQueueList.vue'
-import AdminTabs from '@/components/admin/AdminTabs.vue'
+import AdminQueueEmpty from '@/components/admin/queue/AdminQueueEmpty.vue'
+import AdminQueueHeader from '@/components/admin/queue/AdminQueueHeader.vue'
+import AdminQueueToolbar from '@/components/admin/queue/AdminQueueToolbar.vue'
 import UndoStrip from '@/components/admin/UndoStrip.vue'
 import AdminFeedbackDetailDrawer from '@/components/feedback/AdminFeedbackDetailDrawer.vue'
-import { statusMeta } from '@/lib/feedbackMeta'
-import { relativeDays } from '@/lib/feedbackWindows'
-import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的反馈队列（`/admin/queue`，§4.1）。**这一页是这一轮的主屏** —— 管理侧的
 // 全部日常动作都在这上面发生，详情、看板、成员都是它的支线。
 //
-// 三件事在这一层，不往组件里掉：
+// 这一件现在只剩**接线**：判断与动作在 `composables/useAdminQueue.ts`，页头 / 工具行 /
+// 四态块的画法在 `components/admin/queue/*.vue`，两条对应关系（哪一件点哪一下调哪个
+// 动作）看下面那个模板就够了。三件以前长在这一页里、现在各归各位的东西：
 //
-//   1. **问法**（栏位 / 关键词 / 三个日期窗口）在 store 里，这一层只负责把它们画出来、
+//   1. **问法**（栏位 / 关键词 / 三个日期窗口）在 store 里，这一页只负责把它们画出来、
 //      把人的动作报回去。队列本体（`AdminQueueList` / `AdminFeedbackTable`）只认
-//      `items`，拿不到写入口 —— 分诊键要落 store，所以键在这一层分发（§8 的「列表」档）。
+//      `items`，拿不到写入口 —— 分诊键要落 store，所以键在 composable 那一层分发
+//      （§8 的「列表」档）。
 //   2. **「手上这一条是谁」**。光标、详情、已读、撤销条都挂在同一个 id 上，所以这个
-//      判断只能有一份，也就是这里。`AdminQueueDetail` 的注释把同一个理由写了一遍。
+//      判断只能有一份，也就是 composable 那一份。`AdminQueueDetail` 的注释把同一个
+//      理由写了一遍。
 //   3. **四态**。加载/空/错误/筛空里，「错误」和「筛空」是页面才知道的两件事：卡片
-//      只知道「我手上一条都没有」。所以两个列表组件都留了 `empty` 插槽，内容在这里。
+//      只知道「我手上一条都没有」。所以两个列表组件都留了 `empty` 插槽，内容在这里 ——
+//      填的那一件（`AdminQueueEmpty`）只认 composable 算出来的 `state` / `copy`。
 //
 // **队列与总表共用一份 `adminItems`**（§13 C-10）：切视图不重新取数。代价是两个视图
 // 的排序/筛选状态互相覆盖，不做的原因写在规格里 —— 多一份列表就多一次
 // `/admin/feedback` 请求。
-//
-// 工具行上两组控件说的是两件事，位置分组和文案都在重复这一点：栏位 / 搜索 / 日期窗口
-// chip 是**服务端的问法**（换了重拉），状态页签是**在手上这一页里筛**（服务端没有按
-// 状态查的参数）—— 页签右侧那句「只筛这一页」把这个口径写在面上，完整句进 `title`。
-// 三个日期窗口各有可见的一颗 chip（`windowChips`）：看板 KPI 深链带着 `?since=7d`
-// 进来时它是唯一的筛选指示；值在 store 里存原文、发请求时才折成日期
-// （`lib/feedbackWindows.ts` —— 后端的参数是 datetime，'7d' 原样发出去是 422）。
 defineOptions({ name: 'AdminQueuePage' })
 
-const store = useFeedbackStore()
-const { t } = useI18n()
-const route = useRoute()
-const router = useRouter()
-
-/* ---- 常量 ---- */
-
-/** 光标落定后多久去拉详情（F-06）。200ms 里按十次 `j` 只该产生一次请求 —— 中间的九次
- *  都在把这一颗定时器重排。 */
-const DETAIL_DEBOUNCE_MS = 150
-
-/** 详情真的画出来之后再等多久推已读游标（F-13）。800ms 是「人确实看了这一条」和
- *  「光标路过」之间的距离。 */
-const READ_DELAY_MS = 800
-
-/** 无效按键的闪底（§8 的备注：从已上线不可回退，按键无效并闪底 0.2s）。 */
-const FLASH_MS = 200
-
-/** 搜索两个字起（§12 第 6 条：搜索会打到无索引的四列上）。一个字不发请求，也不清掉
- *  上一次的结果 —— 列表停在那儿比闪一次「没有匹配」好。 */
-const QUERY_MIN_CHARS = 2
-
-/** 「指针刚刚点过队列」的时间窗。**行只报 `activate`，鼠标点击和 `j` 在这一条事件上
- *  长得一模一样**，而两者的意思不同：「点一行」是「打开它」，「按一下 `j`」只是「往下
- *  看一行」。窄屏上把后者也当成打开，就是每按一次 `j` 弹一次抽屉。所以靠时间窗分开。 */
-const POINTER_WINDOW_MS = 400
-
-const WIDE_QUERY = '(min-width: 1280px)'
-
-/** 分诊键落在梯子的第几格（§8 表里的 `1` 进行中 / `2` 已解决 / `3` 已上线）。存的是
- *  **下标**而不是状态名：梯子由服务端给（`store.statusLadder`），下标才是那三条键的
- *  意思，名字会跟着服务端变。 */
-const TRIAGE_SLOTS: Record<string, number> = { 1: 1, 2: 2, 3: 3 }
-
-/** 队列的四个**栏位**（服务端的 `ADMIN_TABS`）。写成常量是因为 store 只导出了类型、
- *  没导出这份元组。顺序就是控件上的顺序：最常用的「公开」在最前，「安全」最靠里。
- *
- *  这四个词在这一页上是**服务端的问法**（`GET /admin/feedback?tab=`），不是客户端的筛选
- *  —— 和工具行右边那排状态页签不是一回事：状态页签在**已经拿到的那一页里**筛，栏位换的
- *  是去要哪一批数据。所以两者在控件上必须长得不一样（这里是收在一段底色里的分段控件，
- *  那边是裸的药丸），否则同一行里两排一模一样的东西说着两件不同的事。 */
-const ADMIN_TABS: AdminTab[] = ['public', 'private', 'agent', 'security']
-
-/** 四个栏位各自的名字。**写成一张字面量表，不拼键** —— i18n 的闸门
- *  （`src/i18n/catalog.spec.ts`）是照源码里的字面量认「这个键有人用」的，拼出来的键
- *  既不算调用、真叶子又会被判成没人引用。值写成函数是为了 `t()` 在读的那一刻取当前
- *  语言（写成常量只会在 setup 时求值一次）。 */
-const LANE_LABEL: Record<AdminTab, () => string> = {
-  public: () => t('feedback.queue.lane.public'),
-  private: () => t('feedback.queue.lane.private'),
-  agent: () => t('feedback.queue.lane.agent'),
-  security: () => t('feedback.queue.lane.security'),
-}
-
-/* ---- 状态 ---- */
-
-type View = 'list' | 'table'
-
-/** 分段控件的两个档。写成常量是因为模板里那一段要在 `v-for` 上判等。 */
-const VIEWS: View[] = ['list', 'table']
-
-const view = ref<View>('list')
-/** 「全部」不是状态，是「不过滤」。它和另外四个同住一行是因为它们互斥。 */
-const statusTab = ref<FeedbackStatus | 'all'>('all')
-/** 当前行。`null` = 还没选过任何一行 —— **默认不替人选**：一进来就把第一条画成「当前」
- *  等于替人表态，而且宽屏那一档会顺手把未读游标推走。 */
-const cursorId = ref<string | null>(null)
-/** 详情开着没有。≥1280 是整页接管（§4.4），<1280 是那个 520px 抽屉。 */
-const detailOpen = ref(false)
-/** 分诊面板展开着没有。宽屏默认展开（那里有一整栏），窄屏默认收起（收起时才是一行
- *  摘要，抽屉里那点高度要留给正文）。`Esc` 的「一次只退一层」退的就是它。 */
-const triageOpen = ref(true)
-
-/** 撤销条：栈深 1（§9.6）。`from` 是改之前的那一格 —— 撤销就是把它写回去。 */
-const undo = ref<{ id: string; from: FeedbackStatus; message: string } | null>(null)
-
-/** 输入框里的字。**它和 `store.adminQuery` 不是同一个东西**：后者是「真的发出去过」
- *  的那一个词，前者是手上正在打的。分开的理由见 `QUERY_MIN_CHARS` 和 `clearFilters`。 */
-const draft = ref(store.adminQuery)
-
-const searchEl = ref<HTMLInputElement | null>(null)
-const detailRef = ref<InstanceType<typeof AdminQueueDetail> | null>(null)
-
-const media =
-  typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(WIDE_QUERY) : null
-const isWide = ref(media ? media.matches : true)
-
-/* ---- 手上这一页 ---- */
-
-const tabs = computed<(FeedbackStatus | 'all')[]>(() => ['all', ...store.statusLadder])
-const items = computed(() => store.adminItems)
-
-/** 状态页签那一排（`AdminTabs`）要的形状：`{ value, label }`。文案口径和原来那颗裸
- *  药丸逐字一致 —— `all` 走 `feedback.queue.tab.all`，其余走 `statusMeta().label`
- *  （那一份是呈现词表，不从 i18n 取，见 `lib/feedbackMeta.ts` 文件头）。 */
-const tabOptions = computed(() =>
-  tabs.value.map((tab) => ({ value: tab, label: tab === 'all' ? t('feedback.queue.tab.all') : statusMeta(tab).label }))
-)
-
-/** 状态页签**在手上这一页里筛**（见文件末尾的代价）。`all` 那一档不复制数组：返回的
- *  就是 store 那一份，`v-for` 的 key 也因此不重算。 */
-const visible = computed(() =>
-  statusTab.value === 'all' ? items.value : items.value.filter((item) => item.status === statusTab.value)
-)
-
-/** 混合列表里要写状态字；单状态的页签下它是一列重复四遍的字，省掉（§5.2）。 */
-const showStatusWord = computed(() => statusTab.value === 'all')
-
-const cursorIndex = computed(() => {
-  const at = visible.value.findIndex((item) => item.id === cursorId.value)
-  // 找不到（还没选、或那一条被筛走了）时回到第一行：没有当前行的队列 Tab 不进来。
-  return at >= 0 ? at : visible.value.length ? 0 : -1
-})
-
-const current = computed<FeedbackCard | null>(() => (cursorIndex.value >= 0 ? visible.value[cursorIndex.value] : null))
-
-const unread = computed(() => store.counts.unread ?? 0)
-
-/** 首次加载才给骨架。已经有内容时换骨架会让整页闪一下，那是比「旧内容多停半秒」更糟
- *  的手感 —— 所以 `store.adminLoading` 只在手上一条都没有时才算数。 */
-const showSkeleton = computed(() => store.adminLoading && !items.value.length)
-
-/** 队列自己的读失败。**列表空着才算**：手上还有一页旧数据时，一次失败的刷新不该把
- *  那一页换成一句错误 —— 它只是不新鲜了。 */
-const listError = computed(() => (!items.value.length && !store.adminLoading ? store.error : null))
-
-/** 详情拉失败的原话。**只在「我要的那条」回来之后才算数**：`store.error` 是共用的，
- *  一次失败的列表刷新不该在详情里画出一句读失败。 */
-const detailError = computed(() =>
-  store.detailId && store.detailId === current.value?.id && !store.detailLoading && !store.detail ? store.error : null
-)
-
-/** 有筛选条件吗。三个日期窗口也算 —— 看板的数字点进来时带的就是它们，那时结果空了要说
- *  「没有符合条件的反馈」而不是「还没有人提交反馈」。 */
-const hasFilter = computed(
-  () =>
-    statusTab.value !== 'all' ||
-    !!store.adminQuery.trim() ||
-    !!(store.adminSince || store.adminResolvedSince || store.adminDeployedSince)
-)
-
-/** 四态里的第三态。空 = 一条都没有且没有任何筛选；筛空 = 有筛选但零命中。**两者必须分开**：
- *  「平台还没有反馈」和「你要找的那条被筛掉了」是两件事，前者会让人以为平台坏了。 */
-const state = computed<'error' | 'filtered' | 'empty' | null>(() => {
-  if (visible.value.length) return null
-  if (listError.value) return 'error'
-  if (items.value.length) return 'filtered'
-  return hasFilter.value ? 'filtered' : 'empty'
-})
-
-/** 四态文案。**键名逐字写全**，不做 `` t(`${ns}.error.title`) `` 那种拼接：i18n 闸门
- *  是按源码里的字面量扫引用的，拼出来的键在它眼里等于没人用（`catalog.spec.ts`）。 */
-const copy = computed(() => {
-  if (state.value === 'error') {
-    return view.value === 'list'
-      ? {
-          title: t('feedback.queue.error.title'),
-          desc: t('feedback.queue.error.desc'),
-          action: t('feedback.queue.error.retry'),
-        }
-      : {
-          title: t('feedback.table.error.title'),
-          desc: t('feedback.table.error.desc'),
-          action: t('feedback.table.error.retry'),
-        }
-  }
-  if (state.value === 'filtered') {
-    return view.value === 'list'
-      ? {
-          title: t('feedback.queue.filtered.title'),
-          desc: t('feedback.queue.filtered.desc'),
-          action: t('feedback.queue.filtered.clear'),
-        }
-      : {
-          title: t('feedback.table.filtered.title'),
-          desc: t('feedback.table.filtered.desc'),
-          action: t('feedback.table.filtered.clear'),
-        }
-  }
-  return view.value === 'list'
-    ? { title: t('feedback.queue.empty.title'), desc: t('feedback.queue.empty.desc'), action: '' }
-    : { title: t('feedback.table.empty.title'), desc: t('feedback.table.empty.desc'), action: '' }
-})
-
-/* ---- 详情：防抖 + 自动已读 ---- */
-
-let detailTimer: ReturnType<typeof setTimeout> | undefined
-let readTimer: ReturnType<typeof setTimeout> | undefined
-let armedId: string | null = null
-
-function clearDetailTimers() {
-  clearTimeout(detailTimer)
-  clearTimeout(readTimer)
-  detailTimer = undefined
-  readTimer = undefined
-}
-
-/** 详情请求的**代次**：每次挪光标 +1。
- *
- *  150ms 防抖只把「同一段连按」并成一次请求，它挡不住的是**光标先动了、请求还没发**
- *  那一段时间：连按 `j` 时那支计时器每次都被重置，于是行上的选中、头上的编号一直在
- *  往前走，而详情区挂的还是最早那一条的正文 —— 那正是 F-06 要丢掉的「过期的东西」。
- *
- *  为什么不靠 store 里 `detailId` 那一条判据：它挡的是「响应比**新请求**晚到」，挡不住
- *  「响应比**光标**晚到」—— 后者发生在防抖窗口里，那期间新请求根本还没发出去，
- *  `detailId` 还是旧的，旧响应会被当成有效的收下。两件事都要有，缺一个就漏一种。 */
-let detailSeq = 0
-
-/** 光标记到哪一条上、`markRead` 要不要跟着推。**请求归请求，已读归已读**：光标路过
- *  一条不等于看过它，所以列表里按 `j` 走一趟不该把整个未读数清零。 */
-function armDetail(id: string | null, markRead: boolean) {
-  clearDetailTimers()
-  armedId = id
-  // 代次 +1：从那一条还在路上的请求，到下面 `.then()` 里那次自动已读，全部作废。
-  const seq = ++detailSeq
-  // **作废在挪光标这一刻就发生**，不等防抖。连按 `j` 时那支计时器每次都被重置，等它
-  // 到期等于让详情区整段连按期间挂着上一条的正文，而左侧选中的行、头上的编号已经是
-  // 新的了（F-06）。先画回骨架，说的是实话。
-  store.invalidateDetail(id)
-  if (!id) return
-  detailTimer = setTimeout(() => {
-    detailTimer = undefined
-    if (seq !== detailSeq) return
-    void store.loadAdminDetail(id).then(() => {
-      if (seq !== detailSeq) return
-      // 拉失败、或这期间人已经挪到别处：不算「看过」，游标不动。
-      if (armedId !== id || store.detailId !== id || !store.detail) return
-      if (!markRead) return
-      readTimer = setTimeout(() => {
-        readTimer = undefined
-        if (armedId === id) void store.markReadOnce(id)
-      }, READ_DELAY_MS)
-    })
-  }, DETAIL_DEBOUNCE_MS)
-}
-
-/* ---- 光标 ---- */
-
-let pointerAt = 0
-
-function pointerJustUsed(): boolean {
-  return Date.now() - pointerAt < POINTER_WINDOW_MS
-}
-
-function select(id: string | null, opts: { open?: boolean; pointer?: boolean } = {}) {
-  const changed = id !== cursorId.value
-  cursorId.value = id
-  // 宽屏那一档没有「选中但看不到」这回事（整页接管），所以光标一挪就等于进了详情；
-  // 窄屏上抽屉要人明说才开，所以只有指针点的那一次和 `Enter` 才算。
-  armDetail(id, !!id && (isWide.value ? changed || !!opts.open : !!opts.open || !!opts.pointer))
-  if (!id) return
-  if (opts.open || opts.pointer || (isWide.value && changed)) detailOpen.value = true
-}
-
-/** `j` / `k` / `H` 挪光标。挪完把焦点也带过去：不然连按 `H` 之后焦点还留在旧行上，
- *  下一颗键又落回旧行（`AdminQueueList` 的 `move` 是同一个理由）。 */
-function step(delta: number, open = false) {
-  const to = cursorIndex.value + delta
-  if (to < 0 || to >= visible.value.length) return
-  select(visible.value[to].id, { open })
-  void nextTick(() => focusRow(visible.value[to].id))
-}
-
-/** 行元素按 id 找，不问组件要 ref：行 id 的约定（`fbrow-` / `ftrow-`）本来就是两个
- *  列表组件和这一层共用的（`aria-activedescendant` 也按它找）。 */
-function focusRow(id: string) {
-  const row = document.getElementById(`fbrow-${id}`) ?? document.getElementById(`ftrow-${id}`)
-  row?.querySelector<HTMLElement>('.fbrow__link')?.focus()
-}
-
-/** 两个列表报上来的「光标挪到第几行」。指针刚点过就按「点开」处理，见 `POINTER_WINDOW_MS`。 */
-function onActiveIndex(index: number) {
-  const item = visible.value[index]
-  if (item) select(item.id, { pointer: pointerJustUsed() })
-}
-
-/** 总表报上来的「选中这一行」。列表那边是 `update:activeIndex`（它按行号报），总表报
- *  的是 id —— 两者的形状不同是因为各自的光标不一样（roving tabindex vs 选中行）。 */
-function onTableActivate(id: string) {
-  select(id, { pointer: pointerJustUsed() })
-}
-
-/** `Enter`（两个列表都只在这一条路上发 `open`）。行上那颗按钮发的是 `advance` ——
- *  推状态和看详情是两件事，混成一个会让人按一下就改掉一条状态。 */
-function openItem(id: string) {
-  select(id, { open: true })
-}
-
-/** 详情里按了那颗主按钮（`triage` 事件）。**状态从 `triage` 走、别的写操作直接落 store**
- *  的那条分工写在 `AdminQueueDetail` 里；撤销条是页面级的栈，所以这条路必须经过这里。 */
-function onDetailTriage(to: FeedbackStatus) {
-  const id = current.value?.id
-  if (id) void writeStatus(id, to, false)
-}
-
-/** 无效按键的闪底。**先摘再挂**：同一个类名连着加两次，第二次不会重启动效，而人看到
- *  的是「第一次按没反应」。 */
-let flashTimer: ReturnType<typeof setTimeout> | undefined
-function flashRow(id: string) {
-  const row = document.getElementById(`fbrow-${id}`) ?? document.getElementById(`ftrow-${id}`)
-  if (!row) return
-  row.classList.remove('qflash')
-  void requestAnimationFrame(() => row.classList.add('qflash'))
-  clearTimeout(flashTimer)
-  flashTimer = setTimeout(() => row.classList.remove('qflash'), FLASH_MS)
-}
-
-/* ---- 分诊 ---- */
-
-function statusOf(id: string): FeedbackStatus | null {
-  if (store.detail?.id === id) return store.detail.status
-  return items.value.find((item) => item.id === id)?.status ?? null
-}
-
-/** 梯子上的位置。合法性只按它判：目标必须**在当前位置之后**，所以「从已上线不可回退」
- *  是它的一个特例而不是一条额外规则 —— 回退和原地下键都会落进同一个分支。 */
-function rank(status: FeedbackStatus): number {
-  return store.statusLadder.indexOf(status)
-}
-
-async function writeStatus(id: string, to: FeedbackStatus, byKey: boolean) {
-  const from = statusOf(id)
-  if (!from) return
-  if (rank(to) <= rank(from)) {
-    // 一颗没有反应的按键和「这个键坏了」长得一模一样，所以无效也要出声。
-    if (byKey) flashRow(id)
-    return
-  }
-  await store.setStatus(id, to)
-  // 写失败时 `store.error` 是原话，而撤销条会变成一句假话（那条根本没改）。队列行上
-  // 那一颗按钮走的是同一条路，只是它没有按键可闪。
-  if (store.error) return
-  undo.value = { id, from, message: t('feedback.undo.message', { status: statusMeta(to).label }) }
-}
-
-/** 行右侧那颗按钮的下一格。和 `AdminQueueRow` 里的表同一份 —— 它推的就是这一格。 */
-const NEXT: Record<FeedbackStatus, FeedbackStatus | null> = {
-  received: 'in_progress',
-  in_progress: 'resolved',
-  resolved: 'deployed',
-  deployed: null,
-}
-
-function advance(id: string) {
-  const from = statusOf(id)
-  const to = from ? NEXT[from] : null
-  if (to) void writeStatus(id, to, false)
-}
-
-/** 撤销条上的「撤销」。写回去的那一次不再产生新的撤销条 —— 否则 `U` 会套娃。 */
-function undoTriage() {
-  const last = undo.value
-  undo.value = null
-  if (last) void store.setStatus(last.id, last.from)
-}
-
-/** `M` 键和页头那个「标记为已读」按钮走的是**手动**这一条：每次真发请求。
- *
- *  以前这里调的是 `markReadOnce(current.id)`（页面自己用的那个「同一条只推一次」的
- *  版本），后果是打开一条停留超过 800ms 之后再按 `M`，那一按被去重集合早退成静默
- *  空操作 —— 未读数不减、徽标不动、也没有任何提示，按的人以为键坏了。另外它先看
- *  `current`（当前光标那一行），所以在筛空了的列表上，那个「已读」按钮同样是按不动
- *  的：按钮只在 `unread > 0` 时出现，而「有没有未读」和「光标停在哪一行」是两件事。 */
-function markCurrentRead() {
-  void store.markRead()
-}
-
-/** `A`：把焦点送进「指派」那个 combobox（§8）。宽屏那一档那个实例上有 `focusAssignee`；
- *  抽屉里的那个没有转发它（`AdminFeedbackDetailDrawer` 的 emits 里没有这一条），所以
- *  退一步在 DOM 上找 —— 详情里只有这一颗 combobox。 */
-async function focusAssignee() {
-  if (!detailOpen.value) {
-    if (!current.value) return
-    detailOpen.value = true
-    await nextTick()
-  }
-  if (detailRef.value?.focusAssignee) {
-    detailRef.value.focusAssignee()
-    return
-  }
-  document.querySelector<HTMLInputElement>('.v-navigation-drawer .v-field input')?.focus()
-}
-
-/* ---- 四态上的动作 ---- */
-
-function reload() {
-  void store.loadAdmin()
-}
-
-/** 「清除筛选」。关键词和状态页签，加上看板带进来的那三段窗口 —— 按钮写着「清除筛选」，
- *  就该把筛选清干净；只清一半的话，人点完还是一屏空的，会以为按钮坏了。
- *
- *  先改 `draft` 再调 `clearAdminQuery()`：watch 是异步的，等它醒过来时 `store.adminQuery`
- *  已经是空串了，那一条守卫会把它挡掉，于是只有一次请求。 */
-function clearFilters() {
-  statusTab.value = 'all'
-  draft.value = ''
-  store.clearAdminQuery()
-  if (store.adminSince) store.setAdminSince(null)
-  if (store.adminResolvedSince) store.setAdminResolvedSince(null)
-  if (store.adminDeployedSince) store.setAdminDeployedSince(null)
-  // 按钮写着「清除筛选」，地址里留着三键的话 F5 会把人送回筛空态。
-  dropQueryKeys(['since', 'resolved_since', 'deployed_since'])
-}
-
-function runAction() {
-  if (state.value === 'error') reload()
-  else if (state.value === 'filtered') clearFilters()
-}
-
-/* ---- 键盘 ---- */
-
-function isTyping(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null
-  if (!el || !el.tagName) return false
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
-}
-
-/** 焦点是不是落在**某一个自己收方向键的格子**里。
- *
- *  两个视图各有一套 `j`/`k` 处理（`AdminQueueList` / `AdminFeedbackTable`，roving
- *  tabindex 归它们管），页面这一层只在格子已经不在 DOM 里的时候接手 —— 宽屏打开
- *  详情时整块被 `v-if` 换掉，就是那一种。
- *
- *  认的是一个**两个格子都标了的属性**，不是类名。以前这里写的是 `.qlist`，于是
- *  表格视图（根类名是 `.aft`）整个漏在外面：窄屏打开抽屉、焦点在表格里时，表格的
- *  `@keydown` 和 window 上这一个同时命中，一次 `j` 前进两行、光标越过一行。两个
- *  视图写了两套类名，守卫只认了一套 —— 属性说的是「这一片子树自己收方向键」，
- *  新增第三个视图时标上它就有同样的待遇，改类名也不会再悄悄把守卫弄丢。 */
-function gridOwnsArrows(): boolean {
-  return !!document.activeElement?.closest('[data-owns-arrow-keys]')
-}
-
-/** `Esc` 逐层后退（§8）：一次只退一层，先分诊面板、再详情。 */
-function onEscape() {
-  if (!detailOpen.value) return
-  if (triageOpen.value) {
-    triageOpen.value = false
-    return
-  }
-  detailOpen.value = false
-}
-
-/** 队列页这一层的键（§8 的「列表 / 详情」两档）：
- *
- *  - 分诊那一批（`1/2/3/H/U/A/M`）**不依赖抽屉开着**（F-12）—— 窄屏上键盘用户不该
- *    被困在抽屉里，所以它们挂在 window 上，焦点在哪儿都算。
- *  - `j`/`k` 在列表自己手里（roving tabindex），这里**只在详情打开、列表已经不在
- *    DOM 里的时候**接手：宽屏接管之后连按 `j` 能一条条往下看，正是 F-06 防抖存在的
- *    理由。列表还在时两边都收一次键，会一次跳两行。
- */
-function onKeydown(event: KeyboardEvent) {
-  if (event.metaKey || event.ctrlKey || event.altKey) return
-
-  if (isTyping(event.target)) {
-    // 输入框里的 `Esc` 先退焦点：不然在搜索框里按 `Esc` 会直接把详情关掉，而人的意思是
-    // 「我不打了」。
-    if (event.key === 'Escape') (event.target as HTMLElement).blur()
-    return
-  }
-
-  if (event.key === '/') {
-    event.preventDefault()
-    searchEl.value?.focus()
-    return
-  }
-  if (event.key === 'Escape') {
-    onEscape()
-    return
-  }
-
-  const detailHoldsFocus = detailOpen.value && !gridOwnsArrows()
-
-  if (event.key === 'j' || event.key === 'ArrowDown') {
-    if (!detailHoldsFocus) return
-    event.preventDefault()
-    step(1)
-    return
-  }
-  if (event.key === 'k' || event.key === 'ArrowUp') {
-    if (!detailHoldsFocus) return
-    event.preventDefault()
-    step(-1)
-    return
-  }
-
-  if (event.key === 'h' || event.key === 'H') {
-    // 「零步数」：状态不动，只往前挪一行 —— 扫一遍队列时不必每按一次都改点什么。
-    if (!current.value) return
-    event.preventDefault()
-    step(1)
-    return
-  }
-  if (event.key === 'u' || event.key === 'U') {
-    if (!undo.value) return
-    event.preventDefault()
-    undoTriage()
-    return
-  }
-  if (event.key === 'm' || event.key === 'M') {
-    markCurrentRead()
-    return
-  }
-  if (event.key === 'a' || event.key === 'A') {
-    void focusAssignee()
-    return
-  }
-
-  const slot = TRIAGE_SLOTS[event.key]
-  if (slot !== undefined) {
-    const to = store.statusLadder[slot]
-    if (!to || !current.value) return
-    event.preventDefault()
-    void writeStatus(current.value.id, to, true)
-  }
-}
-
-/* ---- 地址里带过来的问法 ---- */
-
-/** 看板那几个数字点进来时带的就是这几个（§6.3），旧的 `/admin/feedback?tab=...` 书签
- *  带的也是。返回「有没有已经因此拉过一次」—— 设置器自己会重新取数，这一层就不必再
- *  补一枪，否则一次深链会连打三四个请求。
- *
- *  `status` 不是服务端的参数，它落在状态页签上（在手上这一页里筛）；`assigned` /
- *  `unread` / `hot` 这一层不认识，就不装作认识。 */
-function applyRouteQuery(): boolean {
-  const query = route.query
-  let loaded = false
-
-  const tab = typeof query.tab === 'string' ? (query.tab as AdminTab) : null
-  if (tab && ADMIN_TABS.includes(tab) && store.adminTab !== tab) {
-    store.setAdminTab(tab)
-    loaded = true
-  }
-
-  const status = typeof query.status === 'string' ? query.status : null
-  if (status && store.statusLadder.includes(status as FeedbackStatus)) statusTab.value = status as FeedbackStatus
-
-  const windows: [string, string | null, (v: string | null) => void][] = [
-    ['since', store.adminSince, (v) => store.setAdminSince(v)],
-    ['resolved_since', store.adminResolvedSince, (v) => store.setAdminResolvedSince(v)],
-    ['deployed_since', store.adminDeployedSince, (v) => store.setAdminDeployedSince(v)],
-  ]
-  for (const [key, current, set] of windows) {
-    const value = typeof query[key] === 'string' ? (query[key] as string) : null
-    if (value && current !== value) {
-      set(value)
-      loaded = true
-    }
-  }
-
-  const search = typeof query.q === 'string' ? query.q : null
-  if (search && search !== store.adminQuery) {
-    draft.value = search
-    store.setAdminQuery(search)
-    loaded = true
-  }
-
-  return loaded
-}
-
-/** 切栏位。**和地址同步**，理由有两条：
- *
- *   * 刷新之后还停在刚才那一栏。这一页的栏位是**服务端的问法**，换一栏就是换一批数据；
- *     地址里不带它的话，F5 一下人就被悄悄送回「公开」，而他刚才看的可能是私密那一栏。
- *   * 链接发得出去。`/admin/feedback?tab=private` 这条旧书签本来就认（见 `ADMIN_TABS`），
- *     而这一页现在自己也写得出同样的地址 —— 一份事实、一个来源，不会出现「控件上是私密、
- *     地址上是空的」这种两个答案。
- *
- *  用 `replace` 不是 `push`：切栏位不是「去别的地方」，是在同一页里换一个问题，回退键
- *  该回到来处，而不是在四个栏位之间一步步倒。`public` 那一档**不写进地址**（不写就是
- *  它，默认值不占位）。 */
-function selectLane(lane: AdminTab) {
-  if (store.adminTab === lane) return
-  store.setAdminTab(lane)
-  const query = { ...route.query }
-  if (lane === 'public') delete query.tab
-  else query.tab = lane
-  void router.replace({ query })
-}
-
-/* ---- 日期窗口 chips ---- */
-
-/** 地址里那三个窗口键。和 store 的三个字段一一对应，但存的是**键名**：chip 上画的、
- *  地址里摘的都是它。 */
-type WindowKey = 'since' | 'resolved_since' | 'deployed_since'
-
-/** chip 上窗口值的画法：相对窗口（'7d'）画成「近 7 天」，绝对日期原样。store 里存的
- *  就是深链原文（见 `lib/feedbackWindows.ts`），所以这里只看形状、不用管它从哪来。 */
-function windowValueLabel(raw: string): string {
-  const days = relativeDays(raw)
-  return days === null ? raw : t('feedback.queue.window.days', { n: days })
-}
-
-/** 每个生效的窗口一颗 chip。**键名逐字写全**（同 `LANE_LABEL` 那条理由：i18n 闸门按
- *  源码字面量认键，拼出来的键它看不见）。 */
-const windowChips = computed(() => {
-  const chips: { key: WindowKey; text: string; clearAria: string }[] = []
-  if (store.adminSince)
-    chips.push({
-      key: 'since',
-      text: t('feedback.queue.window.since', { v: windowValueLabel(store.adminSince) }),
-      clearAria: '',
-    })
-  if (store.adminResolvedSince)
-    chips.push({
-      key: 'resolved_since',
-      text: t('feedback.queue.window.resolved', { v: windowValueLabel(store.adminResolvedSince) }),
-      clearAria: '',
-    })
-  if (store.adminDeployedSince)
-    chips.push({
-      key: 'deployed_since',
-      text: t('feedback.queue.window.deployed', { v: windowValueLabel(store.adminDeployedSince) }),
-      clearAria: '',
-    })
-  for (const c of chips) c.clearAria = `${t('feedback.queue.window.clear')}：${c.text}`
-  return chips
-})
-
-/** 把几个键从地址里摘掉。没有那几键时不发 `replace` —— 清筛选不该在历史里留一条
- *  什么都没改的地址。 */
-function dropQueryKeys(keys: string[]) {
-  const query = { ...route.query }
-  let changed = false
-  for (const k of keys) {
-    if (k in query) {
-      delete query[k]
-      changed = true
-    }
-  }
-  if (changed) void router.replace({ query })
-}
-
-/** 清一个窗口 = 改 store（setter 自己重拉）+ 把地址里的那一键摘掉 —— 和 `selectLane`
- *  写回 tab 是同一条规矩：一份事实一个来源，F5 不该复活人刚亲手清掉的筛选。 */
-function clearWindow(key: WindowKey) {
-  if (key === 'since') store.setAdminSince(null)
-  else if (key === 'resolved_since') store.setAdminResolvedSince(null)
-  else store.setAdminDeployedSince(null)
-  dropQueryKeys([key])
-  // chip 没了焦点不能落空：送到旁边的搜索框（鼠标点的不出焦点环，:focus-visible 管这件事）。
-  void nextTick(() => searchEl.value?.focus())
-}
-
-/* ---- 生命周期 ---- */
-
-watch(draft, (value) => {
-  // 已经有过的那个词不再问一遍 —— `clearFilters` 的一串动作会路过这里一次。
-  if (value === store.adminQuery) return
-  const q = value.trim()
-  if (q.length > 0 && q.length < QUERY_MIN_CHARS) return
-  store.setAdminQuery(value)
-})
-
-/** 光标得落在一行**真存在**的行上：筛到别的页签、或者刚才那一条被写走了（改了安全问题
- *  就从公开栏挪进安全栏）。落不回来时回到第一行，而不是留着一个不存在的 id —— 那会让
- *  `Enter` 打开一条已经不在手上的反馈。 */
-watch(visible, (list) => {
-  if (!list.length) {
-    cursorId.value = null
-    clearDetailTimers()
-    return
-  }
-  if (list.some((item) => item.id === cursorId.value)) return
-  cursorId.value = list[0].id
-  armDetail(list[0].id, false)
-})
-
-// 断点换档：分诊面板的默认值跟着换（宽屏展开、窄屏收起），详情那一份容器也跟着换。
-watch(isWide, (wide) => {
-  triageOpen.value = wide
-})
-
-function onMediaChange() {
-  isWide.value = media?.matches ?? true
-}
-
-function onPointerDown() {
-  pointerAt = Date.now()
-}
-
-onMounted(() => {
-  media?.addEventListener('change', onMediaChange)
-  triageOpen.value = isWide.value
-  const loaded = applyRouteQuery()
-  if (!loaded) void store.loadAdmin()
-  window.addEventListener('keydown', onKeydown)
-  window.addEventListener('pointerdown', onPointerDown, true)
-})
-
-onBeforeUnmount(() => {
-  media?.removeEventListener('change', onMediaChange)
-  window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('pointerdown', onPointerDown, true)
-  clearDetailTimers()
-  clearTimeout(flashTimer)
-})
+/** 搜索框住在 `AdminQueueToolbar` 里，而 `/` 键和清窗口之后都要把焦点送进去。
+ *  位置是那一件的事、时机是这一层的事，所以这里只交给 composable 一个「怎么办到」。 */
+const toolbarRef = ref<InstanceType<typeof AdminQueueToolbar> | null>(null)
+
+const {
+  detailRef,
+  isWide,
+  detailOpen,
+  setDetailOpen,
+  closeDetail,
+  triageOpen,
+  setTriageOpen,
+  detail,
+  detailLoading,
+  detailError,
+  onDetailTriage,
+  unread,
+  markCurrentRead,
+  reload,
+  view,
+  setView,
+  adminTab,
+  laneOptions,
+  selectLane,
+  draft,
+  setDraft,
+  windowChips,
+  clearWindow,
+  statusTab,
+  setStatusTab,
+  tabOptions,
+  visible,
+  cursorId,
+  cursorIndex,
+  showSkeleton,
+  showStatusWord,
+  onActiveIndex,
+  onTableActivate,
+  openItem,
+  advance,
+  state,
+  copy,
+  listError,
+  runAction,
+  scoped,
+  hasPrev,
+  hasNext,
+  prev,
+  next,
+  undo,
+  undoTriage,
+  dismissUndo,
+} = useAdminQueue({ focusSearch: () => toolbarRef.value?.focusSearch() })
 </script>
 
 <template>
@@ -752,127 +99,39 @@ onBeforeUnmount(() => {
     <AdminQueueDetail
       v-if="isWide && detailOpen"
       ref="detailRef"
-      :item="store.detail"
-      :loading="store.detailLoading"
+      :item="detail"
+      :loading="detailLoading"
       :error="detailError"
       :triage-open="triageOpen"
-      @close="detailOpen = false"
-      @update:triage-open="triageOpen = $event"
+      @close="closeDetail"
+      @update:triage-open="setTriageOpen"
       @triage="onDetailTriage"
     />
 
     <template v-else>
       <div class="qpage__inner">
-        <AdminPageHeader :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
-          <template #tools>
-            <!-- 未读数。F-13 修的就是它：这个数以前没有人清零，也没有一处模板读它。 -->
-            <span v-if="unread > 0" class="qpage__badge t-num" aria-live="polite">
-              {{ t('feedback.queue.unread', { n: unread }) }}
-            </span>
-            <v-btn
-              v-if="unread > 0"
-              variant="text"
-              size="small"
-              :title="t('notifications.common.markAsRead')"
-              @click="markCurrentRead"
-            >
-              {{ t('notifications.common.markAsRead') }}
-            </v-btn>
+        <AdminQueueHeader
+          :unread="unread"
+          :view="view"
+          @mark-read="markCurrentRead"
+          @refresh="reload"
+          @update:view="setView"
+        />
 
-            <button
-              type="button"
-              class="qpage__icon-btn"
-              :aria-label="t('feedback.queue.refresh')"
-              :title="t('feedback.queue.refresh')"
-              @click="reload"
-            >
-              <v-icon icon="mdi-refresh" size="16" aria-hidden="true" />
-            </button>
-
-            <!-- 视图切换（F-05）：24px 高，落在页头右上角。**切换不重新取数** —— 两个
-                 视图读的是同一份 `adminItems`（§13 C-10）。 -->
-            <div class="qpage__seg" role="group" :aria-label="t('feedback.queue.label')">
-              <button
-                v-for="option in VIEWS"
-                :key="option"
-                type="button"
-                class="qpage__seg-btn"
-                :class="{ 'qpage__seg-btn--on': view === option }"
-                :aria-pressed="view === option"
-                @click="view = option"
-              >
-                {{ option === 'list' ? t('feedback.queue.view.list') : t('feedback.queue.view.table') }}
-              </button>
-            </div>
-          </template>
-        </AdminPageHeader>
-
-        <!-- 工具行 48px：栏位 + 搜索 260px + 状态页签。 -->
-        <div class="qpage__tools">
-          <!-- 栏位（公开 / 私密 / AI 队友提的 / 安全）。**收在一段底色里的分段控件**，
-               和右边那排裸药丸刻意长得不一样 —— 两者不是一回事：这一排换的是「去要哪一批
-               数据」（服务端的 `tab`），右边那排是在**已经拿到的那一页里**筛。四个都画出来
-               而不是收进一个下拉：这一页最贵的一类错就是「管理员以为某条反馈不见了，其实
-               它在隔壁那一栏」，当前停在哪一栏必须一眼看得见。 -->
-          <div class="qpage__lanes" role="radiogroup" :aria-label="t('feedback.queue.lane.label')">
-            <span class="qpage__lanes-label">{{ t('feedback.queue.lane.label') }}</span>
-            <button
-              v-for="lane in ADMIN_TABS"
-              :key="lane"
-              type="button"
-              class="qpage__lane"
-              :class="{ 'qpage__lane--on': store.adminTab === lane }"
-              role="radio"
-              :aria-checked="store.adminTab === lane"
-              @click="selectLane(lane)"
-            >
-              {{ LANE_LABEL[lane]() }}
-            </button>
-          </div>
-
-          <div class="qpage__search">
-            <v-icon icon="mdi-magnify" size="16" class="qpage__search-icon" aria-hidden="true" />
-            <input
-              ref="searchEl"
-              v-model="draft"
-              type="text"
-              class="qpage__search-input"
-              :placeholder="t('feedback.queue.search.placeholder')"
-              :aria-label="t('feedback.queue.search.placeholder')"
-              autocomplete="off"
-              spellcheck="false"
-            />
-          </div>
-
-          <!-- 日期窗口 chips（看板 KPI 深链带进来的那几段）。放在搜索框后、状态页签
-               前：窗口是**服务端的问法**，和栏位 / 搜索归一组；状态页签是客户端筛。
-               四态下照画 —— 它们是控件不是数据，错误态带着窗口重试是正当需求。 -->
-          <div
-            v-if="windowChips.length"
-            class="qpage__windows"
-            role="group"
-            :aria-label="t('feedback.queue.window.label')"
-          >
-            <span v-for="chip in windowChips" :key="chip.key" class="qpage__wchip">
-              {{ chip.text }}
-              <button type="button" class="qpage__wchip-x" :aria-label="chip.clearAria" @click="clearWindow(chip.key)">
-                <v-icon icon="mdi-close" size="12" aria-hidden="true" />
-              </button>
-            </span>
-          </div>
-
-          <!-- 状态页签。和看板的分类、看板的窗口、模型页的分档共用 `AdminTabs`
-               （下划线式，放不下时整排横着滚、右缘渐隐）：这三处以前各写一份，
-               切分区时同一件事的手感不一样。 -->
-          <AdminTabs v-model="statusTab" class="qpage__tabs" :options="tabOptions" :label="t('feedback.queue.label')" />
-
-          <!-- 状态页签的口径注：只在筛选真的生效时出现。面上留「只筛这一页」五个字
-               （口径是正确性问题，不能整句藏进 title），完整句进 title。不进
-               radiogroup —— 它不是选项，不污染组的语义。 -->
-          <span v-if="statusTab !== 'all'" class="qpage__tabs-note" :title="t('feedback.queue.tab.scopeHint')">
-            {{ t('feedback.queue.tab.scope') }}
-          </span>
-        </div>
+        <AdminQueueToolbar
+          ref="toolbarRef"
+          :lane="adminTab"
+          :lanes="laneOptions"
+          :query="draft"
+          :chips="windowChips"
+          :status="statusTab"
+          :status-options="tabOptions"
+          :show-scope-note="statusTab !== 'all'"
+          @update:query="setDraft"
+          @update:status="setStatusTab"
+          @select-lane="selectLane"
+          @clear-window="clearWindow"
+        />
 
         <!-- 队列与总表**同时只挂一个**（§8 末：视图切换时解绑），否则同一个 `j` 会被两个
              `role="grid"` 各收一次。 -->
@@ -887,32 +146,25 @@ onBeforeUnmount(() => {
           @open="openItem"
         >
           <template #empty>
-            <!-- 四态块换成了共用的 `AdminEmptyState`（标题 + 一句为什么 + 至多一个
-                 动作，形状和看板、模型页的空态一致）。错误态多两样东西：
-                 `tone="error"` 换图标颜色；外面那层 `title` 上是服务端那句原话 ——
-                 块里只写「读失败」，具体为什么读失败要能问出来。
-                 （原话不能挂在组件上：`title` 是 `AdminEmptyState` 自己声明的 prop，
-                 传下去会被当成标题，画的就成了服务端那句原文。） -->
-            <div class="qpage__state-raw" :title="state === 'error' && listError ? listError : undefined">
-              <AdminEmptyState
-                :title="copy.title"
-                :desc="copy.desc"
-                :action="copy.action || undefined"
-                :tone="state === 'error' ? 'error' : 'neutral'"
-                @action="runAction"
-              />
-            </div>
+            <AdminQueueEmpty
+              :title="copy.title"
+              :desc="copy.desc"
+              :action="copy.action"
+              :tone="state === 'error' ? 'error' : 'neutral'"
+              :raw="state === 'error' ? listError : null"
+              @action="runAction"
+            />
           </template>
 
           <template #foot>
             <!-- 脚的内容两个视图共用一份（`AdminQueueFoot`），壳在各自的列表组件里。 -->
             <AdminQueueFoot
-              :scope="!!store.adminQuery.trim()"
+              :scope="scoped"
               :rows="visible.length"
-              :has-prev="store.adminHasPrev"
-              :has-next="store.adminHasNext"
-              @prev="store.adminPrev()"
-              @next="store.adminNext()"
+              :has-prev="hasPrev"
+              :has-next="hasNext"
+              @prev="prev"
+              @next="next"
             />
           </template>
         </AdminQueueList>
@@ -926,31 +178,24 @@ onBeforeUnmount(() => {
           @open="openItem"
         >
           <template #empty>
-            <!-- 四态块换成了共用的 `AdminEmptyState`（标题 + 一句为什么 + 至多一个
-                 动作，形状和看板、模型页的空态一致）。错误态多两样东西：
-                 `tone="error"` 换图标颜色；外面那层 `title` 上是服务端那句原话 ——
-                 块里只写「读失败」，具体为什么读失败要能问出来。
-                 （原话不能挂在组件上：`title` 是 `AdminEmptyState` 自己声明的 prop，
-                 传下去会被当成标题，画的就成了服务端那句原文。） -->
-            <div class="qpage__state-raw" :title="state === 'error' && listError ? listError : undefined">
-              <AdminEmptyState
-                :title="copy.title"
-                :desc="copy.desc"
-                :action="copy.action || undefined"
-                :tone="state === 'error' ? 'error' : 'neutral'"
-                @action="runAction"
-              />
-            </div>
+            <AdminQueueEmpty
+              :title="copy.title"
+              :desc="copy.desc"
+              :action="copy.action"
+              :tone="state === 'error' ? 'error' : 'neutral'"
+              :raw="state === 'error' ? listError : null"
+              @action="runAction"
+            />
           </template>
 
           <template #foot>
             <AdminQueueFoot
-              :scope="!!store.adminQuery.trim()"
+              :scope="scoped"
               :rows="visible.length"
-              :has-prev="store.adminHasPrev"
-              :has-next="store.adminHasNext"
-              @prev="store.adminPrev()"
-              @next="store.adminNext()"
+              :has-prev="hasPrev"
+              :has-next="hasNext"
+              @prev="prev"
+              @next="next"
             />
           </template>
         </AdminFeedbackTable>
@@ -963,16 +208,16 @@ onBeforeUnmount(() => {
     <AdminFeedbackDetailDrawer
       v-if="!isWide"
       :open="detailOpen"
-      :item="store.detail"
-      :loading="store.detailLoading"
+      :item="detail"
+      :loading="detailLoading"
       :error="detailError"
       :triage-open="triageOpen"
-      @update:open="detailOpen = $event"
-      @update:triage-open="triageOpen = $event"
+      @update:open="setDetailOpen"
+      @update:triage-open="setTriageOpen"
       @triage="onDetailTriage"
     />
 
-    <UndoStrip v-if="undo" :message="undo.message" @undo="undoTriage" @dismiss="undo = null" />
+    <UndoStrip v-if="undo" :message="undo.message" @undo="undoTriage" @dismiss="dismissUndo" />
   </div>
 </template>
 
@@ -999,311 +244,11 @@ onBeforeUnmount(() => {
   margin: 0 auto;
 }
 
-.qpage__badge {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  background: var(--fill-2);
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-}
-
-.qpage__icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-
-.qpage__icon-btn:hover {
-  background: var(--fill);
-  color: var(--text);
-}
-
-/* 分段控件：24px 高的轨道（§4.1 的 24px 是铁的），滑块**占满整个高度**，两端各留
-   4px。早先写的是「24px 轨道 + 20px 滑块」，那让轨道上下各多出 2px 内边距 —— 2 不在
-   间距的尺子上（§15 第 27 条）。滑块顶到边之后，那 2px 也就不存在了。
-   选中态是**中性**的（`--surface` 底 + 1px `--line`），不是琥珀 —— 队列是全站唯一一处
-   amber 数等于 0 的视图（§7.4）。 */
-.qpage__seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 4px;
-  background: var(--fill);
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-}
-
-.qpage__seg-btn {
-  height: 24px;
-  padding: 0 12px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-
-.qpage__seg-btn--on {
-  background: var(--surface);
-  border-color: var(--line);
-  color: var(--ink);
-}
-
-/* 工具行。**让它能折行**（`min-height` 而不是 `height`）：宽屏上三组东西并排正好
-   48px（32 的内容 + 上下 8 的 padding），窄到装不下时折成两行而不是把状态页签挤出
-   容器 —— 加栏位那一组之前，这一行只有两组，装得下是巧合，不是余量。 */
-.qpage__tools {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  min-height: 48px;
-  padding: 8px 24px;
-  border-bottom: 1px solid var(--line);
-}
-
-/* 栏位那一组：收在一段底色里的分段控件，和页头那个视图切换同一个形状。**和右边那排
-   状态页签刻意长得不一样**，因为两者不是一回事（见 `ADMIN_TABS` 的注释）。 */
-.qpage__lanes {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 4px 0 10px;
-  background: var(--fill);
-  border-top-left-radius: var(--radius-md);
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
-  border-bottom-left-radius: var(--radius-md);
-}
-/* 「栏位」两个字只做说明：它说的是右边那四颗是什么，自己不参与点选。 */
-.qpage__lanes-label {
-  margin-right: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-.qpage__lane {
-  height: 24px;
-  padding: 0 10px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-.qpage__lane:hover {
-  color: var(--text);
-}
-/* 选中的那一颗：抬到底色之上（`--surface` + 一圈描边）。中性色 —— 栏位是一个位置，
-  不是一条告警，琥珀只留给当前选项卡和主操作。 */
-.qpage__lane--on,
-.qpage__lane--on:hover {
-  background: var(--surface);
-  border-color: var(--line);
-  color: var(--ink);
-}
-
-.qpage__search {
-  display: flex;
-  flex: 0 0 260px;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  height: 32px;
-  padding: 0 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-md);
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
-  border-bottom-left-radius: var(--radius-md);
-}
-
-/* 焦点环跟着全局那一套走（`--focus-ring`，2px）。这里只换边框色：搜索框的框本身就是
-   焦点指示的载体，再套一圈 outline 会在 32px 高的小方块外多出一层。 */
-.qpage__search:focus-within {
-  border-color: var(--focus-ring);
-}
-
-.qpage__search-icon {
-  flex: 0 0 auto;
-  color: var(--muted);
-}
-
-.qpage__search-input {
-  flex: 1 1 auto;
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  outline: none;
-}
-
-.qpage__search-input::placeholder {
-  color: var(--muted);
-}
-
-/* 日期窗口 chips。中性色不染色：窗口是筛选条件不是告警。工具行本就 `flex-wrap`，
-   三颗 chip 满编时折行不挤翻页签；chips 自己也能折（窄屏下它们跟着工具行换行，
-   一颗也不会被裁）。 */
-.qpage__windows {
-  display: flex;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.qpage__wchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 24px;
-  padding: 0 4px 0 10px;
-  background: var(--fill);
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-}
-
-/* chip 上的 ×：普通 button，天然进 Tab 序；字母键在 window 级、`isTyping` 不误伤
-   （与翻页按钮现状一致）。 */
-.qpage__wchip-x {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-top-left-radius: var(--radius-sm);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-
-.qpage__wchip-x:hover {
-  background: var(--fill-2);
-  color: var(--text);
-}
-
-/* 状态页签那一排是 `AdminTabs`（下划线式）。这里只管它在工具行里怎么占位：它排在
-   最后，能缩、能横着滚，不把前面的栏位和搜索框挤出去。 */
-.qpage__tabs {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-left: auto;
-}
-
-/* 状态页签的口径注：12px --muted，出现在页签右侧，不推走任何已有控件。 */
-.qpage__tabs-note {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-}
-
 /* 无效按键的闪底。0.2s（§7.7 的「出现 / 消失」那一档），中性色 —— 一次落空的按键
-   不该借状态三连色里的任何一支说话。 */
+   不该借状态三连色里的任何一支说话。类名是这一层加上去的（`flashRow` 直接改 DOM），
+   而行长在两个列表组件里，所以这一条必须是 `:deep`。 */
 .qpage :deep(.qflash) {
   background: var(--fill-2);
   transition: background-color 0.2s ease;
-}
-
-/* 四态块的位置由两个列表组件给（`.qlist__none-box` / `.aft__none` 那 96px 顶距和
-   320px 宽），字和按钮在 `AdminEmptyState` 里。这一层只剩外面那圈：`title` 上挂着
-   服务端原话，所以它得是一个真的元素。 */
-.qpage__state-raw {
-  display: block;
-}
-/* 窄屏（≤700，和页头 / 后台壳同一条线）：工具行不再挤在一行上。
-   - 栏位那一组整条**横着滑**而不是折行：四颗药丸连标签 300px 出头，390 下差一点点，
-     折行会把「安全」单独甩到第二行、看起来像另一组控件；滑动保持它是一组。
-   - 搜索框独占一行（260px 的定宽在 390 下会把行撑破）。
-   - 状态页签那一排 `AdminTabs` 自己会横着滚，这里只把它从右对齐改回左对齐。 */
-@media (max-width: 700px) {
-  .qpage__tools {
-    gap: 12px;
-    padding: 8px 16px;
-  }
-
-  .qpage__lanes {
-    max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .qpage__search {
-    flex: 1 1 100%;
-  }
-
-  .qpage__tabs {
-    margin-left: 0;
-  }
 }
 </style>

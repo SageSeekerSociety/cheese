@@ -375,11 +375,12 @@ def test_serve_is_refused_when_the_machine_carries_no_preview_out(client, monkey
     """No tunnel means the running app cannot reach the panel at all. Refused at
     the API rather than merely reported afterwards, so 芝士 never announces
     「预览已就绪」 over a white frame."""
-    from app.api.routes import topics as topics_routes
+    from app.api.routes import topics_shown
 
     _pid, tid = _topic(client)
     # Don't sit through the real grace window for a machine that is not coming.
-    monkeypatch.setattr(topics_routes, "_PREVIEW_ATTACH_WAIT_S", 0.05)
+    # The window lives where the handler that reads it does now.
+    monkeypatch.setattr(topics_shown, "_PREVIEW_ATTACH_WAIT_S", 0.05)
 
     r = client.post(
         f"/topics/{tid}/shown", json={"path": "Vue dev server", "as": "app"}

@@ -99,7 +99,6 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
             "intro": "一块板",
             "description": "模板",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [
                 {
                     "name": f"{MARKER}-name",

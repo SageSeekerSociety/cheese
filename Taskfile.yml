@@ -89,15 +89,17 @@ tasks:
       - task: be:check
       - task: fe:check
 
-  # The two boundary checks and the size cap, in one command: the import graph
-  # (be:boundaries), component imports (fe:lint:boundary), and the file-size
-  # ratchet — which needs a remote-tracking origin/main, so it is the one that
-  # says "git fetch origin main" when it has never been run in a checkout.
+  # The boundary checks and the size cap, in one command: the import graph
+  # (be:boundaries), component imports (fe:lint:boundary), whether a scene
+  # still renders standalone (fe:lint:scenes), and the file-size ratchet —
+  # which needs a remote-tracking origin/main, so it is the one that says
+  # "git fetch origin main" when it has never been run in a checkout.
   boundaries:
-    desc: Module boundaries + file-size caps (the CI arch checks)
+    desc: Module boundaries + scene + file-size caps (the CI arch checks)
     cmds:
       - task: be:boundaries
       - task: fe:lint:boundary
+      - task: fe:lint:scenes
       - python3 .claude/scripts/check-file-sizes.py
 
   check:full:
@@ -114,6 +116,17 @@ tasks:
     desc: Run the pre-commit checks over the whole tree (what CI runs)
     cmds:
       - uvx pre-commit run --all-files
+
+  # Static fast check before opening a PR: picks pre-commit hook IDs by the
+  # merge-diff scope (same select() and path map as the Required CI gate) and
+  # runs only those. v1 is static checks ONLY — pytest/typecheck/build/e2e do
+  # not run here and the summary says so; full CI stays the merge gate.
+  # `task ci:fast -- --types` adds pyright/vue-tsc. Exit 0 means the selected
+  # static checks really ran green, nothing more.
+  ci:fast:
+    desc: Static fast check scoped to the merge diff (not full CI)
+    cmds:
+      - python3 .github/scripts/ci-fast.py {{.CLI_ARGS}}
 
   infra:
     desc: Start infrastructure services (PG, Valkey)

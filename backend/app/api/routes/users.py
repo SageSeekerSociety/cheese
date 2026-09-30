@@ -16,7 +16,6 @@ from fastapi import (
     Query,
     Request,
     Response,
-    status,
 )
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,12 +59,7 @@ from app.domain.questions.repositories import (
     QuestionTopicRepository,
 )
 from app.domain.space.services import SpaceLabels
-from app.domain.team.membership_services import TeamMembershipService
-from app.domain.team.repositories import (
-    TeamMembershipApplicationRepository,
-    TeamRepository,
-)
-from app.domain.team.services import TeamService
+from app.domain.team.models import ApplicationStatus
 from app.domain.user.models import (
     UserSession,
     UserTrustedDevice,
@@ -755,6 +749,30 @@ def _invite_code_error(exc: ValueError) -> UnprocessableEntityError:
     return UnprocessableEntityError(error_map.get(str(exc), "Invalid invite code"))
 
 
+def _parse_application_status(value: str | None) -> ApplicationStatus | None:
+    """The `?status=` filter of the six `/users/me/team*` lists, or None.
+
+    It stays in this file while those routes live in `users_team.py`, which
+    imports it: the vocabulary is the domain's `ApplicationStatus`, and a route
+    module may not import a domain's models directly (C2). This file carries the
+    frozen exemption for that import already; moving the parse into the domain
+    is its own change.
+    """
+    if value is None:
+        return None
+    upper = value.upper()
+    if upper in {
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "ACCEPTED",
+        "DECLINED",
+        "CANCELED",
+    }:
+        return ApplicationStatus[upper]
+    raise BadRequestError(f"Invalid status: {value}")
+
+
 async def get_user_auth_service(
     db=Depends(get_db),
 ) -> UserAuthService:
@@ -773,16 +791,6 @@ async def get_user_profile_service(
 ) -> UserProfileService:
     profile_repo = UserProfileRepository(session=db)
     return UserProfileService(profile_repo=profile_repo)
-
-
-async def get_team_membership_service(
-    db=Depends(get_db),
-) -> TeamMembershipService:
-    team_repo = TeamRepository(session=db)
-    app_repo = TeamMembershipApplicationRepository(session=db)
-    return TeamMembershipService(
-        session=db, team_repo=team_repo, application_repo=app_repo
-    )
 
 
 async def get_user_realname_service(
@@ -811,176 +819,6 @@ async def get_oauth_service(
     db=Depends(get_db),
 ) -> OAuthService:
     return OAuthService(repo=OAuthConnectionRepository(session=db))
-
-
-@router.delete(
-    "/me/team-requests/{requestId}",
-    summary="Cancel my pending join request",
-)
-async def cancel_my_join_request(
-    request_id: Annotated[int, Path(ge=1, alias="requestId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-) -> Response:
-    await membership_service.cancel_my_join_request(
-        user_id=auth_user.user_id, request_id=request_id
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.delete(
-    "/me/teams/{teamId}",
-    summary="Leave Team",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def leave_team(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> None:
-    team_repo = TeamRepository(session=db)
-    team_service = TeamService(team_repo)
-    await team_service.remove_team_member(
-        team_id=team_id,
-        target_user_id=auth_user.user_id,
-        actor_user_id=auth_user.user_id,
-    )
-
-
-@router.post(
-    "/me/team-invitations/{invitationId}/accept",
-    summary="Accept a team invitation",
-)
-async def accept_team_invitation(
-    invitation_id: Annotated[int, Path(ge=1, alias="invitationId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-) -> Response:
-    await membership_service.accept_team_invitation(
-        user_id=auth_user.user_id, invitation_id=invitation_id
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/me/team-invitations/{invitationId}/decline",
-    summary="Decline a team invitation",
-)
-async def decline_team_invitation(
-    invitation_id: Annotated[int, Path(ge=1, alias="invitationId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-) -> Response:
-    await membership_service.decline_team_invitation(
-        user_id=auth_user.user_id, invitation_id=invitation_id
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get(
-    "/me/team-requests",
-    summary="List my team join requests",
-)
-async def list_my_team_requests(
-    status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None, ge=0),
-    pageSize: int | None = Query(default=None, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-    db=Depends(get_db),
-) -> dict:
-    from app.api.routes.teams import _application_to_api_model, _load_application_maps
-
-    status_enum = None
-    if status is not None:
-        upper = status.upper()
-        if upper in {
-            "PENDING",
-            "APPROVED",
-            "REJECTED",
-            "ACCEPTED",
-            "DECLINED",
-            "CANCELED",
-        }:
-            from app.domain.team.models import ApplicationStatus
-
-            status_enum = ApplicationStatus[upper]
-        else:
-            raise BadRequestError(f"Invalid status: {status}")
-    apps, page = await membership_service.list_my_join_requests(
-        user_id=auth_user.user_id,
-        status=status_enum,
-        page_start=pageStart,
-        page_size=pageSize,
-    )
-    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
-    items = [
-        _application_to_api_model(
-            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
-        )
-        for app in apps
-    ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "requests": items,
-            "page": page,
-        },
-    }
-
-
-@router.get(
-    "/me/team-invitations",
-    summary="List my team invitations",
-)
-async def list_my_team_invitations(
-    status: str | None = Query(default=None),
-    pageStart: int | None = Query(default=None, ge=0),
-    pageSize: int | None = Query(default=None, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    membership_service: TeamMembershipService = Depends(get_team_membership_service),
-    db=Depends(get_db),
-) -> dict:
-    from app.api.routes.teams import _application_to_api_model, _load_application_maps
-
-    status_enum = None
-    if status is not None:
-        upper = status.upper()
-        if upper in {
-            "PENDING",
-            "APPROVED",
-            "REJECTED",
-            "ACCEPTED",
-            "DECLINED",
-            "CANCELED",
-        }:
-            from app.domain.team.models import ApplicationStatus
-
-            status_enum = ApplicationStatus[upper]
-        else:
-            raise BadRequestError(f"Invalid status: {status}")
-    apps, page = await membership_service.list_my_invitations(
-        user_id=auth_user.user_id,
-        status=status_enum,
-        page_start=pageStart,
-        page_size=pageSize,
-    )
-    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
-    items = [
-        _application_to_api_model(
-            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
-        )
-        for app in apps
-    ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "invitations": items,
-            "page": page,
-        },
-    }
 
 
 @router.get(
