@@ -538,30 +538,29 @@ class Executor:
             self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
         return result
 
-    def hooks(self, event, tool, args, key, result=None, cwd=None):
+    def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True):
         if self.config.get("private"):
             return args
-        cwd = Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd
         return project_hooks()["run"](
             event,
             tool,
             args,
             call_id=key,
             root=self.root,
-            cwd=cwd,
+            cwd=Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd,
             env=self.env,
             session_id=self.state.name,
             result=result,
             extra=[self.config.get("settings", {})],
             program=resolve_program,
+            fire=fire,
         )
 
     def tool_hooks(self, params):
         """The project's hooks for one event of a call this executor does not
-        run: a remote MCP server's, which the platform calls. A harness that
-        does not fire the project's hooks itself asks here before the call and
-        after it, as `invoke` does around the calls it runs. A deny is an
-        answer, not a failure: the caller must be able to say why."""
+        run, asked before and after it by a harness that fires none itself; or,
+        with `fire` false, only its `permissions.deny`, for one whose hooks the
+        build fires. A deny is an answer: the caller must be able to say why."""
         try:
             args = self.hooks(
                 params["event"],
@@ -570,6 +569,7 @@ class Executor:
                 params["request_id"],
                 params.get("result"),
                 cwd=params.get("cwd"),
+                fire=params.get("fire", True),
             )
         except PermissionError as denied:
             return {"denied": str(denied)}

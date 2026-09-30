@@ -1692,6 +1692,11 @@ def transport(config, target_path):
                             },
                         },
                         {
+                            "name": "permission",
+                            "description": "Internal. Call Bash instead.",
+                            "inputSchema": {"type": "object"},
+                        },
+                        {
                             "name": "send_user_file",
                             "description": (
                                 "Internal delivery transport for the built-in "
@@ -1731,6 +1736,7 @@ def transport(config, target_path):
                 tool = request["params"]["name"]
                 if tool not in (
                     "invoke",
+                    "permission",
                     "platform_request",
                     "send_user_file",
                     "project_tools",
@@ -1750,24 +1756,15 @@ def transport(config, target_path):
                         "tool": "mcp__native__" + tool,
                         "args": {k: payload[k] for k in picked[tool] if k in payload},
                     }
-                elif tool == "send_user_file":
-                    payload = {
-                        "id": payload["id"],
-                        "session_id": payload["session_id"],
-                        "tool": "SendUserFile",
-                        "args": {
-                            key: value
-                            for key, value in payload.items()
-                            if key not in ("id", "session_id")
-                        },
-                    }
-                elif tool in cheese.PLATFORM_TOOLS:
+                elif tool == "send_user_file" or tool in cheese.PLATFORM_TOOLS:
                     # Every other row of the table. Membership, not a `cheese_`
                     # prefix, decides: `todo_write` carries none.
                     payload = {
                         "id": payload["id"],
                         "session_id": payload["session_id"],
-                        "tool": "mcp__native__" + tool,
+                        "tool": "SendUserFile"
+                        if tool == "send_user_file"
+                        else "mcp__native__" + tool,
                         "args": {
                             key: value
                             for key, value in payload.items()
@@ -1811,6 +1808,8 @@ def transport(config, target_path):
                         if tool == "platform_request"
                         else client.publish_message(payload, args)
                         if tool == "chat_send"
+                        else client.permission(payload, args, notice)
+                        if tool == "permission"
                         else invoke(payload, args, abandoned)
                     )
                 if "error" in receipt:
