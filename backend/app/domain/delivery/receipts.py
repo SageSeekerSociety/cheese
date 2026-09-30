@@ -94,13 +94,16 @@ async def register_input(
 
 
 async def held_blocks(session, *, project_id, topic_id, recipient_handle):
-    """Unsettled registered inputs own their batch, including after a restart."""
+    """Registered inputs own their batch, independently of work completion.
+
+    An echo cannot release an initial batch for another prompt before its Stop.
+    Re-admission requires explicit reconciliation, never a different input UUID.
+    """
     batches = await session.scalars(
         select(NativeInput.held_block_ids).where(
             NativeInput.project_id == project_id,
             NativeInput.topic_id == topic_id,
             NativeInput.recipient_handle == recipient_handle,
-            NativeInput.settled_at.is_(None),
         )
     )
     return {uuid.UUID(block) for batch in batches for block in batch}
