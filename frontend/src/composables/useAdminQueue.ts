@@ -199,24 +199,30 @@ export function useAdminQueue(deps: AdminQueueDeps) {
    *  「平台还没有反馈」和「你要找的那条被筛掉了」是两件事，前者会让人以为平台坏了。 */
   const state = computed<'error' | 'filtered' | 'empty' | null>(() => {
     if (visible.value.length) return null
-    if (listError.value) return 'error'
+    // `!== null`：`null` 才算没失败，空串是「失败了但服务端没给话」。用真值判会把这种
+    // 失败落进「暂无反馈」，把接口挂掉画成平台是空的。
+    if (listError.value !== null) return 'error'
     if (items.value.length) return 'filtered'
     return hasFilter.value ? 'filtered' : 'empty'
   })
 
   /** 四态文案。**键名逐字写全**，不做 `` t(`${ns}.error.title`) `` 那种拼接：i18n 闸门
-   *  是按源码里的字面量扫引用的，拼出来的键在它眼里等于没人用（`catalog.spec.ts`）。 */
+   *  是按源码里的字面量扫引用的，拼出来的键在它眼里等于没人用（`catalog.spec.ts`）。
+   *
+   *  出错那两态的说明行放**服务端原话**，不放「检查网络后重试。」这种固定话：失败未必是
+   *  网络（没权限、限流、后端 500 都长这样），吞掉原因就等于把人往错的方向支。服务端没
+   *  给话时不画那一行（空说明行只占地方），标题和重试照旧 —— 失败本身不能因此不报。 */
   const copy = computed(() => {
     if (state.value === 'error') {
       return view.value === 'list'
         ? {
             title: t('feedback.queue.error.title'),
-            desc: t('feedback.queue.error.desc'),
+            desc: listError.value || undefined,
             action: t('feedback.queue.error.retry'),
           }
         : {
             title: t('feedback.table.error.title'),
-            desc: t('feedback.table.error.desc'),
+            desc: listError.value || undefined,
             action: t('feedback.table.error.retry'),
           }
     }

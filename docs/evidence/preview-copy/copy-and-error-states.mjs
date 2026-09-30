@@ -1,15 +1,18 @@
-// 取证：出错态文案的「现状 / 建议」对照页，以及七个后台页读失败的实机渲染。
+// 取证：出错态文案的「现状 / 建议」对照页，以及七个后台页读失败的**真实调用点**渲染。
 //
 // 为什么要单独取证：出错态文案的差别是**结构性**的（原话当标题 / 原话只在悬停 / 原话被丢了），
-// 纸上写「建议改成某某」看不出来。这里用真实组件把现状 props 和建议 props 并排渲染出来，
-// 再从 DOM 读回每一栏的实际文本，比对「服务端原话最后去了哪」。
+// 纸上写「建议改成某某」看不出来。对照页用真实组件把现状 props 和建议 props 并排渲染出来；
+// 七页那一步走的是**产品自己的路由和调用点**（`#/admin/...`，不是对照页），从 DOM 读回
+// 标题 / 说明行 / 按钮，证明文案真的接进了产品，而不是只在预览页里画着好看。
 //
 // 判据只认 DOM 读回，不认像素：
 //   1. 对照页每一行都有两个 `.cp__stage`，各自的 `.aes__title` / `.aes__desc` / `.aes__btn`
 //      文本读回来，等于脚本里写的期望值；
-//   2. 七页实机截图上，`.aes` 块的 title/desc/action 读回来与现状表一致；
+//   2. 七页实机上，`.aes` 块的 title 是中性句式、desc 是服务端原话、按钮是「重试」——
+//      三条都要成立，缺一条都算没接上（只改 i18n 不传 `desc` 会在这里现形）；
 //   3. 「原话是否可见」看 `document.body.innerText` 里有没有那句原话；
-//   4. 队列那层壳的 `title` 属性读回来，证明原话确实挂在那里（悬停才看得到）。
+//   4. 队列那层壳的 `title` 属性读回来必须是空的：产品不再把原话挂在那里（对照页那两行
+//      还在演示旧结构，所以壳的 `raw` prop 留着，但产品调用点已经不传了）。
 //
 // 跑法：先把预览构建成 dist-feedback-proto 并挂在 PREVIEW_BASE 上，再
 //   TMPDIR=/var/tmp node docs/evidence/preview-copy/copy-and-error-states.mjs
@@ -38,13 +41,30 @@ const bundleLastModified = await fetch(new URL('./proto.js', BASE), { method: 'H
   .catch(() => null)
 
 const ROUTES = [
-  { key: 'queue', label: '反馈队列', hash: '#/admin/queue' },
-  { key: 'dashboard', label: '看板', hash: '#/admin/dashboard' },
-  { key: 'feature-stats', label: '功能数据', hash: '#/admin/feature-stats' },
-  { key: 'models', label: '模型管理', hash: '#/admin/models' },
-  { key: 'spaces', label: '空间申请', hash: '#/admin/spaces' },
-  { key: 'members', label: '成员管理', hash: '#/admin/members' },
-  { key: 'integrations', label: '飞书应用', hash: '#/admin/integrations' },
+  // `titles` 是这一路上**合法的中性标题**（一页可能有两档，比如队列的列表/表格）。
+  // 断言它，才抓得住「只改了 i18n 的值、组件那边还拿原话当标题」这种半接上。
+  { key: 'queue', label: '反馈队列', hash: '#/admin/queue', titles: ['队列加载失败', '表格加载失败'] },
+  { key: 'dashboard', label: '看板', hash: '#/admin/dashboard', titles: ['看板加载失败'] },
+  {
+    key: 'feature-stats',
+    label: '功能数据',
+    hash: '#/admin/feature-stats',
+    titles: ['功能数据加载失败'],
+  },
+  {
+    key: 'models',
+    label: '模型管理',
+    hash: '#/admin/models',
+    titles: ['模型加载失败', '额度加载失败', '最近操作加载失败'],
+  },
+  { key: 'spaces', label: '空间申请', hash: '#/admin/spaces', titles: ['空间申请加载失败'] },
+  { key: 'members', label: '成员管理', hash: '#/admin/members', titles: ['成员加载失败'] },
+  {
+    key: 'integrations',
+    label: '飞书应用',
+    hash: '#/admin/integrations',
+    titles: ['飞书应用加载失败'],
+  },
 ]
 
 const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', args: ['--no-sandbox'] })
@@ -175,6 +195,23 @@ for (const r of ROUTES) {
         ? '挂外层 title 属性，悬停可见'
         : '丢了'
 
+  // 接上了没有，判三条：标题中性、原话在说明行、按钮还在。外加壳的 title 上不能有原话。
+  const errBlocks = dom.blocks.filter((b) => b.title !== '' || b.desc !== '' || b.action !== '')
+  const verdict = {
+    rawAsDesc: errBlocks.filter((b) => b.desc === RAW).length,
+    rawAsTitle: errBlocks.filter((b) => b.title === RAW).length,
+    rawOnShell: dom.blocks.filter((b) => b.shellTitle === RAW).length,
+    neutralTitles: errBlocks.filter((b) => b.desc === RAW && r.titles.includes(b.title)).length,
+    withRetry: errBlocks.filter((b) => b.action === '重试').length,
+    blocks: errBlocks.length,
+  }
+  verdict.pass =
+    verdict.rawAsDesc >= 1 &&
+    verdict.rawAsTitle === 0 &&
+    verdict.rawOnShell === 0 &&
+    verdict.neutralTitles === verdict.rawAsDesc &&
+    verdict.withRetry === verdict.rawAsDesc
+
   results.push({
     name: `err-${r.key}`,
     label: r.label,
@@ -187,6 +224,8 @@ for (const r of ROUTES) {
     dom,
     rawFate,
     rawVisible: dom.rawVisible,
+    verdict,
+    expectedTitles: r.titles,
     net,
     screenshot: shot,
     capturedAt: new Date().toISOString(),
@@ -209,9 +248,16 @@ for (const row of cmp.dom.rows) {
   console.log(`     建议  ${JSON.stringify(next)}`)
 }
 console.log(`写失败横幅 ${cmp.dom.writeRows.length} 行: ${cmp.dom.writeRows.map((r) => r[0]).join(' ')}`)
-console.log(`\n== 七页实机读失败 ==`)
+console.log(`\n== 七页实机读失败（产品调用点） ==`)
+let allPass = cmp.verdict.pass
 for (const r of results.filter((x) => x.name.startsWith('err-'))) {
+  if (!r.verdict.pass) allPass = false
   console.log(
-    `${r.name}\t原话去向=${r.rawFate}\tbody可见=${r.rawVisible}\t重试按钮=${r.dom.hasRetryButton}\tnet=${JSON.stringify(r.net)}\thScroll=${r.dom.hScroll}`,
+    `${r.name}\t${r.verdict.pass ? 'PASS' : 'FAIL'}\t原话去向=${r.rawFate}\tbody可见=${r.rawVisible}\t` +
+      `原话作说明行=${r.verdict.rawAsDesc} 原话当标题=${r.verdict.rawAsTitle} 原话在壳title=${r.verdict.rawOnShell} ` +
+      `中性标题=${r.verdict.neutralTitles} 带重试=${r.verdict.withRetry} 共${r.verdict.blocks}块\t` +
+      `net=${JSON.stringify(r.net)}\thScroll=${r.dom.hScroll}`,
   )
 }
+console.log(`\n全部判据: ${allPass ? 'PASS' : 'FAIL'}`)
+process.exit(allPass ? 0 : 1)

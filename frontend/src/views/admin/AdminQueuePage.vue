@@ -78,7 +78,6 @@ const {
   advance,
   state,
   copy,
-  listError,
   runAction,
   scoped,
   hasPrev,
@@ -151,7 +150,6 @@ const {
               :desc="copy.desc"
               :action="copy.action"
               :tone="state === 'error' ? 'error' : 'neutral'"
-              :raw="state === 'error' ? listError : null"
               @action="runAction"
             />
           </template>
@@ -183,7 +181,6 @@ const {
               :desc="copy.desc"
               :action="copy.action"
               :tone="state === 'error' ? 'error' : 'neutral'"
-              :raw="state === 'error' ? listError : null"
               @action="runAction"
             />
           </template>

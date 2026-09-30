@@ -42,8 +42,10 @@ const { t } = useI18n()
 const status = ref('PENDING')
 const items = ref<SpaceApplication[]>([])
 const loading = ref(false)
-/** 读这一页失败。它说的是「这一页没读到」，所以画在列表自己的位置上（不是页顶横幅）。 */
-const loadError = ref('')
+/** 读这一页失败时是**服务端原话**（原话取不到就空串）；`null` 表示没失败。
+ *  它说的是「这一页没读到」，所以画在列表自己的位置上（不是页顶横幅）。
+ *  失败与否和原话是两件事：原话为空时仍要给出错态，不能落进「暂无申请」那个空态。 */
+const loadError = ref<string | null>(null)
 /** 通过 / 驳回失败。和读失败分开：重试的不是同一件事。 */
 const writeError = ref('')
 const offset = ref(0)
@@ -60,14 +62,15 @@ const statusOptions = computed(() => [
 
 async function load() {
   loading.value = true
-  loadError.value = ''
+  loadError.value = null
   try {
     // 多要一条：见文件开头第 5 条。多的那一条只决定下一页按钮亮不亮。
     const { items: rows } = (await SpacesApi.reviews(status.value, offset.value, PAGE + 1)).data
     hasMore.value = rows.length > PAGE
     items.value = hasMore.value ? rows.slice(0, PAGE) : rows
-  } catch {
-    loadError.value = t('spaces.review.loadFailed')
+  } catch (e) {
+    // 原话存下来作说明行，不用「加载失败，请重试。」这种固定话把原因吞掉。
+    loadError.value = e instanceof Error && e.message ? e.message : ''
     items.value = []
     hasMore.value = false
   } finally {
@@ -168,12 +171,15 @@ onMounted(load)
         />
 
         <div class="asp__panel">
-          <!-- 读失败：一句话说清、重试就在旁边；**不**画成「暂无申请」。 -->
+          <!-- 读失败：中性标题说清是哪一页，服务端原话作说明行，重试就在旁边；**不**画成
+               「暂无申请」。判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，
+               仍要给出错态。 -->
           <AdminEmptyState
-            v-if="loadError"
+            v-if="loadError !== null"
             compact
             tone="error"
-            :title="loadError"
+            :title="t('spaces.review.loadFailed')"
+            :desc="loadError || undefined"
             :action="t('spaces.review.retry')"
             @action="load"
           />

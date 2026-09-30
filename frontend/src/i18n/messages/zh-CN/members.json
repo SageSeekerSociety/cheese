@@ -62,7 +62,7 @@
     "dismiss": "关闭这条提示"
   },
   "error": {
-    "loadFailed": "管理员名单加载失败",
+    "loadFailed": "成员加载失败",
     "searchFailed": "搜账号失败",
     "addFailed": "没加成",
     "removeFailed": "没移出去",

@@ -46,7 +46,6 @@
     },
     "error": {
       "title": "队列加载失败",
-      "desc": "检查网络后重试。",
       "retry": "重试"
     },
     "filtered": {
@@ -128,7 +127,6 @@
     },
     "error": {
       "title": "表格加载失败",
-      "desc": "检查网络后重试。",
       "retry": "重试"
     },
     "filtered": {

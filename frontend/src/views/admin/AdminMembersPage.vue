@@ -332,12 +332,15 @@ onMounted(load)
             </template>
 
             <!-- 读失败那一条就画在列头下面：位置说明「这张表没读出来」，而重试按钮
-                 就在原因旁边。 -->
+                 就在原因旁边。中性标题说清是哪一页，服务端原话落到说明行 —— 原话当标题会被
+                 长句撑得不像标题，也把「是哪一页出的事」盖掉了。原话取不到时（`error` 里
+                 只剩兜底那句）不再重复一遍标题。 -->
             <template #error>
               <AdminEmptyState
                 compact
                 tone="error"
-                :title="error ?? ''"
+                :title="t('members.error.loadFailed')"
+                :desc="error && error !== t('members.error.loadFailed') ? error : undefined"
                 :action="t('members.error.retry')"
                 @action="load"
               />

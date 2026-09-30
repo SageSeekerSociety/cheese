@@ -28,7 +28,9 @@ const { t } = useI18n()
 
 const features = ref<FeatureCatalogueEntry[]>([])
 const loading = ref(true)
-const failed = ref(false)
+/** 读失败时是**服务端原话**（原话取不到就空串）；`null` 表示没失败。
+ *  两件事必须分开存：失败但原话为空时，界面仍要给出错态，不能落进「暂无功能页」那个空态。 */
+const loadError = ref<string | null>(null)
 
 /** 服务端的顺序就是目录的顺序（它是「有哪些目的地」的唯一来源），这里不重排。 */
 const rows = computed(() =>
@@ -45,13 +47,14 @@ const rows = computed(() =>
 
 async function load() {
   loading.value = true
-  failed.value = false
+  loadError.value = null
   try {
     features.value = (await getFeatureCatalogue()).features
-  } catch {
+  } catch (e) {
     // 读失败**不是**「还没有功能页」：两句话，两个画面（否则接口挂了会被读成一切正常）。
+    // 原话存下来作说明行 —— 不用一句固定话把原因吞掉，失败未必是网络。
     features.value = []
-    failed.value = true
+    loadError.value = e instanceof Error && e.message ? e.message : ''
   } finally {
     loading.value = false
   }
@@ -73,8 +76,9 @@ onMounted(load)
         </div>
 
         <AdminEmptyState
-          v-else-if="failed"
+          v-else-if="loadError !== null"
           :title="t('featureStats.page.loadFailed')"
+          :desc="loadError || undefined"
           :action="t('featureStats.page.retry')"
           tone="error"
           @action="load"

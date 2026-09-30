@@ -33,8 +33,10 @@ defineOptions({ name: 'AdminIntegrationsPage' })
 const { t } = useI18n()
 
 const loading = ref(false)
-/** 读这一页失败。它说的是「这一页没读到」，和保存失败是两件事。 */
-const loadError = ref(false)
+/** 读这一页失败时是**服务端原话**（原话取不到就空串）；`null` 表示没失败。
+ *  它说的是「这一页没读到」，和保存失败是两件事。失败与否和原话是两件事，也得分开存：
+ *  原话为空时仍要给出错态，不能因为取不到原因就当成没读到、落进正常表单。 */
+const loadError = ref<string | null>(null)
 /** 保存失败。留在页顶那条错误里，表单里的东西一个字不动。 */
 const saveError = ref('')
 const saved = ref(false)
@@ -60,7 +62,7 @@ const updated = computed(() => {
 
 async function load() {
   loading.value = true
-  loadError.value = false
+  loadError.value = null
   try {
     const current = await getPlatformFeishuApp()
     app.value = current
@@ -68,8 +70,9 @@ async function load() {
     form.domain = current.domain || 'feishu'
     // Secret 不回显，所以这一格永远是空的 —— 它的空表示「不改」，见文件开头第 1 条。
     form.app_secret = ''
-  } catch {
-    loadError.value = true
+  } catch (e) {
+    // 原话存下来作说明行，不用「无法读取」这种固定话把原因吞掉。
+    loadError.value = e instanceof Error && e.message ? e.message : ''
     app.value = null
   } finally {
     loading.value = false
@@ -108,12 +111,14 @@ onMounted(load)
       <AdminPageHeader :title="t('integrations.admin.title')" :sub="t('integrations.admin.sub')" />
 
       <div class="afi__body admin-form-card">
-        <!-- 读失败：只说这一页没读到，重试就在旁边。**不**接着画「还没配置」和那张表单 ——
-             见文件开头第 4 条。 -->
+        <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
+             **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。
+             判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，仍要给出错态。 -->
         <AdminEmptyState
-          v-if="loadError"
+          v-if="loadError !== null"
           tone="error"
           :title="t('integrations.admin.loadFailed')"
+          :desc="loadError || undefined"
           :action="t('integrations.admin.retry')"
           @action="load"
         />
