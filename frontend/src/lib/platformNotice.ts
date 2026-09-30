@@ -24,6 +24,8 @@
  *   }
  *
  * **文案在前端，后端只发码** —— 和 platform_failures.py 的 code + copy contract 同一条规矩。
+ * 平台自己说的那几格（content / detail / detail_label / title）后端存的是中文原句，
+ * 另在 `meta.i18n` 里带着它的键和参数；显示时一律经 `noticeText()` 按读者的语言渲染。
  *
  * 缺少结构化字段的事件仍保留原文；没有作者或类别依据时，不猜它属于哪个 agent。
  */
@@ -32,7 +34,10 @@ import type { BackendErrorPresentation } from './backendErrorEvent'
 import type { PlatformErrorPresentation } from './platformEvents'
 
 import { backendErrorPresentation } from './backendErrorEvent'
+import { noticeText } from './noticeText'
 import { platformErrorPresentation } from './platformEvents'
+
+import { t } from '@/i18n'
 
 /**
  * 这条事件在对话里露不露面。
@@ -89,10 +94,11 @@ function changeSummary(block: Block): ChangeSummary | null {
   }
 }
 
+// Catalog keys, looked up when a row is built so a language switch re-reads them.
 const WHO_LABEL: Record<WhoTag, string> = {
-  platform: '平台已处理',
-  cheese: '芝士处理中',
-  human: '需要手动处理',
+  platform: 'work.room.notice.who.platform',
+  cheese: 'work.room.notice.who.cheese',
+  human: 'work.room.notice.who.human',
 }
 
 // These events describe the room agent's work or execution environment. `who`
@@ -284,7 +290,7 @@ function whoTag(block: Block): WhoTag | '' {
 
 function whoLabel(block: Block): string {
   const who = whoTag(block)
-  return who ? WHO_LABEL[who] : ''
+  return who ? t(WHO_LABEL[who]) : ''
 }
 
 /**
@@ -300,7 +306,7 @@ export function actionResource(block: Block): string | null {
 
 /** meta.action 事件的 content 自带主语（张衡/芝士 编辑了文档）；老卡片要补「芝士」。 */
 function actionText(block: Block): string {
-  return typeof meta(block)?.action === 'string' ? block.content : `芝士${block.content}`
+  return typeof meta(block)?.action === 'string' ? noticeText(block) : `芝士${block.content}`
 }
 
 /** 卡面上留一句就够了，超过这个长度就切断 —— 切掉的部分原样进展开区，不丢。 */
@@ -333,11 +339,10 @@ function splitLead(text: string): { lead: string; rest: string } {
 }
 
 function occurrenceOf(block: Block): NoticeOccurrence {
-  const m = meta(block)
   return {
-    line: block.content,
-    label: str(m?.detail_label),
-    detail: str(m?.detail),
+    line: noticeText(block),
+    label: noticeText(block, 'detail_label'),
+    detail: noticeText(block, 'detail'),
   }
 }
 
@@ -359,14 +364,14 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   const incident = platformErrorPresentation(block)
   if (incident) {
     const { lead, rest } = splitLead(incident.body)
-    const detail = str(m?.detail)
+    const detail = noticeText(block, 'detail')
     return {
       mode: 'incident',
       incident,
       lead,
       // 被切掉的正文和 detail 都收进同一个展开区：卡面只留一句，原文一个字不少。
       rest: [rest, detail].filter(Boolean).join('\n\n'),
-      detailLabel: str(m?.detail_label),
+      detailLabel: noticeText(block, 'detail_label'),
     }
   }
 
@@ -376,8 +381,8 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
       mode: 'action',
       resource,
       text: actionText(block),
-      detail: str(m?.detail),
-      detailLabel: str(m?.detail_label),
+      detail: noticeText(block, 'detail'),
+      detailLabel: noticeText(block, 'detail_label'),
     }
 
   const error = backendErrorPresentation(block)
@@ -391,12 +396,17 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     const state = str(meta(latest)?.state)
     return {
       mode: 'agent-status',
-      line: state === 'ready' ? '工作电脑已就绪' : state === 'waiting' ? '正在准备工作电脑' : latest.content,
+      line:
+        state === 'ready'
+          ? t('work.room.notice.machineReady')
+          : state === 'waiting'
+            ? t('work.room.notice.machinePreparing')
+            : noticeText(latest),
       updatedAt: latest.created_at,
       occurrences: run.map((item) => ({
-        line: item.content,
-        label: item.content,
-        detail: str(meta(item)?.detail),
+        line: noticeText(item),
+        label: noticeText(item),
+        detail: noticeText(item, 'detail'),
       })),
     }
   }
@@ -404,7 +414,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   if (str(m?.detail)) {
     return {
       mode: 'fold',
-      line: block.content,
+      line: noticeText(block),
       who: whoTag(block),
       whoLabel: whoLabel(block),
       count: run.length,

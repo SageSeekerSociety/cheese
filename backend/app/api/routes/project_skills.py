@@ -24,6 +24,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService
@@ -159,6 +160,7 @@ async def create_skill(
         fields=body.model_dump(exclude={"name"}),
     )
     if by_agent:
+        line = say("skillProposed", title=row.title)
         db.add(
             Block(
                 id=uuid.uuid4(),
@@ -167,17 +169,26 @@ async def create_skill(
                 author="system",
                 author_type=AuthorType.platform,
                 kind=BlockKind.event,
-                content=f"芝士把做法整理成了工作方法「{row.title}」，确认后才会保存",
-                meta={
-                    **notice(
-                        EVENT_SKILL_PROPOSED,
-                        severity=SEVERITY_INFO,
-                        who=WHO_CHEESE,
-                        detail=f"用途：{row.description}\n\n步骤与规则：\n{row.steps}",
-                        detail_label="待确认的工作方法",
-                    ),
-                    "skill_id": str(row.id),
-                },
+                content=line,
+                # Added as a row, not through `BlockRepository.add`, so the
+                # line's key is recorded here.
+                meta=with_keys(
+                    {
+                        **notice(
+                            EVENT_SKILL_PROPOSED,
+                            severity=SEVERITY_INFO,
+                            who=WHO_CHEESE,
+                            detail=say(
+                                "skillProposedDetail",
+                                description=row.description,
+                                steps=row.steps,
+                            ),
+                            detail_label=say("labelSkillToConfirm"),
+                        ),
+                        "skill_id": str(row.id),
+                    },
+                    content=line,
+                ),
             )
         )
     await db.commit()

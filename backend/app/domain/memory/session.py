@@ -23,6 +23,7 @@ from difflib import unified_diff
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.block.notice_text import say
 from app.domain.memory.files import MemoryFileScope, scoped_prefix
 from app.domain.memory.files_store import (
     MemoryFileConflict,
@@ -95,17 +96,22 @@ class MemoryChange:
         return _clamp("".join(self.diffs[path] for path in sorted(self.diffs)))
 
     def summary(self) -> str:
-        """房间里那一行说的那句话。"""
+        """房间里那一行说的那句话；什么都没改是空串。"""
         parts = []
         if self.added:
-            parts.append(f"新增 {len(self.added)} 条")
+            parts.append(say("memoryAdded", count=len(self.added)))
         if self.updated:
-            parts.append(f"修改 {len(self.updated)} 条")
+            parts.append(say("memoryUpdated", count=len(self.updated)))
         if self.removed:
-            parts.append(f"删除 {len(self.removed)} 条")
+            parts.append(say("memoryRemoved", count=len(self.removed)))
         if self.conflicted:
-            parts.append(f"{len(self.conflicted)} 条被别人抢先改了")
-        return "、".join(parts)
+            parts.append(say("memoryConflicted", count=len(self.conflicted)))
+        if not parts:
+            return ""
+        said = parts[0]
+        for part in parts[1:]:
+            said = say("listJoin", first=said, second=part)
+        return said
 
 
 def _split(path: str) -> tuple[str, str]:

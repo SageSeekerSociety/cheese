@@ -356,7 +356,37 @@
       "platform": "平台",
       "changedFiles": "改动的文件",
       "moreFiles": "另 {n} 个文件",
-      "goConfirm": "去确认"
+      "goConfirm": "去确认",
+      "who": {
+        "platform": "平台已处理",
+        "cheese": "芝士处理中",
+        "human": "需要手动处理"
+      },
+      "working": "{name}正在处理",
+      "machineReady": "工作电脑已就绪",
+      "machinePreparing": "正在准备工作电脑",
+      "incident": {
+        "title": "工作电脑暂时不可用",
+        "cleaning": "正在自动清理",
+        "recovering": "正在恢复",
+        "retryable": "可以重试",
+        "needsAdmin": "需要管理员处理"
+      },
+      "action": {
+        "doc": "查看文档",
+        "decision": "查看决策记录",
+        "split": "查看任务",
+        "undo": "撤销",
+        "milestone": "查看日历",
+        "accept": "审阅"
+      },
+      "filesChanged": "改动了 {n} 个文件",
+      "viewChanges": "查看改动",
+      "showDetail": "展开详情",
+      "detail": "详情",
+      "docDiff": "文档修改对比",
+      "added": "新增",
+      "removed": "删除"
     },
     "message": {
       "copy": "复制",
