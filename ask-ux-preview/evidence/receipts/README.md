@@ -1,6 +1,6 @@
 # Native receipt evidence
 
-The primitive and lock-order tests exercise real PostgreSQL transactions. The retention tests use real SQLite journals and controlled callbacks. Neither proves live native-model consumption, complete runtime integration, a process restart, or injected PostgreSQL commit failure.
+The primitive, lock-order and send-fault tests exercise real PostgreSQL transactions. The retention tests use real SQLite journals and controlled callbacks. Send faults abort a flushed PostgreSQL transaction inside SQLAlchemy's commit path, against a scripted channel. None proves live native-model consumption, complete runtime integration, or a new-process restart.
 
 ## Primitive baseline
 
@@ -29,4 +29,16 @@ These are reconstructed objects in the same test process, with an `OSError` call
 
 `retention-first.txt` records 3 passed before formatting. `drain-integration-first.txt` records 5 failed/1 passed because existing test subscriptions omitted a receipt callback. Those tests now provide one explicitly; the bulk-old-output fixture excludes receipts because receipts must no longer be discarded as output. The final nine-case run uses the committed source above.
 
-Runtime registration before RPC, structured settlement callbacks, seen reactions and complete group effects remain unfinished. The migration is not independently releasable.
+## Commit failure before and after external admission
+
+Source: `e782649261e186a025705d59c6c8ac9b78a387c3`.
+
+`send-fault-routing.txt` and its JSON manifest record 6 passed, 2 test-JWT key-length warnings, exit 0. Four cases cover initial and busy inputs with either registration or accepted-receipt commit failure. Two more follow the real ChatService → ComputePool → driven runtime → scripted channel → ChatService path. The accepted-fault routing case then checks the caller suppresses normal queue admission and retains the explicit reconciliation result, not delivered=true.
+
+The commit hook flushes real writes and executes `SELECT 1 / 0` on the same PostgreSQL transaction during `Session.commit`. This is a PostgreSQL transaction error in the commit path; it does not simulate an acknowledgement lost after COMMIT succeeded or a network disconnect during COMMIT. Registration failure leaves no NativeInput and zero external calls. Accepted-receipt failure leaves the committed registration, one external call and an unconfirmed accepted timestamp. Same-identity accepted/echo evidence retry settles one row without another channel call. These direct receipt calls are not native echo or journal cursor evidence.
+
+`send-fault-negative.txt` records 3 failed, 3 deselected, exit 1. `unclassified_send_control.py` removes only post-send failure classification: the same PostgreSQL accepted-receipt error escapes as a generic DBAPIError in two cases and becomes False in live chat, failing the explicit reconciliation assertion. The control does not edit product source or weaken tests. Its SHA256 is in the manifest.
+
+`send-fault-first.txt` records an earlier 4-pass dirty-worktree run. Its manifest HEAD is the pre-edit base, NOT the tested source; do not use it as fixed-source evidence. It also includes an async connection teardown error. The fixed-source six-case run above supersedes it.
+
+The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete group effects, durable pending-claim exclusion, native echo → commit → journal cursor fault tests, and new-process recovery remain incomplete. The migration and this draft PR are not independently releasable.

@@ -1,0 +1,5 @@
+....                                                                     [100%]2026-09-30 22:00:17 [error    ] Future exception was never retrieved
+future: <Future finished exception=ConnectionError('unexpected connection_lost() call')> [asyncio]
+ConnectionError: unexpected connection_lost() call
+
+4 passed in 2.63s
