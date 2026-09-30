@@ -46,15 +46,46 @@
 #        check-repo-rules.sh --self-test   prove each rule fires and is scoped
 #        check-repo-rules.sh --update-palette-baseline [root]
 #                                          ratchet frontend/palette-baseline.json down
+#        check-repo-rules.sh --json [root]  one JSON record per check that ran, on
+#                                          stdout, for the ratchet snapshot; the
+#                                          human report and the exit code are
+#                                          unchanged. Only the fixed-palette check
+#                                          has a record — the other rules are repo
+#                                          hygiene, not a debt dimension.
 set -euo pipefail
 
 SELF_TEST=0
 UPDATE_PALETTE=0
+JSON=0
 [ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
 [ "${1:-}" = "--update-palette-baseline" ] && { UPDATE_PALETTE=1; shift; }
+[ "${1:-}" = "--json" ] && { JSON=1; shift; }
 
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 FAILED=0
+
+# Under --json the record owns stdout and nothing else may land there, so the
+# human report moves to stderr for the whole run (it is a log, and it is still
+# all there) and the real stdout is kept on fd 3 for the record to write to.
+if [ "$JSON" = 1 ]; then
+  exec 3>&1
+  exec 1>&2
+fi
+
+# --- the fixed-palette check's numbers, for --json ---------------------------
+# Empty means "the check did not run" (no frontend/src in this tree), which is
+# not the same as zero: the snapshot must show it as not collected, not as a
+# clean tree. PALETTE_FROZEN is empty when there is no baseline file to read an
+# allowance from — an absent allowance is null, never 0.
+PALETTE_STATUS=""
+PALETTE_ACTUAL=""
+PALETTE_FROZEN=""
+PALETTE_STALE=""
+PALETTE_DETAILS=""
+
+sum_col() { awk -F'\t' 'NF >= 2 { total += $2 } END { print total + 0 }'; }
+
+json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t'; }
 
 report() {
   local rule="$1" fix="$2" hits="$3"
@@ -218,7 +249,35 @@ check_fixed_palette() {
       { a = ($1 in allow) ? allow[$1] : 0
         if ($2 > a) printf "%s\t%d\t%d\n", $1, $2, a }
     ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
-  [ -z "$over" ] && return 0
+  # The page shows the two apart: `actual` is every fixed-palette use in the
+  # tree, `frozen` is what the baseline allows to stay. A baseline that has
+  # ratcheted down while the tree has not would otherwise read as progress.
+  PALETTE_ACTUAL="$(printf '%s\n' "$cur" | sum_col)"
+  if [ -f "$baseline" ]; then
+    PALETTE_FROZEN="$(printf '%s\n' "$base" | sum_col)"
+  else
+    PALETTE_FROZEN=""
+  fi
+  PALETTE_DETAILS="$cur"
+  # An allowance with nothing left under it, including a file that is gone.
+  PALETTE_STALE="$(awk -F'\t' '
+      NR == FNR { allow[$1] = $2; order[++n] = $1; next }
+      { seen[$1] = $2 }
+      END {
+        for (i = 1; i <= n; i++) {
+          f = order[i]; now = (f in seen) ? seen[f] : 0
+          if (now < allow[f]) {
+            why = (now == 0) ? "no hits left in the tree" : "fewer hits than the baseline allows"
+            printf "%s\t%d\t%d\t%s\n", f, now, allow[f], why
+          }
+        }
+      }
+    ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
+  if [ -z "$over" ]; then
+    PALETTE_STATUS=pass
+    return 0
+  fi
+  PALETTE_STATUS=fail
   hits="$(while IFS=$'\t' read -r f now allow; do
       [ -n "$f" ] || continue
       echo "$f: $now fixed-palette use(s), baseline allows $allow"
@@ -392,6 +451,24 @@ if [ "$SELF_TEST" = 1 ]; then
   mkdir -p "$tmp/backend/app/domain" "$tmp/backend/app/core"
   me="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+  # The --json record is what the ratchet snapshot reads, so it gets checked the
+  # same way the rules do: in a real process, against a real exit code.
+  JSON_OUT=""
+  JSON_CODE=0
+  json_run() {
+    JSON_OUT="$(bash "$me" --json "$tmp" 2>/dev/null)" && JSON_CODE=0 || JSON_CODE=$?
+  }
+  record_has() {
+    case "$JSON_OUT" in
+      *"$1"*) ;;
+      *) self_fail "the --json record must contain $1 (exit $JSON_CODE, got: $JSON_OUT)" ;;
+    esac
+  }
+  record_is_one_line() {
+    [ "$(printf '%s\n' "$JSON_OUT" | wc -l)" = 1 ] \
+      || self_fail "the --json record must be exactly one line (got: $JSON_OUT)"
+  }
+
   printf 'x = 1\n' > "$tmp/backend/app/core/clean.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a clean tree must pass"
 
@@ -473,9 +550,27 @@ if [ "$SELF_TEST" = 1 ]; then
   printf '{\n  "files": {\n    "src/components/AppBar.vue": 1\n  }\n}\n' \
     > "$tmp/frontend/palette-baseline.json"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a baselined violation must pass"
+  json_run
+  [ "$JSON_CODE" = 0 ] || self_fail "the record must agree with a passing palette check"
+  record_is_one_line
+  record_has '"id":"palette"'
+  record_has '"status":"pass"'
+  record_has '"actual":1'
+  record_has '"frozen":1'
   printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n  <v-app-bar color="white" />\n</template>\n' \
     > "$shell"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "one MORE than the baseline must fail"
+  json_run
+  [ "$JSON_CODE" = 1 ] || self_fail "the record must agree with a failing palette check"
+  record_has '"status":"fail"'
+  record_has '"actual":2'
+  # An allowance with nothing left under it is a stale exemption: reported as
+  # such, and still not a violation — the check keeps passing.
+  printf '<template>\n  <v-system-bar color="background" />\n</template>\n' > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a stale allowance must not fail the check"
+  json_run
+  [ "$JSON_CODE" = 0 ] || self_fail "a stale exemption is not a violation"
+  record_has '"stale":[{"file":"src/components/AppBar.vue","frozen":1,"actual":0'
   # A brand-new file gets an allowance of 0 even while the baseline covers others.
   printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
   printf '<template>\n  <div class="bg-white" />\n</template>\n' \
@@ -499,6 +594,12 @@ if [ "$SELF_TEST" = 1 ]; then
     && self_fail "a fixed file must drop out of the baseline entirely"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tightened baseline must still pass"
   rm -rf "$tmp/frontend"
+  # No frontend, no palette check — and so no record. A snapshot reading a
+  # missing id as "not collected" is the only honest answer; a zero here would
+  # look like a tree with no fixed colours at all.
+  json_run
+  [ "$JSON_CODE" = 0 ] || self_fail "a tree with no frontend must still pass the other rules"
+  [ -z "$JSON_OUT" ] || self_fail "a check that did not run must emit no record (got: $JSON_OUT)"
 
   # Rule 7. The subcommand list is read from the skill, so the fixture supplies
   # both halves — a skill that documents `cheese doc`, and a CLAUDE.md that
@@ -571,11 +672,38 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "deriving from the agent must pass"
   rm "$tmp/backend/app/domain/identity/handles.py"
 
-  echo "PASS: check-repo-rules self-test (8 rules, scoping and the palette ratchet verified)"
+  echo "PASS: check-repo-rules self-test (8 rules, scoping and the palette ratchet verified; the --json record agrees with the exit code, reports a stale allowance, and is absent when the check did not run)"
   exit 0
 fi
 
 run_all
+
+emit_palette_json() {
+  [ "$JSON" = 1 ] || return 0
+  # No record when the check did not run: the snapshot reads a missing id as
+  # not collected, which is what a tree without frontend/src means.
+  [ -n "$PALETTE_STATUS" ] || return 0
+  local details="" first=1 file count stale="" sfirst=1
+  local sfile snow sallow swhy
+  while IFS=$'\t' read -r file count; do
+    [ -n "$file" ] || continue
+    [ "$first" = 1 ] || details+=","
+    first=0
+    details+="{\"file\":\"$(json_escape "$file")\",\"count\":$count}"
+  done <<< "$PALETTE_DETAILS"
+  while IFS=$'\t' read -r sfile snow sallow swhy; do
+    [ -n "$sfile" ] || continue
+    [ "$sfirst" = 1 ] || stale+=","
+    sfirst=0
+    stale+="{\"file\":\"$(json_escape "$sfile")\",\"frozen\":$sallow,\"actual\":$snow,\"why\":\"$(json_escape "$swhy")\"}"
+  done <<< "$PALETTE_STALE"
+  printf '{"id":"palette","better":"down","status":"%s","actual":%s,"frozen":%s,"stale":[%s],"details":[%s]}\n' \
+    "$PALETTE_STATUS" "${PALETTE_ACTUAL:-null}" "${PALETTE_FROZEN:-null}" \
+    "$stale" "$details" >&3
+}
+
+emit_palette_json
+
 if [ "$FAILED" = 1 ]; then
   echo ""
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
