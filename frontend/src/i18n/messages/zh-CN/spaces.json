@@ -239,7 +239,6 @@
     "templateForm": {
       "editTitle": "编辑题目模板",
       "createTitle": "创建题目模板",
-      "back": "返回",
       "templateName": "模板名称",
       "templateDescription": "模板描述",
       "contestTitle": "题目标题",
@@ -248,7 +247,21 @@
       "loadTemplateFailed": "加载模板失败",
       "updateSuccess": "模板更新成功",
       "createSuccess": "模板创建成功",
-      "saveTemplateFailed": "保存模板失败"
+      "saveTemplateFailed": "保存模板失败",
+      "defaults": "题目默认设置",
+      "defaultsHint": "用这个模板发题时自动填入，发题时可以修改",
+      "unset": "留空",
+      "teamSize": "队伍人数",
+      "minTeamSize": "最小队伍人数",
+      "maxTeamSize": "最大队伍人数",
+      "to": "至",
+      "deadlinePrefix": "领取题目后",
+      "deadlineSuffix": "天",
+      "realName": "实名信息",
+      "requireRealName": "需要实名信息",
+      "noRealName": "不需要实名信息",
+      "realNameNote": "参与者需完成实名认证才能参与这道题，信息加密存储，访问受到严格控制",
+      "cancel": "取消"
     }
   },
   "domainGroups": {
