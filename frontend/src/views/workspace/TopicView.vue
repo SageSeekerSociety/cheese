@@ -341,8 +341,8 @@ void openPlace()
     <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
       <v-progress-circular v-if="resolving" indeterminate color="primary" />
       <div v-else class="text-center">
-        <div class="t-body c-muted">这个话题不存在</div>
-        <div class="t-meta mt-1">它可能已被删除，或不属于这个项目</div>
+        <div class="t-body c-muted">{{ t('work.topic.notFound') }}</div>
+        <div class="t-meta mt-1">{{ t('work.topic.notFoundHint') }}</div>
       </div>
     </div>
 
@@ -387,7 +387,7 @@ void openPlace()
         <div
           v-if="mdAndUp && !focusMode"
           class="pane-resizer"
-          title="拖动调整宽度，双击复位"
+          :title="t('work.topic.resize')"
           @mousedown.prevent="startPaneDrag"
           @dblclick="store.setChatPct(50)"
         />

@@ -16,13 +16,13 @@
               hide-details
               density="compact"
               bg-color="transparent"
-              placeholder="编辑您的问题..."
+              :placeholder="t('aiChat.editPlaceholder')"
             ></v-textarea>
             <div class="d-flex justify-end gap-2 mt-2">
               <!-- 不指定 color：气泡是 bg-primary，Vuetify 会把 on-primary 作为前景色往下传 —— 浅色仍是白字，
                    深色主色提亮到 #FFA733 后自动翻成深墨（白字在它上面只有 1.9:1，读不出来） -->
-              <v-btn size="small" variant="text" @click="cancelEdit">取消</v-btn>
-              <v-btn size="small" variant="tonal" @click="submitEdit">提交</v-btn>
+              <v-btn size="small" variant="text" @click="cancelEdit">{{ t('global.cancel') }}</v-btn>
+              <v-btn size="small" variant="tonal" @click="submitEdit">{{ t('aiChat.submit') }}</v-btn>
             </div>
           </v-card-text>
         </v-card>
@@ -41,7 +41,7 @@
             @click="startEdit"
           >
             <v-icon>mdi-pencil</v-icon>
-            <v-tooltip activator="parent">编辑消息</v-tooltip>
+            <v-tooltip activator="parent">{{ t('aiChat.editMessage') }}</v-tooltip>
           </v-btn>
         </div>
         <v-card max-width="80%" color="primary" class="user-message">
@@ -97,7 +97,7 @@
                   </span>
                 </div>
                 <div class="ms-2 text-caption text-medium-emphasis reference-text">
-                  搜索了 {{ finalMessage.references.length }} 个网页
+                  {{ t('aiChat.searchedPages', { count: finalMessage.references.length }) }}
                 </div>
               </div>
             </template>
@@ -168,7 +168,7 @@
               </span>
               <span v-if="finalMessage.seuConsumed" class="usage-seu">
                 <v-icon size="x-small" class="me-1">mdi-creation</v-icon>
-                消耗 {{ finalMessage.seuConsumed }} SEU
+                {{ t('aiChat.seuUsed', { seu: finalMessage.seuConsumed }) }}
               </span>
             </div>
           </v-card-text>
@@ -203,6 +203,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } fr
 import { vBlinkingCursor } from './directives/cursor-directive'
 import { MarkdownRenderer } from './services/markdownRenderer'
 import { ReasoningStatus } from './types'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -343,21 +345,21 @@ const submitEdit = () => {
 
 // 格式化推理时间
 const formatReasoningTime = (timeMs: number | null | undefined) => {
-  if (timeMs === null || timeMs === undefined) return '思考过程'
+  if (timeMs === null || timeMs === undefined) return t('aiChat.reasoning')
 
   const seconds = Math.round(timeMs / 1000)
   if (seconds < 60) {
-    return `已深度思考 ${seconds} 秒`
+    return t('aiChat.reasonedSeconds', { seconds })
   } else {
     const minutes = Math.floor(seconds / 60)
     const remainingSeconds = seconds % 60
-    return `已深度思考 ${minutes} 分 ${remainingSeconds} 秒`
+    return t('aiChat.reasonedMinutes', { minutes, seconds: remainingSeconds })
   }
 }
 
 // 推理状态文本
 const reasoningStatusText = computed(() => {
-  if (reasoningStatus.value === 'reasoning') return '正在思考中...'
+  if (reasoningStatus.value === 'reasoning') return t('aiChat.reasoningNow')
   return formatReasoningTime(finalMessage.value.reasoningTimeMs)
 })
 

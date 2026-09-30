@@ -13,6 +13,11 @@ import {
   visibleRows,
 } from './topicTree'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。
+beforeEach(() => setLocale('zh-CN'))
+
 // 一棵跟侧栏一样拍平的树（DFS 顺序 + depth），方便按 id 写断言：
 //   a          depth 0
 //   ├─ a1      depth 1

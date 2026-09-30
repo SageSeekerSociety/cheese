@@ -26,6 +26,8 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import MentionMenu from './MentionMenu.vue'
 
+import { t } from '@/i18n'
+
 const props = defineProps<{
   topic: Topic | null
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
@@ -319,11 +321,7 @@ defineExpose({
         density="comfortable"
         class="composer-input"
         :placeholder="hint"
-        :title="
-          enterSends
-            ? `Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给${agentName}，可直接粘贴图片`
-            : '可直接粘贴图片'
-        "
+        :title="enterSends ? t('work.room.composer.keysHint', { name: agentName }) : t('work.room.composer.pasteHint')"
         @keydown="onComposerKey"
         @paste="emit('paste', $event)"
         @compositionstart="onCompositionStart"

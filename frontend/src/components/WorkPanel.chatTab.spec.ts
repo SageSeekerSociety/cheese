@@ -12,6 +12,11 @@ import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 vi.mock('../api', () => ({
   getPreview: vi.fn(async () => null),
   getTopicWorkSummary: vi.fn(async () => ({ has_run: false, changed_files: [] })),
@@ -55,7 +60,7 @@ function mount(props: Record<string, unknown>) {
     props: { topic, activityTick: 0, ...props },
     slots: { chat: '<div data-testid="chat-pane">对话内容</div>' },
     global: {
-      plugins: [vuetify],
+      plugins: [vuetify, i18n],
       // 四个子面板各自会去拿数据/建编辑器，这一份只关心 tab 栏本身。
       stubs: { PanelDoc: true, PanelSite: true, PanelChanges: true, PanelPreview: true },
     },

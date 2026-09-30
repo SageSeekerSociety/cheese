@@ -143,7 +143,9 @@ useCommands(roomCommands)
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
             <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
           </span>
-          <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
+          <span v-if="!connected" class="topic-header__disconnected" role="status">{{
+            t('work.room.header.disconnected')
+          }}</span>
         </span>
       </div>
 

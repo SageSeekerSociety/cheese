@@ -53,6 +53,11 @@ import { ApiError } from '../../api'
 
 import PanelDoc from './PanelDoc.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const Doc = PanelDoc as unknown as Component
 
 const topic = {

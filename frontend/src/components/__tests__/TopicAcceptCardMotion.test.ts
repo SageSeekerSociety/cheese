@@ -28,6 +28,8 @@ vi.mock('../../api', async () => {
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 function mergeState(): MergeStateInfo {
   return {
     state: 'clean',
@@ -92,7 +94,7 @@ function mount() {
   // transition: false —— Vue Test Utils 默认把 <Transition> 换成一个什么都不做的桩，
   // 这份用例要看的正是它挂上去的类名。
   return render(Host, {
-    global: { plugins: [createVuetify({ components, directives })], stubs: { transition: false } },
+    global: { plugins: [createVuetify({ components, directives }), i18n], stubs: { transition: false } },
   })
 }
 
@@ -112,6 +114,8 @@ function watchClasses(container: Element): string[] {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   vi.clearAllMocks()
 })

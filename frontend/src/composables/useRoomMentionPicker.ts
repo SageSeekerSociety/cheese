@@ -18,6 +18,7 @@ import type { Topic } from '../cx_types'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { listProjectLibrary } from '../api'
+import { t } from '../i18n'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 
 /** 能被 @ 到的人：这个房间里的，加上项目里还没进这个房间的。 */
@@ -45,10 +46,23 @@ export interface MentionItem {
 }
 
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
-// at the top. expandMentions turns them into <@all>/<@here>.
-const BROADCAST_ITEMS: MentionItem[] = [
-  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
-  { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
+// at the top. expandMentions turns them into <@all>/<@here>. Built per call so
+// the labels follow the current language.
+const broadcastItems = (): MentionItem[] => [
+  {
+    label: t('work.room.mention.all'),
+    kind: 'broadcast',
+    insert: 'all',
+    sub: t('work.room.mention.allSub'),
+    agent: false,
+  },
+  {
+    label: t('work.room.mention.here'),
+    kind: 'broadcast',
+    insert: 'here',
+    sub: t('work.room.mention.hereSub'),
+    agent: false,
+  },
 ]
 
 /** 这一格里「算不算图片」比预览域宽：gif / webp 浏览器也画得出来，而这里只是分组。 */
@@ -98,8 +112,12 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       group,
     })
     return [
-      ...rows.filter((f) => !PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '文件')),
-      ...rows.filter((f) => PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '图片')),
+      ...rows
+        .filter((f) => !PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path)))
+        .map((f) => item(f, t('work.room.mention.fileGroup'))),
+      ...rows
+        .filter((f) => PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path)))
+        .map((f) => item(f, t('work.room.mention.imageGroup'))),
     ]
   }
 
@@ -141,7 +159,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     if (q === null) return []
     const ql = q.toLowerCase()
     if (level.value === 'library') return libraryItems(ql).slice(0, 12)
-    const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+    const broadcast = broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
     const named: MentionItem[] = [
       ...deps.mentionPool().map((m) => ({
         label: m.label,
@@ -154,12 +172,12 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       })),
       ...deps
         .topicList()
-        .filter((t) => t.kind !== 'root')
-        .map((t) => ({
-          label: t.title,
+        .filter((tp) => tp.kind !== 'root')
+        .map((tp) => ({
+          label: tp.title,
           kind: 'topic' as const,
-          insert: t.title,
-          sub: t.status === 'archived' ? '已归档' : '进行中',
+          insert: tp.title,
+          sub: tp.status === 'archived' ? t('work.room.mention.archived') : t('work.room.mention.inProgress'),
           agent: false,
         })),
     ].filter((i) => i.label.toLowerCase().includes(ql))
@@ -175,10 +193,10 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       !ql && libraryFiles.value.length
         ? [
             {
-              label: '资料库',
+              label: t('work.room.mention.library'),
               kind: 'category',
               insert: 'library',
-              sub: `${libraryFiles.value.length} 份文件`,
+              sub: t('work.room.mention.fileCount', { count: libraryFiles.value.length }),
               agent: false,
             },
           ]

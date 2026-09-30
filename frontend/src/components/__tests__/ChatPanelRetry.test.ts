@@ -32,7 +32,7 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 // 按钮的名字从文案目录取：改字不该让这份测试变红。
 const RETRY = () => ({ name: t('work.room.retry.action') })
@@ -94,7 +94,7 @@ async function mountRoom(blocks: Block[]) {
   listBlocks.mockResolvedValue({ data: blocks.map((b) => ({ ...b, topic_id: topic.id })), has_more: false })
   const utils = render(ChatPanel, {
     props: { topic, topicList: [topic], showComposer: true },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await flush()
   return { ...utils, topic }

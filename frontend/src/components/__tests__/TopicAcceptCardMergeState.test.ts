@@ -39,6 +39,8 @@ vi.mock('../../api', async () => {
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 function mergeState(over: Partial<MergeStateInfo>): MergeStateInfo {
   return {
     state: 'unknown',
@@ -119,7 +121,7 @@ async function mountWith(cards: AcceptCard[]) {
   const vuetify = createVuetify({ components, directives })
   const utils = render(TopicAcceptCard, {
     props: { topicId: 't1', topicStatus: 'active' },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await flush()
   return utils
@@ -132,6 +134,8 @@ function acceptButton(container: Element): HTMLButtonElement {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   setAutoMerge.mockReset()

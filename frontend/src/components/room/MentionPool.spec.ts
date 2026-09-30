@@ -3,7 +3,7 @@
  */
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -20,6 +20,13 @@ vi.mock('../../api', async () => {
 })
 
 import { useRoomRoster } from './composables/useRoomRoster'
+
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 const MEMBERS: ProjectMemberRow[] = [
   { user_handle: 'alice', name: 'Alice', source: 'owner' },

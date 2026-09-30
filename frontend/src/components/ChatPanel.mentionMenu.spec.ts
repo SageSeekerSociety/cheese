@@ -15,7 +15,14 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'room/MentionMenu.vue'), 'utf8')
 

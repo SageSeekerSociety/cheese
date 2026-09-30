@@ -15,6 +15,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { fileIcon } from '../../lib/fileKind'
 
+import { t } from '@/i18n'
+
 export interface PanelTab {
   key: string
   label: string
@@ -108,33 +110,33 @@ const inkStyle = computed(() =>
 <template>
   <div ref="tabbarRef" class="tabbar" :class="{ 'tabbar--phone': phone }" role="tablist">
     <button
-      v-for="t in tabs"
-      :key="t.key"
+      v-for="tab in tabs"
+      :key="tab.key"
       type="button"
       role="tab"
       class="tabbar__tab"
-      :class="{ 'tabbar__tab--on': active === t.key, 'tabbar__tab--empty': t.empty }"
-      :aria-selected="active === t.key"
-      :title="t.title ?? t.label"
-      @click="emit('select', t.key)"
+      :class="{ 'tabbar__tab--on': active === tab.key, 'tabbar__tab--empty': tab.empty }"
+      :aria-selected="active === tab.key"
+      :title="tab.title ?? tab.label"
+      @click="emit('select', tab.key)"
     >
-      <v-icon size="16">{{ t.icon }}</v-icon>
-      {{ t.label }}
+      <v-icon size="16">{{ tab.icon }}</v-icon>
+      {{ tab.label }}
       <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
            reader is usually somewhere else while it does, so what it produced
            has to be visible from the tab it produced it on. None of these ever
            selects a tab for you. -->
-      <span v-if="t.signal?.kind === 'pulse'" class="tabbar__pulse" />
+      <span v-if="tab.signal?.kind === 'pulse'" class="tabbar__pulse" />
       <!-- A dot, not a count: there is only ever one current preview, so a
            number would be noise. -->
-      <span v-else-if="t.signal?.kind === 'dot'" class="tabbar__dot" />
+      <span v-else-if="tab.signal?.kind === 'dot'" class="tabbar__dot" />
       <!-- 有几件在路上。和 改动 一样用数字而不是点：几件在跑本身就是要看的那个
            信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
       <span
-        v-else-if="t.signal?.kind === 'count' && t.signal.count"
+        v-else-if="tab.signal?.kind === 'count' && tab.signal.count"
         class="tabbar__count"
-        :class="{ 'tabbar__count--new': t.signal.fresh }"
-        >{{ t.signal.count }}</span
+        :class="{ 'tabbar__count--new': tab.signal.fresh }"
+        >{{ tab.signal.count }}</span
       >
     </button>
     <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会把
@@ -147,7 +149,7 @@ const inkStyle = computed(() =>
         class="tabbar__tab"
         :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
         :aria-selected="active === fileKey(f.path)"
-        :title="f.pinned ? f.path : `${f.path}（双击固定这个页签）`"
+        :title="f.pinned ? f.path : t('work.room.tabs.pinHint', { path: f.path })"
         @click="emit('select', fileKey(f.path))"
         @dblclick="emit('pin-file', f.path)"
       >
@@ -157,8 +159,8 @@ const inkStyle = computed(() =>
       <button
         type="button"
         class="tabbar__close"
-        :aria-label="`关闭 ${fileName(f.path)}`"
-        :title="`关闭 ${fileName(f.path)}`"
+        :aria-label="t('work.room.tabs.close', { name: fileName(f.path) })"
+        :title="t('work.room.tabs.close', { name: fileName(f.path) })"
         @click="emit('close-file', f.path)"
       >
         <v-icon size="14">mdi-close</v-icon>

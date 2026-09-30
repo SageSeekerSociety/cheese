@@ -9,6 +9,7 @@
 // 项目归档了的话，所有者可以把它取消归档，别人只能离开。
 import { computed, onMounted, ref } from 'vue'
 
+import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -34,28 +35,26 @@ async function restore() {
 const said = computed(() => {
   if (props.reason === 'unauthenticated')
     return {
-      title: '需要登录才能查看这个项目',
+      title: t('work.access.signedOutTitle'),
       // 说清楚登录不一定就够——他可能登录完还是进不来，先说了才不算骗人。
-      body: '登录后，如果你是这个项目的成员，就能看到这里的内容',
+      body: t('work.access.signedOutBody'),
       icon: 'mdi-lock-outline',
-      action: { label: '登录', to: '/account/signin' },
+      action: { label: t('work.access.signIn'), to: '/account/signin' },
     }
   if (props.reason === 'archived')
     return {
-      title: '项目已归档',
-      body: isOwner.value
-        ? '内容都还在。取消归档后，项目和随它一起归档的话题会恢复'
-        : '内容都还在。项目所有者取消归档后，可以继续使用',
+      title: t('work.access.archivedTitle'),
+      body: isOwner.value ? t('work.access.archivedOwnerBody') : t('work.access.archivedBody'),
       icon: 'mdi-archive-outline',
-      action: { label: '回到我的项目', to: '/' },
+      action: { label: t('work.access.backToProjects'), to: '/' },
     }
   return {
-    title: '你不是这个项目的成员',
+    title: t('work.access.forbiddenTitle'),
     // 不写「联系管理员」：这个产品里没有管理员这个角色，指过去等于让人
     // 去找一个不存在的人。
-    body: '只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单',
+    body: t('work.access.forbiddenBody'),
     icon: 'mdi-lock-outline',
-    action: { label: '回到我的项目', to: '/' },
+    action: { label: t('work.access.backToProjects'), to: '/' },
   }
 })
 </script>
@@ -74,7 +73,7 @@ const said = computed(() => {
         :loading="restoring"
         @click="restore"
       >
-        取消归档
+        {{ t('work.room.menu.unarchive') }}
       </v-btn>
       <v-btn
         :color="reason === 'archived' && isOwner ? undefined : 'primary'"

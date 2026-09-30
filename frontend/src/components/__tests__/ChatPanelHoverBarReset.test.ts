@@ -34,7 +34,7 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 function room(id: string, title: string): Topic {
   return {
@@ -104,7 +104,7 @@ describe('切话题时的悬停条', () => {
     const vuetify = createVuetify({ components, directives })
     const { container, rerender } = render(ChatPanel, {
       props: { topic: long, topicList: [long, short] },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 

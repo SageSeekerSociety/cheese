@@ -5,6 +5,8 @@
 // header above both columns (see TopicHeader.vue).
 import type { Topic } from '../../cx_types'
 
+import { t } from '@/i18n'
+
 defineProps<{
   topic: Topic
   connected: boolean
@@ -34,7 +36,7 @@ const emit = defineEmits<{
       <span
         class="status-dot"
         :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-        :title="connected ? '已连接' : '未连接'"
+        :title="connected ? t('work.room.header.connected') : t('work.room.header.disconnected')"
       />
     </div>
   </div>
@@ -58,7 +60,7 @@ const emit = defineEmits<{
       <span
         class="status-dot"
         :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-        :title="connected ? '已连接' : '未连接'"
+        :title="connected ? t('work.room.header.connected') : t('work.room.header.disconnected')"
       />
     </div>
   </div>

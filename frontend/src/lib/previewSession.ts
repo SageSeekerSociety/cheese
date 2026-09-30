@@ -1,5 +1,7 @@
 import type { PreviewSession } from '../api'
 
+import { t } from '@/i18n'
+
 /** 内容域上「房间里的这份文件」的地址前缀（后端 `ROOM_FILES_PATH`）。
  *
  *  `/` 那个地址属于房间当前的 artifact；一份房间文件不挂在它下面，所以有自己的
@@ -17,7 +19,7 @@ export function roomFileDestination(path: string): string {
 export function postPreviewSession(session: PreviewSession, options: { target?: string; path?: string } = {}) {
   const destination = new URL(session.url)
   if (destination.origin === window.location.origin || !['http:', 'https:'].includes(destination.protocol)) {
-    throw new Error('预览地址未与平台隔离')
+    throw new Error(t('work.room.preview.notIsolated'))
   }
   const form = document.createElement('form')
   form.method = 'POST'

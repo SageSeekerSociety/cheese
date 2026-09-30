@@ -16,6 +16,7 @@ import { onScopeDispose, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { chatWsUrl } from '../../../api'
+import { t } from '../../../i18n'
 
 export function useRoomSocket(options: {
   /** 此刻在哪个话题上；切走了就不该再为上一个重连。 */
@@ -177,7 +178,7 @@ export function useRoomSocket(options: {
     }
     ws.onerror = () => {
       // The close handler owns retry; the banner just explains the grey dot.
-      if (!connectRefused.value) options.errorMsg.value = '连接断开，正在自动重连…'
+      if (!connectRefused.value) options.errorMsg.value = t('work.room.socket.reconnecting')
     }
     ws.onmessage = (ev: MessageEvent) => {
       // Guard against frames from a stale socket after topic switch.

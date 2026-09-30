@@ -15,6 +15,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicChatColumn from './TopicChatColumn.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Column = TopicChatColumn as unknown as Component
 
 // 时间线末尾那几位是**挂载在会话里的整块界面**，不是接线，所以这里一律替掉：
@@ -46,6 +48,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   sockets.length = 0
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
@@ -82,7 +86,7 @@ describe('对话栏的接线', () => {
     history = []
     const { emitted } = render(Column, {
       props: { topic, members: [], topicList: [] },
-      global: { plugins: [vuetify, createPinia()], stubs: stubbedChildren },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
     })
     await settle()
     sockets.at(-1)?.onopen?.()
@@ -107,7 +111,7 @@ describe('对话栏的接线', () => {
     const { container } = render(Column, {
       props: { topic, members: [], topicList: [], unreadOnOpen: 1 },
       global: {
-        plugins: [vuetify, createPinia()],
+        plugins: [vuetify, createPinia(), i18n],
         stubs: stubbedChildren,
       },
     })
@@ -125,7 +129,7 @@ describe('对话栏的接线', () => {
         onOpenResource: (...args: unknown[]) => seen.push(args),
       },
       global: {
-        plugins: [vuetify, createPinia()],
+        plugins: [vuetify, createPinia(), i18n],
         stubs: stubbedChildren,
       },
     })

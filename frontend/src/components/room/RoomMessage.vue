@@ -191,7 +191,7 @@ async function onAgentTextClick(e: MouseEvent) {
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
-        回复 {{ parentName }}：{{ replySnippet(parent, refs) }}
+        {{ t('work.room.composer.replyTo', { name: parentName, text: replySnippet(parent, refs) }) }}
       </button>
       <!-- 图片输入: an attachment block renders as the image itself
          (click opens the original in a new tab). 字节在 AttachmentImage
@@ -203,7 +203,7 @@ async function onAgentTextClick(e: MouseEvent) {
         prepend-icon="mdi-file-document-outline"
         append-icon="mdi-download-outline"
         class="text-none im-file-link"
-        :title="`下载 ${artifactName(block)}`"
+        :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
         @click="emit('download', block)"
       >
         <span class="text-truncate">{{ artifactName(block) }}</span>
@@ -217,7 +217,7 @@ async function onAgentTextClick(e: MouseEvent) {
         v-else-if="block.kind === 'artifact'"
         type="button"
         class="im-artifact"
-        :title="`打开 ${artifactName(block)}`"
+        :title="t('work.room.message.openFile', { name: artifactName(block) })"
         @click="emit('open-file', block.content, block.task_id ?? null)"
       >
         <span class="att-face im-artifact__face">
@@ -282,8 +282,12 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-else-if="askOptions(block)" key="answered" class="ask-row">
           <div class="ask-answered">
             <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
-            <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
-            选了「{{ askAnswered(block)!.option }}」
+            <i18n-t scope="global" keypath="work.room.message.askAnswered" tag="span">
+              <template #who>
+                <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
+              </template>
+              <template #option>{{ askAnswered(block)!.option }}</template>
+            </i18n-t>
           </div>
         </div>
       </Transition>
@@ -301,7 +305,7 @@ async function onAgentTextClick(e: MouseEvent) {
         "
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        {{ block.upgraded_to_task_id ? '已转为任务' : '已转为话题' }}
+        {{ block.upgraded_to_task_id ? t('work.room.message.upgradedToTask') : t('work.room.message.upgradedToTopic') }}
       </button>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
@@ -312,7 +316,7 @@ async function onAgentTextClick(e: MouseEvent) {
           type="button"
           class="rx-chip"
           :class="{ 'rx-chip--mine': r.authors.includes(viewer) }"
-          :title="r.authors.join('、')"
+          :title="r.authors.join(t('work.room.roster.listSeparator'))"
           @click="emit('react', block, r.emoji)"
         >
           <span class="rx-emoji">{{ r.emoji }}</span>

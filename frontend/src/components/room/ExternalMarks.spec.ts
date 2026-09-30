@@ -15,7 +15,7 @@ vi.mock('../../api', async () => {
   return { ...actual, listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })) }
 })
 
-import { setLocale } from '../../i18n'
+import i18n, { setLocale } from '../../i18n'
 
 import { useRoomRoster } from './composables/useRoomRoster'
 import RoomMessage from './RoomMessage.vue'
@@ -71,13 +71,13 @@ describe('聊天里的外部成员', () => {
     const vuetify = createVuetify({ components, directives })
     const out = render(RoomMessage as unknown as Component, {
       props: { ...base, block, authorName: 'Carol', external: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     expect(out.container.querySelector('.im-meta')?.textContent).toContain('外部')
     out.unmount()
     const inside = render(RoomMessage as unknown as Component, {
       props: { ...base, block: { ...block, author: 'bob' }, authorName: 'Bob', external: false },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     expect(inside.container.querySelector('.im-meta')?.textContent).not.toContain('外部')
   })

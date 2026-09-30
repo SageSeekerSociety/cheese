@@ -23,6 +23,11 @@ vi.mock('../../api', async () => {
 
 import PanelSite from './PanelSite.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const topic = {
   id: 't1',
   project_id: 'p1',

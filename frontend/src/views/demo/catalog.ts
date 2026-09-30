@@ -192,7 +192,7 @@ export const CATALOG: CatalogEntry[] = [
     about: '对话栏里的一条消息：人说的、芝士说的、步骤清单、自己发的。',
     file: 'src/components/room/RoomMessage.vue',
     component: RoomMessage,
-    needs: UI,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '留言（没有交给芝士）',
@@ -269,7 +269,7 @@ export const CATALOG: CatalogEntry[] = [
     file: 'src/components/TopicAcceptCard.vue',
     component: TopicAcceptCard,
     // 这张卡自己去接口取数（`getAcceptCards` / `getPrChecks`），也读工作区 store。
-    needs: ['vuetify', 'pinia', 'router'],
+    needs: ['vuetify', 'pinia', 'router', 'i18n'],
     states: [
       {
         name: '贴在输入框上方',

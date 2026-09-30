@@ -23,6 +23,8 @@ import { usePanelDoc } from '../../composables/usePanelDoc'
 
 import PanelDocView from './PanelDocView.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
@@ -35,7 +37,7 @@ const props = withDefaults(
     /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
     agentName?: string
   }>(),
-  { topicList: () => [], agentName: '芝士' }
+  { topicList: () => [], agentName: () => t('work.room.defaultAgentName') }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
