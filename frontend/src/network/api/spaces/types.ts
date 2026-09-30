@@ -1,4 +1,4 @@
-import type { Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission, TaskSubmitterType } from '@/types'
+import type { Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -371,20 +371,6 @@ export type SpaceLearningOutline = {
   missing: string[]
 }
 
-export type SpaceMyPublishingOverview = {
-  spaceId: number
-  taskCount: number
-  approvedTaskCount: number
-  pendingTaskApprovalCount: number
-  disapprovedTaskCount: number
-  participantCount: number
-  approvedParticipantCount: number
-  pendingParticipantApprovalCount: number
-  submittedParticipantCount: number
-  pendingReviewCount: number
-  successfulParticipantCount: number
-}
-
 export type SpaceMyPublishedTaskCategory = {
   id: number
   name: string
@@ -417,50 +403,6 @@ export type SpaceMyPublishedTask = {
 
 export type SpaceMyPublishedTasks = {
   tasks: SpaceMyPublishedTask[]
-}
-
-export type SpaceMyParticipatingOverview = {
-  spaceId: number
-  participationCount: number
-  approvedParticipationCount: number
-  pendingApprovalCount: number
-  awaitingSubmissionCount: number
-  pendingReviewCount: number
-  resubmittableCount: number
-  successfulCount: number
-  failedCount: number
-}
-
-export type SpaceMyParticipationPublisher = {
-  id: number
-  name: string
-}
-
-export type SpaceMyParticipationCategory = {
-  id: number
-  name: string
-}
-
-export type SpaceMyParticipation = {
-  taskId: number
-  taskName: string
-  publisher: SpaceMyParticipationPublisher
-  category: SpaceMyParticipationCategory
-  participationId: number
-  identityType: TaskSubmitterType
-  teamName?: string | null
-  approved: AnalyticsApproveType
-  completionStatus: AnalyticsCompletionType
-  canSubmit: boolean
-  joinedAt: number
-  deadline?: number | null
-  latestSubmissionAt?: number | null
-  latestReviewAccepted?: boolean | null
-  latestReviewScore?: number | null
-}
-
-export type SpaceMyParticipations = {
-  participations: SpaceMyParticipation[]
 }
 
 export type AnalyticsApproveType = 'NONE' | 'APPROVED' | 'DISAPPROVED'

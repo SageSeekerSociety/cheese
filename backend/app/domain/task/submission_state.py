@@ -23,10 +23,6 @@
 一个没人重算的存量值，正是这一列在交过作业、判通过的领取上还写着 ``NOT_SUBMITTED``
 的原因。
 
-「什么算已成功」的两种读法（判通过才算 / 交了就算）不改变上面任何一条转移，只改变
-计数与标签怎么显示 —— 那处开关在 ``member_participating_service.get_overview`` 与
-``frontend/src/views/spaces/board/pages/Mine.vue``。
-
 同一份优先级还有第二种粒度：板上的题卡片只问「我这条领取走到哪了」，取值那套见下面
 的 :func:`claim_state`。它不看截止时间那一档，别的与上面逐条对齐，且顺序由
 :func:`completion_status_for` 一处说了算。

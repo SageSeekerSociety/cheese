@@ -21,9 +21,6 @@ from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
-from app.domain.space.member_participating_service import (
-    SpaceMemberParticipatingService,
-)
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.models import (
     Space,
@@ -321,12 +318,6 @@ async def get_space_member_publishing_service(
     db=Depends(get_db),
 ) -> SpaceMemberPublishingService:
     return SpaceMemberPublishingService(session=db)
-
-
-async def get_space_member_participating_service(
-    db=Depends(get_db),
-) -> SpaceMemberParticipatingService:
-    return SpaceMemberParticipatingService(session=db)
 
 
 async def get_space_analytics_view_service(
