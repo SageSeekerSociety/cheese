@@ -298,8 +298,24 @@ POST /topics/asks/{group_id}/settle
 
 **先修两处，回执才配叫凭据**（最小改动，不另开通用投递重构）：
 
-1. **回执按 `delivery_id` 归属**，不再只按 topic + 文本相等/前缀。`_pending_receipts` 的候选里带上 `delivery_id`（`begin_send` 已经拿着它，`chat.py:4610`），命中时 `receive_attempt` 结算的是**这一笔** delivery。回答文本那条块的 `meta.delivery_event_id` 是同一个 key（4.6.1），所以「一份文本 ↔ 一条投递」两边都有落点。两批相同题面/相同答案、两个席位同 topic 不串账（R40）。
-2. **`pending.remove(entry)` 挪到 DB commit 成功之后**。摘除是「已结算」的记账，不是「开始尝试」。DB 那三步失败就留在候选里，下一条回执还能对上 —— 这才是可再对账的真实凭据。**收到 native receipt 但 commit 失败**：不许只留 logger，也不许把已读文本重新盲 inject（R41、R42）。
+1. 回执核对持久 `NativeInput` 的项目、话题、席位、harness、原生会话、输入及 work 身份；关联 `delivery_id`、`attempt_id`、`event_id`。登记先 commit 再外发，不按文本选候选。回执只结算对应投递、消费和已阅效果，两批同文或同话题不同席位不串账（R40）。
+2. 结算事务 commit 后才推进 journal 的 landed 游标。commit 失败保留回执和原身份，不只留日志，不用新输入 UUID 盲发（R41、R42）。accepted 只证 RPC 接受；native echo 只证输入回显，初始批次仍等原 work 完成消费。
+
+登记与结算的锁图（批次段仍待真实 PG 竞争验证）：
+
+```text
+新登记：Delivery → NativeInput INSERT/唯一键冲突 → NativeInput 行 → Block[id 升序]
+登记重试：Delivery → NativeInput 行 → 核对原登记并返回
+native echo：无锁读不可变关联 → Delivery → NativeInput 行 → Block[id 升序]
+accepted：无锁读不可变关联 → Delivery → NativeInput 行
+完成 work：Block 消费更新 → commit；本路径不再锁 Delivery/NativeInput
+```
+
+- 无关联投递时跳过 Delivery。输入插入和唯一键冲突必须在块锁之前，包含隐式等待；不能留下 Block→NativeInput 边。
+- 两笔不同投递共享块时，各持自己的输入行，只按块 id 升序竞争。持块后查询其他输入的持有信息不加输入锁；不会反向等待对方输入行。无块交集的不同席位、话题、项目不设全局锁。
+- 登记自己的未提交行不计入重叠检查。争抢失败必须回滚整笔登记，不得 commit 无效持有或外发。同身份重试仅核对，不替换身份或效果。
+- accepted、unknown、echo 不能释放初始持有。完成消费只释放对应原 work 的块；其他 work 的消费标记不能替代。可验证未外发的显式释放与完整组效果仍待接线和证据。
+- 仓库现有 work 完成更新尚未统一稳定块锁，其他组事务必须沿用上述顺序；本图不是全链无死锁或全目标完成的声明。旧已闭合锁测试不为此重复运行。
 
 **「列出 `uncertain` + 反馈」是可见边界，不是恢复实现。** 三者关系是这样：
 

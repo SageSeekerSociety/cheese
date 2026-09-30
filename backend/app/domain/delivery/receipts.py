@@ -78,6 +78,29 @@ async def register_input(
     # A settled/uncertain attempt may verify an old registration, never add one.
     if delivery is not None and delivery.state != "sending":
         raise ValidationError("Input does not own the addressed delivery attempt")
+    # INSERT/unique-index conflict can wait on another input transaction. Do it
+    # before Block locks, so neither admission nor settlement has a Block→Input
+    # edge. Validation failure requires caller rollback of this whole transaction.
+    inserted = await session.scalar(
+        insert(NativeInput)
+        .values(id=uuid.uuid4(), registered_at=datetime.now(UTC), **values)
+        .on_conflict_do_nothing(constraint="uq_native_input_identity")
+        .returning(NativeInput.id)
+    )
+    row = await session.scalar(
+        select(NativeInput)
+        .where(
+            NativeInput.harness == identity.harness,
+            NativeInput.native_session_id == identity.native_session_id,
+            NativeInput.input_id == identity.input_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if row is None or any(getattr(row, key) != value for key, value in values.items()):
+        raise ValidationError("Native input identity was reused for another input")
+    if inserted is None:
+        return
     affected = (
         set(effects.held_block_ids)
         | set(effects.block_ids)
@@ -86,43 +109,16 @@ async def register_input(
     await _lock_blocks(session, identity, affected)
     if effects.seen_by is not None and effects.seen_by != identity.recipient_handle:
         raise ValidationError("Input cannot mark blocks as read by another receiver")
-    # Another registration can commit while we wait for the shared block locks.
-    existing = await session.scalar(
-        select(NativeInput)
-        .where(
-            NativeInput.harness == identity.harness,
-            NativeInput.native_session_id == identity.native_session_id,
-            NativeInput.input_id == identity.input_id,
-        )
-        .execution_options(populate_existing=True)
-    )
-    if existing is not None:
-        if any(getattr(existing, key) != value for key, value in values.items()):
-            raise ValidationError("Native input identity was reused for another input")
-        return
     if effects.held_block_ids:
         held = await held_blocks(
             session,
             project_id=identity.project_id,
             topic_id=identity.topic_id,
             recipient_handle=identity.recipient_handle,
+            exclude_input_id=row.id,
         )
         if held.intersection(effects.held_block_ids):
             raise ValidationError("Input batch is already held by another native input")
-    await session.execute(
-        insert(NativeInput)
-        .values(id=uuid.uuid4(), registered_at=datetime.now(UTC), **values)
-        .on_conflict_do_nothing(constraint="uq_native_input_identity")
-    )
-    row = await session.scalar(
-        select(NativeInput).where(
-            NativeInput.harness == identity.harness,
-            NativeInput.native_session_id == identity.native_session_id,
-            NativeInput.input_id == identity.input_id,
-        )
-    )
-    if row is None or any(getattr(row, key) != value for key, value in values.items()):
-        raise ValidationError("Native input identity was reused for another input")
 
 
 async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
@@ -145,7 +141,9 @@ async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
     return rows
 
 
-async def held_blocks(session, *, project_id, topic_id, recipient_handle):
+async def held_blocks(
+    session, *, project_id, topic_id, recipient_handle, exclude_input_id=None
+):
     """Registered inputs own their batch, independently of work completion.
 
     An echo cannot release an initial batch for another prompt before its Stop.
@@ -157,6 +155,9 @@ async def held_blocks(session, *, project_id, topic_id, recipient_handle):
                 NativeInput.project_id == project_id,
                 NativeInput.topic_id == topic_id,
                 NativeInput.recipient_handle == recipient_handle,
+                NativeInput.id != exclude_input_id
+                if exclude_input_id is not None
+                else True,
             )
         )
     ).all()
