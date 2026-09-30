@@ -13,6 +13,7 @@ from app.domain.agent.market import (
     cloud_provisionable,
     compute_default_name,
 )
+from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
@@ -83,14 +84,14 @@ def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
 async def validate_choice(session: AsyncSession, project_id, choice: ComputeChoice):
     if choice.profile == "cloud":
         if not cloud_provisionable(settings):
-            raise ValidationError("云端尚未接入，暂不可用")
+            raise ValidationError(say("cloudNotAvailable"))
         return
     devices = await sql_device_service(session).list_devices_for_project(project_id)
     if choice.device_id:
         if choice.device_id not in {d.device_id for d in devices}:
-            raise ValidationError("设备不属于当前项目或团队")
+            raise ValidationError(say("deviceNotInProjectOrTeam"))
     elif not devices:
-        raise ValidationError("团队暂无自有设备")
+        raise ValidationError(say("teamHasNoDevices"))
 
 
 async def bind_room_device_choice(

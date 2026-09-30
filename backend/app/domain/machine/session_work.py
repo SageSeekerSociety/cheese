@@ -481,10 +481,10 @@ async def push_before_switch(
     except (RuntimeError, TimeoutError) as exc:
         raise WorkComputerUnreachable(f"{PUSH_UNREACHABLE}：{exc}") from exc
     if "error" in result:
-        raise ConflictError(f"推送失败，没有更换：{result['error']}")
+        raise ConflictError(say("switchPushFailed", error=result["error"]))
     output = result["value"]
     if output.get("backgroundTaskId"):
-        raise ConflictError("推送两分钟内没有完成，没有更换；稍后重试")
+        raise ConflictError(say("switchPushTimedOut"))
     said = output.get("stdout") or ""
     if not said.startswith("Exit code "):
         return []
@@ -493,7 +493,7 @@ async def push_before_switch(
     if failed and keeps_files and all(closed for closed, _ in failed):
         return [say("workLeftClosedTask", line=line) for _, line in failed]
     detail = "\n".join(line for _, line in failed) or printed.strip()[-600:] or said
-    raise ConflictError(f"推送失败，没有更换：{detail}")
+    raise ConflictError(say("switchPushFailed", error=detail))
 
 
 # The line ``cheese sync --all`` ends each task it could not sync with.
@@ -773,7 +773,7 @@ async def _move_session(
             await db.commit()
         return []
     if _still_preparing(old):
-        raise ConflictError("机器分配仍在进行，请稍后再换机")
+        raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
         raise SessionWorking(WORKING)
     if old and await sql_device_service(db).get_device(old["device_id"]) is None:
@@ -804,9 +804,9 @@ async def _move_session(
         request = row.execution_request or {}
         old = row.work_lease
         if request.get("generation") != generation or not old:
-            raise ConflictError("工作电脑刚被更换过，刷新后重试")
+            raise ConflictError(say("workComputerJustSwitched"))
         if _still_preparing(old):
-            raise ConflictError("机器分配仍在进行，请稍后再换机")
+            raise ConflictError(say("machineAllocationInProgress"))
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     left = None
     if on_cloud:

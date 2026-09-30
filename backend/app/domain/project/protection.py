@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.domain.block.notice_text import say
 from app.domain.project.models import Project
 
 BRANCH_PROTECTION_KEY = "branch_protection"
@@ -145,11 +146,11 @@ def _validate_glob(path: object) -> str:
     if not text:
         raise ValueError("检查的路径范围不能是空串")
     if len(text) > MAX_PATH_CHARS:
-        raise ValueError(f"路径范围不能超过 {MAX_PATH_CHARS} 个字符")
+        raise ValueError(say("pathScopeTooLong", max=MAX_PATH_CHARS))
     if "\x00" in text or "\n" in text:
         raise ValueError("路径范围不能包含 NUL 或换行")
     if text.startswith("/"):
-        raise ValueError(f"路径范围要相对仓库根，不能以 / 开头：{text!r}")
+        raise ValueError(say("pathScopeAbsolute", path=repr(text)))
     try:
         re.compile(fnmatch.translate(text))
     except re.error as e:  # pragma: no cover — translate rarely yields bad re
@@ -161,7 +162,7 @@ def _validate_required_checks(value: object) -> list[dict]:
     if not isinstance(value, list):
         raise ValueError("required_checks 必须是列表")
     if len(value) > MAX_REQUIRED_CHECKS:
-        raise ValueError(f"必跑检查最多 {MAX_REQUIRED_CHECKS} 条")
+        raise ValueError(say("requiredChecksTooMany", max=MAX_REQUIRED_CHECKS))
     checks: list[dict] = []
     for item in value:
         if not isinstance(item, dict):
@@ -170,7 +171,7 @@ def _validate_required_checks(value: object) -> list[dict]:
         if not name:
             raise ValueError("检查名不能为空")
         if len(name) > MAX_CHECK_NAME_CHARS:
-            raise ValueError(f"检查名不能超过 {MAX_CHECK_NAME_CHARS} 个字符")
+            raise ValueError(say("checkNameTooLong", max=MAX_CHECK_NAME_CHARS))
         if "\x00" in name or "\n" in name:
             raise ValueError("检查名不能包含 NUL 或换行")
         raw_paths = item.get("paths")
@@ -180,7 +181,7 @@ def _validate_required_checks(value: object) -> list[dict]:
         if not isinstance(raw_paths, list):
             raise ValueError(f"检查 {name!r} 的 paths 必须是列表")
         if len(raw_paths) > MAX_PATHS_PER_CHECK:
-            raise ValueError(f"一条检查的路径范围最多 {MAX_PATHS_PER_CHECK} 个")
+            raise ValueError(say("checkPathsTooMany", max=MAX_PATHS_PER_CHECK))
         checks.append({"name": name, "paths": [_validate_glob(p) for p in raw_paths]})
     return checks
 

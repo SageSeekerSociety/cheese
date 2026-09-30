@@ -2,7 +2,8 @@
 
 The backend stores a room line as Chinese text plus the key and parameters of
 the sentence (`app/domain/block/notice_text.py`); a screen renders the key in its
-reader's language from the frontend catalog `roomNotice`. Two things can go
+reader's language from the frontend catalog `roomNotice` (an error's sentence
+from `apiError`). Two things can go
 wrong without anything failing at the moment they happen:
 
 - the two copies of the Chinese templates drift, and the room stores one
@@ -23,8 +24,10 @@ from pathlib import Path
 import pytest
 
 from app.domain.block.notice_text import (
+    ERROR_MESSAGES,
     I18N_META_KEY,
     MESSAGES,
+    NOTICE_MESSAGES,
     notice_message,
     say,
     with_keys,
@@ -35,25 +38,31 @@ APP = ROOT / "backend/app"
 CATALOG = ROOT / "frontend/src/i18n/messages"
 
 
-def _catalog(locale: str) -> dict[str, str]:
-    return json.loads((CATALOG / locale / "roomNotice.json").read_text("utf-8"))
+#: Each backend catalog and the frontend namespace that mirrors it.
+CATALOGS = [("roomNotice", NOTICE_MESSAGES), ("apiError", ERROR_MESSAGES)]
+
+
+def _catalog(locale: str, namespace: str) -> dict[str, str]:
+    return json.loads((CATALOG / locale / f"{namespace}.json").read_text("utf-8"))
 
 
 def _placeholders(template: str) -> set[str]:
     return set(re.findall(r"\{(\w+)\}", template))
 
 
-def test_the_backend_templates_are_the_frontend_chinese_catalog():
-    assert _catalog("zh-CN") == MESSAGES
+@pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
+def test_the_backend_templates_are_the_frontend_chinese_catalog(namespace, templates):
+    assert _catalog("zh-CN", namespace) == templates
 
 
-def test_every_sentence_has_english_with_the_same_placeholders():
-    english = _catalog("en")
-    assert set(english) == set(MESSAGES)
+@pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
+def test_every_sentence_has_english_with_the_same_placeholders(namespace, templates):
+    english = _catalog("en", namespace)
+    assert set(english) == set(templates)
     assert {
-        key: (_placeholders(MESSAGES[key]), _placeholders(english[key]))
-        for key in MESSAGES
-        if _placeholders(MESSAGES[key]) != _placeholders(english[key])
+        key: (_placeholders(templates[key]), _placeholders(english[key]))
+        for key in templates
+        if _placeholders(templates[key]) != _placeholders(english[key])
     } == {}
 
 

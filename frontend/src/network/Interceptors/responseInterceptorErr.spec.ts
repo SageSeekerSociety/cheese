@@ -25,6 +25,33 @@ describe('responseInterceptorErr', () => {
     )
   })
 
+  it('renders a refusal said from the catalog in the reader language, and keeps the server words otherwise', () => {
+    const refused = (i18n: { key: string; params?: Record<string, unknown> }) =>
+      ({
+        response: {
+          status: 403,
+          config: { url: '/invitations/1/respond' },
+          data: {
+            code: 403,
+            message: 'ForbiddenError: 只有被邀请的人能答复这张邀请',
+            error: { name: 'ForbiddenError', message: '只有被邀请的人能答复这张邀请', i18n },
+          },
+        },
+      }) as AxiosError<ResponseDataType>
+
+    setLocale('en')
+    expect(() => responseInterceptorErr(refused({ key: 'inviteNotYours' }))).toThrowError(
+      'Only the invited person can answer this invitation'
+    )
+    expect(() => responseInterceptorErr(refused({ key: 'somethingNewer' }))).toThrowError(
+      '只有被邀请的人能答复这张邀请'
+    )
+    setLocale('zh-CN')
+    expect(() => responseInterceptorErr(refused({ key: 'inviteNotYours' }))).toThrowError(
+      '只有被邀请的人能答复这张邀请'
+    )
+  })
+
   it('uses the human-facing business message instead of the error-class prefix', () => {
     const error = {
       response: {

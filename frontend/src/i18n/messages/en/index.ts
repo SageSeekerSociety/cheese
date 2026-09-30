@@ -1,6 +1,7 @@
 import account from './account.json'
 import admin from './admin.json'
 import aiChat from './aiChat.json'
+import apiError from './apiError.json'
 import compute from './compute.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
@@ -55,6 +56,7 @@ export default {
   spaces,
   notifications,
   roomNotice,
+  apiError,
   toolLabels,
   work,
   admin,
