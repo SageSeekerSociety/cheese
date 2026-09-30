@@ -38,7 +38,6 @@
   "detail": {
     "announcements": "Announcements",
     "allContests": "All problems",
-    "auditContests": "Review problems",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
     "dangerZone": "Danger zone",
@@ -119,9 +118,6 @@
         "listHint": "Comma-separated"
       }
     },
-    "analytics": {
-      "title": "Analytics"
-    },
     "publishTask": {
       "createSuccess": "Problem created",
       "createSuccessAndWaitingAudit": "Problem created — awaiting review",
@@ -196,7 +192,12 @@
   "sidebar": {
     "back": "Back to home",
     "tasks": "Tasks",
-    "manage": "Manage"
+    "manage": "Manage",
+    "announcements": "Announcements",
+    "audit": "Awaiting review",
+    "members": "Members",
+    "analytics": "Analytics",
+    "settings": "Settings"
   },
   "members": {
     "title": "Members",

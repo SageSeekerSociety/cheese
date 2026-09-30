@@ -14,6 +14,7 @@ import { defineStore } from 'pinia'
 
 import { SpacesApi } from '@/network/api/spaces'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
+import { TasksApi } from '@/network/api/tasks'
 import AccountService from '@/services/account'
 
 export const useSpaceStore = defineStore('space', () => {
@@ -22,6 +23,8 @@ export const useSpaceStore = defineStore('space', () => {
   const categories = ref<SpaceCategory[]>([])
   const loadingCategories = ref(false)
   const domainGroups = ref<DomainGroup[]>([])
+  /** 这个空间里等着审核的题目数，侧栏「待审核」那一格的角标。只有所有者与管理员读得到。 */
+  const pendingAuditCount = ref(0)
 
   /** 我在这个空间里的角色：管理员名单（含所有者）里有我就是那个角色，否则是成员。 */
   const myRole = computed<SpaceAdminRoleType | 'MEMBER'>(() => {
@@ -59,11 +62,30 @@ export const useSpaceStore = defineStore('space', () => {
     return currentSpace.value.classificationTopics || []
   })
 
+  /** 读一遍待审核的题目数：用审核队列同一个列表接口，只要总数。 */
+  const fetchPendingAuditCount = async () => {
+    const spaceId = currentSpaceId.value
+    if (!spaceId) return
+    try {
+      const { data } = await TasksApi.list({
+        space: spaceId,
+        approved: 'NONE',
+        pageSize: 1,
+        sort_by: 'createdAt',
+        sort_order: 'asc',
+      })
+      if (spaceId === currentSpaceId.value) pendingAuditCount.value = data.page.total ?? 0
+    } catch (error) {
+      console.error('fetch pending audit count failed', error)
+    }
+  }
+
   const fetchSpace = async (spaceId: number) => {
     const isAnotherSpace = spaceId !== currentSpaceId.value
     if (isAnotherSpace) {
       currentSpace.value = null
       categories.value = []
+      pendingAuditCount.value = 0
     }
     currentSpaceId.value = spaceId
 
@@ -322,6 +344,8 @@ export const useSpaceStore = defineStore('space', () => {
   return {
     currentSpace,
     currentSpaceId,
+    pendingAuditCount,
+    fetchPendingAuditCount,
     templates,
     announcements,
     classificationTopics,

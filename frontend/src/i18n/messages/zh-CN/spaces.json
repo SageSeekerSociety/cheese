@@ -43,7 +43,6 @@
     "expandSidebar": "展开侧边栏",
     "contests": "题目",
     "allContests": "全部题目",
-    "auditContests": "审核题目",
     "deleteAnnouncement": "删除公告",
     "publishedAt": "发布于 {time}",
     "updateSuccess": "更新成功",
@@ -142,9 +141,6 @@
         "knowledgeIds": "知识条目编号",
         "listHint": "用逗号分隔"
       }
-    },
-    "analytics": {
-      "title": "数据分析"
     },
     "publishTask": {
       "title": "发布题目",
@@ -249,7 +245,12 @@
   "sidebar": {
     "back": "回到首页",
     "tasks": "题目",
-    "manage": "管理"
+    "manage": "管理",
+    "announcements": "公告",
+    "audit": "待审核",
+    "members": "成员",
+    "analytics": "数据",
+    "settings": "设置"
   },
   "members": {
     "title": "成员",

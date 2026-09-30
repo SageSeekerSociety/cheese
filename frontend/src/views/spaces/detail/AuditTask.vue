@@ -224,6 +224,7 @@ const approveTask = async (taskId: number) => {
     toast.error(t('spaces.detail.auditTasks.operationFailed'))
   } finally {
     await refresh()
+    spaceStore.fetchPendingAuditCount()
   }
 }
 
@@ -251,6 +252,7 @@ const rejectTask = async (taskId: number) => {
     toast.error(t('spaces.detail.auditTasks.operationFailed'))
   } finally {
     await refresh()
+    spaceStore.fetchPendingAuditCount()
   }
 }
 
