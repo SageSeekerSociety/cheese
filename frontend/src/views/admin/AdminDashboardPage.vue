@@ -118,7 +118,7 @@ function onSelectDay(date: string | null) {
         v-if="failed"
         tone="error"
         :title="t('feedback.dashboard.error.title')"
-        :desc="error"
+        :desc="error ?? undefined"
         :action="t('feedback.dashboard.retry')"
         @action="retry"
       />
