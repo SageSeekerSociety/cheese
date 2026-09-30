@@ -13,7 +13,8 @@
     "archived": "archived collections: {count}",
     "deployed": "Deployed commit",
     "run": "CI run for this collection",
-    "collectionFailed": "The newest collection failed: the numbers above come from an earlier one, not from it."
+    "collectionFailed": "The newest collection failed: {reason}. Every row below is this collection's own answer — blank means \"not measured\", not 0.",
+    "collectionFailedNoReason": "The newest collection failed and the snapshot did not say why. Every row below is this collection's own answer — blank means \"not measured\", not 0."
   },
   "note": {
     "singlePoint": "The archive starts here: one collection so far, so a trend has to wait for a second."

@@ -80,6 +80,16 @@ const noMeasurementsDesc = computed(() => {
     ? t('ratchet.state.noMeasurementsFailed', { count: collections.value, reason })
     : t('ratchet.state.noMeasurementsPlain', { count: collections.value })
 })
+
+/** 「最近一次采集失败」那一行，下面还有表可看时用它。说的是**这一次**：表里每一格
+ *  画的就是这一次的回答，「还没测到」是没量到，不是 0。这里原先写的是「上面这些数
+ *  来自更早的一次」——那是句假话：「现在」那一格画的是最新那个点，而采集失败的那次
+ *  在归档里没有检查记录，所以每一格都落成「还没测到」，上面根本没有数。原因照抄
+ *  采集自己写下的那句话，没写就不替它编。 */
+const collectionFailedLine = computed(() => {
+  const reason = latestReason.value
+  return reason ? t('ratchet.prov.collectionFailed', { reason }) : t('ratchet.prov.collectionFailedNoReason')
+})
 </script>
 
 <template>
@@ -140,9 +150,10 @@ const noMeasurementsDesc = computed(() => {
           </a>
         </p>
 
-        <!-- 这一句说的是「上面这些数来自更早的一次」，所以只在真的有数画出来时说。 -->
+        <!-- 归档里一条测量都没有时不说这一句：那时整页走「这次没有可用的测量」，两句话
+             说的是同一件事，说两遍就成了两种说法。 -->
         <p v-if="checks && board.collection && board.collection !== 'ok'" class="arc__pull arc__pull--bad">
-          {{ t('ratchet.prov.collectionFailed') }}
+          {{ collectionFailedLine }}
         </p>
 
         <!-- 只有一个点的时候不画走势：这一句解释为什么下面是空的，也解释了什么时候会有。 -->

@@ -13,7 +13,8 @@
     "archived": "已归档 {count} 次采集",
     "deployed": "部署提交",
     "run": "这次采集的 CI run",
-    "collectionFailed": "最近一次采集是失败的：上面这些数来自更早的一次，不是这次的。"
+    "collectionFailed": "最近一次采集失败了：{reason}。下面各行画的就是这一次的答案——空着的意思是没量到，不是 0。",
+    "collectionFailedNoReason": "最近一次采集失败了，快照里没写原因。下面各行画的就是这一次的答案——空着的意思是没量到，不是 0。"
   },
   "note": {
     "singlePoint": "归档从这次开始：现在只有一次采集，走势要等第二次才有。"

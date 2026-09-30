@@ -10,11 +10,12 @@
  *    的 `build_board`）。把它当成「一条都没归档」，会把失败历史和采集来源一起藏起来，
  *    而那正是唯一能解释「为什么空着」的东西。
  *
- * 还有一条是这一屏自己的规矩：`collection !== 'ok'` 时那句「上面这些数来自更早的一次」
- * 只能在**真的画出了数**的时候说（`checks > 0`）——`areas` 为空时上面根本没有数，
- * 那句话会是假的。
+ * 3. **最近一次采集失败**时那一行说的话，和采集失败在归档里的真实形状对得上：失败的那
+ *    一行没有检查记录，于是每一道检查在这个点上都是洞——「现在」那一格是「还没测到」，
+ *    表里一个数都没有。所以那一行说的是「下面画的就是这一次的答案」，不是「上面这些数
+ *    来自更早的一次」（后者是这一屏原先写的，现在钉住它不回来）。
  */
-import type { RatchetBoard, RatchetCheck } from '@/views/admin/ratchetApi'
+import type { RatchetBoard, RatchetCheck, RatchetPoint } from '@/views/admin/ratchetApi'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -36,50 +37,70 @@ vi.mock('vue-i18n', async () => {
 
 import AdminRatchetPageView from './AdminRatchetPageView.vue'
 
-function check(): RatchetCheck {
+/** 一道检查的两个点，都是 `pass`、都量到 3。
+ *
+ *  `lastIsHole` 把最新那个点换成洞——一次失败的采集在归档里没有检查记录，`_point_for`
+ *  于是给每一道检查补一个洞（`status="not_collected"`、`actual=null`、
+ *  `rule_fingerprint=null`），`_direction` 也因为没有两个连着量到的点而报 `unknown`。
+ *  这不是编的形状：`collection="failed"` 的行就是这么来的（采集器写 `collection:
+ *  "failed"` 那份快照时 `checks` 是空的），所以这一组的板子也这么填。 */
+function check(lastIsHole = false): RatchetCheck {
+  const points: RatchetPoint[] = [
+    {
+      commit: 'aaaaaaa1',
+      collected_at: '2026-09-30T10:00:00+00:00',
+      run_url: 'https://example.test/run/1',
+      collection: 'ok',
+      status: 'pass',
+      actual: 3,
+      frozen: 3,
+      stale_count: null,
+      rule_fingerprint: 'fp-a',
+      rule_changed: false,
+      new_exemptions: null,
+      details: null,
+      reason: null,
+    },
+    {
+      commit: 'bbbbbbb2',
+      collected_at: '2026-09-30T11:00:00+00:00',
+      run_url: 'https://example.test/run/2',
+      collection: 'ok',
+      status: 'pass',
+      actual: 3,
+      frozen: 3,
+      stale_count: null,
+      rule_fingerprint: 'fp-a',
+      rule_changed: false,
+      new_exemptions: null,
+      details: null,
+      reason: null,
+    },
+  ]
+  if (lastIsHole) {
+    points[1] = {
+      ...points[1],
+      collection: 'failed',
+      status: 'not_collected',
+      actual: null,
+      frozen: null,
+      rule_fingerprint: null,
+      reason: '这次采集里没有这道检查',
+    }
+  }
+  const last = points[points.length - 1]
   return {
     id: 'fe-boundary',
     area: 'boundaries',
     better: 'down',
-    direction: 'flat',
-    status: 'pass',
-    actual: 3,
-    frozen: 3,
+    direction: lastIsHole ? 'unknown' : 'flat',
+    status: last.status,
+    actual: last.actual,
+    frozen: last.frozen,
     stale: [],
     stale_count: null,
-    rule_fingerprint: 'fp-a',
-    points: [
-      {
-        commit: 'aaaaaaa1',
-        collected_at: '2026-09-30T10:00:00+00:00',
-        run_url: 'https://example.test/run/1',
-        collection: 'ok',
-        status: 'pass',
-        actual: 3,
-        frozen: 3,
-        stale_count: null,
-        rule_fingerprint: 'fp-a',
-        rule_changed: false,
-        new_exemptions: null,
-        details: null,
-        reason: null,
-      },
-      {
-        commit: 'bbbbbbb2',
-        collected_at: '2026-09-30T11:00:00+00:00',
-        run_url: 'https://example.test/run/2',
-        collection: 'ok',
-        status: 'pass',
-        actual: 3,
-        frozen: 3,
-        stale_count: null,
-        rule_fingerprint: 'fp-a',
-        rule_changed: false,
-        new_exemptions: null,
-        details: null,
-        reason: null,
-      },
-    ],
+    rule_fingerprint: last.rule_fingerprint,
+    points,
   }
 }
 
@@ -182,7 +203,7 @@ describe('棘轮页的画面', () => {
     expect(queryByText('ratchet.prov.collectionFailed')).toBeNull()
   })
 
-  it('有测量、而最近一次采集失败时，来源行和那句「来自更早的一次」都在', () => {
+  it('最近一次采集失败、下面还有表时，那一行说的是这一次，并带上采集自己报的原因', () => {
     const live = board({
       collection: 'failed',
       points: 2,
@@ -197,12 +218,16 @@ describe('棘轮页的画面', () => {
           reason: 'no interpreter (exit 127)',
         },
       ],
-      areas: [{ area: 'boundaries', checks: [check()] }],
+      areas: [{ area: 'boundaries', checks: [check(true)] }],
     })
-    const { getByText } = mount({ board: live })
+    const { getByText, queryByText } = mount({ board: live })
 
-    expect(getByText('ratchet.prov.collectionFailed')).toBeTruthy()
+    expect(getByText('ratchet.prov.collectionFailed {"reason":"no interpreter (exit 127)"}')).toBeTruthy()
     expect(getByText('ratchet.prov.archived {"count":2}')).toBeTruthy()
+    // 表里一个数都没有——失败那一次在归档里没有检查记录，每一格都是洞。所以那一行
+    // 不能说「上面这些数来自更早的一次」：上面根本没有数。
+    expect(getByText('ratchet.value.notCollected')).toBeTruthy()
+    expect(queryByText('3')).toBeNull()
   })
 
   it('归档里有采集、但没有原因时只说「没有可用测量」，不替采集编一个理由', () => {
