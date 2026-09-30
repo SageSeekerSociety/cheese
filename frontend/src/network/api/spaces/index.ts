@@ -1,4 +1,4 @@
-import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type { DomainGroup, Space, SpaceAnnouncement, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -7,11 +7,13 @@ import type {
   AnalyticsSortOrder,
   GetSpacesResponseData,
   PatchSpaceAdminRequestData,
+  PatchSpaceAnnouncementRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
   PatchSpaceInviteCodeRequestData,
   PatchSpaceRequestData,
   PostSpaceAdminRequestData,
+  PostSpaceAnnouncementRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
   PostSpaceInviteCodeRequestData,
@@ -23,6 +25,7 @@ import type {
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPeople,
   SpaceAnalyticsPublishers,
+  SpaceAnnouncementList,
   SpaceLearningFilters,
   SpaceLearningOutline,
   SpaceLearningQuestions,
@@ -107,6 +110,36 @@ export namespace SpacesApi {
     NewApiInstance.request({
       url: `/spaces/${spaceId}/leave`,
       method: 'POST',
+    })
+
+  export const listAnnouncements = (spaceId: number) =>
+    NewApiInstance.request<SpaceAnnouncementList>({
+      url: `/spaces/${spaceId}/announcements`,
+      method: 'GET',
+    })
+
+  export const publishAnnouncement = (spaceId: number, data: PostSpaceAnnouncementRequestData) =>
+    NewApiInstance.request<{ announcement: SpaceAnnouncement }>({
+      url: `/spaces/${spaceId}/announcements`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateAnnouncement = (
+    spaceId: number,
+    announcementId: number,
+    data: PatchSpaceAnnouncementRequestData
+  ) =>
+    NewApiInstance.request<{ announcement: SpaceAnnouncement }>({
+      url: `/spaces/${spaceId}/announcements/${announcementId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteAnnouncement = (spaceId: number, announcementId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/announcements/${announcementId}`,
+      method: 'DELETE',
     })
 
   export const listInviteCodes = (spaceId: number) =>

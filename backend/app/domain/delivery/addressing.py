@@ -40,6 +40,7 @@
 | 提需求的人 | 他等的东西有了结果 |
 | 被问的那个人 | 芝士停在一个待确认问题上，只有他能回答 |
 | 设备的主人 | 有 agent 开始在他登记的机器上干活，让不让它继续用只有他能定（#1900） |
+| 公告的读者 | 空间发了一条公告，而公告就是写给这个空间里的每个人的 |
 
 前三条是 #1084 定的收件人。「待我处理」那份清单和投递读的是同一份判据 —— 通知负
 责把人叫回来，清单负责他回来之后不用自己翻。
@@ -66,6 +67,7 @@ REASON_REVIEWER = "reviewer"
 REASON_REPORTER = "reporter"
 REASON_ASKED = "asked"
 REASON_MACHINE_OWNER = "machine_owner"
+REASON_AUDIENCE = "audience"
 
 
 class Hand(enum.StrEnum):
@@ -111,6 +113,11 @@ class Event:
     asked: str | None = None
     #: 登记了那台机器的人：他的机器上有 agent 开工了。
     machine_owner: str | None = None
+    #: 一条公告写给的那些人：发布那一刻这个空间里除发布人以外的每个人。这是上面
+    #: 「不从名册推」唯一的例外，而它不是推出来的：公告本身就是对全空间说的话，
+    #: 名单由发公告的那个调用点点出来、在这一刻快照下来，之后进出空间的人不改变
+    #: 它发给过谁。
+    audience: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +180,7 @@ def address(event: Event, next_hand: Hand) -> Addressed:
         *((h, REASON_REVIEWER) for h in event.reviewers),
         (event.reporter, REASON_REPORTER),
         (event.machine_owner, REASON_MACHINE_OWNER),
+        *((h, REASON_AUDIENCE) for h in event.audience),
     ):
         name = (handle or "").strip()
         if not name or name in seen:

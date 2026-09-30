@@ -211,14 +211,12 @@ class SpaceService:
         avatar_id: int | None,
         enable_rank: bool,
         owner_id: int,
-        announcements: list,
         task_templates: list,
         visible_task_limit: int | None = None,
     ) -> Space:
         self._validate_strings(name=name)
         if not isinstance(intro, str) or not isinstance(description, str):
             raise BadRequestError("intro and description must be strings")
-        normalized_announcements = self._normalize_json_list(announcements)
         normalized_templates = self._normalize_json_list(task_templates)
         self._validate_visible_task_limit(visible_task_limit)
 
@@ -228,7 +226,6 @@ class SpaceService:
             description=description.strip(),
             avatar_id=avatar_id,
             enable_rank=enable_rank,
-            announcements=normalized_announcements,
             task_templates=normalized_templates,
             visible_task_limit=visible_task_limit,
         )
@@ -275,7 +272,6 @@ class SpaceService:
         description: str | None = None,
         avatar_id: int | None = None,
         enable_rank: bool | None = None,
-        announcements: list | None = None,
         task_templates: list | None = None,
         default_category_id: int | None = None,
         visible_task_limit: int | None = None,
@@ -300,8 +296,6 @@ class SpaceService:
             space.avatar_id = avatar_id
         if enable_rank is not None:
             space.enable_rank = bool(enable_rank)
-        if announcements is not None:
-            space.announcements = self._normalize_json_list(announcements)
         if task_templates is not None:
             space.task_templates = self._normalize_json_list(task_templates)
         if set_visible_task_limit:

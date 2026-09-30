@@ -1,12 +1,4 @@
-import type {
-  DomainGroup,
-  Space,
-  SpaceAdminRoleType,
-  SpaceAnnouncement,
-  SpaceCategory,
-  SpaceTaskTemplate,
-  Topic,
-} from '@/types'
+import type { DomainGroup, Space, SpaceAdminRoleType, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
 
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
@@ -62,16 +54,6 @@ export const useSpaceStore = defineStore('space', () => {
     }
   })
 
-  const announcements = computed<SpaceAnnouncement[]>(() => {
-    if (!currentSpace.value) return []
-    try {
-      return JSON.parse(currentSpace.value.announcements || '[]')
-    } catch (error) {
-      console.error('解析公告失败:', error)
-      return []
-    }
-  })
-
   const classificationTopics = computed<Topic[]>(() => {
     if (!currentSpace.value) return []
     return currentSpace.value.classificationTopics || []
@@ -103,7 +85,6 @@ export const useSpaceStore = defineStore('space', () => {
     currentSpace,
     currentSpaceId,
     templates,
-    announcements,
     classificationTopics,
     categories,
     loadingCategories,

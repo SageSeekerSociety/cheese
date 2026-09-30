@@ -366,6 +366,105 @@
       '404':
         description: No such invite code
 
+/spaces/{spaceId}/announcements:
+  get:
+    summary: List a space's announcements
+    description: |
+      Everyone in the space may read. `current` holds the unexpired ones,
+      pinned first and then newest; `expired` holds the rest, most recently
+      expired first — the server's clock decides. `notifyCount` is how many
+      people an announcement published by the caller would notify (everyone in
+      the space but the caller), given to the owner and admins and null for
+      everyone else.
+    operationId: listSpaceAnnouncements
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/SpaceId'
+    responses:
+      '200':
+        description: '`{current: SpaceAnnouncement[], expired: SpaceAnnouncement[], notifyCount: integer | null}`'
+      '404':
+        description: The space does not exist, or the caller cannot see it
+  post:
+    summary: Publish an announcement
+    description: |
+      The owner and admins only. Everyone else in the space receives one
+      in-app notification (`SPACE_ANNOUNCEMENT`), unread; no email or push.
+    operationId: publishSpaceAnnouncement
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/SpaceId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/PublishSpaceAnnouncementRequest'
+    responses:
+      '201':
+        description: '`{announcement: SpaceAnnouncement}`'
+      '400':
+        description: Empty title, or an expiry already past
+      '403':
+        description: The caller is neither the owner nor an admin
+
+/spaces/{spaceId}/announcements/{announcementId}:
+  patch:
+    summary: Update an announcement
+    description: |
+      The owner and admins only. Notifies nobody again; the notifications it
+      already sent are brought up to date.
+    operationId: updateSpaceAnnouncement
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/SpaceId'
+      - name: announcementId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/UpdateSpaceAnnouncementRequest'
+    responses:
+      '200':
+        description: '`{announcement: SpaceAnnouncement}`'
+      '403':
+        description: The caller is neither the owner nor an admin
+      '404':
+        description: No such announcement in this space
+  delete:
+    summary: Delete an announcement
+    description: |
+      The owner and admins only. The notifications it sent are deleted with it.
+    operationId: deleteSpaceAnnouncement
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/SpaceId'
+      - name: announcementId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '204':
+        description: Deleted
+      '403':
+        description: The caller is neither the owner nor an admin
+      '404':
+        description: No such announcement in this space
+
 /spaces/{spaceId}/members:
   get:
     summary: List space members

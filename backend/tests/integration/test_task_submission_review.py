@@ -31,7 +31,6 @@ class TestTaskSubmissionReviewIntegration:
                 "description": "A lengthy description. " * 20,
                 "avatarId": 1,
                 "enableRank": False,
-                "announcements": [],
                 "taskTemplates": [],
             },
             headers={"Authorization": f"Bearer {creator.token}"},

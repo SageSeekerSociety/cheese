@@ -35,7 +35,6 @@ def _space(**overrides):
         "description": "Desc",
         "avatar_id": None,
         "enable_rank": True,
-        "announcements": [],
         "task_templates": [],
         "created_at": NOW,
         "updated_at": NOW,
@@ -190,7 +189,6 @@ class TestSpaceRepository:
             description="Desc",
             avatar_id=None,
             enable_rank=True,
-            announcements=[],
             task_templates=[],
         )
         assert result.name == "New Space"
