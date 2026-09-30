@@ -1,4 +1,3 @@
-export { default as AIChatButton } from './AIChatButton.vue'
 export { default as LeaveTeamDialog } from './LeaveTeamDialog.vue'
 export { default as LoadingErrorContainer } from './LoadingErrorContainer.vue'
 export { default as PrivacyProtectionInfo } from './PrivacyProtectionInfo.vue'
