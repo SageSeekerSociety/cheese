@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 
 import { truncateString } from '@/utils/form'
 
+import { t } from '@/i18n'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
@@ -38,7 +39,7 @@ export function useTaskData() {
   const breadcrumbItems = computed(() => {
     if (taskData.value?.space) {
       return [
-        { title: '知是', to: { name: 'HomeDefault' } },
+        { title: t('global.cheese'), to: { name: 'HomeDefault' } },
         {
           title: truncateString(taskData.value?.space.name, 12),
           to: { name: routeNames.spaceHome, params: { spaceId: taskData.value?.space.id } },
@@ -145,7 +146,7 @@ export function useTaskData() {
         }
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '加载题目信息失败'
+      error.value = err instanceof Error ? err.message : t('tasks.loadFailed')
       console.error('Failed to load task:', err)
     } finally {
       loading.value = false

@@ -303,7 +303,9 @@ function realNameLine(info: TaskParticipantRealNameInfo): string {
 function memberName(member: TaskTeamParticipantMemberSummary): string {
   if (props.taskData?.requireRealName && member.realNameInfo?.realName) {
     const id = member.realNameInfo.studentId
-    return id ? `${member.realNameInfo.realName}（${id}）` : member.realNameInfo.realName
+    return id
+      ? t('tasks.roster.memberWithId', { name: member.realNameInfo.realName, id })
+      : member.realNameInfo.realName
   }
   return member.name
 }
@@ -620,6 +622,11 @@ function saveDeadline() {
 
 .rs__member + .rs__member::before {
   content: '、';
+}
+
+/* 顿号只在中文里是列表分隔符；英文界面用逗号。<html lang> 随界面语言切换。 */
+:lang(en) .rs__member + .rs__member::before {
+  content: ', ';
 }
 
 .rs__sr {

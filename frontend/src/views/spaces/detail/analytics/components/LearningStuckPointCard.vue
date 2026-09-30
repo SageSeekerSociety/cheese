@@ -6,7 +6,7 @@
         class="stuck-card__check"
         density="compact"
         hide-details
-        :aria-label="`勾选卡点 ${label}`"
+        :aria-label="t('spaces.analytics.learning.stuck.pick', { label })"
       />
 
       <div class="stuck-card__titles">
@@ -14,7 +14,9 @@
         <div class="stuck-card__counts">{{ counts }}</div>
       </div>
 
-      <div class="stuck-card__latest">最近 {{ formatLearningTime(point.latestAt) }}</div>
+      <div class="stuck-card__latest">
+        {{ t('spaces.analytics.learning.stuck.latest', { time: formatLearningTime(point.latestAt) }) }}
+      </div>
     </div>
 
     <LearningQuoteItem :excerpt="point.example" />
@@ -25,6 +27,7 @@
 import type { SpaceLearningStuckPoint } from '@/network/api/spaces/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { formatLearningTime, knowledgePointLabel } from '../helpers'
 
@@ -36,12 +39,18 @@ const props = defineProps<{
 
 // 勾中一个卡点就把它的那条示例发言带进提纲 —— 管理员勾的是「这个知识点要讲」，
 // 而能带走的东西只有后端给的那一条例子。
+const { t } = useI18n()
+
 const checked = defineModel<boolean>('checked', { default: false })
 
 const label = computed(() => knowledgePointLabel(props.point.knowledgePoint))
 
-const counts = computed(
-  () => `${props.point.studentCount} 个成员 · ${props.point.projectCount} 个项目 · ${props.point.questionCount} 条发言`
+const counts = computed(() =>
+  t('spaces.analytics.learning.stuck.counts', {
+    students: props.point.studentCount,
+    projects: props.point.projectCount,
+    questions: props.point.questionCount,
+  })
 )
 </script>
 

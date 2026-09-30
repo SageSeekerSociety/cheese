@@ -15,6 +15,7 @@ import { computed } from 'vue'
 import { getAvatarUrl } from '@/utils/materials'
 
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import { t } from '@/i18n'
 import {
   canEditKnowledge,
   formatDetailDate,
@@ -80,7 +81,7 @@ const richText = computed({
             max-width="100%"
           >
             <source :src="resource.material.url" />
-            您的浏览器不支持视频播放
+            {{ t('teams.knowledge.videoUnsupported') }}
           </video>
 
           <!-- 音频预览 -->
@@ -91,7 +92,7 @@ const richText = computed({
             style="width: 100%"
           >
             <source :src="resource.material.url" />
-            您的浏览器不支持音频播放
+            {{ t('teams.knowledge.audioUnsupported') }}
           </audio>
 
           <!-- 文档预览 -->
@@ -107,12 +108,14 @@ const richText = computed({
             ></v-icon>
             <div class="text-center">
               <div class="text-body-2 mb-2">
-                {{ (resource.material.meta as FileMeta).name || '该文档需要在外部程序中查看' }}
+                {{ (resource.material.meta as FileMeta).name || t('teams.knowledge.documentExternal') }}
               </div>
               <div class="text-caption text-medium-emphasis mb-3">
                 {{ formatFileSize((resource.material.meta as FileMeta).size) }}
               </div>
-              <v-btn color="primary" size="small" @click="emit('openLink', resource)"> 打开文档 </v-btn>
+              <v-btn color="primary" size="small" @click="emit('openLink', resource)">{{
+                t('teams.knowledge.openDocument')
+              }}</v-btn>
             </div>
           </v-sheet>
 
@@ -139,7 +142,9 @@ const richText = computed({
                 <h3 class="text-h6 mb-1">{{ content.title || resource.name }}</h3>
                 <p class="text-body-2 mb-2">{{ content.description || resource.description }}</p>
                 <div class="text-caption text-medium-emphasis mb-3 text-truncate">{{ content.url }}</div>
-                <v-btn color="primary" size="small" @click="emit('openLink', resource)"> 访问链接 </v-btn>
+                <v-btn color="primary" size="small" @click="emit('openLink', resource)">{{
+                  t('teams.knowledge.visitLink')
+                }}</v-btn>
               </div>
             </div>
           </v-sheet>
@@ -147,7 +152,7 @@ const richText = computed({
           <!-- 代码片段预览 -->
           <v-sheet v-else-if="resource.type === 'CODE'" color="surface-light" class="pa-4 code-preview rounded-lg">
             <div class="d-flex align-center mb-2">
-              <div class="text-subtitle-1 font-weight-medium">代码片段</div>
+              <div class="text-subtitle-1 font-weight-medium">{{ t('teams.knowledge.typeCode') }}</div>
               <v-chip v-if="content.language" class="ml-2" size="small" variant="tonal">
                 {{ content.language }}
               </v-chip>
@@ -162,34 +167,34 @@ const richText = computed({
 
           <div v-else class="text-center py-4">
             <v-icon :icon="resourceTypeIcon(resource.type, resource.material?.type)" size="64"></v-icon>
-            <div class="mt-2 text-body-2">此类型的资料没有预览</div>
+            <div class="mt-2 text-body-2">{{ t('teams.knowledge.noPreview') }}</div>
           </div>
         </div>
 
         <!-- 资料信息 -->
         <v-sheet color="surface-light" rounded="lg" class="pa-4 mb-4">
-          <div class="text-subtitle-1 font-weight-medium mb-2">资料信息</div>
+          <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('teams.knowledge.resourceInfo') }}</div>
           <div class="d-flex resource-info-row">
-            <div class="resource-info-label">类型</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.type') }}</div>
             <div>{{ resourceTypeName(resource.type, resource.material?.type) }}</div>
           </div>
           <div v-if="resource.material?.type === 'file'" class="d-flex resource-info-row">
-            <div class="resource-info-label">文件名</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.fileName') }}</div>
             <div>{{ (resource.material.meta as FileMeta).name }}</div>
           </div>
           <div v-if="resource.material" class="d-flex resource-info-row">
-            <div class="resource-info-label">大小</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.size') }}</div>
             <div>{{ formatFileSize(resource.material.meta.size) }}</div>
           </div>
           <div
             v-if="resource.material?.type === 'video' || resource.material?.type === 'audio'"
             class="d-flex resource-info-row"
           >
-            <div class="resource-info-label">时长</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.duration') }}</div>
             <div>{{ formatDuration((resource.material.meta as VideoMeta | AudioMeta).duration) }}</div>
           </div>
           <div class="d-flex resource-info-row">
-            <div class="resource-info-label">添加者</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.creator') }}</div>
             <div class="d-flex align-center">
               <v-avatar size="24" color="surface-variant" class="mr-2">
                 <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
@@ -198,19 +203,19 @@ const richText = computed({
             </div>
           </div>
           <div class="d-flex resource-info-row">
-            <div class="resource-info-label">添加时间</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.createdAt') }}</div>
             <div>{{ formatDetailDate(resource.createdAt) }}</div>
           </div>
           <div class="d-flex resource-info-row">
-            <div class="resource-info-label">来源频道</div>
-            <div>{{ resource.sourceChannel?.name || '未知频道' }}</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.sourceChannel') }}</div>
+            <div>{{ resource.sourceChannel?.name || t('teams.knowledge.unknownChannel') }}</div>
           </div>
           <div v-if="resource.description" class="d-flex resource-info-row">
-            <div class="resource-info-label">描述</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.description') }}</div>
             <div>{{ resource.description }}</div>
           </div>
           <div v-if="resource.labels && resource.labels.length > 0" class="d-flex resource-info-row">
-            <div class="resource-info-label">标签</div>
+            <div class="resource-info-label">{{ t('teams.knowledge.tags') }}</div>
             <div class="d-flex flex-wrap">
               <v-chip v-for="tag in resource.labels" :key="tag" size="small" variant="tonal" class="mr-1 mb-1">
                 {{ tag }}
@@ -221,7 +226,7 @@ const richText = computed({
 
         <!-- 原始讨论上下文 -->
         <v-sheet color="surface-light" rounded="lg" class="pa-4">
-          <div class="text-subtitle-1 font-weight-medium mb-2">原始讨论</div>
+          <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('teams.knowledge.originalDiscussion') }}</div>
           <div v-if="resource.originalMessage" class="original-message-context">
             <div class="d-flex">
               <v-avatar size="36" color="surface-variant" class="mt-1">
@@ -239,7 +244,9 @@ const richText = computed({
             </div>
             <!-- 频道已退役（都归项目）：原始消息就地展示，不再提供跳转。 -->
           </div>
-          <div v-else class="text-center py-4 text-body-2 text-medium-emphasis">没有关联的原始讨论信息</div>
+          <div v-else class="text-center py-4 text-body-2 text-medium-emphasis">
+            {{ t('teams.knowledge.noOriginalDiscussion') }}
+          </div>
         </v-sheet>
       </v-card-text>
 
@@ -253,11 +260,11 @@ const richText = computed({
           variant="text"
           @click="emit('delete', resource)"
         >
-          删除资料
+          {{ t('teams.knowledge.deleteResource') }}
         </v-btn>
         <v-btn color="primary" variant="tonal" @click="emit('openLink', resource)">
           <v-icon start>mdi-open-in-new</v-icon>
-          打开资料
+          {{ t('teams.knowledge.openResource') }}
         </v-btn>
       </v-card-actions>
     </v-card>

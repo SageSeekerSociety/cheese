@@ -2,11 +2,11 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import InsightsView from './InsightsView.vue'
 
-import i18n from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const TASK_ID = 3
 
@@ -72,6 +72,8 @@ function buckets(): Record<string, string> {
 }
 
 describe('单题看板的「小队构成」', () => {
+  // 桶名与单位按中文界面断言。
+  beforeEach(() => setLocale('zh-CN'))
   afterEach(() => {
     cleanup()
   })

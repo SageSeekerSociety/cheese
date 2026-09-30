@@ -265,7 +265,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     about: '实名信息要求那张卡：一个开关，加上开关底下跟着变的那一块。',
     file: 'src/components/tasks/form/TaskFormRealNameCard.vue',
     component: TaskFormRealNameCard,
-    needs: UI,
+    needs: UI_T,
     states: [
       {
         name: '没开（默认）',
@@ -373,7 +373,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     about: '视频链接那张卡：一个选填的地址和一句「支持 Bilibili」的提示。',
     file: 'src/components/tasks/form/TaskFormVideoCard.vue',
     component: TaskFormVideoCard,
-    needs: UI,
+    needs: UI_T,
     states: [
       {
         name: '空着',
@@ -405,7 +405,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     about: '「实名信息隐私保护」那段说明：第一次要求实名再提交时弹出来，读完点「了解并接受」才真的交上去。',
     file: 'src/components/tasks/form/TaskFormPrivacyDialog.vue',
     component: TaskFormPrivacyDialog,
-    needs: UI,
+    needs: UI_T,
     teleport: true,
     states: [
       {
@@ -422,7 +422,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     about: '「视频链接提示」那段：填了一个解析不了的地址时问一句「还存吗」。',
     file: 'src/components/tasks/form/TaskFormVideoDialog.vue',
     component: TaskFormVideoDialog,
-    needs: UI,
+    needs: UI_T,
     teleport: true,
     states: [
       {

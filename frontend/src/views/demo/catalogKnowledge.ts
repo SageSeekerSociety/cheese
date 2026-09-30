@@ -70,8 +70,8 @@ export const KNOWLEDGE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '三个筛选都挂着',
-        note: '类型那一栏给的是中文名（`RESOURCE_TYPE_OPTIONS`），请求里要的 type code 由页翻（`resourceTypeCode`）—— 所以这里和下拉的文案是同一张表。',
-        props: knowledgeToolbarProps({ searchQuery: '设计', typeFilter: '文件', tagFilter: '前端' }),
+        note: '类型那一栏的值就是类型码（`RESOURCE_TYPE_OPTIONS`），显示名由件按界面语言翻（`knowledgeTypeLabel`）—— 请求里直接用这个值。',
+        props: knowledgeToolbarProps({ searchQuery: '设计', typeFilter: 'MATERIAL', tagFilter: '前端' }),
         expect: '上传资料',
       },
       {

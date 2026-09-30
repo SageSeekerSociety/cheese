@@ -8,6 +8,7 @@ import type { Knowledge } from '@/types'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { t } from '@/i18n'
 import { canEditKnowledge, formatDay, resourceTypeIcon, resourceTypeName } from '@/lib/knowledgeFormat'
 
 defineOptions({ name: 'KnowledgeTable' })
@@ -25,12 +26,12 @@ const emit = defineEmits<{
   <v-table class="resource-table rounded-lg">
     <thead>
       <tr>
-        <th>资料名称</th>
-        <th>类型</th>
-        <th>添加者</th>
-        <th>添加时间</th>
-        <th>标签</th>
-        <th>操作</th>
+        <th>{{ t('teams.knowledge.name') }}</th>
+        <th>{{ t('teams.knowledge.type') }}</th>
+        <th>{{ t('teams.knowledge.creator') }}</th>
+        <th>{{ t('teams.knowledge.createdAt') }}</th>
+        <th>{{ t('teams.knowledge.tags') }}</th>
+        <th>{{ t('teams.knowledge.actions') }}</th>
       </tr>
     </thead>
     <tbody>
