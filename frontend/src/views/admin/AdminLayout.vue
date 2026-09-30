@@ -74,6 +74,16 @@ const SECTIONS: { to: string; name: string; icon: string; label: () => string; b
     label: () => t('navigation.admin.featureStats'),
     badge: false,
   },
+  // 「棘轮」也放在这里，理由和上一条一样：它是「看数」不是「操作」。三块的刻度不同 ——
+  // 看板是平台、功能数据是一个功能、这一条是仓库自己的架构债。它排在最后，因为它不是
+  // 每天要看的：采集跟着 main 走，变化以天计。
+  {
+    to: '/admin/ratchet',
+    name: 'AdminRatchet',
+    icon: 'mdi-chart-timeline-variant',
+    label: () => t('navigation.admin.ratchet'),
+    badge: false,
+  },
   // 「模型」放在看板后面：它和看板看的是同一条链（网关上的模型与它们花掉的钱），
   // 只是看板报量、这一块管钱和上架。入口名说的是里面装的是什么。
   {
