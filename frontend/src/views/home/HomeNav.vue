@@ -5,7 +5,8 @@
 // （HomeHub）——同一份目录，两端不各写一份。
 //
 // 团队在原地展开：一个团队只有四样东西（项目、成员、知识库、工作电脑），点哪样
-// 右边就打开哪样，侧栏不动。空间不展开：空间自己有一整套目录，点进去就是那个空间。
+// 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
+// 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
 import type { Team } from '@/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -101,6 +102,9 @@ const TEAM_PAGES = [
   { name: 'TeamsDetailKnowledge', label: 'home.nav.teamKnowledge', exact: false },
   { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
 ] as const
+// 个人团队谁也加不进来（后端拒），「成员」一页就不列。
+const pagesOf = (team: Team) =>
+  team.personal ? TEAM_PAGES.filter((page) => page.name !== 'TeamsDetailMembers') : TEAM_PAGES
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
@@ -170,6 +174,7 @@ const joinOpen = ref(false)
             </template>
             <v-list density="compact">
               <v-list-item
+                v-if="!team.personal"
                 :to="{ name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } }"
                 :title="t('home.nav.inviteMembers')"
               />
@@ -180,7 +185,7 @@ const joinOpen = ref(false)
       </v-list-item>
       <template v-if="isOpen(team)">
         <v-list-item
-          v-for="page in TEAM_PAGES"
+          v-for="page in pagesOf(team)"
           :key="page.name"
           rounded="lg"
           class="home-nav__leaf"
