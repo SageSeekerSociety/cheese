@@ -85,7 +85,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
   </aside>
   <main class="page">
   <div class="page-container--admin">
-    <div class="banner">预览页，未上线。数字是芝士在工作机上对 main 实跑的结果和 CI 的 50 份历史记录；带「人工标注」的变化分类和「刷新」按钮是示意。</div>
+    <div class="banner">预览页，未上线。数字是芝士在工作机上对 main 实跑的结果和 CI 的 53 份历史记录；带「人工标注」的变化分类和「刷新」按钮是示意。</div>
 
     <div class="ph">
       <div>
@@ -96,16 +96,16 @@ a.pr{color:var(--info-ink);text-decoration:none}
     </div>
 
     <div class="prov">
-      <span>检查结果：<b class="mono">main@dc069a4</b>（#2189）</span>
-      <span>采集：<b>2026-09-30 05:22–05:23 UTC</b>，芝士工作机实跑</span>
-      <span>历史：CI「Architecture metrics」<b>50 次</b> main 运行，最早 2026-09-29 15:24 UTC</span>
+      <span>检查结果：<b class="mono">main@ccc8a18e</b>（#2182 合入）</span>
+      <span>采集：<b>2026-09-30 06:00:56–06:06:52 UTC</b>，芝士工作机实跑</span>
+      <span>历史：CI「Architecture metrics」<b>53 次</b> main 运行，2026-09-29 15:24 至本次采集的提交</span>
     </div>
     <div class="legend">
       <span class="tag t-real">真实值</span>
       <span class="tag t-sample">样例 / 示意</span>
       <span class="tag t-missing">未采集</span>
       <span class="tag t-recal">口径修正中</span>
-      <span class="tag t-rule">规则变更</span>
+      <span class="tag t-rule">规则变更 / 新口径起点</span>
       <span class="tag t-del">删除功能</span>
       <span class="tag t-up">新增豁免</span>
     </div>
@@ -116,9 +116,9 @@ a.pr{color:var(--info-ink);text-decoration:none}
       <table class="overview">
         <thead><tr><th>方面</th><th>检查</th><th>结果</th><th>还冻结着的债</th><th>同口径起点 → 现在</th><th>判断</th></tr></thead>
         <tbody>
-          <tr><td><a href="#s1">能独立运行的前端场景</a></td><td>2 道</td><td><span class="tag t-recal">口径修正中</span></td><td class="dim">待核算</td><td class="dim">暂不比较</td><td>等 #2182 的判定修复合入并回归通过后再采</td></tr>
+          <tr><td><a href="#s1">能独立运行的前端场景</a></td><td>2 道</td><td><span class="tag t-pass">通过</span></td><td>128 个场景评分未达标</td><td><span class="tag t-rule">新口径起点</span> 评分达标 10 / 138，其中 1 个有挂载证据</td><td>第一次采集，还没有可比的点</td></tr>
           <tr><td><a href="#s2">前后端依赖边界</a></td><td>7 道</td><td><span class="tag t-pass">7 通过</span></td><td>前端 116 处 · 后端契约 253 条（冻结 255）</td><td>前端 127 → 116 · C3 178 → 173</td><td><span class="delta-down">在降</span>；C1、C2 无变化</td></tr>
-          <tr><td><a href="#s3">文件规模</a></td><td>1 道</td><td><span class="tag t-pass">通过</span></td><td>29 个文件超标，共超 28,034 行</td><td>34 → 29 个 · 34,753 → 28,034 行</td><td><span class="delta-down">在降</span>；其中 3 个文件靠删除功能下线</td></tr>
+          <tr><td><a href="#s3">文件规模</a></td><td>1 道</td><td><span class="tag t-pass">通过</span></td><td>29 个文件超标，共超 27,887 行</td><td>34 → 29 个 · 34,753 → 27,887 行</td><td><span class="delta-down">在降</span>；其中 3 个文件靠删除功能下线</td></tr>
           <tr><td><a href="#s4">类型与样式</a></td><td>3 道</td><td><span class="tag t-pass">3 通过</span></td><td>样式令牌 37 处 · 固定色 7 处（冻结）</td><td><span class="tag t-missing">历史未采集</span></td><td>无历史，不判断方向</td></tr>
         </tbody>
       </table>
@@ -126,26 +126,30 @@ a.pr{color:var(--info-ink);text-decoration:none}
 
     <!-- 1 -->
     <section class="card" id="s1">
-      <div class="card-h"><h3>① 能独立运行的前端场景</h3><span class="why">页面或面板只靠 props 和事件就能渲染</span><span class="st tag t-recal">口径修正中</span></div>
+      <div class="card-h"><h3>① 能独立运行的前端场景</h3><span class="why">页面或面板只靠 props 和事件就能渲染</span><span class="st tag t-pass">2 道通过</span></div>
       <div class="kpis">
-        <div class="kpi"><div class="l">能独立运行的场景</div><div class="v dim">待核算</div><div class="f">判定漏算 .vue 子组件自己取数，负责人在修判定并重建基线</div></div>
-        <div class="kpi"><div class="l">组件 A 级（只靠 props）</div><div class="v dim">待核算</div><div class="f">同一套判定，同样受影响；旧口径读数不作当前值</div></div>
-        <div class="kpi"><div class="l">预览站缺的条目</div><div class="v dim">未采集</div><div class="f">场景闸门合入 main 后才有</div></div>
+        <div class="kpi"><div class="l">评分达标 <span class="tag t-real">真实值</span></div><div class="v">10<small>/ 138 个</small></div><div class="f">页面 2 · 面板 8。按规则评分，不代表已单独挂载运行过</div></div>
+        <div class="kpi"><div class="l">已挂载验证 <span class="tag t-real">真实值</span></div><div class="v">1<small>个</small></div><div class="f">PanelTabs：预览站 3 格在 catalog.spec 里挂载通过</div></div>
+        <div class="kpi"><div class="l">达标但未验证 <span class="tag t-real">真实值</span></div><div class="v">9<small>个</small></div><div class="f">没登记预览站，没有挂载证据。补登记本身不算还债</div></div>
+        <div class="kpi"><div class="l">评分未达标 <span class="tag t-real">真实值</span></div><div class="v">128<small>个</small></div><div class="f">C 57（自己取数）· D 71（读路由等）；冻结 128</div></div>
       </div>
       <table class="grid">
         <thead><tr><th>检查</th><th class="num">当前</th><th class="num">基线</th><th>结果</th><th>数据来源</th></tr></thead>
         <tbody>
-          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · PR #2182（未合入）</div></td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-missing">未采集</span></td><td class="src">合入后读 <span class="mono">scene-ratchet.py --list</span> 的输出</td></tr>
+          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · <span class="mono">pnpm run lint:scenes</span></div></td><td class="num">10 / 128</td><td class="num">10 / 128</td><td><span class="tag t-pass">通过</span></td><td class="src">ready / debt；基线 <span class="mono">frontend/scene-baseline.json</span></td></tr>
           <tr class="detail" id="d-scene" hidden><td colspan="5"><dl class="dl">
             <dt>规则</dt><dd>已经能独立运行的场景不许退化；新加的页面或面板从第一天起就要能独立运行</dd>
             <dt>判定来源</dt><dd><span class="mono">.claude/scripts/frontend_grade.py</span>，指标板和闸门共用这一份，本页只读它的输出</dd>
-            <dt>现状</dt><dd>原重构话题已复现漏判：子组件自己取数时父页面仍被评为 A。修复 PR 的 head 和回归结果出来之前，本区不显示数字</dd>
-            <dt>相关</dt><dd><a class="pr">#2182</a> · <a class="pr">#2174</a> · <a class="pr">#2143</a></dd>
+            <dt>口径</dt><dd>#2182 合入时修正了漏判：子组件自己取数，父页面不再被评为 A。本次是修正后的第一次采集，作为新口径起点；之前的「20 个」属于旧口径，不与之比较</dd>
+            <dt>重构负责人的拆分</dt><dd>旧口径到新口径的差异里，有规则修正、24 个场景随功能删除、5 个是 main 上既有的新增，三者分开记。<span class="dim">（来自重构话题，本页未独立复核这份拆分）</span></dd>
+            <dt>挂载证据</dt><dd>只认 /demo/catalog 登记、并被 <span class="mono">views/demo/catalog.spec.ts</span> 逐格挂载通过的场景。本次在 ccc8a18e 上单独跑了这份测试（06:20 UTC）：PanelTabs 的 3 格全部挂载通过</dd>
+            <dt>未验证的 9 个</dt><dd class="mono">ChangesFileTree · TodoChecklist · DocOverlays · DocSlashMenu · DocSurface · PreviewPages · PreviewSheet · views/404 · user/settings/General</dd>
+            <dt>相关</dt><dd><a class="pr">#2182</a> · <a class="pr">#2143</a></dd>
           </dl></td></tr>
-          <tr class="row" data-d="d-grade"><td><div class="name">组件 A/B/C/D 分级</div><div class="src">arch-metrics.py · 看板，不拦 PR</div></td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-recal">口径修正中</span></td><td class="src">CI 每次 push main 的 JSON</td></tr>
+          <tr class="row" data-d="d-grade"><td><div class="name">组件 A/B/C/D 分级</div><div class="src">arch-metrics.py · 看板，不拦 PR</div></td><td class="num">A 147 / 392</td><td class="num dim">无冻结</td><td><span class="tag t-rule">新口径起点</span></td><td class="src">B 1 · C 144 · D 100；CI 每次 push main 的 JSON</td></tr>
           <tr class="detail" id="d-grade" hidden><td colspan="5"><dl class="dl">
-            <dt>旧口径读数</dt><dd>main@dc069a4：A 180 / 392 个组件。仅供对照，修复后的判定会改变它，届时起点从新判定的第一次运行算起</dd>
-            <dt>历史</dt><dd>09-29 15:24 起 50 次；其中 #2154 删除课程与讨论后组件数 442 → 392，这一步是删除功能，不是还债</dd>
+            <dt>口径</dt><dd>从 ccc8a18e 起是新判定。旧判定的 52 次记录（最后一次 A 180 / 392）单独保留，不和新口径连成一条线</dd>
+            <dt>旧口径里的一步</dt><dd>#2154 删除课程与讨论后组件数 442 → 392，这是删除功能，不是还债</dd>
           </dl></td></tr>
         </tbody>
       </table>
@@ -176,7 +180,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
             </ul><div class="dim" style="font-size:11.5px;margin-top:4px">分类为预览中人工按 PR 标注 <span class="tag t-sample">样例</span></div></dd>
           </dl></td></tr>
           <tr class="row" data-d="d-c1"><td><div class="name">C1 分层：api → domain → core 不倒挂</div><div class="src">import-linter · <span class="mono">check_boundaries.py</span></div></td><td class="num">26</td><td class="num">26</td><td class="num">0</td><td class="num">26</td><td class="num delta-flat">0</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c1" width="180" height="30"></svg></td></tr>
-          <tr class="detail" id="d-c1" hidden><td colspan="8"><dl class="dl"><dt>判断</dt><dd>自 09-29 15:24 起 50 次运行都是 26，没有一条被还掉</dd><dt>基线文件</dt><dd><span class="mono">backend/.importlinter</span> 的 ignore_imports</dd></dl></td></tr>
+          <tr class="detail" id="d-c1" hidden><td colspan="8"><dl class="dl"><dt>判断</dt><dd>自 09-29 15:24 起 53 次运行都是 26，没有一条被还掉</dd><dt>基线文件</dt><dd><span class="mono">backend/.importlinter</span> 的 ignore_imports</dd></dl></td></tr>
           <tr class="row" data-d="d-c2"><td><div class="name">C2 路由不碰别的领域的 models</div><div class="src">import-linter</div></td><td class="num">54</td><td class="num">56</td><td class="num" style="color:var(--warn-ink)">2</td><td class="num">56<span class="dim">（冻结）</span></td><td class="num dim">实际历史未采集</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c2" width="180" height="30"></svg></td></tr>
           <tr class="detail" id="d-c2" hidden><td colspan="8"><dl class="dl">
             <dt>失效豁免</dt><dd><span class="mono">app.api.routes.spaces -&gt; app.domain.teaching.models</span><br><span class="mono">app.api.routes.spaces -&gt; app.domain.task.models</span><br>#2153 删掉了空间讨论接口，这两条已无对应导入</dd>
@@ -201,7 +205,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
       <div class="card-h"><h3>③ 文件规模</h3><span class="why">前端单文件 ≤ 1000 行，后端 ≤ 1500 行；超标的只许变小</span><span class="st tag t-pass">通过</span></div>
       <div class="kpis">
         <div class="kpi"><div class="l">超标文件 <span class="tag t-real">真实值</span></div><div class="v">29<small>个</small></div><div class="f"><span class="delta-down">−5</span> 比起点 34 · 前端 13 · 后端 16</div></div>
-        <div class="kpi"><div class="l">超出上限的行数合计 <span class="tag t-real">真实值</span></div><div class="v">28,034<small>行</small></div><div class="f"><span class="delta-down">−6,719</span> 比起点 34,753</div></div>
+        <div class="kpi"><div class="l">超出上限的行数合计 <span class="tag t-real">真实值</span></div><div class="v">27,887<small>行</small></div><div class="f"><span class="delta-down">−6,866</span> 比起点 34,753</div></div>
         <div class="kpi"><div class="l"><span class="mono">agent/chat.py</span> <span class="tag t-real">真实值</span></div><div class="v">5,487<small>行</small></div><div class="f"><span class="delta-down">−1,150</span> 比起点 6,637 · 上限 1,500</div></div>
       </div>
       <table class="grid">
@@ -243,7 +247,7 @@ document.querySelectorAll('svg.spark').forEach(svg=>{
   if(mark){const i=S.findIndex(r=>r.sha===mark); if(i>=0){const l=document.createElementNS(ns,'line');l.setAttribute('x1',x(i));l.setAttribute('x2',x(i));l.setAttribute('y1',1);l.setAttribute('y2',H-1);l.setAttribute('stroke','#2F5AA8');l.setAttribute('stroke-dasharray','2 2');svg.appendChild(l);}}
   const p=document.createElementNS(ns,'path');p.setAttribute('d',d);p.setAttribute('fill','none');p.setAttribute('stroke','#5A5E66');p.setAttribute('stroke-width','1.6');svg.appendChild(p);
   const dot=document.createElementNS(ns,'circle');dot.setAttribute('r',3);dot.setAttribute('fill','#191A1C');dot.style.display='none';svg.appendChild(dot);
-  svg.addEventListener('mousemove',e=>{const b=svg.getBoundingClientRect();const i=Math.max(0,Math.min(S.length-1,Math.round((e.clientX-b.left-pad)/((W-2*pad)/(S.length-1)))));const r=S[i];dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(r[key]));dot.style.display='';tip.style.display='block';tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px';tip.innerHTML=`<b>${fmt(r[key])}</b> · ${r.date.replace('T',' ').slice(0,16)} UTC<br><span style="font-family:monospace">${r.sha}</span> ${r.subject.replace(/</g,'&lt;')}`;});
+  svg.addEventListener('mousemove',e=>{const b=svg.getBoundingClientRect();const i=Math.max(0,Math.min(S.length-1,Math.round((e.clientX-b.left-pad)/((W-2*pad)/(S.length-1)))));const r=S[i];dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(r[key]));dot.style.display='';tip.style.display='block';tip.innerHTML=`<b>${fmt(r[key])}</b> · ${r.date.replace('T',' ').slice(0,16)} UTC<br><span style="font-family:monospace">${r.sha}</span> ${r.subject.replace(/</g,'&lt;')}`;const tw=tip.offsetWidth;tip.style.left=(e.clientX+12+tw>innerWidth?e.clientX-12-tw:e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px';});
   svg.addEventListener('mouseleave',()=>{dot.style.display='none';tip.style.display='none'});
 });
 const tb=document.getElementById('worst');
