@@ -37,6 +37,12 @@ _FAILED_MEMBER = "ratchet-snapshot.failed.txt"
 #: section later. The cap is here because a download is unbounded otherwise.
 _MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
+#: What one member may expand to. The cap above bounds the zip we download, which
+#: bounds nothing inside it: a 5 KB artifact can declare a member of gigabytes,
+#: and `ZipFile.read` would build that in memory without asking. Two guards, not
+#: one — the declared size first (cheap), then a bounded read (a header can lie).
+_MAX_MEMBER_BYTES = 8 * 1024 * 1024
+
 
 class RatchetGitHubError(RuntimeError):
     """GitHub refused, or answered with something that is not an artifact."""
@@ -186,6 +192,23 @@ class GitHubArtifacts:
         return resp.content
 
 
+def _read_member(archive: zipfile.ZipFile, name: str) -> bytes | None:
+    """Read one member, refusing anything that expands past the cap.
+
+    None means "too big", which the caller turns into an unreadable artifact —
+    the same reading as an unknown version, and for the same reason: this reader
+    did not understand what it was given, so it stores nothing.
+    """
+    info = archive.getinfo(name)
+    if info.file_size > _MAX_MEMBER_BYTES:
+        return None
+    with archive.open(info) as member:
+        raw = member.read(_MAX_MEMBER_BYTES + 1)
+    if len(raw) > _MAX_MEMBER_BYTES:
+        return None
+    return raw
+
+
 def read_snapshot(blob: bytes) -> SnapshotRead:
     """Turn one downloaded artifact into a snapshot, or say why it is not one.
 
@@ -196,9 +219,24 @@ def read_snapshot(blob: bytes) -> SnapshotRead:
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
             names = archive.namelist()
             if _SNAPSHOT_MEMBER in names:
-                raw = archive.read(_SNAPSHOT_MEMBER)
+                raw = _read_member(archive, _SNAPSHOT_MEMBER)
+                if raw is None:
+                    return SnapshotRead(
+                        None,
+                        None,
+                        f"{_SNAPSHOT_MEMBER} 解压后超过 {_MAX_MEMBER_BYTES} 字节，不读",
+                        unreadable=True,
+                    )
             elif _FAILED_MEMBER in names:
-                text = archive.read(_FAILED_MEMBER).decode("utf-8", "replace").strip()
+                note = _read_member(archive, _FAILED_MEMBER)
+                if note is None:
+                    return SnapshotRead(
+                        None,
+                        None,
+                        f"{_FAILED_MEMBER} 解压后超过 {_MAX_MEMBER_BYTES} 字节，不读",
+                        unreadable=True,
+                    )
+                text = note.decode("utf-8", "replace").strip()
                 return SnapshotRead(
                     None, None, text[:2000] or "采集失败，工件没有写明原因"
                 )

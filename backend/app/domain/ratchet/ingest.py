@@ -8,19 +8,29 @@ job and the page's refresh button can both call it without coordinating.
 The token is the platform App's, minted for the repo's own installation, i.e.
 the same read-only identity a project's repository fetch uses. Nothing here
 writes to GitHub.
+
+**A pull that could not happen reports instead of raising.** The callers are a
+periodic job and the page's refresh button; neither has anywhere to put a
+traceback, and a 500 would lose the one thing worth reading — GitHub's own
+sentence about why. So GitHub's failures come back in `report["error"]`.
 """
 
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.agent.github_app import github_app_tokens_for_project
-from app.domain.project.repositories import ProjectGitInstallationRepository
-from app.domain.ratchet.artifacts import Artifact, GitHubArtifacts, read_snapshot
+from app.domain.project.forge import github_tokens_for_repo
+from app.domain.ratchet.artifacts import (
+    Artifact,
+    GitHubArtifacts,
+    RatchetGitHubError,
+    read_snapshot,
+)
 from app.domain.ratchet.store import RatchetSnapshots
 
 #: How many artifacts one pull looks at. The archive is filled newest-first, so
@@ -44,9 +54,14 @@ class ArtifactSource(Protocol):
 
 @dataclass(frozen=True)
 class Pulled:
-    """One artifact, turned into the row it should become."""
+    """One artifact, turned into the row it should become.
 
-    row: dict[str, Any]
+    ``row`` is None for an artifact this reader cannot read at all (unknown
+    version, not a zip). Nothing is stored for those, and that is deliberate:
+    see `row_for`.
+    """
+
+    row: dict[str, Any] | None
     unreadable: bool
     failed: bool
 
@@ -61,13 +76,25 @@ def _parse_time(raw: Any) -> datetime | None:
 
 
 def row_for(artifact: Artifact, read, repo: str) -> Pulled:
-    """The row for one downloaded artifact.
+    """The row for one downloaded artifact, or None when nothing should be stored.
 
-    A store-everything policy with an honest label, rather than a store-only-
-    good-runs one: a CI run that failed to collect, and an artifact this code
-    cannot read, both belong in the series as the holes they are. Storing only
-    the good ones would draw a line whose every point is a pass and whose gaps
-    are invisible.
+    Two unreadable things are not the same thing, and the difference is what
+    makes re-reading possible later:
+
+    * **The collector said the run failed to collect** (`ratchet-snapshot.failed
+      .txt`, or a payload whose own `collection` is not ``ok``). That is a hole
+      in the series and it is permanent — the same artifact will say the same
+      thing forever. It is stored, labelled, and drawn as the hole it is.
+    * **This reader cannot read it** (unknown version, not a zip, no snapshot
+      member). The run may have collected perfectly; what failed is our reading
+      of it. Storing that as a failed collection would put a number nobody
+      measured into the archive — and, because a stored run is never pulled
+      again, would freeze the mistake: a later version of this reader could
+      never come back for it. So it is counted as unreadable and left out.
+
+    Returning None for the second case is what keeps the retry possible:
+    `known_run_ids` only knows stored runs, so an unreadable artifact is offered
+    again on the next pull.
     """
     base: dict[str, Any] = {
         "repo": repo,
@@ -98,6 +125,8 @@ def row_for(artifact: Artifact, read, repo: str) -> Pulled:
         if base["collection"] == "failed":
             base["reason"] = str(payload.get("reason") or "采集失败，快照没有写明原因")
         base["run_url"] = str(payload.get("run_url") or artifact.run_url or "") or None
+    if read.payload is None and read.unreadable:
+        return Pulled(row=None, unreadable=True, failed=False)
     return Pulled(
         row=base,
         unreadable=read.unreadable,
@@ -151,17 +180,24 @@ async def ingest_once(
     reader: ArtifactSource = source or GitHubArtifacts()
     store = RatchetSnapshots(session)
 
-    installation = await ProjectGitInstallationRepository(session).get_by_repo(repo)
-    if installation is None:
-        report["error"] = f"{repo} 没有连接 GitHub App 安装"
-        return report
-    tokens = await github_app_tokens_for_project(installation.project_id, session)
+    # 凭据按**仓库名**问 project 那一块要（`project.forge` 正是「哪个仓库、什么凭据」
+    # 的边界），采集自己不摸别的领域的 repository。
+    tokens = await github_tokens_for_repo(repo, session)
     if tokens is None:
-        report["error"] = "平台 App 没有配置，读不到 GitHub 工件"
+        report["error"] = (
+            f"{repo} 没有可用的 GitHub App 安装（没连接，或平台 App 未配置）"
+        )
         return report
     token, _expires = await tokens.installation_token()
 
-    artifacts = await reader.list(owner=owner, repo=name, token=token, limit=limit)
+    # GitHub 那侧的失败**不走异常**：这一趟拉不到，页面上已经存下的点还是真的，所以把
+    # 原因原话写进 report，让它出现在 `board.refresh.error` 里。抛出去的话路由只回一个
+    # 500，原因就没了 —— 而「谁拒绝了、为什么」正是要给人看的那句。
+    try:
+        artifacts = await reader.list(owner=owner, repo=name, token=token, limit=limit)
+    except (RatchetGitHubError, httpx.HTTPError) as exc:
+        report["error"] = f"列工件失败：{exc}"
+        return report
     report["listed"] = len(artifacts)
     known = await store.known_run_ids(repo, [a.run_id for a in artifacts if a.run_id])
 
@@ -176,11 +212,18 @@ async def ingest_once(
             # produced. Counted, not stored: the archive is what was collected.
             report["unreadable"] += 1
             continue
-        blob = await reader.download(
-            owner=owner, repo=name, artifact_id=artifact.id, token=token
-        )
+        try:
+            blob = await reader.download(
+                owner=owner, repo=name, artifact_id=artifact.id, token=token
+            )
+        except (RatchetGitHubError, httpx.HTTPError):
+            # One artifact of many: the rest of the pull is still worth doing, and
+            # this run stays unstored so the next pull offers it again.
+            report["unreadable"] += 1
+            continue
         pulled = row_for(artifact, read_snapshot(blob), repo)
-        rows.append(pulled.row)
+        if pulled.row is not None:
+            rows.append(pulled.row)
         report["unreadable"] += int(pulled.unreadable)
         report["failed"] += int(pulled.failed)
 

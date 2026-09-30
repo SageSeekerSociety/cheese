@@ -26,6 +26,7 @@ from app.domain.agent.forgejo_tokens import (
 )
 from app.domain.agent.github_app import GitHubAppTokens, github_app_tokens_for_project
 from app.domain.project.models import Project, ProjectForge
+from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient, default_client
 
@@ -49,6 +50,24 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
             binding, sessions=async_sessionmaker(session.bind, expire_on_commit=False)
         )
     raise GatewayUnavailableError("项目的代码托管类型无法识别")
+
+
+async def github_tokens_for_repo(
+    repo: str, session: AsyncSession
+) -> GitHubAppTokens | None:
+    """The App minter for whichever project is connected to ``repo``, or None.
+
+    棘轮的采集按**仓库名**找人：它手上没有项目 id（那份快照说的是仓库的 CI），而
+    要读的正是这个仓库的工件。所以这里多一个按仓库查的入口，而不是让采集自己去摸
+    `project.repositories` —— 「哪个仓库归哪个项目、拿什么凭据」是这一块的事，别处
+    只该问这一句。按仓库查这一步复用 `ProjectGitInstallationRepository.get_by_repo`
+    （仓库名大小写不敏感的那条既有查法），不另写一遍。没连接、或平台 App 没配置，
+    都返回 None。
+    """
+    installation = await ProjectGitInstallationRepository(session).get_by_repo(repo)
+    if installation is None:
+        return None
+    return await github_app_tokens_for_project(installation.project_id, session)
 
 
 async def ensure_author_email(

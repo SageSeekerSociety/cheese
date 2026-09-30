@@ -7,6 +7,8 @@
 * 规则指纹一变就开新段，方向只看最后一段；跨段相减会把「判定变了」画成「还了债」。
 * 「新增豁免」只在冻结数上升、且指纹没变时标出；那是有人决定冻结，不是发现了债。
 * 方向用检查自己声明的 `better`；没有它就不给方向，不猜。
+* 洞**打断**比较而不是被跳过去：跨过洞相减，会把「中间那次没量到」读成一次巨大的
+  还债。
 """
 
 from datetime import UTC, datetime
@@ -141,6 +143,26 @@ def test_direction_within_one_segment():
         _row("b" * 40, [_check("be-contracts", actual=9)], day=2),
     ]
     assert _check_of(_board(flat), "be-contracts")["direction"] == "flat"
+
+
+def test_a_hole_ends_the_comparison_instead_of_being_stepped_over():
+    rows = [
+        _row("a" * 40, [_check("be-contracts", actual=10)], day=1),
+        _row("b" * 40, [], collection="failed", day=2),
+        _row("c" * 40, [_check("be-contracts", actual=3)], day=3),
+    ]
+    check = _check_of(_board(rows), "be-contracts")
+
+    # 10 → 3 跨过一次失败的采集。中间那次一个数都没量到，两个端点不是同一个状态下
+    # 的读数；照 10 → 3 算会得出「还掉了 7 条债」，而这是页面唯一见证的一个变化。
+    # 只有洞**之后**的连续点才互相比，这里只剩一个点，所以没有方向。
+    assert [point["actual"] for point in check["points"]] == [10, None, 3]
+    assert check["direction"] == "unknown"
+
+    # 洞之后再量到一个点就恢复比较，比的是 3 → 2，不与洞之前那些数相减。
+    rows.append(_row("d" * 40, [_check("be-contracts", actual=2)], day=4))
+    resumed = _check_of(_board(rows), "be-contracts")
+    assert resumed["direction"] == "improving"
 
 
 def test_better_up_reads_the_other_way():

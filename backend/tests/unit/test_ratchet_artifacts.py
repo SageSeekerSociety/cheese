@@ -14,9 +14,9 @@ from app.domain.ratchet.artifacts import read_snapshot
 from app.domain.ratchet.ingest import row_for
 
 
-def _zip(members: dict[str, bytes]) -> bytes:
+def _zip(members: dict[str, bytes], *, compress: int = zipfile.ZIP_STORED) -> bytes:
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
+    with zipfile.ZipFile(buffer, "w", compression=compress) as archive:
         for name, blob in members.items():
             archive.writestr(name, blob)
     return buffer.getvalue()
@@ -126,9 +126,39 @@ def test_a_failed_artifact_still_becomes_a_row():
     assert pulled.failed is True
 
 
-def test_an_unreadable_artifact_is_labelled_and_not_kept_as_a_snapshot():
+def test_an_unreadable_artifact_does_not_enter_the_archive():
     pulled = row_for(_artifact(), read_snapshot(b"junk"), "o/r")
 
-    assert pulled.row["collection"] == "failed"
-    assert pulled.row["payload"] is None
+    # 读不了**不是**一次失败的采集：这次 run 可能采得好好的，是读的人看不懂。存成
+    # failed 会往序列里放一个没人量过的点，而且因为存过的 run 不再拉，这个错会冻在
+    # 归档里 —— 以后读得懂了也补不回来。所以这里什么都不存，下一次拉还会再拿到它。
+    assert pulled.row is None
     assert pulled.unreadable is True
+    assert pulled.failed is False
+
+
+def test_an_unknown_version_does_not_enter_the_archive_either():
+    read = read_snapshot(_zip({"ratchet-snapshot.json": _snapshot(version=99)}))
+
+    assert read.unreadable is True
+    assert row_for(_artifact(), read, "o/r").row is None
+
+
+def test_a_snapshot_member_that_expands_past_the_cap_is_refused():
+    # 压缩后几 KB、解压后 9 MB 的成员：工件本身远在 32 MB 那道闸门之内，涨的是解压
+    # 这一步。不设这道上限，`ZipFile.read` 会照着头部声明的长度在内存里把它拼出来。
+    blob = _zip(
+        {
+            "ratchet-snapshot.json": json.dumps(
+                {"version": 1, "pad": "0" * (9 << 20)}
+            ).encode()
+        },
+        compress=zipfile.ZIP_DEFLATED,
+    )
+    assert len(blob) < 100_000  # 证据本身：小工件，大成员
+
+    read = read_snapshot(blob)
+
+    assert read.payload is None
+    assert read.unreadable is True
+    assert "超过" in read.reason

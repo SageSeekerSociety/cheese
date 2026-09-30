@@ -14,7 +14,7 @@ of them invented here:
   different in an archive.
 * **One direction per check, from the check's own word.** `better` says which
   way is better; the direction is the first-to-last difference inside the last
-  segment. Nothing is summed, weighted, or scored: the page shows thirteen
+  segment. Nothing is summed, weighted, or scored: the page shows ten
   answers, not one grade.
 * **新豁免 is separate from 违规数.** A rise in the frozen count is a decision
   made in a commit, not debt discovered; it is marked on the point where the
@@ -131,7 +131,18 @@ def _direction(points: list[dict[str, Any]], better: Any) -> str:
             break
         segment.append(point)
     segment.reverse()
-    measured = [point for point in segment if point["actual"] is not None]
+    # A hole ends the comparison, it does not get stepped over: the points before
+    # it were measured in a state this series cannot see through. Taking the
+    # first and last *measured* point of the segment would subtract 10 (before a
+    # failed collection) from 3 (after it) and call the run an improvement — a
+    # number the page would be the only witness to. So: only the unbroken run of
+    # measured points at the end of the segment counts.
+    measured: list[dict[str, Any]] = []
+    for point in reversed(segment):
+        if point["actual"] is None:
+            break
+        measured.append(point)
+    measured.reverse()
     if len(measured) < 2:
         return "unknown"
     first, last = measured[0]["actual"], measured[-1]["actual"]
