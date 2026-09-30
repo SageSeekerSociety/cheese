@@ -17,6 +17,7 @@ export type NotificationType =
   | 'ROOM_NOTICE'
   | 'CHEESE_QUESTION'
   | 'DEVICE_IN_USE'
+  | 'SPACE_ANNOUNCEMENT'
 
 export interface EntityInfo {
   id: string

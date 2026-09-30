@@ -1,7 +1,6 @@
 /**
- * 空间页面共用的纯函数：邀请码是否可用、题目简介里的出处、公告的显示顺序。
+ * 空间页面共用的纯函数：邀请码是否可用、题目简介里的出处、公告的日期。
  */
-import type { SpaceAnnouncement } from '@/types'
 
 /** 一张邀请码现在的状态。库里只有次数与期限，两者都能让一张码失效。 */
 export interface InviteCodeStatus {
@@ -75,20 +74,38 @@ export function splitOrigin(intro: string): { summary: string; origin?: string }
 
 // --- 公告 --------------------------------------------------------------------
 
-/** 公告的显示顺序：**置顶排最前，其余按发布时间倒序**。
- *
- *  `pinned` 缺省当 `false`：加这一格之前发出去的公告都没有它。时间也带一层兜底 ——
- *  公告是 jsonb 里的一段，元素形状没有 schema 兜着。
- *
- *  这是**显示**口径，不是数据口径：`stores/space.ts` 的 `updateAnnouncement(index, …)`
- *  是按下标写回的，把 store 里那份数组本身排序，改动会写到别的条目上。要排就排副本
- *  （`sortAnnouncements`），不然就把原下标一起带在手上。 */
-export function compareAnnouncements(a: SpaceAnnouncement, b: SpaceAnnouncement): number {
-  if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
-  return (b.createdAt ?? 0) - (a.createdAt ?? 0)
+/** 公告上的一天（发布日期、到期日），本地时间。`year` 只在不是今年时给出：今年的
+ *  日子写「9 月 28 日」，别的年份才带上年份。 */
+export interface AnnouncementDay {
+  year: number | null
+  month: number
+  date: number
 }
 
-/** 排好序的副本，store 里那份的顺序一个字节都不动。 */
-export function sortAnnouncements(list: SpaceAnnouncement[]): SpaceAnnouncement[] {
-  return [...list].sort(compareAnnouncements)
+export function announcementDay(at: number, now: number = Date.now()): AnnouncementDay {
+  const d = new Date(at)
+  return {
+    year: d.getFullYear() === new Date(now).getFullYear() ? null : d.getFullYear(),
+    month: d.getMonth() + 1,
+    date: d.getDate(),
+  }
+}
+
+/** 选的到期日（`<input type="date">` 的 `YYYY-MM-DD`）从哪一刻起算已到期：**那一天
+ *  过完**，本地时间的第二天零点。到期日当天公告还在。 */
+export function expiryFromDay(day: string): number {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d + 1).getTime()
+}
+
+/** 「N 月 N 日到期」里那一天：到期时刻的前一刻所在的那天。 */
+export function expiryDay(expiresAt: number, now: number = Date.now()): AnnouncementDay {
+  return announcementDay(expiresAt - 1, now)
+}
+
+/** `expiryFromDay` 反过来：编辑时把已有的到期时刻放回日期框。 */
+export function dayOfExpiry(expiresAt: number): string {
+  const d = new Date(expiresAt - 1)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }

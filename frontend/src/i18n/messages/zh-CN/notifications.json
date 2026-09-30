@@ -106,5 +106,9 @@
     "title": "{agent} 开始在「{device}」上工作",
     "body": "{project} · {room}",
     "wholeMachine": "能访问整台机器"
+  },
+  "SPACE_ANNOUNCEMENT": {
+    "tag": "公告",
+    "meta": "{space} · {author}"
   }
 }

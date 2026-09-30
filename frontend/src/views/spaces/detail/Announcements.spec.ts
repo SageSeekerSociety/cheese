@@ -1,13 +1,13 @@
-// 公告页这一批加的是「置顶」。它有两个容易写错的地方，都不是「长什么样」：
+// 公告页上几条不看长相的规则：
 //
-// 1. **写回用的下标必须是 store 里那份数组的下标，不是排过序的位置。**
-//    `stores/space.ts` 的 `updateAnnouncement(index, …)` 是按下标替换的，列表是排过
-//    序的副本 —— 把「显示上的第 0 条」当成「数组里的第 0 条」写下去，改的就是**别的
-//    公告**。界面上不会报错，只会有一条不相干的公告被置顶。所以这条用例断言的是
-//    **PATCH 出去的那份 JSON**，不是屏幕上那颗按钮。
-// 2. **成员是纯读的**：一个操作按钮都不该出现（发 / 改 / 删 / 置顶都只对所有者与
-//    管理员开）。漏了就是给成员发了一张点下去必然 403 的按钮。
+// 1. **成员是纯读的**：一个操作按钮都不该出现（发 / 改 / 删 / 置顶只对所有者与管理员
+//    开）。漏了就是给成员一颗点下去必然 403 的按钮。
+// 2. **置顶只改那一条**：写出去的是那一条公告自己的 `pinned`，不带别的公告，也不带
+//    它的标题正文 —— 两位管理员各改各的，谁也不该覆盖谁。
+// 3. **已到期的收起来**：点开「已到期」那一行之前，它们不在页面上。
+// 4. **取消发布什么也不发**：弹窗关掉，服务端一条公告都没收到。
 import type { Component } from 'vue'
+import type { SpaceAnnouncement } from '@/types'
 
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -19,33 +19,37 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spaceDetail = vi.fn()
-const spaceUpdate = vi.fn()
+const listAnnouncements = vi.fn()
+const publishAnnouncement = vi.fn()
+const updateAnnouncement = vi.fn()
+const deleteAnnouncement = vi.fn()
 
 vi.mock('@/network/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
-    update: (...a: unknown[]) => spaceUpdate(...a),
+    listAnnouncements: (...a: unknown[]) => listAnnouncements(...a),
+    publishAnnouncement: (...a: unknown[]) => publishAnnouncement(...a),
+    updateAnnouncement: (...a: unknown[]) => updateAnnouncement(...a),
+    deleteAnnouncement: (...a: unknown[]) => deleteAnnouncement(...a),
   },
 }))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// 读弹窗的正文是 tiptap 富文本；这一批测的是它上面那行「谁 · 什么时候 · 改过没有」，
-// 所以把渲染器换成一个只画文本的替身 —— 编辑器本身不进 happy-dom。
-vi.mock('@/components/common/Editor/TipTapViewer.vue', async () => {
+// 富文本编辑器不进 happy-dom：这里测的是写出去什么，不是编辑器本身。
+vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return {
-    default: defineComponent({
-      name: 'TipTapViewer',
-      props: { value: { type: String, default: '' } },
-      setup: (props) => () => h('div', { class: 'ttv-stub' }, props.value),
-    }),
+    default: defineComponent({ name: 'TipTapEditor', setup: () => () => h('div') }),
+    // 挂载时测试工具会问这个模块是不是 Teleport / KeepAlive。
+    __isTeleport: false,
+    __isKeepAlive: false,
   }
 })
 
-// 「谁看得到那些按钮」是拿登录的人跟 `space.admins` 对出来的（空间 store 的 `isManager`）。
+// 谁看得到那些按钮，是拿登录的人跟 `space.admins` 对出来的（空间 store 的 `isManager`）。
 vi.mock('@/services/account', () => ({
-  default: { _user: { value: null as { id: number; username: string; nickname: string } | null } },
+  default: { _user: { value: null as { id: number } | null } },
 }))
 
 import Announcements from './Announcements.vue'
@@ -56,322 +60,168 @@ import { dialogs } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 
 const SPACE_ID = 11
-const ROUTE = { name: 'SpacesAnnouncements', params: { spaceId: String(SPACE_ID) } }
+const OWNER_ID = 4
+const DAY = 86_400_000
+const NOW = Date.now()
 
-/** 原始数组的顺序**故意不是**显示顺序：
- *  - 第 0 格：没置顶的最老一条；
- *  - 第 1 格：没置顶的中间一条；
- *  - 第 2 格：置顶的那一条，而且发布得最早；
- *  - 第 3 格：没置顶的最新一条（不排序的话它会排在最前）。
- *  显示顺序于是是 `[2, 3, 1, 0]` —— **没有一个位置的下标相同**，把显示位置当成数组
- *  下标写下去（这一批最容易写错的地方）一定会被这几条用例抓到。 */
-const ANNOUNCEMENTS = [
-  { title: '第 0 格：没置顶的老公告', content: '<p>正文</p>', createdAt: 100, updatedAt: 100, publisher: '蔡松洋' },
-  { title: '第 1 格：没置顶的中间公告', content: '<p>正文</p>', createdAt: 500, updatedAt: 500, publisher: '马小雨' },
-  {
-    title: '第 2 格：置顶的公告',
-    content: '<p>正文</p>',
-    createdAt: 50,
-    updatedAt: 50,
-    publisher: '蔡松洋',
-    pinned: true,
-  },
-  { title: '第 3 格：没置顶的新公告', content: '<p>正文</p>', createdAt: 900, updatedAt: 900, publisher: '马小雨' },
-]
-
-/** 空间随公告一起走：`announcements` 是那一格 **JSON 字符串**。 */
-function space(announcements: unknown[]) {
+function announcement(id: number, title: string, over: Partial<SpaceAnnouncement> = {}): SpaceAnnouncement {
   return {
-    id: SPACE_ID,
-    name: '数据结构空间',
-    intro: '',
-    avatarId: null,
-    admins: [{ user: { id: 4, username: 'caisongyang', nickname: '蔡松洋' }, role: 'OWNER' }],
-    announcements: JSON.stringify(announcements),
-    taskTemplates: '[]',
-    classificationTopics: [],
-    visibleTaskLimit: null,
+    id,
+    spaceId: SPACE_ID,
+    title,
+    // 空正文：卡片不画富文本渲染器，这里只看哪几条出现。
+    content: '',
+    pinned: false,
+    expiresAt: null,
+    createdAt: NOW - id * DAY,
+    updatedAt: NOW - id * DAY,
+    author: { id: OWNER_ID, username: 'linxia', nickname: '林夏', avatarId: null },
+    ...over,
   }
 }
 
-/** 点名前先落一个登录态 —— 角色是拿它跟 `space.admins` 对出来的（4 号是所有者）。 */
-function signIn(handle: string) {
-  AccountService._user.value = { id: handle === 'caisongyang' ? 4 : 99, username: handle, nickname: '蔡松洋' } as never
+const CURRENT = [
+  announcement(1, '置顶的公告', { pinned: true }),
+  announcement(2, '普通的公告'),
+  announcement(3, '另一条普通公告'),
+]
+const EXPIRED = [announcement(9, '已经到期的公告', { expiresAt: NOW - DAY })]
+
+function signIn(userId: number) {
+  AccountService._user.value = { id: userId } as never
 }
 
 const Blank = defineComponent({ render: () => h('div') })
-
-/** 对话框本身住在 App.vue（跨路由活着），这一份把这一页和它一起挂起来 —— 读一条公告
- *  是真的弹那个框，`dialog.custom` 里那行「谁 · 什么时候 · 改过没有」于是才看得见。 */
 const Page = defineComponent({ render: () => h('div', [h(Announcements), h(DialogContainer)]) })
 
 async function mount() {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/spaces/:spaceId/announcements', ...ROUTE, component: Blank as Component }],
+    routes: [{ path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: Blank as Component }],
   })
   await router.push(`/spaces/${SPACE_ID}/announcements`)
   await router.isReady()
-
-  // 直接挂这一页（和外壳无关）：它自己从路由参数里读空间 id，所以路由得推到那一条上。
   const utils = render(Page, {
     global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
   })
-  await waitFor(() => expect(spaceDetail).toHaveBeenCalled())
+  await waitFor(() => expect(listAnnouncements).toHaveBeenCalled())
   return utils
 }
 
-/** 屏幕上第 n 张公告卡片。 */
-function card(n: number): Element | null {
-  return document.querySelectorAll('.acard')[n] ?? null
+function cards(): Element[] {
+  return Array.from(document.querySelectorAll('article'))
 }
 
-/** 卡片上那颗置顶按钮 —— 认图标，不认它是第几颗按钮。 */
-function pinButton(n: number): Element | null {
-  const buttons = Array.from(card(n)?.querySelectorAll('button') ?? [])
-  return buttons.find((b) => b.querySelector('.mdi-pin-outline, .mdi-pin-off-outline')) ?? null
+function cardTitled(title: string): Element | undefined {
+  return cards().find((c) => c.textContent?.includes(title))
 }
 
-describe('公告页的置顶', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    setActivePinia(createPinia())
-    spaceDetail.mockImplementation(async () => ({ data: { space: space(ANNOUNCEMENTS) } }))
-    spaceUpdate.mockImplementation(async () => ({ data: { space: space(ANNOUNCEMENTS) } }))
-  })
+function buttonLabelled(root: ParentNode, label: string): HTMLElement | undefined {
+  return Array.from(root.querySelectorAll<HTMLElement>('button')).find(
+    (b) => b.getAttribute('aria-label') === label || b.textContent?.trim() === label
+  )
+}
 
-  afterEach(() => {
-    // 浮层清单是插件里的模块级状态，跨用例活着：上一个用例没关掉的读弹窗会跟到下一
-    // 个用例里。
-    dialogs.splice(0, dialogs.length)
-    cleanup()
-    vi.clearAllMocks()
-    localStorage.clear()
-  })
+beforeEach(() => {
+  // Vuetify 的浮层（v-dialog）会读 `visualViewport`，happy-dom 里没有。
+  if (!('visualViewport' in window)) {
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: {
+        height: 800,
+        width: 600,
+        offsetTop: 0,
+        offsetLeft: 0,
+        scale: 1,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+    })
+  }
+  setLocale('zh-CN')
+  setActivePinia(createPinia())
+  spaceDetail.mockImplementation(async () => ({
+    data: {
+      space: {
+        id: SPACE_ID,
+        name: '数据分析课',
+        admins: [{ user: { id: OWNER_ID, nickname: '林夏' }, role: 'OWNER' }],
+        taskTemplates: '[]',
+        classificationTopics: [],
+      },
+    },
+  }))
+  listAnnouncements.mockImplementation(async () => ({
+    data: { current: CURRENT, expired: EXPIRED, notifyCount: 3 },
+  }))
+  updateAnnouncement.mockImplementation(async () => ({ data: {} }))
+  publishAnnouncement.mockImplementation(async () => ({ data: {} }))
+})
 
-  it('置顶的排最前，其余按发布时间倒序', async () => {
-    signIn('caisongyang')
-    await mount()
-    await waitFor(() => expect(card(0)).not.toBeNull())
+afterEach(() => {
+  dialogs.splice(0, dialogs.length)
+  cleanup()
+  vi.clearAllMocks()
+})
 
-    const titles = Array.from(document.querySelectorAll('.acard__title')).map((t) => t.textContent)
-    expect(titles).toEqual([
-      '第 2 格：置顶的公告',
-      '第 3 格：没置顶的新公告',
-      '第 1 格：没置顶的中间公告',
-      '第 0 格：没置顶的老公告',
-    ])
-  })
-
-  it('置顶的公告带「置顶」标记', async () => {
-    signIn('caisongyang')
-    await mount()
-    await waitFor(() => expect(card(0)).not.toBeNull())
-
-    const chips = Array.from(document.querySelectorAll('.acard__head .v-chip')).map((c) => c.textContent?.trim())
-    expect(chips).toEqual(['置顶'])
-  })
-
-  it('取消置顶写回的是**数组里那一格**，不是它显示的位置', async () => {
-    signIn('caisongyang')
-    await mount()
-    await waitFor(() => expect(pinButton(0)).not.toBeNull())
-
-    // 屏幕上第 0 张是数组里的第 2 格。按下它，取消的必须是**第 2 格**的置顶。
-    await fireEvent.click(pinButton(0)!)
-
-    await waitFor(() => expect(spaceUpdate).toHaveBeenCalled())
-    const body = spaceUpdate.mock.calls[0][1] as { announcements: string }
-    const written = JSON.parse(body.announcements) as { title: string; pinned?: boolean }[]
-
-    // 顺序也不许变：store 里那份数组是按下标写回的依据。
-    expect(written.map((a) => a.title)).toEqual([
-      '第 0 格：没置顶的老公告',
-      '第 1 格：没置顶的中间公告',
-      '第 2 格：置顶的公告',
-      '第 3 格：没置顶的新公告',
-    ])
-    expect(written[2].pinned).toBe(false)
-    // 另外三格一个都不许动 —— 按显示下标写就会写到这里来。
-    expect(written.map((a) => a.pinned)).toEqual([undefined, undefined, false, undefined])
-  })
-
-  it('置顶一条没置顶的，同样落在数组里那一格上', async () => {
-    signIn('caisongyang')
-    await mount()
-    await waitFor(() => expect(pinButton(1)).not.toBeNull())
-
-    // 屏幕上第 1 张是数组里的第 3 格（最新的那条）。
-    await fireEvent.click(pinButton(1)!)
-
-    await waitFor(() => expect(spaceUpdate).toHaveBeenCalled())
-    const body = spaceUpdate.mock.calls[0][1] as { announcements: string }
-    const written = JSON.parse(body.announcements) as { title: string; pinned?: boolean }[]
-
-    expect(written[3].pinned).toBe(true)
-    expect(written.map((a) => a.pinned)).toEqual([undefined, undefined, true, true])
-  })
-
+describe('公告页', () => {
   it('成员是纯读的：操作按钮一个都不出现', async () => {
-    signIn('someone-else')
+    signIn(99)
     await mount()
-    await waitFor(() => expect(card(0)).not.toBeNull())
+    await waitFor(() => expect(cardTitled('置顶的公告')).toBeDefined())
 
-    expect(document.querySelectorAll('.acard button')).toHaveLength(0)
-    expect(Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.includes('发布公告'))).toBe(false)
-    // 公告本身还是看得见的 —— 这一页对谁都不设门槛。
-    expect(document.body.textContent).toContain('第 2 格：置顶的公告')
-    // 下面是**反证**：同一个空间换成它自己的所有者，按钮就都回来了 —— 否则上面那条
-    // 「一个按钮都没有」可能只是因为这一页根本渲染不出按钮。
+    expect(cards().flatMap((c) => Array.from(c.querySelectorAll('button')))).toHaveLength(0)
+    expect(buttonLabelled(document, '发布公告')).toBeUndefined()
+
+    // 反证：同一个空间换成它的所有者，按钮就都在 —— 否则上面那条可能只是这一页
+    // 根本画不出按钮。
     cleanup()
-    signIn('caisongyang')
+    signIn(OWNER_ID)
     await mount()
-    await waitFor(() => expect(pinButton(0)).not.toBeNull())
-  })
-})
-
-// 这一批补的两处：**列表上什么时候发的**（相对时间，超过一周退回日期），以及
-// **读一条时框里写着谁、什么时候、改过没有**。相对时间的词全靠「现在」才成立，
-// 所以这一组把 Date 钉死。**只假 Date** —— 连 setTimeout 一起假掉，`waitFor`
-// 就再也等不到下一拍。
-describe('公告页的时间与「已编辑」', () => {
-  const NOW = new Date('2026-09-28T12:00:00Z').getTime()
-  const DAY = 86_400_000
-
-  /** 三条各占一种：改过的、三天前发的、一周以上的。 */
-  const TIMED = [
-    {
-      title: '改过的一条',
-      content: '<p>正文</p>',
-      createdAt: NOW - 4 * DAY,
-      updatedAt: NOW - DAY,
-      publisher: '蔡松洋',
-    },
-    {
-      title: '三天前发的',
-      content: '<p>正文</p>',
-      createdAt: NOW - 3 * DAY,
-      updatedAt: NOW - 3 * DAY,
-      publisher: '马小雨',
-    },
-    {
-      title: '很久以前发的',
-      content: '<p>正文</p>',
-      createdAt: NOW - 40 * DAY,
-      updatedAt: NOW - 40 * DAY,
-      publisher: '蔡松洋',
-    },
-  ]
-
-  beforeEach(() => {
-    // Vuetify 的浮层（v-dialog）会去读 `visualViewport`，测试环境里没有这个对象，于是
-    // 弹窗根本不渲染 —— 断言会以为「读弹窗里什么都没有」。
-    if (!('visualViewport' in window)) {
-      Object.defineProperty(window, 'visualViewport', {
-        configurable: true,
-        value: {
-          height: 800,
-          width: 600,
-          offsetTop: 0,
-          offsetLeft: 0,
-          scale: 1,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-        },
-      })
-    }
-    localStorage.clear()
-    setActivePinia(createPinia())
-    // 相对时间的词是按语言出的（「3 天前」/ "3 days ago"），这里钉死中文再断言。
-    setLocale('zh-CN')
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(NOW)
-    spaceDetail.mockImplementation(async () => ({ data: { space: space(TIMED) } }))
-    spaceUpdate.mockImplementation(async () => ({ data: { space: space(TIMED) } }))
+    await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
+    expect(buttonLabelled(cardTitled('普通的公告')!, '置顶')).toBeDefined()
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-    dialogs.splice(0, dialogs.length)
-    cleanup()
-    vi.clearAllMocks()
-    localStorage.clear()
-  })
-
-  /** 卡片底部那一行：发布人 · 时间（· 已编辑）。 */
-  function foot(n: number): string {
-    return (card(n)?.querySelector('.acard__foot')?.textContent || '').trim()
-  }
-
-  /** 读弹窗里那行元信息。 */
-  function meta(): string {
-    return document.querySelector('[data-testid="announcement-meta"]')?.textContent || ''
-  }
-
-  it('卡片上的时间说「N 天前」，不说一串日期', async () => {
+  it('置顶只改那一条自己的置顶，不带别的公告，也不带它的标题正文', async () => {
+    signIn(OWNER_ID)
     await mount()
-    await waitFor(() => expect(card(0)).not.toBeNull())
+    await waitFor(() => expect(buttonLabelled(cardTitled('另一条普通公告') ?? document, '置顶')).toBeDefined())
 
-    // 显示顺序（发布时间倒序）：三天前、四天前（改过的那条）、一周以上。
-    expect(foot(0)).toContain('3天前')
-    expect(foot(1)).toContain('4天前')
+    await fireEvent.click(buttonLabelled(cardTitled('另一条普通公告')!, '置顶')!)
+
+    await waitFor(() => expect(updateAnnouncement).toHaveBeenCalledTimes(1))
+    expect(updateAnnouncement).toHaveBeenCalledWith(SPACE_ID, 3, { pinned: true })
   })
 
-  it('超过一周就退回日期，不再说「N 天前」', async () => {
+  it('已到期的公告收在「已到期」里，点开才出现', async () => {
+    signIn(99)
     await mount()
-    await waitFor(() => expect(card(2)).not.toBeNull())
+    await waitFor(() => expect(cardTitled('置顶的公告')).toBeDefined())
 
-    expect(foot(2)).toMatch(/\d{2}-\d{2}/)
-    expect(foot(2)).not.toContain('天前')
+    expect(cardTitled('已经到期的公告')).toBeUndefined()
+    const fold = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('已到期'))!
+    await fireEvent.click(fold)
+
+    await waitFor(() => expect(cardTitled('已经到期的公告')).toBeDefined())
   })
 
-  it('读弹窗里写着发布人、发布时间，改过的还带「已编辑」', async () => {
+  it('打开发布弹窗再取消，什么也没有发出去', async () => {
+    signIn(OWNER_ID)
     await mount()
-    await waitFor(() => expect(card(1)).not.toBeNull())
+    await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
 
-    await fireEvent.click(card(1)!)
-    await waitFor(() => expect(document.querySelector('[data-testid="announcement-meta"]')).not.toBeNull())
+    await fireEvent.click(buttonLabelled(document, '发布公告')!)
+    await waitFor(() => expect(buttonLabelled(document, '取消')).toBeDefined())
+    await fireEvent.click(buttonLabelled(document, '取消')!)
 
-    expect(meta()).toContain('蔡松洋')
-    expect(meta()).toContain('4天前')
-    expect(meta()).toContain('已编辑')
+    expect(publishAnnouncement).not.toHaveBeenCalled()
   })
 
-  it('没改过的公告，读弹窗里不写「已编辑」', async () => {
-    await mount()
-    await waitFor(() => expect(card(0)).not.toBeNull())
-
-    await fireEvent.click(card(0)!)
-    await waitFor(() => expect(document.querySelector('[data-testid="announcement-meta"]')).not.toBeNull())
-
-    expect(meta()).toContain('马小雨')
-    expect(meta()).toContain('3天前')
-    expect(meta()).not.toContain('已编辑')
-  })
-})
-
-describe('公告页的发布入口', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    setActivePinia(createPinia())
-    spaceUpdate.mockImplementation(async () => ({ data: { space: space([]) } }))
-  })
-
-  afterEach(() => {
-    dialogs.splice(0, dialogs.length)
-    cleanup()
-    vi.clearAllMocks()
-  })
-
-  it('所有者在一条公告都没有时也能发第一条（空间读回来之后才知道他是所有者）', async () => {
-    signIn('caisongyang')
-    spaceDetail.mockImplementation(async () => ({ data: { space: space([]) } }))
+  it('一条公告都没有时，所有者也能发第一条', async () => {
+    signIn(OWNER_ID)
+    listAnnouncements.mockImplementation(async () => ({ data: { current: [], expired: [], notifyCount: 0 } }))
     await mount()
 
-    await waitFor(() =>
-      expect(Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.includes('发布公告'))).toBe(
-        true
-      )
-    )
+    await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
   })
 })

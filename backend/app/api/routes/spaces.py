@@ -77,7 +77,6 @@ class CreateSpaceRequest(BaseModel):
     description: str = ""
     avatar_id: int | None = Field(default=None, alias="avatarId")
     enable_rank: bool = Field(default=False, alias="enableRank")
-    announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(
         default=None, alias="classificationTopics"
@@ -102,7 +101,6 @@ class PatchSpaceRequest(BaseModel):
     description: str | None = None
     avatar_id: int | None = Field(default=None, alias="avatarId")
     enable_rank: bool | None = Field(default=None, alias="enableRank")
-    announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(
         default=None, alias="classificationTopics"
@@ -414,7 +412,6 @@ def _space_to_api_model(space: Space) -> dict:
         "enableRank": space.enable_rank,
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
-        "announcements": json.dumps(space.announcements or []),
         "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
@@ -810,7 +807,6 @@ async def create_space(
     if await service.exists_by_name(payload.name):
         raise ConflictError(f"Space with name '{payload.name}' already exists")
 
-    announcements = _expect_list(payload.announcements, "announcements")
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []
 
@@ -821,7 +817,6 @@ async def create_space(
         avatar_id=payload.avatar_id,
         enable_rank=payload.enable_rank,
         owner_id=auth_user.user_id,
-        announcements=announcements,
         task_templates=task_templates,
         visible_task_limit=payload.visible_task_limit,
     )
@@ -875,10 +870,7 @@ async def patch_space(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    announcements = payload.announcements
     task_templates = payload.task_templates
-    if announcements is not None:
-        announcements = _expect_list(announcements, "announcements")
     if task_templates is not None:
         task_templates = _expect_list(task_templates, "taskTemplates")
 
@@ -892,7 +884,6 @@ async def patch_space(
         description=payload.description,
         avatar_id=payload.avatar_id,
         enable_rank=payload.enable_rank,
-        announcements=announcements,
         task_templates=task_templates,
         default_category_id=payload.default_category_id,
         visible_task_limit=payload.visible_task_limit,
@@ -1875,379 +1866,3 @@ async def get_space_me_participations(
         "message": "OK",
         "data": {"participations": participations},
     }
-
-
-# ---------------------------------------------------------------------------
-# Space Topics (NT-API aligned)
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/{spaceId}/topics",
-    summary="List or search topics in a space",
-)
-async def get_space_topics(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    keyword: str | None = Query(default=None),
-    sort: str = Query(default="name"),
-    limit: int = Query(default=20, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceTagsService = Depends(get_space_topics_service),
-    db=Depends(get_db),
-) -> dict:
-    """List or search topics associated with the space.
-
-    NT-aligned (see `SpaceController.getSpaceTopics`):
-    - Limit is capped at 50 regardless of the client-requested value.
-    - If `keyword` is provided, perform a fuzzy search (sort is ignored).
-    - Otherwise, return the hottest topics (most non-deleted tasks in the space).
-    """
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    safe_limit = min(limit, 50)
-
-    if keyword and keyword.strip():
-        topics = await service.search_topics(space_id, keyword, safe_limit)
-    else:
-        topics = await service.get_hot_topics(space_id, safe_limit)
-
-    return {"code": 200, "message": "OK", "data": {"topics": topics}}
-
-
-@router.post(
-    "/{spaceId}/categories",
-    summary="Create Space Category",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_space_category(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: CreateSpaceCategoryRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> dict:
-    category = await service.create_category(
-        space_id=space_id,
-        name=payload.name,
-        description=payload.description,
-        display_order=payload.display_order,
-        actor_user_id=auth_user.user_id,
-    )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"category": _category_to_api_model(category)},
-    }
-
-
-@router.patch(
-    "/{spaceId}/categories/{categoryId}",
-    summary="Update Space Category",
-)
-async def patch_space_category(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    payload: PatchSpaceCategoryRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> dict:
-    # Support both "archived" (boolean) and "archivedAt" (timestamp)
-    archived = payload.archived
-    if archived is None and payload.archived_at is not None:
-        archived = payload.archived_at > 0
-
-    category = await service.update_category(
-        space_id=space_id,
-        category_id=category_id,
-        actor_user_id=auth_user.user_id,
-        name=payload.name,
-        description=payload.description,
-        display_order=payload.display_order,
-        archived=archived,
-        # `model_dump()` (field names, not aliases): what lands in the column is
-        # the shape `Teaching.from_json` reads back, so the write path and the
-        # read path cannot drift into two different spellings of one config.
-        teaching=(
-            payload.teaching.model_dump() if payload.teaching is not None else None
-        ),
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
-
-
-@router.get(
-    "/{spaceId}/categories/{categoryId}",
-    summary="Get Space Category",
-)
-async def get_space_category(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    _ = auth_user
-    category = await service.get_category_detail(
-        space_id=space_id, category_id=category_id
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
-
-
-@router.delete(
-    "/{spaceId}/categories/{categoryId}",
-    summary="Delete Space Category",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_space_category(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> None:
-    await service.delete_category(
-        space_id=space_id, category_id=category_id, actor_user_id=auth_user.user_id
-    )
-    return None
-
-
-@router.post(
-    "/{spaceId}/categories/{categoryId}/archive",
-    summary="Archive Space Category",
-)
-async def archive_space_category(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> dict:
-    category = await service.set_category_archived(
-        space_id=space_id,
-        category_id=category_id,
-        archived=True,
-        actor_user_id=auth_user.user_id,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
-
-
-@router.delete(
-    "/{spaceId}/categories/{categoryId}/archive",
-    summary="Unarchive Space Category",
-)
-async def unarchive_space_category(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> dict:
-    category = await service.set_category_archived(
-        space_id=space_id,
-        category_id=category_id,
-        archived=False,
-        actor_user_id=auth_user.user_id,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
-
-
-@router.get(
-    "/{spaceId}/domain-groups",
-    summary="List Space Domain Groups",
-)
-async def list_space_domain_groups(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    groups = await service.list_domain_groups(
-        space_id=space_id, actor_user_id=auth_user.user_id
-    )
-    items = [_domain_group_to_api_model(group, domains) for group, domains in groups]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"groups": items},
-    }
-
-
-@router.post(
-    "/{spaceId}/domain-groups",
-    summary="Create Space Domain Group",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_space_domain_group(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: CreateSpaceDomainGroupRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> dict:
-    group, domains = await service.create_domain_group(
-        space_id=space_id,
-        name=payload.name,
-        description=payload.description,
-        domains=payload.domains,
-        actor_user_id=auth_user.user_id,
-    )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"group": _domain_group_to_api_model(group, domains)},
-    }
-
-
-@router.patch(
-    "/{spaceId}/domain-groups/{groupId}",
-    summary="Update Space Domain Group",
-)
-async def patch_space_domain_group(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    group_id: Annotated[int, Path(ge=1, alias="groupId")],
-    payload: PatchSpaceDomainGroupRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> dict:
-    group, domains = await service.update_domain_group(
-        space_id=space_id,
-        group_id=group_id,
-        name=payload.name,
-        description=payload.description,
-        domains=payload.domains,
-        actor_user_id=auth_user.user_id,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"group": _domain_group_to_api_model(group, domains)},
-    }
-
-
-@router.delete(
-    "/{spaceId}/domain-groups/{groupId}",
-    summary="Delete Space Domain Group",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_space_domain_group(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    group_id: Annotated[int, Path(ge=1, alias="groupId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> None:
-    await service.delete_domain_group(
-        space_id=space_id,
-        group_id=group_id,
-        actor_user_id=auth_user.user_id,
-    )
-    return None
-
-
-@router.get(
-    "/{spaceId}/managers",
-    summary="List Space Managers",
-)
-async def list_space_admins(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    # The managers list answers only to someone who can see the 题目版 — an
-    # outsider must not learn who runs a board they were never invited to.
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    admins = await service.list_admins(space_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"managers": [_admin_to_api_model(rel) for rel in admins]},
-    }
-
-
-@router.post(
-    "/{spaceId}/managers",
-    summary="Add Space Manager",
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_space_admin(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: AddSpaceManagerRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    role_value = payload.role.upper()
-    role_mapping = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
-    role = role_mapping.get(role_value)
-    if role is None:
-        raise BadRequestError(f"Invalid role: {role_value}")
-    await service.add_admin(
-        space_id=space_id,
-        target_user_id=payload.user_id,
-        role=role,
-        actor_user_id=auth_user.user_id,
-    )
-    space = await service.get_space(space_id)
-    if space is None:
-        return {"code": 201, "message": "Created", "data": None}
-    space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 201, "message": "Created", "data": {"space": space_data}}
-
-
-@router.delete(
-    "/{spaceId}/managers/{userId}",
-    summary="Remove Space Manager",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_space_admin(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> Response:
-    await service.remove_admin(
-        space_id=space_id,
-        target_user_id=user_id,
-        actor_user_id=auth_user.user_id,
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.patch(
-    "/{spaceId}/managers/{userId}",
-    summary="Update Space Manager Role",
-)
-async def patch_space_manager(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    payload: PatchSpaceManagerRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    role_map = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
-    new_role = role_map.get(payload.role.upper())
-    if new_role is None:
-        raise BadRequestError(f"Invalid role: {payload.role}. Must be OWNER or ADMIN")
-    await service.update_admin_role(
-        space_id=space_id,
-        target_user_id=user_id,
-        new_role=new_role,
-        actor_user_id=auth_user.user_id,
-    )
-    space = await service.get_space(space_id)
-    if space is None:
-        return {"code": 200, "message": "OK", "data": None}
-    space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 200, "message": "OK", "data": {"space": space_data}}

@@ -96,6 +96,11 @@ class NotificationType(str, Enum):
     #: 主人批准；一次会话开工一条，不是每轮一条（`machine.session_work`）。
     DEVICE_IN_USE = "DEVICE_IN_USE"
 
+    #: 空间里发了一条公告，告诉这个空间里除发布人以外的每个人
+    #: （`space.announcement_service`）。只进站内：不发邮件、不推送
+    #: （`outbox.MAILBOX_ONLY`）。改公告不再发；删公告连它发出去的这些一起撤回。
+    SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
+
     #: 平台报告自己的那四种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒

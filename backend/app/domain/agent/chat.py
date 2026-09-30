@@ -11,8 +11,6 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
-import hashlib
-import json
 import logging
 import time
 import uuid
@@ -24,9 +22,8 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.background import hold
 from app.core.config import settings
-from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
@@ -48,7 +45,21 @@ from app.domain.agent.event_lines import (
     _subagent_result_meta,  # noqa: F401 — 测试仍从 chat.py 导它
     _tool_event_meta,  # noqa: F401 — 测试仍从 chat.py 导它
 )
-from app.domain.agent.gateway import LlmGateway, drain_new_usage
+from app.domain.agent.gateway import LlmGateway
+
+# 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
+# 网关的用量落库）搬去了 `gateway_usage.py`（那里有它们各自的文档）。这里重新导出，
+# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
+# 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
+# 搬走，不再是 `ChatService` 的属性。
+from app.domain.agent.gateway_usage import (
+    _drain_gateway_usage,
+    _gateway_project_env,
+    _model_kwargs,
+    _model_policy_call,
+    _schedule_deferred_drain,
+    project_gateway_key,
+)
 from app.domain.agent.harness import (
     Opening,
     SessionRef,
@@ -202,7 +213,6 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
-from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -241,13 +251,11 @@ from app.domain.memory.session import (
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
-from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.forge import binding_for_project
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
@@ -394,32 +402,6 @@ def _resolve_compute_id(project_settings: dict | None, topic=None) -> str | None
     if topic is not None:
         return room_choice(topic, project_settings).profile
     return project_configs(project_settings).default.profile
-
-
-def _model_policy_call(project, agent=None) -> gate.Call:
-    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
-
-    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
-    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
-
-    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
-    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
-    给一个猜出来的人。
-    """
-    choices = binding.catalog(project.settings)
-    bound = binding.resolve(
-        None,
-        choices,
-        agent_model=agent.configuration.get("model") if agent else None,
-        default_model=(project.settings or {}).get("default_model"),
-    )
-    return gate.Call(
-        resource=gate.Resource.model,
-        subject=bound.model,
-        label=choices[bound.model]["label"],
-        tier=choices[bound.model]["tier"],
-        approver=project.owner_handle or "",
-    )
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -3647,6 +3629,10 @@ class ChatService:
     ) -> _Proposed | None:
         return await _pass_policy_gate(session, topic_id, call, policy, actor=actor)
 
+    # --- 网关：这一轮的模型、模型环境与项目的网关用量 ----------------------
+    # 这一段搬去了 `gateway_usage.py`（那里有它们各自的文档）。这里留一行同名委托，
+    # 调用点一格没动；名字仍然从 `app.domain.agent.chat` 导得出来。
+
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
@@ -3656,173 +3642,27 @@ class ChatService:
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
     ) -> tuple[dict, str]:
-        """Resolve a turn's model, model environment and usage route.
-
-        Which model comes from the binding of the work this turn belongs to —
-        and a room's main thread is not a piece of work, so it always gets the
-        project default (`room_task/binding.py`).
-
-        Machine providers assemble their own scoped credentials. Other providers
-        retain their gateway/profile transport, carrying that resolved model.
-        The optional snapshots keep model, role and author consistent within a turn.
-
-        ``provider=None`` means there is no machine in this turn at all (私聊 走
-        platform work): the platform is the one about to call the model, so it needs
-        the same base_url + key a sandbox would have been handed. That is exactly
-        the not-``builds_model_env`` branch, so it falls through to it rather than
-        growing a second way to answer the same question.
-        """
-        environment = None
-        async with self._sessions() as session:
-            project = await ProjectRepository(session).get(project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-            topic = await TopicRepository(session).get(topic_id) if topic_id else None
-            if topic is not None:
-                if acting_agent is None:
-                    acting_agent = await self._agent_handle(session, topic.id)
-                # Overview remains available to repair failed project setup.
-                environment = (
-                    EnvironmentConfig().snapshot()
-                    if topic.kind == TopicKind.root
-                    else await pin_environment(session, project_id, topic.id)
-                )
-                await session.commit()
-            if agent is None:
-                agents = AgentInstanceService(session)
-                agent = (
-                    await agents.for_topic(topic, project)
-                    if topic
-                    else await agents.for_project(project)
-                )
-        # A saved teammate may override the project main model.
-        bound = binding.resolve(
-            None,
-            binding.catalog(project.settings),
-            agent_model=agent.configuration.get("model"),
-            default_model=(project.settings or {}).get("default_model"),
+        """Resolve a turn's model, model environment and usage route
+        (gateway_usage.py)."""
+        return await _model_kwargs(
+            self,
+            self._sessions,
+            self._gateway,
+            self._profiles,
+            self._gateway_lock,
+            project_id,
+            provider,
+            topic_id,
+            agent=agent,
+            acting_agent=acting_agent,
         )
-        # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
-        # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
-        # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
-        #
-        # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
-        # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
-        # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
-        async with self._sessions() as session:
-            proposed = await self._pass_policy_gate(
-                session,
-                topic_id,
-                _model_policy_call(project, agent),
-                gate.policy_of(project.settings),
-                actor=acting_agent or agent.handle,
-            )
-            if proposed is not None:
-                await session.commit()
-                raise gate.OverTier(proposed.proposal.content)
-        supply = bound.supply
-        model = bound.wire_model
-        child_default = (project.settings or {}).get("default_subagent_model") or (
-            project.settings or {}
-        ).get("default_model")
-        child_choices = binding.catalog(project.settings)
-        # An unused invalid child default must not block a valid main override.
-        # Preserve it for the child request's admission refusal, never replace it.
-        child_model = child_default
-        if not child_default or child_default in child_choices:
-            child_model = binding.resolve(
-                None, child_choices, default_model=child_default
-            ).wire_model
-        config_hash = hashlib.sha256(
-            # Author identity, chat skills, and native RC arguments are installed
-            # at process birth; refresh them together at the next task boundary.
-            #
-            # 模型和它的池也在里面：两条路都在启动那一刻把 model 钉进进程 ——
-            # 容器那条路是 `session_launch.py` 拼进 argv 的 `claude --model`，
-            # device 那条路是下面的 `ANTHROPIC_MODEL`。Claude Code 按它组装整套
-            # 系统提示词和自我介绍（Opus 与 Sonnet 用的是两份不同的提示词），
-            # 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，所以改
-            # 项目模型在两条路上都会到下一个 task boundary 收屏重开一次，提示词
-            # 随之换成新模型的。device 上每个请求实际跑哪个模型仍然只由准入决定
-            # （结论 46），计量代理把答案写进请求体；启动时的这个名字只决定提示
-            # 词，在重开之前的那几轮里它可能落后于绑定。容器那条路没有代理改写，
-            # 不放进哈希就是屏幕带着 `--model glm-5.2` 继续跑而准入已经解析成订阅
-            # 池，此后每一轮都死在「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
-            (
-                json.dumps(
-                    {
-                        "agent": agent.configuration,
-                        "git_author": acting_agent,
-                        "model": model,
-                        "supply": supply,
-                        "subagent_model": (project.settings or {}).get(
-                            "default_subagent_model"
-                        ),
-                    },
-                    sort_keys=True,
-                )
-                + ":explicit-chat-v5-launch-model"
-                + (":native-rc-v1" if supply == SUBSCRIPTION else "")
-            ).encode()
-        ).hexdigest()
-        kwargs: dict = {
-            "model": model,
-            "env": {
-                "CHEESE_AGENT_CONFIG": config_hash,
-                "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
-                # The bound model, so Claude Code builds the system prompt and
-                # self-description for the model the turn actually runs on.
-                "ANTHROPIC_MODEL": model,
-                "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
-            },
-            # Which conversation the turn belongs to, and so which session's
-            # machines it runs on. Separate from `agent_handle` below, which is
-            # the SEAT the turn authors under — the two are different strings
-            # and the place is recorded under this one.
-            "session_agent": agent.handle,
-        }
-        if acting_agent is not None:
-            kwargs["agent_handle"] = acting_agent
-        if environment is not None:
-            kwargs["env"]["CHEESE_ENVIRONMENT"] = json.dumps(environment)
-        if provider is not None and provider.builds_model_env:
-            return kwargs, supply
-        pool_route = True
-        if self._profiles is not None:
-            profile = self._profiles.resolve(
-                project.settings if project else None,
-                project.owner_handle if project else None,
-            )
-            kwargs["env"].update(profile.full_env())
-            kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
-            kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
-            # Only the pool profile routes through the gateway; the testing
-            # (native Claude) profiles pin their own base_url + credentials.
-            pool_route = profile.base_url == settings.anthropic_base_url
-        routed = pool_route and self._gateway is not None
-        if routed:
-            # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
-            # the master key (containment), attributable + budget-capped.
-            override = await self._gateway_project_env(project_id)
-            if not override:
-                raise GatewayUnavailableError(
-                    "AI gateway could not provision a project-scoped key; "
-                    "no model call was made"
-                )
-            kwargs["env"] = {**kwargs.get("env", {}), **override}
-        return kwargs, "gateway" if routed else "native"
-
-    _GW_KEY = "llm_gateway_key"
-    _GW_CKPT = "llm_gateway_usage_ckpt"
-    _GW_BUDGET = "llm_gateway_budget_usd"
 
     async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
-        """The project's virtual gateway key, minted on first use — the same one
-        a local sandbox turn runs on. Public because the remote-machine LLM proxy
-        (routes/llm_proxy.py) has to swap it in per request: a machine off the box
-        never receives a provider credential, only its own scoped cheese token."""
-        env = await self._gateway_project_env(project_id)
-        return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
+        """The project's virtual gateway key, minted on first use
+        (gateway_usage.py)."""
+        return await project_gateway_key(
+            self, self._sessions, self._gateway, self._gateway_lock, project_id
+        )
 
     async def _gateway_budget_target(
         self, session: AsyncSession, project_id: uuid.UUID
@@ -3830,191 +3670,39 @@ class ChatService:
         return await _gateway_budget_target(session, project_id)
 
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
-        """Env override for a gateway-routed turn: mint (once) and return the
-        project's virtual key, and keep its L2 max_budget in step with the
-        project's grants. Returns None on any gateway/admin failure; the caller
-        must refuse the turn rather than expose default pool credentials.
-
-        **Answering a project that needs nothing written takes no lock at all.**
-        `_gateway_lock` serialises the settings read-modify-write, but this
-        method used to hold it across the whole body — including the two gateway
-        HTTP calls — so one project minting a key, or one drain asking the
-        gateway for spend, stalled every admission on the box behind it. These
-        calls are on the hot path of every model request (routes/llm_proxy.py
-        asks once per turn, and the metering proxy asks per request), and the
-        queued wait is what the /llm/admission p95 is made of. Measured on dev,
-        2026-09-23: 20 concurrent admissions for ONE project — key long since
-        minted, no budget drift to apply — still fanned out into a 5.8 s tail.
-        Nothing about answering that request is exclusive, so it is answered
-        before the lock is reached.
-        """
-        try:
-            # Read path: the key exists and is in step → nothing to write.
-            async with self._sessions() as session:
-                project = await ProjectRepository(session).get(project_id)
-                if project is None or self._gateway is None:
-                    return None
-                s = dict(project.settings or {})
-                key = s.get(self._GW_KEY)
-                if isinstance(key, str) and key:
-                    target = await self._gateway_budget_target(session, project_id)
-                    if target is None or s.get(self._GW_BUDGET) == target:
-                        return {"ANTHROPIC_AUTH_TOKEN": key}
-
-            # Write path: something must be minted or re-priced. Serialised, and
-            # the settings row is re-read here so a mint that landed while this
-            # call waited on the lock is the one that gets used.
-            async with self._gateway_lock:
-                async with self._sessions() as session:
-                    project = await ProjectRepository(session).get(project_id)
-                    if project is None or self._gateway is None:
-                        return None
-                    s = dict(project.settings or {})
-                    key = s.get(self._GW_KEY)
-                    if not isinstance(key, str) or not key:
-                        key = await self._gateway.mint_project_key(project_id)
-                        if not key:
-                            return None
-                        s[self._GW_KEY] = key
-                    target = await self._gateway_budget_target(session, project_id)
-                    if target is not None and s.get(self._GW_BUDGET) != target:
-                        if await self._gateway.set_key_budget(key, target):
-                            s[self._GW_BUDGET] = target
-                    if s != (project.settings or {}):
-                        project.settings = s
-                        await session.commit()
-            return {"ANTHROPIC_AUTH_TOKEN": key}
-        except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
-            logger.exception("gateway project-env failed for %s", project_id)
-            return None
+        """Env override for a gateway-routed turn (gateway_usage.py)."""
+        return await _gateway_project_env(
+            self, self._sessions, self._gateway, self._gateway_lock, project_id
+        )
 
     def _schedule_deferred_drain(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None:
-        """Late-landing spend rows: drain again in the background and land the
-        usage row + credit deduction when they show up. Strong-ref'd so the
-        pending commit can't be GC'd."""
-
-        async def _later() -> None:
-            await asyncio.sleep(20.0)
-            usages = await self._drain_gateway_usage(project_id, topic_id, turn_id)
-            if not usages:
-                return  # still nothing — the next turn's drain picks it up
-            logger.info(
-                "deferred usage drain landed for turn %s (%s)",
-                turn_id,
-                ", ".join(
-                    f"{u.model or '?'}:{u.input_tokens}+{u.output_tokens}"
-                    for u in usages
-                ),
-            )
-
-        hold(
-            asyncio.create_task(_later()),
+        """Late-landing spend rows: drain again in the background
+        (gateway_usage.py)."""
+        return _schedule_deferred_drain(
+            self._sessions,
+            self._gateway,
+            self._gateway_lock,
             self._background_tasks,
-            name=f"deferred-usage-drain-{turn_id}",
+            project_id,
+            topic_id,
+            turn_id,
         )
 
     async def _drain_gateway_usage(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> list[AgentUsage] | None:
-        """L1: real usage for gateway-routed turns, **one entry per model**.
-
-        The hooks backends can't see token usage locally (interactive Claude
-        Code reports none → usage=0), so read the project's NEW spend from the
-        gateway's log instead — an exactly-once daily cumulative delta per
-        model (see gateway.drain_new_usage), so late-logged rows surface in a
-        later drain instead of being lost. Usage rows, credits and the checkpoint
-        commit together. ``None`` covers both "nothing to
-        land yet" and "could not ask the gateway" — the callers treat them the
-        same (retry now / settle later) and only differ on whether the
-        checkpoint was advanced, which this function already did or did not
-        do."""
-        if self._gateway is None:
-            return None
-        try:
-            for attempt in range(2):
-                if attempt:
-                    # Spend rows can arrive late. Wait without holding the lock
-                    # needed by new model requests, then read the current checkpoint.
-                    await asyncio.sleep(3.0)
-                # Read the checkpoint and ASK THE GATEWAY outside the lock. The
-                # ask is an HTTP round trip to LiteLLM (`/spend/logs`), and
-                # `_gateway_lock` is the box-wide lock that `/llm/admission`
-                # takes per request — holding it across a slow spend read queued
-                # every admission on the platform behind it (measured on dev,
-                # 2026-09-23: 25 admissions in one second, 1.1–6.1 s each, with a
-                # drain in flight). Only the checkpoint read-modify-write below
-                # needs to be exclusive.
-                async with self._sessions() as session:
-                    project = await ProjectRepository(session).get(project_id)
-                    if project is None:
-                        return None
-                    s = dict(project.settings or {})
-                    key = s.get(self._GW_KEY)
-                    if not isinstance(key, str) or not key:
-                        return None  # nothing ever routed → nothing to meter
-                    ckpt = s.get(self._GW_CKPT)
-                    ckpt = ckpt if isinstance(ckpt, dict) else None
-                drained = await drain_new_usage(self._gateway, key, ckpt)
-                if not attempt and (drained is None or not drained[0]):
-                    continue
-                if drained is None:
-                    return None
-                rows, next_ckpt = drained
-                # Exactly-once, and two drains can now be in flight at once: the
-                # checkpoint must still be the one we read before this drain is
-                # allowed to bill its delta. A drain that finds it already
-                # advanced has had its window taken by the other one and must
-                # land nothing — otherwise the same spend rows are billed twice.
-                async with self._gateway_lock:
-                    async with self._sessions() as session:
-                        project = await ProjectRepository(session).get(project_id)
-                        if project is None:
-                            return None
-                        # Another backend process can drain during a rollout.
-                        # Lock and refresh the row before comparing checkpoints.
-                        await session.refresh(project, with_for_update=True)
-                        s = dict(project.settings or {})
-                        if s.get(self._GW_CKPT) != ckpt:
-                            return None
-                        usages = [
-                            AgentUsage(
-                                model=row.model,
-                                input_tokens=row.prompt_tokens,
-                                output_tokens=row.completion_tokens,
-                                cost_usd=row.spend_usd,
-                            )
-                            for row in rows
-                        ]
-                        for usage in usages:
-                            await UsageRepository(session).add(
-                                project_id=project_id,
-                                topic_id=topic_id,
-                                model=usage.model or settings.agent_model,
-                                input_tokens=usage.input_tokens,
-                                output_tokens=usage.output_tokens,
-                                cost_usd=usage.cost_usd,
-                                route="gateway",
-                                turn_id=turn_id,
-                            )
-                            await ComputeGrantRepository(session).consume(
-                                project_id,
-                                usage_to_credits(usage, spend_priced=True),
-                            )
-                        s[self._GW_CKPT] = next_ckpt
-                        project.settings = s
-                        await session.commit()
-                # `model=""` is the one pre-split migration row (see
-                # gateway.drain_new_usage): it is real spend we can only state
-                # as a total. Stamp the default name so it is still visible,
-                # exactly as before the split — do NOT invent a model.
-                # None, not []: "no rows" and "gateway unreachable" both mean
-                # there is nothing to land this pass (see the docstring).
-                return usages or None
-        except Exception:  # noqa: BLE001 — metering must never fail a turn
-            logger.exception("gateway usage drain failed for %s", project_id)
-            return None
+        """L1: real usage for gateway-routed turns, one entry per model
+        (gateway_usage.py)."""
+        return await _drain_gateway_usage(
+            self._sessions,
+            self._gateway,
+            self._gateway_lock,
+            project_id,
+            topic_id,
+            turn_id,
+        )
 
     async def _bail_notice(
         self,
