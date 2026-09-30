@@ -11,7 +11,7 @@
 import type { Topic } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useRoutineList } from '@/composables/useRoutineList'
 
@@ -23,9 +23,19 @@ import RoutineBoard from '@/components/routine/RoutineBoard.vue'
 import RoutineFormDialog from '@/components/routine/RoutineFormDialog.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
+const router = useRouter()
+const workspace = useWorkspaceStore()
+
+/** 人名 → 显示名：行里的人名只画字（`UserRef`），名册在这里查一次。 */
+const userNames = computed(() =>
+  Object.fromEntries(
+    workspace.members.map((m) => [m.user_handle, m.name]).filter((e): e is [string, string] => Boolean(e[1]))
+  )
+)
 
 const rooms = ref<Topic[]>([])
 
@@ -128,6 +138,8 @@ useCommands(() => [
         :loading="loading"
         :error="error"
         :room-names="roomNames"
+        :user-names="userNames"
+        @navigate="(t) => router.push(t)"
         @confirm="(r) => act(r, 'confirm')"
         @pause="(r) => act(r, 'pause')"
         @resume="(r) => act(r, 'resume')"

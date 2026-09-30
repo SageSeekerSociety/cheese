@@ -12,6 +12,7 @@
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavTarget } from '@/lib/navTarget'
 import type { Routine, RoutineRun } from '@/lib/routine'
+import type { UserRefTarget } from '@/lib/userRef'
 
 import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -19,8 +20,9 @@ import { useDisplay } from 'vuetify'
 import NavLink from '../common/NavLink.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { formatRoutineTime, ROUTINE_RUN_LABEL, ROUTINE_STATE_LABEL } from '@/lib/routine'
+import { userRefRoute } from '@/lib/userRef'
 
 const props = withDefaults(
   defineProps<{
@@ -37,8 +39,11 @@ const props = withDefaults(
     /** 执行结果那几行点开去哪儿。不给就只写路径（房间面板里那份文件就在手边，
      *  点它没有别的地方可去）。 */
     roomTo?: NavTarget
+    /** 人名 → 显示名。名册查询在外面（`useUserRef` 那条路），这一行只收结果；
+     *  查不到的画 handle 本身。 */
+    userNames?: Record<string, string>
   }>(),
-  { runs: () => [], open: false, busy: '', roomName: undefined, roomTo: undefined }
+  { runs: () => [], open: false, busy: '', roomName: undefined, roomTo: undefined, userNames: () => ({}) }
 )
 
 const emit = defineEmits<{
@@ -49,7 +54,12 @@ const emit = defineEmits<{
   (e: 'edit'): void
   (e: 'delete'): void
   (e: 'toggle-runs'): void
+  /** 点了行里的某个人名：去他的成员页 / 主页。跳路由是最外层的事。 */
+  (e: 'navigate', target: UserRefTarget): void
 }>()
+
+const nameOf = (h: string) => props.userNames[h] || h
+const targetOf = (h: string) => userRefRoute(h, props.routine.project_id)
 
 const draft = computed(() => props.routine.state === 'draft')
 const stateLabel = computed(() => ROUTINE_STATE_LABEL[props.routine.state])
@@ -135,8 +145,19 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
       <dd>房间 {{ routine.output_dir || '根目录' }}</dd>
       <dt>执行者</dt>
       <dd>
-        <UserRef :handle="routine.agent_handle" :project-id="routine.project_id" />（由
-        <UserRef :handle="routine.proposed_by" :project-id="routine.project_id" /> 起草）
+        <UserRef
+          :handle="routine.agent_handle"
+          :name="nameOf(routine.agent_handle)"
+          :to="targetOf(routine.agent_handle)"
+          @navigate="emit('navigate', targetOf(routine.agent_handle))"
+        />（由
+        <UserRef
+          :handle="routine.proposed_by"
+          :name="nameOf(routine.proposed_by)"
+          :to="targetOf(routine.proposed_by)"
+          @navigate="emit('navigate', targetOf(routine.proposed_by))"
+        />
+        起草）
       </dd>
     </dl>
 
@@ -166,7 +187,14 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
     <!-- 别人的规则：一颗按钮都不画，但要说清为什么 —— 一条没有按钮的规则和一条你没
          权限的规则，看起来不该是同一个东西。 -->
     <p v-else class="t-meta c-faint routine-row__readonly">
-      这条规则由 <UserRef :handle="routine.owner_handle" :project-id="routine.project_id" /> 管，只有他和项目管理员能改
+      这条规则由
+      <UserRef
+        :handle="routine.owner_handle"
+        :name="nameOf(routine.owner_handle)"
+        :to="targetOf(routine.owner_handle)"
+        @navigate="emit('navigate', targetOf(routine.owner_handle))"
+      />
+      管，只有他和项目管理员能改
     </p>
 
     <div v-if="open && !draft" class="routine-runs">

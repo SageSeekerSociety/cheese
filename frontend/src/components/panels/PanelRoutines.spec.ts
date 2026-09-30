@@ -1,27 +1,17 @@
-// 房间右侧「定时与触发」那一格：**只问这一个房间**。
+// 房间面板「定时与触发」那一格（纯展示）：数据从 props 进，动作从事件出。
 //
-// 它和项目「定时与触发」页画的是同一串（`RoutineBoard`）、填的是同一张表，差别只有
-// 范围：那一页是整个项目，这一格带着 `topicId` 去问后端。所以这一份钉的是三件只有
-// 这一格才成立的事：问的是这个房间、新建的规则长在这个房间（表单里连「在哪个房间
-// 执行」都不问）、拿不到权限的规则只读。
+// 它是场景棘轮里的「场景」——panels/ 下的 SFC 新加的第一天就必须能脱离后端单独渲染。
+// 这一份钉的就是这句话：给一组 props 出画面（别人的规则只读、说清归谁管），点「新建」
+// 和存表单是把意图抛出去，不是自己去做。
+import type { Routine } from '@/lib/routine'
+
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('../../api/routines', () => ({
-  listProjectRoutines: vi.fn(),
-  getRoutine: vi.fn(),
-  createRoutine: vi.fn(),
-  updateRoutine: vi.fn(),
-  routineAction: vi.fn(),
-  deleteRoutine: vi.fn(),
-}))
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import PanelRoutines from './PanelRoutines.vue'
-
-const { createRoutine, listProjectRoutines } = await import('../../api/routines')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -43,7 +33,7 @@ beforeAll(() => {
   }
 })
 
-const live = {
+const live: Routine = {
   id: 'live-1',
   can_manage: true,
   room_archived: false,
@@ -53,11 +43,11 @@ const live = {
   instructions: '把这个房间今天的进展写成一页',
   context_scope: '',
   output_dir: '日报',
-  trigger: 'schedule' as const,
+  trigger: 'schedule',
   trigger_text: '每天 09:00（Asia/Shanghai）',
   spec: { freq: 'daily', time: '09:00' },
   timezone: 'Asia/Shanghai',
-  state: 'active' as const,
+  state: 'active',
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
   proposed_by: 'cheese-x',
@@ -69,14 +59,9 @@ const live = {
   updated_at: '2026-09-25T00:00:00Z',
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
-  vi.mocked(listProjectRoutines).mockResolvedValue({ data: [live], total: 1 })
-})
-
-function mount() {
+function mount(props: Record<string, unknown> = {}) {
   return render(PanelRoutines, {
-    props: { topicId: 'room-1', projectId: 'p1' },
+    props: { routines: [live], defaultRoom: 'room-1', ...props },
     global: { plugins: [vuetify] },
   })
 }
@@ -85,46 +70,28 @@ function button(label: string, scope: ParentNode = document.body): HTMLElement |
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
 }
 
-describe('房间右侧的「定时与触发」', () => {
-  it('问的是这一个房间，不是整个项目', async () => {
-    const { findByText } = mount()
-    await findByText('这个房间的日报')
-    expect(listProjectRoutines).toHaveBeenCalledWith('p1', 'room-1')
-  })
-
-  it('还没有规则：写的是「点新建」，不是一个「暂无」', async () => {
-    vi.mocked(listProjectRoutines).mockResolvedValue({ data: [], total: 0 })
-    const { findByText } = mount()
-    await findByText('还没有定时或触发规则')
-  })
-
-  it('别人的规则：只读，一颗按钮都不画', async () => {
-    vi.mocked(listProjectRoutines).mockResolvedValue({
-      data: [{ ...live, can_manage: false, owner_handle: 'u-other' }],
-      total: 1,
-    })
-    const { container, findByText } = mount()
-    await findByText('这个房间的日报')
+describe('房间面板的「定时与触发」（纯展示）', () => {
+  it('给一组 props 出画面：别人的规则只读，并且说清归谁管', () => {
+    const { container } = mount({ routines: [{ ...live, can_manage: false, owner_handle: 'u-other' }] })
     const row = container.querySelector('[data-routine="live-1"]')!
     expect(row.querySelectorAll('button')).toHaveLength(0)
     expect(row.textContent).toContain('只有他和项目管理员能改')
   })
 
-  it('在这一格里新建：房间是定死的，不问「在哪个房间执行」', async () => {
-    vi.mocked(createRoutine).mockResolvedValue({ ...live, id: 'new-1', state: 'draft' })
-    const { findByText } = mount()
-    await findByText('这个房间的日报')
-
+  it('点「新建」是把意图抛出去，不是自己开表单', async () => {
+    const { emitted } = mount()
     await fireEvent.click(button('新建')!)
+    expect(emitted()['start-new']).toHaveLength(1)
+  })
+
+  it('表单开着时：房间是定死的（不问「在哪个房间执行」），存是把内容抛出去', async () => {
+    const { emitted } = mount({ formOpen: true })
     await waitFor(() => expect(button('保存')).toBeTruthy())
     expect(document.body.textContent).not.toContain('在哪个房间执行')
 
     await fireEvent.click(button('保存')!)
-
-    await waitFor(() => expect(createRoutine).toHaveBeenCalled())
-    const [room, body] = vi.mocked(createRoutine).mock.calls[0]
-    expect(room).toBe('room-1')
-    expect(body.trigger).toBe('schedule')
-    expect(body.spec).toEqual({ freq: 'weekly', time: '09:00', weekdays: [0] })
+    await waitFor(() => expect(emitted()['submit']).toBeTruthy())
+    const [payload] = emitted()['submit'][0] as [{ room: string }]
+    expect(payload.room).toBe('room-1')
   })
 })

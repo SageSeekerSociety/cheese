@@ -5,6 +5,7 @@
 // 只吃 props、只往上抛动作：谁去调接口由调用方办。唯一自己做主的是「删之前问一句」——
 // 那是一次确认，不是一次请求。
 import type { Routine, RoutineRun } from '@/lib/routine'
+import type { UserRefTarget } from '@/lib/userRef'
 
 import { computed, ref } from 'vue'
 
@@ -28,8 +29,19 @@ const props = withDefaults(
     roomNames?: Record<string, string>
     /** 结果那几行要不要指回规则所在的房间。房间右侧那一格里指过去就是原地。 */
     linkRooms?: boolean
+    /** 人名 → 显示名。名册查询在调用方，这一串只收结果。 */
+    userNames?: Record<string, string>
   }>(),
-  { runs: () => ({}), openId: null, busy: '', loading: false, error: '', roomNames: () => ({}), linkRooms: true }
+  {
+    runs: () => ({}),
+    openId: null,
+    busy: '',
+    loading: false,
+    error: '',
+    roomNames: () => ({}),
+    linkRooms: true,
+    userNames: () => ({}),
+  }
 )
 
 const emit = defineEmits<{
@@ -40,6 +52,8 @@ const emit = defineEmits<{
   (e: 'edit', routine: Routine): void
   (e: 'delete', routine: Routine): void
   (e: 'toggle-runs', routine: Routine): void
+  /** 点了行里的某个人名：去他的成员页 / 主页。跳路由是最外层的事。 */
+  (e: 'navigate', target: UserRefTarget): void
 }>()
 
 const drafts = computed(() => props.routines.filter((r) => r.state === 'draft'))
@@ -77,9 +91,11 @@ function confirmDelete() {
             :routine="r"
             :busy="busy"
             :room-name="roomNames[r.topic_id]"
+            :user-names="userNames"
             @confirm="emit('confirm', r)"
             @edit="emit('edit', r)"
             @delete="confirming = r"
+            @navigate="(t) => emit('navigate', t)"
           />
         </ul>
       </section>
@@ -94,12 +110,14 @@ function confirmDelete() {
           :busy="busy"
           :room-name="roomNames[r.topic_id]"
           :room-to="linkRooms ? routineRoomTarget(r) : undefined"
+          :user-names="userNames"
           @pause="emit('pause', r)"
           @resume="emit('resume', r)"
           @run-now="emit('run-now', r)"
           @edit="emit('edit', r)"
           @toggle-runs="emit('toggle-runs', r)"
           @delete="confirming = r"
+          @navigate="(t) => emit('navigate', t)"
         />
       </ul>
 

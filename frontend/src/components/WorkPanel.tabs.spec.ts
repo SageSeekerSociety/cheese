@@ -79,7 +79,7 @@ function mount(props: Record<string, unknown> = {}) {
         PanelSite: true,
         PanelChanges: true,
         PanelPreview: true,
-        PanelRoutines: true,
+        RoutinePanelHost: true,
       },
     },
   })

@@ -36,12 +36,12 @@ import { previewCanShowInRoom } from '../lib/fileKind'
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
-import PanelRoutines from './panels/PanelRoutines.vue'
 import PanelSite from './panels/PanelSite.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
+import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
@@ -653,7 +653,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
         />
         <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
              （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
-        <PanelRoutines
+        <RoutinePanelHost
           v-if="mounted.has('routines')"
           v-show="active === 'routines'"
           :class="enterClass('routines')"
