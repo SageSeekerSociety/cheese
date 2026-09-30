@@ -1503,14 +1503,14 @@ export interface FeedbackMeta {
   /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
    *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
    *  分、一个支持几天打对折、不够线时至少补几条。
-   *
    *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
    *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
    *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
   hot_score: number
   hot_half_life_days: number
   hot_min_items: number
-  is_admin: boolean
+  is_admin: boolean // 反馈管理员（队列、私密反馈）
+  is_platform_admin: boolean // 平台管理员（管理台其余各块）；两份名单互不包含
 }
 
 export interface FeedbackSupportResult {

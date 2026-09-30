@@ -525,7 +525,7 @@ export const useFeedbackStore = defineStore('feedback', {
   }),
 
   getters: {
-    /** 我是不是平台管理员。**服务端说了算**；meta 没到之前一律按「不是」。 */
+    /** 我是不是反馈管理员（不是平台管理员，见 meta.is_platform_admin）。服务端说了算。 */
     isAdmin(state): boolean {
       return !!state.meta?.is_admin
     },

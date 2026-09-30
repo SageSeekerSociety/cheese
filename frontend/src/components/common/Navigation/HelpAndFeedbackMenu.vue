@@ -28,8 +28,9 @@ const { t } = useI18n()
 
 const hasUnread = computed(() => store.counts.unread > 0)
 
-/** 菜单项。管理后台那一项**只在服务端说我是管理员时**出现 —— `store.isAdmin` 读的是
- *  `/feedback/meta` 的回答，不是前端按 handle 猜的。 */
+/** 菜单项。管理后台那一项**只在服务端说我是管理员时**出现 —— 读的是 `/feedback/meta`
+ *  的回答，不是前端按 handle 猜的。反馈管理员落在队列上，只是平台管理员的落在看板上：
+ *  队列不归他。 */
 const items = computed(() => {
   // 使用文档是 nginx 直接发的静态站（/docs/），不在这个应用的路由里，所以走 href
   // 整页跳转而不是 `to`：交给路由器只会落到应用自己的 404。
@@ -40,6 +41,8 @@ const items = computed(() => {
   ]
   if (store.isAdmin) {
     all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })
+  } else if (store.meta?.is_platform_admin) {
+    all.push({ key: 'admin', to: '/admin/dashboard', label: t('navigation.feedback.admin') })
   }
   // 「了解知是」讲的是这个产品，不是「我」，所以住在这里而不在用户菜单里。
   all.push({ key: 'about', to: '/about', label: t('publicSite.aboutCheese') })

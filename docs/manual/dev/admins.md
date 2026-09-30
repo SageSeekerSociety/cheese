@@ -24,9 +24,18 @@ covers:
 
 接口用 `require_platform_admin`（`backend/app/api/routes/admin_common.py`）拦截非管理员。
 
+## 反馈管理员是另一份名单 {#feedback-admins}
+
+反馈队列（`/admin/feedback`）、改状态、内部备注、读私密和安全反馈、删别人的反馈和评论，只归**反馈管理员**：环境变量 `FEEDBACK_TRIAGE_HANDLES`，JSON 数组（`settings.feedback_triage_handles`，判据在 `FeedbackService.is_admin`）。它和平台管理员互不包含：平台管理员要用后台做别的事，但那不等于能读每一条私密反馈。
+
+- 只在部署配置里，界面上没有能往里加人的地方。测试环境的值写在 `.github/workflows/deploy-dev.yml` 里，每次部署整份写进那台机器的 env 文件，手改不会留下来；改名单就是改这个文件、走评审。
+- 为空就是没有人管反馈：提交照常，管理员那一支全关。它不像平台管理员那样启动时强制要求非空，因为空着只是关掉一个队列，不是把整个后台锁死。其他部署在自己的 env 文件里设（`deploy/.env.prod.example`）。
+- 名字不叫 `FEEDBACK_ADMIN_HANDLES`：那是平台管理员名单的旧名，后端仍把它当 `PLATFORM_ADMIN_HANDLES` 读。
+- `/feedback/meta` 两个都答：`is_admin`（反馈管理员）和 `is_platform_admin`。后台外壳任一为真就能进，队列只给前者，其余各块只给后者。
+
 ## 后台有什么 {#console}
 
-后台管理在 `/admin`（`frontend/src/router/feedback.ts`）：「反馈队列」（用户提交的反馈）、「看板」、「模型管理」（平台可用的模型目录）、「空间申请」（审核新建的空间）、「成员管理」（界面名单里的管理员）。
+后台管理在 `/admin`（`frontend/src/router/feedback.ts`）：「反馈队列」（用户提交的反馈，只对反馈管理员）、「看板」、「模型管理」（平台可用的模型目录）、「空间申请」（审核新建的空间）、「成员管理」（界面名单里的管理员）。
 
 ## 开发文档的访问 {#dev-docs}
 

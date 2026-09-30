@@ -54,6 +54,8 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     `admin_handles()` 每次重读 settings，就是为了这个改动不用重启进程。
     """
     monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    # The feedback board is read here, and the queue is driven to move reports.
+    monkeypatch.setattr(settings, "feedback_triage_handles", [ADMIN])
     return ADMIN
 
 

@@ -457,9 +457,14 @@ class FeedbackMeta(BaseModel):
     hot_score: float
     hot_half_life_days: float
     hot_min_items: int
-    #: Whether the caller may see the admin surface. The client asks instead of
-    #: guessing from a role string it can only get wrong.
+    #: Whether the caller administers feedback (the triage queue, private
+    #: reports). The client asks instead of guessing from a role string it can
+    #: only get wrong.
     is_admin: bool
+    #: Whether the caller is a platform admin — the admin screens other than the
+    #: feedback queue. A separate roster from `is_admin`; either one opens the
+    #: admin shell, and each opens only its own sections.
+    is_platform_admin: bool
 
 
 class SupportOut(BaseModel):
