@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, StringConstraints
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -21,6 +22,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -42,11 +44,14 @@ from app.domain.block.models import (
 )
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.agent import instance_for_seat, record_agent
+from app.domain.delivery.ledger import DeliveryEvent, event_id_for
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.mentions import canonicalize_refs
+from app.domain.notification.models import NotificationType
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -1224,6 +1229,25 @@ async def summon_agent(
     return ok({"started": True})
 
 
+# 一次作答/更正的全部状态都写在 `meta` 上，形状见 ask-ux-preview/contract.md §4.1。
+# 处理顺序是有讲究的（§4.4）：先鉴权，再查重，再校验内容，最后才比版本 —— 颠倒
+# 任何一对都会留下一个可以拿来绕过的口子。
+_ANSWER_KINDS = ("option", "note", "reject")
+
+
+def _option_texts(meta: dict) -> list[str]:
+    """选项的文字。顺序是选项列表唯一的意思，所以按原数组顺序返回。"""
+    out: list[str] = []
+    for entry in (meta.get("options") or []):
+        out.append(entry["text"] if isinstance(entry, dict) else str(entry))
+    return out
+
+
+def _answer_payload(kind: str, option: str, note: str) -> tuple[str, str, str]:
+    """幂等键要比的那份「内容」：换一个字就是另一次操作。"""
+    return kind, option, note
+
+
 @router.post("/blocks/{block_id}/answer")
 async def answer_options(
     block_id: uuid.UUID,
@@ -1233,14 +1257,35 @@ async def answer_options(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """One-click answer to an option question: validates the choice against the
-    ask block's own options, records it on the block (meta.answered), and posts
-    the choice as the answerer's message, addressed to the teammate that asked."""
-    option = (body.get("option") or "").strip()
+    """Answer an option question, or correct this answerer's own earlier answer.
+
+    The answer is an append-only log; the last entry is the one in force. A
+    correction keeps the entry it replaces, so the room can still see what was
+    originally chosen and who chose it.
+
+    Two invariants worth naming, both of which a naive rewrite breaks:
+
+    * **Authentication happens before anything else.** The idempotency lookup
+      reads the question's state; returning "already answered" to somebody who
+      has not proven they belong here is a leak, and it is also how an outsider
+      would probe for `client_op_id` values. So `resolve` + `authorize_topic`
+      come first, and every other branch is behind them.
+    * **The wake is one durable delivery, not a second timeline message.**
+      `broker.receive_message` both persists a row and starts a turn; running it
+      here alongside `record_agent` wakes the seat twice and writes the answer
+      text twice. Only `record_agent` runs — and because `_run` does not persist
+      anything (`Human message already persisted by `receive_message``), the
+      answer text is written here, once, carrying the same `delivery_event_id`
+      as the delivery.
+    """
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
         raise NotFoundError("问题不存在")
+
+    # 1. 先鉴权。`body["author"]` 只是寻址的退路，不参与授权 —— 见
+    # `ActorResolver` 的 docstring：legacy authorship fallback does not
+    # authenticate.
     actor = await resolver.resolve(
         fallback_handle=body.get("author"),
         topic_id=blk.topic_id,
@@ -1250,51 +1295,168 @@ async def answer_options(
         actor, project_id=blk.project_id, topic_id=blk.topic_id
     )
     author = actor.handle
-    if author == "anonymous" or not option:
-        raise ValidationError("author 和 option 都要有")
-    meta = dict(blk.meta or {})
-    options = meta.get("options") or []
-    if option not in options:
-        raise ValidationError("不在选项里")
-    if meta.get("answered"):
-        raise ValidationError(
-            f"已由 {meta.get('answered_by')} 选过：{meta.get('answered')}"
-        )
-    meta["answered"] = option
-    meta["answered_by"] = author
-    blk.meta = meta
-    await db.flush()
-    updated = BlockOut.model_validate(blk).model_dump(mode="json")
-    await db.commit()
-    await get_broker().publish(
-        str(blk.topic_id), {"type": "block_updated", "block": updated}
+
+    kind = (body.get("kind") or "option").strip()
+    option = (body.get("option") or "").strip()
+    note = (body.get("note") or "").strip()
+    client_op_id = (body.get("client_op_id") or "").strip()
+    expect_version = body.get("expect_version")
+
+    if kind not in _ANSWER_KINDS:
+        raise ValidationError("kind 要是 option / note / reject")
+    if not client_op_id:
+        raise ValidationError("client_op_id 必带")
+    if not isinstance(expect_version, int) or isinstance(expect_version, bool):
+        raise ValidationError("expect_version 必带：初答 0，之后是 answer_log 末项的 v")
+    if len(note) > 2000:
+        raise ValidationError("note 最多 2000 字")
+    if author == "anonymous":
+        raise ValidationError("要登录才能作答")
+
+    # 2. 行锁。幂等查重、内容校验、版本比对读的是同一份 `answer_log`，不锁住就
+    # 会出现「两个并发都没看见对方」的假幂等 —— 重试的那一次会拿到 409 而不是
+    # 已经存好的那一版。锁在这里而不是在 CAS 那一行，是为了让查重也在锁内。
+    locked = await db.execute(
+        select(Block).where(Block.id == block_id).with_for_update()
     )
-    # 选项是回答一个待确认问题，收件人就是问问题的那个席位。**@ 写进正文**，不在
-    # 帧上另置一位：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁
-    # 也没叫的消息却起了一轮（这也是浏览器发消息时遵守的同一条规矩）。
-    #
-    # 只认名册上真有的席位（`addressable_agent_handle`）：正文里的 @ 是由名册解析
-    # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
-    # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
-    # 样记在卡上。
-    #
-    # 「问问题的那个席位」就是这张卡的署名：一个房间可以坐好几位 AI 队友，点房间
-    # 的默认席位的话，别的队友问出的题一点选项就换成默认芝士来接，而它手上没有那
-    # 道题的来龙去脉。署名者已不在名册上（被请出房间、或者题是人问的）才退回默认
-    # 席位。
+    blk = locked.scalar_one()
+    meta = dict(blk.meta or {})
+    log: list[dict] = list(meta.get("answer_log") or [])
+
+    # 3. 幂等：同一个 (块, 人, 操作) 只记一次。**在版本拒绝之前** —— 重试的人手上
+    # 的 expect_version 可能已经过期，但他那一次操作确实已经落库了，这时该拿 200
+    # 而不是 409。
+    for entry in log:
+        if entry.get("by") != author or entry.get("client_op_id") != client_op_id:
+            continue
+        stored = _answer_payload(
+            entry.get("kind") or "option",
+            entry.get("option") or "",
+            entry.get("note") or "",
+        )
+        if stored != _answer_payload(kind, option, note):
+            raise ConflictError("同一个 client_op_id 换了内容")
+        return ok(BlockOut.model_validate(blk).model_dump(mode="json"))
+
+    # 4. 内容校验。`allow_other` 读建题 meta（持久化的那一份），不是读这次请求。
+    texts = _option_texts(meta)
+    if kind == "option":
+        if not option:
+            raise ValidationError("kind=option 要给 option")
+        if option not in texts:
+            raise ValidationError("不在选项里")
+    else:
+        # reject / note 都**不伪造合法项**：不写进 options，也不编一个 option 出来。
+        if option:
+            raise ValidationError(f"kind={kind} 不给 option")
+        if kind == "note" and not note:
+            raise ValidationError("kind=note 要给 note")
+        if kind == "note" and not meta.get("allow_other"):
+            raise ValidationError("这道题不接受自由输入")
+    if kind == "reject" and not (
+        meta.get("reject_option") or meta.get("allow_other")
+    ):
+        # 老题没有这两个键：界面没补「以上都不是」，就不该有一条 API 能替它补。
+        raise ValidationError("这道题不接受「以上都不是」")
+
+    # 5. 更正闸门：只有原答者能改自己的答案。这是房间里的规则，不是「你不是成员」
+    # —— 后者才是 403（ForbiddenError），所以这里用 422。
+    if log:
+        last = log[-1]
+        if author != last.get("by"):
+            raise ValidationError("只有原答者能更正")
+
+    # 6. CAS：旧日志长度等于 expect_version。初答 expect_version=0、长度 0 → 成立
+    # → 写第 1 版；第一次更正 expect_version=1、长度 1 → 成立 → 写 v=2。
+    # 不是 `== expect_version + 1` —— 那个式子在初答时要求 0 == 1，会把第一次作答
+    # 整个拒掉。落败的那个拿 409。
+    if len(log) != expect_version:
+        raise ConflictError("版本不对，请重取这一题后再作答")
+
+    now_iso = datetime.now(UTC).isoformat()
+    entry = {
+        "v": expect_version + 1,
+        "kind": kind,
+        "option": option if kind == "option" else None,
+        "note": note or None,
+        "by": author,
+        "at": now_iso,
+        "client_op_id": client_op_id,
+    }
+    log.append(entry)
+    meta["answer_log"] = log
+
     members = TopicMemberService(db)
     if blk.author in await members.agent_handles(blk.topic_id):
         seat: str | None = blk.author
     else:
         seat = await members.addressable_agent_handle(blk.topic_id)
-    await get_broker().receive_message(
-        chat,
-        blk.topic_id,
+
+    event_id = event_id_for(NotificationType.MENTION, f"{block_id}:{entry['v']}")
+    text = _answer_line(seat, entry)
+
+    # 7. 同一件事一个事务里写完：答案、那条给人看的文本、那条给席位的投递意图。
+    blk.meta = meta
+    answer_block = await repo.add(
+        project_id=blk.project_id,
+        topic_id=blk.topic_id,
         author=author,
-        content=f"<@{seat}> {option}" if seat else option,
-        provision_actor=actor,
+        author_type=AuthorType.participant,
+        content=text,
+        kind=BlockKind.message,
+        meta={"delivery_event_id": str(event_id), "answer_to": str(block_id)},
     )
+    if seat is not None:
+        instance = await instance_for_seat(db, blk.project_id, seat)
+        if instance is not None:
+            await record_agent(
+                db,
+                DeliveryEvent(
+                    id=event_id,
+                    type=NotificationType.MENTION,
+                    payload={"answer_to": str(block_id), "v": entry["v"]},
+                    occurred_at=datetime.now(UTC),
+                ),
+                topic_id=blk.topic_id,
+                instance_id=instance.id,
+                content=text,
+            )
+
+    updated = BlockOut.model_validate(blk).model_dump(mode="json")
+    answer_out = BlockOut.model_validate(answer_block).model_dump(mode="json")
+
+    # 8. 提交。落库之后再广播 —— 广播是尽力而为，状态已经在库里，前端可以重取。
+    await db.commit()
+    await get_broker().publish(
+        str(blk.topic_id), {"type": "block_updated", "block": updated}
+    )
+    await get_broker().publish(
+        str(blk.topic_id), {"type": "block_added", "block": answer_out}
+    )
+    # 投递意图已经落库，接着把它交出去。这一步不在事务里：意图先持久，投递后发生，
+    # 中间崩了也只是留一条 `pending`，由 `dispatch_pending` / 定时补送接上，而不是
+    # 把答案写两遍。
+    from app.domain.delivery.agent import dispatch_pending
+
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(updated)
+
+
+def _answer_line(seat: str | None, entry: dict) -> str:
+    """时间线上那一行的正文。@ 写进正文（不是帧上另置一位），读的人才看得出叫了谁。"""
+    kind = entry.get("kind")
+    if kind == "option":
+        what = entry["option"] or ""
+    elif kind == "reject":
+        what = "以上都不是"
+    else:
+        what = entry.get("note") or ""
+    suffix = ""
+    if kind == "option" and entry.get("note"):
+        suffix = f"（{entry['note']}）"
+    elif kind == "reject" and entry.get("note"):
+        suffix = f"（{entry['note']}）"
+    return f"<@{seat}> {what}{suffix}" if seat else f"{what}{suffix}"
 
 
 @router.post("/{topic_id}/webhook-token")

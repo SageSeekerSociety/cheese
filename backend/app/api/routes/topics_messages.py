@@ -225,6 +225,29 @@ async def _summon_the_named(
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
 
 
+def _option_entries(raw: object) -> list[dict]:
+    """选项从这里进，形状只有一种：`{"text": …, "explain"?: …}`。
+
+    旧的 `string[]` 在这里就是错的形状，不是另一种写法：留一条兼容分支，就等于让
+    `meta.options` 永远有两种读法，而读它的人有四处（前端渲染、作答校验、待办判据、
+    CLI）。所以裸字符串直接 422，而不是被顺手收下。
+    """
+    if not isinstance(raw, list):
+        raise ValidationError("options 必须是数组")
+    out: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValidationError("每个选项都是 {text, explain?} 对象")
+        text = str(entry.get("text") or "").strip()
+        if not text:
+            raise ValidationError("每个选项都要有 text")
+        item: dict = {"text": text}
+        explain = entry.get("explain")
+        if isinstance(explain, str) and explain.strip():
+            item["explain"] = explain.strip()
+        out.append(item)
+    return out
+
 @router.post("/{topic_id}/ask")
 async def ask_options(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -240,11 +263,17 @@ async def ask_options(
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
     question = (body.get("question") or "").strip()
-    options = [str(o).strip() for o in (body.get("options") or []) if str(o).strip()]
+    options = _option_entries(body.get("options"))
     if not question:
         raise ValidationError("question is required")
-    if not 2 <= len(options) <= 4:
-        raise ValidationError("需要 2-4 个选项")
+    # 提问方给 2-3 项，「以上都不是」由界面按 `reject_option` 自动补，不占这里的名额
+    # （已批 PDF p6）。少了不够选，多了那道题就变成读一列。
+    if not 2 <= len(options) <= 3:
+        raise ValidationError("需要 2-3 个选项")
+    # 作答许可写在这道题自己身上，不是留在请求里：作答那一刻读的是建题 meta。
+    # 默认开着，因为「关联自由输入」是已批方案的目标之二；关掉才需要显式说。
+    allow_other = bool(body.get("allow_other", True))
+    reject_option = bool(body.get("reject_option", True))
     # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
     # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese_ask` 只在 CHEESE_TURN
     # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
@@ -285,7 +314,12 @@ async def ask_options(
         author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
-        meta={"options": options, "asked": asked},
+        meta={
+            "options": options,
+            "asked": asked,
+            "allow_other": allow_other,
+            "reject_option": reject_option,
+        },
         own_output=asked_by_agent,
     )
     await notify_question(

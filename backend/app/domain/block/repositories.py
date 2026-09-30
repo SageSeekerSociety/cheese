@@ -563,9 +563,10 @@ class BlockRepository:
     ) -> dict[uuid.UUID, str | None]:
         """这些活里，哪几条停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
-        判据是 #1084 定的那一条：**最近一条提问消息没有 `answered`**。不需要新增
-        存储，因为回答本来就记在提问那一块上（`meta.answered`）。取「最近一条」而
-        不是「有没有任何一条」：已回答的旧提问不该让这条活长期停留在待处理。
+        判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
+        存储，因为回答本来就记在提问那一块上（`meta.answer_log`，末条是当前生效的
+        那一版）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这条
+        活长期停留在待处理。
 
         等谁也记在那一块上（`meta.asked`，提问那一刻写下的，见 `ask_options`）。
         None 是「这道题指不到具体的人」。只关心停没停的调用方照样拿它做 `in`。
@@ -802,7 +803,9 @@ class BlockRepository:
                 place_column.in_(place_ids),
                 Block.kind == BlockKind.message,
                 # `meta` 是 json（不是 jsonb），所以用 `->>` 判存在，和
-                # `ix_blocks_cloud_provisioning` 那个部分索引同一个写法。
+                # `ix_blocks_cloud_provisioning` 那个部分索引同一个写法。判的是
+                # 「这是一道题」——`options` 这个键在不在，和它装的是字符串还是
+                # {text, explain} 对象无关（`->>` 取到的都不是 NULL）。
                 Block.meta["options"].as_string().isnot(None),
                 *extra,
             )
@@ -812,7 +815,7 @@ class BlockRepository:
         rows = [
             (place_id, meta or {}, at, asker)
             for place_id, meta, at, asker in (await self._session.execute(stmt)).all()
-            if place_id is not None and not (meta or {}).get("answered")
+            if place_id is not None and not (meta or {}).get("answer_log")
         ]
         if not rows:
             return {}
