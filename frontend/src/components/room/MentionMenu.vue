@@ -1,0 +1,268 @@
+<script setup lang="ts">
+// `@` 候选菜单，浮在输入框上方。
+//
+// 从 `RoomComposer.vue` 里拆出来的（#2143）：它只吃 props、只往上发事件，所以能
+// 单独摆在预览站里。候选是什么、高亮哪一项、在第几级，全在外面算好——这里不认识
+// 名册，也不认识资料库。
+//
+// 它**不传送到 body**，就是一个 `position: absolute` 的 div，定位的参照是输入区
+// 那个 `position: relative` 的盒子。所以它自己那套样式写在下面就够了，不需要谁从
+// 外面 `:deep` 进来（浮层要传送的才需要）。
+import type { MentionItem } from '@/composables/useRoomMentionPicker'
+
+import { nextTick, ref } from 'vue'
+
+import { avatarColor, avatarInitial } from '../../utils/avatar'
+import ExternalTag from '../common/ExternalTag.vue'
+
+defineProps<{
+  /** 候选是不是该露出来。Esc 收起之后它是 false（`@` 还留在正文里）。 */
+  open: boolean
+  matches: MentionItem[]
+  /** 高亮的是第几项。鼠标划过和 ↑/↓ 改的是同一个值。 */
+  activeIndex: number
+  /** 进来翻资料库了没有：二级菜单的头和往左让开的动画都看它。 */
+  level: 'root' | 'library'
+  /** 触摸屏上回车是换行，那条「Enter 挑这一项」的提示就不该出现。 */
+  enterSends: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'pick', item: MentionItem): void
+  (e: 'hover', index: number): void
+}>()
+
+const menuEl = ref<HTMLElement | null>(null)
+
+// 菜单自己有高度上限、自己滚（见 .mention-menu）：不把高亮项滚进视野，按 ↓ 走到
+// 底之后高亮就跑到看不见的地方去了——那时键盘看起来又坏了。
+//
+// 只由 ↑/↓ 触发（输入区在换高亮之后叫这一下）；鼠标划过不需要滚，指针指着的
+// 那一项本来就在眼前。
+async function scrollActiveIntoView() {
+  await nextTick()
+  menuEl.value?.querySelector('.mention-menu-item.is-active')?.scrollIntoView?.({ block: 'nearest' })
+}
+
+defineExpose({ scrollActiveIntoView })
+</script>
+
+<template>
+  <Transition name="menu-rise">
+    <div v-if="open || level === 'library'" ref="menuEl" class="mention-menu">
+      <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
+      <Transition :name="level === 'library' ? 'level-in' : 'level-out'" mode="out-in">
+        <div :key="level" class="mention-menu-level">
+          <div v-if="level === 'library'" class="mention-menu-head" title="按 Esc 返回">
+            <v-icon size="13">mdi-folder-outline</v-icon>
+            <span class="mention-menu-name">资料库</span>
+          </div>
+          <template v-for="(mm, i) in matches" :key="mm.kind + mm.insert">
+            <div v-if="mm.group && mm.group !== matches[i - 1]?.group" class="mention-menu-group">
+              {{ mm.group }}
+            </div>
+            <button
+              type="button"
+              class="mention-menu-item"
+              :class="{ 'is-active': i === activeIndex }"
+              @click="emit('pick', mm)"
+              @mouseenter="emit('hover', i)"
+            >
+              <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
+                <v-icon size="13">mdi-bullhorn-outline</v-icon>
+              </span>
+              <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
+                avatarInitial(mm.label)
+              }}</span>
+              <span
+                v-else-if="mm.kind === 'member'"
+                class="mention-avatar"
+                :style="{ backgroundColor: avatarColor(mm.handle) }"
+                >{{ avatarInitial(mm.label) }}</span
+              >
+              <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
+                <v-icon size="13">mdi-folder-outline</v-icon>
+              </span>
+              <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
+                <v-icon size="13">mdi-file-outline</v-icon>
+              </span>
+              <span v-else class="mention-avatar mention-avatar--topic">
+                <v-icon size="13">mdi-pound</v-icon>
+              </span>
+              <span class="mention-menu-name">{{ mm.label }}</span>
+              <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+              <ExternalTag v-else-if="mm.external" />
+              <span class="mention-menu-sub">{{ mm.sub }}</span>
+              <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
+              <span v-else-if="i === activeIndex && enterSends" class="mention-menu-hint">Enter</span>
+            </button>
+          </template>
+          <div v-if="level === 'library' && !matches.length" class="mention-menu-group">暂无匹配的文件</div>
+        </div>
+      </Transition>
+    </div>
+  </Transition>
+</template>
+
+<style scoped>
+/* @-autocomplete popup — mirrors TopicView's composer picker. */
+/* 浮在输入区上方，不占位置。它原来是输入区里的一个普通块：菜单一出现输入区就长高，
+   贴在输入框上面的验收横条被整条顶上去，菜单一收又掉回来。浮层本来就该带投影、
+   盖在别的东西上面。 */
+.mention-menu {
+  position: absolute;
+  right: 12px;
+  bottom: 100%;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  /* 横向仍旧裁边（圆角靠它），纵向改自滚：规范只在某一侧是 `visible` 时才把另一
+     侧算成 `auto`，所以这两条不冲突。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
+     就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
+     一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
+     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
+     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
+     lib/keyboardInset.ts）。 */
+  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+.mention-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  min-height: 36px;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+/* 高亮只有一套：鼠标划过（`@mouseenter` 把下标挪过去）和 ↑/↓ 改的是同一个下标。
+   两边各画一次的话，指针停在第三行、键盘走到第四行时屏幕上会同时亮着两行，
+   而回车只会挑其中一行。 */
+.mention-menu-item.is-active {
+  background: var(--fill);
+}
+.mention-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  /* 底色是 avatarColor() 按 handle 算出来的定值，和时间线上这个人的头像一个颜色，
+     两套主题下都不变，所以上面的字也得是定值。design-system §唯一的例外：这种地方
+     必须写明理由，否则下一个人会顺手换成 token（深色下就变成浅灰压浅底）。 */
+  /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色，底色不随主题变。 */
+  color: #fff;
+  flex: none;
+}
+/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来
+   是一颗琥珀圆——琥珀留给主操作，不给头像。 */
+.mention-avatar--agent {
+  color: var(--inverse-ink);
+  background: var(--inverse-surface);
+  border-radius: var(--radius-sm);
+}
+.mention-avatar--broadcast {
+  /* --ink inverts with the theme (near-black → near-white), so the ink on it
+     has to invert too; --surface is #fff in light (unchanged) and #1B1D20 dark. */
+  color: var(--surface);
+  background: var(--ink);
+}
+.mention-avatar--topic,
+.mention-avatar--file {
+  background: var(--fill);
+  color: var(--muted);
+}
+.menu-rise-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.menu-rise-leave-active {
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.menu-rise-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.menu-rise-leave-to {
+  opacity: 0;
+}
+.mention-menu-level {
+  display: flex;
+  flex-direction: column;
+}
+.level-in-enter-active,
+.level-out-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.level-in-leave-active,
+.level-out-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.level-in-enter-from,
+.level-out-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
+}
+.level-in-leave-to,
+.level-out-enter-from {
+  opacity: 0;
+  transform: translateX(-16px);
+}
+/* 二级菜单的头，和它里面的分组标题：两条都不是可选项，所以不长得像可选项。 */
+.mention-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--muted);
+}
+.mention-menu-group {
+  padding: 6px 12px 2px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.mention-menu-name {
+  font-weight: 500;
+}
+.mention-agent-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: var(--fill);
+}
+.mention-menu-sub {
+  font-size: 12px;
+  color: var(--faint);
+}
+.mention-menu-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--faint);
+}
+/* 触屏上手指点得中（设计系统 §10.1）：行画出来的样子不变，能点的范围撑到 44px 高。 */
+@media (pointer: coarse) {
+  .mention-menu-item {
+    min-height: 44px;
+  }
+}
+</style>

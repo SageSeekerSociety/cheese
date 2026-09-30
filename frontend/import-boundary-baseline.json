@@ -58,7 +58,6 @@
     "src/components/ResourceLimitsNotice.vue": 2,
     "src/components/room/composables/useRoomRoster.ts": 1,
     "src/components/room/composables/useRoomSocket.ts": 1,
-    "src/components/room/RoomComposer.vue": 2,
     "src/components/SessionInspector.vue": 2,
     "src/components/settings/AgentTeamSettings.vue": 2,
     "src/components/settings/CreditsPanel.vue": 1,
