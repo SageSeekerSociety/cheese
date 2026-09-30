@@ -23,11 +23,6 @@
   },
   "loading": "Loading",
   "offline": "Offline · New messages can’t be sent or received. Reconnects when the network is back",
-  "update": {
-    "ready": "A new version is available. The page reloads after updating",
-    "now": "Update now",
-    "later": "Later"
-  },
   "version": {
     "title": "Deployed build {sha} (click to copy)"
   },
