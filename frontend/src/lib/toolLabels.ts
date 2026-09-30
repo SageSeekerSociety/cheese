@@ -100,6 +100,11 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_machine: 'toolLabels.cheeseMachine',
   cheese_note: 'toolLabels.cheeseNote',
   cheese_deliver_at: 'toolLabels.cheeseDeliverAt',
+  cheese_routine_draft: 'toolLabels.cheeseRoutineDraft',
+  cheese_routine_list: 'toolLabels.cheeseRoutineList',
+  cheese_routine_update: 'toolLabels.cheeseRoutineUpdate',
+  cheese_routine_pause: 'toolLabels.cheeseRoutinePause',
+  cheese_routine_report: 'toolLabels.cheeseRoutineReport',
   // 后台任务 — pi 自己没有后台 shell，这五个是平台加的。
   bash_start: 'toolLabels.bashStart',
   bash_read: 'toolLabels.bashRead',
