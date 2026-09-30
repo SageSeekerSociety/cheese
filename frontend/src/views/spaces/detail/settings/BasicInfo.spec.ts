@@ -29,6 +29,11 @@ vi.mock('@/network/api/spaces', () => ({
   },
 }))
 
+// 空间外壳替管理员读一遍待审核的题数，这里不关心它的结果。
+vi.mock('@/network/api/tasks', () => ({
+  TasksApi: { list: vi.fn().mockResolvedValue({ data: { tasks: [], page: { total: 0 } } }) },
+}))
+
 vi.mock('@/network/api/avatars', () => ({
   AvatarsApi: { createAvatar: vi.fn() },
 }))
@@ -61,7 +66,6 @@ const SPACE = {
   intro: '',
   avatarId: null,
   admins: [{ user: { id: OWNER_ID, nickname: '管理员' }, role: 'OWNER' }],
-  announcements: '[]',
   taskTemplates: '[]',
   classificationTopics: [],
   visibleTaskLimit: null,

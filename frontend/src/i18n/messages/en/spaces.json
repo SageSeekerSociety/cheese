@@ -247,5 +247,45 @@
       "visibleLimitRequired": "Enter a limit",
       "visibleLimitInvalid": "The limit must be a whole number of 0 or more"
     }
+  },
+  "announcements": {
+    "publish": "Post announcement",
+    "editTitle": "Edit announcement",
+    "empty": "No announcements",
+    "pinnedTag": "Pinned",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "edit": "Edit",
+    "delete": "Delete",
+    "day": "{month}/{date}",
+    "dayWithYear": "{month}/{date}/{year}",
+    "publishedOn": "Posted {day}",
+    "edited": "Edited",
+    "expiresOn": "Expires {day}",
+    "expiredFold": "Expired · {count}",
+    "confirmDelete": "Delete this announcement?",
+    "form": {
+      "title": "Title",
+      "content": "Body",
+      "pinned": "Pin",
+      "expiry": "Expires on (optional)",
+      "notifyHint": "{count} members of this space will be notified. Later edits notify no one.",
+      "cancel": "Cancel",
+      "publish": "Post",
+      "save": "Save"
+    },
+    "toast": {
+      "published": "Posted",
+      "saved": "Saved",
+      "deleted": "Deleted",
+      "pinned": "Pinned",
+      "unpinned": "Unpinned",
+      "publishFailed": "Could not post",
+      "saveFailed": "Could not save",
+      "deleteFailed": "Could not delete",
+      "pinFailed": "Could not pin",
+      "unpinFailed": "Could not unpin"
+    },
+    "morePinned": "{count} more pinned"
   }
 }

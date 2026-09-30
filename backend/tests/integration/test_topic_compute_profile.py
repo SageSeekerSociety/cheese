@@ -143,7 +143,8 @@ def test_select_persists_only_to_topic(client, monkeypatch):
     # `device` is the carrier: local-docker is retired (#358) and Cloud demands a
     # verified human caller (it provisions a billed VM — see the authorization test
     # below). This test covers room-local profile selection.
-    monkeypatch.setattr("app.api.routes.topics.project_device_online", _online)
+    # The handler moved into topics_compute.py, so the name it reads lives there.
+    monkeypatch.setattr("app.api.routes.topics_compute.project_device_online", _online)
 
     # An undeployed pool can't be selected.
     bad = client.put(f"/topics/{tid}/compute-profile", json={"profile": "gpu"})

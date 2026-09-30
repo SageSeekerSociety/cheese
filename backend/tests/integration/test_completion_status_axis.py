@@ -79,7 +79,6 @@ def _claim(user_client: UserCreator, api_client: TestClient, *, own: bool) -> _C
             "description": "一块题目板。" * 20,
             "avatarId": 1,
             "enableRank": False,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(teacher.token),

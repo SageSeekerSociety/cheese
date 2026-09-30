@@ -2,6 +2,7 @@
   <v-sheet flat rounded="lg" class="task-container">
     <!-- 顶部导航和筛选区 -->
     <div class="filter-section pa-4 pb-0">
+      <PinnedAnnouncements class="mb-4" />
       <!-- 主分类选项按钮在移动端显示 -->
       <div class="d-md-none category-nav-mobile mb-4">
         <v-select
@@ -197,12 +198,15 @@ import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import MyPublishedTaskCard from './member-tasks/components/MyPublishedTaskCard.vue'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
+import PinnedAnnouncements from '@/views/spaces/detail/PinnedAnnouncements.vue'
 
 const TaskCard = defineAsyncComponent(() => import('@/components/TaskCard.vue'))
 
@@ -231,6 +235,7 @@ const selectedTopic = ref<number | null>(null)
 const { t } = useI18n()
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpace, categories } = storeToRefs(spaceStore)
 
 const hotTopics = ref<Topic[]>([])
@@ -440,7 +445,7 @@ watch(
 )
 
 onMounted(async () => {
-  await spaceStore.fetchCategories() // 获取分类列表
+  await spaceData.fetchCategories() // 获取分类列表
   fetchHotTopics()
 })
 </script>

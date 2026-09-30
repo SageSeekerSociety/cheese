@@ -36,7 +36,7 @@
     "dismiss": "关闭这条提示"
   },
   "detail": {
-    "announcements": "公告板",
+    "announcements": "公告",
     "showMore": "查看更多",
     "showLess": "收起",
     "collapseSidebar": "收起侧边栏",
@@ -300,5 +300,45 @@
       "visibleLimitRequired": "填写数量上限",
       "visibleLimitInvalid": "数量上限需为大于等于 0 的整数"
     }
+  },
+  "announcements": {
+    "publish": "发布公告",
+    "editTitle": "编辑公告",
+    "empty": "暂无公告",
+    "pinnedTag": "置顶",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "edit": "编辑",
+    "delete": "删除",
+    "day": "{month} 月 {date} 日",
+    "dayWithYear": "{year} 年 {month} 月 {date} 日",
+    "publishedOn": "{day}发布",
+    "edited": "已编辑",
+    "expiresOn": "{day}到期",
+    "expiredFold": "已到期 · {count} 条",
+    "confirmDelete": "删除这条公告？",
+    "form": {
+      "title": "标题",
+      "content": "正文",
+      "pinned": "置顶",
+      "expiry": "到期日（选填）",
+      "notifyHint": "发布后通知空间内 {count} 位成员，后续修改不再通知",
+      "cancel": "取消",
+      "publish": "发布",
+      "save": "保存"
+    },
+    "toast": {
+      "published": "已发布",
+      "saved": "已保存",
+      "deleted": "已删除",
+      "pinned": "已置顶",
+      "unpinned": "已取消置顶",
+      "publishFailed": "发布失败",
+      "saveFailed": "保存失败",
+      "deleteFailed": "删除失败",
+      "pinFailed": "置顶失败",
+      "unpinFailed": "取消置顶失败"
+    },
+    "morePinned": "另有 {count} 条置顶公告"
   }
 }

@@ -80,7 +80,6 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
             "intro": "一块板",
             "description": "材料放在这道题上",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(creator_token),

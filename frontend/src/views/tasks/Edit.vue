@@ -51,6 +51,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
@@ -71,6 +73,7 @@ const taskManagementModule = useTaskManagement(taskDataModule)
 const { submitEditTask } = taskManagementModule
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { domainGroups } = storeToRefs(spaceStore)
 
 // 状态
@@ -124,8 +127,8 @@ const navigateToDetail = () => {
 onMounted(async () => {
   await loadTaskData()
   if (taskData.value?.space?.id) {
-    spaceStore.currentSpaceId = taskData.value.space.id
-    await spaceStore.fetchDomainGroups()
+    spaceStore.setCurrentSpaceId(taskData.value.space.id)
+    await spaceData.fetchDomainGroups()
   }
 })
 </script>

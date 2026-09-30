@@ -8,6 +8,7 @@ import { onBeforeRouteUpdate, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useSpaceData } from '@/composables/useSpaceData'
 
 import { useSpaceStore } from '@/stores/space'
 
@@ -15,11 +16,12 @@ const route = useRoute()
 const { setDynamicTitle } = usePageTitle()
 
 const spaceStore = useSpaceStore()
-const { currentSpace: space } = storeToRefs(spaceStore)
+const spaceData = useSpaceData()
+const { currentSpace: space, currentSpaceId, isManager } = storeToRefs(spaceStore)
 
 const getSpace = async (spaceId: number) => {
-  await spaceStore.fetchSpace(spaceId)
-  spaceStore.fetchCategories()
+  await spaceData.fetchSpace(spaceId)
+  spaceData.fetchCategories()
   if (space.value?.name) setDynamicTitle(space.value.name, 'SpacesDetail')
 }
 
@@ -29,6 +31,15 @@ watch(
   (name) => {
     if (name) setDynamicTitle(name, 'SpacesDetail')
   }
+)
+
+// 侧栏「待审核」旁边的数：只有所有者与管理员读得到（接口对别人不开），换了空间重读一次。
+watch(
+  [currentSpaceId, isManager],
+  ([id, manager]) => {
+    if (id && manager) spaceData.fetchPendingAuditCount()
+  },
+  { immediate: true }
 )
 
 onMounted(async () => {

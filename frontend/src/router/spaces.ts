@@ -190,9 +190,13 @@ export default {
           component: () => import('@/views/spaces/detail/settings/BasicInfo.vue'),
         },
         {
+          // 分类与话题是两页现成的管理页，并排画在这一栏里：设置页给话题留了一个具名出口。
           path: 'categories',
           name: 'SpacesDetailSettingsCategories',
-          component: () => import('@/views/spaces/detail/settings/CategoriesAndTopics.vue'),
+          components: {
+            default: () => import('@/views/spaces/detail/ManageCategories.vue'),
+            topics: () => import('@/views/spaces/detail/ManageTopics.vue'),
+          },
         },
         {
           path: 'templates',

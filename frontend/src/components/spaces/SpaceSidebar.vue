@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
@@ -85,17 +85,8 @@ import { useSpaceStore } from '@/stores/space'
 const { t } = useI18n()
 const route = useRoute()
 const spaceStore = useSpaceStore()
-const { currentSpace: space, currentSpaceId, categories, isManager, pendingAuditCount } = storeToRefs(spaceStore)
+const { currentSpace: space, categories, isManager, pendingAuditCount } = storeToRefs(spaceStore)
 const { mdAndUp } = useDisplay()
-
-// 待审核的角标：只有所有者与管理员读得到（接口对别人不开），换了空间重读一次。
-watch(
-  [currentSpaceId, isManager],
-  ([id, manager]) => {
-    if (id && manager) spaceStore.fetchPendingAuditCount()
-  },
-  { immediate: true }
-)
 
 /** 侧栏里的分类：未归档的，按显示顺序。 */
 const activeCategories = computed(() =>

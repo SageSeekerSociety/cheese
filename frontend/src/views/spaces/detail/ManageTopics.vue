@@ -44,6 +44,8 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import TopicSelector from '@/components/common/TopicSelector.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useSpaceStore } from '@/stores/space'
@@ -51,7 +53,7 @@ import { Topic } from '@/types'
 
 const spaceStore = useSpaceStore()
 const { classificationTopics } = storeToRefs(spaceStore)
-const { deleteClassificationTopic, addClassificationTopics } = spaceStore
+const { deleteClassificationTopic, addClassificationTopics } = useSpaceData()
 const { t } = useI18n()
 
 const selectedTopics = ref<Topic[]>([])

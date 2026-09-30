@@ -16,20 +16,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.domain.delivery.addressing import Addressed
-from app.domain.delivery.models import Delivery, TimedDelivery
+from app.domain.delivery.models import ChannelDelivery, Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,
     NotificationEventHandler,
 )
-from app.domain.notification.models import NotificationType
+from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.services import user_by_handle
 
@@ -291,6 +291,49 @@ async def deliver(
     全仓发通知只有这一处（I11）：房间里的事件和社交那几条都从这里出去。
     """
     await Ledger(session).deliver(event, addressed)
+
+
+async def retract(session: AsyncSession, event_id: uuid.UUID) -> None:
+    """这件事不作数了：它发出去的每一笔连同收件箱里那一行一起删掉。
+
+    一条被删掉的公告不该还躺在谁的动态里，点开是一页找不到的东西。账本上的行也
+    删：留着一行没发出去的投递，补发会把收件箱那一行再写回来。
+    """
+    keys = list(
+        (
+            await session.scalars(
+                select(Delivery.dedup_key).where(Delivery.event_id == event_id)
+            )
+        ).all()
+    )
+    if not keys:
+        return
+    await session.execute(
+        delete(Notification).where(Notification.delivery_key.in_(keys))
+    )
+    await session.execute(
+        delete(ChannelDelivery).where(ChannelDelivery.delivery_key.in_(keys))
+    )
+    await session.execute(delete(Delivery).where(Delivery.event_id == event_id))
+    await session.flush()
+
+
+async def amend(session: AsyncSession, event_id: uuid.UUID, payload: dict) -> None:
+    """这件事说的话改了：已经发出去的那些改成新的说法，不再发一遍。
+
+    收件箱那一行的已读未读原样不动 —— 改一个错别字不是一件新的事。账本上的
+    `payload` 也跟着改，补发写回来的才是现在这句话。
+    """
+    keys = select(Delivery.dedup_key).where(Delivery.event_id == event_id)
+    await session.execute(
+        update(Notification)
+        .where(Notification.delivery_key.in_(keys))
+        .values(metadata_payload=payload)
+    )
+    await session.execute(
+        update(Delivery).where(Delivery.event_id == event_id).values(payload=payload)
+    )
+    await session.flush()
 
 
 async def resend_unsent_deliveries(sessions: SessionFactory) -> dict[str, int]:

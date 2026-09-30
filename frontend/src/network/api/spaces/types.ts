@@ -1,4 +1,4 @@
-import type { Page, Space, SpaceTeaching, TaskSubmission } from '@/types'
+import type { Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -18,7 +18,6 @@ export type PostSpaceRequestData = {
   name: string
   intro?: string
   avatarId?: number
-  announcements?: string
   taskTemplates?: string
   visibleTaskLimit?: number | null
 }
@@ -55,11 +54,30 @@ export type PatchSpaceRequestData = {
   name?: string
   intro?: string
   avatarId?: number
-  announcements?: string
   taskTemplates?: string
   classificationTopics?: number[]
   defaultCategoryId?: number
   visibleTaskLimit?: number | null
+}
+
+export type PostSpaceAnnouncementRequestData = {
+  title: string
+  content: string
+  pinned: boolean
+  /** Epoch milliseconds, in the future; null = it does not expire. */
+  expiresAt: number | null
+}
+
+/** Each field present is changed; an explicit `expiresAt: null` clears the expiry. */
+export type PatchSpaceAnnouncementRequestData = Partial<PostSpaceAnnouncementRequestData>
+
+export type SpaceAnnouncementList = {
+  /** Unexpired, pinned first and then newest. */
+  current: SpaceAnnouncement[]
+  /** Past their expiry, most recently expired first. */
+  expired: SpaceAnnouncement[]
+  /** How many people an announcement from the caller would notify; null unless the caller manages the space. */
+  notifyCount: number | null
 }
 
 export type PostSpaceAdminRequestData = {

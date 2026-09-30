@@ -111,6 +111,8 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
@@ -123,6 +125,7 @@ const { confirm } = useDialog()
 const spaceId = Number(route.params.spaceId)
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { domainGroups } = storeToRefs(spaceStore)
 
 const loading = ref(false)
@@ -179,7 +182,7 @@ function removeDomain(index: number) {
 async function fetchDomainGroups() {
   loading.value = true
   try {
-    await spaceStore.fetchDomainGroups(spaceId)
+    await spaceData.fetchDomainGroups(spaceId)
   } catch {
     // handled silently
   } finally {

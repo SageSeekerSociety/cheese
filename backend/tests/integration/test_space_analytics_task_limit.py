@@ -73,7 +73,6 @@ def test_the_task_table_carries_the_participant_limit_or_null(
             "intro": "一门课",
             "description": "一块题目板",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(token),
