@@ -18,20 +18,21 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.deps import get_broker
 from app.api.response import ok, page
-from app.api.routes.topics import (
-    _ARTIFACT_MIME,
-    _clean_artifact_path,
-    artifact_kind_for,
-    record_shown,
-)
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project import room_files
+from app.domain.project.room_files import (
+    ARTIFACT_MIME,
+    artifact_kind_for,
+    clean_artifact_path,
+)
 from app.domain.room_task.place import Place
 from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
@@ -61,7 +62,7 @@ def author_kind(actor: Actor) -> str:
 
 
 def _room_path(raw: str) -> str:
-    path = _clean_artifact_path(raw)
+    path = clean_artifact_path(raw)
     if library.library_name(path) is not None:
         raise ValidationError("项目资料里的原件不能修改，可以基于它新建一份")
     return path
@@ -88,7 +89,7 @@ async def room_file_raw(
 ) -> Response:
     """The file as it is now, with its version — what `cheese pull` reads."""
     place, _ = await _in_room(db, resolver, topic_id)
-    clean = _clean_artifact_path(path)
+    clean = clean_artifact_path(path)
     name = library.library_name(clean)
     if name is not None:
         data = await asyncio.to_thread(
@@ -106,7 +107,7 @@ async def list_file_revisions(
     topic_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     place, _ = await _in_room(db, resolver, topic_id)
-    clean = _clean_artifact_path(path)
+    clean = clean_artifact_path(path)
     rows = await room_files.list_revisions(db, place.room_id, clean)
     current = await asyncio.to_thread(
         room_files.current_version, place.project_id, place.room_id, clean
@@ -159,9 +160,9 @@ async def copy_into_room(
     file becomes the template for a new one without being overwritten.
     """
     place, actor = await _in_room(db, resolver, topic_id)
-    source = _clean_artifact_path(str(body.get("source") or ""))
+    source = clean_artifact_path(str(body.get("source") or ""))
     target = _room_path(str(body.get("path") or ""))
-    if artifact_kind_for(target) not in _ARTIFACT_MIME:
+    if artifact_kind_for(target) not in ARTIFACT_MIME:
         raise ValidationError("不支持的文件类型")
     name = library.library_name(source)
     if name is not None:
@@ -187,7 +188,21 @@ async def copy_into_room(
         source="upload",
         note=f"从 {source} 复制",
     )
-    await record_shown(db, place, target, author=actor.handle)
+    shown = await add_shown_block(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=target,
+        author=actor.handle,
+        mime=ARTIFACT_MIME[artifact_kind_for(target)],
+    )
+    # Live, like a published message: the reader is usually in the room
+    # while 芝士 works, and the card has to appear then, not on the next
+    # reload.
+    await get_broker().publish(
+        str(place.room_id),
+        {"type": "assistant_block", "block": shown.model_dump(mode="json")},
+    )
     await db.commit()
     return ok({"path": target, "version": made.sha256[:16]})
 
@@ -232,7 +247,21 @@ async def new_from_template(
         source="template",
         note=f"从「{template.name}」模板新建",
     )
-    await record_shown(db, place, target, author=actor.handle)
+    shown = await add_shown_block(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=target,
+        author=actor.handle,
+        mime=ARTIFACT_MIME[artifact_kind_for(target)],
+    )
+    # Live, like a published message: the reader is usually in the room
+    # while 芝士 works, and the card has to appear then, not on the next
+    # reload.
+    await get_broker().publish(
+        str(place.room_id),
+        {"type": "assistant_block", "block": shown.model_dump(mode="json")},
+    )
     await db.commit()
     return ok({"path": target, "version": made.sha256[:16]})
 
@@ -243,7 +272,7 @@ async def open_in_editor(
 ) -> dict:
     """The signed config the browser opens the office editor with."""
     place, actor = await _in_room(db, resolver, topic_id)
-    clean = _clean_artifact_path(path)
+    clean = clean_artifact_path(path)
     if not editor.enabled():
         return ok({"enabled": False, "reason": "这个部署没有启用在线编辑"})
     if editor.document_type(clean) is None:
@@ -373,6 +402,20 @@ async def editor_saves_file(
             editor_key=target.key,
         )
         place = await TopicService(db).place_or_404(target.room_id)
-        await record_shown(db, place, aside, author=author)
+        shown = await add_shown_block(
+            db,
+            project_id=place.project_id,
+            room_id=place.room_id,
+            path=aside,
+            author=author,
+            mime=ARTIFACT_MIME[artifact_kind_for(aside)],
+        )
+        # Live, like a published message: the reader is usually in the room
+        # while 芝士 works, and the card has to appear then, not on the next
+        # reload.
+        await get_broker().publish(
+            str(place.room_id),
+            {"type": "assistant_block", "block": shown.model_dump(mode="json")},
+        )
     await db.commit()
     return JSONResponse({"error": 0})
