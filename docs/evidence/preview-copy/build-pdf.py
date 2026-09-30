@@ -149,7 +149,7 @@ HTML = f"""<!doctype html>
 <body>
 
 <h1>后台管理布局统一：方案 B 实现与核验</h1>
-<p class="meta">2026-09-30 · 分支 <code>task/d0241114</code> · 审基线 head <code>0d1a4ddcf</code> · PR #2206</p>
+<p class="meta">2026-09-30 · 分支 <code>task/d0241114</code> · 审基线 head <code>0c8565785</code> · PR #2206</p>
 
 <div class="lede">
 <p><strong>结论</strong>：方案 B 已实现到可评审状态。八个后台页的页头、正文宽度、间距、筛选与操作区、表格卡片、加载/空/出错三态收成一套；<strong>功能和权限一字未改</strong>。</p>
