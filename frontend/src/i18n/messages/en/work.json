@@ -589,7 +589,12 @@
       "loadNew": "Load the new version",
       "copyName": "Save in the room as",
       "makeCopy": "Make a copy to edit",
-      "originalKept": "The original stays in the library unchanged."
+      "originalKept": "The original stays in the library unchanged.",
+      "unavailable": {
+        "not_configured": "Online editing is not enabled on this deployment",
+        "unsupported": "This kind of file can't be edited online",
+        "library_original": "Originals in the project library are read-only. Make a copy in the room to edit it"
+      }
     },
     "fileHistory": {
       "source": {
@@ -871,6 +876,27 @@
       "delivering": "Delivering",
       "needs_you": "Needs you",
       "done": "Done",
+      "archived": "Archived"
+    },
+    "phrase": {
+      "running": "Running",
+      "started": "Started",
+      "not_started": "Not started",
+      "returned": "Handed back",
+      "idle": "Idle",
+      "draft": "Draft",
+      "lost": "Lost contact",
+      "gate_running": "Checks running",
+      "awaiting_checks": "Waiting for checks",
+      "fixing_checks": "Fixing checks",
+      "resolving_conflict": "Resolving conflict",
+      "updating_branch": "Platform updating branch",
+      "checks_failed": "Checks failed",
+      "awaiting_review": "Awaiting review",
+      "bounced": "Sent back",
+      "awaiting_answer": "Awaiting answer",
+      "accepted": "Accepted",
+      "closed": "Closed",
       "archived": "Archived"
     },
     "loadFailed": "Couldn't load",

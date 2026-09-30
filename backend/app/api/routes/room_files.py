@@ -270,21 +270,19 @@ async def new_from_template(
 async def open_in_editor(
     topic_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """The signed config the browser opens the office editor with."""
+    """The signed config the browser opens the office editor with.
+
+    When it cannot open, ``reason`` is a code (``not_configured``,
+    ``unsupported``, ``library_original``) that the screen words in its
+    reader's language (``work.room.fileEditor.unavailable.<code>``)."""
     place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
     if not editor.enabled():
-        return ok({"enabled": False, "reason": "这个部署没有启用在线编辑"})
+        return ok({"enabled": False, "reason": "not_configured"})
     if editor.document_type(clean) is None:
-        return ok({"enabled": False, "reason": "这种文件不能在线编辑"})
+        return ok({"enabled": False, "reason": "unsupported"})
     if library.library_name(clean) is not None:
-        return ok(
-            {
-                "enabled": False,
-                "reason": "项目资料里的原件只读，先在房间里复制一份再编辑",
-                "copyable": True,
-            }
-        )
+        return ok({"enabled": False, "reason": "library_original", "copyable": True})
     version = await asyncio.to_thread(
         room_files.current_version, place.project_id, place.room_id, clean
     )

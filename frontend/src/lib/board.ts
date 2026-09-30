@@ -10,9 +10,9 @@
 // 表回答「有哪些活、它们各是什么状态」，板回答「现在轮到谁」。同一个客观事实——
 // 比如快检红了——下一步在平台手上就落 `delivering`，在人手上就落 `needs_you`。
 
-import type { BoardColumn } from '@/cx_types'
+import type { BoardColumn, BoardPhrase } from '@/cx_types'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 export interface BoardColumnSpec {
   key: BoardColumn
@@ -24,6 +24,12 @@ export interface BoardColumnSpec {
 // 列名按当前语言现取，不存成常量：切换语言后要跟着变。
 export function columnLabel(column: BoardColumn): string {
   return t(`work.board.column.${column}`)
+}
+
+/** 卡面上那一句，按当前语言现取。后端给的是码（`presentation.phrase`）；这一版
+ *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。 */
+export function phraseLabel(phrase: BoardPhrase): string {
+  return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN') ? t(`work.board.phrase.${phrase}`) : phrase
 }
 
 /** 色点的 class。列色是这套界面里唯一说「该谁动」的颜色，所以看板、房间总览、侧栏

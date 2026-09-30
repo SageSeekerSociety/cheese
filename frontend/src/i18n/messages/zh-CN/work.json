@@ -589,7 +589,12 @@
       "loadNew": "载入新版本",
       "copyName": "在房间里存成",
       "makeCopy": "复制一份来编辑",
-      "originalKept": "原件留在资料库里不动。"
+      "originalKept": "原件留在资料库里不动。",
+      "unavailable": {
+        "not_configured": "这个部署没有启用在线编辑",
+        "unsupported": "这种文件不能在线编辑",
+        "library_original": "项目资料里的原件只读，先在房间里复制一份再编辑"
+      }
     },
     "fileHistory": {
       "source": {
@@ -871,6 +876,27 @@
       "delivering": "交付中",
       "needs_you": "待处理",
       "done": "已完成",
+      "archived": "已归档"
+    },
+    "phrase": {
+      "running": "运行中",
+      "started": "已动工",
+      "not_started": "待开工",
+      "returned": "已交回",
+      "idle": "空闲",
+      "draft": "草稿",
+      "lost": "失联",
+      "gate_running": "检查运行中",
+      "awaiting_checks": "等待检查",
+      "fixing_checks": "修复检查",
+      "resolving_conflict": "解决冲突",
+      "updating_branch": "平台更新分支",
+      "checks_failed": "检查未通过",
+      "awaiting_review": "待审阅",
+      "bounced": "已退回",
+      "awaiting_answer": "待回答",
+      "accepted": "已采纳",
+      "closed": "已关闭",
       "archived": "已归档"
     },
     "loadFailed": "加载失败",

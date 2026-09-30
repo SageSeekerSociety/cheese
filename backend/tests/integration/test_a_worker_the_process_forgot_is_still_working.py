@@ -99,7 +99,7 @@ def _seed(client, stub_hooks) -> dict[str, str]:
 def _cells(client, ids: dict[str, str]) -> dict[str, str]:
     """一次读整个项目 —— 两条活在同一批里，各自答各自的。"""
     rows = client.get(f"/projects/{ids['project']}/tasks").json()["data"]["data"]
-    return {row["id"]: row["presentation"]["display_status"] for row in rows}
+    return {row["id"]: row["presentation"]["phrase"] for row in rows}
 
 
 def _chat(client):

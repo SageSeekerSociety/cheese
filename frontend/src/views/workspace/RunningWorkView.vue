@@ -11,7 +11,7 @@
 // ——某个房间四条在跑三条排队，从那个房间里面看是正常的，从这里看才是「它把队排
 // 到别处去了」。这两条理由是这一页存在的全部原因，改成板不能把它们弄丢。
 //
-// 屏幕上每一个状态词都是后端算好的 `presentation.display_status`，这里一个都不推。
+// 屏幕上每一个状态词都是后端算好的 `presentation.phrase`，这里一个都不推。
 import type { BoardColumn, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -27,7 +27,7 @@ import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
 import { isAgentHandle } from '@/lib/authorship'
-import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks } from '@/lib/board'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -146,11 +146,11 @@ function onAvatarError(handle?: string | null): void {
 
 /** 这会儿真的在跑的那些。
  *
- *  「运行中」是后端 `display_status` 的原词，这里只是认它，没有在前端另推一次状
+ *  `running` 是后端 `presentation.phrase` 的码，这里只是认它，没有在前端另推一次状
  *  态：色点是**列级**的，所以「施工中」那一列里在跑的和排队的原来长得一模一样，
  *  而这两件事对看的人不是一回事。 */
 function isRunning(row: RoomTask): boolean {
-  return row.presentation.display_status === '运行中'
+  return row.presentation.phrase === 'running'
 }
 
 /** 「只看我的」。
@@ -401,7 +401,7 @@ function openTask(task: RoomTask) {
                       :style="columnDotStyle(row.presentation.column)"
                       aria-hidden="true"
                     />
-                    <span class="board-card__phrase">{{ row.presentation.display_status }}</span>
+                    <span class="board-card__phrase">{{ phraseLabel(row.presentation.phrase) }}</span>
                     <span class="board-card__when">{{ relTime(row.updated_at ?? row.created_at) }}</span>
                   </span>
                   <!-- 一条活骑一张卡、一棵树开一个 PR，是一对一 —— 所以这里永远只有
@@ -439,7 +439,7 @@ function openTask(task: RoomTask) {
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                 <span class="done-row__title t-body">{{ row.title }}</span>
                 <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
-                <span class="done-row__phrase t-meta">{{ row.presentation.display_status }}</span>
+                <span class="done-row__phrase t-meta">{{ phraseLabel(row.presentation.phrase) }}</span>
               </button>
             </li>
           </ul>

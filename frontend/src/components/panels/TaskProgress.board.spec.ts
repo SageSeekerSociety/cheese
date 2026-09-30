@@ -52,7 +52,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     status: 'open',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
     ...over,
   }
 }
@@ -88,7 +88,7 @@ describe('列和短语跟项目那块板是同一套', () => {
   it('列的顺序和名字一字不差', async () => {
     listRoomTasks.mockResolvedValue({
       data: BOARD_COLUMNS.map((c, i) =>
-        task({ id: `t${i}`, title: c.label, presentation: { column: c.key, display_status: c.label } })
+        task({ id: `t${i}`, title: c.label, presentation: { column: c.key, phrase: 'running' } })
       ),
       total: BOARD_COLUMNS.length,
     })
@@ -103,18 +103,42 @@ describe('列和短语跟项目那块板是同一套', () => {
 
   it('行上写的是后端那句话，不是这一段自己想的词', async () => {
     listRoomTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'needs_you', display_status: '已退回' } })],
+      data: [task({ presentation: { column: 'needs_you', phrase: 'bounced' } })],
       total: 1,
     })
     const { findByText } = mount()
     await findByText('已退回')
   })
 
+  it('那句话按读者的语言画，切换语言时已经在屏上的也跟着变', async () => {
+    // 后端给的是码：同一块板被说不同语言的人同时看，挑语言是读者屏幕的事。
+    setLocale('en')
+    listRoomTasks.mockResolvedValue({
+      data: [task({ presentation: { column: 'needs_you', phrase: 'awaiting_review' } })],
+      total: 1,
+    })
+    const { findByText } = mount()
+    await findByText('Awaiting review')
+    setLocale('zh-CN')
+    await findByText('待审阅')
+  })
+
+  it('这一版不认识的码照原样写出来，不留空白', async () => {
+    listRoomTasks.mockResolvedValue({
+      data: [
+        task({ presentation: { column: 'building', phrase: 'warming_up' as RoomTask['presentation']['phrase'] } }),
+      ],
+      total: 1,
+    })
+    const { findByText } = mount()
+    await findByText('warming_up')
+  })
+
   it('活按后端给的列分开', async () => {
     listRoomTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'building', display_status: '空闲' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'needs_you', display_status: '待审阅' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'building', phrase: 'idle' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'needs_you', phrase: 'awaiting_review' } }),
       ],
       total: 2,
     })
@@ -134,8 +158,8 @@ describe('已完成收在最底下', () => {
   it('折起来时件数说得出来，展开后「已采纳」和「已关闭」分得清', async () => {
     listRoomTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已采纳' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'done', phrase: 'accepted' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', phrase: 'closed' } }),
       ],
       total: 2,
     })
@@ -158,9 +182,9 @@ describe('标题旁边那个数', () => {
   it('说的是有几件在等人 —— 打开一个房间最该先看到的数', async () => {
     listRoomTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', presentation: { column: 'needs_you', display_status: '待审阅' } }),
-        task({ id: 'b', presentation: { column: 'needs_you', display_status: '检查未通过' } }),
-        task({ id: 'c', presentation: { column: 'building', display_status: '运行中' } }),
+        task({ id: 'a', presentation: { column: 'needs_you', phrase: 'awaiting_review' } }),
+        task({ id: 'b', presentation: { column: 'needs_you', phrase: 'checks_failed' } }),
+        task({ id: 'c', presentation: { column: 'building', phrase: 'running' } }),
       ],
       total: 3,
     })
@@ -182,7 +206,7 @@ describe('第 N 件的编号不跟着列走', () => {
           id: 'b',
           title: '新的',
           created_at: '2026-08-09T00:00:00Z',
-          presentation: { column: 'needs_you', display_status: '待审阅' },
+          presentation: { column: 'needs_you', phrase: 'awaiting_review' },
         }),
       ],
       total: 2,
