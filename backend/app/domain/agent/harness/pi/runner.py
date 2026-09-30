@@ -33,10 +33,17 @@ from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog, hooks
-from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING, Journal
+from app.domain.agent.harness.pi.journal import (
+    COMPACTING,
+    GAVE_UP,
+    RETRYING,
+    THREAD,
+    Journal,
+)
 from app.domain.agent.harness.pi.mcp import ProjectServers
 from app.domain.agent.harness.pi.project_skills import project_skills
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
+from app.domain.agent.harness.pi.subagents import Subagents
 
 # A live event that can only mean an entry was written. Anything else is
 # progress within a message, and the entry for it does not exist yet.
@@ -87,6 +94,13 @@ class Runner(runner.Runner[Journal]):
         # hooks run in too (`tool_hooks`).
         self.workspace = ""
         self.env: dict[str, str] = {}
+        # What a subagent is started from (`subagents.py`): the parent's own
+        # pin, argv, skills and extension, as `start` was given them.
+        self.binary = ""
+        self.args: list[str] = []
+        self.skill_args: list[str] = []
+        self.extension_files: dict[str, str] = {}
+        self.children = Subagents(self)
 
     # --- reading -------------------------------------------------------------
 
@@ -265,7 +279,9 @@ class Runner(runner.Runner[Journal]):
 
     # --- the platform extension ----------------------------------------------
 
-    def write_extension(self, files: dict[str, str], notice: str = "") -> Path:
+    def write_extension(
+        self, files: dict[str, str], notice: str = "", *, home: Path | None = None
+    ) -> Path:
         """Put the extension and its tool catalog on disk; answer with the entry.
 
         The catalog is built HERE, from the CLI installed on this machine,
@@ -277,8 +293,15 @@ class Runner(runner.Runner[Journal]):
         A machine with no CLI still gets the extension: it has four more
         reasons to exist than the platform tools, and a room where the CLI
         failed to install is one where saying so beats loading nothing.
+
+        ``home`` is a subagent's (`subagents.py`): the same extension with the
+        platform's tools, the project's MCP servers and its hooks, and none of
+        what belongs to the session alone — no subagents of its own, and no
+        background shell, whose jobs would outlive the subagent that started
+        them with nobody left to be told they ended.
         """
-        home = self.state / "extension"
+        child = home is not None
+        home = home or self.state / "extension"
         home.mkdir(parents=True, exist_ok=True)
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
@@ -298,9 +321,10 @@ class Runner(runner.Runner[Journal]):
                     # thread. Both named here because the runner is the side
                     # that knows: it was started by that interpreter and it
                     # just wrote that script.
-                    "python": sys.executable,
-                    "background": str(home / "background.py"),
-                    "jobs": str(self.state / "bg"),
+                    "python": "" if child else sys.executable,
+                    "background": "" if child else str(home / "background.py"),
+                    "jobs": "" if child else str(self.state / "bg"),
+                    "subagents": not child,
                     "tools": tools,
                     "unavailable": reason,
                     # The project's MCP servers' tools, listed when the session
@@ -399,6 +423,46 @@ class Runner(runner.Runner[Journal]):
             return {"denied": str(denied)}
         return {"input": args}
 
+    # --- subagents -------------------------------------------------------------
+
+    def _stamped(self, record: dict, thread: dict) -> dict:
+        owner = json.loads(self.journal.recall("owner") or "{}")
+        stamped = {**record, THREAD: thread}
+        return {**stamped, "cheese": owner} if owner else stamped
+
+    def note(self, record: dict, *, thread: dict) -> None:
+        """A record of the runner's own about one subagent (`subagents.py`)."""
+        self.journal.import_entries(
+            [self._stamped({**record, "id": f"cheese:{uuid.uuid4()}"}, thread)]
+        )
+
+    def note_page(
+        self, entries: list[dict], *, thread: dict, cursor: tuple[str, str]
+    ) -> None:
+        """A page of one subagent's own entries, landed on its thread."""
+        self.journal.import_entries(
+            [self._stamped(entry, thread) for entry in entries], cursor=cursor
+        )
+
+    async def tell_parent(self, text: str) -> None:
+        """Say something to the session on the platform's behalf: after what it
+        is doing if it is working, as a turn of its own if it is not — the way
+        Claude Code hears that a subagent it left in the background ended."""
+        if self.client is None or self.client.closed:
+            return
+        if not self.working:
+            owner = json.loads(self.journal.recall("owner") or "{}")
+            owner.update(work_id=str(uuid.uuid4()), unsolicited=True)
+            self.journal.remember("owner", json.dumps(owner))
+        try:
+            await self.client.request(
+                "prompt",
+                message=f"{self.notice}\n{text}" if self.notice else text,
+                streamingBehavior="followUp",
+            )
+        except Exception as error:  # noqa: BLE001 — the record is in the log
+            print(f"could not tell the session: {error!r}", file=sys.stderr)
+
     # --- lifecycle -----------------------------------------------------------
 
     async def start(
@@ -417,6 +481,8 @@ class Runner(runner.Runner[Journal]):
     ) -> str:
         self.claim()
         self.workspace, self.env = cwd, env
+        self.binary, self.args = binary, list(args)
+        self.extension_files = dict(extension or {})
         saved = self.journal.recall("session_id")
         if saved is not None and opening.resume_token not in (None, saved):
             raise ValueError("A session directory cannot resume a different session")
@@ -457,6 +523,13 @@ class Runner(runner.Runner[Journal]):
             file.write_text(content, encoding="utf-8")
             if file.name == "SKILL.md":
                 appended += ["--skill", str(file.parent)]
+        # A subagent works in the same project with the same ways of working.
+        self.skill_args = [
+            value
+            for flag, path in zip(appended[::2], appended[1::2], strict=True)
+            if flag == "--skill"
+            for value in (flag, path)
+        ]
         if extension is not None:
             await self.open_servers(
                 workspace=cwd, env=env, remote=remote_mcp, agent=agent_mcp
@@ -617,10 +690,30 @@ class Runner(runner.Runner[Journal]):
             )
         if method == "hooks":
             return await self.tool_hooks(params)
+        if method == "subagent_spawn":
+            return await self.children.spawn(
+                params["prompt"],
+                description=params.get("description") or "",
+                model=params.get("model"),
+                background=bool(params.get("background")),
+            )
+        if method == "subagent_wait":
+            return await self.children.wait(params["agent_id"])
+        if method == "subagent_background":
+            await self.children.background(params["agent_id"])
+            return {}
+        if method == "subagent_send":
+            await self.children.send(params["agent_id"], params["message"])
+            return {"sent": True}
+        if method == "subagent_stop":
+            return {"stopped": await self.children.stop(params["agent_id"])}
         if method == "abort":
             if self.client is None:
                 return {"aborted": False}
             self.aborting = True
+            # The work taken away includes what its subagents were doing — and
+            # first: pi's abort waits for a `Task` call still waiting on one.
+            await self.children.stop_all()
             await self.client.request("abort")
             self.working = False
             return {"aborted": True}
@@ -669,6 +762,8 @@ class Runner(runner.Runner[Journal]):
             await super().stopped()
 
     async def close(self) -> None:
+        # A subagent lives and dies with the session that started it.
+        await self.children.stop_all()
         self.end_background_jobs()
         if self.refresher is not None:
             self.refresher.cancel()

@@ -16,6 +16,8 @@
   "webFetch": "Read web page",
   "agent": "Send out a subagent",
   "task": "Send out a subagent",
+  "sendMessage": "Message a subagent",
+  "taskStop": "Stop a background task",
   "notebookEdit": "Edit notebook",
   "todoWrite": "Update the checklist",
   "bashOutput": "View command output",

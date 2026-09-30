@@ -31,6 +31,8 @@ export const TOOL_LABELS: Record<string, string> = {
   WebFetch: 'toolLabels.webFetch',
   Agent: 'toolLabels.agent',
   Task: 'toolLabels.task',
+  SendMessage: 'toolLabels.sendMessage',
+  TaskStop: 'toolLabels.taskStop',
   NotebookEdit: 'toolLabels.notebookEdit',
   TodoWrite: 'toolLabels.todoWrite',
   BashOutput: 'toolLabels.bashOutput',
