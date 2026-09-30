@@ -458,7 +458,7 @@ describe('题目详情', () => {
       },
     })
     expect(container.textContent).not.toContain('Task is not approved yet.')
-    expect(container.textContent).toContain('这道题还在审核中')
+    expect(container.textContent).toContain(i18n.global.t('tasks.eligibility.TASK_NOT_APPROVED'))
 
     cleanup()
     const other = await mount({

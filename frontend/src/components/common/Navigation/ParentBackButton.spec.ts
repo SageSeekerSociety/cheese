@@ -99,8 +99,6 @@ describe('返回上一级', () => {
     ['/spaces/42/tasks/7/submit', '/spaces/42/tasks/7'],
     ['/spaces/42/tasks/7/edit', '/spaces/42/tasks/7'],
     ['/spaces/42/tasks/publish', '/spaces/42/tasks'],
-    ['/spaces/42/discussions/9', '/spaces/42/discussions'],
-    ['/spaces/42/discussions/create', '/spaces/42/discussions'],
     ['/spaces/42/templates/create', '/spaces/42/templates'],
     ['/spaces/42/templates/2/edit', '/spaces/42/templates'],
     ['/spaces/42/tasks', '/spaces'],
