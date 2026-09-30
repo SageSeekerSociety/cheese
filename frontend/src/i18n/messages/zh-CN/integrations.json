@@ -15,6 +15,7 @@
     "saved": "已保存",
     "saveFailed": "保存失败",
     "loadFailed": "无法读取",
+    "retry": "重试",
     "configured": "已配置",
     "notConfigured": "还没配置",
     "updatedBy": "最后由 {handle} 更新",
