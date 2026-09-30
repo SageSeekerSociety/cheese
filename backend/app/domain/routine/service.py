@@ -488,9 +488,8 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         f"结果保存到：{folder}（用 cheese show 放进房间，文件名带上日期）",
         "",
         "做完后必须交回结果，成功失败都要交：",
-        f'platform_request(method="POST", path="/routine-runs/{run.id}/report", '
-        'body={"status": "succeeded" 或 "failed", "summary": "一两句结果或失败原因",'
-        ' "outputs": ["房间里的结果文件路径"]})',
+        f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
+        'summary="一两句结果或失败原因", outputs=["房间里的结果文件路径"])',
         "没有交回结果的一次执行会被记为失败。",
     ]
     return "\n".join(lines)

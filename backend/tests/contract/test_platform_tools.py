@@ -127,6 +127,27 @@ CALLS = {
         "POST",
         "/topics/fixture/deliveries",
     ),
+    "cheese_routine_draft": (
+        {
+            "title": "每周整理一次进展",
+            "instructions": "把这一周的进展整理成一页",
+            "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+        },
+        "POST",
+        "/topics/fixture/routines",
+    ),
+    "cheese_routine_list": ({}, "GET", "/projects/fixture-project/routines"),
+    "cheese_routine_update": (
+        {"routine": "r-1", "timezone": "UTC"},
+        "PATCH",
+        "/routines/r-1",
+    ),
+    "cheese_routine_pause": ({"routine": "r-1"}, "POST", "/routines/r-1/pause"),
+    "cheese_routine_report": (
+        {"run": "run-1", "status": "failed", "summary": "接口挂了"},
+        "POST",
+        "/routine-runs/run-1/report",
+    ),
 }
 
 #: 要机器上一份东西的那两样：读一个文件、推一条任务分支。
@@ -326,6 +347,49 @@ def test_each_platform_tool_reaches_the_platform_without_the_machine(
     assert "deny" not in outcome, outcome
     assert (method, path) in [(m, p) for m, p, _ in platform_calls], platform_calls
     assert executor_calls == [], f"{tool} 经过了那台机器"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "said"),
+    [
+        (
+            {
+                "title": "每周整理一次进展",
+                "instructions": "整理",
+                "spec": {"freq": "weekly", "time": "09:00"},
+            },
+            "每周执行要给出星期几",
+        ),
+        (
+            {"title": "整点跑", "instructions": "整理", "spec": {"freq": "daily"}},
+            "执行时间要写成 HH:MM",
+        ),
+        (
+            {"title": "整点跑", "instructions": "整理", "timezone": "Mars/Olympus"},
+            "不认识的时区",
+        ),
+        (
+            {"title": "整点跑", "instructions": "整理", "trigger": "clock"},
+            "trigger 只能是",
+        ),
+    ],
+)
+def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
+    machine_is_gone, arguments, said
+):
+    """定时规则的取值错在发出之前说出来。
+
+    这些错后端也会拒（`routine/schedule.py` 的 `normalize`），但那时 agent 已经等了
+    一个来回，拿回来的只有一句「频率只能是…」，而它本来就知道时间该写成什么样。拒
+    在这里，而且一个请求都没发出去 —— 发出去的那一次会起草出一条谁都不要的规则。
+    """
+    process, platform_calls, executor_calls = machine_is_gone
+
+    outcome = _call(process, "cheese_routine_draft", arguments)
+
+    assert said in outcome["deny"], outcome
+    assert platform_calls == [], platform_calls
+    assert executor_calls == []
 
 
 @pytest.mark.parametrize("tool", sorted(NEEDS_THE_MACHINE))
