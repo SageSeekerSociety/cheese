@@ -249,6 +249,13 @@ describe('custom cloud spec against the current supply', () => {
   async function setField(label: string, value: string) {
     await fireEvent.update(screen.getByLabelText(label), value)
   }
+  // 菜单收起时这一项还挂着（`v-menu` 用 v-show，不销毁内容），再打开要重新问一次。
+  async function reopenMenu() {
+    const toggle = screen.getByRole('button', { name: '改' })
+    await fireEvent.click(toggle)
+    await fireEvent.click(toggle)
+  }
+  const saveButton = () => screen.getByRole('button', { name: '使用此配置' }) as HTMLButtonElement
 
   it('shows the range before saving and will not send a spec outside it', async () => {
     getCloudSupply.mockResolvedValue(supply)
@@ -299,5 +306,51 @@ describe('custom cloud spec against the current supply', () => {
     await waitFor(() =>
       expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', expect.objectContaining({ disk_gb: 256 }), {})
     )
+  })
+
+  // 下面两条是反例：菜单再打开时要重新问一次。把重查去掉，它们就红。
+  it('recovers once the cloud answers again instead of staying unreadable for good', async () => {
+    getCloudSupply.mockRejectedValueOnce(new Error('MicroCloud unreachable'))
+    await openCustom()
+    expect((await screen.findByTestId('supply-unknown')).textContent).toContain('MicroCloud unreachable')
+    // 查不到的时候可以先保存，256 不该被假范围挡下
+    await setField('磁盘 GB', '256')
+    await waitFor(() => expect(saveButton().disabled).toBe(false))
+
+    let recovered: (value: unknown) => void = () => {}
+    getCloudSupply.mockReturnValueOnce(new Promise((r) => (recovered = r)))
+    await reopenMenu()
+    expect(getCloudSupply).toHaveBeenCalledTimes(2)
+    // 新答案回来之前按钮照旧禁着，不让按旧答案提交
+    await waitFor(() => expect(saveButton().disabled).toBe(true))
+    recovered(supply)
+
+    // 恢复后的范围顶掉「查不到」；已填的 256 不被清掉，改按新范围判
+    expect((await screen.findByTestId('supply-range')).textContent).toContain('128')
+    expect(screen.queryByTestId('supply-unknown')).toBeNull()
+    expect((screen.getByLabelText('磁盘 GB') as HTMLInputElement).value).toBe('256')
+    await waitFor(() => expect(saveButton().disabled).toBe(true))
+  })
+
+  it('picks up a widened range instead of blocking a legal spec with the old one', async () => {
+    getCloudSupply.mockResolvedValue(supply) // 磁盘上限 128
+    await openCustom()
+    await screen.findByTestId('supply-range')
+    await setField('磁盘 GB', '256')
+    await waitFor(() => expect(saveButton().disabled).toBe(true))
+
+    const widened = {
+      ...supply,
+      selectable: { ...supply.selectable, disk_gb: { min: 2, max: 256 } },
+      provider: { ...supply.provider, disk_gb: { min: 2, max: 256 } },
+    }
+    getCloudSupply.mockResolvedValue(widened)
+    await reopenMenu()
+    expect(getCloudSupply).toHaveBeenCalledTimes(2)
+
+    // 256 现在合法了：已填值还在，红框消失，按钮放行
+    await waitFor(() => expect(saveButton().disabled).toBe(false))
+    expect((screen.getByLabelText('磁盘 GB') as HTMLInputElement).value).toBe('256')
+    expect(screen.getByTestId('supply-range').textContent ?? '').toContain('256')
   })
 })

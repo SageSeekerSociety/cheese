@@ -4,7 +4,7 @@
 // 那一行上。
 import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { ApiError, setTopicComputeChoice } from '../api'
 import { useCloudSupply } from '../composables/useCloudSupply'
@@ -26,6 +26,12 @@ const proposal = ref('')
 const unreachable = ref<ComputeChoice | null>(null)
 const menuOpen = ref(false)
 const more = ref(false)
+// 再打开就再问一次范围：菜单收起时这一项还挂着（`v-menu` 不销毁内容），留着的
+// 那份答案会旧 —— 服务可能已经恢复，云端的上限也可能已经放开。还没问过就不问，
+// 等表单自己要；这样一次打开最多问一次。
+watch(menuOpen, (open) => {
+  if (open && cloudSupply.value) void loadSupply()
+})
 const choices = computed(() => compactChoices(props.profile.project_default, props.profile.choice))
 const cloudAvailable = computed(() => props.profile.profiles.some((p) => p.id === 'cloud' && p.available))
 function online(choice: ComputeChoice): string {

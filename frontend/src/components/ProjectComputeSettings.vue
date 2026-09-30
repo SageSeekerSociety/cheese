@@ -50,6 +50,11 @@ async function save(choice: ComputeChoice) {
 const releaseGate = holdRevealGate()
 onMounted(() => load().finally(releaseGate))
 watch(() => props.projectId, load)
+// 再进编辑就再问一次范围：表单收起时答案留在这里，留着的那份会旧。还没问过就不问，
+// 等表单自己要；这样一次编辑最多问一次。
+watch(editing, (open) => {
+  if (open && cloudSupply.value) void loadSupply()
+})
 </script>
 
 <template>

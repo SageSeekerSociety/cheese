@@ -31,19 +31,27 @@ export function getCloudSupply(projectId: string): Promise<CloudSupply> {
 }
 
 // 问一次、记住结果；问不到就把原因当作结果，不拿平台自己的上下限冒充。
+// 记住只是这一次显示用的，不是长期缓存：`load` 每次都真的问一遍（只有在途的
+// 那次会被合并成一个）。云端供应会变、查询也会失败，把上一次的答案一直留着，
+// 合法的配置会被旧数一直禁着，恢复了的服务也一直显示查不到。
 export function useCloudSupply(projectId: () => string) {
   const supply = ref<CloudSupply | null>(null)
   const loading = ref(false)
-  async function load() {
-    if (supply.value || loading.value) return
+  let inflight: Promise<void> | null = null
+  function load(): Promise<void> {
+    if (inflight) return inflight
     loading.value = true
-    try {
-      supply.value = await getCloudSupply(projectId())
-    } catch (e) {
-      supply.value = { available: false, reason: e instanceof Error ? e.message : '请求失败' }
-    } finally {
-      loading.value = false
-    }
+    inflight = (async () => {
+      try {
+        supply.value = await getCloudSupply(projectId())
+      } catch (e) {
+        supply.value = { available: false, reason: e instanceof Error ? e.message : '请求失败' }
+      } finally {
+        loading.value = false
+        inflight = null
+      }
+    })()
+    return inflight
   }
   return { supply, loading, load }
 }
