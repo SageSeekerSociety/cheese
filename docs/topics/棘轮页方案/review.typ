@@ -20,13 +20,13 @@
 #align(left)[
   #text(size: 18pt, weight: "bold", fill: rgb("#191A1C"))[后台「棘轮」页：维度盘点与页面方案]
   #v(-4pt)
-  #text(fill: rgb("#5A5E66"))[第三份评审稿（已并入 main 现行规则重采）· 2026-09-30 · 数字取自 `ccd637952`（2026-09-30 11:13 UTC）的一次真实采集；走势取自 CI 的 55 次 main 记录]
+  #text(fill: rgb("#5A5E66"))[第三份评审稿（已并入 main 现行规则重采）· 2026-09-30 · 数字取自 `af6ec5e47`（2026-09-30 13:20 UTC）的一次真实采集；走势取自 CI 的 55 次 main 记录]
 ]
 
 #block(fill: rgb("#FDF1E2"), inset: 10pt, radius: 8pt, width: 100%)[
   *结论*
   - 仓库里有 10 道真实检查，分属四个方面：能独立运行的前端场景（1）、前后端依赖边界（5）、文件规模（1）、类型与样式（3）。页面按这四个方面分区（结构一）。
-  - 采集已经跑通了：这几道检查各自的 `--json` 输出、一个合成快照的脚本、工作流在合入 main 后跑并存进 CI 产物。本页所有数字是它在 `ccd637952` 上的一次真实运行，不是手抄的。
+  - 采集已经跑通了：这几道检查各自的 `--json` 输出、一个合成快照的脚本、工作流在合入 main 后跑并存进 CI 产物。本页所有数字是它在 `af6ec5e47` 上的一次真实运行，不是手抄的。
   - 每条记录带规则指纹。指纹变了页面就开一个新的比较起点，规则前后不画成一条线。
   - 场景一区的判定规则在 main 上换过（\#2209，HuanCheng65 首修；补强 \#2217 仍在 draft）。本稿按 main 现行规则重采，所以这一区标「口径修正中」、不给方向：128 → 126 是规则变化，不是重构成果。实际独立挂载证据另列，本轮实跑 37 个组件 / 125 格全部通过。
   - 四分区、main 上采集留历史、参考指标留在文档站——三条都已批准，第 5 节记成已定项。本稿只等界面本身被看。
@@ -48,17 +48,17 @@
   th[方面], th[检查（命令 · 基线）], th[实际], th[冻结], th[当前能拿到什么], th[历史],
   [① 场景], [场景棘轮：新页面必须能独立运行（`scene-ratchet.py`）], [126], [126], [0 条失效豁免；数的是「评分未达标」的场景 #real], [无],
   [① 场景], [组件 A/B/C/D 分级（`arch-metrics.py`）], [—], [—], [旧口径 A 180/392，不作当前值 #recal], [CI 里存了旧口径，待重算],
-  [② 边界], [组件不取数、不读路由（`lint:boundary`）], [115], [115], [0 条失效豁免 #real], [55 次（冻结数）],
-  [② 边界], [C1 分层 api→domain→core（import-linter）], [26], [26], [0 条失效豁免 #real], [55 次],
+  [② 边界], [组件不取数、不读路由（`lint:boundary`）], [114], [114], [0 条失效豁免 #real], [55 次（冻结数）],
+  [② 边界], [C1 分层 api→domain→core（import-linter）], [27], [27], [0 条失效豁免 #real], [55 次],
   [② 边界], [C2 路由不碰别域 models], [*54*], [*56*], [2 条豁免已失效（\#2153 删了接口） #real], [只存冻结数],
   [② 边界], [C3 同级领域无环], [174], [174], [0 条失效豁免 #real], [55 次],
   [② 边界], [领域不直连别域 repository（pytest 账本）], [156], [156], [通过即相等；数从测试模块自带的登记表读 #real], [#miss],
   [② 边界], [Claude Code 适配器跨界账本（pytest）], [6], [6], [通过即相等 #real], [#miss],
   [② 边界], [`is_private` 读点登记（pytest）], [20], [20], [数的是读点、不是文件 #real], [#miss],
-  [③ 规模], [单文件行数上限（`check-file-sizes.py`）], [0], [无冻结表], [这道闸门只判改动文件，在 main 上通常是 0；树的全量数由看板给：23 个文件、超 21,655 行 #real], [55 次],
+  [③ 规模], [单文件行数上限（`check-file-sizes.py`）], [0], [无冻结表], [这道闸门只判改动文件，在 main 上通常是 0；树的全量数由看板给：21 个文件、超 19,800 行 #real], [55 次],
   [④ 样式], [vue-tsc 类型错误（`typecheck`）], [0], [0], [#real], [#miss],
-  [④ 样式], [设计令牌（`lint:style`）], [37], [37], [#real], [#miss],
-  [④ 样式], [Vuetify 固定色（`check-repo-rules.sh`）], [6], [7], [1 条失效豁免，上一版这一格是「未采集」；本轮脚本输出了计数 #real], [#miss],
+  [④ 样式], [设计令牌（`lint:style`）], [31], [31], [#real], [#miss],
+  [④ 样式], [Vuetify 固定色（`check-repo-rules.sh`）], [5], [6], [1 条失效豁免，上一版这一格是「未采集」；本轮脚本输出了计数 #real], [#miss],
 )
 
 看板里另有几项参考指标不是棘轮：后端函数内导入、30/90 天热点文件、同一天被多次改动的文件-天。它们没有「通过/违规」，只能看方向，本页暂时没有收。
@@ -90,7 +90,7 @@
   [`agent/chat.py` 6,637 → 5,487 \ #box(width: 150pt, height: 36pt)[#place(line(start: (3.0pt, 3.0pt), end: (5.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (5.7pt, 3.0pt), end: (8.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (8.3pt, 3.0pt), end: (11.0pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (11.0pt, 3.0pt), end: (13.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (13.7pt, 3.0pt), end: (16.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (16.3pt, 3.0pt), end: (19.0pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (19.0pt, 3.0pt), end: (21.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (21.7pt, 3.0pt), end: (24.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (24.3pt, 3.0pt), end: (27.0pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (27.0pt, 3.0pt), end: (29.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (29.7pt, 3.0pt), end: (32.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (32.3pt, 3.0pt), end: (35.0pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (35.0pt, 3.0pt), end: (37.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (37.7pt, 3.0pt), end: (40.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (40.3pt, 3.0pt), end: (43.0pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (43.0pt, 3.0pt), end: (45.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (45.7pt, 3.0pt), end: (48.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (48.3pt, 3.0pt), end: (51.0pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (51.0pt, 3.0pt), end: (53.7pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (53.7pt, 3.0pt), end: (56.3pt, 3.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (56.3pt, 3.0pt), end: (59.0pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (59.0pt, 9.6pt), end: (61.7pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (61.7pt, 9.6pt), end: (64.3pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (64.3pt, 9.6pt), end: (67.0pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (67.0pt, 9.6pt), end: (69.7pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (69.7pt, 9.6pt), end: (72.3pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (72.3pt, 9.6pt), end: (75.0pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (75.0pt, 9.6pt), end: (77.7pt, 9.6pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (77.7pt, 9.6pt), end: (80.3pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (80.3pt, 13.9pt), end: (83.0pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (83.0pt, 13.9pt), end: (85.7pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (85.7pt, 13.9pt), end: (88.3pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (88.3pt, 13.9pt), end: (91.0pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (91.0pt, 13.9pt), end: (93.7pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (93.7pt, 13.9pt), end: (96.3pt, 13.9pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (96.3pt, 13.9pt), end: (99.0pt, 19.8pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (99.0pt, 19.8pt), end: (101.7pt, 19.8pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (101.7pt, 19.8pt), end: (104.3pt, 19.8pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (104.3pt, 19.8pt), end: (107.0pt, 19.8pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (107.0pt, 19.8pt), end: (109.7pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (109.7pt, 33.0pt), end: (112.3pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (112.3pt, 33.0pt), end: (115.0pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (115.0pt, 33.0pt), end: (117.7pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (117.7pt, 33.0pt), end: (120.3pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (120.3pt, 33.0pt), end: (123.0pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (123.0pt, 33.0pt), end: (125.7pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (125.7pt, 33.0pt), end: (128.3pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (128.3pt, 33.0pt), end: (131.0pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (131.0pt, 33.0pt), end: (133.7pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (133.7pt, 33.0pt), end: (136.3pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (136.3pt, 33.0pt), end: (139.0pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (139.0pt, 33.0pt), end: (141.7pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (141.7pt, 33.0pt), end: (144.3pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))#place(line(start: (144.3pt, 33.0pt), end: (147.0pt, 33.0pt), stroke: 1pt + rgb("#5A5E66")))]],
 )
 
-*走势的最后一点比快照旧。* CI 历史停在 `27a2619b1`（09-30 05:51 UTC），快照取自 `ccd637952`（2026-09-30 11:13 UTC，含 main 的 \#2199 拆 AdminDashboardPage）。两者之间的差值不全是同一棵树上的变化，页面把这件事写在 ③ 的脚注里。
+*走势的最后一点比快照旧。* CI 历史停在 `27a2619b1`（09-30 05:51 UTC），快照取自 `af6ec5e47`（2026-09-30 13:20 UTC，含 main 的 \#2199 拆 AdminDashboardPage）。两者之间的差值不全是同一棵树上的变化，页面把这件事写在 ③ 的脚注里。
 
 == 本轮按 main 现行规则重采
 
@@ -118,7 +118,7 @@
 
 #tbl((auto, 1.4fr, 1fr, 1fr),
   th[做法], th[怎么做], th[好处], th[状态],
-  [*A 读 CI 快照（推荐，已实现）*], [扩展 `arch-metrics.yml`：装前后端依赖后按各检查自己的命令跑一遍，每道检查输出一条 JSON（实际数、冻结数、失效豁免），采集脚本再补上区、检查名和规则指纹，合成一份 `ratchet-snapshot.json` 上传成 CI 产物（保留 90 天）。], [和 CI 同源，不复制判断；后端读最新一份存库后不受 90 天限制], [脚本与工作流已在分支 `task/4db75afb` 上（head `ccd637952`）；后端存库与页面未做],
+  [*A 读 CI 快照（推荐，已实现）*], [扩展 `arch-metrics.yml`：装前后端依赖后按各检查自己的命令跑一遍，每道检查输出一条 JSON（实际数、冻结数、失效豁免），采集脚本再补上区、检查名和规则指纹，合成一份 `ratchet-snapshot.json` 上传成 CI 产物（保留 90 天）。], [和 CI 同源，不复制判断；后端读最新一份存库后不受 90 天限制], [脚本与工作流已在分支 `task/4db75afb` 上（head `af6ec5e47`）；后端存库与页面未做],
   [B 后端自己跑], [后端定时在服务器上跑检查器。], [不依赖 CI], [不可行：部署镜像里没有前端源码、node 依赖和 git 历史],
   [C 结果提交进仓库], [CI 把结果写成 JSON 提交回 main。], [看得见改动], [不可行：每次合入多一个提交，又触发 CI，和合并队列冲突],
 )
@@ -156,19 +156,19 @@
 
 结构一已批准（时间线放进每道检查的展开详情里，预览页已这样做）。历史攒够几周后，可以在页面顶部加一个「最近变化」标签页。
 
-预览页（交互版在房间右侧，本页是按它重排的静态示意）首屏，数字同 `ccd637952` 的快照：
+预览页（交互版在房间右侧，本页是按它重排的静态示意）首屏，数字同 `af6ec5e47` 的快照：
 
 #block(stroke: 0.6pt + rgb("#E2E3E6"), radius: 8pt, inset: 10pt, width: 100%)[
   #set text(size: 8pt)
   #text(size: 12pt, weight: "bold", fill: rgb("#191A1C"))[棘轮] #h(6pt) #text(fill: rgb("#5A5E66"))[架构还债进度：每道检查现在是多少、冻结了多少、比起点好了还是差了]\
-  #text(fill: rgb("#5A5E66"))[采集提交 `ccd637952` · 提交 2026-09-30 11:08 · 采集 2026-09-30 11:13 UTC · 带规则指纹 10 / 10 道]\
+  #text(fill: rgb("#5A5E66"))[采集提交 `af6ec5e47` · 提交 2026-09-30 13:08 · 采集 2026-09-30 13:20 UTC · 带规则指纹 10 / 10 道]\
   #v(4pt)
   #tbl((1.2fr, auto, 1.4fr, 1.5fr, 1.2fr),
     th[方面], th[结果], th[还冻结着的债], th[同口径起点 → 现在], th[判断],
     [能独立运行的前端场景], [#recal], [规则评分未达标 126 个], [规则在改，暂不比较], [等规则定稿],
-    [前后端依赖边界], [7 #ok], [前端 115 处 · 后端契约 254 条（冻结 256）], [前端 127 → 115 · C3 178 → 174], [前端在降；C1、C2 没动],
-    [文件规模], [#ok], [23 个文件，超 21,655 行], [34 → 23 · 34,753 → 21,655], [在降；拆文件和删功能都有],
-    [类型与样式], [3 #ok], [令牌 37 · 固定色 6（冻结 7）], [#miss], [无历史不判断],
+    [前后端依赖边界], [7 #ok], [前端 114 处 · 后端契约 255 条（冻结 257）], [前端 127 → 114 · C3 178 → 174], [前端在降；C1、C2 没动],
+    [文件规模], [#ok], [21 个文件，超 19,800 行], [34 → 21 · 34,753 → 19,800], [在降；拆文件和删功能都有],
+    [类型与样式], [3 #ok], [令牌 31 · 固定色 5（冻结 6）], [#miss], [无历史不判断],
   )
 ]
 
@@ -194,7 +194,7 @@
 = 7　没做和没核实的
 
 - 快照是 *CI 自己跑出来的那一份*：run 36706995490（`arch-metrics` 工作流在 main 上），工件 `ratchet-snapshot` 解开就是这份 `snapshot.json`。不是工作机上跑的样例。
-- 走势的最后一点（09-30 05:51 的 `27a2619b1`）早于快照的提交，中间隔着 05:51 之后的若干次 main 提交（含 \#2199）。29 → 23 的差有一部分出在那里，页面已写明。
+- 走势的最后一点（09-30 05:51 的 `27a2619b1`）早于快照的提交，中间隔着 05:51 之后的若干次 main 提交（含 \#2199）。29 → 21 的差有一部分出在那里，页面已写明。
 - 场景一区没有方向：main 上 \#2209（HuanCheng65）已经换过判定规则，这一稿按新规则重采；补强 \#2217 仍在 draft、未合。规则一改指纹就变，本页自动换新起点，不把 ready 数量的跳变当成重构成果。
 - 挂载证据是单独一件事：在 `aaed8e4f7` 上跑 `vitest run src/views/demo/catalog.spec.ts`，37 个组件、125 格全部挂载通过（128 passed / 0 failed）。它是跑出来的，不是规则给的，页面单独列一列。
 - 固定色、三个 pytest 账本和 vue-tsc 没有历史：CI 看板从来没存过，合入后才开始积累。上一版 PDF 里这三格是「未采集」，现在有当次数了，但还没有第二个点可比。

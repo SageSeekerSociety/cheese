@@ -1,10 +1,10 @@
 {
  "version": 1,
  "collection": "ok",
- "commit": "ccd6379520cb2d3a22d747ec582b2128c53a74d3",
- "commit_date": "2026-09-30T11:08:08Z",
- "collected_at": "2026-09-30T11:13:28+00:00",
- "run_url": "https://github.com/SageSeekerSociety/cheese/actions/runs/36706995490",
+ "commit": "af6ec5e4785f4973dc4c8b8746f0fd0e88b22c5c",
+ "commit_date": "2026-09-30T13:08:34Z",
+ "collected_at": "2026-09-30T13:20:09+00:00",
+ "run_url": "https://github.com/SageSeekerSociety/cheese/actions/runs/36720557835",
  "checks": [
   {
    "better": "down",
@@ -1010,12 +1010,9 @@
     },
     {
      "file": "src/views/teams/detail/Knowledge.vue",
-     "grade": "D",
+     "grade": "C",
      "reasons": [
-      "imports the API layer (frontend/src/network/api/knowledges/index.ts)",
-      "imports the API layer (frontend/src/network/api/materials/index.ts)",
-      "imports the API layer (frontend/src/services/account.ts)",
-      "uses provide()/inject()"
+      "reaches the API layer through frontend/src/composables/useTeamKnowledge.ts"
      ]
     },
     {
@@ -1159,13 +1156,13 @@
    "reason": "",
    "id": "scene-ratchet",
    "area": "场景",
-   "rule_fingerprint": "3b90858f835ca2810a453f90e2441f6120594187f172b67dd30d287ea70d440b"
+   "rule_fingerprint": "cb4fc043fb140f970a0e99086b35a149eea06f69d1c9305369c97785f8b14925"
   },
   {
    "better": "down",
    "status": "pass",
-   "actual": 115,
-   "frozen": 115,
+   "actual": 114,
+   "frozen": 114,
    "stale": [],
    "details": [
     {
@@ -1250,10 +1247,6 @@
     },
     {
      "file": "src/components/TaskCard.vue",
-     "count": 1
-    },
-    {
-     "file": "src/components/TopicAcceptCard.vue",
      "count": 1
     },
     {
@@ -1473,20 +1466,20 @@
   {
    "better": "down",
    "status": "pass",
-   "actual": 254,
-   "frozen": 256,
+   "actual": 255,
+   "frozen": 257,
    "stale": [
     {
      "file": "routes-touch-no-models",
      "frozen": 1,
      "actual": 0,
-     "why": "No matches for ignored import app.api.routes.spaces -> app.domain.task.models."
+     "why": "No matches for ignored import app.api.routes.spaces -> app.domain.teaching.models."
     },
     {
      "file": "routes-touch-no-models",
      "frozen": 1,
      "actual": 0,
-     "why": "No matches for ignored import app.api.routes.spaces -> app.domain.teaching.models."
+     "why": "No matches for ignored import app.api.routes.spaces -> app.domain.task.models."
     }
    ],
    "details": [
@@ -1494,8 +1487,8 @@
      "file": "api-domain-core",
      "name": "C1 layers: api -> domain -> core, no imports upward",
      "kept": true,
-     "actual": 26,
-     "frozen": 26,
+     "actual": 27,
+     "frozen": 27,
      "stale": 0
     },
     {
@@ -1518,7 +1511,7 @@
    "reason": "",
    "id": "be-contracts",
    "area": "边界",
-   "rule_fingerprint": "b9e02b4d484f7351597f5dbb35116d850aef7619988066bd3c3994b718879dd0"
+   "rule_fingerprint": "786431f0a72cccd5e180a1912970a5715bcd0047ccea6f2d3ba8caf05c95ce1b"
   },
   {
    "area": "边界",
@@ -1583,8 +1576,8 @@
   {
    "better": "down",
    "status": "pass",
-   "actual": 37,
-   "frozen": 37,
+   "actual": 31,
+   "frozen": 31,
    "stale": [],
    "details": [
     {
@@ -1642,10 +1635,6 @@
     {
      "file": "src/components/common/Navigation/RailItem.vue",
      "count": 3
-    },
-    {
-     "file": "src/views/teams/detail/Knowledge.vue",
-     "count": 6
     }
    ],
    "reason": "",
@@ -1656,8 +1645,8 @@
   {
    "better": "down",
    "status": "pass",
-   "actual": 6,
-   "frozen": 7,
+   "actual": 5,
+   "frozen": 6,
    "stale": [
     {
      "file": "src/layouts/account/Account.vue",
@@ -1678,10 +1667,6 @@
     {
      "file": "src/views/spaces/Index.vue",
      "count": 1
-    },
-    {
-     "file": "src/views/teams/detail/Knowledge.vue",
-     "count": 1
     }
    ],
    "reason": "",
@@ -1693,51 +1678,51 @@
  "board": {
   "meta": {
    "root": "/home/runner/work/cheese/cheese",
-   "commit": "ccd6379520cb",
-   "date": "2026-09-30T11:08:08Z",
-   "subject": "docs: document task ci:fast usage in the dev workflow (#2219)"
+   "commit": "af6ec5e4785f",
+   "date": "2026-09-30T13:08:34Z",
+   "subject": "feat(ratchet): archive snapshots and answer the board from them (#2228)"
   },
   "frontend": {
    "grade_counts": {
-    "components": 418,
-    "lines": 101518,
+    "components": 431,
+    "lines": 101027,
     "grades": {
-     "A": 168,
+     "A": 177,
      "B": 1,
-     "C": 149,
-     "D": 100
+     "C": 154,
+     "D": 99
     },
     "grade_pct": {
-     "A": 40.2,
+     "A": 41.1,
      "B": 0.2,
-     "C": 35.6,
-     "D": 23.9
+     "C": 35.7,
+     "D": 23.0
     },
     "grade_lines": {
-     "A": 29430,
+     "A": 30798,
      "B": 192,
-     "C": 41593,
-     "D": 30303
+     "C": 41311,
+     "D": 28726
     }
    },
    "boundary": {
-    "files": 74,
-    "violations": 115
+    "files": 73,
+    "violations": 114
    }
   },
   "backend": {
    "contracts": {
     "per_contract": {
-     "api-domain-core": 26,
+     "api-domain-core": 27,
      "routes-touch-no-models": 56,
      "domains-acyclic": 174
     },
-    "total": 256
+    "total": 257
    },
-   "deferred_imports": 722,
+   "deferred_imports": 723,
    "files": {
-    "python_files": 696,
-    "files_over_1000": 26,
+    "python_files": 711,
+    "files_over_1000": 25,
     "files_over_1500": 14,
     "chat_py_lines": 5175
    }
@@ -1745,32 +1730,26 @@
   "size": {
    "per_cap": {
     "frontend/src/": {
-     "judged": 1143,
-     "over_cap": 9,
-     "excess_lines": 6439,
+     "judged": 1169,
+     "over_cap": 7,
+     "excess_lines": 5712,
      "cap": 1000
     },
     "backend/app/": {
-     "judged": 696,
+     "judged": 711,
      "over_cap": 14,
-     "excess_lines": 15216,
+     "excess_lines": 14088,
      "cap": 1500
     }
    },
-   "offenders": 23,
-   "excess_lines": 21655,
+   "offenders": 21,
+   "excess_lines": 19800,
    "worst": [
     {
      "file": "backend/app/domain/agent/chat.py",
      "lines": 5175,
      "cap": 1500,
      "over": 3675
-    },
-    {
-     "file": "backend/app/api/routes/users.py",
-     "lines": 4282,
-     "cap": 1500,
-     "over": 2782
     },
     {
      "file": "frontend/src/api.ts",
@@ -1791,6 +1770,12 @@
      "over": 2153
     },
     {
+     "file": "backend/app/api/routes/users.py",
+     "lines": 3512,
+     "cap": 1500,
+     "over": 2012
+    },
+    {
      "file": "frontend/src/proto-feedback-fixtures.ts",
      "lines": 2648,
      "cap": 1000,
@@ -1803,12 +1788,6 @@
      "over": 1379
     },
     {
-     "file": "backend/app/api/routes/topics.py",
-     "lines": 2297,
-     "cap": 1500,
-     "over": 797
-    },
-    {
      "file": "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
      "lines": 2222,
      "cap": 1500,
@@ -1819,14 +1798,20 @@
      "lines": 1712,
      "cap": 1000,
      "over": 712
+    },
+    {
+     "file": "frontend/src/cx_types.ts",
+     "lines": 1577,
+     "cap": 1000,
+     "over": 577
     }
    ]
   },
   "hotspots": {
    "30d": {
-    "commits": 1329,
-    "files_touched": 1515,
-    "fix_commits": 577,
+    "commits": 1341,
+    "files_touched": 1554,
+    "fix_commits": 578,
     "top": [
      {
       "file": "backend/app/domain/agent/chat.py",
@@ -1846,19 +1831,11 @@
      },
      {
       "file": "backend/app/api/routes/topics.py",
-      "changes": 101,
-      "lines": 2297,
-      "churn": 231997,
+      "changes": 103,
+      "lines": 1939,
+      "churn": 199717,
       "fix_commits": 28,
-      "fix_share": 0.277
-     },
-     {
-      "file": "backend/app/api/routes/users.py",
-      "changes": 37,
-      "lines": 4282,
-      "churn": 158434,
-      "fix_commits": 20,
-      "fix_share": 0.541
+      "fix_share": 0.272
      },
      {
       "file": "backend/app/domain/review/services.py",
@@ -1883,6 +1860,14 @@
       "churn": 137199,
       "fix_commits": 19,
       "fix_share": 0.218
+     },
+     {
+      "file": "backend/app/api/routes/users.py",
+      "changes": 38,
+      "lines": 3512,
+      "churn": 133456,
+      "fix_commits": 20,
+      "fix_share": 0.526
      },
      {
       "file": "backend/app/domain/agent/harness/claude_code/remote_execution/client.py",
@@ -1911,17 +1896,17 @@
     ]
    },
    "90d": {
-    "commits": 2171,
-    "files_touched": 1727,
-    "fix_commits": 844,
+    "commits": 2177,
+    "files_touched": 1765,
+    "fix_commits": 842,
     "top": [
      {
       "file": "backend/app/domain/agent/chat.py",
-      "changes": 243,
+      "changes": 239,
       "lines": 5175,
-      "churn": 1257525,
-      "fix_commits": 79,
-      "fix_share": 0.325
+      "churn": 1236825,
+      "fix_commits": 77,
+      "fix_share": 0.322
      },
      {
       "file": "frontend/src/api.ts",
@@ -1941,11 +1926,11 @@
      },
      {
       "file": "backend/app/api/routes/topics.py",
-      "changes": 161,
-      "lines": 2297,
-      "churn": 369817,
+      "changes": 163,
+      "lines": 1939,
+      "churn": 316057,
       "fix_commits": 39,
-      "fix_share": 0.242
+      "fix_share": 0.239
      },
      {
       "file": "backend/app/domain/agent/device_provider.py",
@@ -1957,19 +1942,11 @@
      },
      {
       "file": "backend/app/domain/agent/runtime.py",
-      "changes": 86,
+      "changes": 85,
       "lines": 2879,
-      "churn": 247594,
+      "churn": 244715,
       "fix_commits": 34,
-      "fix_share": 0.395
-     },
-     {
-      "file": "backend/app/api/routes/users.py",
-      "changes": 52,
-      "lines": 4282,
-      "churn": 222664,
-      "fix_commits": 26,
-      "fix_share": 0.5
+      "fix_share": 0.4
      },
      {
       "file": "frontend/src/cx_types.ts",
@@ -1980,12 +1957,20 @@
       "fix_share": 0.208
      },
      {
+      "file": "backend/app/api/routes/users.py",
+      "changes": 53,
+      "lines": 3512,
+      "churn": 186136,
+      "fix_commits": 26,
+      "fix_share": 0.491
+     },
+     {
       "file": "backend/app/core/config.py",
-      "changes": 145,
-      "lines": 1229,
-      "churn": 178205,
+      "changes": 146,
+      "lines": 1244,
+      "churn": 181624,
       "fix_commits": 31,
-      "fix_share": 0.214
+      "fix_share": 0.212
      },
      {
       "file": "backend/app/api/routes/tasks.py",
@@ -1999,8 +1984,8 @@
    }
   },
   "shared_days": {
-   "file_days": 6628,
-   "shared_days": 1753,
+   "file_days": 6684,
+   "shared_days": 1757,
    "worst": [
     {
      "file": "backend/app/domain/agent/chat.py",
@@ -2015,10 +2000,6 @@
      "days": 31
     },
     {
-     "file": "frontend/src/components/ChatPanel.vue",
-     "days": 28
-    },
-    {
      "file": "backend/app/api/routes/topics.py",
      "days": 27
     },
@@ -2028,6 +2009,10 @@
     },
     {
      "file": "frontend/src/cx_types.ts",
+     "days": 27
+    },
+    {
+     "file": "frontend/src/components/ChatPanel.vue",
      "days": 27
     },
     {
