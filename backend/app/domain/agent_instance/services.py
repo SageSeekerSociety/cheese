@@ -10,7 +10,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
-from app.domain.agent_type.library import preset_types
+from app.domain.agent_type.library import AgentTypeDef, preset_types
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
@@ -57,8 +57,55 @@ def initial_configuration(type_name: str | None = None) -> AgentConfiguration:
     return AgentConfiguration(
         body=preset.body,
         skills=list(preset.skills),
-        mcp_servers=list(preset.mcp_servers),
     )
+
+
+async def type_of_seat(
+    db: AsyncSession, project_id: uuid.UUID, handle: str | None
+) -> AgentTypeDef | None:
+    """The type of the teammate acting as ``handle`` in this project, or None.
+
+    Where a session finds its MCP servers: they belong to the type, never to
+    the saved agent. ``handle`` is a session's ``agent_handle`` — a teammate's
+    seat, or the shared ``cheese`` seat, which the project's default answers.
+    Read without writing, since a session start asks it on every turn.
+    """
+    project = await db.get(Project, project_id)
+    if project is None or not handle:
+        return None
+    service = AgentInstanceService(db)
+    agent = await service.for_seat_handle(project, handle)
+    type_name = agent.type_name if agent is not None else None
+    if agent is None and handle == CHEESE_HANDLE and project.default_agent_instance_id:
+        instance = await db.get(AgentInstance, project.default_agent_instance_id)
+        type_name = instance.type_name if instance is not None else None
+    return preset_types().get(type_name) if type_name else None
+
+
+async def agent_stdio_servers(
+    db: AsyncSession, project_id: uuid.UUID, handle: str | None
+) -> dict[str, dict]:
+    """The stdio servers ``handle``'s type defines, by name. Its remote ones
+    are the platform's to call (`remote_mcp`)."""
+    agent_type = await type_of_seat(db, project_id, handle)
+    if agent_type is None:
+        return {}
+    return {
+        name: spec
+        for name, spec in agent_type.inline_servers().items()
+        if not isinstance(spec.get("url"), str)
+    }
+
+
+async def project_types(db: AsyncSession, project_id: uuid.UUID) -> list[AgentTypeDef]:
+    """The types of this project's active teammates, each once."""
+    names = {
+        instance.type_name
+        for instance in await AgentInstanceRepository(db).list_for_project(project_id)
+        if instance.is_active and instance.type_name
+    }
+    library = preset_types()
+    return [library[name] for name in sorted(names) if name in library]
 
 
 def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:

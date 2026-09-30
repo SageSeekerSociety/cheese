@@ -1,0 +1,242 @@
+"""An agent type's MCP servers reach its teammates' sessions, and only theirs.
+
+A type declares them as a Claude Code subagent does (`mcpServers`). An inline
+remote server is connected once for the project, in project settings, like a
+`.mcp.json` one, and the platform calls it with that connection; an inline
+stdio server is handed to the session as a definition its machine runs. A
+teammate of another type gets neither. A name the project's `.mcp.json`
+already uses stays the project's.
+"""
+
+import json
+import sys
+import uuid
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.channel import Placement
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.pi.channel import PiChannel
+from app.domain.agent_instance import services as agent_instances
+from app.domain.agent_type.library import load_type_library
+from app.domain.remote_mcp import service
+from tests.integration import test_central_room_sessions as central_sessions
+from tests.integration import test_remote_mcp as base
+from tests.integration.conftest import session_auth_headers
+from tests.integration.test_archive_retires_storage import _seed_device
+
+upstream = base.upstream
+_local_upstream = base._local_upstream
+_connect, _project, _servers, _topic = (
+    base._connect,
+    base._project,
+    base._servers,
+    base._topic,
+)
+
+LINT = {"command": sys.executable, "args": ["lint.py"]}
+
+
+@pytest.fixture
+def types(upstream, tmp_path, monkeypatch):
+    """A type library with one type that declares servers, and one that does not."""
+    (tmp_path / "tracer.md").write_text(
+        f"""---
+name: tracer
+title: Tracer
+mcpServers:
+  - ticket:
+      type: http
+      url: {upstream.base}/mcp
+  - lint:
+      command: {json.dumps(LINT["command"])}
+      args: ["lint.py"]
+  # The project's `.mcp.json` names a server `search` too; the project's stays.
+  - search:
+      type: http
+      url: https://elsewhere.example.test/mcp
+  - tracker
+---
+You trace tickets.
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "plain.md").write_text(
+        "---\nname: plain\n---\nYou help.", encoding="utf-8"
+    )
+    library = load_type_library(tmp_path)
+    monkeypatch.setattr(agent_instances, "preset_types", lambda: library)
+    return library
+
+
+def _teammate(client, pid: uuid.UUID, handle: str, type_name: str) -> str:
+    """A teammate of this type, and the seat handle its sessions act as."""
+    made = client.post(
+        f"/projects/{pid}/agents",
+        json={"handle": handle, "type_name": type_name, "display_name": handle},
+        headers=session_auth_headers("alice"),
+    )
+    assert made.status_code == 200, made.text
+    assert "mcp_servers" not in made.json()["data"]["configuration"]
+    return made.json()["data"]["seat_handle"]
+
+
+def _call_as(client, tid: str, pid, seat: str, name: str, method: str, params=None):
+    response = client.post(
+        f"/topics/{tid}/mcp/{name}",
+        json={"method": method, "params": params or {}},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=str(pid), topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def _session_target(client, pid, tid, seat):
+    async def compose():
+        async with client.test_factory() as session:
+            return await service.session_target(session, pid, uuid.UUID(tid), seat)
+
+    return client.portal.call(compose)
+
+
+def test_a_types_remote_server_uses_the_projects_connection_for_its_teammates(
+    client, upstream, types
+):
+    pid = _project(client, upstream)
+    tid = _topic(client, pid)
+    tracer = _teammate(client, pid, "tracer-1", "tracer")
+    plain = _teammate(client, pid, "plain-1", "plain")
+
+    # Project settings list it beside the `.mcp.json` servers, to connect once.
+    listed = _servers(client, pid)
+    assert listed["ticket"]["status"] == "disconnected"
+    # A name the project already uses is the project's definition.
+    assert listed["search"]["host"] != "elsewhere.example.test"
+    assert listed["search"]["auth"] == "headers"
+
+    back = _connect(client, pid, name="ticket")
+    assert back.status_code == 302, back.text
+    assert _servers(client, pid)["ticket"]["authorized_by"] == "alice"
+
+    assert _session_target(client, pid, tid, tracer) == {
+        "path": f"/topics/{tid}/mcp",
+        "servers": ["ticket"],
+    }
+    assert _session_target(client, pid, tid, plain) is None
+
+    tools = _call_as(client, tid, pid, tracer, "ticket", "tools/list")
+    assert tools["result"]["tools"][0]["name"] == "whoami"
+    called = _call_as(
+        client,
+        tid,
+        pid,
+        tracer,
+        "ticket",
+        "tools/call",
+        {"name": "whoami", "arguments": {"note": "hi"}},
+    )
+    assert called["result"]["content"][0]["text"] == "reached with oauth; note=hi"
+    # Called with the project's connection, which the session never holds.
+    assert upstream.seen_credentials[-1] == f"Bearer {upstream.issued[-1]}"
+    assert upstream.issued[-1] not in json.dumps(called)
+
+    reached = len(upstream.tool_calls)
+    refused = _call_as(
+        client,
+        tid,
+        pid,
+        plain,
+        "ticket",
+        "tools/call",
+        {"name": "whoami", "arguments": {"note": "not mine"}},
+    )
+    assert "error" in refused and "result" not in refused
+    assert len(upstream.tool_calls) == reached, "another type never reaches it"
+
+
+@pytest.fixture
+def room(client, upstream):
+    pid = _project(client, upstream)
+    tid = uuid.UUID(_topic(client, pid))
+
+    async def seed():
+        async with client.test_factory() as db:
+            await _seed_device(db, "executor", project_id=pid)
+            await db.commit()
+
+    client.portal.call(seed)
+    return pid, tid
+
+
+def _central_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
+    """The execution target a Claude Code or Codex session of this teammate
+    starts with. A session is keyed by the teammate's handle; its credential
+    names the seat it acts as."""
+    central: Any = central_sessions.channel(client, monkeypatch)
+    ref = SessionRef(pid, tid, handle, harness="claude-code")
+
+    async def open_session():
+        await central.ensure_ready(
+            session=ref,
+            token=mint_scoped_token(
+                project_id=str(pid), topic_id=str(tid), agent_handle=seat
+            ),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=await central.precheck(ref, needs_place=True),
+            turn_id=uuid.uuid4(),
+        )
+        opening = central._ensure_screen.await_args.kwargs
+        return json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
+
+    return client.portal.call(open_session)
+
+
+def _pi_configuration(client, pid, tid, handle, seat) -> dict:
+    """What `PiChannel` hands the machine for this teammate's session."""
+    hub: Any = SimpleNamespace(
+        is_online=lambda _machine: True,
+        call_executor=AsyncMock(return_value={"alive": True, "session_id": "s"}),
+    )
+    device = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    device.precheck = AsyncMock(  # type: ignore[method-assign]
+        return_value=Placement("machine", 1, seat, rented=True)
+    )
+    device.ensure_ready = AsyncMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(resource_id=tid)
+    )
+    channel = PiChannel(device)
+    channel._remember = AsyncMock()  # type: ignore[method-assign]
+    ref = SessionRef(pid, tid, handle, harness="pi")
+    client.portal.call(lambda: channel.ensure(ref, Opening(system_prompt="Room")))
+    opened = device.ensure_ready.await_args
+    assert opened is not None
+    return opened.kwargs["launch"].configuration(str(pid))
+
+
+def test_a_types_stdio_server_is_handed_only_to_its_teammates_sessions(
+    client, room, types, monkeypatch
+):
+    pid, tid = room
+    tracer = _teammate(client, pid, "tracer-1", "tracer")
+    plain = _teammate(client, pid, "plain-1", "plain")
+
+    own = _central_target(client, monkeypatch, pid, tid, "tracer-1", tracer)
+    assert own["agent_mcp"] == {"lint": LINT}
+    other = _central_target(client, monkeypatch, pid, tid, "plain-1", plain)
+    assert "agent_mcp" not in other
+
+    assert _pi_configuration(client, pid, tid, "tracer-1", tracer)["agent_mcp"] == {
+        "lint": LINT
+    }
+    assert _pi_configuration(client, pid, tid, "plain-1", plain)["agent_mcp"] is None

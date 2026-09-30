@@ -277,7 +277,9 @@ export function register(on) {
         return { deny: "Cheese delivery failed: " + String(error) };
       }
     }
-    for (const server of execution.mcp_servers || []) {
+    // The machine's stdio servers and the teammate's type's (`agent_mcp`, whose
+    // definitions the bridge hands the machine with each call).
+    for (const server of [...(execution.mcp_servers || []), ...Object.keys(execution.agent_mcp || {})]) {
       const prefix = "mcp__" + server + "__";
       if (tool.startsWith(prefix)) {
         try {

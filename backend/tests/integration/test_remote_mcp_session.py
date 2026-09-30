@@ -84,7 +84,8 @@ def _target(client, pid, tid, tmp_path) -> Path:
 
     async def compose():
         async with client.test_factory() as session:
-            return await service.session_target(session, pid, tid)
+            # The project default's session: no type of its own.
+            return await service.session_target(session, pid, tid, None)
 
     remote = asyncio.run(compose())
     target = {

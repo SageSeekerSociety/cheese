@@ -167,6 +167,7 @@ async def proxy(
             db,
             project_id=project_id,
             topic_id=topic_id,
+            agent_handle=claims.get("a"),
             name=name,
             method=body.method,
             params=body.params,

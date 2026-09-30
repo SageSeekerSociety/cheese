@@ -19,6 +19,7 @@ from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.agent_instance.services import agent_stdio_servers
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
@@ -300,9 +301,18 @@ class CentralChannel(DeviceChannel):
             # instead. Part of the target, so connecting one relaunches an idle
             # session with it (`_launch_identity`).
             async with factory() as db:
-                remote = await remote_mcp.session_target(db, project_id, topic_id)
+                remote = await remote_mcp.session_target(
+                    db, project_id, topic_id, agent_handle
+                )
+                own = await agent_stdio_servers(db, project_id, agent_handle)
             if remote is not None:
                 target["remote_mcp"] = remote
+            # The teammate's type's own stdio servers, as definitions: they run
+            # on the room's machine like the checkout's `.mcp.json` ones, and
+            # `RemoteClient` hands the machine the definition with each call.
+            # Part of the target, so a changed type relaunches an idle session.
+            if own:
+                target["agent_mcp"] = own
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
         location = {

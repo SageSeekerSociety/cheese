@@ -91,7 +91,6 @@ const CONFIG = {
   model: null,
   body: 'Review code',
   skills: [],
-  mcp_servers: [],
 }
 
 beforeEach(() => {

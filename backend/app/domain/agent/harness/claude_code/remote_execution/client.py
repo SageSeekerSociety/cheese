@@ -42,6 +42,7 @@ if __package__:
         RemoteClient,
         read_file_on_the_machine,
         session_path,
+        session_servers,
         stat_file_on_the_machine,
     )
 else:
@@ -57,6 +58,7 @@ else:
         RemoteClient,
         read_file_on_the_machine,
         session_path,
+        session_servers,
         stat_file_on_the_machine,
     )
 
@@ -480,12 +482,9 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    # The room machine's stdio servers and the project's remote ones take the
-    # same bridge; `RemoteClient.call` sends each to where it is served.
-    bridged = [
-        *target.get("mcp_servers", []),
-        *(target.get("remote_mcp") or {}).get("servers", []),
-    ]
+    # The machine's stdio servers, the type's and the remote ones share one
+    # bridge; `RemoteClient.call` sends each where it is served.
+    bridged = session_servers(target)
     for name in bridged:
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
@@ -1964,7 +1963,8 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        remote = (config.get("remote_mcp") or {}).get("servers", [])
+        # Remote servers and a type's own, whose definition rides each call.
+        remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
         if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
                 from .runtime import bridge

@@ -1465,9 +1465,9 @@ class ChatService:
         return turn_id in self._active_turn_ids.get(topic_id, ())
 
     async def _unconnected_mcp(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str | None
     ) -> tuple[str, ...]:
-        """The project's remote MCP servers this room's session cannot use yet,
+        """The remote MCP servers this session cannot use yet, its type's too,
         each said once in the room: 「<name> 需要在项目设置里连接」."""
         from sqlalchemy import select
 
@@ -1477,7 +1477,7 @@ class ChatService:
         try:
             async with self._sessions() as session:
                 unusable = (
-                    await remote_mcp.session_servers(session, project_id)
+                    await remote_mcp.session_servers(session, project_id, agent_handle)
                 ).unusable
                 said = set(
                     await session.scalars(
@@ -4439,7 +4439,7 @@ class ChatService:
             teaching=teaching,
             session_opening=_session_opening_lines(
                 unconnected_mcp=(
-                    await self._unconnected_mcp(project_id, topic_id)
+                    await self._unconnected_mcp(project_id, topic_id, acting_agent)
                     if needs_place
                     else ()
                 ),

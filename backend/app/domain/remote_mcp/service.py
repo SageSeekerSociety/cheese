@@ -125,6 +125,32 @@ def _status(
     return CONNECTED
 
 
+async def _project_declared(
+    db: AsyncSession, project_id: uuid.UUID, *, fresh: bool = False
+) -> Declared:
+    """Every remote server anyone in the project may need connected: its
+    `.mcp.json`'s and those of its teammates' types."""
+    from app.domain.agent_instance.services import project_types
+
+    return declared.with_types(
+        await declared.read(db, project_id, fresh=fresh),
+        await project_types(db, project_id),
+    )
+
+
+async def _seat_declared(
+    db: AsyncSession, project_id: uuid.UUID, agent_handle: str | None
+) -> Declared:
+    """The remote servers one teammate's sessions reach: the project's, and its
+    own type's. A teammate of another type never reaches this type's."""
+    from app.domain.agent_instance.services import type_of_seat
+
+    agent_type = await type_of_seat(db, project_id, agent_handle)
+    return declared.with_types(
+        await declared.read(db, project_id), [agent_type] if agent_type else []
+    )
+
+
 @dataclass(frozen=True)
 class SessionServers:
     """What a session in this project gets: the servers it can call, and the
@@ -134,8 +160,10 @@ class SessionServers:
     unusable: tuple[str, ...] = ()
 
 
-async def session_servers(db: AsyncSession, project_id: uuid.UUID) -> SessionServers:
-    found = await declared.read(db, project_id)
+async def session_servers(
+    db: AsyncSession, project_id: uuid.UUID, agent_handle: str | None
+) -> SessionServers:
+    found = await _seat_declared(db, project_id, agent_handle)
     if not found.servers:
         return SessionServers()
     connections = await _connections(db, project_id)
@@ -148,11 +176,15 @@ async def session_servers(db: AsyncSession, project_id: uuid.UUID) -> SessionSer
 
 
 async def session_target(
-    db: AsyncSession, project_id: uuid.UUID, topic_id: uuid.UUID
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    agent_handle: str | None,
 ) -> dict | None:
-    """What a session's execution target carries about remote servers: where
-    it posts their calls, and which it may call. None when there are none."""
-    usable = (await session_servers(db, project_id)).usable
+    """What the execution target of ``agent_handle``'s session carries about
+    remote servers: where it posts their calls, and which it may call. None
+    when there are none."""
+    usable = (await session_servers(db, project_id, agent_handle)).usable
     if not usable:
         return None
     return {"path": f"/topics/{topic_id}/mcp", "servers": list(usable)}
@@ -164,7 +196,7 @@ def _when(value: datetime | None) -> str | None:
 
 async def settings_view(db: AsyncSession, project_id: uuid.UUID) -> dict:
     """The settings page's list: one row per remote server, never a credential."""
-    found: Declared = await declared.read(db, project_id, fresh=True)
+    found: Declared = await _project_declared(db, project_id, fresh=True)
     connections = await _connections(db, project_id)
     secret_rows = await _secret_rows(db, project_id)
     values = _secret_values(project_id, secret_rows)
@@ -232,7 +264,7 @@ def _host(url: str) -> str:
 async def _declared_server(
     db: AsyncSession, project_id: uuid.UUID, name: str, *, fresh: bool = False
 ) -> RemoteServer:
-    server = (await declared.read(db, project_id, fresh=fresh)).get(name)
+    server = (await _project_declared(db, project_id, fresh=fresh)).get(name)
     if server is None:
         raise NotFoundError("项目的 .mcp.json 里没有这个远程 MCP 服务器")
     return server
@@ -431,7 +463,7 @@ async def disconnect(db: AsyncSession, project_id: uuid.UUID, name: str) -> None
 async def set_secret(
     db: AsyncSession, project_id: uuid.UUID, name: str, value: str, handle: str
 ) -> None:
-    found = await declared.read(db, project_id, fresh=True)
+    found = await _project_declared(db, project_id, fresh=True)
     if not any(name in server.all_variables() for server in found.servers):
         raise NotFoundError("项目的 .mcp.json 里没有用到这个变量")
     if not value:
@@ -537,12 +569,16 @@ async def call(
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
+    agent_handle: str | None,
     name: str,
     method: str,
     params: dict,
 ) -> dict:
-    """One MCP request from a session in `topic_id` to the project's server."""
-    server = await _declared_server(db, project_id, name)
+    """One MCP request from ``agent_handle``'s session in `topic_id` to a server
+    that session has: the project's, or its own type's."""
+    server = (await _seat_declared(db, project_id, agent_handle)).get(name)
+    if server is None:
+        raise NotFoundError("这个队友没有叫这个名字的远程 MCP 服务器")
     values = _secret_values(project_id, await _secret_rows(db, project_id))
     try:
         url, headers = server.expanded(values)

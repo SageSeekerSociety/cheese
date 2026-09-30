@@ -319,12 +319,17 @@ class Runner(runner.Runner[Journal]):
         return home
 
     async def open_servers(
-        self, *, workspace: str, env: dict[str, str], remote: dict | None
+        self,
+        *,
+        workspace: str,
+        env: dict[str, str],
+        remote: dict | None,
+        agent: dict | None = None,
     ) -> None:
-        """Start the checkout's stdio MCP servers and list every server's tools,
-        before the extension's manifest is written."""
+        """Start the checkout's and the teammate's type's stdio MCP servers and
+        list every server's tools, before the extension's manifest is written."""
         self.servers = ProjectServers(
-            self.state, workspace=workspace, env=env, remote=remote
+            self.state, workspace=workspace, env=env, remote=remote, agent=agent
         )
         self.mcp_tools = await self.servers.discover()
 
@@ -408,6 +413,7 @@ class Runner(runner.Runner[Journal]):
         extension: dict[str, str] | None = None,
         notice: str = "",
         remote_mcp: dict | None = None,
+        agent_mcp: dict | None = None,
     ) -> str:
         self.claim()
         self.workspace, self.env = cwd, env
@@ -452,7 +458,9 @@ class Runner(runner.Runner[Journal]):
             if file.name == "SKILL.md":
                 appended += ["--skill", str(file.parent)]
         if extension is not None:
-            await self.open_servers(workspace=cwd, env=env, remote=remote_mcp)
+            await self.open_servers(
+                workspace=cwd, env=env, remote=remote_mcp, agent=agent_mcp
+            )
             home = self.write_extension(extension, notice)
             appended += ["--extension", str(home / "index.ts")]
             # Named rather than derived: an extension that had to work out

@@ -226,8 +226,10 @@ def test_self_test_the_frontend_guard_lets_through(source: str) -> None:
 # 是这三个拼写。清单写在这里，加一个字段就要在这里改一行并说出它凭什么是角色的
 # 一部分——这正是结论 3、28 要人停下来想的那一下。
 
-_A_ROLE = {"body", "skills", "mcp_servers"}
+_A_ROLE = {"body", "skills"}
 
+# MCP servers are the type's alone: an instance must not override them
+# (architecture v2, 1.1), so a saved configuration has no field for them.
 _A_TYPE = {
     "name",
     "title",
@@ -236,12 +238,14 @@ _A_TYPE = {
     "space_id",
     "created_by",
     "created_at",
+    "mcp_servers",
 } | _A_ROLE
 
 
 def test_a_saved_configuration_carries_a_role_and_optional_model() -> None:
     assert set(AgentConfiguration.model_fields) == _A_ROLE | {"model"}, (
-        "A teammate stores its role and optional model override, not harness or effort."
+        "A teammate stores its role and optional model override, not harness, "
+        "effort or MCP servers."
     )
 
 

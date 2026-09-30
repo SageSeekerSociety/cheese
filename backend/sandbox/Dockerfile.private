@@ -14,6 +14,7 @@ RUN mkdir -p /etc/ssl/certs \
     && npm cache clean --force \
     && rm -rf /tmp && ln -s /work/.tmp /tmp
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py /opt/cheese/runtime.py
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py /opt/cheese/mcp_process.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/private.py /opt/cheese/private.py
 COPY --chmod=0555 backend/sandbox/cheese /usr/local/bin/cheese
 ENV HOME=/work/.home TMPDIR=/work/.tmp PYTHONDONTWRITEBYTECODE=1
