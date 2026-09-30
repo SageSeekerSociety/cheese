@@ -1,0 +1,13 @@
+{
+  "agentNotProjectMember": "AI 队友不能加到项目成员里。项目里的 Agent 由 Agent 配置管理，不占人名册。",
+  "projectManageForbidden": "只有项目所有者或团队管理员能管理这个项目",
+  "peopleJoinByInvite": "人通过邀请加入项目；这里只能给 AI 队友放座位",
+  "leaveProjectSignIn": "需要登录后才能退出项目",
+  "ownerCannotLeave": "项目所有者不能退出项目，需要先把项目转让给别人",
+  "inviteWhom": "要邀请谁",
+  "inviteSelf": "不用邀请自己",
+  "inviteAlreadyMember": "这个人已经在项目里了（团队成员不需要邀请）",
+  "invitePending": "已经邀请过这个人，正在等他答复",
+  "inviteAnswered": "这张邀请已经答复过了",
+  "inviteNotYours": "只有被邀请的人能答复这张邀请"
+}

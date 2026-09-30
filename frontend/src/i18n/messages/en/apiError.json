@@ -1,0 +1,13 @@
+{
+  "agentNotProjectMember": "AI teammates can't be added as project members. A project's agents are managed in its agent settings, not in the member list.",
+  "projectManageForbidden": "Only the project owner or a team admin can manage this project",
+  "peopleJoinByInvite": "People join a project by invitation. This only adds seats for AI teammates",
+  "leaveProjectSignIn": "Sign in to leave the project",
+  "ownerCannotLeave": "The project owner can't leave the project. Transfer it to someone else first",
+  "inviteWhom": "Choose who to invite",
+  "inviteSelf": "You don't need to invite yourself",
+  "inviteAlreadyMember": "This person is already in the project (team members don't need an invitation)",
+  "invitePending": "This person has already been invited and hasn't answered yet",
+  "inviteAnswered": "This invitation has already been answered",
+  "inviteNotYours": "Only the invited person can answer this invitation"
+}

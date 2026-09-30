@@ -17,6 +17,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.authz.policy import can_manage_project_members
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
 from app.domain.project.models import (
@@ -48,9 +49,7 @@ async def _reject_execution_identity(session: AsyncSession, handle: str) -> None
     from app.domain.identity.services import IdentityService
 
     if await IdentityService(session).is_agent(handle):
-        raise ValidationError(
-            "AI 队友不能加到项目成员里。项目里的 Agent 由 Agent 配置管理，不占人名册。"
-        )
+        raise ValidationError(say("agentNotProjectMember"))
 
 
 class MemberService:
@@ -115,7 +114,7 @@ class MemberService:
             team_manager=team_manager,
         )
         if not allowed:
-            raise ForbiddenError("只有项目所有者或团队管理员能管理这个项目")
+            raise ForbiddenError(say("projectManageForbidden"))
 
     async def seat_agent(
         self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
@@ -132,7 +131,7 @@ class MemberService:
         from app.domain.identity.services import IdentityService
 
         if not await IdentityService(self._session).is_agent(user_handle):
-            raise ValidationError("人通过邀请加入项目；这里只能给 AI 队友放座位")
+            raise ValidationError(say("peopleJoinByInvite"))
         existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if existing is not None:
             raise ValidationError("User is already a member of this project")
@@ -187,9 +186,9 @@ class MemberService:
         """
         project = await self._ensure_project(project_id)
         if not actor.authenticated:
-            raise ForbiddenError("需要登录后才能退出项目")
+            raise ForbiddenError(say("leaveProjectSignIn"))
         if project.owner_handle and project.owner_handle == actor.handle:
-            raise ForbiddenError("项目所有者不能退出项目，需要先把项目转让给别人")
+            raise ForbiddenError(say("ownerCannotLeave"))
         member = await self._repo.get(project_id=project_id, user_handle=actor.handle)
         on_team = await self._on_team(project, actor)
         if member is None and not on_team:
@@ -289,21 +288,21 @@ class InvitationService:
         # 同一条授权，和改名册用的是同一个判断：能管名册的人才能发邀请。
         await MemberService(self._session).require_manager(project_id, actor)
         if not invitee_handle:
-            raise ValidationError("要邀请谁")
+            raise ValidationError(say("inviteWhom"))
         if actor.handle == invitee_handle:
-            raise ValidationError("不用邀请自己")
+            raise ValidationError(say("inviteSelf"))
         await _reject_execution_identity(self._session, invitee_handle)
         if await self._is_on_project_roster(project_id, invitee_handle):
             # Someone on the team is already in every project of it; an invitation
             # is only for a person from outside it.
-            raise ValidationError("这个人已经在项目里了（团队成员不需要邀请）")
+            raise ValidationError(say("inviteAlreadyMember"))
         if (
             await self._repo.pending_for(
                 project_id=project_id, invitee_handle=invitee_handle
             )
             is not None
         ):
-            raise ValidationError("已经邀请过这个人，正在等他答复")
+            raise ValidationError(say("invitePending"))
         invitation = await self._repo.add(
             project_id=project_id,
             invitee_handle=invitee_handle,
@@ -364,7 +363,7 @@ class InvitationService:
         if invitation.status != InvitationStatus.pending:
             # 已经答复过的邀请不是「找不到」，说清楚它已经结束了——否则界面上那颗
             # 按钮点两下会得到一句莫名其妙的 404。
-            raise ValidationError("这张邀请已经答复过了")
+            raise ValidationError(say("inviteAnswered"))
         return invitation
 
     async def respond(
@@ -372,7 +371,7 @@ class InvitationService:
     ) -> ProjectInvitation:
         invitation = await self._pending_or_404(invitation_id)
         if actor.handle != invitation.invitee_handle:
-            raise ForbiddenError("只有被邀请的人能答复这张邀请")
+            raise ForbiddenError(say("inviteNotYours"))
         if accept:
             # 拦在执行身份上，而不是只拦在发邀请那一刻：一条**在修复之前**发出去的
             # 邀请还躺在那里，点一下接受就能绕开 invite 里那条判断。
