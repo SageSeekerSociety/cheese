@@ -2645,60 +2645,64 @@ function create(body: FeedbackCreateBody): FeedbackDetail {
   return created
 }
 
-/** 把 `/api/*` 上的那几条路由接到假数据上。**只拦 `/api/`**：图标、字体那些请求照旧
- *  走真正的网络栈。
+/** 这个地址是不是接口。**只拦接口**：图标、字体、构建产物那些请求照旧走真正的网络栈。
  *
- *  出口有两条，都要汇到同一份假数据上：
- *    * `src/api.ts` 那一层用 `fetch`，直接落在下面这个补丁上；
- *    * `network/api` 那一层用 axios（空间申请、成员管理走它），而 axios 在浏览器里
- *      默认用 XHR 适配器，**根本不经过 `window.fetch`** —— 只补 fetch 的话，那几页
- *      会照样去打真网络，在预览域上就是一页 404，画成「加载失败」。 */
+ *  拦不拦**不能只看有没有 `/api`**。应用有两条 HTTP 出口，地址长得不一样：
+ *    * `src/api.ts` 那一层用 `fetch`，地址带 `/api` 前缀（`/api/feedback/...`）；
+ *    * `network/api` 那一层用 axios（空间申请、成员管理走它），它的 `baseURL` 在预览
+ *      构建里是空的，于是地址没有前缀（`/admin/spaces`）。
+ *  只认前缀会把后一条整条漏给真网络，在预览域上就是 404，页面画成「加载失败，请重试」。 */
+function looksLikeApi(url: URL): boolean {
+  return url.pathname.startsWith('/api/') || /^\/(admin|feedback)(\/|$)/.test(url.pathname)
+}
+
+/** 把一个接口请求翻成假响应。两条出口都指望「一定拿得到一个响应」，所以不在假数据里
+ *  的地址也给一个（404 + 一行日志），不抛出去。 */
+async function fakeResponse(url: URL, method: string, body: unknown): Promise<Response> {
+  if (
+    PREVIEW_SLOW &&
+    method === 'GET' &&
+    !url.pathname.endsWith('/feedback/meta') &&
+    !url.pathname.endsWith('/feedback/counts')
+  ) {
+    // 慢样本：挂住不返回，让页面停在加载态（`?slow=1` 用）。
+    await new Promise(() => {})
+  }
+  const hit = routes(url, method, body)
+  if (hit === undefined) {
+    // 页面调了一个这里没写的接口。预览里它不该发生；真发生了，报出来比在界面上
+    // 留一个没有原因的空列表好。
+    console.warn('[preview] 没有假数据的请求', method, url.pathname)
+    return envelope(null)
+  }
+  if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
+  if ('refused' in hit) return envelope(null, 412, hit.refused)
+  if ('forbidden' in hit) return envelope(null, 403, hit.forbidden)
+  if ('invalid' in hit) return envelope(null, 400, hit.invalid)
+  if ('conflict' in hit) return envelope(null, 409, hit.conflict)
+  if ('failed' in hit) return envelope(null, 500, hit.failed)
+  return envelope(hit.data)
+}
+
+/** 把接口接到假数据上。两条出口、两道门，都汇到 `fakeResponse` 这一份假数据上。 */
 export function installPreviewFetch(): void {
   const real = window.fetch.bind(window)
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     const url = new URL(raw, window.location.origin)
-    if (!url.pathname.startsWith('/api/')) return real(input as RequestInfo, init)
+    if (!looksLikeApi(url)) return real(input as RequestInfo, init)
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
-    let body: unknown = null
     // 请求体要么在 `init.body` 里（`src/api.ts` 那条出口），要么整个请求是一个
     // `Request` 对象（axios 的 fetch 适配器是这么发的），后者得先把体读出来。
-    const rawBody = typeof init?.body === 'string' && init.body ? init.body : await requestBody(input)
-    if (rawBody) {
-      try {
-        body = JSON.parse(rawBody)
-      } catch {
-        body = null
-      }
-    }
-    if (
-      PREVIEW_SLOW &&
-      method === 'GET' &&
-      !url.pathname.endsWith('/feedback/meta') &&
-      !url.pathname.endsWith('/feedback/counts')
-    ) {
-      await new Promise(() => {})
-    }
-    const hit = routes(url, method, body)
-    if (hit === undefined) {
-      // 走到这里说明页面调了一个这里没写的接口。预览里它不该发生；真发生了，
-      // 报出来比在界面上留一个没有原因的空列表好。
-      console.warn('[preview] 没有假数据的请求', method, url.pathname)
-      return envelope(null)
-    }
-    if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
-    if ('refused' in hit) return envelope(null, 412, hit.refused)
-    if ('forbidden' in hit) return envelope(null, 403, hit.forbidden)
-    if ('invalid' in hit) return envelope(null, 400, hit.invalid)
-    if ('conflict' in hit) return envelope(null, 409, hit.conflict)
-    if ('failed' in hit) return envelope(null, 500, hit.failed)
-    return envelope(hit.data)
+    return fakeResponse(url, method, parseJsonBody(await rawRequestBody(input, init)))
   }
   forceAxiosThroughFetch()
+  installPreviewXhr()
 }
 
-/** 读一个 `Request` 的请求体；不是 `Request`（或者读不出来）就当没有体。 */
-async function requestBody(input: RequestInfo | URL): Promise<string | null> {
+/** 把请求体读成字符串。`init.body` 优先；整个请求是 `Request` 对象时才去 clone 读。 */
+async function rawRequestBody(input: RequestInfo | URL, init?: RequestInit): Promise<string | null> {
+  if (typeof init?.body === 'string' && init.body) return init.body
   if (!(input instanceof Request)) return null
   try {
     return await input.clone().text()
@@ -2707,12 +2711,28 @@ async function requestBody(input: RequestInfo | URL): Promise<string | null> {
   }
 }
 
+/** 请求体是 JSON 就解析，不是就当没有体。 */
+function parseJsonBody(raw: string | null): unknown {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
 /** 让 axios 也从 `window.fetch` 出去（也就是上面那个补丁），不再用它默认的 XHR 适配器。
  *
- *  为什么不写 `axios.defaults.adapter = 'fetch'`：`network/api/index.ts` 在模块加载时
- *  就 `axios.create()` 了，那一步会把当时的 defaults（`['xhr', 'http', 'fetch']`）
- *  **抄进实例配置**，之后再改 defaults 已经赶不上。`Axios.prototype.request` 是每次
- *  请求都要过的一道门，把适配器写进当次 config，实例是先建的还是后建的都一样。 */
+ *  为什么不写 `axios.defaults.adapter = 'fetch'`：`network/api/index.ts` 一被加载就
+ *  `axios.create()`，那一步会把当时的 defaults（`['xhr', 'http', 'fetch']`）**抄进实例
+ *  配置**，之后再改 defaults 已经赶不上。
+ *
+ *  这一道补丁**有生效条件**：`axios.create()` 会把当时 `Axios.prototype.request` 的引用
+ *  也抄进实例（`lib/axios.js` 里的 `bind`），所以改 prototype 只对**之后**建的实例生效。
+ *  现在预览入口的路由全是懒加载（`router/feedback.ts` 里 `component: () => import(...)`），
+ *  `network/api` 的实例建在补丁之后，够用；可谁往入口的静态导入图里加一条通到
+ *  `network/api` 的路径，它就静默失效、页面退回 404。所以下面还有一道不看创建时机的
+ *  后手（`installPreviewXhr`）。 */
 function forceAxiosThroughFetch(): void {
   const proto = axios.Axios.prototype as unknown as {
     request: (this: unknown, ...args: unknown[]) => Promise<unknown>
@@ -2727,6 +2747,91 @@ function forceAxiosThroughFetch(): void {
     else out[0] = withFetch(out[0])
     return original.apply(this, out)
   }
+}
+
+/** `XMLHttpRequest` 上记下的请求信息。 */
+type PreviewXhrMeta = { method: string; url: string; body: unknown }
+
+type PreviewXhr = XMLHttpRequest & { __preview?: PreviewXhrMeta }
+
+/** 第二道门：把 `XMLHttpRequest` 也接到假数据上。
+ *
+ *  为什么必须有它：axios 在浏览器里默认走 XHR 适配器，**根本不经过 `window.fetch`**。
+ *  上面那道补丁是把 axios 的出口改到 `window.fetch`，但受创建时机限制；这一道不看实例
+ *  是先建还是后建 —— XHR 是每次 `send` 时才真正出门的，出门那一下就是它。
+ *
+ *  拦下来之后不用真的 `send`，改从 `fakeResponse` 取响应填回这个 XHR。XHR 的 `status`、
+ *  `responseText`、`response`、`readyState` 都是原型上的只读访问器，直接赋值会被忽略，
+ *  所以在实例上定义同名自有属性把它们遮住 —— 属性查找先命中自有属性，axios 读到的就是
+ *  这些值。 */
+function installPreviewXhr(): void {
+  const proto = window.XMLHttpRequest.prototype as PreviewXhr & {
+    open: (method: string, url: string, async?: boolean, username?: string | null, password?: string | null) => void
+    send: (body?: Document | XMLHttpRequestBodyInit | null) => void
+  }
+  const realOpen = proto.open
+  const realSend = proto.send
+
+  proto.open = function (
+    this: PreviewXhr,
+    method: string,
+    url: string,
+    async?: boolean,
+    username?: string | null,
+    password?: string | null
+  ) {
+    this.__preview = { method: String(method).toUpperCase(), url: String(url), body: null }
+    // 真的 `open` 还是要调：axios 之后会 `setRequestHeader`，没开过的 XHR 上它会抛
+    // INVALID_STATE_ERR。真 `send` 不调，所以这个 XHR 从头到尾不出门。
+    return realOpen.call(this, method, url, async ?? true, username, password)
+  }
+
+  proto.send = function (this: PreviewXhr, body?: Document | XMLHttpRequestBodyInit | null) {
+    const meta = this.__preview
+    const url = meta ? new URL(meta.url, window.location.origin) : null
+    if (!meta || !url || !looksLikeApi(url)) return realSend.call(this, body)
+    meta.body = parseJsonBody(typeof body === 'string' ? body : null)
+    const xhr = this
+    void (async () => {
+      const res = await fakeResponse(url, meta.method, meta.body)
+      const text = await res.text()
+      const define = (key: string, value: unknown) => {
+        try {
+          Object.defineProperty(xhr, key, { value, configurable: true, writable: true, enumerable: true })
+        } catch {
+          // 被浏览器挡下来就随它去：那说明调用方本来也不读这个字段。
+        }
+      }
+      define('readyState', 4)
+      define('status', res.status)
+      define('statusText', res.statusText)
+      define('responseURL', url.href)
+      define('responseText', text)
+      define('response', safeResponsePayload(xhr, text))
+      define('getAllResponseHeaders', () => 'content-type: application/json\r\n')
+      define('getResponseHeader', (key: string) =>
+        String(key).toLowerCase() === 'content-type' ? 'application/json' : null
+      )
+      // axios 走 `onloadend` 这条路（真的 XHR 上 `'onloadend' in request` 恒真），
+      // 它自己挂的是 `request.onloadend = fn`，派事件就会调到它；三种事件都派一次，
+      // 走 `onreadystatechange` 那条路的调用方也收得到。
+      xhr.dispatchEvent(new Event('readystatechange'))
+      xhr.dispatchEvent(new ProgressEvent('load'))
+      xhr.dispatchEvent(new ProgressEvent('loadend'))
+    })()
+  }
+}
+
+/** 按调用方声明的 `responseType` 给出 `response` 字段该有的形状。 */
+function safeResponsePayload(xhr: XMLHttpRequest, text: string): unknown {
+  if (xhr.responseType === 'json') {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return null
+    }
+  }
+  return text
 }
 
 function envelope(data: unknown, code = 200, message = 'ok'): Response {
