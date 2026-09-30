@@ -3,6 +3,7 @@
 import uuid
 from functools import lru_cache
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -25,6 +26,14 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
 from app.domain.machine.services import MachineService
 from app.domain.machine.wakeup import WAKE_NOTICE, WAKE_PROMPT, CloudWakeup
+from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.oauth.services import OAuthService
+from app.domain.user.repositories import (
+    UserProfileRepository,
+    UserRepository,
+    UserStatisticsRepository,
+)
+from app.domain.user.services import UserAuthService
 
 __all__ = [
     "get_db",
@@ -245,3 +254,22 @@ def get_work_runner() -> AgentWorkRunner:
     )
     runner.subscribe_messages()
     return runner
+
+
+async def get_user_auth_service(
+    db=Depends(get_db),
+) -> UserAuthService:
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    stats_repo = UserStatisticsRepository(session=db)
+    return UserAuthService(
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        stats_repo=stats_repo,
+    )
+
+
+async def get_oauth_service(
+    db=Depends(get_db),
+) -> OAuthService:
+    return OAuthService(repo=OAuthConnectionRepository(session=db))

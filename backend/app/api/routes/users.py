@@ -22,9 +22,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_oauth_service, get_user_auth_service
 from app.api.routes.admin_common import PlatformAdminDep
 from app.api.routes.legal import client_context
-from app.api.routes.users_common import _SUDO_TICKET_SCOPE, _spend_sudo_ticket
+from app.api.routes.users_common import (
+    _SUDO_TICKET_SCOPE,
+    REFRESH_COOKIE,
+    TRUST_COOKIE,
+    _clear_refresh_cookie,
+    _set_refresh_cookie,
+    _spend_sudo_ticket,
+    issue_session,
+)
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -32,7 +41,7 @@ from app.common.auth import (
     create_access_token,
     get_current_session_id,
 )
-from app.core.config import GATEWAY_MOUNT, settings
+from app.core.config import settings
 from app.core.email import is_placeholder_email
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -50,7 +59,6 @@ from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS, ConsentService
-from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.prompt import PasskeyPromptService
 from app.domain.passkey.repositories import PasskeyRepository
@@ -60,11 +68,11 @@ from app.domain.questions.repositories import (
     QuestionTopicRepository,
 )
 from app.domain.space.services import SpaceLabels
-from app.domain.team.models import ApplicationStatus
 from app.domain.user.models import (
     UserSession,
     UserTrustedDevice,
 )
+from app.domain.user.passwords import require_new_password
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -82,7 +90,7 @@ from app.domain.user.services import (
     normalize_nickname,
 )
 from app.domain.user.sessions import SessionService
-from app.domain.user.trusted_devices import Granted, TrustedDeviceService
+from app.domain.user.trusted_devices import TrustedDeviceService
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -208,56 +216,6 @@ async def lookup_account_route(
     return {"code": 200, "message": "OK", "data": found}
 
 
-# The refresh token rides in this cookie and is sent to the auth routes only.
-# Its path is the one the browser sees, through the gateway, not the route's.
-REFRESH_COOKIE = "cheese_refresh"
-_REFRESH_COOKIE_PATH = f"{GATEWAY_MOUNT}/users/auth"
-
-
-def _set_refresh_cookie(
-    response: Response, refresh_token: str, expires_at: datetime
-) -> None:
-    """The cookie lasts as long as the sign-in behind it. Without a Max-Age
-    the browser drops it when the session ends while the access token in
-    localStorage survives, and the next refresh signs the user out."""
-    response.set_cookie(
-        REFRESH_COOKIE,
-        refresh_token,
-        max_age=max(0, int((expires_at - datetime.now(UTC)).total_seconds())),
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path=_REFRESH_COOKIE_PATH,
-    )
-
-
-def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(
-        REFRESH_COOKIE,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path=_REFRESH_COOKIE_PATH,
-    )
-
-
-# A browser trusted to skip two-step verification holds this cookie. Scoped
-# like the refresh cookie: only the sign-in routes ever read it.
-TRUST_COOKIE = "cheese_trusted_device"
-
-
-def _set_trust_cookie(response: Response, granted: Granted) -> None:
-    response.set_cookie(
-        TRUST_COOKIE,
-        granted.token,
-        max_age=max(0, int((granted.expires_at - datetime.now(UTC)).total_seconds())),
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path=_REFRESH_COOKIE_PATH,
-    )
-
-
 async def _trusted_device(
     request: Request, db: AsyncSession, user_id: int
 ) -> UserTrustedDevice | None:
@@ -298,72 +256,6 @@ def _require_same_origin(request: Request) -> None:
     same_host = urlsplit(origin).netloc == request.headers.get("host")
     if not same_host and _origin_of(origin) not in trusted:
         raise ForbiddenError("Cross-site request refused")
-
-
-# The credentials ``/auth/sudo`` accepts from any account that has them. A
-# mailed code is one only without two-step verification, which is why an
-# email-code sign-in that a trusted device let past the second step is not.
-_SUDO_SIGN_IN_METHODS = frozenset({"passkey", "password", "totp"})
-
-
-def _sign_in_opens_sudo(login_method: str, two_factor_skipped: bool) -> bool:
-    """Whether this sign-in proved a credential sudo would have accepted, so
-    that asking for one again straight away would only repeat it."""
-    if login_method in _SUDO_SIGN_IN_METHODS:
-        return True
-    return login_method == "email_code" and not two_factor_skipped
-
-
-async def issue_session(
-    response: Response,
-    request: Request,
-    db: AsyncSession,
-    *,
-    user_id: int,
-    handle: str,
-    login_method: str,
-    trust: UserTrustedDevice | None = None,
-    grant_trust: bool = False,
-) -> str:
-    """Sign the user in: open a session, put its refresh token in the cookie
-    on ``response``, and return the access token for the body.
-
-    Every way of signing in ends here, so every sign-in is a session the
-    account can see and end.
-
-    ``trust`` is the trusted device that stood in for two-step verification,
-    when one did. ``grant_trust`` trusts this browser from now on: the
-    sign-in has just passed two-step verification and its owner asked not to
-    be asked again here.
-    """
-    from app.core.client_address import resolved_client_address
-
-    user_agent = request.headers.get("user-agent", "")
-    # Behind a proxy that is not trusted to name the client, the peer is the
-    # proxy; the device list shows no address rather than the proxy's.
-    started = await SessionService(db).start(
-        user_id,
-        login_method,
-        ip=resolved_client_address(request) or "",
-        user_agent=user_agent,
-        two_factor_skipped=trust is not None,
-        sudo=_sign_in_opens_sudo(login_method, trust is not None),
-    )
-    trusted = TrustedDeviceService(db)
-    if trust is not None:
-        await trusted.used(trust, started.session_id)
-    if grant_trust:
-        _set_trust_cookie(
-            response,
-            await trusted.grant(
-                user_id,
-                started.session_id,
-                user_agent=user_agent,
-                replacing=request.cookies.get(TRUST_COOKIE),
-            ),
-        )
-    _set_refresh_cookie(response, started.refresh_token, started.expires_at)
-    return create_access_token(user_id, handle=handle, sid=started.session_id)
 
 
 logger = logging.getLogger(__name__)
@@ -627,33 +519,6 @@ async def _passkey_enrollment(user_id: int, session: AsyncSession) -> dict[str, 
     }
 
 
-def _reject_overlong_password(password: str) -> None:
-    """Refused before anything is consumed: bcrypt cannot hash it, and failing
-    after the email code or reset token is spent would cost the user both."""
-    from app.domain.user.passwords import MAX_PASSWORD_BYTES, password_too_long
-
-    if password_too_long(password):
-        raise BadRequestError(f"Password must not exceed {MAX_PASSWORD_BYTES} bytes")
-
-
-# At least 8 characters, a letter, a digit and an ASCII symbol: the web
-# client's rule (REGEX_PASSWORD), so the form and the server agree on it.
-_NEW_PASSWORD_PATTERN = re.compile(
-    r"^(?=.*[a-zA-Z])(?=.*\d)(?=.*[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]).{8,}$"
-)
-
-
-def _require_new_password(password: str) -> None:
-    """The rule a password chosen for an account must meet, and the length
-    bcrypt can hold. Checked before anything single-use is spent."""
-    if not _NEW_PASSWORD_PATTERN.match(password):
-        raise UnprocessableEntityError(
-            "Use at least 8 characters, with a letter, a number, "
-            "and a special character"
-        )
-    _reject_overlong_password(password)
-
-
 def _normalize_registration_invite_code(
     invite_code: str | None, *, required: bool
 ) -> str | None:
@@ -694,43 +559,6 @@ def _invite_code_error(exc: ValueError) -> UnprocessableEntityError:
     return UnprocessableEntityError(error_map.get(str(exc), "Invalid invite code"))
 
 
-def _parse_application_status(value: str | None) -> ApplicationStatus | None:
-    """The `?status=` filter of the six `/users/me/team*` lists, or None.
-
-    It stays in this file while those routes live in `users_team.py`, which
-    imports it: the vocabulary is the domain's `ApplicationStatus`, and a route
-    module may not import a domain's models directly (C2). This file carries the
-    frozen exemption for that import already; moving the parse into the domain
-    is its own change.
-    """
-    if value is None:
-        return None
-    upper = value.upper()
-    if upper in {
-        "PENDING",
-        "APPROVED",
-        "REJECTED",
-        "ACCEPTED",
-        "DECLINED",
-        "CANCELED",
-    }:
-        return ApplicationStatus[upper]
-    raise BadRequestError(f"Invalid status: {value}")
-
-
-async def get_user_auth_service(
-    db=Depends(get_db),
-) -> UserAuthService:
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    stats_repo = UserStatisticsRepository(session=db)
-    return UserAuthService(
-        user_repo=user_repo,
-        profile_repo=profile_repo,
-        stats_repo=stats_repo,
-    )
-
-
 async def get_user_profile_service(
     db=Depends(get_db),
 ) -> UserProfileService:
@@ -758,12 +586,6 @@ async def get_passkey_service(
 ) -> PasskeyService:
     repo = PasskeyRepository(session=db)
     return PasskeyService(repo=repo)
-
-
-async def get_oauth_service(
-    db=Depends(get_db),
-) -> OAuthService:
-    return OAuthService(repo=OAuthConnectionRepository(session=db))
 
 
 @router.get(
@@ -1193,7 +1015,7 @@ async def register_user(
 
     nickname = normalize_nickname(nickname)
 
-    _require_new_password(password)
+    require_new_password(password)
 
     # Always verify email code, regardless of invite code
     client = resolved_client_address(request)
@@ -1698,7 +1520,7 @@ async def user_login(
             user_id=user.id,
             handle=user.username,
             login_method="totp" if requires_2fa and trust is None else "password",
-            trust=trust,
+            trust_device_id=trust.id if trust else None,
         )
 
         user_dto = await auth_service.build_user_dto(
@@ -1999,7 +1821,7 @@ async def verify_sign_in_code(
         user_id=user.id,
         handle=user.username,
         login_method="email_code",
-        trust=trust,
+        trust_device_id=trust.id if trust else None,
     )
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -2791,7 +2613,7 @@ async def _oauth_login_redirect(
         user_id=user_id,
         handle=user_obj.username,
         login_method=f"oauth:{provider_id}",
-        trust=trust,
+        trust_device_id=trust.id if trust else None,
     )
     return redirect
 
@@ -3199,7 +3021,7 @@ async def oauth_create_user(
     assert consentMethod is not None
     if passwordMode == "password":
         try:
-            _require_new_password(password or "")
+            require_new_password(password or "")
         except (BadRequestError, UnprocessableEntityError) as exc:
             return _oauth_error_redirect("WEAK_PASSWORD", str(exc))
     # Same gate as /users registration: an OAuth account is still a new account.

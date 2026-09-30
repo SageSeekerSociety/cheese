@@ -282,7 +282,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 没有新增跨包的边，也没还掉任何一条，所以按同一笔债入账。
         ("app.api.routes.topics_messages", "app.domain.agent.repositories"),
         ("app.api.routes.users", "app.domain.answers.repositories"),
-        ("app.api.routes.users", "app.domain.oauth.repositories"),
         ("app.api.routes.users", "app.domain.passkey.repositories"),
         ("app.api.routes.users", "app.domain.questions.repositories"),
         ("app.api.routes.users", "app.domain.user.repositories"),

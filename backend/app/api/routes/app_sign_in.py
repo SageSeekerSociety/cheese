@@ -17,11 +17,9 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users import (
-    _require_same_origin,
-    get_user_auth_service,
-    issue_session,
-)
+from app.api.deps import get_user_auth_service
+from app.api.routes.users import _require_same_origin
+from app.api.routes.users_common import issue_session
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
