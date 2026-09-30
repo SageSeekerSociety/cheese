@@ -15,6 +15,7 @@ import {
 import AdminAuditDiff from '@/components/admin/AdminAuditDiff.vue'
 import AdminBudgetDialog from '@/components/admin/AdminBudgetDialog.vue'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminModelDetailDrawer from '@/components/admin/AdminModelDetailDrawer.vue'
@@ -493,8 +494,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="amd">
-    <div class="amd__inner">
+  <div class="amd admin-page">
+    <div class="amd__inner admin-page__col page-container--admin">
       <AdminPageHeader :title="t('models.page.title')" :sub="subLine">
         <template #tools>
           <!-- readiness 健康灯：常在的一眼状态，点与文字，完整 detail 挂 title。
@@ -529,29 +530,24 @@ onMounted(load)
         </template>
       </AdminPageHeader>
 
-      <div class="amd__body">
+      <div class="amd__body admin-page__body">
         <!-- 写失败 / 提示：token 画的一条横条（`v-alert` 那套默认样在这一页像另一个
              产品）。**读失败不在这里说** —— 那一条画在各自那一段的位置上（表的列头
              下面、审计那张卡里），同一次失败说两遍，人会以为是两次。 -->
-        <div v-if="writeError" class="amd__flash amd__flash--bad" role="alert">
-          <v-icon icon="mdi-alert-circle-outline" size="16" class="amd__flashIcon" />
-          <span class="amd__flashText">{{ writeError }}</span>
-          <button
-            type="button"
-            class="amd__flashClose"
-            :aria-label="t('models.notice.dismiss')"
-            @click="writeError = null"
-          >
-            <v-icon icon="mdi-close" size="14" />
-          </button>
-        </div>
-        <div v-else-if="notice" class="amd__flash amd__flash--ok" role="status">
-          <v-icon icon="mdi-check-circle-outline" size="16" class="amd__flashIcon" />
-          <span class="amd__flashText">{{ notice }}</span>
-          <button type="button" class="amd__flashClose" :aria-label="t('models.notice.dismiss')" @click="notice = null">
-            <v-icon icon="mdi-close" size="14" />
-          </button>
-        </div>
+        <AdminFlash
+          v-if="writeError"
+          tone="error"
+          :text="writeError"
+          :dismiss-aria="t('models.notice.dismiss')"
+          @dismiss="writeError = null"
+        />
+        <AdminFlash
+          v-else-if="notice"
+          tone="ok"
+          :text="notice"
+          :dismiss-aria="t('models.notice.dismiss')"
+          @dismiss="notice = null"
+        />
 
         <div class="amd__kpis">
           <AdminKpiCard v-for="kpi in kpis" :key="kpi.key" :label="kpi.label" :value="kpi.value" :loading="loading" />
@@ -939,99 +935,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 滚动归这一页自己领（和看板同一套约定）：外壳只让高度和宽度。 */
-.amd {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  background: var(--canvas);
-}
-
-/* 宽度和队列页一样锁 `--page-w-admin` 并居中：这一页的右边没有东西，靠左会让不同
-   视口下的列宽差出一截（同 `.qpage__inner` 那条注）。`flex: 0 0 auto` 是给滚动
-   容器的：内容短时它不拉伸，长时它按内容长、由 `.amd` 滚。 */
-.amd__inner {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  margin: 0 auto;
-}
-
-/* 内容区的内边距在这里，不在 `.amd` 上 —— 页头（`AdminPageHeader`）自带 24px
-   内边距和底下那条发丝线，两边各写一份就会在两者之间多出一段谁都说不清是谁的空白。 */
-.amd__body {
-  display: flex;
-  flex-direction: column;
-  padding: 16px 24px 24px;
-}
-
-/* 一条横条（写失败 / 提示）。**不是 `v-alert`**：那套默认样（大圆角、实色底、
-   整块染色）在这一页的表格旁边像另一个产品。这里只留一条：左侧一道 3px 的色标
-   说这是哪一类，其余全是这一页自己的底色与描边。 */
-.amd__flash {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left-width: 3px;
-  border-radius: var(--radius-md);
-}
-
-.amd__flash--bad {
-  border-left-color: var(--danger);
-}
-
-.amd__flash--bad .amd__flashIcon {
-  color: var(--danger);
-}
-
-.amd__flash--ok {
-  border-left-color: var(--ok);
-}
-
-.amd__flash--ok .amd__flashIcon {
-  color: var(--ok);
-}
-
-.amd__flashText {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.amd__flashClose {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.amd__flashClose:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-
-.amd__flashClose:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
 
 .amd__kpis {
   display: grid;

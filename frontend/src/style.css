@@ -837,6 +837,82 @@ button:not(.v-btn) {
   max-width: var(--page-w-admin);
 }
 
+/* 后台每一页的骨架，三层。它在这一份文件里而不是在每页各写一份，因为三层一起管着两件
+   不能各写各的事：**谁来滚**（`common.scss` 把 html/body/#app 定成固定高度 +
+   `overflow: hidden`，滚动由每一页自己领；少写一次那一页的内容就有一截永远够不着，
+   而且屏幕上没有任何东西看起来坏了），以及**内容列宽和页边距**（`--page-w-admin`
+   居中 + 24/16）。
+
+   从上到下：
+     `.admin-page`        灰画布 + 自己滚
+     `.admin-page__col`   1440 那一列，居中
+     `.admin-page__body`  正文，白卡片（`.admin-card`）摆在它上面
+
+   白色页头带由 `AdminPageHeader` 自己给（白底 + 底边一道 `--line`），它就住在
+   `.admin-page__col` 里，所以**页头发丝线的两端、卡片的两端、标题的左沿是同一条
+   竖线**。这条以前有三种长度：队列/成员/模型止于 1440 栏内，看板和功能数据页借负
+   margin 多出 24px，飞书页没有列宽可言。
+
+   断点用**容器查询**（`.admin-page__col` 上的 `container-type`）：侧栏能手折，折出来
+   的宽度视口媒体查询看不见，要看的是「这一格有多宽」（先例：`RunningWorkView`）。 */
+.admin-page {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--canvas);
+}
+
+.admin-page__col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0 auto;
+  container-type: inline-size;
+}
+
+.admin-page__body {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  padding: 16px 24px 24px;
+}
+
+/* 正文里的白卡片。设计系统规定卡片**不带投影**、只用一道 `--line` 勾轮廓 ——
+   `--shadow-*` 是给浮在页面之上的菜单/对话框/抽屉的，页面上的东西不用影子分层。 */
+.admin-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+/* 表单页的那张卡片：宽度与标题左沿对齐，再窄一档 —— 一行输入框超过 720px 就该换行，
+   而不是让人的眼从左边扫到右边再折回来看下一格的标签。 */
+.admin-form-card {
+  box-sizing: border-box;
+  width: calc(100% - 48px);
+  max-width: 720px;
+  margin: 16px 24px 24px;
+  padding: 20px 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+@media (max-width: 700px) {
+  .admin-page__body {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .admin-form-card {
+    width: calc(100% - 32px);
+    margin-right: 16px;
+    margin-left: 16px;
+    padding: 16px;
+  }
+}
+
 /* 渲染出来的 markdown（v-html 塞进来的那一份：总览的概要、项目文档的正文）。
    一份定义，两处用。以前这段样式在两个页面里各抄了一遍、注释还互称「镜像」，
    于是凡是只补进其中一份的东西就只在一半的页面上生效——代码块的 `overflow-x`

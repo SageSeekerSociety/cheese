@@ -745,7 +745,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="qpage">
+  <div class="qpage admin-page">
     <!-- 宽屏的详情是**整页接管**（§4.4：200 导航 + 440 左栏 + 760 右栏）。队列行本身
          就要 1100px，两个并排在任何常见视口里都塞不下 —— 塞得下的那种宽度下，
          `AdminQueueDetail` 自己那条 1280 媒体查询又已经把它拆成两栏了。 -->
@@ -762,7 +762,7 @@ onBeforeUnmount(() => {
     />
 
     <template v-else>
-      <div class="qpage__inner">
+      <div class="qpage__inner admin-page__col page-container--admin">
         <AdminPageHeader :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
           <template #tools>
             <!-- 未读数。F-13 修的就是它：这个数以前没有人清零，也没有一处模板读它。 -->
@@ -977,27 +977,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.qpage {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  background: var(--canvas);
-}
-
-/* 内容列锁 1440（--page-w-admin）：16 + 4 + 12 + F + 16 + 116 + 16 + 88 + 16 +
-   B + 20 = 1440，即 F = 1156 − B（B 是 max-content 的推进按钮，56–84 → F ≈ 1072–1100）。
-   F 的下限仍是 740：可用区不足时整行在 `.qlist` 里横着滚，窄屏行为和 1100 时代一致。
-   居中而不是靠左：这一页的右边没有东西，靠左会让不同视口下的行宽差出一截。 */
-.qpage__inner {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  min-height: 0;
-  margin: 0 auto;
-}
+/* 这一行的列宽算法（内容列 1440 = 16 + 4 + 12 + F + 16 + 116 + 16 + 88 + 16 + B + 20，
+   即 F = 1156 − B，B 是 max-content 的推进按钮 56–84 → F ≈ 1072–1100；F 的下限仍是
+   740，可用区不足时整行在 `.qlist` 里横着滚）是**这一行**的，不属于壳。列宽与居中
+   由 `.admin-page__col` 给（1440 居中：这一页右边没有东西，靠左会让不同视口下的
+   行宽差出一截）。 */
 
 .qpage__badge {
   display: inline-flex;
@@ -1087,6 +1071,8 @@ onBeforeUnmount(() => {
 /* 工具行。**让它能折行**（`min-height` 而不是 `height`）：宽屏上三组东西并排正好
    48px（32 的内容 + 上下 8 的 padding），窄到装不下时折成两行而不是把状态页签挤出
    容器 —— 加栏位那一组之前，这一行只有两组，装得下是巧合，不是余量。 */
+/* 筛选/操作区和页头同住一条白带：底色相同，页头自己那道线去掉（见上面 `.aph--flush`
+   的同一条约定），整条白带只有最下面一道 `--line`。 */
 .qpage__tools {
   display: flex;
   flex: 0 0 auto;
@@ -1095,6 +1081,7 @@ onBeforeUnmount(() => {
   gap: 16px;
   min-height: 48px;
   padding: 8px 24px;
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 

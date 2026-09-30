@@ -3,8 +3,14 @@
 //
 // 之前五页各写一份（`.qpage__head` / `.ad__head` / `.amd__head` / `.am__head` /
 // `v-container + h1.text-h5`），字号、内边距和分割线各不相同，切分区时页头会跳。
-// 这里定下一份：56px 高的标题行、24px 左右内边距（窄屏 16px）、底部一条 --line-2。
+// 这里定下一份：56px 高的标题行、24px 左右内边距（窄屏 16px）、白底、底部一条 --line。
 // 说明文字放在标题行下面而不是旁边——它是给第一次来的人看的，不该跟工具抢位置。
+//
+// 底边用 `--line` 而不是 `--line-2`：这条线是**白带的外轮廓**（白带底下直接是灰画布），
+// 不是白带内部的分隔。内部那种本来就不画 —— 一条白带只有一道底边。
+//
+// 下面还接着一条筛选/操作区、或者整条白带由外层画线时挂上 `aph--flush`（`AdminPageShell`
+// 会自己挂）：线只画在白带最下面，页头自己不再画，免得两条叠在一起。
 defineOptions({ name: 'AdminPageHeader' })
 
 defineProps<{
@@ -33,7 +39,12 @@ defineProps<{
 .aph {
   flex: 0 0 auto;
   padding: 12px 24px;
-  border-bottom: 1px solid var(--line-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.aph--flush {
+  border-bottom: 0;
 }
 
 .aph__row {

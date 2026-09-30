@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { getAvatarUrl } from '@/utils/materials'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -132,8 +133,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="asp">
-    <div class="asp__inner">
+  <div class="asp admin-page">
+    <div class="asp__inner admin-page__col page-container--admin">
       <AdminPageHeader :title="t('spaces.review.title')" :sub="t('spaces.review.adminHelp')">
         <template #tools>
           <v-btn
@@ -155,21 +156,16 @@ onMounted(load)
         />
       </AdminPageHeader>
 
-      <div class="asp__body">
+      <div class="asp__body admin-page__body">
         <!-- 通过 / 驳回失败：一条 token 画的横条。驳回框开着时这一句在框里说
              （见下面的对话框），读的人不会去页面上找。 -->
-        <div v-if="writeError && !selected" class="asp__flash asp__flash--bad" role="alert">
-          <v-icon icon="mdi-alert-circle-outline" size="16" class="asp__flashIcon" />
-          <span class="asp__flashText">{{ writeError }}</span>
-          <button
-            type="button"
-            class="asp__flashClose"
-            :aria-label="t('spaces.review.dismiss')"
-            @click="writeError = ''"
-          >
-            <v-icon icon="mdi-close" size="14" />
-          </button>
-        </div>
+        <AdminFlash
+          v-if="writeError && !selected"
+          tone="error"
+          :text="writeError"
+          :dismiss-aria="t('spaces.review.dismiss')"
+          @dismiss="writeError = ''"
+        />
 
         <div class="asp__panel">
           <!-- 读失败：一句话说清、重试就在旁边；**不**画成「暂无申请」。 -->
@@ -252,10 +248,7 @@ onMounted(load)
         <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('spaces.review.reject') }}</v-card-title>
         <v-card-text class="px-4">
           <p class="asp__who t-body">{{ selected?.name }}</p>
-          <div v-if="writeError" class="asp__flash asp__flash--bad" role="alert">
-            <v-icon icon="mdi-alert-circle-outline" size="16" class="asp__flashIcon" />
-            <span class="asp__flashText">{{ writeError }}</span>
-          </div>
+          <AdminFlash v-if="writeError" tone="error" :text="writeError" />
           <v-textarea
             v-model="reason"
             autocomplete="off"
@@ -285,81 +278,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 三段式和队列页同一套：页头（`AdminPageHeader`）自带内边距与底下那条发丝线，
-   内容区接着往下排；宽度锁 `--page-w-admin` 并居中（左边距不给具体的值，是靠
-   `margin: 0 auto` 均分 —— 靠左会让不同视口下列宽差出一截）。 */
-.asp {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  background: var(--canvas);
-}
 
-.asp__inner {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  margin: 0 auto;
-}
-
-.asp__body {
-  display: flex;
-  flex-direction: column;
-  padding: 16px 24px 24px;
-}
-
-/* 一条横条（写失败）。**不是 `v-alert`**：那套默认样（大圆角、实色底、整块染色）
-   在这一页旁边像另一个产品。这里只留一条：左侧一道 3px 的色标说这是哪一类。 */
-.asp__flash {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left-width: 3px;
-  border-radius: var(--radius-md);
-}
-
-.asp__flash--bad {
-  border-left-color: var(--danger);
-}
-
-.asp__flash--bad .asp__flashIcon {
-  color: var(--danger);
-}
-
-.asp__flashText {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.asp__flashClose {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.asp__flashClose:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
 
 /* 列表是一张卡：外描边 + 圆角，行与行之间是发丝线。`overflow: hidden` 让首末两行
    自己不去画圆角（这里没有 sticky 表头，不存在 `AdminGrid` 那条坑）。 */
