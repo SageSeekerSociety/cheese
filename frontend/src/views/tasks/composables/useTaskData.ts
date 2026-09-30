@@ -4,7 +4,6 @@ import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { truncateString } from '@/utils/form'
-import { getTaskStatusText, getTaskStatusType } from '@/utils/tasks'
 
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
@@ -30,9 +29,6 @@ export function useTaskData() {
     if (!taskData.value?.space) return false
     return taskData.value.space.admins.some((admin) => admin.user.id === AccountService.user?.id)
   })
-
-  const taskStatusText = computed(() => getTaskStatusText(taskData.value))
-  const taskStatusType = computed(() => getTaskStatusType(taskData.value))
 
   const titleStartsWithChinesePunctuation = computed(() => {
     const chinesePunctuations = ['【', '《', '「', '『', '（', '〈', '〖', '［', '｛', '〔']
@@ -163,8 +159,6 @@ export function useTaskData() {
     error,
     isTaskCreator,
     isSpaceAdmin,
-    taskStatusText,
-    taskStatusType,
     titleStartsWithChinesePunctuation,
     breadcrumbItems,
     editTaskData,

@@ -148,7 +148,40 @@
         "publishing": "Published"
       },
       "loadFailed": "Couldn't load problems",
-      "pendingOnly": "Needs action only"
+      "pendingOnly": "Needs action only",
+      "scopeLabel": "Scope",
+      "topicCount": "{n} topics",
+      "clearTopics": "Clear selection",
+      "noTopics": "No topics",
+      "sort": "Sort",
+      "row": {
+        "mine": "Claimed",
+        "by": "By {name}",
+        "claimed": "{n} claimed",
+        "claimedOf": "{n} / {limit}",
+        "deadline": "Due {date}",
+        "noDeadline": "No deadline"
+      },
+      "published": {
+        "state": {
+          "PENDING_APPROVAL": "Pending review",
+          "REJECTED": "Rejected",
+          "APPROVED_HIDDEN": "Approved, not listed",
+          "APPROVED_VISIBLE": "Listed",
+          "ENDED": "Closed"
+        },
+        "publishedOn": "Published {date}",
+        "createdOn": "Created {date}",
+        "claimed": "Claimed {n}",
+        "approved": "Approved {n}",
+        "submitted": "Submitted {n}",
+        "passed": "Passed {n}",
+        "failed": "Failed {n}",
+        "submitRate": "Submit rate {rate}",
+        "passRate": "Pass rate {rate}",
+        "pendingClaims": "{n} claims to approve",
+        "pendingReviews": "{n} to review"
+      }
     },
     "templateForm": {
       "editTitle": "Edit problem template",

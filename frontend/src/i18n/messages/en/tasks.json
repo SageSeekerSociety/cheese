@@ -111,13 +111,6 @@
     "title": "Publish problem",
     "submit": "Submit"
   },
-  "status": {
-    "pending": "Pending review",
-    "notStarted": "Not started",
-    "ongoing": "Registration open",
-    "ended": "Closed",
-    "rejected": "Rejected"
-  },
   "eligibility": {
     "TASK_NOT_APPROVED": "This task has not been approved yet; it can be claimed once approved",
     "REGISTRATION_NOT_STARTED": "Registration has not opened yet",

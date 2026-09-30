@@ -65,9 +65,7 @@
   "spaces.detail.showLess",
   "spaces.detail.showMore",
   "spaces.detail.tasks.getSpaceDetailsFailed",
-  "spaces.detail.tasks.moreTopics",
   "spaces.detail.tasks.noCategory",
-  "spaces.detail.tasks.sort",
   "spaces.domainGroups.createFailed",
   "spaces.domainGroups.createSuccess",
   "spaces.domainGroups.deleteFailed",
@@ -84,6 +82,5 @@
   "tasks.form.allowEditSubmissions",
   "tasks.form.allowMultipleSubmissions",
   "tasks.publish.back",
-  "tasks.publish.createFailed",
-  "tasks.status.joined"
+  "tasks.publish.createFailed"
 ]
