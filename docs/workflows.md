@@ -140,3 +140,21 @@ uv run --with playwright python scripts/shots.py
 - 不擅自 commit；都走 PR、不上 main（项目规范）。
 - commit/PR/代码注释**英文**；产品文档（本文件、spec、evals）中文。
 - `.env`、`tmp_*`、`tmp_review/`、`.workspaces/` 不进版本库。
+
+---
+
+## 6. 开 PR 前：task ci:fast（本地静态快检）
+
+Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的静态检查并真实执行，让 lint 错误、超 cap 文件这类明显问题在开 PR 前就暴露。完整 Required CI + merge queue 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
+
+```bash
+task ci:fast                 # 开 PR 前跑；先把分支跟进 main（fetch + merge/rebase）
+task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc
+```
+
+- **它证明什么**：本次 merge diff 命中的静态检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
+- **这些都不是绿**（退出码 2/3，机器可读）：hook 被 SKIP 环境跳过、无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行、报告写失败、hook 超时、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
+- **边界**：只覆盖静态检查，pytest / build / e2e 不在这一层（摘要会列出未跑项和定向建议）。不带 `--types` 会漏缺 prop 类型那类回归。
+- **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `SKIP` / `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。
+
+设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释；行为层快检不在 v1 范围。

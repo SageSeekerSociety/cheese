@@ -68,7 +68,8 @@ STANDALONE = "A"
 VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]""", re.S)
 VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
 SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
-TEMPLATE_BLOCK = re.compile(r"<template[^>]*>(.*?)</template>", re.S)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_TAG_START = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9_-]*)")
 STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
 PARENT_USE = re.compile(r"\$parent|\$root")
@@ -87,11 +88,24 @@ STORE_ALIASES = {"Title": "pageTitle", "PageTitle": "pageTitle"}
 API_EXCLUDED = ("frontend/src/utils/apiBase.ts",)
 
 
-def frontend_files(root: Path, suffix: str) -> list[Path]:
-    """Every `<suffix>` file under `frontend/src`, sorted."""
+def repo_src(root: Path) -> Path:
+    """The `frontend/src` directory of a repo root — or no grading at all.
+
+    A caller that hands the grader a directory that is not the repo root must
+    not get a green answer: with a missing `frontend/src` the import graph is
+    empty, every component looks standalone, and a gate would pass everything.
+    So this raises instead of returning an empty tree. The CLI turns the
+    LookupError into exit 2 — "cannot judge" — which is the only way a wrong
+    root is allowed to fail loud."""
     src = root / "frontend" / "src"
     if not src.is_dir():
-        return []
+        raise LookupError(f"not a repo root (frontend/src missing): {root}")
+    return src
+
+
+def frontend_files(root: Path, suffix: str) -> list[Path]:
+    """Every `<suffix>` file under `frontend/src`, sorted."""
+    src = repo_src(root)
     return sorted(p for p in src.rglob(f"*{suffix}") if p.is_file())
 
 
@@ -137,7 +151,7 @@ def api_reach(root: Path) -> set[Path]:
     import is not an edge: it is erased at build time, so a module that only
     declares a type from the API layer is not a module that reaches it.
     """
-    src = root / "frontend" / "src"
+    src = repo_src(root)
     graph: dict[Path, set[Path]] = {}
     reach: set[Path] = set()
     for path in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.vue"))):
@@ -192,18 +206,102 @@ def normalise_store(name: str) -> str:
     return STORE_ALIASES.get(name, name[:1].lower() + name[1:])
 
 
+def template_blocks(text: str) -> list[str]:
+    """The contents of every top-level `<template>` block in an SFC.
+
+    Three ways a naive `<template...>(.*?)</template>` read lies: a tag
+    inside `<!-- ... -->` is not rendered (comments are stripped first); Vue
+    templates nest (`<template v-if>`), so a non-greedy match ends at the
+    first *inner* `</template>` and loses everything after it (nested tags
+    are balanced here); and `title="</template>"` is an attribute value, not
+    a tag — the scan honours quotes, so what an attribute says never becomes
+    a tag boundary.
+    """
+    text = _HTML_COMMENT.sub("", text)
+    blocks: list[str] = []
+    i, n = 0, len(text)
+    depth = 0
+    block_start: int | None = None
+    while i < n:
+        if text[i] == "<":
+            start = _TAG_START.match(text, i)
+            if start is not None:
+                # The end of this tag, honouring quoted attribute values:
+                # `<` and `>` inside quotes are not tag boundaries.
+                j = start.end()
+                quote = ""
+                while j < n:
+                    char = text[j]
+                    if quote:
+                        if char == quote:
+                            quote = ""
+                    elif char in "\"'":
+                        quote = char
+                    elif char == ">":
+                        break
+                    j += 1
+                if start.group(1).lower() == "template":
+                    closing = text[i + 1] == "/"
+                    if closing:
+                        depth = max(0, depth - 1)
+                        if depth == 0 and block_start is not None:
+                            blocks.append(text[block_start:i])
+                            block_start = None
+                    elif text[j - 1] != "/":  # not self-closing
+                        if depth == 0:
+                            block_start = j + 1
+                        depth += 1
+                i = j + 1
+                continue
+        i += 1
+    if block_start is not None:
+        blocks.append(text[block_start:])  # an unclosed template: take the rest
+    return blocks
+
+
+def tag_names(block: str) -> list[str]:
+    """Every real tag name in a template block, in order.
+
+    Quote-aware like `template_blocks`: `title="<SettleView />"` is an
+    attribute value, and the string it holds is not a render.
+    """
+    names: list[str] = []
+    i, n = 0, len(block)
+    while i < n:
+        if block[i] == "<":
+            start = _TAG_START.match(block, i)
+            if start is not None:
+                j = start.end()
+                quote = ""
+                while j < n:
+                    char = block[j]
+                    if quote:
+                        if char == quote:
+                            quote = ""
+                    elif char in "\"'":
+                        quote = char
+                    elif char == ">":
+                        break
+                    j += 1
+                names.append(start.group(1))
+                i = j + 1
+                continue
+        i += 1
+    return names
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
     `reach` is `api_reach(root)` — passed in when grading many files, because
     building it reads the whole tree and grading one file should not.
     """
-    src = root / "frontend" / "src"
+    src = repo_src(root)
     if reach is None:
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")
     script = "\n".join(SCRIPT_BLOCK.findall(text))
-    template = "\n".join(TEMPLATE_BLOCK.findall(text))
+    template = "\n".join(template_blocks(text))
     whole = script + "\n" + template
 
     reasons: list[str] = []

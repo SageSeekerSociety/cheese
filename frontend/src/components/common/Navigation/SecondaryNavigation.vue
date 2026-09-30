@@ -6,8 +6,11 @@
     :class="drawerClass"
     :color="color"
     :border="border"
+    :width="isDesktop ? width : undefined"
     v-bind="$attrs"
   >
+    <!-- 右边缘拖动改宽度。宽度是四处侧栏共用的一个数（useSidebarWidth）。 -->
+    <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @mousedown="startResize" />
     <slot></slot>
   </v-navigation-drawer>
 </template>
@@ -17,6 +20,9 @@ import { computed, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
+import { useSidebarWidth } from '@/composables/useSidebarWidth'
+
+import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 
 interface Props {
@@ -46,6 +52,26 @@ const { closeSecondaryDrawer } = navigationStore
 
 // 计算是否为桌面端模式
 const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
+
+const { width, setWidth } = useSidebarWidth()
+
+// 拖右边缘：宽度 = 指针到抽屉左边缘的距离。抽屉左边还有一级导航那一条，所以不能
+// 直接拿指针的 x 当宽度。
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const left = (e.currentTarget as HTMLElement).parentElement?.getBoundingClientRect().left ?? 0
+  const move = (ev: MouseEvent) => setWidth(ev.clientX - left)
+  const stop = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', stop)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', stop)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 
 // 计算是否使用 permanent 模式
 const permanent = computed(() => isDesktop.value)
@@ -88,3 +114,29 @@ watch(
   }
 )
 </script>
+
+<style scoped>
+/* 抓手比看得见的那条宽：11px 好抓，中间 2px 在悬停时变成琥珀。 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  bottom: 0;
+  z-index: 4;
+  width: 11px;
+  cursor: col-resize;
+}
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 5px;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.sidebar-resizer:hover::after {
+  background: var(--accent);
+}
+</style>

@@ -120,6 +120,25 @@ listed in the same file as debt and are allowed to sit there; `--update` may add
 to the ready set and subtract from the debt set and will refuse to do either
 backwards.
 
+A new page that has to read the address or fetch and save is not stuck: it may
+be a **container** if it renders through a sibling `<Page>View.vue` it imports.
+Importing is not enough: the page's template must actually render the view
+(statically — a `<component :is>` page cannot be judged and is not a
+container), and every other component the template renders must be verifiable
+as standalone too, otherwise the fetching just moved one level down. The
+reading is literal about what renders: comments do not, nested `<template>`
+blocks do not end the scan, attribute quotes are honoured
+(`title="</template>"` is a value, not a tag), a lowercase tag is native only
+if it is a real HTML/SVG element, Vuetify is trusted by the repo's own
+auto-import table and never by the V- prefix, and a local binding — import or
+declaration — shadows a builtin name. The view
+is then the scene — graded, frozen, required to be A — and the page
+is judged as its container on every run, in neither list. That is the
+`PanelDoc` → `usePanelDoc` → `PanelDocView` shape, named so the check can find
+it: the rule is about the rendering being standalone, and a route has to get
+its data somewhere. Pages only: a panel has no route, so a panel in the same
+costume is a panel that fetches, not a container.
+
 Two things about it are worth knowing from this file:
 
 - The page list is derived from the router's import graph, so hanging a new route

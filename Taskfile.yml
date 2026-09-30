@@ -117,6 +117,17 @@ tasks:
     cmds:
       - uvx pre-commit run --all-files
 
+  # Static fast check before opening a PR: picks pre-commit hook IDs by the
+  # merge-diff scope (same select() and path map as the Required CI gate) and
+  # runs only those. v1 is static checks ONLY — pytest/typecheck/build/e2e do
+  # not run here and the summary says so; full CI stays the merge gate.
+  # `task ci:fast -- --types` adds pyright/vue-tsc. Exit 0 means the selected
+  # static checks really ran green, nothing more.
+  ci:fast:
+    desc: Static fast check scoped to the merge diff (not full CI)
+    cmds:
+      - python3 .github/scripts/ci-fast.py {{.CLI_ARGS}}
+
   infra:
     desc: Start infrastructure services (PG, Valkey)
     cmds:

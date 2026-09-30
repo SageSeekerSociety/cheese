@@ -108,5 +108,8 @@
     "leaveScope": "移除项目范围，跨项目搜索名称",
     "searchAll": "查看全部结果",
     "weekly": "周报"
+  },
+  "sidebar": {
+    "resize": "拖动调整宽度"
   }
 }

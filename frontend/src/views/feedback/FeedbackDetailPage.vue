@@ -668,7 +668,7 @@ async function share() {
   margin-top: 12px;
   /* 下内边距就是这一页末尾的留白（`.fb-page` 那 48px 挪到这儿了）。 */
   padding: 8px 0 16px;
-  background: var(--canvas);
+  background: var(--surface);
 }
 /* 底下那条操作栏在的时候，评论框抬到它上面一栏高（64px，和 `.fb-actionbar` 的
    height 是同一个数，改一处必须改两处）。两条都黏在底边的话会叠在一起 ——

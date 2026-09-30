@@ -4,7 +4,6 @@
     "src/components/common/AvatarUploader.vue": 3,
     "src/components/common/ColorSelector.vue": 1,
     "src/layouts/account/Account.vue": 1,
-    "src/views/spaces/Index.vue": 1,
-    "src/views/teams/detail/Knowledge.vue": 1
+    "src/views/spaces/Index.vue": 1
   }
 }

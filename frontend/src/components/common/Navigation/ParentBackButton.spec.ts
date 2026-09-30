@@ -99,8 +99,8 @@ describe('返回上一级', () => {
     ['/spaces/42/tasks/7/submit', '/spaces/42/tasks/7'],
     ['/spaces/42/tasks/7/edit', '/spaces/42/tasks/7'],
     ['/spaces/42/tasks/publish', '/spaces/42/tasks'],
-    ['/spaces/42/templates/create', '/spaces/42/templates'],
-    ['/spaces/42/templates/2/edit', '/spaces/42/templates'],
+    ['/spaces/42/manage/settings/templates/create', '/spaces/42/manage/settings/templates'],
+    ['/spaces/42/manage/settings/templates/2/edit', '/spaces/42/manage/settings/templates'],
     ['/spaces/42/tasks', '/spaces'],
     ['/teams/12/members', '/home'],
   ])('direct entry to %s returns to %s without browser history', async (path, parent) => {

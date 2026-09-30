@@ -36,16 +36,21 @@ they are not in a config file: `backend/tests/unit/test_domain_import_guard.py`
 makes the same choice for the same reason.)
 
 Exit 0 nothing over its cap, 1 something is, 2 the tree could not be judged.
+
+    ... --json     one JSON record on stdout, same exit code (see ratchet_report)
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from ratchet_report import as_json, cannot_judge, emit, verdict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -173,17 +178,53 @@ def resolve_base(root: Path, base: str) -> str:
         raise NoMergeBase(base) from None
 
 
-def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
-    """(exit code, lines to print) for the tree at `root`."""
+def stale_exemptions(root: Path) -> list[dict]:
+    """EXEMPT entries that are no longer needed: gone, or back under the cap.
+
+    An exemption that outlives its reason is not free: it hides the file from
+    the ratchet from then on, and nothing in the tree would ever say so.
+    """
+    stale: list[dict] = []
+    for path, why in sorted(EXEMPT.items()):
+        cap = cap_for(path)
+        absolute = root / path
+        if cap is None:
+            stale.append({"file": path, "frozen": 1, "actual": 0, "why": "no longer judged"})
+            continue
+        if not absolute.is_file():
+            stale.append({"file": path, "frozen": 1, "actual": 0, "why": "the file is gone"})
+            continue
+        try:
+            current = count_lines(absolute.read_bytes())
+        except OSError:
+            continue
+        if current <= cap.limit:
+            stale.append(
+                {
+                    "file": path,
+                    "frozen": 1,
+                    "actual": 0,
+                    "why": f"back under its cap at {current} lines ({why})",
+                }
+            )
+    return stale
+
+
+def judge_tree(root: Path, base: str) -> tuple[int, list[str], dict | None]:
+    """(exit code, lines to print, JSON record) for the tree at `root`.
+
+    The record is None when the tree could not be judged: a 2 has no counts to
+    report, and a snapshot that recorded 0 instead would read as a clean run.
+    """
     try:
         against = resolve_base(root, base)
     except FileNotFoundError:
-        return 2, ["cannot judge: git is not on PATH"]
+        return 2, ["cannot judge: git is not on PATH"], None
     except LookupError:
         return 2, [
             f"cannot judge: {base} is not a ref this checkout has.",
             "run `git fetch origin main` (or pass --base <ref>), then try again.",
-        ]
+        ], None
     except NoMergeBase:
         return 2, [
             f"cannot judge: {base} and HEAD have no merge base in this checkout,",
@@ -193,7 +234,7 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
             "this branch never touched, so this is a 2 rather than a guess.",
             "Fetch the history, then try again:",
             "    git fetch --unshallow origin    # or a bounded `git fetch --deepen=<n> origin`",
-        ]
+        ], None
 
     paths = changed_files(root, against)
 
@@ -212,7 +253,7 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
         try:
             current = count_lines(absolute.read_bytes())
         except OSError as exc:
-            return 2, [f"cannot judge: {path} could not be read: {exc}"]
+            return 2, [f"cannot judge: {path} could not be read: {exc}"], None
         try:
             base_count: int | None = count_lines(
                 subprocess.run(
@@ -228,6 +269,27 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
         finding = judge(path, current, base_count)
         if finding is not None:
             findings.append(finding)
+
+    record = verdict(
+        check_id="file-sizes",
+        ok=not findings,
+        # Both columns are counts: files over their cap this run, exemptions
+        # registered in EXEMPT. Empty today, and a stale one still counts in
+        # `frozen` while showing up under `stale` — the page shows those apart.
+        actual=len(findings),
+        frozen=len(EXEMPT),
+        stale=stale_exemptions(root),
+        details=[
+            {
+                "file": finding.path,
+                "lines": finding.current,
+                "cap": finding.cap,
+                "base": finding.base,
+                "over": finding.current - finding.cap,
+            }
+            for finding in sorted(findings, key=lambda f: -f.current)
+        ],
+    )
 
     lines: list[str] = []
     if findings:
@@ -253,7 +315,7 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
         lines.append("a reason, in a commit somebody reviews.")
         lines.append(f"If {base} is behind, `git fetch origin` first.")
         lines.append("::error::file size cap exceeded")
-        return 1, lines
+        return 1, lines, record
 
     lines.append(
         f"PASS: {judged} changed file(s) judged against the merge base with {base}, "
@@ -261,7 +323,7 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
     )
     for entry in exempted:
         lines.append(f"  exempt: {entry}")
-    return 0, lines
+    return 0, lines, record
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +331,10 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
 # ---------------------------------------------------------------------------
 
 _LOREM = "x = 1\n"
+
+#: Exit code -> the status the record must carry for it. An exit code and a
+#: status that can disagree is two answers to one question.
+STATUS_OF_EXIT = {0: "pass", 1: "fail", 2: "cannot_judge"}
 
 
 def _write(path: Path, lines: int) -> None:
@@ -295,15 +361,31 @@ def _script_runner(root: Path):
     """A runner for THIS script against `root`, the way CI runs it: a real
     process with a real exit code, so a 2 cannot be mistaken for a pass."""
 
-    def run(base: str = "HEAD") -> tuple[int, str]:
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), "--root", str(root), "--base", base],
+    def invoke(base: str, extra: list[str]):
+        return subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--root", str(root), "--base", base, *extra],
             capture_output=True,
             text=True,
         )
+
+    def run(base: str = "HEAD") -> tuple[int, str]:
+        result = invoke(base, [])
         return result.returncode, result.stdout + result.stderr
 
-    return run
+    def run_json(base: str = "HEAD") -> tuple[int, dict]:
+        """The same run with --json: (exit code, record).
+
+        The record mode has to agree with the report mode on the exit code —
+        the page and the gate would otherwise tell two stories about one run —
+        and it has to put exactly one JSON object on stdout, whatever happened.
+        """
+        result = invoke(base, ["--json"])
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        if len(lines) != 1:
+            raise AssertionError(f"--json put {len(lines)} line(s) on stdout: {lines!r}")
+        return result.returncode, json.loads(lines[0])
+
+    return run, run_json
 
 
 def self_test() -> int:
@@ -312,6 +394,16 @@ def self_test() -> int:
     def check(label: str, got: object, want: object) -> None:
         if got != want:
             failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    def agrees(label: str, code: int, json_code: int, record: dict) -> None:
+        """The record mode says the same thing the exit code does."""
+        check(f"--json agrees on the exit code ({label})", json_code, code)
+        check(f"--json names the check ({label})", record.get("id"), "file-sizes")
+        check(
+            f"--json reports {STATUS_OF_EXIT[code]} ({label})",
+            record.get("status"),
+            STATUS_OF_EXIT[code],
+        )
 
     # The rules, directly.
     check("a new file at the cap passes", judge("backend/app/a.py", 1500, None), None)
@@ -340,7 +432,7 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
         root = Path(raw)
         git = _repo_git(root)
-        run = _script_runner(root)
+        run, run_json = _script_runner(root)
         try:
             git("init", "-q")
             _write(root / "backend/app/legacy.py", 3000)
@@ -358,6 +450,11 @@ def self_test() -> int:
         check("... and the message names it", "backend/app/legacy.py" in out, True)
         check("... and says it may only shrink", "may only shrink" in out, True)
         check("... and gives the cap", "cap 1500" in out, True)
+        json_code, record = run_json()
+        agrees("a violation", code, json_code, record)
+        check("... and counts the file", record.get("actual"), 1)
+        check("... and breaks it down by file", record["details"][0]["file"], "backend/app/legacy.py")
+        check("... with the line count in the row", record["details"][0]["lines"], 3001)
 
         # 2. a brand new oversized backend file
         _write(root / "backend/app/fresh.py", 1600)
@@ -379,6 +476,11 @@ def self_test() -> int:
         code, out = run()
         check("shrinking an oversized file is allowed", code, 0)
         check("... and the run says so", "PASS" in out, True)
+        json_code, record = run_json()
+        agrees("a clean run", code, json_code, record)
+        check("... and counts no file over its cap", record.get("actual"), 0)
+        check("... and no stale exemption", record.get("stale"), [])
+        check("... and reports the exemption count as a number", record.get("frozen"), 0)
 
         # 5. a file under the cap may grow up to it, and no further
         _write(root / "backend/app/small.py", 1500)
@@ -394,6 +496,10 @@ def self_test() -> int:
         code, out = run("no-such-ref")
         check("a missing base exits 2", code, 2)
         check("... and says so", "cannot judge" in out, True)
+        json_code, record = run_json("no-such-ref")
+        agrees("a missing base", code, json_code, record)
+        check("... and never counts it as clean", "actual" in record, False)
+        check("... and carries the reason", "no-such-ref" in record.get("reason", ""), True)
 
     # 7. A fork, with real history on both sides — the shape of the bug. The
     #    branch forks from the base branch, the base branch moves on and SHRINKS
@@ -404,7 +510,7 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
         root = Path(raw)
         git = _repo_git(root)
-        run = _script_runner(root)
+        run, run_json = _script_runner(root)
         try:
             git("init", "-q")
             _write(root / "backend/app/legacy.py", 3000)
@@ -462,7 +568,8 @@ def self_test() -> int:
     print(
         "PASS: check-file-sizes self-test (caps per tree, new vs oversized files, "
         "shrinking allowed, judged at the merge base, no merge base is a 2, "
-        "a missing base is a 2)"
+        "a missing base is a 2, --json agrees with the exit code and prints "
+        "exactly one line)"
     )
     return 0
 
@@ -472,12 +579,27 @@ def main() -> int:
     parser.add_argument("--base", default="origin/main", help="the ref to difference against")
     parser.add_argument("--root", default=str(REPO_ROOT), help="the tree to judge")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print one JSON record on stdout instead of the report; exit code unchanged",
+    )
     args = parser.parse_args()
 
     if args.self_test:
         return self_test()
 
-    code, lines = judge_tree(Path(args.root).resolve(), args.base)
+    code, lines, record = judge_tree(Path(args.root).resolve(), args.base)
+    if code == 2:
+        # The human explanation still goes to stderr in both modes; under --json
+        # stdout carries the record and nothing else.
+        print("\n".join(lines), file=sys.stderr)
+        cannot_judge("file-sizes", " ".join(lines))
+        return 2
+    if as_json():
+        assert record is not None  # code 2 returned above
+        emit(record)
+        return code
     print("\n".join(lines), file=sys.stderr if code else sys.stdout)
     return code
 

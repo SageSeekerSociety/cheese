@@ -35,16 +35,22 @@ and nothing more.
 
     ... --self-test   plant each violation the three contracts exist to catch,
                       in a throwaway tree, and require them to fire
+    ... --json        one JSON record on stdout instead of the report; the exit
+                      code is unchanged. The record's shape is fixed in
+                      docs/topics/棘轮页方案 section 3.1.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, NoReturn
 
 HERE = Path(__file__).resolve()
 BACKEND_ROOT = HERE.parents[1]
@@ -63,6 +69,119 @@ CONTRACT_IDS = ("api-domain-core", "routes-touch-no-models", "domains-acyclic")
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
 
+#: The check id in the ratchet snapshot, and the longest a `reason` may be.
+CHECK_ID = "be-contracts"
+REASON_LIMIT = 2000
+
+
+# --- the JSON record ---------------------------------------------------------
+# Fixed in docs/topics/棘轮页方案 section 3.1, and written by hand here rather
+# than imported from .claude/scripts/ratchet_report.py: this script is run from
+# backend/ and reaching across directories for fifteen lines would tie two CI
+# working directories together. The frontend ratchets share that helper.
+def _as_json() -> bool:
+    return "--json" in sys.argv
+
+
+def _emit(record: dict[str, Any]) -> None:
+    """One JSON line on stdout, and only in --json mode.
+
+    Raising otherwise is the point: a checker whose human output quietly grew a
+    JSON line would change every CI log that reads it.
+    """
+    if not _as_json():
+        raise RuntimeError("check_boundaries: _emit() is only for --json runs")
+    print(json.dumps(record, ensure_ascii=False))
+
+
+def _cannot_judge(reason: str) -> NoReturn:
+    """Say why on stdout as the record, when a record was asked for, and exit 2."""
+    if _as_json():
+        _emit(
+            {
+                "id": CHECK_ID,
+                "better": "down",
+                "status": "cannot_judge",
+                "reason": reason.strip()[:REASON_LIMIT],
+            }
+        )
+    sys.exit(2)
+
+
+def _record(
+    code: int, rows: list[dict[str, Any]] | None, message: str
+) -> dict[str, Any]:
+    """The record for a run that reached a verdict.
+
+    `actual` is how many frozen exceptions the tree still needs, `frozen` how
+    many are on the books. Those are the two numbers the board used to take
+    from the baseline's line count — which is why an exception that stopped
+    matching anything could sit there unnoticed until the day it was counted.
+    Without rows (a wildcard in the baseline, refused before the contracts run)
+    neither number was measured, so both are null rather than 0.
+    """
+    record: dict[str, Any] = {
+        "id": CHECK_ID,
+        "better": "down",
+        "status": "pass" if code == OK else "fail",
+    }
+    if rows is None:
+        record |= {
+            "actual": None,
+            "frozen": None,
+            "stale": [],
+            "details": [],
+            "reason": message.strip().splitlines()[0][:REASON_LIMIT] if message else "",
+        }
+        return record
+    record |= {
+        "actual": sum(row["actual"] for row in rows),
+        "frozen": sum(row["frozen"] for row in rows),
+        "stale": [
+            {"file": row["file"], "frozen": 1, "actual": 0, "why": warning}
+            for row in rows
+            for warning in row["unused"]
+        ],
+        # One row per contract. `file` carries the contract id: this check's
+        # unit is a contract, not a path, and the id is what the config and the
+        # page both name it by.
+        "details": [
+            {
+                key: row[key]
+                for key in ("file", "name", "kept", "actual", "frozen", "stale")
+            }
+            for row in rows
+        ],
+    }
+    if message:
+        record["reason"] = message.strip().splitlines()[0][:REASON_LIMIT]
+    return record
+
+
+def _contract_rows(report, options) -> list[dict[str, Any]]:
+    """What each contract froze, what it still needs, and how many are unused.
+
+    import-linter's own bookkeeping, not the baseline: `ignored_import_count`
+    is the number of exceptions the tree still needs, and a warning is an
+    exception on the books that no longer matches any import.
+    """
+    ids = {option.get("name"): option.get("id") for option in options.contracts_options}
+    rows: list[dict[str, Any]] = []
+    for contract, check in report.get_contracts_and_checks():
+        frozen = getattr(contract, "ignore_imports", None) or []
+        rows.append(
+            {
+                "file": ids.get(contract.name) or "?",
+                "name": contract.name,
+                "kept": bool(check.kept),
+                "actual": int(check.ignored_import_count),
+                "frozen": len(frozen),
+                "stale": len(check.warnings),
+                "unused": [str(warning) for warning in check.warnings],
+            }
+        )
+    return rows
+
 
 def _baseline_entries(options) -> list[tuple[str, str]]:
     """(contract id, raw expression) for every frozen exception."""
@@ -76,8 +195,12 @@ def _baseline_entries(options) -> list[tuple[str, str]]:
     return entries
 
 
-def judge(config_path: Path) -> tuple[int, str]:
-    """Run the contracts in `config_path` against the tree at the cwd."""
+def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
+    """Run the contracts in `config_path` against the tree at the cwd.
+
+    The third element is the per-contract breakdown when the contracts actually
+    ran, and None when the run stopped before it could count anything.
+    """
     # `lint-imports` finds the root package on sys.path, and its CLI puts the
     # working directory there first. Do the same, so this check and the tool it
     # wraps judge the same tree from the same place.
@@ -93,7 +216,7 @@ def judge(config_path: Path) -> tuple[int, str]:
         )
         from importlinter.application.user_options import UserOptions
     except Exception as exc:  # pragma: no cover - depends on the installed version
-        return CANNOT_JUDGE, f"import-linter is not usable here: {exc!r}"
+        return CANNOT_JUDGE, f"import-linter is not usable here: {exc!r}", None
 
     try:
         parsed = read_configuration(str(config_path))
@@ -101,54 +224,66 @@ def judge(config_path: Path) -> tuple[int, str]:
         return (
             CANNOT_JUDGE,
             f"no {config_path.name} to read — nothing declared to check",
+            None,
         )
     except Exception as exc:
-        return CANNOT_JUDGE, f"{config_path.name} could not be parsed: {exc!r}"
+        return CANNOT_JUDGE, f"{config_path.name} could not be parsed: {exc!r}", None
 
     options = UserOptions(parsed["session_options"], parsed["contracts_options"])
 
     ids = [contract.get("id") for contract in options.contracts_options]
     missing = [contract_id for contract_id in CONTRACT_IDS if contract_id not in ids]
     if missing:
-        return CANNOT_JUDGE, (
+        return (
+            CANNOT_JUDGE,
             f"{config_path.name} declares {ids}, which is missing {missing}. "
             "The check is designed to run all of "
-            f"{list(CONTRACT_IDS)}; a declaration that lost one is not judged."
+            f"{list(CONTRACT_IDS)}; a declaration that lost one is not judged.",
+            None,
         )
 
     wildcards = [entry for entry in _baseline_entries(options) if "*" in entry[1]]
     if wildcards:
         listing = "\n".join(f"  [{cid}] {expr}" for cid, expr in wildcards)
-        return BROKEN, (
-            "a frozen exception uses a wildcard, which the baseline does not "
-            f"allow:\n{listing}\n\n"
-            "Name the module and its target exactly. A wildcard exemption\n"
-            "silences every future violation of that contract while looking\n"
-            "like one considered exception — the ratchet has to be able to\n"
-            "say which pair it is holding open."
+        return (
+            BROKEN,
+            (
+                "a frozen exception uses a wildcard, which the baseline does not "
+                f"allow:\n{listing}\n\n"
+                "Name the module and its target exactly. A wildcard exemption\n"
+                "silences every future violation of that contract while looking\n"
+                "like one considered exception — the ratchet has to be able to\n"
+                "say which pair it is holding open."
+            ),
+            None,
         )
 
     try:
         _register_contract_types(options)
         report = create_report(options, cache_dir=None)
     except Exception as exc:
-        return CANNOT_JUDGE, f"the contracts could not be run at all: {exc!r}"
+        return CANNOT_JUDGE, f"the contracts could not be run at all: {exc!r}", None
 
     rendering.render_report(report)
 
+    rows = _contract_rows(report, options)
     if report.could_not_run:
-        return CANNOT_JUDGE, "import-linter could not run one of the contracts"
+        return CANNOT_JUDGE, "import-linter could not run one of the contracts", None
     if report.contains_failures:
         frozen = len(_baseline_entries(options))
-        return BROKEN, (
-            "a boundary broke. The exceptions already known are frozen in "
-            f"{config_path.name} ({frozen} entries); one of them is now unused "
-            "if you removed an offending import, and the report above names "
-            "whatever is left over.\n"
-            "For the contract that broke: every module named there must be "
-            "reported, not read."
+        return (
+            BROKEN,
+            (
+                "a boundary broke. The exceptions already known are frozen in "
+                f"{config_path.name} ({frozen} entries); one of them is now unused "
+                "if you removed an offending import, and the report above names "
+                "whatever is left over.\n"
+                "For the contract that broke: every module named there must be "
+                "reported, not read."
+            ),
+            rows,
         )
-    return OK, ""
+    return OK, "", rows
 
 
 def main() -> int:
@@ -159,6 +294,11 @@ def main() -> int:
         action="store_true",
         help="plant each violation in a throwaway tree and require the check to fire",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print one JSON record on stdout instead of the report",
+    )
     args = parser.parse_args()
 
     if args.self_test:
@@ -167,19 +307,30 @@ def main() -> int:
     config_path = Path(args.config) if args.config else DEFAULT_CONFIG
 
     if not (Path.cwd() / ROOT_PACKAGE / "__init__.py").is_file():
-        print(
-            f"cannot judge: no {ROOT_PACKAGE}/ package in {Path.cwd()} — run this "
-            "from the directory that holds it (backend/)",
-            file=sys.stderr,
+        reason = (
+            f"no {ROOT_PACKAGE}/ package in {Path.cwd()} — run this from the "
+            "directory that holds it (backend/)"
         )
-        return CANNOT_JUDGE
+        print(f"cannot judge: {reason}", file=sys.stderr)
+        _cannot_judge(reason)
 
-    code, message = judge(config_path)
-    if code == OK:
+    # Under --json stdout carries one record and nothing else, so the whole
+    # judgement runs with stdout pointed at stderr: import-linter and grimp
+    # print as they work, and none of it may land around the record.
+    if _as_json():
+        with contextlib.redirect_stdout(sys.stderr):
+            code, message, rows = judge(config_path)
+    else:
+        code, message, rows = judge(config_path)
+    if code == CANNOT_JUDGE:
+        print(f"cannot judge: {message}", file=sys.stderr)
+        _cannot_judge(message)
+    if _as_json():
+        _emit(_record(code, rows, message))
+    elif code == OK:
         print(f"PASS: module boundaries held ({config_path.name})")
     else:
-        label = "broken" if code == BROKEN else "cannot judge"
-        print(f"{label}: {message}", file=sys.stderr)
+        print(f"broken: {message}", file=sys.stderr)
     return code
 
 
@@ -284,7 +435,25 @@ ancestors =
 """
 
 
-def _run(config_text: str | None, files: dict[str, str], tmp: Path) -> tuple[int, str]:
+def _invoke(tmp: Path, *extra: str) -> tuple[int, str, str]:
+    """Run the real check, as a process, from the tree it is judging — the same
+    way CI and a commit run it. In-process would have to juggle sys.path entries
+    for a root package named `app`, which is exactly the kind of cleverness that
+    makes a check pass for a reason nobody can name.
+
+    stdout and stderr are kept apart on purpose: which stream a thing lands on
+    is part of what --json promises, and a merged stream cannot check it.
+    """
+    result = subprocess.run(
+        [sys.executable, str(HERE), "--config", DEFAULT_CONFIG.name, *extra],
+        cwd=tmp,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+def _plant(config_text: str | None, files: dict[str, str], tmp: Path) -> None:
     for relative, contents in {**_SEED, **files}.items():
         path = tmp / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -294,17 +463,40 @@ def _run(config_text: str | None, files: dict[str, str], tmp: Path) -> tuple[int
     else:
         (tmp / DEFAULT_CONFIG.name).write_text(config_text)
 
-    # Run the real check, as a process, from the tree it is judging — the same
-    # way CI and a commit run it. In-process would have to juggle sys.path
-    # entries for a root package named `app`, which is exactly the kind of
-    # cleverness that makes a check pass for a reason nobody can name.
-    result = subprocess.run(
-        [sys.executable, str(HERE), "--config", DEFAULT_CONFIG.name],
-        cwd=tmp,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode, result.stdout + result.stderr
+
+def _run(config_text: str | None, files: dict[str, str], tmp: Path) -> tuple[int, str]:
+    _plant(config_text, files, tmp)
+    code, out, err = _invoke(tmp)
+    return code, out + err
+
+
+#: Exit code -> the status its record must carry. An exit code and a status that
+#: can disagree is two answers to one question.
+_STATUS_OF_EXIT = {OK: "pass", BROKEN: "fail", CANNOT_JUDGE: "cannot_judge"}
+
+
+def _record_problem(
+    tmp: Path, expected: int
+) -> tuple[str | None, dict[str, Any] | None]:
+    """(what is wrong with the --json run, the record).
+
+    The record mode gets the same treatment as the rules themselves: a real
+    process, a real exit code, and exactly one line of JSON on stdout in every
+    outcome, because the snapshot parses that line blind.
+    """
+    code, output, _err = _invoke(tmp, "--json")
+    if code != expected:
+        return f"expected exit {expected}, got {code}", None
+    lines = [line for line in output.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return f"expected one line on stdout, got {len(lines)}: {lines!r}", None
+    record = json.loads(lines[0])
+    if record.get("id") != CHECK_ID:
+        return f"record names {record.get('id')!r}", record
+    want = _STATUS_OF_EXIT[expected]
+    if record.get("status") != want:
+        return f"status {record.get('status')!r}, want {want!r}", record
+    return None, record
 
 
 def _tail(output: str, lines: int = 25) -> str:
@@ -379,6 +571,41 @@ def self_test() -> int:
             "wildcard",
         )
 
+        # Every planted tree again under --json: the record has to agree with
+        # the exit code the gate uses, and name every contract it claims to
+        # have run — a check that quietly narrowed itself must not read as a
+        # cleaner tree.
+        json_cases = [
+            (f"case{index}", what, expected)
+            for index, (what, _f, expected, _n) in enumerate(_CASES)
+        ]
+        json_cases.append(
+            ("thin", "a declaration that lost two of its three contracts", CANNOT_JUDGE)
+        )
+        json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
+        json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))
+        for where, what, expected in json_cases:
+            problem, record = _record_problem(sandbox / where, expected)
+            if problem is None and where.startswith("case"):
+                ids = [row.get("file") for row in record.get("details", [])]
+                if ids != list(CONTRACT_IDS):
+                    problem = f"details name {ids}, want {list(CONTRACT_IDS)}"
+            if (
+                problem is None
+                and where == "wildcard"
+                and record.get("actual") is not None
+            ):
+                # The wildcard is refused before the contracts run, so nothing
+                # was counted. 0 there would read as a tree with no violations.
+                problem = (
+                    "a run that counted nothing reports "
+                    f"actual={record.get('actual')!r}"
+                )
+            verdict = "ok" if problem is None else f"FAIL: {problem}"
+            if problem is not None:
+                failures.append(f"--json {what}: {problem}")
+            print(f"  [{verdict}] --json {what}")
+
     if failures:
         print("\n".join(failures), file=sys.stderr)
         print(
@@ -389,7 +616,8 @@ def self_test() -> int:
     print(
         "PASS: check_boundaries self-test (3 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
-        "come back not-passing)"
+        "come back not-passing; every case agrees with the exit code under --json, "
+        "on one line of stdout, naming all three contracts)"
     )
     return 0
 

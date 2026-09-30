@@ -1,0 +1,362 @@
+<script setup lang="ts">
+// 「添加资料」对话框：选类型、填这一档要的那几格、提交。
+//
+// 它自己拿着那份草稿（`KnowledgeDraft`）和 `VForm` 的校验 —— 填到一半的东西只有
+// 它知道。校验过了就把整份草稿报上去（`submit`），之后的事全在外面：传材料、
+// 建记录、说一句话、决定关不关。所以 `uploading` 是 props 进来的 —— 上传中它
+// 只负责把按钮转起来。
+//
+// 打开一次就是新的一张表：`modelValue` 变 true 时把草稿和校验都清掉。原来的页
+// 是在打开前清一次、成功后再清一次；对填表的人来说两者一样（他从没见过旧值）。
+import type { KnowledgeDraft } from '@/lib/knowledgeDraft'
+import type { KnowledgeType } from '@/types'
+
+import { ref, watch } from 'vue'
+import { VForm } from 'vuetify/lib/components/index.mjs'
+
+import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import { emptyKnowledgeDraft } from '@/lib/knowledgeDraft'
+import {
+  filePreviewUrl,
+  fileTypeIcon,
+  isImageFile,
+  KNOWLEDGE_TYPE_OPTIONS,
+  LANGUAGE_OPTIONS,
+  uploadTypeIcon,
+} from '@/lib/knowledgeFormat'
+
+defineOptions({ name: 'KnowledgeUploadDialog' })
+
+const props = defineProps<{
+  modelValue: boolean
+  uploading: boolean
+  availableTags: string[]
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  submit: [draft: KnowledgeDraft]
+}>()
+
+const form = ref<KnowledgeDraft>(emptyKnowledgeDraft())
+const uploadForm = ref<InstanceType<typeof VForm>>()
+
+function reset() {
+  form.value = emptyKnowledgeDraft()
+  uploadForm.value?.resetValidation()
+}
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) reset()
+  }
+)
+
+function pickType(type: KnowledgeType) {
+  form.value.type = type
+}
+
+function close() {
+  emit('update:modelValue', false)
+}
+
+/** 校验过的草稿才出去；原件不递（交一份快照，免得外面改到里面这一份）。 */
+async function submitUpload() {
+  if (!uploadForm.value || !(await uploadForm.value.validate()).valid) {
+    return
+  }
+  emit('submit', { ...form.value })
+}
+</script>
+
+<template>
+  <v-dialog :model-value="modelValue" max-width="600" @update:model-value="emit('update:modelValue', $event)">
+    <v-card rounded="lg" class="upload-dialog">
+      <v-card-title class="d-flex justify-space-between align-center pa-4">
+        <div class="text-h6 font-weight-medium">添加资料</div>
+        <v-btn icon="mdi-close" variant="text" @click="close"></v-btn>
+      </v-card-title>
+
+      <v-card-text class="pa-4 pt-2">
+        <v-form ref="uploadForm" @submit.prevent="submitUpload">
+          <!-- 资料名称 -->
+          <v-text-field
+            v-model="form.name"
+            autocomplete="off"
+            label="资料名称"
+            variant="outlined"
+            hide-details="auto"
+            class="mb-4"
+            density="comfortable"
+            :rules="[(v) => !!v || '请输入资料名称']"
+          ></v-text-field>
+
+          <div class="type-selector mb-5">
+            <label class="text-body-2 text-medium-emphasis mb-3 d-block">资料类型</label>
+
+            <div class="type-options">
+              <div
+                v-for="type in KNOWLEDGE_TYPE_OPTIONS"
+                :key="type.value"
+                class="type-option"
+                :class="{ 'type-option-active': form.type === type.value }"
+                @click="pickType(type.value)"
+              >
+                <div class="type-icon-wrapper">
+                  <v-icon :icon="uploadTypeIcon(type.value)" size="18"></v-icon>
+                </div>
+                <div class="type-label">{{ type.text }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="content-area">
+            <!-- 文件上传区 -->
+            <div v-if="form.type === 'MATERIAL'" class="upload-content">
+              <v-file-input
+                v-model="form.file"
+                label="选择文件"
+                variant="outlined"
+                density="comfortable"
+                accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,video/*,audio/*"
+                :rules="[(v) => !!v || '请选择文件']"
+                hide-details="auto"
+                class="mb-4"
+                show-size
+                chips
+                prepend-icon=""
+              >
+                <template #prepend>
+                  <v-icon color="primary" class="mr-2">mdi-file-upload-outline</v-icon>
+                </template>
+              </v-file-input>
+
+              <div v-if="form.file" class="file-preview py-2">
+                <v-img
+                  v-if="isImageFile(form.file)"
+                  :src="filePreviewUrl(form.file)"
+                  height="120"
+                  width="100%"
+                  class="rounded-lg mb-2"
+                  cover
+                ></v-img>
+                <!-- 原来这里挂着一个裸的 `grey-lighten-5` class：Vuetify 3 不生成这种
+                     无前缀的调色板类（v2 才有），所以它一直是死代码、没有任何底色。
+                     删掉它，免得下一个人"顺手修好"、给它补上 `bg-` 前缀 —— 那等于往
+                     模板里钉一个固定色板的名字，主题一翻它不跟着走
+                     （固定色板那一关拦的就是这个）。 -->
+                <div v-else class="d-flex align-center justify-center py-3 rounded-lg">
+                  <v-icon :icon="fileTypeIcon(form.file)" size="36" color="primary" class="mr-2"></v-icon>
+                  <span class="text-body-2">{{ form.file.name }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 富文本编辑区 -->
+            <div v-else-if="form.type === 'TEXT'" class="upload-content">
+              <div class="mb-3">
+                <TipTapEditor v-model="form.richTextContent" output="json" :min-height="180" />
+              </div>
+            </div>
+
+            <!-- 链接添加区 -->
+            <div v-else-if="form.type === 'LINK'" class="upload-content">
+              <v-text-field
+                v-model="form.url"
+                autocomplete="off"
+                label="链接地址"
+                variant="outlined"
+                density="comfortable"
+                hide-details="auto"
+                class="mb-4"
+                :rules="[(v) => !!v || '请输入链接地址', (v) => /^https?:\/\//.test(v) || '请输入有效的URL']"
+                placeholder="https://"
+                prepend-inner-icon="mdi-link"
+              ></v-text-field>
+              <v-text-field
+                v-model="form.title"
+                autocomplete="off"
+                label="链接标题（可选）"
+                variant="outlined"
+                density="comfortable"
+                hide-details="auto"
+                placeholder="如果留空，将使用资料名称"
+              ></v-text-field>
+            </div>
+
+            <!-- 代码片段区 -->
+            <div v-else-if="form.type === 'CODE'" class="upload-content">
+              <v-select
+                v-model="form.language"
+                autocomplete="off"
+                label="编程语言"
+                :items="LANGUAGE_OPTIONS"
+                item-title="text"
+                item-value="value"
+                variant="outlined"
+                density="comfortable"
+                hide-details="auto"
+                prepend-inner-icon="mdi-code-tags"
+                class="mb-3"
+              ></v-select>
+              <v-textarea
+                v-model="form.code"
+                autocomplete="off"
+                label="代码内容"
+                variant="outlined"
+                density="comfortable"
+                :rules="[(v) => !!v || '请输入代码内容']"
+                rows="6"
+                hide-details="auto"
+                placeholder="在此处粘贴代码..."
+                class="code-textarea"
+                color="primary"
+              ></v-textarea>
+            </div>
+          </div>
+
+          <!-- 附加信息区 -->
+          <div class="additional-info mt-4">
+            <v-expansion-panels variant="accordion">
+              <v-expansion-panel>
+                <v-expansion-panel-title>
+                  <div class="d-flex align-center">
+                    <v-icon icon="mdi-information-outline" size="small" class="mr-2"></v-icon>
+                    附加信息
+                  </div>
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-textarea
+                    v-model="form.description"
+                    autocomplete="off"
+                    label="资料描述"
+                    variant="outlined"
+                    density="comfortable"
+                    rows="2"
+                    hide-details="auto"
+                    class="mb-3"
+                    placeholder="简要描述此资料的内容和用途"
+                  ></v-textarea>
+
+                  <v-combobox
+                    v-model="form.labels"
+                    autocomplete="off"
+                    label="标签"
+                    variant="outlined"
+                    density="comfortable"
+                    multiple
+                    chips
+                    closable-chips
+                    hide-details="auto"
+                    :items="availableTags"
+                    placeholder="添加标签，便于分类和查找"
+                  ></v-combobox>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </div>
+        </v-form>
+      </v-card-text>
+
+      <v-divider></v-divider>
+
+      <v-card-actions class="pa-4">
+        <v-spacer></v-spacer>
+        <v-btn variant="text" @click="close">取消</v-btn>
+        <v-btn color="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">上传</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+</template>
+
+<style scoped lang="scss">
+.upload-dialog {
+  overflow: hidden;
+}
+
+.type-selector {
+  margin-bottom: 24px;
+}
+
+.type-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.type-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: var(--fill);
+  border: 1px solid transparent;
+
+  &:hover {
+    background-color: var(--fill-2);
+    transform: translateY(-2px);
+  }
+
+  &.type-option-active {
+    background-color: rgba(var(--v-theme-primary), 0.08);
+    border-color: rgba(var(--v-theme-primary), 0.2);
+
+    .type-icon-wrapper {
+      background-color: rgb(var(--v-theme-primary));
+      /* 琥珀底上的反白图标：深色主题的琥珀是 #FFA733，纯白只有 1.9:1 */
+      color: var(--surface);
+    }
+
+    .type-label {
+      color: rgb(var(--v-theme-primary));
+      font-weight: 500;
+    }
+  }
+}
+
+.type-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: var(--fill-2);
+  transition: all 0.2s ease;
+}
+
+.type-label {
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+}
+
+// 响应式调整
+@media (max-width: 600px) {
+  .type-options {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.upload-content {
+  padding: 0;
+  border-radius: 8px;
+  min-height: 120px;
+}
+
+.file-preview {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.code-textarea :deep(textarea) {
+  font-family: 'Fira Code', monospace !important;
+  font-size: 14px;
+  line-height: 1.5;
+}
+</style>

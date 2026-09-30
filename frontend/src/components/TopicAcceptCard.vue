@@ -22,32 +22,21 @@
 // outside needs to read them. TopicView only ever says 「重新拉一次」 (`reload`),
 // which it does when 芝士 files a card or a `cheese` command changes one
 // mid-turn.
-import type { AcceptCard, PrChecks } from '@/cx_types'
+//
+// 这一件现在只剩**接线**：判断与动作在 `composables/useAcceptCard.ts`，五张脸的
+// 画法在 `components/accept/*.vue`，谁点哪一下打哪个动作看下面那个模板就够了。
+// 拆开之前它是一块 1215 行的模板（#2143）。
 import type { CardPhase } from '@/lib/topicState'
 
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { watch } from 'vue'
 
-import {
-  acceptCard,
-  approveCard,
-  cardDeliverableUrl,
-  downloadFile,
-  getAcceptCards,
-  getPrChecks,
-  mergeCardAnyway,
-  reassignCard,
-  rejectCard,
-  revokeCard,
-  setAutoMerge,
-  voidCard,
-} from '@/api'
-import UserRef from '@/components/common/UserRefLink.vue'
-import { t } from '@/i18n'
-import { columnDotStyle } from '@/lib/board'
-import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
-import { noteTone } from '@/lib/noteTone'
-import { myHandle } from '@/me'
-import { useWorkspaceStore } from '@/stores/workspace'
+import { useAcceptCard } from '@/composables/useAcceptCard'
+
+import AcceptDecidedFace from '@/components/accept/AcceptDecidedFace.vue'
+import AcceptDeliveringFace from '@/components/accept/AcceptDeliveringFace.vue'
+import AcceptDockBar from '@/components/accept/AcceptDockBar.vue'
+import AcceptGateFace from '@/components/accept/AcceptGateFace.vue'
+import AcceptPendingFace from '@/components/accept/AcceptPendingFace.vue'
 
 const props = defineProps<{
   topicId: string
@@ -62,414 +51,59 @@ const emit = defineEmits<{
   /** 去验收: show me what I am being asked to accept. */
   (e: 'review'): void
 }>()
-const store = useWorkspaceStore()
-const AUTHOR = myHandle()
 
-const acceptCards = ref<AcceptCard[]>([])
-// This topic's cards are in. Distinguishes 「没有卡」 from 「还没问过」 for anyone
-// reading the phase from outside.
-const loaded = ref(false)
-// 卡的出现和收走演不演。打开房间 / 切话题那一次读到的不演（那张卡本来就在），读完
-// 之后再变的才演。
-const animate = ref(false)
-const acceptBusy = ref(false)
-const rejectNote = ref('')
-const showRejectInput = ref(false)
-// 作废：卡停在一个没人能推进的地方（GitHub 拒绝合并、冲突卡等）时的出口。
-// 它不是退回——不叫芝士改，只结束这次审阅，所以同样要先展开、再确认。
-const voidNote = ref('')
-const showVoidInput = ref(false)
-// 人工放行 (#718): 明知合并态不是 clean 仍合并。默认拒绝、显式放行，所以
-// 它藏在一个要先展开、再填理由的小表单后面——不是一个可以顺手点到的按钮。
-const showForceMergeInput = ref(false)
-const forceMergeReason = ref('')
-
-// Newest pending card (the list comes newest-first). A card in `conflict`
-// (采纳时合并冲突，芝士被派去解决) keeps the merge box up — as a STATE, with a
-// retry button — instead of pretending the accept went through.
-const pendingCard = computed<AcceptCard | null>(
-  () => acceptCards.value.find((c) => c.status === 'pending' || c.status === 'conflict') ?? null
-)
-// The accepted card on an archived topic — its presence lets us offer 撤回采纳.
-const acceptedCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'accepted') ?? null)
-
-// 已采纳等合并 (`pr_open`, #718 退役): 历史状态。采纳现在当场合并，什么都不再
-// 写这个状态，存量卡也已迁回 pending —— 这张脸和闸门那两张一样，只为库里的
-// 极端残留兜底，只读。
-const deliveringCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'pr_open') ?? null)
-// 后端把途中的阶段信息/故障写在卡的 note 上（PR 有新提交、GitHub 拒绝合并、
-// 凭据失效），那是这些事唯一露头的地方，照原样显示。轻重由 note_level 定。
-const cardNote = (card: AcceptCard | null) => {
-  if (!card) return null
-  const tone = noteTone(card)
-  return tone ? { text: card.note, tone } : null
-}
-const deliveryNote = computed(() => cardNote(deliveringCard.value))
-// 待采纳卡上的同一条 note（比如「PR 有新提交，之前看到的版本已过时」）。冲突卡
-// 的 note 已经在冲突说明里念过了，不再重复。
-const pendingNote = computed(() =>
-  pendingCard.value && pendingCard.value.status !== 'conflict' ? cardNote(pendingCard.value) : null
-)
-
-// 卡上的状态 = 合并态 (#718)：词和「谁的活」的圈都是后端算好的，这里只翻译
-// （lib/mergeState.ts）。冲突卡的标题已经说了「芝士处理中」，不再画第二行。
-const mergeBadge = computed(() => {
-  const card = pendingCard.value
-  if (!card || card.status === 'conflict') return null
-  return mergeBadgeOf(card.merge_state, store.agentName)
-})
-const mergeReasons = computed(() => {
-  const card = pendingCard.value
-  if (!card) return []
-  return card.forge.reports_checks && card.pr_number === null
-    ? card.merge_state.reasons
-    : visibleReasons(card.merge_state)
-})
-// 读不到检查结论的托管方，采纳就是验收人自己的判断。
-const platformLane = computed(() => {
-  const card = pendingCard.value
-  return !!card && !card.forge.reports_checks
-})
-// 这个托管方在人点之前就说明了自己是谁（I23）；GitHub 那一档不说话，卡上有链接。
-const forgeDeclaration = computed(() => pendingCard.value?.forge.declaration || '')
-const needsPr = computed(() => !!pendingCard.value?.forge.hosts_proposals && pendingCard.value.pr_number === null)
-// 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
-// services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
-// `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
-// unstable 是「有检查没过，但没有一个在必跑名单上」——它可以合，而红了哪个检查
-// 照样念在按钮上方的依据行里（mergeReasons），亮着不等于不说。
-// 灰之前按住的那半条路（人工放行）也用这个判断，两个入口不许对「现在能不能合」
-// 有两种看法。
-const MERGEABLE_STATES = ['clean', 'unstable']
-const acceptBlockedTitle = computed<string | null>(() => {
-  const card = pendingCard.value
-  if (!card) return null
-  // 托管方读不出来的那一档（forge.kind === 'unknown'）：能力位一位都不敢说是，所以
-  // 它看起来像平台 lane，但它不是 —— 后端这会儿真去采纳会按同一个失败 422 拒掉。
-  // 闸门和采纳是同一条线，那就灰在这里，理由用卡上已经写着的那一句。
-  if (card.forge.kind === 'unknown') return card.forge.declaration
-  if (platformLane.value || needsPr.value) return null
-  if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
-  const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
-  return ['现在采纳不会合并', ...why].join('：')
-})
-
-// 绿了自动合 (#718)：项目允许、且卡正停在 blocked/behind（规则还没满足）时才有
-// 这个开关；已布防的开关一直可见，好让人解除。
-const autoMergeArmedBy = computed(() => pendingCard.value?.auto_merge.armed_by ?? null)
-const autoMergeVisible = computed(() => {
-  const card = pendingCard.value
-  if (!card || !card.auto_merge.allowed) return false
-  const state = card.merge_state.state
-  return state === 'blocked' || state === 'behind' || !!card.auto_merge.armed_by
-})
-
-// 机器闸门 (eval C2, 已退役): a card left in a gate state by the mechanism that
-// used to run the project's check before the card reached its reviewer. Only the
-// newest card can carry one (one live card per topic is enforced server-side).
-const gateCard = computed<AcceptCard | null>(() => {
-  const c = acceptCards.value[0]
-  return c && (c.status === 'gate_failed' || c.status === 'gate_blocked') ? c : null
-})
-const showGateOutput = ref(false)
-
-// 横条展开没有。默认收着：一行已经说清「有一个决定在等谁」，整张卡要的时候再看。
-const expanded = ref(false)
-const showDetail = computed(() => !props.docked || expanded.value)
-
-// 横条上那一行说什么。顺序和下面卡片的 v-if 链一致：同一时刻只有一张卡在台面上。
-const bar = computed<{ icon: string; color: string; title: string; sub: string }>(() => {
-  const gate = gateCard.value
-  if (gate?.status === 'gate_failed')
-    return { icon: 'mdi-close-octagon-outline', color: 'error', title: t('work.room.accept.gateFailed'), sub: '' }
-  if (gate?.status === 'gate_blocked')
-    return { icon: 'mdi-help-circle-outline', color: 'warning', title: t('work.room.accept.gateBlocked'), sub: '' }
-  const pending = pendingCard.value
-  if (pending?.status === 'conflict')
-    return {
-      icon: 'mdi-source-merge',
-      color: 'warning',
-      title: t('work.room.accept.conflict', { agent: store.agentName }),
-      sub: '',
-    }
-  if (pending)
-    return {
-      icon: 'mdi-source-merge',
-      color: 'success',
-      // 被审阅的东西按它实际是什么说。交一次合并时，产物是整个代码仓库，每张卡都是
-      // 「《同一个名字》第 N 版」，一行里说不出这次改了什么 —— 那就用这次改动自己的
-      // 标题；产物和第几版在展开的「这次交付」里。交文件、交地址时，产物的名字和第几版
-      // 就是这次交的东西。
-      title:
-        pending.deliverable?.kind === 'merge' && pending.change_subject
-          ? pending.change_subject
-          : pending.artifact
-            ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
-            : t('work.room.accept.change'),
-      sub:
-        pending.reviewer_handle === AUTHOR
-          ? t('work.room.accept.waitingOnYou')
-          : t('work.room.accept.waitingOn', { handle: pending.reviewer_handle }),
-    }
-  if (deliveringCard.value)
-    return { icon: 'mdi-history', color: 'warning', title: t('work.room.accept.delivering'), sub: '' }
-  const accepted = acceptedCard.value
-  return {
-    icon: 'mdi-check-circle-outline',
-    color: 'success',
-    title: accepted ? t('work.room.accept.decidedBy', { handle: accepted.decided_by }) : t('work.room.accept.accepted'),
-    sub: '',
-  }
-})
-
-// Nothing to show at all — the host still renders the slot wrapper, so this
-// component simply contributes no box.
-const hasBox = computed(
-  () =>
-    !!(
-      pendingCard.value ||
-      gateCard.value ||
-      deliveringCard.value ||
-      (props.topicStatus === 'archived' && acceptedCard.value)
-    )
-)
-
-async function loadAcceptCard(silent = false) {
-  // silent = a background refresh (the PR-checks poll / after a vote): keep the
-  // current cards on screen instead of blanking the box for a beat.
-  if (!silent) {
-    animate.value = false
-    acceptCards.value = []
-    loaded.value = false
-    showRejectInput.value = false
-    rejectNote.value = ''
-    showGateOutput.value = false
-    expanded.value = false
-  }
-  const tid = props.topicId
-  const task = props.taskId
-  if (!tid) return
-  try {
-    const payload = await getAcceptCards(tid, task)
-    if (props.topicId === tid && props.taskId === task) {
-      acceptCards.value = payload.data.filter((card) => (props.taskId ? card.task_id === props.taskId : !card.task_id))
-      loaded.value = true
-      if (!silent) void nextTick(() => (animate.value = true))
-    }
-  } catch {
-    // Best-effort; the banner just stays hidden.
-  }
-}
-
-// 采纳 PR 化 (#188 §5.1): live CI state of the card's PR. Polled slowly while such
-// a card is on screen — checks take minutes, not seconds. Both the pending card
-// (人还没点) and the delivering one (点完了，CI 在跑) ride the same PR, and
-// /pr-checks answers for any card that has a pr_number.
-const prCheckCard = computed<AcceptCard | null>(() => pendingCard.value ?? deliveringCard.value)
-const prChecks = ref<PrChecks | null>(null)
-let prPollTimer: number | null = null
-async function loadPrChecks() {
-  const tid = props.topicId
-  const task = props.taskId
-  if (!prCheckCard.value?.pr_number) return
-  try {
-    const payload = await getPrChecks(tid, task)
-    if (props.topicId === tid && props.taskId === task) prChecks.value = payload
-  } catch {
-    // Best-effort; the PR row just shows the link without CI state.
-  }
-}
-watch(
-  () => (prCheckCard.value?.pr_number ? `${props.topicId}:${props.taskId ?? ''}:${prCheckCard.value.pr_number}` : null),
-  (active) => {
-    prChecks.value = null
-    if (active) void loadPrChecks()
-    if (active && prPollTimer === null) {
-      prPollTimer = window.setInterval(() => {
-        void loadPrChecks()
-        // 卡本身也跟着刷——待采纳和交付中都要，而且理由是同一个：**这张卡是快照，
-        // 而它描述的东西还在变**，界面不重新读就会停在它到达的那一刻。
-        //
-        // 交付中那一支变的是合并时间、note、最终 accepted。
-        //
-        // 待采纳那一支变的是 `merge_state`，而它决定采纳按钮亮不亮：递卡的一瞬间
-        // PR 刚从草稿翻成待看，GitHub 还没算完能不能合，后端如实给 `unknown` ——
-        // 不可采纳，注释里写着「下一轮读到真值自然收敛」（domain/review/
-        // merge_state.py）。可这里原本没有下一轮，于是那颗按钮就一直灰着，验收人
-        // 只能靠刷新页面或切一次话题才点得动。实测 #888：01:23 还是 unstable，
-        // 01:24 已经 clean，后端确实在收敛，看不见的是界面。
-        void loadAcceptCard(true)
-      }, 15000)
-    } else if (!active && prPollTimer !== null) {
-      window.clearInterval(prPollTimer)
-      prPollTimer = null
-    }
-  },
-  { immediate: true }
-)
-onUnmounted(() => {
-  if (prPollTimer !== null) window.clearInterval(prPollTimer)
-})
-
-// 这一版交出去的那一份，在人点采纳之前拿到手 (#1085 结论五)。走下载而不是预览：
-// 给的是递卡那一刻落下的快照，要审的就是这些字节本身。
-const deliverableBusy = ref(false)
-const deliverableError = ref('')
-
-async function onDownloadDeliverable() {
-  const card = pendingCard.value
-  const filename = card?.deliverable?.filename
-  if (!card || !filename || deliverableBusy.value) return
-  deliverableBusy.value = true
-  deliverableError.value = ''
-  try {
-    await downloadFile(cardDeliverableUrl(card.id), filename)
-  } catch (e) {
-    deliverableError.value = e instanceof Error ? e.message : '下载失败'
-  } finally {
-    deliverableBusy.value = false
-  }
-}
-
-// 主分支保护 (spec §4.4): my vote toward the pending card's accept.
-async function onApproveCard() {
-  const card = pendingCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    await approveCard(card.id, AUTHOR)
-    await loadAcceptCard(true)
-  } catch (e) {
-    store.reportError(e, '批准失败')
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-// 能改派给谁：名册上还在岗的那些。队友当验收人没问题——AI 队友和人的权限一样大
-// ——要挡的只有停用的队友：停用就是为了挡住新的活，而改派就是派活。后端的
-// `reviewer_handle` 只是个 handle，不校验这个人还在不在，点下去就是把卡停在一个没
-// 人驱动的实例名下，界面上还照样写着「等 @xxx 验收」。
-const reviewerChoices = computed(() => store.members.filter((m) => m.active !== false))
-
-async function onReassignCard(handle: string) {
-  const card = pendingCard.value
-  if (!card || handle === card.reviewer_handle) return
-  acceptBusy.value = true
-  try {
-    await reassignCard(card.id, handle)
-    await loadAcceptCard()
-  } catch (e) {
-    store.reportError(e, '改由他人审阅失败')
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-async function onAcceptCard() {
-  const card = pendingCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    const updated = await acceptCard(card.id, AUTHOR, card.merge_state.head_sha)
-    if (updated.status === 'conflict') {
-      store.error = `与主分支冲突，未能合并。${store.agentName}正在处理，完成后可以重新采纳`
-    }
-    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
-  } catch (e) {
-    store.reportError(e, needsPr.value ? '创建 PR 失败' : '采纳失败')
-    // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
-    // 否则人只能对着同一张旧卡再点一次，再被拒一次。
-    await loadAcceptCard(true)
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-async function onRevokeCard() {
-  const card = acceptedCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    await revokeCard(card.id, AUTHOR)
-    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
-  } catch (e) {
-    store.reportError(e, '撤回采纳失败')
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-async function onForceMerge() {
-  const card = pendingCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    await mergeCardAnyway(card.id, forceMergeReason.value, card.merge_state.head_sha)
-    showForceMergeInput.value = false
-    forceMergeReason.value = ''
-    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
-  } catch (e) {
-    store.reportError(e, '采纳失败')
-    await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-// 绿了自动合 (#718)：布防/解除都打同一个端点，布防人由后端从会话认定。
-async function onToggleAutoMerge(enabled: unknown) {
-  const card = pendingCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    await setAutoMerge(card.id, !!enabled, card.merge_state.head_sha)
-    await loadAcceptCard(true)
-  } catch (e) {
-    store.reportError(e, '设置自动合并失败')
-    await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-async function onRejectCard() {
-  const card = pendingCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    await rejectCard(card.id, AUTHOR, rejectNote.value)
-    showRejectInput.value = false
-    rejectNote.value = ''
-    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
-  } catch (e) {
-    store.reportError(e, '退回失败')
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-async function onVoidCard() {
-  const card = pendingCard.value
-  if (!card) return
-  acceptBusy.value = true
-  try {
-    await voidCard(card.id, voidNote.value)
-    showVoidInput.value = false
-    voidNote.value = ''
-    await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
-  } catch (e) {
-    store.reportError(e, '作废失败')
-  } finally {
-    acceptBusy.value = false
-  }
-}
-
-watch(
-  () => [props.topicId, props.taskId],
-  () => void loadAcceptCard(),
-  { immediate: true }
-)
+const {
+  acceptBusy,
+  expanded,
+  showDetail,
+  hasBox,
+  bar,
+  phase,
+  loaded,
+  animate,
+  // 台面上的那几张卡
+  pendingCard,
+  acceptedCard,
+  deliveringCard,
+  gateCard,
+  // 待采纳那张脸要读的
+  mergeBadge,
+  mergeReasons,
+  forgeDeclaration,
+  needsPr,
+  acceptBlockedTitle,
+  autoMergeVisible,
+  autoMergeArmedBy,
+  pendingNote,
+  deliveryNote,
+  reviewerChoices,
+  prChecks,
+  // 展开的小表单
+  showGateOutput,
+  showRejectInput,
+  rejectNote,
+  showVoidInput,
+  voidNote,
+  showForceMergeInput,
+  forceMergeReason,
+  deliverableBusy,
+  deliverableError,
+  // 动作
+  reload,
+  onDownloadDeliverable,
+  onApproveCard,
+  onReassignCard,
+  onAcceptCard,
+  onRevokeCard,
+  onForceMerge,
+  onToggleAutoMerge,
+  onRejectCard,
+  onVoidCard,
+  // 画的时候顺手要用的
+  author,
+  agentName,
+  agentHandle,
+} = useAcceptCard(props)
 
 // 决策在聊天，审查在面板: the card stays here — accepting is a social decision
 // and needs the conversation around it — but where the topic stands is not this
@@ -479,17 +113,11 @@ watch(
 // It is reported only once the cards are actually in: before that, 「没有卡」 and
 // 「卡还没拉回来」 look identical from outside, and the panel would open on 文档
 // for a topic that was waiting to be reviewed.
-const phase = computed<CardPhase>(() => {
-  if (deliveringCard.value) return 'delivering'
-  if (gateCard.value) return 'gate'
-  if (pendingCard.value) return 'pending'
-  return null
-})
 watch([loaded, phase], () => {
   if (loaded.value) emit('phase', phase.value)
 })
 
-defineExpose({ reload: loadAcceptCard })
+defineExpose({ reload })
 </script>
 
 <template>
@@ -513,560 +141,85 @@ defineExpose({ reload: loadAcceptCard })
                     <v-icon :color="bar.color" size="19">{{ bar.icon }}</v-icon>
                     <span class="t-title">{{ bar.title }}</span>
                   </div>
-                  <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。 -->
-                  <v-card v-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box">
-                    <div class="pa-3">
-                      <div class="text-caption text-medium-emphasis mb-2">
-                        检查未通过，未提交审阅。<UserRef
-                          :handle="store.agentHandle"
-                          :name="store.agentName"
-                        />修复后会重新提交
-                      </div>
-                      <v-btn
-                        size="small"
-                        variant="text"
-                        :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-                        @click="showGateOutput = !showGateOutput"
-                      >
-                        {{ showGateOutput ? '收起检查输出' : '查看检查输出' }}
-                      </v-btn>
-                      <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
-                    </div>
-                  </v-card>
 
-                  <!-- 闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。刻意跟
-           「未通过」分开显示——它是需要人看一眼的状态，不是代码红了。 -->
-                  <v-card
-                    v-else-if="gateCard && gateCard.status === 'gate_blocked'"
-                    variant="outlined"
-                    class="merge-box"
-                  >
-                    <div class="pa-3">
-                      <div class="text-caption text-medium-emphasis mb-2">
-                        检查未能运行，未提交审阅。<UserRef
-                          :handle="store.agentHandle"
-                          :name="store.agentName"
-                        />修复检查环境后会重新提交，多次失败时需要手动处理
-                      </div>
-                      <v-btn
-                        size="small"
-                        variant="text"
-                        :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-                        @click="showGateOutput = !showGateOutput"
-                      >
-                        {{ showGateOutput ? '收起检查输出' : '查看检查输出' }}
-                      </v-btn>
-                      <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '暂无输出' }}</pre>
-                    </div>
-                  </v-card>
+                  <!-- 闸门未过 / 闸门没跑成：历史卡的两张只读脸。 -->
+                  <AcceptGateFace
+                    v-if="gateCard"
+                    :card="gateCard"
+                    :open="showGateOutput"
+                    :agent-name="agentName"
+                    :agent-handle="agentHandle"
+                    @update:open="showGateOutput = $event"
+                  />
 
-                  <v-card v-else-if="pendingCard" variant="outlined" class="merge-box">
-                    <div class="pa-3">
-                      <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
-                        {{ pendingCard.note || '与主分支冲突，未能合并' }}
-                        <UserRef :handle="store.agentHandle" :name="store.agentName" />正在处理，完成后可以重新采纳
-                      </div>
-                      <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
-               圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
-               clean 画绿勾不画圈 —— 绿勾本身就是记号。 -->
-                      <div v-if="mergeBadge" class="d-flex align-center ga-2 text-body-2 mb-1">
-                        <v-icon v-if="pendingCard.merge_state.state === 'clean'" color="success" size="16"
-                          >mdi-check-circle</v-icon
-                        >
-                        <span v-else class="board-dot" :style="columnDotStyle(mergeBadge.column)" aria-hidden="true" />
-                        <span>{{ mergeBadge.label }}</span>
-                      </div>
-                      <!-- 结论的依据：红了哪个检查要能看见。 -->
-                      <div
-                        v-for="(r, i) in mergeReasons"
-                        :key="i"
-                        class="d-flex align-center flex-wrap ga-1 text-caption text-medium-emphasis mb-1"
-                      >
-                        <span>{{ r.detail }}</span>
-                        <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
-                      </div>
-                      <!-- 托管方自己的一句话，在人点采纳之前就在卡上（I23）：这次采纳会落到
-               哪里、有没有外部检查。不是采纳之后补写的一条 note。 -->
-                      <div v-if="forgeDeclaration" class="text-caption text-medium-emphasis mb-2">
-                        {{ forgeDeclaration }}
-                      </div>
-                      <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
-                      <div
-                        v-if="pendingNote"
-                        class="d-flex align-start ga-1 text-caption mb-2"
-                        :class="pendingNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
-                      >
-                        <v-icon
-                          v-if="pendingNote.tone === 'error'"
-                          icon="mdi-alert-circle-outline"
-                          size="14"
-                          class="mt-1"
-                        />
-                        <span>{{ pendingNote.text }}</span>
-                      </div>
-                      <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
-                        <span>待</span>
-                        <UserRef :handle="pendingCard.reviewer_handle" />
-                        <span>审阅</span>
-                        <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
-                        <v-menu>
-                          <template #activator="{ props: menuProps }">
-                            <v-btn
-                              v-bind="menuProps"
-                              size="small"
-                              variant="text"
-                              density="comfortable"
-                              class="text-medium-emphasis"
-                              :disabled="acceptBusy"
-                            >
-                              更换
-                            </v-btn>
-                          </template>
-                          <v-list density="compact">
-                            <v-list-subheader>改由谁审阅</v-list-subheader>
-                            <v-list-item
-                              v-for="mbr in reviewerChoices"
-                              :key="mbr.user_handle"
-                              :active="mbr.user_handle === pendingCard.reviewer_handle"
-                              @click="onReassignCard(mbr.user_handle)"
-                            >
-                              <v-list-item-title class="text-body-2"> @{{ mbr.user_handle }} </v-list-item-title>
-                              <v-list-item-subtitle class="text-caption">
-                                {{ mbr.role }}
-                              </v-list-item-subtitle>
-                            </v-list-item>
-                            <v-list-item v-if="reviewerChoices.length === 0">
-                              <v-list-item-title class="text-caption text-medium-emphasis">
-                                暂无可选成员
-                              </v-list-item-title>
-                            </v-list-item>
-                          </v-list>
-                        </v-menu>
-                      </div>
-                      <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
-                        推荐理由：{{ pendingCard.routing_reason }}
-                      </div>
-                      <!--
-            这次交付定的是哪一项产物的哪一版，以及交出去的那一份东西 (#1085 结论
-            三/五)。它在提交标题上面，因为点采纳定的首先是这件事：这一版要不要成为
-            《报告》的当前版本、交出去的是不是这一份文件。提交标题是它被记进历史时
-            的写法，不是它本身。
-            三种交法各有各的落点：文件能当场拿走（快照在递卡那一刻就落好了），地址
-            能当场打开，而一次合并没有可拿的东西——那时候只写产物和版本，不补一句
-            「交出去的是这次合并」凑格式。
-            版本号是后端按卡的状态算的，这里一个都不推。落地之前递的那些卡两样都没
-            有，整块就不出现。
-          -->
-                      <div v-if="pendingCard.artifact || pendingCard.deliverable" class="mb-3">
-                        <div class="text-caption text-medium-emphasis">这次交付</div>
-                        <div class="d-flex align-center flex-wrap ga-2">
-                          <span v-if="pendingCard.artifact" class="text-body-2">
-                            《{{ pendingCard.artifact.name }}》第 {{ pendingCard.artifact.version }} 版
-                          </span>
-                          <template v-if="pendingCard.deliverable?.kind === 'file' && pendingCard.deliverable.filename">
-                            <span class="text-medium-emphasis">·</span>
-                            <code class="text-caption">{{ pendingCard.deliverable.filename }}</code>
-                            <v-btn
-                              size="small"
-                              variant="text"
-                              density="comfortable"
-                              class="text-medium-emphasis"
-                              prepend-icon="mdi-tray-arrow-down"
-                              :loading="deliverableBusy"
-                              @click="onDownloadDeliverable"
-                            >
-                              下载
-                            </v-btn>
-                          </template>
-                          <template v-else-if="pendingCard.deliverable?.kind === 'link' && pendingCard.deliverable.url">
-                            <span class="text-medium-emphasis">·</span>
-                            <a class="text-caption" :href="pendingCard.deliverable.url" target="_blank" rel="noopener">
-                              {{ pendingCard.deliverable.url }}
-                            </a>
-                          </template>
-                        </div>
-                        <div v-if="deliverableError" role="alert" class="text-caption text-error mt-1">
-                          {{ deliverableError }}
-                        </div>
-                      </div>
-                      <!--
-            提交与 PR 规范: 采纳会把整个分支压成一个提交，标题就是这一行。
-            采纳前是最后一次能反对它的机会，所以它必须在按钮上方可见，而不是
-            等它进了 git 历史才有人发现写的是话题标题。
-          -->
-                      <div v-if="pendingCard.change_subject" class="mb-3">
-                        <div class="text-caption text-medium-emphasis">合并后的提交标题</div>
-                        <code class="text-caption">{{ pendingCard.change_subject }}</code>
-                      </div>
-                      <!--
-            机器闸门 (eval C2, 已退役) 的历史读数。`gate_passed_at` 只由
-            `AcceptService.finish_gate` 写，而 采纳即合并 (#296, stage 1) 之后再没有
-            任何东西调用它——所以今天递的卡这一格永远是空的，它出现就意味着这张卡是
-            退役之前递的。留着，是因为那次检查当年真的跑过：抹掉等于把「这张卡当年
-            过了平台检查」这个事实从界面上删掉。
-            绝不画成绿勾：当年跑的是项目自己配的 check_command，不是完整 CI，让一个
-            绿勾替它背书正是这一格要避免的事。今天的检查是 PR 上的 GitHub Actions，
-            平台不会先替你跑一遍。
-          -->
-                      <div
-                        v-if="pendingCard.gate_passed_at"
-                        class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2"
-                      >
-                        <v-icon size="15">mdi-timer-sand</v-icon>
-                        平台检查已通过：只检查了代码规范和类型，未运行测试
-                      </div>
-                      <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
-                      <div v-if="pendingCard.pr_url" class="mb-2">
-                        <div class="d-flex align-center flex-wrap ga-2">
-                          <v-chip
-                            size="small"
-                            variant="tonal"
-                            prepend-icon="mdi-source-pull"
-                            :href="pendingCard.pr_url"
-                            target="_blank"
-                          >
-                            PR #{{ pendingCard.pr_number }}
-                          </v-chip>
-                          <span
-                            v-if="prChecks?.available && prChecks.mergeable === false"
-                            class="text-caption text-error"
-                          >
-                            与主分支冲突
-                          </span>
-                        </div>
-                        <div
-                          v-for="chk in prChecks?.checks ?? []"
-                          :key="chk.name"
-                          class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
-                        >
-                          <v-icon
-                            size="14"
-                            :color="
-                              chk.conclusion === 'success'
-                                ? 'success'
-                                : chk.conclusion === 'failure'
-                                  ? 'error'
-                                  : undefined
-                            "
-                          >
-                            {{
-                              chk.conclusion === 'success'
-                                ? 'mdi-check-circle'
-                                : chk.conclusion === 'failure'
-                                  ? 'mdi-close-circle'
-                                  : 'mdi-progress-clock'
-                            }}
-                          </v-icon>
-                          {{ chk.name }}
-                          <span v-if="chk.status !== 'completed'">进行中</span>
-                        </div>
-                      </div>
-                      <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
-                      <div v-if="pendingCard.approvals_required > 1" class="d-flex align-center flex-wrap ga-2 mb-3">
-                        <v-chip
-                          size="small"
-                          variant="tonal"
-                          :color="
-                            pendingCard.approvals.length >= pendingCard.approvals_required ? 'success' : undefined
-                          "
-                          prepend-icon="mdi-account-check-outline"
-                        >
-                          {{ pendingCard.approvals.length }}/{{ pendingCard.approvals_required }}
-                          已批准
-                        </v-chip>
-                        <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
-                          <template v-for="(h, i) in pendingCard.approvals" :key="h"
-                            >{{ i ? '、' : '' }}<UserRef :handle="h"
-                          /></template>
-                        </span>
-                        <v-btn
-                          v-if="!pendingCard.approvals.includes(AUTHOR)"
-                          size="small"
-                          variant="outlined"
-                          class="btn-secondary"
-                          :disabled="acceptBusy"
-                          prepend-icon="mdi-thumb-up-outline"
-                          @click="onApproveCard"
-                        >
-                          批准
-                        </v-btn>
-                        <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
-                          <v-icon size="14">mdi-check</v-icon>你已批准
-                        </span>
-                      </div>
-                      <div class="d-flex align-center flex-wrap ga-2">
-                        <!-- 决策在聊天，审查在面板。贴底的时候这一颗在横条上，这里不再放一颗。 -->
-                        <v-btn
-                          v-if="!docked"
-                          variant="outlined"
-                          class="btn-secondary"
-                          prepend-icon="mdi-file-search-outline"
-                          @click="emit('review')"
-                        >
-                          {{ t('work.room.accept.review') }}
-                        </v-btn>
-                        <!-- 采纳 = 当场合并 (#718)：GitHub lane 亮在后端会合的那两档（clean /
-                 unstable），为什么灰写在 title 里；平台 lane 的采纳纯是人的判断，
-                 从不按状态灰。 -->
-                        <span :title="acceptBlockedTitle ?? undefined">
-                          <v-btn
-                            color="success"
-                            variant="flat"
-                            :loading="acceptBusy"
-                            :disabled="acceptBusy || !!acceptBlockedTitle"
-                            prepend-icon="mdi-check"
-                            @click="onAcceptCard"
-                          >
-                            {{ needsPr ? '创建 PR' : pendingCard.status === 'conflict' ? '重新采纳' : '采纳' }}
-                          </v-btn>
-                        </span>
-                        <v-btn
-                          variant="text"
-                          :disabled="acceptBusy"
-                          prepend-icon="mdi-undo"
-                          @click="showRejectInput = !showRejectInput"
-                        >
-                          退回
-                        </v-btn>
-                        <v-btn
-                          variant="text"
-                          class="text-medium-emphasis"
-                          :disabled="acceptBusy"
-                          prepend-icon="mdi-close-circle-outline"
-                          @click="showVoidInput = !showVoidInput"
-                        >
-                          作废
-                        </v-btn>
-                      </div>
-                      <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
-                      <div v-if="autoMergeVisible" class="d-flex align-center flex-wrap ga-2 mt-2">
-                        <v-switch
-                          :model-value="!!autoMergeArmedBy"
-                          color="success"
-                          density="compact"
-                          hide-details
-                          :disabled="acceptBusy"
-                          label="检查通过后自动合并"
-                          @update:model-value="onToggleAutoMerge"
-                        />
-                        <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
-                          由 <UserRef :handle="autoMergeArmedBy" /> 开启
-                        </span>
-                      </div>
-                      <!--
-            人工放行 (#718)：明知合并态不是 clean 仍合并。平台自己永远不走这条路——
-            红着合有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
-            没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
-          -->
-                      <div
-                        v-if="
-                          pendingCard.pr_number &&
-                          acceptBlockedTitle &&
-                          !mergeReasons.some((r) => r.kind === 'dependency')
-                        "
-                        class="mt-2"
-                      >
-                        <v-btn
-                          v-if="!showForceMergeInput"
-                          size="small"
-                          variant="text"
-                          class="text-medium-emphasis"
-                          prepend-icon="mdi-alert-decagram-outline"
-                          @click="showForceMergeInput = true"
-                        >
-                          仍要采纳
-                        </v-btn>
-                        <template v-else>
-                          <div class="text-caption text-medium-emphasis mb-1">
-                            检查未全部通过。操作人、时间和当时的检查状态会被记录
-                          </div>
-                          <v-textarea
-                            v-model="forceMergeReason"
-                            autocomplete="off"
-                            label="理由"
-                            rows="2"
-                            auto-grow
-                            density="compact"
-                            variant="outlined"
-                            hide-details
-                            class="mb-2"
-                          />
-                          <div class="d-flex ga-2">
-                            <v-btn
-                              size="small"
-                              color="warning"
-                              variant="flat"
-                              :loading="acceptBusy"
-                              :disabled="acceptBusy"
-                              @click="onForceMerge"
-                            >
-                              确认采纳
-                            </v-btn>
-                            <v-btn
-                              size="small"
-                              variant="text"
-                              :disabled="acceptBusy"
-                              @click="showForceMergeInput = false"
-                            >
-                              取消
-                            </v-btn>
-                          </div>
-                        </template>
-                      </div>
-                      <div v-if="showRejectInput" class="d-flex align-end ga-2 mt-3">
-                        <v-text-field
-                          v-model="rejectNote"
-                          autocomplete="off"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                          placeholder="退回理由（可选）"
-                          class="flex-grow-1"
-                        />
-                        <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">
-                          确认退回
-                        </v-btn>
-                      </div>
-                      <div v-if="showVoidInput" class="mt-3">
-                        <div class="text-caption text-medium-emphasis mb-1">
-                          作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅
-                        </div>
-                        <div class="d-flex align-end ga-2">
-                          <v-text-field
-                            v-model="voidNote"
-                            autocomplete="off"
-                            variant="outlined"
-                            density="compact"
-                            hide-details
-                            placeholder="作废理由（可选）"
-                            class="flex-grow-1"
-                          />
-                          <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onVoidCard">
-                            确认作废
-                          </v-btn>
-                        </div>
-                      </div>
-                    </div>
-                  </v-card>
+                  <AcceptPendingFace
+                    v-else-if="pendingCard"
+                    v-model:show-reject-input="showRejectInput"
+                    v-model:reject-note="rejectNote"
+                    v-model:show-void-input="showVoidInput"
+                    v-model:void-note="voidNote"
+                    v-model:show-force-merge-input="showForceMergeInput"
+                    v-model:force-merge-reason="forceMergeReason"
+                    :card="pendingCard"
+                    :badge="mergeBadge"
+                    :reasons="mergeReasons"
+                    :forge-declaration="forgeDeclaration"
+                    :note="pendingNote"
+                    :reviewer-choices="reviewerChoices"
+                    :busy="acceptBusy"
+                    :blocked-title="acceptBlockedTitle"
+                    :needs-pr="needsPr"
+                    :auto-merge-visible="autoMergeVisible"
+                    :auto-merge-armed-by="autoMergeArmedBy"
+                    :pr-checks="prChecks"
+                    :docked="!!docked"
+                    :my-handle="author"
+                    :agent-name="agentName"
+                    :agent-handle="agentHandle"
+                    :deliverable-busy="deliverableBusy"
+                    :deliverable-error="deliverableError"
+                    @accept="onAcceptCard"
+                    @review="emit('review')"
+                    @approve="onApproveCard"
+                    @reassign="onReassignCard"
+                    @download="onDownloadDeliverable"
+                    @reject="onRejectCard"
+                    @void="onVoidCard"
+                    @force-merge="onForceMerge"
+                    @toggle-auto-merge="onToggleAutoMerge"
+                  />
 
-                  <!-- 已采纳等合并 (`pr_open`, #718 退役): 历史卡的兜底脸，参考闸门那两张的
-           处理——只读、不转圈（转圈是在说平台此刻正跑着什么，而平台什么也没跑）。
-           采纳现在当场合并，这个状态不会再有新卡进来。 -->
-                  <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box">
-                    <div class="pa-3">
-                      <div class="text-caption text-medium-emphasis mb-2">
-                        <UserRef :handle="deliveringCard.decided_by" /> 已采纳，但合并未完成，需要手动处理
-                      </div>
-                      <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
-               note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
-               标：颜色是唯一信号的话，色觉障碍和灰度截图上就什么都没有了。 -->
-                      <div
-                        v-if="deliveryNote"
-                        class="d-flex align-start ga-1 text-caption mb-2"
-                        :class="deliveryNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
-                      >
-                        <v-icon
-                          v-if="deliveryNote.tone === 'error'"
-                          icon="mdi-alert-circle-outline"
-                          size="14"
-                          class="mt-1"
-                        />
-                        <span>{{ deliveryNote.text }}</span>
-                      </div>
-                      <!-- PR + 实时 CI，复用待采纳卡那套 prChecks 轮询。 -->
-                      <div v-if="deliveringCard.pr_url">
-                        <div class="d-flex align-center flex-wrap ga-2">
-                          <v-chip
-                            size="small"
-                            variant="tonal"
-                            prepend-icon="mdi-source-pull"
-                            :href="deliveringCard.pr_url"
-                            target="_blank"
-                          >
-                            PR #{{ deliveringCard.pr_number }}
-                          </v-chip>
-                          <span v-if="deliveringCard.pr_head_sha" class="text-caption text-medium-emphasis">
-                            {{ deliveringCard.pr_head_sha.slice(0, 7) }}
-                          </span>
-                          <span
-                            v-if="prChecks?.available && prChecks.mergeable === false"
-                            class="text-caption text-error"
-                          >
-                            与主分支冲突
-                          </span>
-                        </div>
-                        <div
-                          v-for="chk in prChecks?.checks ?? []"
-                          :key="chk.name"
-                          class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
-                        >
-                          <v-icon
-                            size="14"
-                            :color="
-                              chk.conclusion === 'success'
-                                ? 'success'
-                                : chk.conclusion === 'failure'
-                                  ? 'error'
-                                  : undefined
-                            "
-                          >
-                            {{
-                              chk.conclusion === 'success'
-                                ? 'mdi-check-circle'
-                                : chk.conclusion === 'failure'
-                                  ? 'mdi-close-circle'
-                                  : 'mdi-progress-clock'
-                            }}
-                          </v-icon>
-                          {{ chk.name }}
-                          <span v-if="chk.status !== 'completed'">进行中</span>
-                        </div>
-                      </div>
-                    </div>
-                  </v-card>
+                  <!-- 已采纳等合并 (`pr_open`, #718 退役): 历史卡的兜底脸，只读、不转圈。 -->
+                  <AcceptDeliveringFace
+                    v-else-if="deliveringCard"
+                    :card="deliveringCard"
+                    :checks="prChecks"
+                    :note="deliveryNote"
+                  />
 
                   <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
-                  <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box">
-                    <div class="pa-3">
-                      <div class="text-body-2 c-muted mb-3"><UserRef :handle="acceptedCard.decided_by" /> 已采纳</div>
-                      <v-btn
-                        variant="outlined"
-                        class="btn-secondary"
-                        :loading="acceptBusy"
-                        :disabled="acceptBusy"
-                        prepend-icon="mdi-undo"
-                        @click="onRevokeCard"
-                      >
-                        撤回采纳
-                      </v-btn>
-                    </div>
-                  </v-card>
+                  <AcceptDecidedFace
+                    v-else-if="acceptedCard"
+                    :card="acceptedCard"
+                    :busy="acceptBusy"
+                    @revoke="onRevokeCard"
+                  />
                 </div>
               </div>
             </div>
           </Transition>
-          <div v-if="docked" class="accept-bar">
-            <button
-              type="button"
-              class="accept-bar__toggle"
-              :aria-expanded="expanded"
-              aria-controls="accept-detail"
-              :title="expanded ? t('work.room.accept.collapse') : t('work.room.accept.expand')"
-              @click="expanded = !expanded"
-            >
-              <v-icon :color="bar.color" size="18">{{ bar.icon }}</v-icon>
-              <span class="accept-bar__title">{{ bar.title }}</span>
-              <span v-if="bar.sub" class="accept-bar__sub">{{ bar.sub }}</span>
-              <v-icon size="16" class="accept-bar__caret">{{
-                expanded ? 'mdi-chevron-down' : 'mdi-chevron-up'
-              }}</v-icon>
-            </button>
-            <!-- 决策在聊天，审查在面板: the bar asks for a decision, and the thing the
-                 decision is about is a diff in the panel next to it. -->
-            <v-btn v-if="pendingCard" size="small" color="primary" variant="flat" @click="emit('review')">
-              {{ t('work.room.accept.review') }}
-            </v-btn>
-          </div>
+
+          <AcceptDockBar
+            v-if="docked"
+            :icon="bar.icon"
+            :color="bar.color"
+            :title="bar.title"
+            :sub="bar.sub"
+            :expanded="expanded"
+            :can-review="!!pendingCard"
+            @toggle="expanded = !expanded"
+            @review="emit('review')"
+          />
         </div>
       </div>
     </div>
@@ -1102,14 +255,6 @@ defineExpose({ reload: loadAcceptCard })
   grid-template-rows: 0fr;
   opacity: 0;
 }
-/* 这一列里唯一的卡片，因为它是唯一的决策入口。绿色（合并的惯例色）保留，但
-   强调改成边框而不是左竖条 —— ChatPanel 自己的规矩是「强调靠 wash 底色，不靠
-   左竖条（左条纹只留给引用块和结构线）」，而这里原本就是一条 3px 左竖条。 */
-/* 展开的那张卡不再自己描一圈绿边：它长在横条上面，横条和它是一块。 */
-.merge-box {
-  position: relative;
-  background: transparent;
-}
 /* 贴着输入框的那一块：一条顶线把它和对话分开，底色和对话栏一样。展开的详情有上
    限，再长就在里面滚——它不能把对话整个盖住。 */
 .accept-dock {
@@ -1133,83 +278,5 @@ defineExpose({ reload: loadAcceptCard })
   align-items: center;
   gap: 8px;
   padding: 12px 12px 0;
-}
-.accept-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 4px 8px 4px 4px;
-}
-.accept-bar__toggle {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 8px;
-  border-radius: var(--radius-md);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.accept-bar__toggle:hover {
-  background: var(--fill);
-}
-/* 标题可以是一次改动的整句标题（最长 72 字），窄屏上一行放不下，所以它也跟着截断；
-   「等谁」那半句更短，先让标题让位。 */
-.accept-bar__title {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-}
-.accept-bar__sub {
-  flex: 0 0 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.accept-bar__caret {
-  flex: none;
-  margin-left: auto;
-  color: var(--faint);
-}
-/* 机器闸门: tail of the failed check's output (查看输出). */
-.gate-output {
-  max-height: 240px;
-  overflow: auto;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--fill);
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-/* Secondary button: 1px border, neutral text, surface bg. */
-.btn-secondary {
-  border: 1px solid var(--line-2);
-  color: var(--text);
-  background: var(--surface);
-}
-/* 「谁的活」的圈。形状和颜色都由 `lib/board.ts` 一处给出（内联样式），这里只管
-   尺寸 —— scoped 样式进不了别的组件，颜色写在这儿就意味着卡和看板各有一份。 */
-.board-dot {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 2px solid var(--faint);
 }
 </style>

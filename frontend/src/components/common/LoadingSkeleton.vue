@@ -433,7 +433,7 @@ function width(i: number): string {
 }
 
 /* RunningWorkView 的 .board-card：padding 10px、margin-bottom 8px、gap 4px、
-   1px 边框 + --radius-md，坐在 --canvas 上。里面四样东西照着卡自己的顺序来：
+   1px 边框 + --radius-md，白底，坐在 --fill 的泳道里。里面四样东西照着卡自己的顺序来：
    标题（可两行，这里画一行）/ 房间·队友·负责人 / 一条分隔线 / 状态 + 时间。
    合计 10+23+4+19+4+7+4+19+10+2 = 102px，真卡 101px。 */
 .skel__card {
@@ -444,7 +444,7 @@ function width(i: number): string {
   margin-bottom: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--canvas);
+  background: var(--surface);
 }
 /* 卡里的标题行盒 22.7px（.t-body 14px × 1.62），比正文默认那根少 1px —— 两张卡
    叠起来那 1px 就会看出来。 */
