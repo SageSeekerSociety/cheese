@@ -157,8 +157,12 @@ jobs:
       # and skipped when it is not. A check whose environment is missing is that
       # check's own `not_collected` — a snapshot with holes in it, not a
       # snapshot that disappears.
+      # `continue-on-error` is deliberately absent from this step and from the
+      # upload below: a run that collected nothing must not read as a run that
+      # succeeded. A check whose environment is missing is `not_collected`
+      # inside a snapshot; a collection that could not happen at all is this
+      # job going red, with the reason in the artifact and the summary.
       - name: Collect the ratchet snapshot
-        continue-on-error: true
         env:
           OUT: ${{ runner.temp }}
         run: |
@@ -183,6 +187,11 @@ jobs:
               echo "exit code: $code"
             } > "$OUT/ratchet-snapshot.failed.txt"
           fi
+          # The collector exits 0 for any snapshot it managed to write, red
+          # checks included, and 2 when the collection itself failed. Carry
+          # that out of the step so a failed collection is a red job, not a
+          # green job with an empty series.
+          exit "$code"
 
       - name: Job summary
         continue-on-error: true
@@ -221,7 +230,6 @@ jobs:
       # artifact says which of the two happened rather than leaving the reader
       # to guess from an absence.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        continue-on-error: true
         if: always()
         with:
           name: ratchet-snapshot
