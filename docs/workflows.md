@@ -152,6 +152,15 @@ task ci:fast                 # 开 PR 前跑；先把分支跟进 main（fetch +
 task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc
 ```
 
+**机器上没有 `task` 时**：平台云执行机镜像不预装 task（README 第 13 行的安装脚本可装到 `~/.local/bin`）。Taskfile 只是薄封装，不装 task 时用等价入口，只需 python3 + uv（镜像里已有，pre-commit 由 uvx 解析）：
+
+```bash
+python3 .github/scripts/ci-fast.py             # ≡ task ci:fast
+python3 .github/scripts/ci-fast.py --types     # ≡ task ci:fast -- --types
+cd backend && uv sync                          # ≡ task be:deps:sync（备 backend/.venv）
+cd frontend && pnpm install --frozen-lockfile  # ≡ task fe:install（备 node_modules）
+```
+
 - **它证明什么**：本次 merge diff 命中的静态检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
 - **这些都不是绿**（退出码 2/3，机器可读）：hook 被 SKIP 环境跳过、无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行、报告写失败、hook 超时、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
 - **边界**：只覆盖静态检查，pytest / build / e2e 不在这一层（摘要会列出未跑项和定向建议）。不带 `--types` 会漏缺 prop 类型那类回归。
