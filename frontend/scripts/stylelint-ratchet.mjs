@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
 import {
   compare,
   formatReport,
@@ -29,7 +30,6 @@ import {
   tightenedBaseline,
   violationDetails,
 } from './stylelint-ratchet-core.mjs'
-import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')

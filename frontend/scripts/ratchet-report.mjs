@@ -73,4 +73,3 @@ export function verdict({ id, better = BETTER, result, details = [] }) {
     details: details.slice(0, 200),
   }
 }
-

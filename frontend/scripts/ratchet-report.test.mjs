@@ -20,8 +20,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
 import { after, describe, it } from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { BETTER, verdict } from './ratchet-report.mjs'
 
@@ -90,8 +90,7 @@ writeFileSync(
 )
 
 describe('cannotJudge', () => {
-  const runFixture = (...args) =>
-    spawnSync(process.execPath, [FIXTURE, ...args], { cwd: ROOT, encoding: 'utf8' })
+  const runFixture = (...args) => spawnSync(process.execPath, [FIXTURE, ...args], { cwd: ROOT, encoding: 'utf8' })
 
   it('exits 2 under --json, with a record that says why', () => {
     const { status, stdout, stderr } = runFixture('--json')
@@ -135,7 +134,11 @@ function agreedRecord(script, id) {
   const record = JSON.parse(lines[0])
   assert.equal(record.id, id)
   assert.equal(record.better, BETTER)
-  assert.equal(record.status, STATUS_OF_EXIT[run.status], `exit ${run.status} but the record says ${record.status}: ${run.stderr}`)
+  assert.equal(
+    record.status,
+    STATUS_OF_EXIT[run.status],
+    `exit ${run.status} but the record says ${record.status}: ${run.stderr}`
+  )
 
   if (run.status === 2) assert.equal(typeof record.reason, 'string')
   else {
