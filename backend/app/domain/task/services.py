@@ -37,6 +37,7 @@ from app.domain.task.submission_state import (
     refresh_completion_status,
     refresh_completion_status_for_submission,
 )
+from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
 
 
@@ -281,6 +282,12 @@ class TaskMembershipService:
                     "A member of this team has already claimed this task "
                     "through another team."
                 )
+
+        # 一个人不是团队：只有自己的那个团队不能领团队题，一个人去领个人题。
+        if is_team:
+            team = await self._repo._session.get(Team, member_id)
+            if team is not None and team.personal_owner_user_id is not None:
+                raise BadRequestError("A team task is claimed by a team, not a person.")
 
         # requireRealName：简化为只校验提交者本人
         if task.require_real_name and self._realname_repo is not None and approved == 0:

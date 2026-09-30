@@ -48,9 +48,12 @@ class TeamRepository:
         self._session = session
 
     async def exists_by_name(self, name: str) -> bool:
+        # A personal team is shown by its owner's nickname, never by the name
+        # stored on it, so it holds no name another team could want.
         stmt = select(func.count(Team.id)).where(
             Team.name == name,
             Team.deleted_at.is_(None),
+            Team.personal_owner_user_id.is_(None),
         )
         result = await self._session.execute(stmt)
         return bool(result.scalar_one() or 0)
@@ -166,8 +169,14 @@ class TeamRepository:
         team_ids = [rel.team_id for rel in rel_result.scalars().all()]
         if not team_ids:
             return []
+        # A team task is claimed by a team; one person on their own takes a
+        # task open to individuals, so their personal team is never a candidate.
         team_stmt: Select[tuple[Team]] = select(Team).where(
-            and_(Team.id.in_(team_ids), Team.deleted_at.is_(None))
+            and_(
+                Team.id.in_(team_ids),
+                Team.deleted_at.is_(None),
+                Team.personal_owner_user_id.is_(None),
+            )
         )
         team_result = await self._session.execute(team_stmt)
         return list(team_result.scalars().all())
