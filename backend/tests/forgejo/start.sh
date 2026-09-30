@@ -5,7 +5,15 @@ here="$(cd "$(dirname "$0")" && pwd)"
 port="${FORGEJO_TEST_PORT:-33086}"
 token_file="${FORGEJO_TEST_TOKEN_FILE:-$here/admin-token}"
 dc() { docker --context "${DOCKER_CONTEXT:-colima}" compose -p "${FORGEJO_TEST_PROJECT:-cheese-forge1286-test}" -f "$here/compose.yml" "$@"; }
-dc up -d
+case "${FORGEJO_TEST_CI_PULL_RETRY:-}" in
+  "") dc up -d ;;
+  1)
+    bash "$here/pull-ci.sh" docker --context "${DOCKER_CONTEXT:-colima}" compose \
+      -p "${FORGEJO_TEST_PROJECT:-cheese-forge1286-test}" -f "$here/compose.yml"
+    dc up -d --pull never
+    ;;
+  *) echo "FORGEJO_TEST_CI_PULL_RETRY must be unset or 1" >&2; exit 2 ;;
+esac
 for attempt in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:$port/api/v1/version" >/dev/null; then break; fi
   sleep 1
