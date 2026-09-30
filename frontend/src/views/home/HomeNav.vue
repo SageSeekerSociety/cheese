@@ -176,7 +176,7 @@ const joinOpen = ref(false)
             <v-icon size="16" class="home-nav__caret">{{
               isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
             }}</v-icon>
-            <v-avatar size="22" rounded="md" class="home-nav__mark">
+            <v-avatar size="22" class="home-nav__mark" :class="{ 'home-nav__mark--person': team.personal }">
               <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
                  后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
               <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
@@ -277,7 +277,7 @@ const joinOpen = ref(false)
 }
 .home-nav__mark {
   flex: none;
-  /* 团队头像、自己名下的头像和空间首字一个形状：圆角方块。 */
+  /* 形状照 GitHub：人是圆的，团队、空间是圆角方块。 */
   border-radius: var(--radius-md) !important;
   font-size: 12px;
   font-weight: 600;
@@ -285,6 +285,10 @@ const joinOpen = ref(false)
   background: var(--fill-2);
 }
 /* 头像读不到（没传过、或头像服务不在）时退回首字，和空间那一格同一个样子。 */
+/* 自己名下那一行是本人：用人的圆形。 */
+.home-nav__mark--person {
+  border-radius: var(--radius-pill) !important;
+}
 .home-nav__mark :deep(.v-img__error) {
   display: flex;
   align-items: center;
