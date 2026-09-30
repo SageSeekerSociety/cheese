@@ -22,7 +22,12 @@ def build() -> bytes:
             "domain/agent/harness/pi/hooks.py",
             "domain/agent/harness/pi/mcp.py",
             "domain/agent/harness/pi/project_skills.py",
+            "domain/agent/harness/pi/subagents.py",
+            # How a subagent's prompt names the card its work lands on, read
+            # the way the other harnesses' adapters read it (`subagents.py`).
+            "domain/room_task/thread_label.py",
             "domain/agent/harness/pi/runner.py",
             "domain/agent/harness/pi/entry.py",
         ),
+        extra={"app/domain/room_task/__init__.py": ""},
     )
