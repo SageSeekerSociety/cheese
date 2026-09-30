@@ -13,6 +13,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import PreviewPages from './PreviewPages.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 /** pdf.js 是假的：这条测的是「谁作废了谁」，不是 pdf.js 会不会解析。
  *  `calls` 是自己数的，不用 vi.fn：组件是动态 import（`await import('pdfjs-dist/legacy/build/pdf.mjs')`），
  *  这个假模块要等 library() 真的跑起来才建起来——beforeEach 里够不着它。 */

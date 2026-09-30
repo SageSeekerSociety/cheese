@@ -19,7 +19,7 @@ import { ApiError, listBlocks } from '../api'
 
 import ChatPanel from './ChatPanel.vue'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 async function flushPromises() {
   await vi.advanceTimersByTimeAsync(0)
@@ -45,11 +45,13 @@ function mountPanel(showComposer = false) {
       topic: { id: crypto.randomUUID(), project_id: 'p', title: 'Recovery', kind: 'topic' } as Topic,
       showComposer,
     },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.useFakeTimers()
   sockets.length = 0
   vi.stubGlobal('WebSocket', TestSocket)

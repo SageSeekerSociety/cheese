@@ -46,6 +46,11 @@ import { ApiError } from '../api'
 
 import DocEditor from './DocEditor.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const wrappers: ReturnType<typeof render>[] = []
 async function flushPromises() {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0))

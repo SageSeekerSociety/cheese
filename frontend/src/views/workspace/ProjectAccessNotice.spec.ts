@@ -13,6 +13,11 @@ import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。
+beforeEach(() => setLocale('zh-CN'))
+
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 
 import ProjectAccessNotice from './ProjectAccessNotice.vue'

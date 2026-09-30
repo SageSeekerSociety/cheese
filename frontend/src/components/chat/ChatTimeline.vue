@@ -23,6 +23,7 @@ import RoomNotice from '../room/RoomNotice.vue'
 import TimelineMark from '../TimelineMark.vue'
 
 import UserRef from '@/components/common/UserRefLink.vue'
+import { t } from '@/i18n'
 
 defineProps<{
   topic: Topic | null
@@ -151,11 +152,11 @@ function emitOutboxLeave(el: Element, done: () => void) {
         <LoadingSkeleton v-if="loadingHistory" variant="chat" />
       </Transition>
 
-      <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
-        <h2 class="t-title mb-2">从一件具体的事开始</h2>
-        <p class="t-body c-muted mb-4">
-          <UserRef :handle="agentSeat?.handle" :name="agentName" />可以查找资料、起草文档，或和你一起拆分任务
-        </p>
+      <section v-if="showStarters" class="chat-start px-5 py-8" :aria-label="t('work.room.chat.startAria')">
+        <h2 class="t-title mb-2">{{ t('work.room.chat.startTitle') }}</h2>
+        <i18n-t scope="global" keypath="work.room.chat.startBody" tag="p" class="t-body c-muted mb-4">
+          <template #agent><UserRef :handle="agentSeat?.handle" :name="agentName" /></template>
+        </i18n-t>
         <div class="d-flex flex-wrap ga-2">
           <v-btn
             v-for="prompt in starterPrompts"
@@ -179,7 +180,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
         data-testid="chat-older-loader"
       >
-        {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
+        {{ loadingOlder ? t('work.room.chat.loadingOlder') : t('work.room.chat.older') }}
       </div>
 
       <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
@@ -190,7 +191,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
                这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
         <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
           <v-icon size="12">mdi-arrow-down</v-icon>
-          以下是新消息
+          {{ t('work.room.chat.newMessagesBelow') }}
         </TimelineMark>
         <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻

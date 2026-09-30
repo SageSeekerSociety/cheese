@@ -17,6 +17,8 @@ import DocComments from './doc/DocComments.vue'
 import DocSurface from './doc/DocSurface.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
+import { t } from '@/i18n'
+
 withDefaults(
   defineProps<{
     topic: Topic | null
@@ -72,7 +74,7 @@ withDefaults(
     overwriteWithMine: () => void
     setError: (message: string | null) => void
   }>(),
-  { agentName: '芝士', topicList: () => [] }
+  { agentName: () => t('work.room.defaultAgentName'), topicList: () => [] }
 )
 
 const emit = defineEmits<{
@@ -154,7 +156,7 @@ defineExpose({
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
-        <div>选择一个话题查看文档</div>
+        <div>{{ t('work.room.doc.pickTopic') }}</div>
       </div>
     </div>
 
@@ -165,18 +167,28 @@ defineExpose({
       <div v-if="hasPendingEdits" class="doc-notice">
         <v-icon size="16" class="doc-notice__icon">mdi-content-save-alert-outline</v-icon>
         <div class="doc-notice__text">
-          未保存的改动已保留，编辑器中是已保存的版本。
-          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，将先恢复最近一份。</template>
+          {{ t('work.room.doc.pendingKept') }}
+          <template v-if="pendingEdits.length > 1">{{
+            t('work.room.doc.pendingCount', { count: pendingEdits.length })
+          }}</template>
         </div>
-        <button type="button" class="doc-notice__btn" @click="applyPendingEdits">恢复我的改动</button>
-        <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">丢弃</button>
+        <button type="button" class="doc-notice__btn" @click="applyPendingEdits">
+          {{ t('work.room.doc.restoreMine') }}
+        </button>
+        <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">
+          {{ t('work.room.doc.discard') }}
+        </button>
       </div>
       <!-- Server and local both moved: neither side wins silently. -->
       <div v-if="externalDoc !== null" class="doc-notice doc-notice--conflict">
         <v-icon size="16" class="doc-notice__icon">mdi-source-branch</v-icon>
-        <div class="doc-notice__text">{{ agentName }}更新了这篇文档，你也有未保存的改动。两个版本都已保留</div>
-        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看{{ agentName }}的版本</button>
-        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">保留我的版本</button>
+        <div class="doc-notice__text">{{ t('work.room.doc.externalConflict', { name: agentName }) }}</div>
+        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">
+          {{ t('work.room.doc.viewAgentVersion', { name: agentName }) }}
+        </button>
+        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">
+          {{ t('work.room.doc.keepMine') }}
+        </button>
       </div>
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
@@ -187,17 +199,17 @@ defineExpose({
              单占一行就是一条什么都没说的横杠。源码模式下编辑器顶到最上面，浮着会压住
              代码，才回到自己的一行。 -->
         <div class="doc-bar" :class="{ 'doc-bar--row': sourceMode }">
-          <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
-          <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
+          <span v-if="saveStatus === 'loading'" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
+          <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">{{ t('work.room.doc.saving') }}</span>
           <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
           <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
             <v-icon size="13">mdi-pause-circle-outline</v-icon>
-            已暂停 · 改动未保存
+            {{ t('work.room.doc.paused') }}
           </span>
           <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
-            <span class="status-dot status-dot--ok" />已保存
+            <span class="status-dot status-dot--ok" />{{ t('work.room.doc.saved') }}
           </span>
-          <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
+          <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">{{ t('work.room.doc.editing') }}</span>
 
           <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
                就回去。平常用不上，进去的入口在 ⋯ 里。 -->
@@ -207,20 +219,20 @@ defineExpose({
             variant="text"
             color="medium-emphasis"
             class="me-1"
-            title="回到编辑"
+            :title="t('work.room.doc.backToEdit')"
             @click="toggleEditable"
           >
-            只读
+            {{ t('work.room.doc.readOnly') }}
           </v-btn>
           <v-btn
             v-if="sourceMode"
             size="small"
             variant="text"
             class="me-1 tool-btn--active"
-            title="退出源码模式"
+            :title="t('work.room.doc.exitSourceMode')"
             @click="toggleSourceMode"
           >
-            源码
+            {{ t('work.room.doc.source') }}
           </v-btn>
           <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
             <template #activator="{ props: menuProps }">
@@ -230,14 +242,14 @@ defineExpose({
                 size="small"
                 variant="text"
                 color="medium-emphasis"
-                title="更多"
-                aria-label="更多"
+                :title="t('work.room.menu.more')"
+                :aria-label="t('work.room.menu.more')"
               />
             </template>
-            <v-list density="compact" aria-label="文档选项">
+            <v-list density="compact" :aria-label="t('work.room.doc.options')">
               <v-list-item
                 v-if="!editingBlocked"
-                :title="editable ? '设为只读' : '回到编辑'"
+                :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
                 :disabled="sourceMode"
                 @click="toggleEditable"
               />
@@ -246,8 +258,8 @@ defineExpose({
                    见 editingBlocked。 -->
               <v-list-item
                 v-if="mdAndUp"
-                :title="sourceMode ? '退出源码模式' : '源码模式'"
-                subtitle="直接编辑 markdown 原文"
+                :title="sourceMode ? t('work.room.doc.exitSourceMode') : t('work.room.doc.sourceMode')"
+                :subtitle="t('work.room.doc.sourceModeHint')"
                 @click="toggleSourceMode"
               />
             </v-list>
@@ -280,14 +292,10 @@ defineExpose({
             <div v-if="lossy" class="doc-lossy-banner">
               <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
               <div class="doc-lossy-banner__text">
-                {{
-                  editingBlocked
-                    ? '这篇文档包含编辑器无法显示的格式，需要在源码模式下编辑。手机上暂不支持，可以在电脑上打开'
-                    : '这篇文档包含编辑器无法显示的格式，保存会丢失这些格式，因此自动保存已暂停。在源码模式下编辑可以保留原文'
-                }}
+                {{ editingBlocked ? t('work.room.doc.lossyBlocked') : t('work.room.doc.lossy') }}
               </div>
               <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
-                切换到源码模式
+                {{ t('work.room.doc.switchToSource') }}
               </button>
             </div>
             <!-- 正文本身。⌘S 从这一层原样落下去（存不存是取数那一半的事）。 -->
@@ -344,16 +352,22 @@ defineExpose({
         <v-card rounded="lg">
           <v-card-title class="text-subtitle-1 d-flex align-center ga-2">
             <v-icon size="20" color="warning">mdi-alert-outline</v-icon>
-            仍要保存？
+            {{ t('work.room.doc.saveAnywayTitle') }}
           </v-card-title>
           <v-card-text class="text-body-2 pt-0">
-            编辑器无法显示的格式会丢失。在源码模式下编辑可以保留原文，你的改动会暂存
+            {{ t('work.room.doc.saveAnywayBody') }}
           </v-card-text>
           <v-card-actions>
             <v-spacer />
-            <v-btn size="small" variant="text" @click="closeLossyConfirm()"> 取消 </v-btn>
-            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式编辑 </v-btn>
-            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave"> 仍要保存 </v-btn>
+            <v-btn size="small" variant="text" @click="closeLossyConfirm()">
+              {{ t('work.room.doc.cancel') }}
+            </v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()">
+              {{ t('work.room.doc.editInSource') }}
+            </v-btn>
+            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave">
+              {{ t('work.room.doc.saveAnyway') }}
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>

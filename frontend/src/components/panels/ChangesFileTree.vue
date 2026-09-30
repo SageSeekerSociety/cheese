@@ -8,6 +8,8 @@ import type { FileRow } from '../../lib/changesTree'
 
 import { nextTick, ref, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 const props = defineProps<{
   rows: FileRow[]
   /** 全部文件时文件夹默认收着；只看改动时那份清单一律摊开。 */
@@ -75,8 +77,12 @@ watch(
         <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
         <span class="file-item__name">{{ row.name }}</span>
         <!-- 变更标记: 新增 / 删除 说的是这个文件本身的去留，改过的给增删行数。 -->
-        <span v-if="row.diff?.status === 'added'" class="file-mark file-mark--add">新增</span>
-        <span v-else-if="row.diff?.status === 'removed'" class="file-mark file-mark--del">删除</span>
+        <span v-if="row.diff?.status === 'added'" class="file-mark file-mark--add">{{
+          t('work.room.changes.fileAdded')
+        }}</span>
+        <span v-else-if="row.diff?.status === 'removed'" class="file-mark file-mark--del">{{
+          t('work.room.changes.fileRemoved')
+        }}</span>
         <template v-else-if="row.diff">
           <span v-if="row.diff.added" class="file-mark file-mark--add">+{{ row.diff.added }}</span>
           <span v-if="row.diff.removed" class="file-mark file-mark--del">−{{ row.diff.removed }}</span>

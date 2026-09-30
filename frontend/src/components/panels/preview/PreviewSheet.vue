@@ -8,6 +8,8 @@
 
 import { computed, ref, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     /** 表格文件的原始字节。 */
@@ -144,7 +146,7 @@ function openCsv(data: ArrayBuffer) {
   const text = decodeText(data)
   const rows = parseCsv(text, sniffSeparator(text))
   if (!rows.length) {
-    failure.value = '这个文件是空的'
+    failure.value = t('work.room.preview.fileEmpty')
     return
   }
   sheets.value = [{ name: '', rows, width: Math.max(...rows.map((r) => r.length)) }]
@@ -184,10 +186,10 @@ async function open(data: ArrayBuffer) {
     if (mine !== generation) return
     sheets.value = read
     activeIndex.value = 0
-    if (!read.length) failure.value = '这个表格里没有工作表'
+    if (!read.length) failure.value = t('work.room.preview.noSheets')
   } catch (e) {
     if (mine !== generation) return
-    failure.value = e instanceof Error ? e.message : '无法读取这个表格'
+    failure.value = e instanceof Error ? e.message : t('work.room.preview.sheetReadFailed')
   } finally {
     if (mine === generation) loading.value = false
   }
@@ -225,7 +227,7 @@ watch(
     </div>
     <div v-else-if="failure" class="ps__state ps__state--text">
       <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>无法显示这个表格</div>
+      <div>{{ t('work.room.preview.sheetCantDisplay') }}</div>
       <div class="t-meta mt-1">{{ failure }}</div>
     </div>
 

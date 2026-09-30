@@ -32,6 +32,8 @@ import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
 
 import { useTopicMemory } from './useTopicMemory'
 
+import { t } from '@/i18n'
+
 export interface PanelChangesProps {
   topicId: string | null
   projectId: string | null
@@ -68,12 +70,18 @@ export function usePanelChanges(props: PanelChangesProps) {
   let fileRequest = 0
   let taskRequest = 0
   const currentTask = computed(() => taskOptions.value.find((task) => task.id === selectedTask.value))
-  const sourceTitle = computed(() => (selectedTask.value ? currentTask.value?.title ?? '任务不可用' : '项目当前代码'))
+  const sourceTitle = computed(() =>
+    selectedTask.value
+      ? currentTask.value?.title ?? t('work.room.changes.taskUnavailable')
+      : t('work.room.changes.projectCode')
+  )
   // 任务结束了，它的文件就只读——这件事以前是横条下面单独一行字，现在跟在状态后面。
   const sourceStatus = computed(() => {
-    if (!selectedTask.value) return '只读'
+    if (!selectedTask.value) return t('work.room.changes.readOnly')
     const status = currentTask.value?.presentation.display_status ?? ''
-    return currentTask.value && currentTask.value.status !== 'open' ? `${status} · 只读` : status
+    return currentTask.value && currentTask.value.status !== 'open'
+      ? t('work.room.changes.statusReadOnly', { status })
+      : status
   })
   const sourceUnavailable = computed(() => tasksLoaded.value && !!selectedTask.value && !currentTask.value)
   const requestedSource = ref<FileSource>('live')
@@ -97,7 +105,8 @@ export function usePanelChanges(props: PanelChangesProps) {
             delete overviewErrors.value[task.id]
           } catch (error) {
             if (sourceEpoch !== epoch) return
-            overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
+            overviewErrors.value[task.id] =
+              error instanceof Error ? error.message : t('work.room.changes.loadChangesFailed')
             delete overviewDiffs.value[task.id]
           }
         })
@@ -124,7 +133,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (overview.value) await loadOverview()
     } catch (error) {
       if (request === taskRequest) {
-        taskLoadError.value = error instanceof Error ? error.message : '任务加载失败'
+        taskLoadError.value = error instanceof Error ? error.message : t('work.room.changes.loadTasksFailed')
       }
     }
   }
@@ -150,7 +159,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     try {
       await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '下载失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.downloadFailed')
     }
   }
 
@@ -182,7 +191,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       gitCommits.value = log.data
       gitDiff.value = diff.diff
     } catch (e) {
-      if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : '加载失败'
+      if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       if (selectedTask.value === task && sourceEpoch === epoch) {
         loading.value = false
@@ -444,7 +453,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       }
     } catch (e) {
       if (sourceEpoch !== epoch) return
-      errorMsg.value = e instanceof Error ? e.message : '加载失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       if (selectedTask.value === task && sourceEpoch === epoch) loading.value = false
     }
@@ -503,7 +512,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       revealInTree(path)
     } catch (e) {
       if (selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
-      errorMsg.value = e instanceof Error ? e.message : '读取文件失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.readFileFailed')
     }
   }
 
@@ -535,7 +544,7 @@ export function usePanelChanges(props: PanelChangesProps) {
         // show the conflict and let the human reload or overwrite on purpose.
         fileConflict.value = true
       } else {
-        errorMsg.value = e instanceof Error ? e.message : '保存失败'
+        errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.saveFailed')
       }
     } finally {
       if (selectedTask.value === task && sourceEpoch === epoch) fileSaving.value = false
@@ -559,7 +568,8 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (epoch !== sourceEpoch || openPath.value !== path) return
       await writeOpenFile(current.version)
     } catch (error) {
-      if (epoch === sourceEpoch) errorMsg.value = error instanceof Error ? error.message : '读取文件失败'
+      if (epoch === sourceEpoch)
+        errorMsg.value = error instanceof Error ? error.message : t('work.room.changes.readFileFailed')
     }
   }
 

@@ -77,7 +77,7 @@ async function load(silent = false) {
       errorMsg.value = null
     }
   } catch {
-    if (!silent && props.projectId === pid) errorMsg.value = '加载失败'
+    if (!silent && props.projectId === pid) errorMsg.value = t('work.board.loadFailed')
   } finally {
     inFlight = false
     if (!silent && props.projectId === pid) loading.value = false
@@ -115,7 +115,7 @@ watch(
  *  多条活共用一棵树、一棵树开一个 PR。照抄那一行只会写出一个假的事实。 */
 const roomTitle = computed(() => {
   const byId = new Map((store.topics as Topic[]).map((t) => [t.id, t.title]))
-  return (roomId: string) => byId.get(roomId) ?? '未知房间'
+  return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 
 // 「谁在做」是一个人，不是一个 handle。名册里有昵称和他自己挑的头像，卡上就该是
@@ -210,8 +210,8 @@ function countLabel(column: BoardColumn): string {
  *  条，三列全空、底下一条「已完成 292」才是常态。所以「施工中」那一列还要多说一
  *  句下一步——一块空板本身说不出该做什么。 */
 function emptyLine(column: BoardColumn): string {
-  if (mine.value) return '暂无分配给你的任务'
-  return `暂无${columnLabel(column)}的任务`
+  if (mine.value) return t('work.board.noneMine')
+  return t('work.board.emptyColumn', { column: columnLabel(column) })
 }
 
 /** 这个项目还什么都没有：没有活，也没有一个话题。
@@ -264,8 +264,8 @@ const tally = computed(() => {
   const all = totalByColumn.value
   return [
     ...BOARD_COLUMNS.map((c) => ({ label: c.label, n: all.get(c.key)?.length ?? 0 })),
-    { label: '已完成', n: all.get('done')?.length ?? 0 },
-  ].filter((t) => t.n > 0)
+    { label: columnLabel('done'), n: all.get('done')?.length ?? 0 },
+  ].filter((item) => item.n > 0)
 })
 
 // 打开一张卡 = 打开**它所在的房间**，然后在总览那一格钻进这张卡。一件活不是
@@ -292,7 +292,7 @@ function openTask(task: RoomTask) {
           </template>
         </template>
         <!-- 正文已经整屏说了「暂无任务」时，这里不再说第二遍。 -->
-        <template v-else-if="!loading && !nothingYet">暂无任务</template>
+        <template v-else-if="!loading && !nothingYet">{{ t('work.room.noTasks') }}</template>
       </span>
     </template>
     <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
@@ -300,7 +300,7 @@ function openTask(task: RoomTask) {
     <template v-if="mineHandle" #controls>
       <button type="button" class="board__mine t-meta tap-target" :aria-pressed="mine" @click="toggleMine">
         <span class="board__sw" aria-hidden="true" />
-        只看我的
+        {{ t('work.board.mineOnly') }}
       </button>
     </template>
     <div class="board">
@@ -309,7 +309,7 @@ function openTask(task: RoomTask) {
 
       <div v-if="errorMsg" class="pa-6 t-body c-muted">
         {{ errorMsg }}
-        <v-btn class="ms-2" size="small" variant="text" @click="load()">重试</v-btn>
+        <v-btn class="ms-2" size="small" variant="text" @click="load()">{{ t('work.board.retry') }}</v-btn>
       </div>
 
       <template v-else-if="nothingYet">
@@ -317,8 +317,10 @@ function openTask(task: RoomTask) {
            「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。产物那一列在
            这一屏上也不画：没有派出去过一条活的项目不可能有产物。 -->
         <div class="board__start">
-          <p class="t-body">暂无任务</p>
-          <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">进入对话</v-btn>
+          <p class="t-body">{{ t('work.room.noTasks') }}</p>
+          <v-btn v-if="rootTopicId" class="mt-4" color="primary" variant="flat" @click="openHomeRoom">{{
+            t('work.board.openChat')
+          }}</v-btn>
         </div>
       </template>
 
@@ -372,7 +374,7 @@ function openTask(task: RoomTask) {
                       >
                       <span class="board-card__name">{{ ownerName(row.owner_handle) }}</span>
                     </span>
-                    <span v-else class="c-faint">暂无负责人</span>
+                    <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
                     <!-- 这个房间四个槽位占满了：还没开始的任务是真的在排队，不是没人理。
                        只标在它们身上，已经在跑的那几张不用说。 -->
                     <span
@@ -382,14 +384,14 @@ function openTask(task: RoomTask) {
                         (runningPerRoom.get(row.room_id) ?? 0) >= 4
                       "
                       class="board-card__full"
-                      >排队中</span
+                      >{{ t('work.board.queued') }}</span
                     >
                   </span>
                   <span class="board-card__rule" aria-hidden="true" />
                   <span class="board-card__status t-meta">
                     <!-- 在跑的那条活换成侧栏那一颗呼吸点（同一个类名、同一套观感）：
                        色点是列级的，同一列里在跑的和排队的原来长得一模一样。 -->
-                    <span v-if="isRunning(row)" class="running-dot" title="正在运行" />
+                    <span v-if="isRunning(row)" class="running-dot" :title="t('work.board.running')" />
                     <span
                       v-else
                       class="board-dot"
@@ -413,7 +415,7 @@ function openTask(task: RoomTask) {
              时候这一列留着：一列凭空消失会让整个网格错位。 -->
           <section class="board-col board-col--made">
             <header class="board-col__head">
-              <span class="board-col__name t-body">做出了什么</span>
+              <span class="board-col__name t-body">{{ t('work.board.made') }}</span>
               <span class="board-col__count t-meta">{{ madeCount }}</span>
             </header>
             <ArtifactManifest :project-id="projectId" @count="madeCount = $event" />
@@ -428,7 +430,7 @@ function openTask(task: RoomTask) {
             <span class="t-meta board-col__count">{{ countLabel('done') }}</span>
           </button>
           <ul v-if="showDone" class="board__done-list">
-            <li v-if="!doneRows.length" class="board-col__empty t-body">暂无分配给你的任务</li>
+            <li v-if="!doneRows.length" class="board-col__empty t-body">{{ t('work.board.noneMine') }}</li>
             <li v-for="row in doneRows" :key="row.id">
               <button type="button" class="done-row" @click="openTask(row)">
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />

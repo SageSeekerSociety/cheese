@@ -30,6 +30,8 @@ import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
 
+import { t } from '@/i18n'
+
 const props = defineProps<{
   topicId: string | null
   readOnly: boolean
@@ -120,35 +122,33 @@ const moreOpen = ref(false)
 const sourceMenu = ref(false)
 const moreActions = computed<MenuAction[]>(() => {
   const pick = (on: boolean) => (on ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank')
-  const list: MenuAction[] = [
-    { key: 'scope-changed', label: '改动', icon: pick(!props.showAll), onSelect: () => emit('scope-changed', false) },
-    { key: 'scope-all', label: '全部文件', icon: pick(props.showAll), onSelect: () => emit('scope-changed', true) },
+  const item = (key: string, label: string, icon: string, onSelect: () => void): MenuAction => ({
+    key,
+    label,
+    icon,
+    onSelect,
+  })
+  const list = [
+    item('scope-changed', t('work.room.changes.scopeChanged'), pick(!props.showAll), () =>
+      emit('scope-changed', false)
+    ),
+    item('scope-all', t('work.room.changes.scopeAll'), pick(props.showAll), () => emit('scope-changed', true)),
   ]
   if (props.selectedTask && props.currentTask?.status === 'open') {
+    const live = props.fileSource === 'live'
     list.push(
-      {
-        key: 'source-live',
-        label: '机器实时文件',
-        icon: pick(props.fileSource === 'live'),
-        onSelect: () => emit('select-version', 'live'),
-      },
-      {
-        key: 'source-committed',
-        label: '已提交版本',
-        icon: pick(props.fileSource === 'committed'),
-        onSelect: () => emit('select-version', 'committed'),
-      }
+      item('source-live', t('work.room.changes.liveFile'), pick(live), () => emit('select-version', 'live')),
+      item('source-committed', t('work.room.changes.committedVersion'), pick(!live), () =>
+        emit('select-version', 'committed')
+      )
     )
   }
   if (props.fileToolReady && props.openPath) {
-    list.push({ key: 'download', label: '下载', icon: 'mdi-download-outline', onSelect: () => emit('download') })
+    list.push(item('download', t('work.room.changes.download'), 'mdi-download-outline', () => emit('download')))
   }
   list.push({
-    key: 'refresh',
-    label: '刷新',
-    icon: 'mdi-refresh',
+    ...item('refresh', t('work.room.changes.refresh'), 'mdi-refresh', () => emit('refresh')),
     loading: props.refreshing,
-    onSelect: () => emit('refresh'),
   })
   return list
 })
@@ -189,8 +189,8 @@ function revisionReadOnly(): boolean {
           variant="text"
           color="medium-emphasis"
           :class="{ 'tap-target': !mdAndUp }"
-          title="房间改动"
-          aria-label="房间改动"
+          :title="t('work.room.changes.roomChanges')"
+          :aria-label="t('work.room.changes.roomChanges')"
           @click="emit('open-overview')"
         />
         <v-menu v-model="sourceMenu">
@@ -199,14 +199,14 @@ function revisionReadOnly(): boolean {
               v-bind="menuProps"
               type="button"
               class="source-pick"
-              title="切换来源"
-              :aria-label="`切换来源：${props.sourceTitle}`"
+              :title="t('work.room.changes.switchSource')"
+              :aria-label="t('work.room.changes.switchSourceTo', { source: props.sourceTitle })"
             >
               <span class="source-pick__name">{{ props.sourceTitle }}</span>
               <v-icon size="16">mdi-chevron-down</v-icon>
             </button>
           </template>
-          <v-list density="compact" aria-label="文件来源">
+          <v-list density="compact" :aria-label="t('work.room.changes.fileSource')">
             <v-list-item
               v-for="task in props.taskOptions"
               :key="task.id"
@@ -217,8 +217,8 @@ function revisionReadOnly(): boolean {
             />
             <v-divider />
             <v-list-item
-              title="项目当前代码"
-              subtitle="只读"
+              :title="t('work.room.changes.projectCode')"
+              :subtitle="t('work.room.changes.readOnly')"
               :active="props.selectedTask === null"
               @click="emit('open-task', null)"
             />
@@ -234,15 +234,15 @@ function revisionReadOnly(): boolean {
           variant="text"
           class="file-icon-btn"
           :class="{ 'file-icon-btn--on': fileListOpen, 'tap-target': !mdAndUp }"
-          title="文件列表"
+          :title="t('work.room.changes.fileList')"
           @click="fileListOpen = !fileListOpen"
         >
           <v-icon size="18">mdi-format-list-bulleted</v-icon>
         </v-btn>
         <span class="changes-bar__path" :title="props.openPath || ''">
-          {{ (mdAndUp ? props.openPath : props.openPath?.split('/').pop()) || '未打开文件' }}
+          {{ (mdAndUp ? props.openPath : props.openPath?.split('/').pop()) || t('work.room.changes.noFileOpen') }}
         </span>
-        <span v-if="props.fileDirty" class="changes-bar__dot" title="未保存" />
+        <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
       </template>
       <v-spacer v-if="mdAndUp || !props.fileToolReady" />
       <template v-if="props.fileToolReady">
@@ -255,7 +255,7 @@ function revisionReadOnly(): boolean {
             :class="{ 'seg__btn--on': props.effectiveView === 'diff' }"
             @click="emit('view-changed', 'diff')"
           >
-            差异
+            {{ t('work.room.changes.diffView') }}
           </button>
           <button
             type="button"
@@ -263,13 +263,15 @@ function revisionReadOnly(): boolean {
             :class="{ 'seg__btn--on': props.effectiveView === 'edit' }"
             @click="emit('view-changed', 'edit')"
           >
-            {{ props.fileReadOnly || !mdAndUp ? '全文' : '编辑' }}
+            {{ props.fileReadOnly || !mdAndUp ? t('work.room.changes.fullText') : t('work.room.changes.edit') }}
           </button>
         </div>
         <!-- Read-only files (binary / oversized / images) get no 保存 button at
            all: saving one is what corrupted them. 手机上文件只读（见 CodeEditor
            那一处），也就没有保存；每份都是只读，不必每份再说一次。 -->
-        <span v-if="mdAndUp && props.fileReadOnly && props.openPath" class="changes-bar__ro">只读</span>
+        <span v-if="mdAndUp && props.fileReadOnly && props.openPath" class="changes-bar__ro">{{
+          t('work.room.changes.readOnly')
+        }}</span>
         <v-btn
           v-else-if="mdAndUp && !props.fileReadOnly && props.effectiveView === 'edit'"
           size="x-small"
@@ -279,7 +281,7 @@ function revisionReadOnly(): boolean {
           :disabled="!props.fileDirty"
           @click="emit('save')"
         >
-          保存
+          {{ t('work.room.changes.save') }}
         </v-btn>
       </template>
       <template v-if="!mdAndUp">
@@ -289,8 +291,8 @@ function revisionReadOnly(): boolean {
           variant="text"
           color="medium-emphasis"
           class="tap-target"
-          title="更多"
-          aria-label="更多"
+          :title="t('work.room.changes.more')"
+          :aria-label="t('work.room.changes.more')"
           :loading="props.refreshing"
           @click="moreOpen = true"
         />
@@ -304,32 +306,40 @@ function revisionReadOnly(): boolean {
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="更多"
-            aria-label="更多"
+            :title="t('work.room.changes.more')"
+            :aria-label="t('work.room.changes.more')"
             :loading="props.refreshing"
           />
         </template>
-        <v-list density="compact" aria-label="改动选项">
+        <v-list density="compact" :aria-label="t('work.room.changes.options')">
           <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
                是为了顺手看一眼旁边那个没动过的文件。 -->
-          <v-list-subheader>范围</v-list-subheader>
-          <v-list-item title="改动" :active="!props.showAll" @click="emit('scope-changed', false)">
+          <v-list-subheader>{{ t('work.room.changes.scope') }}</v-list-subheader>
+          <v-list-item
+            :title="t('work.room.changes.scopeChanged')"
+            :active="!props.showAll"
+            @click="emit('scope-changed', false)"
+          >
             <template v-if="props.fileDiffs.length" #append>
               <span class="menu-count">{{ props.fileDiffs.length }}</span>
             </template>
           </v-list-item>
-          <v-list-item title="全部文件" :active="props.showAll" @click="emit('scope-changed', true)" />
+          <v-list-item
+            :title="t('work.room.changes.scopeAll')"
+            :active="props.showAll"
+            @click="emit('scope-changed', true)"
+          />
           <template v-if="props.selectedTask && props.currentTask?.status === 'open'">
-            <v-list-subheader>版本</v-list-subheader>
+            <v-list-subheader>{{ t('work.room.changes.version') }}</v-list-subheader>
             <v-list-item
-              title="机器实时文件"
-              subtitle="包含尚未提交的修改"
+              :title="t('work.room.changes.liveFile')"
+              :subtitle="t('work.room.changes.liveNote')"
               :active="props.fileSource === 'live'"
               @click="emit('select-version', 'live')"
             />
             <v-list-item
-              title="已提交版本"
-              subtitle="只读，不包含尚未提交的修改"
+              :title="t('work.room.changes.committedVersion')"
+              :subtitle="t('work.room.changes.committedNote')"
               :active="props.fileSource === 'committed'"
               @click="emit('select-version', 'committed')"
             />
@@ -337,19 +347,23 @@ function revisionReadOnly(): boolean {
           <v-divider class="my-1" />
           <v-list-item
             v-if="props.fileToolReady && props.openPath"
-            title="下载"
+            :title="t('work.room.changes.download')"
             prepend-icon="mdi-download-outline"
             @click="emit('download')"
           />
-          <v-list-item title="刷新" prepend-icon="mdi-refresh" @click="emit('refresh')" />
+          <v-list-item :title="t('work.room.changes.refresh')" prepend-icon="mdi-refresh" @click="emit('refresh')" />
         </v-list>
       </v-menu>
     </div>
     <v-alert v-if="props.taskLoadError" type="error" density="compact" class="ma-4">{{ props.taskLoadError }}</v-alert>
     <div v-if="props.overview" class="room-changes">
-      <p v-if="props.requestedPath" class="source-note">选择一个任务，查看 {{ props.requestedPath }}</p>
-      <p v-if="!props.tasksLoaded && !props.taskLoadError" class="source-note">加载中…</p>
-      <p v-else-if="props.tasksLoaded && !props.taskOptions.length" class="source-note">暂无任务改动</p>
+      <p v-if="props.requestedPath" class="source-note">
+        {{ t('work.room.changes.pickTaskToView', { path: props.requestedPath }) }}
+      </p>
+      <p v-if="!props.tasksLoaded && !props.taskLoadError" class="source-note">{{ t('work.room.changes.loading') }}</p>
+      <p v-else-if="props.tasksLoaded && !props.taskOptions.length" class="source-note">
+        {{ t('work.room.changes.noTaskChanges') }}
+      </p>
       <article v-for="task in props.taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
         <!-- 进任务和铺开文件是两件事，所以是两个按钮：点整行进这条任务，点最右边
              那个箭头才在当前页展开它自己的改动清单。 -->
@@ -361,17 +375,25 @@ function revisionReadOnly(): boolean {
           >
             <span class="t-title">{{ task.title }}</span>
             <span class="source-status">{{ task.presentation.display_status }}</span>
-            <span v-if="props.overviewDiffs[task.id]" class="task-file-count"
-              >{{ props.overviewDiffs[task.id].length }} 个文件</span
-            >
+            <span v-if="props.overviewDiffs[task.id]" class="task-file-count">{{
+              t('work.room.changes.fileCount', { count: props.overviewDiffs[task.id].length })
+            }}</span>
           </button>
           <button
             type="button"
             class="task-change-toggle"
             :aria-expanded="props.expandedTasks.has(task.id)"
             :aria-controls="`task-files-${task.id}`"
-            :title="props.expandedTasks.has(task.id) ? '收起改动文件' : '展开改动文件'"
-            :aria-label="`${props.expandedTasks.has(task.id) ? '收起' : '展开'}「${task.title}」的改动文件`"
+            :title="
+              props.expandedTasks.has(task.id)
+                ? t('work.room.changes.collapseFiles')
+                : t('work.room.changes.expandFiles')
+            "
+            :aria-label="
+              props.expandedTasks.has(task.id)
+                ? t('work.room.changes.collapseFilesOf', { title: task.title })
+                : t('work.room.changes.expandFilesOf', { title: task.title })
+            "
             @click="emit('toggle-task-files', task.id)"
           >
             <v-icon size="18">{{ props.expandedTasks.has(task.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
@@ -383,8 +405,12 @@ function revisionReadOnly(): boolean {
           {{ props.overviewErrors[task.id] }}
         </p>
         <div v-if="props.expandedTasks.has(task.id)" :id="`task-files-${task.id}`">
-          <p v-if="!props.overviewDiffs[task.id] && !props.overviewErrors[task.id]" class="source-note">加载中…</p>
-          <p v-else-if="props.overviewDiffs[task.id]?.length === 0" class="source-note">暂无改动</p>
+          <p v-if="!props.overviewDiffs[task.id] && !props.overviewErrors[task.id]" class="source-note">
+            {{ t('work.room.changes.loading') }}
+          </p>
+          <p v-else-if="props.overviewDiffs[task.id]?.length === 0" class="source-note">
+            {{ t('work.room.changes.noChanges') }}
+          </p>
           <button
             v-for="file in props.overviewDiffs[task.id] ?? []"
             :key="file.path"
@@ -401,19 +427,19 @@ function revisionReadOnly(): boolean {
         </div>
       </article>
       <button type="button" class="task-change-heading project-code" @click="emit('open-task', null)">
-        <span class="t-title">项目当前代码</span>
-        <span class="source-status">只读</span>
+        <span class="t-title">{{ t('work.room.changes.projectCode') }}</span>
+        <span class="source-status">{{ t('work.room.changes.readOnly') }}</span>
         <v-icon size="18" class="ms-auto">mdi-chevron-right</v-icon>
       </button>
     </div>
-    <v-alert v-else-if="props.sourceUnavailable" type="warning" density="compact" class="ma-4"
-      >无法打开这个任务，换一个来源查看</v-alert
-    >
+    <v-alert v-else-if="props.sourceUnavailable" type="warning" density="compact" class="ma-4">{{
+      t('work.room.changes.sourceUnavailable')
+    }}</v-alert>
     <template v-else>
       <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
          而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
          等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
-      <p v-if="props.noRepo" class="source-note">暂无代码仓库</p>
+      <p v-if="props.noRepo" class="source-note">{{ t('work.room.changes.noRepo') }}</p>
       <div v-else-if="props.loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
@@ -424,7 +450,7 @@ function revisionReadOnly(): boolean {
           variant="text"
           size="small"
           @click="emit('select-version', 'committed')"
-          >切换到已提交版本</v-btn
+          >{{ t('work.room.changes.switchToCommitted') }}</v-btn
         >
       </v-alert>
 
@@ -439,16 +465,20 @@ function revisionReadOnly(): boolean {
           class="ma-2"
           data-testid="missing-file"
         >
-          {{ props.missing }} 不在{{ props.selectedTask ? '这个任务' : '项目当前代码' }}里
+          {{
+            t(props.selectedTask ? 'work.room.changes.missingInTask' : 'work.room.changes.missingInProject', {
+              path: props.missing,
+            })
+          }}
         </v-alert>
         <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
            human choose — a silent winner is how edits vanished. -->
         <div v-if="props.fileConflict" class="file-conflict">
           <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
-          <span class="file-conflict__text"> 你编辑期间，这个文件已被修改，直接保存会覆盖这些修改 </span>
-          <v-btn size="x-small" variant="text" @click="emit('reload')">载入最新版本</v-btn>
+          <span class="file-conflict__text"> {{ t('work.room.changes.conflict') }} </span>
+          <v-btn size="x-small" variant="text" @click="emit('reload')">{{ t('work.room.changes.reloadLatest') }}</v-btn>
           <v-btn size="x-small" variant="text" color="error" :loading="props.fileSaving" @click="emit('overwrite')">
-            仍要保存
+            {{ t('work.room.changes.saveAnyway') }}
           </v-btn>
         </div>
         <div class="file-body" :class="{ 'file-body--phone': !mdAndUp }">
@@ -460,7 +490,7 @@ function revisionReadOnly(): boolean {
             :active-path="props.openPath"
             :reveal-tick="props.revealTick"
             :cover="!mdAndUp"
-            :empty-label="props.showAll ? '暂无文件' : '暂无改动'"
+            :empty-label="props.showAll ? t('work.room.changes.noFiles') : t('work.room.changes.noChanges')"
             @select="pickFile"
             @toggle-dir="emit('toggle-dir', $event)"
           />
@@ -473,19 +503,19 @@ function revisionReadOnly(): boolean {
               </div>
               <div v-else-if="props.docRendererMissing && !props.docBytes" class="file-blob">
                 <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
-                <div class="file-blob__title">文档预览未启用</div>
+                <div class="file-blob__title">{{ t('work.room.changes.docPreviewDisabled') }}</div>
                 <v-btn size="small" variant="tonal" class="mt-3" @click="emit('download')">
                   <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                  下载原文件
+                  {{ t('work.room.changes.downloadOriginal') }}
                 </v-btn>
               </div>
               <div v-else-if="props.docError && !props.docBytes" class="file-blob">
                 <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-                <div class="file-blob__title">无法显示这个文件</div>
+                <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
                 <div class="file-blob__note">{{ props.docError }}</div>
                 <v-btn size="small" variant="tonal" class="mt-3" @click="emit('download')">
                   <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                  下载原文件
+                  {{ t('work.room.changes.downloadOriginal') }}
                 </v-btn>
               </div>
               <div v-else class="doc-view__body">
@@ -520,12 +550,12 @@ function revisionReadOnly(): boolean {
                 {{ props.fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
               </v-icon>
               <div class="file-blob__title">
-                {{ props.fileTooLarge ? '文件过大，无法在浏览器中打开' : '非文本文件，无法编辑' }}
+                {{ props.fileTooLarge ? t('work.room.changes.tooLarge') : t('work.room.changes.binary') }}
               </div>
               <div class="file-blob__note">{{ props.openPath }} · {{ fmtBytes(props.fileBytes) }}</div>
               <v-btn size="small" variant="tonal" class="mt-3" @click="emit('download')">
                 <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                下载原文件
+                {{ t('work.room.changes.downloadOriginal') }}
               </v-btn>
             </div>
             <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
@@ -542,8 +572,10 @@ function revisionReadOnly(): boolean {
                它配一个位置，但不配一个和文件并列的入口。 -->
             <div v-else class="changes-scroll">
               <div class="pa-3">
-                <div class="t-eyebrow mb-2">提交记录</div>
-                <div v-if="props.gitCommits.length === 0" class="text-medium-emphasis text-body-2">暂无提交</div>
+                <div class="t-eyebrow mb-2">{{ t('work.room.changes.commits') }}</div>
+                <div v-if="props.gitCommits.length === 0" class="text-medium-emphasis text-body-2">
+                  {{ t('work.room.changes.noCommits') }}
+                </div>
                 <v-list v-else density="compact" class="py-0">
                   <v-list-item v-for="c in props.gitCommits" :key="c.hash" class="px-0">
                     <template #prepend>
@@ -563,7 +595,9 @@ function revisionReadOnly(): boolean {
         </div>
       </div>
     </template>
-    <p v-if="props.draftCount" class="source-note source-drafts">未保存的修改已暂存，回到对应文件可以继续编辑</p>
+    <p v-if="props.draftCount" class="source-note source-drafts">
+      {{ t('work.room.changes.draftsKept') }}
+    </p>
   </div>
 </template>
 

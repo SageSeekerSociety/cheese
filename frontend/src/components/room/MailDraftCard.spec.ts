@@ -20,6 +20,13 @@ vi.mock('../../api', () => ({
 
 import { discardMailDraft, sendMailDraft } from '../../api'
 
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
+
 const vuetify = createVuetify({ components, directives })
 
 function drafted(id: string, subject = 'Re: 芝士测试'): Block {

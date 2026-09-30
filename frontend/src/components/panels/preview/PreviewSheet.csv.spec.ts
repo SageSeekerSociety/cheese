@@ -6,9 +6,14 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import PreviewSheet from './PreviewSheet.vue'
+
+import { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
 
 const vuetify = createVuetify({ components, directives })
 

@@ -24,6 +24,8 @@ vi.mock('../api', async () => {
 
 import TopicMembers from './TopicMembers.vue'
 
+import { setLocale } from '@/i18n'
+
 const Roster = TopicMembers as unknown as Component
 
 function pending<T>() {
@@ -67,6 +69,8 @@ const settle = async () => {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   listTopicMembers.mockReset()
   document.body.innerHTML = ''
 })

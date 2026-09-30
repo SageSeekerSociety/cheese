@@ -7,6 +7,7 @@ import { computed, ref } from 'vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import { t } from '@/i18n'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -123,7 +124,7 @@ defineExpose({
          位置：队友进了成员名册（它本来就是这个房间的成员），工作电脑在话题头的 ⋯ 里。 -->
       <template #composer-chips>
         <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
-          <span class="status-dot status-dot--muted" />已归档
+          <span class="status-dot status-dot--muted" />{{ t('work.sidebar.archived') }}
         </span>
       </template>
     </ChatPanel>

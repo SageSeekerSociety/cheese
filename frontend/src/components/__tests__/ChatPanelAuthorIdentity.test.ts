@@ -36,6 +36,8 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
 function freshRoom(): string {
@@ -76,7 +78,7 @@ function mountPanel(id: string, author: string, members: ProjectMemberRow[]) {
   const vuetify = createVuetify({ components, directives })
   return render(ChatPanel, {
     props: { topic: room(id), topicList: [room(id)], members },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 
@@ -99,6 +101,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.clearAllMocks()
 })
 

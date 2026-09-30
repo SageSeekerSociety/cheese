@@ -155,7 +155,7 @@ async function loadTemplates() {
 
 function pick(template: DocumentTemplate) {
   picking.value = template
-  newPath.value = `文档/${template.name}.${template.suffix}`
+  newPath.value = `${t('work.room.outputs.defaultFolder')}/${template.name}.${template.suffix}`
 }
 
 async function create() {
@@ -223,7 +223,7 @@ defineExpose({ reload: load })
       </li>
       <li v-for="tpl in templates" :key="tpl.id">
         <button type="button" class="outs__template" @click="pick(tpl)">
-          <span class="t-body">{{ tpl.name }}（.{{ tpl.suffix }}）</span>
+          <span class="t-body">{{ t('work.room.outputs.templateName', { name: tpl.name, suffix: tpl.suffix }) }}</span>
           <span class="t-meta c-faint">{{ tpl.about }}</span>
         </button>
       </li>

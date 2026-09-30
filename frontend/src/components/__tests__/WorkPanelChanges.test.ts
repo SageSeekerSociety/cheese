@@ -24,6 +24,11 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 // Monaco does not load under happy-dom (and is not what is under test): stand in
 // a textarea that speaks the same v-model / @save contract.
 vi.mock('../CodeEditor.vue', () => ({
@@ -100,7 +105,7 @@ function mountPanel(id: string) {
   return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0 },
     global: {
-      plugins: [vuetify],
+      plugins: [vuetify, i18n],
     },
   })
 }
@@ -117,7 +122,7 @@ function mountSwitchable(id: string) {
     },
     template: '<WorkPanel :key="topic.id" :topic="topic" :activity-tick="0" />',
   })
-  return render(Page, { props: { topic: topic(id) }, global: { plugins: [vuetify] } })
+  return render(Page, { props: { topic: topic(id) }, global: { plugins: [vuetify, i18n] } })
 }
 
 /** Let the panel's chained awaits (list → read) settle. */

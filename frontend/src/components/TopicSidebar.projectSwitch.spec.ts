@@ -14,11 +14,16 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
-import { t } from '@/i18n'
+import { setLocale, t } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。下面几处标签在模块顶层就取了词，
+// 所以语言要在 import 之前定下来。
+vi.hoisted(() => localStorage.setItem('cheese:locale', 'zh-CN'))
+beforeEach(() => setLocale('zh-CN'))
 
 const Sidebar = TopicSidebar as unknown as Component
 
