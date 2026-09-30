@@ -48,6 +48,7 @@ import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
+import { ROOM_ENTRIES } from './catalogRoom'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
@@ -616,6 +617,9 @@ export const CATALOG: CatalogEntry[] = [
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
+  // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件）在自己的文件里：
+  // `catalogRoom.ts`（数据就在那份里，它们要的都是几行字）。
+  ...ROOM_ENTRIES,
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
   ...KNOWLEDGE_ENTRIES,
