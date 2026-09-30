@@ -243,4 +243,24 @@ describe('棘轮页的画面', () => {
     expect(getByText('ratchet.state.noMeasurementsPlain {"count":1}')).toBeTruthy()
     expect(queryByText(/noMeasurementsFailed/)).toBeNull()
   })
+
+  it('归档比这次带回来的点多时，「没有可用测量」说的是带回来的这几次，总数另说', () => {
+    // 后端只取最近 `ratchet_series_points`（60）条，更早的留在库里。归档 61 次、只
+    // 带回最新 60 次（那 1 次更早的成功采集不在这一屏里）时，句子里的数只能是 60：
+    // 说成「归档里 60 次都没有测量」是把全历史说错了。归档总数由来源行按 total_stored
+    // 说——那一格读错字段的话，它也会跟着露馅。
+    const window = board({
+      collection: 'ok',
+      points: 60,
+      total_stored: 61,
+      collections: [{ commit: 'ddddddd4', collected_at: null, run_url: '', collection: 'ok', reason: null }],
+      areas: [],
+    })
+    const { getByText, queryByText } = mount({ board: window })
+
+    expect(getByText('ratchet.state.noMeasurementsPlain {"count":60}')).toBeTruthy()
+    expect(getByText('ratchet.prov.archived {"count":61}')).toBeTruthy()
+    expect(queryByText('ratchet.prov.archived {"count":60}')).toBeNull()
+    expect(queryByText(/noMeasurementsPlain \{"count":61\}/)).toBeNull()
+  })
 })

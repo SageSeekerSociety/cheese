@@ -102,8 +102,8 @@
     "loadFailedDesc": "This is a read failure, not \"nothing collected yet\" — two different things, two different sentences.",
     "retry": "Retry",
     "noMeasurements": "Nothing measurable in this collection",
-    "noMeasurementsFailed": "The most recent collection failed: {reason}. The archive holds {count} collection(s), but none of them left a usable measurement — blank means \"not measured\", not 0.",
-    "noMeasurementsPlain": "The archive holds {count} collection(s), but none of them left a usable measurement — blank means \"not measured\", not 0."
+    "noMeasurementsFailed": "The most recent collection failed: {reason}. None of the most recent {count} collection(s) left a usable measurement — blank means \"not measured\", not 0.",
+    "noMeasurementsPlain": "None of the most recent {count} collection(s) left a usable measurement — blank means \"not measured\", not 0."
   },
   "foot": {
     "source": "The checks and their rules live in the repository ({repo}); this page only draws the numbers they report."

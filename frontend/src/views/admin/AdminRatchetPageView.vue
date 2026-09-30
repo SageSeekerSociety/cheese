@@ -61,7 +61,12 @@ const { t } = useI18n()
 
 const areas = computed(() => props.board?.areas ?? [])
 const checks = computed(() => areas.value.reduce((n, area) => n + area.checks.length, 0))
+/** 这次 board 里带回来的点数。**不是归档总数**：后端只取最近 `ratchet_series_points`
+ *  条（现在 60），更早的留在库里（`total_stored`）。两个数在页面上各说各的话，不能
+ *  混成一个——历史超过窗口时，「已归档 N 次」说小的那个就成了假的。 */
 const collections = computed(() => props.board?.points ?? 0)
+/** 归档里一共有几次采集。 */
+const stored = computed(() => props.board?.total_stored ?? 0)
 const short = (sha: string | null, width = 10) => (sha ? sha.slice(0, width) : '—')
 const stamp = (iso: string | null) => (iso ? `${iso.slice(0, 16).replace('T', ' ')}Z` : '—')
 
@@ -71,8 +76,13 @@ const latestReason = computed(() => {
   return list.length ? list[list.length - 1]?.reason ?? '' : ''
 })
 
-/** 「归档里有采集、但一条测量都没有」那一段的说辞：采集自己报了失败就把原因带上，
- *  没有原因就只说没有测量——不能替它编一个理由。 */
+/** 「有采集、但一条测量都没有」那一段的说辞：采集自己报了失败就把原因带上，没有原因
+ *  就只说没有测量——不能替它编一个理由。
+ *
+ *  句子里的数只能是**这次 board 带回来的这几次**（`collections`），不能读成整个归档：
+ *  归档超过窗口时（比如 61 次、只带回最新 60 次），「归档里 60 次都没有测量」是对全
+ *  历史的误述——那 1 次更早的成功采集不在这一屏里，也没被这句话数进去。归档总数在
+ *  上面来源行按 `total_stored` 单说。 */
 const noMeasurementsDesc = computed(() => {
   const reason = latestReason.value
   const reportedFailure = props.board?.collection && props.board.collection !== 'ok'
@@ -139,7 +149,7 @@ const collectionFailedLine = computed(() => {
             >{{ t('ratchet.prov.commitTime') }} <b>{{ stamp(board.collected_at) }}</b></span
           >
           <span>
-            {{ t('ratchet.prov.archived', { count: collections }) }}
+            {{ t('ratchet.prov.archived', { count: stored }) }}
           </span>
           <span>
             {{ t('ratchet.prov.deployed') }}
