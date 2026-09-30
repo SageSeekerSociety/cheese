@@ -68,7 +68,8 @@ STANDALONE = "A"
 VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]""", re.S)
 VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
 SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
-TEMPLATE_BLOCK = re.compile(r"<template[^>]*>(.*?)</template>", re.S)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_TEMPLATE_TAG = re.compile(r"</?template(?:\s[^>]*)?/?>", re.DOTALL)
 STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
 PARENT_USE = re.compile(r"\$parent|\$root")
@@ -205,6 +206,42 @@ def normalise_store(name: str) -> str:
     return STORE_ALIASES.get(name, name[:1].lower() + name[1:])
 
 
+def template_blocks(text: str) -> list[str]:
+    """The contents of every top-level `<template>` block in an SFC.
+
+    Two ways a naive `<template...>(.*?)</template>` read lies: a tag inside
+    `<!-- ... -->` is not rendered (comments are stripped first), and Vue
+    templates nest (`<template v-if>`), so a non-greedy match ends at the
+    first *inner* `</template>` and loses everything after it (nested tags
+    are balanced here).
+    """
+    text = _HTML_COMMENT.sub("", text)
+    blocks: list[str] = []
+    pos = 0
+    while True:
+        start = _TEMPLATE_TAG.search(text, pos)
+        if start is None or start.group().startswith("</"):
+            return blocks
+        if start.group().endswith("/>"):
+            pos = start.end()
+            continue
+        cursor = start.end()
+        depth = 1
+        for tag in _TEMPLATE_TAG.finditer(text, cursor):
+            found = tag.group()
+            if found.startswith("</"):
+                depth -= 1
+            elif not found.endswith("/>"):
+                depth += 1
+            if depth == 0:
+                blocks.append(text[cursor:tag.start()])
+                pos = tag.end()
+                break
+        else:
+            blocks.append(text[cursor:])  # an unclosed template: take the rest
+            return blocks
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
@@ -216,7 +253,7 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")
     script = "\n".join(SCRIPT_BLOCK.findall(text))
-    template = "\n".join(TEMPLATE_BLOCK.findall(text))
+    template = "\n".join(template_blocks(text))
     whole = script + "\n" + template
 
     reasons: list[str] = []
