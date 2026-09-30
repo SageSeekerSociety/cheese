@@ -6,7 +6,7 @@ from sqlalchemy import Select, and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError
+from app.core.errors import BadRequestError, ConflictError
 from app.domain.team.models import (
     PERSONAL_TEAM_ROW,
     ApplicationStatus,
@@ -19,6 +19,23 @@ from app.domain.team.models import (
 )
 
 _HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+
+
+def refuse_anyone_but_the_owner(team: Team, user_id: int) -> None:
+    """A personal team is one person's: nobody but its owner is ever in it.
+
+    Working with someone on a personal project is done by inviting them into
+    that project as an external member; a group that shares everything makes a
+    shared team.
+    """
+    if (
+        team.personal_owner_user_id is not None
+        and team.personal_owner_user_id != user_id
+    ):
+        raise BadRequestError(
+            "A personal team has no members but its owner",
+            data={"teamId": team.id},
+        )
 
 
 def _use_fts(token: str) -> bool:
@@ -255,6 +272,12 @@ class TeamRepository:
     async def add_member(
         self, team_id: int, user_id: int, role: int
     ) -> TeamUserRelation:
+        # Every way into a team ends in this write — a direct add, an accepted
+        # invitation, an approved request, a join by link — so the rule is kept
+        # here, where no path can go around it.
+        team = await self.get_by_id(team_id)
+        if team is not None:
+            refuse_anyone_but_the_owner(team, user_id)
         existing = await self.get_member_relation(team_id, user_id)
         if existing is not None:
             raise ConflictError(

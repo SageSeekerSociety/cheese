@@ -23,6 +23,7 @@ from app.domain.team.models import (
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
+    refuse_anyone_but_the_owner,
 )
 from app.domain.user.services import handles_by_ids
 
@@ -195,6 +196,11 @@ class TeamMembershipService:
                 f"User {initiator_user_id} is not authorized to invite members to team {team_id}."  # noqa: E501
             )
 
+        team = await self._team_repo.get_by_id(team_id)
+        if team is not None:
+            # Refused now rather than when it is accepted: an invitation that
+            # can never be accepted should not sit in someone's inbox.
+            refuse_anyone_but_the_owner(team, user_id_to_invite)
         await self._validate_user_can_apply_or_be_invited(user_id_to_invite, team_id)
 
         now = datetime.now(UTC)

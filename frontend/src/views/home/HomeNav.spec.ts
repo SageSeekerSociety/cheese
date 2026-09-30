@@ -76,6 +76,17 @@ beforeAll(() => {
       disconnect() {}
     }
   )
+  // 团队操作是个 v-menu，打开时要量视口；jsdom 两样都没有。
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
 })
 beforeEach(() => {
   setLocale('zh-CN')
@@ -115,6 +126,23 @@ describe('首页目录', () => {
     await mount('/inbox')
     await screen.findByText('数据课第三组')
     expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
+  })
+
+  it('个人团队展开后没有「成员」，团队操作里也没有「邀请成员」', async () => {
+    const personal = { ...team('andy', '个人', 'OWNER'), personal: true }
+    getMyTeams.mockResolvedValue({ data: { teams: [personal, team('crew', '知是开发组', 'OWNER')] } })
+    await mount('/teams/andy')
+    await waitFor(() =>
+      expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/knowledge', '/teams/andy/compute']))
+    )
+    expect(hrefs()).not.toContain('/teams/andy/members')
+
+    const [personalMenu, sharedMenu] = screen.getAllByLabelText('团队操作')
+    await fireEvent.click(personalMenu!)
+    await screen.findByText('编辑团队资料')
+    expect(screen.queryByText('邀请成员')).toBeNull()
+    await fireEvent.click(sharedMenu!)
+    await screen.findByText('邀请成员')
   })
 
   it('空间点了就进那个空间', async () => {
