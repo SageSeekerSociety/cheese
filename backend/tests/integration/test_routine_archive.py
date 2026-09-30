@@ -1,8 +1,12 @@
-"""归档带走执行：房间里留一句话，规则的主人收到一条通知；规则本身不动。
+"""归档带走执行：对账时房间里留一句话，规则的主人收到一条通知；规则本身不动。
 
 归档不写规则那一行（结论：取消归档后从下一个时刻继续，中间错过的记成 skipped），
 所以「已随话题归档停止」只能由房间答 —— 接口回给前端的 ``room_archived`` 就是从
 ``topic.status`` 推出来的。
+
+说话的是对账而不是归档那个接口：归档是别处做的动作（手工、整个项目、脚本），
+认得它的只有房间的状态，所以每次 ``sweep`` 问一遍哪个房间的话还没说
+（``RoutineService.announce_archived_rooms``），按归档这一轮去重。
 """
 
 import uuid
@@ -74,6 +78,11 @@ def test_archiving_a_room_says_so_in_the_room_and_tells_each_owner(client):
 
     archived = _archive(client, room)
     assert archived.status_code == 200, archived.text
+    # 归档那一刻不说：接口不碰周期任务那一域，说话的是下一次对账。
+    assert _stopped_lines(client, room) == []
+
+    result, _ = _sweep(client)
+    assert result["stopped"] == 1, result
 
     lines = _stopped_lines(client, room)
     assert len(lines) == 1, lines
@@ -110,19 +119,24 @@ def test_the_room_is_told_once_per_archive_but_every_episode(client):
     _weekly(client, room, headers=PERSON)
 
     assert _archive(client, room).status_code == 200
+    _sweep(client)
     assert len(_stopped_lines(client, room)) == 1
 
-    # 幂等：同一段里再说一遍是没有的事。
+    # 幂等：同一段里再说一遍是没有的事 —— 对账每隔几分钟就来一次。
+    _sweep(client)
     assert _archive(client, room).status_code == 200
+    _sweep(client)
     assert len(_stopped_lines(client, room)) == 1
 
     assert _unarchive(client, room).status_code == 200
     assert _archive(client, room).status_code == 200
+    _sweep(client)
     assert len(_stopped_lines(client, room)) == 2, "第二段归档没有留下自己的那一行"
 
     # 项目归档把每个房间都交了出来：这个房间已经在归档里，不再被说一遍。
     with_project = client.post(f"/projects/{project}/archive", json={}, headers=PERSON)
     assert with_project.status_code == 200, with_project.text
+    _sweep(client)
     assert len(_stopped_lines(client, room)) == 2
 
 
@@ -134,6 +148,7 @@ def test_a_room_without_active_rules_is_left_alone(client):
     assert drafted["state"] == "draft"
 
     assert _archive(client, room).status_code == 200
+    _sweep(client)
     assert _stopped_lines(client, room) == []
 
 

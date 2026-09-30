@@ -227,7 +227,7 @@ async def _present(
     归档不写规则那一行（结论：规则状态不变，取消归档后从下一个时刻继续），所以
     「已随话题归档停止」只能由房间答，一次问完这一批。
     """
-    archived = await TopicService(db).archived_ids([r.topic_id for r in rows])
+    archived = await RoutineService(db).archived_room_ids([r.topic_id for r in rows])
     return [
         _routine(
             r,
