@@ -42,6 +42,7 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
@@ -599,6 +600,9 @@ export const CATALOG: CatalogEntry[] = [
   // 看板那八件（从 2880 行的 AdminDashboardPage 拆出来的七屏 + 页头）在自己的文件里：
   // `catalogDashboard.ts`（数据在 `catalogDashboardFixtures.ts`）。
   ...DASHBOARD_ENTRIES,
+  // 队列那三件（从 1309 行的 AdminQueuePage 拆出来的页头、工具行、四态块）在自己的
+  // 文件里：`catalogQueue.ts`（数据在 `catalogQueueFixtures.ts`）。
+  ...QUEUE_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',
