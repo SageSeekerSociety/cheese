@@ -363,6 +363,9 @@ class RoutineService:
                         )
                     )
                 )
+                # 和这一串里别的几步一样：两个后端进程同时扫，锁住的那间这次跳过，
+                # 下一轮（30 秒后）再补 —— 不然同一段归档会被说两遍。
+                .with_for_update(skip_locked=True)
             )
         )
         from app.domain.notification.services import ProjectNotificationService
