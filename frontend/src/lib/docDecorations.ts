@@ -16,21 +16,24 @@ import { Extension as TiptapExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
+import { t } from '@/i18n'
+
 export interface LiveRefFacts {
   title: string | null
   status: string
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  open: '进行中',
-  in_progress: '进行中',
-  active: '进行中',
-  draft: '草稿',
-  archived: '已完成',
-  completed: '已完成',
+const STATUS_KEY: Record<string, string> = {
+  open: 'work.room.doc.status.inProgress',
+  in_progress: 'work.room.doc.status.inProgress',
+  active: 'work.room.doc.status.inProgress',
+  draft: 'work.room.doc.status.draft',
+  archived: 'work.room.doc.status.done',
+  completed: 'work.room.doc.status.done',
 }
 function statusLabel(s: string): string {
-  return STATUS_LABEL[s] ?? s
+  const key = STATUS_KEY[s]
+  return key ? t(key) : s
 }
 
 // ---- 支线徽章: a doc paragraph that was upgraded into a subtopic stays in
@@ -50,7 +53,10 @@ function liveRefWidget(topicId: string, facts: LiveRefFacts): HTMLElement {
   el.dataset.topic = topicId
   el.contentEditable = 'false'
   el.setAttribute('role', 'button')
-  el.title = `「${subTitle ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
+  el.title = t('work.room.doc.liveRefTitle', {
+    title: subTitle ?? t('work.room.doc.thisTask'),
+    status: statusLabel(status),
+  })
   const dot = document.createElement('span')
   dot.className = `doc-liveref__dot is-${status}`
   // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在
@@ -63,7 +69,7 @@ function liveRefWidget(topicId: string, facts: LiveRefFacts): HTMLElement {
   icon.setAttribute('aria-hidden', 'true')
   const label = document.createElement('span')
   label.className = 'doc-liveref__label'
-  label.textContent = subTitle ?? '子话题'
+  label.textContent = subTitle ?? t('work.room.doc.subtopic')
   const st = document.createElement('span')
   st.className = 'doc-liveref__status'
   st.textContent = statusLabel(status)
@@ -208,7 +214,7 @@ function tokenWidget(kind: '@' | '#' | '&', id: string, titleOf: (tid: string) =
   } else if (kind === '#') {
     el.className = 'mention topic-ref'
     el.dataset.topic = id
-    el.textContent = `#${titleOf(id) ?? '话题'}`
+    el.textContent = `#${titleOf(id) ?? t('work.room.doc.topic')}`
   } else {
     el.className = 'mention file-ref'
     el.dataset.file = id

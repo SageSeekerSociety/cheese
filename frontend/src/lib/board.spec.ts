@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
   BOARD_COLUMNS,
@@ -9,6 +9,10 @@ import {
   compareTasks,
   liveBoardTasks,
 } from './board'
+
+import { setLocale } from '@/i18n'
+
+beforeEach(() => setLocale('zh-CN'))
 
 function task(over: Partial<Parameters<typeof compareTasks>[0]> = {}) {
   return { id: 'a', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...over }

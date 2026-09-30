@@ -16,7 +16,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -87,7 +87,7 @@ function mountPanel(slots: Record<string, () => unknown> = {}, topicId?: string)
   return render(ChatPanel, {
     props: { topic: topic(topicId), showComposer: true, hideHeader: true, members },
     slots,
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 
@@ -138,6 +138,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.clearAllMocks()
   sent.length = 0
 })
@@ -717,7 +719,7 @@ describe('对话栏自己的输入栏', () => {
         // 项目名册上也没有芝士那一行——这个房间此刻确实不知道它是谁。
         members: [{ user_handle: 'alice', name: 'Alice', role: 'lead' }],
       },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 

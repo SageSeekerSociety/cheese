@@ -17,6 +17,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。
+beforeEach(() => setLocale('zh-CN'))
+
 const Sidebar = TopicSidebar as unknown as Component
 
 function topic(id: string, parentId: string | null, flags: Partial<Topic> = {}): Topic {

@@ -18,6 +18,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 const topic = {
@@ -35,6 +37,8 @@ const topic = {
 const calls: Array<{ url: string; body: FormData | null }> = []
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   calls.length = 0
   vi.stubGlobal(
     'WebSocket',
@@ -74,7 +78,7 @@ async function flush() {
 function composer() {
   const { container } = render(Panel, {
     props: { topic, showComposer: true },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   return container
 }

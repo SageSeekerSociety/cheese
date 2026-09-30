@@ -19,6 +19,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api'
+import { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
 
 const getForgeConnection = vi.fn()
 const getGitLog = vi.fn()

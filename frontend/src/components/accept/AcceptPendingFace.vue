@@ -66,8 +66,10 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
   <v-card variant="outlined" class="merge-box">
     <div class="pa-3">
       <div v-if="card.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
-        {{ card.note || '与主分支冲突，未能合并' }}
-        <UserRef :handle="agentHandle" :name="agentName" />正在处理，完成后可以重新采纳
+        {{ card.note || t('work.room.accept.conflictFallback') }}
+        <i18n-t scope="global" keypath="work.room.accept.conflictWorking" tag="span">
+          <template #agent><UserRef :handle="agentHandle" :name="agentName" /></template>
+        </i18n-t>
       </div>
       <!-- 合并态 (#718): 状态词 + 「谁的活」的圈。词和 who 都是后端算好下发的，
        圈用看板「该谁动」的点语言（同一个问题在整套界面里只有一种颜色）。
@@ -94,9 +96,9 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
       <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
       <AcceptNoteLine v-if="note" :text="note.text" :tone="note.tone" />
       <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
-        <span>待</span>
-        <UserRef :handle="card.reviewer_handle" />
-        <span>审阅</span>
+        <i18n-t scope="global" keypath="work.room.accept.waitingOnWho" tag="span">
+          <template #who><UserRef :handle="card.reviewer_handle" /></template>
+        </i18n-t>
         <!-- 改验收人 (spec §4.4): 任何成员都可以改推荐/加人 -->
         <v-menu>
           <template #activator="{ props: menuProps }">
@@ -108,11 +110,11 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
               class="text-medium-emphasis"
               :disabled="busy"
             >
-              更换
+              {{ t('work.room.accept.reassign') }}
             </v-btn>
           </template>
           <v-list density="compact">
-            <v-list-subheader>改由谁审阅</v-list-subheader>
+            <v-list-subheader>{{ t('work.room.accept.reassignTitle') }}</v-list-subheader>
             <v-list-item
               v-for="mbr in reviewerChoices"
               :key="mbr.user_handle"
@@ -125,13 +127,15 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
               </v-list-item-subtitle>
             </v-list-item>
             <v-list-item v-if="reviewerChoices.length === 0">
-              <v-list-item-title class="text-caption text-medium-emphasis"> 暂无可选成员 </v-list-item-title>
+              <v-list-item-title class="text-caption text-medium-emphasis">
+                {{ t('work.room.accept.noMembers') }}
+              </v-list-item-title>
             </v-list-item>
           </v-list>
         </v-menu>
       </div>
       <div v-if="card.routing_reason" class="text-caption text-medium-emphasis mb-3">
-        推荐理由：{{ card.routing_reason }}
+        {{ t('work.room.accept.routingReason', { reason: card.routing_reason }) }}
       </div>
       <!--
         这次交付定的是哪一项产物的哪一版，以及交出去的那一份东西 (#1085 结论
@@ -145,10 +149,10 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
         有，整块就不出现。
       -->
       <div v-if="card.artifact || card.deliverable" class="mb-3">
-        <div class="text-caption text-medium-emphasis">这次交付</div>
+        <div class="text-caption text-medium-emphasis">{{ t('work.room.accept.delivery') }}</div>
         <div class="d-flex align-center flex-wrap ga-2">
           <span v-if="card.artifact" class="text-body-2">
-            《{{ card.artifact.name }}》第 {{ card.artifact.version }} 版
+            {{ t('work.room.accept.artifact', { name: card.artifact.name, version: card.artifact.version }) }}
           </span>
           <template v-if="card.deliverable?.kind === 'file' && card.deliverable.filename">
             <span class="text-medium-emphasis">·</span>
@@ -162,7 +166,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
               :loading="deliverableBusy"
               @click="emit('download')"
             >
-              下载
+              {{ t('work.room.accept.download') }}
             </v-btn>
           </template>
           <template v-else-if="card.deliverable?.kind === 'link' && card.deliverable.url">
@@ -182,7 +186,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
         等它进了 git 历史才有人发现写的是话题标题。
       -->
       <div v-if="card.change_subject" class="mb-3">
-        <div class="text-caption text-medium-emphasis">合并后的提交标题</div>
+        <div class="text-caption text-medium-emphasis">{{ t('work.room.accept.changeSubject') }}</div>
         <code class="text-caption">{{ card.change_subject }}</code>
       </div>
       <!--
@@ -197,7 +201,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
       -->
       <div v-if="card.gate_passed_at" class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2">
         <v-icon size="15">mdi-timer-sand</v-icon>
-        平台检查已通过：只检查了代码规范和类型，未运行测试
+        {{ t('work.room.accept.gatePassed') }}
       </div>
       <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
       <AcceptPrChecks v-if="card.pr_url" :card="card" :checks="prChecks" class="mb-2" />
@@ -209,11 +213,12 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           :color="card.approvals.length >= card.approvals_required ? 'success' : undefined"
           prepend-icon="mdi-account-check-outline"
         >
-          {{ card.approvals.length }}/{{ card.approvals_required }}
-          已批准
+          {{ t('work.room.accept.approvedCount', { done: card.approvals.length, total: card.approvals_required }) }}
         </v-chip>
         <span v-if="card.approvals.length" class="text-caption text-medium-emphasis">
-          <template v-for="(h, i) in card.approvals" :key="h">{{ i ? '、' : '' }}<UserRef :handle="h" /></template>
+          <template v-for="(h, i) in card.approvals" :key="h"
+            >{{ i ? t('work.room.roster.listSeparator') : '' }}<UserRef :handle="h"
+          /></template>
         </span>
         <v-btn
           v-if="!card.approvals.includes(myHandle)"
@@ -224,10 +229,10 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           prepend-icon="mdi-thumb-up-outline"
           @click="emit('approve')"
         >
-          批准
+          {{ t('work.room.accept.approve') }}
         </v-btn>
         <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
-          <v-icon size="14">mdi-check</v-icon>你已批准
+          <v-icon size="14">mdi-check</v-icon>{{ t('work.room.accept.youApproved') }}
         </span>
       </div>
       <div class="d-flex align-center flex-wrap ga-2">
@@ -253,11 +258,17 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
             prepend-icon="mdi-check"
             @click="emit('accept')"
           >
-            {{ needsPr ? '创建 PR' : card.status === 'conflict' ? '重新采纳' : '采纳' }}
+            {{
+              needsPr
+                ? t('work.room.accept.createPr')
+                : card.status === 'conflict'
+                  ? t('work.room.accept.retryAccept')
+                  : t('work.room.accept.acceptAction')
+            }}
           </v-btn>
         </span>
         <v-btn variant="text" :disabled="busy" prepend-icon="mdi-undo" @click="showRejectInput = !showRejectInput">
-          退回
+          {{ t('work.room.accept.sendBack') }}
         </v-btn>
         <v-btn
           variant="text"
@@ -266,7 +277,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           prepend-icon="mdi-close-circle-outline"
           @click="showVoidInput = !showVoidInput"
         >
-          作废
+          {{ t('work.room.accept.void') }}
         </v-btn>
       </div>
       <!-- 绿了自动合 (#718)：项目允许、规则还没满足时才有；布防人由后端认定。 -->
@@ -277,11 +288,13 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           density="compact"
           hide-details
           :disabled="busy"
-          label="检查通过后自动合并"
+          :label="t('work.room.accept.autoMerge')"
           @update:model-value="emit('toggle-auto-merge', $event)"
         />
         <span v-if="autoMergeArmedBy" class="text-caption text-medium-emphasis">
-          由 <UserRef :handle="autoMergeArmedBy" /> 开启
+          <i18n-t scope="global" keypath="work.room.accept.autoMergeArmedBy" tag="span">
+            <template #who><UserRef :handle="autoMergeArmedBy" /></template>
+          </i18n-t>
         </span>
       </div>
       <!--
@@ -298,14 +311,16 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           prepend-icon="mdi-alert-decagram-outline"
           @click="showForceMergeInput = true"
         >
-          仍要采纳
+          {{ t('work.room.accept.forceMerge') }}
         </v-btn>
         <template v-else>
-          <div class="text-caption text-medium-emphasis mb-1">检查未全部通过。操作人、时间和当时的检查状态会被记录</div>
+          <div class="text-caption text-medium-emphasis mb-1">
+            {{ t('work.room.accept.forceMergeWarning') }}
+          </div>
           <v-textarea
             v-model="forceMergeReason"
             autocomplete="off"
-            label="理由"
+            :label="t('work.room.accept.forceMergeReason')"
             rows="2"
             auto-grow
             density="compact"
@@ -322,9 +337,11 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
               :disabled="busy"
               @click="emit('force-merge')"
             >
-              确认采纳
+              {{ t('work.room.accept.confirmForceMerge') }}
             </v-btn>
-            <v-btn size="small" variant="text" :disabled="busy" @click="showForceMergeInput = false"> 取消 </v-btn>
+            <v-btn size="small" variant="text" :disabled="busy" @click="showForceMergeInput = false">
+              {{ t('work.room.accept.cancel') }}
+            </v-btn>
           </div>
         </template>
       </div>
@@ -335,14 +352,16 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
           variant="outlined"
           density="compact"
           hide-details
-          placeholder="退回理由（可选）"
+          :placeholder="t('work.room.accept.sendBackReason')"
           class="flex-grow-1"
         />
-        <v-btn variant="outlined" class="btn-secondary" :loading="busy" @click="emit('reject')"> 确认退回 </v-btn>
+        <v-btn variant="outlined" class="btn-secondary" :loading="busy" @click="emit('reject')">
+          {{ t('work.room.accept.confirmSendBack') }}
+        </v-btn>
       </div>
       <div v-if="showVoidInput" class="mt-3">
         <div class="text-caption text-medium-emphasis mb-1">
-          作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅
+          {{ t('work.room.accept.voidHint') }}
         </div>
         <div class="d-flex align-end ga-2">
           <v-text-field
@@ -351,10 +370,12 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
             variant="outlined"
             density="compact"
             hide-details
-            placeholder="作废理由（可选）"
+            :placeholder="t('work.room.accept.voidReason')"
             class="flex-grow-1"
           />
-          <v-btn variant="outlined" class="btn-secondary" :loading="busy" @click="emit('void')"> 确认作废 </v-btn>
+          <v-btn variant="outlined" class="btn-secondary" :loading="busy" @click="emit('void')">
+            {{ t('work.room.accept.confirmVoid') }}
+          </v-btn>
         </div>
       </div>
     </div>

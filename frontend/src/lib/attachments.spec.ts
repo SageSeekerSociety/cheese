@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { uploaded, usePendingAttachments } from './attachments'
 
+import { setLocale } from '@/i18n'
+
 function file(name: string, type: string): File {
   return new File(['x'], name, { type })
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_url, options) => {

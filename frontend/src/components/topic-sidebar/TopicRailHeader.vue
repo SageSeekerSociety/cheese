@@ -92,8 +92,8 @@ const emit = defineEmits<{
         type="button"
         class="rail-header__more tap-target"
         :class="{ 'rail-header__more--active': menuOpen }"
-        title="项目菜单"
-        aria-label="项目菜单"
+        :title="t('work.sidebar.projectMenu')"
+        :aria-label="t('work.sidebar.projectMenu')"
         aria-haspopup="dialog"
         :aria-expanded="menuOpen ? 'true' : 'false'"
         @click="emit('open-sheet')"
@@ -107,8 +107,8 @@ const emit = defineEmits<{
             type="button"
             class="rail-header__more"
             :class="{ 'rail-header__more--active': isActive, 'tap-target': page }"
-            title="项目菜单"
-            aria-label="项目菜单"
+            :title="t('work.sidebar.projectMenu')"
+            :aria-label="t('work.sidebar.projectMenu')"
           >
             <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
           </button>
@@ -126,7 +126,7 @@ const emit = defineEmits<{
           <v-divider class="my-1" />
           <v-list-item
             prepend-icon="mdi-cog-outline"
-            title="项目设置"
+            :title="t('work.projectSettings.title')"
             :active="routeName === 'project-settings'"
             :disabled="!projectSelected"
             @click="emit('open-page', 'project-settings')"

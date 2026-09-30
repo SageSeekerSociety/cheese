@@ -35,6 +35,8 @@ import { PAGE_SIZE } from '../lib/blockPaging'
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const TOPIC = {
   id: 't-paging',
   project_id: 'p1',
@@ -139,6 +141,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.clearAllMocks()
   FakeResizeObserver.instances = []
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
@@ -172,7 +176,7 @@ async function mount(metrics: Metrics = { scrollHeight: 2000, clientHeight: 500,
   const topic: Topic = { ...TOPIC, id: `t-paging-${++rooms}` }
   const view = render(ChatPanel, {
     props: { topic, topicList: [topic] },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   const pane = view.container.querySelector<HTMLElement>('[data-testid="chat-scroll"]')
   expect(pane, 'the chat pane must be there for a scroll to be dispatched at it').toBeTruthy()

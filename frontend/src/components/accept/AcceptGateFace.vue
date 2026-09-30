@@ -9,6 +9,7 @@
 import type { AcceptCard } from '@/cx_types'
 
 import UserRef from '@/components/common/UserRefLink.vue'
+import { t } from '@/i18n'
 
 defineProps<{
   /** 一定是 `gate_failed` 或 `gate_blocked`，别的状态这张脸不接。 */
@@ -27,15 +28,15 @@ defineEmits<{ (e: 'update:open', open: boolean): void }>()
       <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。
            闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。 -->
       <div class="text-caption text-medium-emphasis mb-2">
-        <template v-if="card.status === 'gate_failed'">
-          检查未通过，未提交审阅。<UserRef :handle="agentHandle" :name="agentName" />修复后会重新提交
-        </template>
-        <template v-else>
-          检查未能运行，未提交审阅。<UserRef
-            :handle="agentHandle"
-            :name="agentName"
-          />修复检查环境后会重新提交，多次失败时需要手动处理
-        </template>
+        <i18n-t
+          scope="global"
+          :keypath="
+            card.status === 'gate_failed' ? 'work.room.accept.gateFailedBody' : 'work.room.accept.gateBlockedBody'
+          "
+          tag="span"
+        >
+          <template #agent><UserRef :handle="agentHandle" :name="agentName" /></template>
+        </i18n-t>
       </div>
       <v-btn
         size="small"
@@ -43,9 +44,9 @@ defineEmits<{ (e: 'update:open', open: boolean): void }>()
         :prepend-icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'"
         @click="$emit('update:open', !open)"
       >
-        {{ open ? '收起检查输出' : '查看检查输出' }}
+        {{ open ? t('work.room.accept.hideGateOutput') : t('work.room.accept.showGateOutput') }}
       </v-btn>
-      <pre v-if="open" class="gate-output mt-2">{{ card.gate_output || '暂无输出' }}</pre>
+      <pre v-if="open" class="gate-output mt-2">{{ card.gate_output || t('work.room.accept.noGateOutput') }}</pre>
     </div>
   </v-card>
 </template>

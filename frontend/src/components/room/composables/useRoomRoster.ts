@@ -13,6 +13,7 @@ import type { Block, ProjectMemberRow, Topic, TopicMemberRow } from '../../../cx
 import { computed, ref, watch } from 'vue'
 
 import { listTopicMembers } from '../../../api'
+import { t } from '../../../i18n'
 import { agentNames } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
@@ -63,7 +64,7 @@ export function useRoomRoster(options: {
     } catch {
       // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
       // 芝士」，而屏幕上没有任何东西说明为什么。
-      options.onError('成员名单加载失败，@ 补全可能不全')
+      options.onError(t('work.room.roster.mentionLoadFailed'))
     }
   }
 
@@ -103,7 +104,7 @@ export function useRoomRoster(options: {
   )
 
   /** 界面上称呼它用的名字。名册没到时谁也不猜，就写「芝士」。 */
-  const agentName = computed(() => agentSeat.value?.label || '芝士')
+  const agentName = computed(() => agentSeat.value?.label || t('work.room.defaultAgentName'))
 
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的**人**。 */
   const mentionPool = computed(() => {
@@ -168,7 +169,7 @@ export function useRoomRoster(options: {
     return agentNameMap.value.get(handle) ?? null
   }
   function agentDisplayName(handle: string): string {
-    return agentNameOf(handle) || '芝士'
+    return agentNameOf(handle) || t('work.room.defaultAgentName')
   }
   function displayName(m: Block): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)

@@ -16,7 +16,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setLocale } from '../../i18n'
+import i18n, { setLocale } from '../../i18n'
 
 vi.mock('../CodeEditor.vue', () => ({
   default: {
@@ -74,7 +74,7 @@ function mountPanel(working = false) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
     props: { topic: topic('topic-A'), activityTick: 0, working },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 

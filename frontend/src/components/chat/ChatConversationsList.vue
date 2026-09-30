@@ -7,7 +7,7 @@
         density="compact"
         flat
         hide-details
-        placeholder="搜索对话..."
+        :placeholder="t('aiChat.search')"
         prepend-inner-icon="mdi-magnify"
         variant="solo-filled"
         rounded="lg"
@@ -20,7 +20,7 @@
         variant="tonal"
         color="primary"
         prepend-icon="mdi-plus-circle"
-        text="开始新对话"
+        :text="t('aiChat.startNew')"
         @click="$emit('newConversation')"
       ></v-btn>
     </div>
@@ -66,6 +66,8 @@ import type { ConversationSummary } from './types'
 import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 
+import { t } from '@/i18n'
+
 const props = defineProps<{
   conversations: ConversationSummary[]
   activeConversationId: string
@@ -102,11 +104,11 @@ const groupedConversations = computed(() => {
 
   // 创建分组
   const groups = [
-    { title: '今天', conversations: [] as ConversationSummary[] },
-    { title: '昨天', conversations: [] as ConversationSummary[] },
-    { title: '过去7天', conversations: [] as ConversationSummary[] },
-    { title: '过去30天', conversations: [] as ConversationSummary[] },
-    { title: '更早', conversations: [] as ConversationSummary[] },
+    { title: t('aiChat.groups.today'), conversations: [] as ConversationSummary[] },
+    { title: t('aiChat.groups.yesterday'), conversations: [] as ConversationSummary[] },
+    { title: t('aiChat.groups.last7Days'), conversations: [] as ConversationSummary[] },
+    { title: t('aiChat.groups.last30Days'), conversations: [] as ConversationSummary[] },
+    { title: t('aiChat.groups.older'), conversations: [] as ConversationSummary[] },
   ]
 
   // 对对话进行分组
@@ -140,7 +142,7 @@ const formatTime = (dateStr: string) => {
   try {
     return dayjs(dateStr).fromNow()
   } catch (e) {
-    return '未知时间'
+    return t('aiChat.unknownTime')
   }
 }
 
@@ -159,7 +161,7 @@ const truncateText = (text?: string | null, maxLength: number = 60) => {
 // 格式化对话标题
 const formatConversationTitle = (conversation: ConversationSummary) => {
   if (conversation.title) return conversation.title
-  if (!conversation.latestMessage?.question) return '新对话'
+  if (!conversation.latestMessage?.question) return t('aiChat.newConversation')
   return truncateText(conversation.latestMessage?.question, 30)
 }
 

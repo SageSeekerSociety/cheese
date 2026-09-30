@@ -15,6 +15,8 @@ import { nextTick, ref } from 'vue'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
 import ExternalTag from '../common/ExternalTag.vue'
 
+import { t } from '@/i18n'
+
 defineProps<{
   /** 候选是不是该露出来。Esc 收起之后它是 false（`@` 还留在正文里）。 */
   open: boolean
@@ -53,9 +55,9 @@ defineExpose({ scrollActiveIntoView })
       <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
       <Transition :name="level === 'library' ? 'level-in' : 'level-out'" mode="out-in">
         <div :key="level" class="mention-menu-level">
-          <div v-if="level === 'library'" class="mention-menu-head" title="按 Esc 返回">
+          <div v-if="level === 'library'" class="mention-menu-head" :title="t('work.room.mention.escBack')">
             <v-icon size="13">mdi-folder-outline</v-icon>
-            <span class="mention-menu-name">资料库</span>
+            <span class="mention-menu-name">{{ t('work.room.mention.library') }}</span>
           </div>
           <template v-for="(mm, i) in matches" :key="mm.kind + mm.insert">
             <div v-if="mm.group && mm.group !== matches[i - 1]?.group" class="mention-menu-group">
@@ -90,14 +92,16 @@ defineExpose({ scrollActiveIntoView })
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
               <span class="mention-menu-name">{{ mm.label }}</span>
-              <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+              <span v-if="mm.agent" class="mention-agent-badge">{{ t('work.room.roster.agentBadge') }}</span>
               <ExternalTag v-else-if="mm.external" />
               <span class="mention-menu-sub">{{ mm.sub }}</span>
               <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
               <span v-else-if="i === activeIndex && enterSends" class="mention-menu-hint">Enter</span>
             </button>
           </template>
-          <div v-if="level === 'library' && !matches.length" class="mention-menu-group">暂无匹配的文件</div>
+          <div v-if="level === 'library' && !matches.length" class="mention-menu-group">
+            {{ t('work.room.mention.noFiles') }}
+          </div>
         </div>
       </Transition>
     </div>

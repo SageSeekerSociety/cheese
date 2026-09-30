@@ -173,7 +173,7 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
     about: '机器闸门留下来的两张只读历史脸：检查未通过（代码红了）和检查未能执行（检查本身没跑起来）。',
     file: 'src/components/accept/AcceptGateFace.vue',
     component: AcceptGateFace,
-    needs: UI,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '检查未通过，输出点开了',
@@ -201,7 +201,7 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
     about: '「已采纳，但合并没走完」那张兜底脸：只读、不转圈，念一句后端写在卡上的故障，再挂上真 PR 和它的 CI。',
     file: 'src/components/accept/AcceptDeliveringFace.vue',
     component: AcceptDeliveringFace,
-    needs: UI,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '只是没合完',
@@ -223,7 +223,7 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
     about: '归档话题上那张已采纳的卡：存在的理由只有一个 —— 给一次反悔留个入口。',
     file: 'src/components/accept/AcceptDecidedFace.vue',
     component: AcceptDecidedFace,
-    needs: UI,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '可以撤回',

@@ -52,7 +52,13 @@ const props = withDefaults(
     /** 名册里查不到名字的 AI 发言按这个名字称呼（项目 AI 队友的名字）。 */
     agentName?: string
   }>(),
-  { active: false, memberNames: () => ({}), working: false, agentControl: null, agentName: '芝士' }
+  {
+    active: false,
+    memberNames: () => ({}),
+    working: false,
+    agentControl: null,
+    agentName: () => t('work.room.defaultAgentName'),
+  }
 )
 
 const emit = defineEmits<{
@@ -101,7 +107,7 @@ async function loadOlder() {
     const sc = scrollRef.value
     if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '加载失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
   } finally {
     loadingOlder.value = false
   }
@@ -190,7 +196,7 @@ async function load() {
     // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
     if (follow) scrollSiteToTail()
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '加载失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
   } finally {
     loading.value = false
   }
@@ -446,10 +452,12 @@ function isLive(index: number): boolean {
         :agent="statusAgent"
         :agent-handle="statusAgentHandle"
       />
-      <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">暂无现场记录</div>
+      <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">
+        {{ t('work.room.site.empty') }}
+      </div>
       <div v-else class="site-log pa-3">
         <div v-if="hasOlder" class="site-older">
-          {{ loadingOlder ? '加载更早的现场…' : '更早的现场' }}
+          {{ loadingOlder ? t('work.room.site.loadingOlder') : t('work.room.site.older') }}
         </div>
         <section v-for="(turn, index) in turns" :key="turn.key" class="turn">
           <!-- 组头：这一轮从什么时候开始、几步、多久。触发这一轮的那句话在对话
@@ -461,10 +469,11 @@ function isLive(index: number): boolean {
             <span class="turn__time">{{ fmtTime(turn.startedAt) }}</span>
             <span v-if="isLive(index)" class="turn__live">
               <i class="turn__pulse" />
-              进行中
+              {{ t('work.room.site.live') }}
             </span>
             <span class="turn__meta">
-              {{ turn.steps }} 步<template v-if="turn.seconds > 0"> · {{ formatSpan(turn.seconds) }}</template>
+              {{ t('work.room.site.steps', { count: turn.steps })
+              }}<template v-if="turn.seconds > 0"> · {{ formatSpan(turn.seconds) }}</template>
             </span>
           </div>
           <template v-for="b in turn.entries" :key="b.id">
@@ -541,7 +550,11 @@ function isLive(index: number): boolean {
                   class="site-msg__more"
                   @click="toggleSiteEntry(b.id)"
                 >
-                  {{ expandedSite.has(b.id) ? '收起' : `展开全部（${countLines(b.content)} 行）` }}
+                  {{
+                    expandedSite.has(b.id)
+                      ? t('work.room.site.collapse')
+                      : t('work.room.site.expandAll', { count: countLines(b.content) })
+                  }}
                 </button>
               </div>
             </div>

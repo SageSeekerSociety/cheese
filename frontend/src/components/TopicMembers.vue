@@ -56,7 +56,7 @@ async function load() {
     const payload = await listTopicMembers(props.topicId)
     members.value = payload.data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载成员失败'
+    error.value = e instanceof Error ? e.message : t('work.room.roster.loadFailed')
   } finally {
     loading.value = false
   }
@@ -99,7 +99,7 @@ const roomChoiceIsProjectDefault = computed(
 // 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像
 // 「几个人，另外还有个它」。
 // 「位」而不是「人」：同一句话要数得下一个 AI 队友。
-const countLabel = computed(() => `${members.value.length} 位`)
+const countLabel = computed(() => t('work.room.roster.count', { count: members.value.length }))
 
 // Compact indicator: the first few human faces as a stack, capped so the
 // stack never grows unbounded — extra people fold into a "+N" tile.
@@ -126,7 +126,12 @@ const addable = computed(() => {
     .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
     .map((m) => {
       const name = m.name || m.user_handle
-      const mark = m.agent ? '（AI 队友）' : externals.value.has(m.user_handle) ? `（${t('work.external.tag')}）` : ''
+      const tag = m.agent
+        ? t('work.room.roster.agentBadge')
+        : externals.value.has(m.user_handle)
+          ? t('work.external.tag')
+          : ''
+      const mark = tag ? t('work.room.roster.mark', { tag }) : ''
       return { title: `${name}${mark}`, subtitle: `@${m.user_handle}`, value: m.user_handle }
     })
 })
@@ -150,7 +155,7 @@ function initial(name: string): string {
 }
 
 function roleLabel(role: string): string {
-  return { owner: '拥有者', admin: '管理员', member: '成员' }[role] ?? role
+  return ROLES.includes(role as (typeof ROLES)[number]) ? t(`work.room.roster.role.${role}`) : role
 }
 
 async function guard<T>(fn: () => Promise<T>): Promise<void> {
@@ -160,7 +165,7 @@ async function guard<T>(fn: () => Promise<T>): Promise<void> {
     await fn()
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '操作失败'
+    error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
   } finally {
     busy.value = false
   }
@@ -190,7 +195,7 @@ async function onSetRole(handle: string, role: string) {
         type="button"
         class="members-mini tap-target"
         :class="{ 'members-mini--open': open }"
-        :title="`话题成员 · ${countLabel}`"
+        :title="`${t('work.room.roster.title')} · ${countLabel}`"
       >
         <span class="members-mini__stack">
           <template v-for="(m, i) in stackFaces" :key="m.id">
@@ -219,7 +224,7 @@ async function onSetRole(handle: string, role: string) {
 
     <div class="roster">
       <div class="roster__head">
-        <span class="roster__title">话题成员</span>
+        <span class="roster__title">{{ t('work.room.roster.title') }}</span>
         <span class="roster__count">{{ countLabel }}</span>
       </div>
 
@@ -245,7 +250,7 @@ async function onSetRole(handle: string, role: string) {
             <span class="roster__name">{{ m.name || m.member_handle }}</span>
             <span class="roster__handle">@{{ m.member_handle }}</span>
           </span>
-          <span v-if="m.agent" class="roster__badge">AI 队友</span>
+          <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
 
           <!-- Owner/admin: change role via a small menu; else a static chip.
@@ -277,7 +282,7 @@ async function onSetRole(handle: string, role: string) {
               type="button"
               class="roster__remove"
               :disabled="busy || (m.role === 'owner' && ownerCount <= 1)"
-              title="移出话题"
+              :title="t('work.room.roster.remove')"
               @click="onRemove(m.member_handle)"
             >
               <v-icon size="15">mdi-close</v-icon>
@@ -310,8 +315,8 @@ async function onSetRole(handle: string, role: string) {
           density="compact"
           variant="outlined"
           hide-details
-          placeholder="添加成员…"
-          no-data-text="项目成员和队友都已在话题中"
+          :placeholder="t('work.room.roster.addPlaceholder')"
+          :no-data-text="t('work.room.roster.allIn')"
           class="roster__select"
         />
         <v-btn
@@ -322,10 +327,10 @@ async function onSetRole(handle: string, role: string) {
           :loading="busy"
           @click="onAdd"
         >
-          加入
+          {{ t('work.room.roster.add') }}
         </v-btn>
       </div>
-      <div v-else class="roster__hint">只有拥有者和管理员能修改成员</div>
+      <div v-else class="roster__hint">{{ t('work.room.roster.readOnly') }}</div>
     </div>
   </v-menu>
 </template>

@@ -1,4 +1,5 @@
 import account from './account.json'
+import aiChat from './aiChat.json'
 import comments from './comments.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
@@ -20,6 +21,7 @@ import users from './users.json'
 import work from './work.json'
 
 export default {
+  aiChat,
   global,
   home,
   integrations,

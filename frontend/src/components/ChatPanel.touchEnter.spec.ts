@@ -17,6 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 const topic = {
@@ -68,7 +70,7 @@ function composerOf(isTouch: boolean): HTMLTextAreaElement {
   pretendTouchDevice(isTouch)
   const { container } = render(Panel, {
     props: { topic, showComposer: true },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   const textarea = container.querySelector('textarea') as HTMLTextAreaElement
   expect(textarea).toBeTruthy()

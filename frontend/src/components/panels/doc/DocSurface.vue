@@ -15,7 +15,7 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import type { Block, Topic } from '../../../cx_types'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import {
@@ -31,6 +31,8 @@ import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 
 import { alignedDocBlocks } from './docBlocks'
 import DocOverlays from './DocOverlays.vue'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -378,6 +380,9 @@ function serializeVisual(): string | null {
 }
 
 defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
+
+// 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
+const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
 </script>
 
 <template>
@@ -422,7 +427,7 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
    its left edge instead of cutting through a misaligned overlay. PM renders
    an empty doc as <p><br class="ProseMirror-trailingBreak"></p>. */
 .doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
-  content: 'AI 队友会在这里维护文档，你也可以直接编辑';
+  content: v-bind(emptyPlaceholder);
   color: rgba(var(--v-theme-on-surface), 0.38);
   pointer-events: none;
   float: left;
