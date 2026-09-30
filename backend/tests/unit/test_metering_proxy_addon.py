@@ -20,8 +20,10 @@ import hmac
 import importlib.util
 import json
 import sys
+import threading
 import time
 import types
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -87,6 +89,7 @@ def _load_addon(
     allow_header_attr: str = "",
     credential: str | None = None,
     chatgpt_key: str = "",
+    admission_url: str = "",
 ):
     """Load a FRESH billing_addon module with env captured for this test.
 
@@ -102,7 +105,7 @@ def _load_addon(
     monkeypatch.setenv("CHEESE_USAGE_LOG", str(tmp_path / "usage.jsonl"))
     monkeypatch.setenv("CHEESE_SCOPED_SECRET", scoped_secret)
     monkeypatch.setenv("CHEESE_ALLOW_HEADER_ATTR", allow_header_attr)
-    monkeypatch.setenv("CHEESE_ADMISSION_URL", "")
+    monkeypatch.setenv("CHEESE_ADMISSION_URL", admission_url)
     monkeypatch.setenv("CHEESE_GATEWAY_BASE", "")
     monkeypatch.setenv("CHEESE_TOKEN_CAP", "0")
     credential_file = tmp_path / "claude-credential" / "credential"
@@ -232,7 +235,14 @@ def test_inherited_and_explicit_child_models_do_not_share_admission():
     calls = []
 
     def admit(
-        url, bearer, timeout, *, subagent=False, requested_model="", child_model=""
+        url,
+        bearer,
+        timeout,
+        *,
+        subagent=False,
+        requested_model="",
+        child_model="",
+        **_,
     ):
         calls.append((requested_model, child_model))
         return _verdict(model="claude-opus-5" if child_model else "claude-sonnet-5")
@@ -266,7 +276,7 @@ def test_recorded_native_child_choices_replay_through_proxy_admission(
     mod.ADMISSION_URL = "http://fixture/admission"
     admitted = []
 
-    def admit(url, bearer, timeout, *, subagent=False, child_model=""):
+    def admit(url, bearer, timeout, *, subagent=False, child_model="", **_):
         assert subagent
         admitted.append(child_model)
         return _verdict(model=child_model)
@@ -396,7 +406,7 @@ def test_an_unreachable_admission_does_not_echo_the_platform_account(
     Anthropic 账号回话」这一问，答案里本来就不该有它。
     """
 
-    def unreachable(url, bearer, timeout_s):
+    def unreachable(url, bearer, timeout_s, **_):
         raise OSError("control plane is down")
 
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
@@ -780,6 +790,63 @@ def test_a_gateway_turn_never_carries_the_sessions_credential(
         if "REAL-SESSION-CREDENTIAL" in value
     }
     assert leaked == {}, f"the session's credential reached the gateway: {leaked}"
+
+
+def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path):
+    """The backend hands a gateway project's key only to a caller presenting the
+    proxy's own credential: the session's bearer alone names the room, and a
+    session holding that bearer must not be able to fetch the key itself. So
+    the proxy's admission call carries both, and the gateway turn is routed on
+    the key that answer brings back."""
+    secret = "s3cr3t"
+    asked: list[dict] = []
+
+    class Backend(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 — the stdlib's name
+            asked.append({k.lower(): v for k, v in self.headers.items()})
+            body = json.dumps(
+                {
+                    "data": {
+                        "allow": True,
+                        "reason": "ok",
+                        "supply": {
+                            "pool": "gateway",
+                            "model": "deepseek-flash",
+                            "key": "sk-virtual-project-key",
+                        },
+                    }
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        mod = _load_addon(
+            monkeypatch,
+            tmp_path,
+            scoped_secret=secret,
+            admission_url=f"http://127.0.0.1:{server.server_address[1]}/llm/admission",
+        )
+        monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+        token = _scoped_token(secret, project="p9")
+        mod.http_connect(_connect_flow_on("c1", _basic(token)))
+        flow = _session_flow(conn="c1")
+        asyncio.run(mod.requestheaders(flow))
+    finally:
+        server.shutdown()
+
+    (headers,) = asked
+    assert headers["authorization"] == f"Bearer {token}"
+    assert headers["x-cheese-token"] == secret
+    assert flow.request.host == "litellm.invalid"
+    assert flow.request.headers["authorization"] == "Bearer sk-virtual-project-key"
 
 
 def test_a_gateway_session_stays_on_the_gateway_while_admission_is_down(

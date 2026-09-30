@@ -5,6 +5,8 @@
 #
 # Values come from a box-local .env next to this file (never committed):
 #   CHEESE_SCOPED_SECRET    = the backend's SANDBOX_TOKEN (rotate together)
+#                           Also the proxy's own credential on admission:
+#                           without it no gateway project gets its key.
 #   CHEESE_ADMISSION_URL    e.g. http://172.17.0.1:8081/llm/admission. Leaving
 #                           it unset switches off TWO things with no error:
 #                           per-project budgets stop being enforced, and no
