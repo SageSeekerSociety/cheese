@@ -1,5 +1,5 @@
 // 空间设置的每一栏都能单独链接：把地址发给另一位管理员，他打开的就是那一栏，
-// 不是被带回第一栏。打开「设置」本身落在基本信息。
+// 不是被带回第一栏。
 import type { RouteRecordRaw } from 'vue-router'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -21,17 +21,14 @@ function router() {
 }
 
 describe('空间设置的地址', () => {
-  it('打开设置落在基本信息', async () => {
-    const r = router()
-    await r.push({ name: 'SpacesDetailSettings', params: { spaceId: '42' } })
-    expect(r.currentRoute.value.name).toBe('SpacesDetailSettingsBasic')
-  })
-
   it.each([
+    ['basic', 'SpacesDetailSettingsBasic'],
     ['categories', 'SpacesDetailSettingsCategories'],
     ['templates', 'SpacesDetailSettingsTemplates'],
     ['invite-codes', 'SpacesDetailSettingsInviteCodes'],
     ['domain-groups', 'SpacesDetailSettingsDomainGroups'],
+    ['templates/create', 'SpacesDetailCreateTemplate'],
+    ['templates/2/edit', 'SpacesDetailEditTemplate'],
   ])('直接打开 %s 这一栏，停在这一栏', async (tab, name) => {
     const r = router()
     await r.push(`/spaces/42/manage/settings/${tab}`)

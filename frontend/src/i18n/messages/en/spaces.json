@@ -197,7 +197,6 @@
     "templateForm": {
       "editTitle": "Edit problem template",
       "createTitle": "Create a problem template",
-      "back": "Back",
       "templateName": "Template name",
       "templateDescription": "Template description",
       "contestTitle": "Problem title",
@@ -206,7 +205,21 @@
       "loadTemplateFailed": "Couldn't load template",
       "updateSuccess": "Template updated",
       "createSuccess": "Template created",
-      "saveTemplateFailed": "Couldn't save template"
+      "saveTemplateFailed": "Couldn't save template",
+      "defaults": "Task defaults",
+      "defaultsHint": "Filled in when a task is published from this template, and can be changed then",
+      "unset": "Leave blank",
+      "teamSize": "Team size",
+      "minTeamSize": "Minimum team size",
+      "maxTeamSize": "Maximum team size",
+      "to": "to",
+      "deadlinePrefix": "After claiming,",
+      "deadlineSuffix": "days",
+      "realName": "Real name",
+      "requireRealName": "Real name required",
+      "noRealName": "No real name needed",
+      "realNameNote": "Participants must verify their real name to take part. It is stored encrypted and access is tightly controlled",
+      "cancel": "Cancel"
     }
   },
   "domainGroups": {
@@ -334,7 +347,11 @@
       "avatar": "Avatar",
       "changeAvatar": "Change avatar",
       "visibleLimitLabel": "Visible problem limit"
-    }
+    },
+    "overlay": "Space settings",
+    "close": "Close space settings",
+    "closeHint": "Close space settings (Esc)",
+    "back": "Back to space settings"
   },
   "announcements": {
     "publish": "Post announcement",

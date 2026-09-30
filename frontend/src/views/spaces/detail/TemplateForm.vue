@@ -1,184 +1,136 @@
 <template>
-  <v-sheet flat rounded="lg">
-    <v-toolbar
-      :title="isEditing ? t('spaces.detail.templateForm.editTitle') : t('spaces.detail.templateForm.createTitle')"
-      color="transparent"
-      density="compact"
-    >
-      <template #prepend>
-        <v-btn variant="text" prepend-icon="mdi-chevron-left" @click="goBack">{{
-          t('spaces.detail.templateForm.back')
-        }}</v-btn>
-      </template>
-    </v-toolbar>
+  <!-- 「题目模板」下一级的整页表单，画在空间设置那一层里：左上角回到模板列表。 -->
+  <div class="tform">
+    <header>
+      <router-link :to="listRoute" class="tform__crumb">
+        <v-icon icon="mdi-chevron-left" size="16" />{{ t('spaces.settings.tabs.templates') }}
+      </router-link>
+      <h1 class="t-page-title">
+        {{ isEditing ? t('spaces.detail.templateForm.editTitle') : t('spaces.detail.templateForm.createTitle') }}
+      </h1>
+    </header>
 
-    <v-form ref="form" class="pa-4" @submit.prevent="saveTemplate">
-      <!-- 基本信息 -->
-      <v-card flat rounded="lg" class="mb-4 form-card">
-        <v-card-item>
-          <template #prepend>
-            <div class="me-3">
-              <v-avatar color="primary-lighten-5" size="48" class="elevation-0">
-                <v-icon color="primary" size="28">mdi-information-outline</v-icon>
-              </v-avatar>
-            </div>
-          </template>
-          <v-card-title class="text-h5 ps-0">基本信息</v-card-title>
-        </v-card-item>
+    <v-form class="tform__form" @submit.prevent="saveTemplate">
+      <section class="settings-card">
+        <div class="srow">
+          <label class="srow__k" for="tpl-name">{{ t('spaces.detail.templateForm.templateName') }}</label>
+          <v-text-field
+            id="tpl-name"
+            v-model="template.name"
+            autocomplete="off"
+            density="compact"
+            variant="outlined"
+            hide-details
+            required
+          />
+        </div>
+        <div class="srow srow--top">
+          <label class="srow__k" for="tpl-desc">{{ t('spaces.detail.templateForm.templateDescription') }}</label>
+          <v-textarea
+            id="tpl-desc"
+            v-model="template.description"
+            autocomplete="off"
+            density="compact"
+            variant="outlined"
+            rows="2"
+            auto-grow
+            hide-details
+          />
+        </div>
+        <div class="srow">
+          <label class="srow__k" for="tpl-title">{{ t('spaces.detail.templateForm.contestTitle') }}</label>
+          <v-text-field
+            id="tpl-title"
+            v-model="template.title"
+            autocomplete="off"
+            density="compact"
+            variant="outlined"
+            hide-details
+            required
+          />
+        </div>
+      </section>
 
-        <v-card-text class="pt-2">
-          <v-row dense>
-            <v-col cols="12">
-              <v-text-field
-                v-model="template.name"
-                autocomplete="off"
-                :label="t('spaces.detail.templateForm.templateName')"
-                required
-              ></v-text-field>
-            </v-col>
-            <v-col cols="12">
-              <v-textarea
-                v-model="template.description"
-                autocomplete="off"
-                :label="t('spaces.detail.templateForm.templateDescription')"
-                rows="3"
-              ></v-textarea>
-            </v-col>
-            <v-col cols="12">
-              <v-text-field
-                v-model="template.title"
-                autocomplete="off"
-                :label="t('spaces.detail.templateForm.contestTitle')"
-                required
-              ></v-text-field>
-            </v-col>
-
-            <v-col cols="12" md="6">
-              <v-radio-group
-                v-model="template.submitterType"
-                :label="t('tasks.form.participantType')"
-                inline
-                class="mt-0"
-              >
-                <v-radio :label="t('tasks.form.individual')" value="USER"></v-radio>
-                <v-radio :label="t('tasks.form.team')" value="TEAM"></v-radio>
-                <v-radio label="留空" :value="null"></v-radio>
-              </v-radio-group>
-            </v-col>
-
-            <v-col cols="12" md="6">
-              <v-radio-group v-model="template.rank" :label="t('tasks.form.taskLevel')" inline class="mt-0">
-                <v-radio :label="t('tasks.form.beginner')" :value="1"></v-radio>
-                <v-radio :label="t('tasks.form.intermediate')" :value="2"></v-radio>
-                <v-radio :label="t('tasks.form.advanced')" :value="3"></v-radio>
-                <v-radio label="留空" :value="null"></v-radio>
-              </v-radio-group>
-            </v-col>
-
-            <!-- 小队人数限制 -->
-            <template v-if="template.submitterType === 'TEAM'">
-              <v-col cols="12" md="6">
-                <v-text-field v-model.number="template.minTeamSize" label="最小队伍人数" type="number" min="1">
-                </v-text-field>
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-text-field v-model.number="template.maxTeamSize" label="最大队伍人数" type="number" min="1">
-                </v-text-field>
-              </v-col>
-            </template>
-          </v-row>
-        </v-card-text>
-      </v-card>
-
-      <!-- 时间设置 -->
-      <v-card flat rounded="lg" class="mb-4 form-card">
-        <v-card-item>
-          <template #prepend>
-            <div class="me-3">
-              <v-avatar color="primary-lighten-5" size="48" class="elevation-0">
-                <v-icon color="primary" size="28">mdi-clock-outline</v-icon>
-              </v-avatar>
-            </div>
-          </template>
-          <v-card-title class="text-h5 ps-0">时间设置</v-card-title>
-        </v-card-item>
-
-        <v-card-text class="pt-2">
-          <v-row dense>
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model.number="template.defaultDeadline"
-                :label="t('tasks.form.defaultDeadline')"
-                type="number"
-                prefix="领取题目后"
-                suffix="天"
-                min="1"
-                clearable
-              ></v-text-field>
-            </v-col>
-          </v-row>
-        </v-card-text>
-      </v-card>
-
-      <!-- 实名信息要求 -->
-      <v-card flat rounded="lg" class="mb-4 form-card">
-        <v-card-item>
-          <template #prepend>
-            <div class="me-3">
-              <v-avatar color="primary-lighten-5" size="48" class="elevation-0">
-                <v-icon color="primary" size="28">mdi-shield-account</v-icon>
-              </v-avatar>
-            </div>
-          </template>
-          <v-card-title class="text-h5 ps-0">实名信息要求</v-card-title>
-        </v-card-item>
-
-        <v-card-text class="pt-2">
-          <v-radio-group v-model="template.requireRealName" inline class="mt-0">
-            <v-radio label="需要实名信息" :value="true"></v-radio>
-            <v-radio label="不需要实名信息" :value="false"></v-radio>
-            <v-radio label="留空" :value="null"></v-radio>
+      <section class="settings-card">
+        <div class="settings-card__title">{{ t('spaces.detail.templateForm.defaults') }}</div>
+        <div class="settings-card__desc">{{ t('spaces.detail.templateForm.defaultsHint') }}</div>
+        <div class="srow">
+          <span class="srow__k">{{ t('tasks.form.participantType') }}</span>
+          <v-radio-group v-model="template.submitterType" inline hide-details density="compact">
+            <v-radio :label="t('tasks.form.individual')" value="USER" />
+            <v-radio :label="t('tasks.form.team')" value="TEAM" />
+            <v-radio :label="t('spaces.detail.templateForm.unset')" :value="null" />
           </v-radio-group>
+        </div>
+        <div v-if="template.submitterType === 'TEAM'" class="srow">
+          <span class="srow__k">{{ t('spaces.detail.templateForm.teamSize') }}</span>
+          <div class="tform__range">
+            <v-text-field
+              v-model.number="template.minTeamSize"
+              :aria-label="t('spaces.detail.templateForm.minTeamSize')"
+              type="number"
+              min="1"
+              density="compact"
+              variant="outlined"
+              hide-details
+            />
+            <span class="tform__to">{{ t('spaces.detail.templateForm.to') }}</span>
+            <v-text-field
+              v-model.number="template.maxTeamSize"
+              :aria-label="t('spaces.detail.templateForm.maxTeamSize')"
+              type="number"
+              min="1"
+              density="compact"
+              variant="outlined"
+              hide-details
+            />
+          </div>
+        </div>
+        <div class="srow">
+          <span class="srow__k">{{ t('tasks.form.taskLevel') }}</span>
+          <v-radio-group v-model="template.rank" inline hide-details density="compact">
+            <v-radio :label="t('tasks.form.beginner')" :value="1" />
+            <v-radio :label="t('tasks.form.intermediate')" :value="2" />
+            <v-radio :label="t('tasks.form.advanced')" :value="3" />
+            <v-radio :label="t('spaces.detail.templateForm.unset')" :value="null" />
+          </v-radio-group>
+        </div>
+        <div class="srow">
+          <label class="srow__k" for="tpl-deadline">{{ t('tasks.form.defaultDeadline') }}</label>
+          <div class="tform__range">
+            <span class="tform__to">{{ t('spaces.detail.templateForm.deadlinePrefix') }}</span>
+            <v-text-field
+              id="tpl-deadline"
+              v-model.number="template.defaultDeadline"
+              type="number"
+              min="1"
+              density="compact"
+              variant="outlined"
+              hide-details
+              clearable
+              class="tform__deadline"
+            />
+            <span class="tform__to">{{ t('spaces.detail.templateForm.deadlineSuffix') }}</span>
+          </div>
+        </div>
+        <div class="srow srow--top">
+          <span class="srow__k">{{ t('spaces.detail.templateForm.realName') }}</span>
+          <div>
+            <v-radio-group v-model="template.requireRealName" inline hide-details density="compact">
+              <v-radio :label="t('spaces.detail.templateForm.requireRealName')" :value="true" />
+              <v-radio :label="t('spaces.detail.templateForm.noRealName')" :value="false" />
+              <v-radio :label="t('spaces.detail.templateForm.unset')" :value="null" />
+            </v-radio-group>
+            <p v-if="template.requireRealName === true" class="tform__note">
+              {{ t('spaces.detail.templateForm.realNameNote') }}
+            </p>
+          </div>
+        </div>
+      </section>
 
-          <v-alert
-            v-if="template.requireRealName === true"
-            color="primary"
-            variant="tonal"
-            class="mt-3 mb-0"
-            density="comfortable"
-            border="start"
-          >
-            <div class="d-flex align-start">
-              <v-avatar color="primary" class="mr-3 mt-1" size="28">
-                <!-- 琥珀底上的反白图标：surface 在深色下是深墨，white 会糊在 #FFA733 上 -->
-                <v-icon icon="mdi-shield-check" color="surface" size="18"></v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">已选择要求实名信息</div>
-                <p class="text-body-2 mb-0">
-                  • 参与者需完成实名认证方可参与此题目<br />
-                  • 所有信息经过加密存储，访问受到严格控制
-                </p>
-              </div>
-            </div>
-          </v-alert>
-        </v-card-text>
-      </v-card>
-
-      <!-- 赛题详情 -->
-      <v-card flat rounded="lg" class="mb-4 form-card">
-        <v-card-item>
-          <template #prepend>
-            <div class="me-3">
-              <v-avatar color="primary-lighten-5" size="48" class="elevation-0">
-                <v-icon color="primary" size="28">mdi-text-box-outline</v-icon>
-              </v-avatar>
-            </div>
-          </template>
-          <v-card-title class="text-h5 ps-0">{{ t('tasks.form.taskDescription') }}</v-card-title>
-        </v-card-item>
-
-        <v-card-text class="pt-2">
+      <section class="settings-card">
+        <div class="settings-card__title">{{ t('tasks.form.taskDescription') }}</div>
+        <div class="tform__editor">
           <TipTapEditor
             v-model="template.content"
             output="json"
@@ -186,16 +138,17 @@
             :min-height="200"
             :max-height="1000"
             editor-class="tiptap-editor"
-            :title="t('spaces.detail.templateForm.contestDescription')"
+            :aria-label="t('spaces.detail.templateForm.contestDescription')"
           />
-        </v-card-text>
-      </v-card>
+        </div>
+      </section>
 
-      <div class="d-flex justify-end mt-4">
-        <v-btn type="submit" color="primary">{{ t('spaces.detail.templateForm.save') }}</v-btn>
+      <div class="tform__actions">
+        <v-btn variant="text" :to="listRoute">{{ t('spaces.detail.templateForm.cancel') }}</v-btn>
+        <v-btn type="submit" color="primary" variant="flat">{{ t('spaces.detail.templateForm.save') }}</v-btn>
       </div>
     </v-form>
-  </v-sheet>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -293,36 +246,99 @@ const saveTemplate = async () => {
     toast.success(
       isEditing.value ? t('spaces.detail.templateForm.updateSuccess') : t('spaces.detail.templateForm.createSuccess')
     )
-    router.push({ name: 'SpacesDetailSettingsTemplates', params: { spaceId } })
+    router.push(listRoute)
   } catch (error) {
     console.error(t('spaces.detail.templateForm.saveTemplateFailed'), error)
     toast.error(t('spaces.detail.templateForm.saveTemplateFailed'))
   }
 }
 
-const goBack = () => {
-  router.go(-1)
-}
+const listRoute = { name: 'SpacesDetailSettingsTemplates', params: { spaceId } }
 </script>
 
+<style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
-.form-card {
-  border: 1px solid rgba(var(--v-border-color), 0.12);
-  background-color: rgb(var(--v-theme-surface));
-  transition: all 0.2s ease;
+.tform {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.form-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.15);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
+.tform__crumb {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-decoration: none;
 }
 
-.mb-4 {
-  margin-bottom: 16px !important;
+.tform__crumb:hover {
+  color: var(--ink);
 }
 
-.mt-4 {
-  margin-top: 16px !important;
+.tform__form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.srow {
+  grid-template-columns: 180px minmax(0, 1fr);
+}
+
+.srow--top {
+  align-items: start;
+}
+
+.srow--top > .srow__k {
+  padding-top: 8px;
+}
+
+.tform__range {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: 280px;
+}
+
+.tform__to {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.tform__deadline {
+  flex: 0 0 120px;
+}
+
+.tform__note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.tform__editor {
+  padding: 0 24px 20px;
+}
+
+.tform__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 599.98px) {
+  .srow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tform__editor {
+    padding: 0 16px 16px;
+  }
 }
 </style>
