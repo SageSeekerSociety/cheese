@@ -165,8 +165,8 @@ const emit = defineEmits<{
  * 工作台**这条线被抹掉了，其余三个照常显示。那条 reset 自己的注释也写明了这个
  * 约定：「buttons that declare their own border override this」。
  *
- * 颜色和 .sidebar-header / PageHeader 完全一致（Vuetify 那对 border token），
- * 不是 --line/--line-2：目标是和右边内容区顶栏那条线同款同高，能接成一条。
+ * 颜色读 --app-page-header-rule，和 .sidebar-header / PageHeader 是同一个值：目标
+ * 是和右边内容区顶栏那条线同款同高，能接成一条。
  * 删掉这一行，线就会静默消失，而且沙箱里跑不了渲染、任何测试都抓不到。 */
 .rail-header {
   width: 100%;
@@ -178,7 +178,7 @@ const emit = defineEmits<{
      是它。 */
   flex: none;
   border: 0;
-  border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-block-end: var(--app-page-header-rule);
   background: none;
   font: inherit;
   color: inherit;
