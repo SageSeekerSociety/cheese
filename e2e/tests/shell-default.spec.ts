@@ -60,19 +60,16 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   await page.screenshot({ path: 'shell-default-desktop.png', fullPage: false });
 });
 
-// 顶栏右边这一簇（登录后是「帮助与反馈」和铃铛）：同一种形状 —— 同高、无描边、不带
-// 琥珀。登录后语言开关不在这里（它在「我」的菜单里，和外观并排），所以这一簇只剩两颗。
+// 顶栏右边的「帮助与反馈」：没有描边、不带琥珀，是一颗真按钮。登录后语言开关不在这里
+// （它在「我」的菜单里，和外观并排）。
 //
-//  · 高度。按钮那侧的高度来自两处互不相干的规则：铃铛是 Vuetify `:size` 给出的**内联**
-//    height，「帮助与反馈」是它自己组件里的一条规则。两边各改各的，量出来就会差着（历史
-//    读数 28 对 26、24 对 26），所以钉的是「两颗一样高」，不是某一个数。
 //  · 字装得下。`:size="24"` 对数字给的是一个**方格**（Vuetify 的 `useSize` 同时下发内联
 //    的 width 与 height），带文字的按钮被压成正方形、字溢到隔壁 —— 真发生过，而只量高度
 //    的话一切正常。
 //
 // 它是一个**菜单**：底下有反馈中心 / 我的反馈 / 管理后台 / 了解知是。改形状最容易弄丢
 // 的是「点得开、项都在」，所以这一条同时钉住点开之后各项都在、管理员那一项按身份出现。
-test('顶栏的帮助与反馈：和铃铛同高、字装得下、点开各项都在', async ({ page }) => {
+test('顶栏的帮助与反馈：字装得下、点开各项都在', async ({ page }) => {
   await apiLogin(page);
 
   // 登录后语言在「我」的菜单里，顶栏不再有语言开关。
@@ -81,11 +78,8 @@ test('顶栏的帮助与反馈：和铃铛同高、字装得下、点开各项�
   const entry = page.locator('.help-entry');
   const box = await entry.evaluate((el) => {
     const s = getComputedStyle(el);
-    const bell = document.querySelector('.app-system-bar [aria-label="通知"]');
     const content = el.querySelector('.v-btn__content');
     return {
-      height: el.getBoundingClientRect().height,
-      bellHeight: bell ? bell.getBoundingClientRect().height : null,
       borderWidth: s.borderTopWidth,
       color: s.color,
       tag: el.tagName,
@@ -97,9 +91,7 @@ test('顶栏的帮助与反馈：和铃铛同高、字装得下、点开各项�
     };
   });
 
-  expect(box.bellHeight).not.toBeNull();
-  expect(box.height).toBeCloseTo(box.bellHeight as number, 0);
-  // 和铃铛同一种形状：没有描边（Vuetify 的按钮样式是 solid、宽 0，所以量宽度）
+  // 没有描边（Vuetify 的按钮样式是 solid、宽 0，所以量宽度）
   expect(box.borderWidth).toBe('0px');
   // 不带琥珀：它不是这一屏的主操作
   expect(box.color).not.toBe('rgb(245, 127, 23)');

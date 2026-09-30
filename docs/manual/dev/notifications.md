@@ -21,7 +21,7 @@ covers:
 并起来之后，**一行就是一个人收到的一条通知**。并表带来两个必须写下来的约定：
 
 - **收件人有两个名字**。`recipient_handle` 是名册上的名字，`receiver_id` 是账号池里的那一行。投递这一侧只认 handle（I11）——房间的名册、@ 的目标、`cheese_notify` 的 `to` 给的都是 handle；知是那一侧的站内信按数字 id 查。项目收件箱写下的行两个都填（handle 在账号池里找不到对应行时后者为空），知是那一侧写下的行只有 `receiver_id`。
-- **两侧各自列出的是各自的行**。知是的收件箱只列 `recipient_handle IS NULL` 的那些（`repositories._my_mail`，`api/routes/notifications_flat.py` 那条 int 键的 `/notifications`），带名册名字的只在项目收件箱里列出（`_mine_in`）。为什么这句不能少：房间里的 @ 若同时落进知是的铃铛，那边渲染不了它——前端按 `type` 找模板，`MENTION` 读的是 `payload` 里的 `mentioner`/`discussionTitle`，项目通知的文字在 `title`/`body` 上，渲染出来是一句「有人提到了你 / 在讨论 未知讨论 中提到了你」、还不带跳转，而未读数照加，知是那边一点「全部已读」还会把项目角标一起清掉。按 id 点名的那几条（取一条、标一条、删一条）不带这一句：那是已经拿着行号的调用者在动自己名下的行，两侧都认它。
+- **两侧各自列出的是各自的行**。知是的收件箱只列 `recipient_handle IS NULL` 的那些（`repositories._my_mail`，`api/routes/notifications_flat.py` 那条 int 键的 `/notifications`），带名册名字的只在项目收件箱里列出（`_mine_in`）。为什么这句不能少：房间里的 @ 若同时落进待办页的「动态」，那边渲染不了它——前端按 `type` 找模板，`MENTION` 读的是 `payload` 里的 `mentioner`/`discussionTitle`，项目通知的文字在 `title`/`body` 上，渲染出来是一句「有人提到了你 / 在讨论 未知讨论 中提到了你」、还不带跳转，而未读数照加，知是那边一点「全部已读」还会把项目角标一起清掉。按 id 点名的那几条（取一条、标一条、删一条）不带这一句：那是已经拿着行号的调用者在动自己名下的行，两侧都认它。
 
 **广播没有自己的形状**。`alerts` 里 `target_handle IS NULL` 曾经表示「这条谁都看得见」，读的一侧于是每一处都得写成「点了我的名 **或者** 谁的名都没点」——四处查询、一处内存过滤，漏掉任何一处就是把别人的信念给了他。现在广播在**写入的时候**就展开成一人一行（`ProjectNotificationService.create`），读的那一侧只剩一句相等。展开成零行不是成功：名册上一个人都不剩时它抛错、不静默丢——并表前那种「一行谁都看得见」的形式丢不掉，展开成一人一行之后「零行」就是把整条通知扔了，而路由照样回 200。
 

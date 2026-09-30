@@ -215,7 +215,6 @@ onBeforeUnmount(() => {
   <v-container class="px-6 py-5" fluid>
     <div class="mb-5 d-flex align-start flex-wrap ga-3">
       <div>
-        <h2 class="text-h6 font-weight-medium mb-1">工作电脑</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
           团队的云端额度和自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。
         </p>

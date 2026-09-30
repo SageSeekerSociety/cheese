@@ -85,7 +85,7 @@ describe('ArchiveProjectDialog', () => {
     expect(archiveProject).not.toHaveBeenCalled()
   })
 
-  it('打对名字之后归档，刷新项目清单并回到我的工作', async () => {
+  it('打对名字之后归档，刷新项目清单并回到首页', async () => {
     await mount()
     await fireEvent.update(await screen.findByLabelText('输入项目名称「毕业设计」确认'), '毕业设计')
     await fireEvent.click(archiveButton())

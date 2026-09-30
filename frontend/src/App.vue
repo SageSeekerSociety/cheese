@@ -229,6 +229,7 @@ import { pendingSudo } from '@/utils/sudo'
 import { useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import ConsentGate from './components/account/ConsentGate.vue'
@@ -496,8 +497,10 @@ const workspaceProjectId = computed<string | null>(() =>
   workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
 )
 
-// 「待办」那一格的件数：桌面画在 rail 上，手机画在底栏上。
+// 待我处理的件数：桌面画在首页那一格上，手机画在底栏「待办」上。
 const awaitingCount = useAwaitingCount(computed(() => AccountService._loggedIn.value))
+// 没读的动态（提到你、回复你……）：没有待处理的事时，同一格上画一颗小点。
+const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
 watch(awaitingCount, desktopBadge)
 
@@ -507,6 +510,7 @@ const navSources = computed<NavSources>(() => ({
   projectAvatar,
   createProject: createNewProject,
   awaitingCount: awaitingCount.value,
+  unreadActivity: unreadActivity.value > 0,
 }))
 
 // 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、

@@ -2,29 +2,30 @@
 import type { WaitingItem } from '@/cx_types'
 
 import { computed, onMounted, ref } from 'vue'
-import { useDisplay } from 'vuetify'
+
+import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe } from '@/api'
+import AppPage from '@/components/common/AppPage.vue'
+import { t } from '@/i18n'
+import { DEFAULT_SHELL, termParams } from '@/lib/shell'
+import { useWorkspaceStore } from '@/stores/workspace'
+import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
+import NotificationFeed from '@/views/home/NotificationFeed.vue'
 
-// 「待办」——手机底栏三格之一（设计见 docs/plans/2026-08-18-mobile-shell-design.md）。
+// 「待办」：首页那一格点开就是这一页（手机上是底栏的一格）。
 //
-// 它列的是**待我处理**：和看板读同一份规则（后端 `room_task/presentation.py`），
-// 范围换成我能看见的全部项目，再按「这件事点的是谁」过滤。它此前接的是顶栏铃铛那份
-// 通知数据（提及与回复）——通知是一条条事件记录，答不出「现在还没处理完的有哪些」：
-// 一张验收卡被驳回之后，它那条通知还在。
+// 上面是**等你处理**：和看板读同一份规则（后端 `room_task/presentation.py`），范围换成
+// 我能看见的全部项目，再按「这件事点的是谁」过滤。它答的是「现在还没处理完的有哪些」，
+// 处理完就消失。
 //
-// 铃铛照旧：通知负责把人叫回来，这一格负责他回来之后不用自己翻。
+// 下面是**动态**：提到你、回复你、邀请你、截止提醒。它们是一条条事件，读过就算。以前
+// 它们在顶栏的铃铛里；铃铛拆了，两样东西放在同一页，人回来只看这一处。
 defineOptions({ name: 'InboxView' })
 
 const items = ref<WaitingItem[]>([])
 const loading = ref(true)
 const failed = ref(false)
-
-const REASON_TEXT: Record<WaitingItem['reason'], string> = {
-  reviewer: '待你审阅',
-  reporter: '你提的需求已有交付',
-  asked: '待你回答',
-}
 
 async function load() {
   loading.value = true
@@ -38,12 +39,23 @@ async function load() {
   }
 }
 
-onMounted(load)
+const store = useWorkspaceStore()
+onMounted(() => {
+  void load()
+  if (!store.projectsSettled) void store.refreshProjects()
+})
 
-// 手机上标题在顶栏里；桌面没有那条顶栏标题，页面自己说「这是哪儿」。
-const { mdAndUp } = useDisplay()
+// 一个项目都没有的人（刚注册）：这一页给他唯一有意义的两步。
+const noProjects = computed(() => store.projectsSettled && store.projects.length === 0)
+const projectTerm = termParams(DEFAULT_SHELL)
+const { show: showNewProjectDialog } = useNewProjectDialog()
+const joinOpen = ref(false)
 
-const empty = computed(() => !loading.value && !failed.value && items.value.length === 0)
+const REASON: Record<WaitingItem['reason'], string> = {
+  reviewer: 'home.inbox.reason.reviewer',
+  reporter: 'home.inbox.reason.reporter',
+  asked: 'home.inbox.reason.asked',
+}
 
 function linkTo(item: WaitingItem) {
   return {
@@ -54,26 +66,29 @@ function linkTo(item: WaitingItem) {
 </script>
 
 <template>
-  <div class="inbox-page" :class="{ 'inbox-page--wide': mdAndUp }">
-    <header v-if="mdAndUp" class="inbox-page__head">
-      <h1 class="t-page-title">待办</h1>
-      <p class="t-body inbox-page__lede">点到你、还没处理完的事，跨你所在的全部项目。</p>
-    </header>
+  <AppPage :title="t('navigation.inbox')">
+    <section v-if="noProjects" class="inbox__start">
+      <p class="t-title">{{ t('work.emptyTitle', projectTerm) }}</p>
+      <div class="inbox__start-actions">
+        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="showNewProjectDialog()">
+          {{ t('navigation.newProject', projectTerm) }}
+        </v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-ticket-confirmation-outline" @click="joinOpen = true">
+          {{ t('work.joinAction') }}
+        </v-btn>
+      </div>
+    </section>
 
-    <div v-if="loading" class="inbox-page__state">
-      <v-progress-circular indeterminate size="24" width="2" color="primary" />
+    <h2 class="inbox__heading">{{ t('home.inbox.waiting') }}</h2>
+    <div v-if="loading" class="inbox__quiet">
+      <v-progress-circular indeterminate size="18" width="2" />
     </div>
-
-    <div v-else-if="failed" class="inbox-page__state">
-      <span class="t-body">未能读取待处理事项</span>
-      <v-btn variant="text" color="primary" size="small" @click="load">重试</v-btn>
+    <div v-else-if="failed" class="inbox__quiet">
+      <span>{{ t('home.inbox.loadFailed') }}</span>
+      <v-btn variant="text" size="small" @click="load">{{ t('home.inbox.retry') }}</v-btn>
     </div>
-
-    <div v-else-if="empty" class="inbox-page__state">
-      <span class="t-body inbox-page__empty">暂无待处理事项</span>
-    </div>
-
-    <v-list v-else class="inbox-page__list" bg-color="transparent" lines="two">
+    <p v-else-if="items.length === 0" class="inbox__quiet">{{ t('home.inbox.waitingEmpty') }}</p>
+    <v-list v-else class="inbox__list" bg-color="transparent" lines="two">
       <v-list-item
         v-for="item in items"
         :key="`${item.topicId}:${item.taskId ?? ''}`"
@@ -87,83 +102,76 @@ function linkTo(item: WaitingItem) {
           {{ item.taskTitle || item.topicTitle }}
         </v-list-item-title>
         <v-list-item-subtitle class="inbox-item__meta">
-          {{ REASON_TEXT[item.reason] }} · {{ item.displayStatus }} · {{ item.projectName }}
+          {{ t(REASON[item.reason]) }} · {{ item.displayStatus }} · {{ item.projectName }}
         </v-list-item-subtitle>
       </v-list-item>
     </v-list>
-  </div>
+
+    <NotificationFeed />
+    <JoinSpaceDialog v-model="joinOpen" />
+  </AppPage>
 </template>
 
 <style scoped>
-.inbox-page {
-  height: 100%;
-  overflow-y: auto;
+.inbox__start {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
-
-.inbox-page--wide {
-  /* 宽屏上一整行拉满屏幕，标题和状态隔得太远，眼睛来回扫；收成一栏居中。 */
-  padding: 24px 24px 48px;
-}
-
-.inbox-page--wide > * {
-  max-width: 760px;
-  margin-inline: auto;
-}
-
-.inbox-page__head {
-  margin-bottom: 16px;
-}
-
-.inbox-page__lede {
-  margin-top: 4px;
-  color: var(--muted);
-}
-
-.inbox-page--wide .inbox-page__list {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.inbox-page--wide .inbox-item:last-child {
-  border-bottom: none;
-}
-
-.inbox-page__state {
+.inbox__start-actions {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.inbox__heading {
+  margin: 24px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.inbox__quiet {
+  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 48px 16px;
-  color: var(--muted);
-}
-
-.inbox-page__empty {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   color: var(--faint);
 }
-
-.inbox-page__list {
+.inbox__list {
   padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
 }
-
 .inbox-item {
   border-bottom: 1px solid var(--line);
 }
-
-/* 待处理是整个产品里唯一需要人动手的那一列，和看板上同一个暖色的标记。 */
+.inbox-item :deep(.v-list-item__prepend) {
+  width: auto;
+  margin-inline-end: 12px;
+}
+.inbox-item:last-child {
+  border-bottom: none;
+}
+/* 待处理是整个产品里要人动手的那一列，和看板上同一个暖色的标记。 */
 .inbox-item__mark {
   width: 6px;
   height: 6px;
   border-radius: var(--radius-pill);
   background: var(--warn);
 }
-
 .inbox-item__title {
   color: var(--ink);
   font-size: 14px;
 }
-
 .inbox-item__meta {
   color: var(--muted);
   font-size: 13px;

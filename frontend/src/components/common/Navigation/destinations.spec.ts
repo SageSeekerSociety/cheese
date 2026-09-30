@@ -38,7 +38,7 @@ describe('一级导航的两份清单', () => {
   describe('⌘N 切到哪一格', () => {
     it('⌘1 是首页，之后依次是项目', () => {
       const rail = railItems(sources(3, 'p1'), DEFAULT_SHELL)
-      expect(shortcutTarget(rail, 1)).toBe('/')
+      expect(shortcutTarget(rail, 1)).toBe('/inbox')
       expect(shortcutTarget(rail, 2)).toBe('/projects/p0')
       expect(shortcutTarget(rail, 3)).toBe('/projects/p1')
     })
@@ -122,7 +122,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
     home: 'workspace-running',
     nav: {
       rail: ['home', 'projects', 'add'],
-      tabs: ['workspace', 'spaces', 'inbox'],
+      tabs: ['workspace', 'home', 'inbox'],
       project: [],
     },
     hidden: [],
@@ -133,7 +133,6 @@ describe('壳决定露出哪几格、什么顺序', () => {
     // 这是整个壳层的验收条件：没声明壳的项目必须和今天逐屏一样。
     expect(items(railItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual([
       '首页',
-      '待办',
       '项目0',
       '项目1',
       '项目2',
@@ -149,7 +148,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
   it('壳没列出来的格子就不画', () => {
     const trimmed: Shell = {
       ...DEFAULT_SHELL,
-      nav: { ...DEFAULT_SHELL.nav, tabs: ['spaces', 'workspace'] },
+      nav: { ...DEFAULT_SHELL.nav, tabs: ['home', 'workspace'] },
     }
     expect(items(tabItems(sources(1, 'p0'), trimmed)).map((i) => i.title)).toEqual(['首页', '工作区'])
   })
@@ -157,7 +156,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
   it('不认识的 key 画不出来，而不是画一格点了就 404', () => {
     const ahead: Shell = {
       ...DEFAULT_SHELL,
-      nav: { ...DEFAULT_SHELL.nav, tabs: ['spaces', '课程表', 'inbox'] },
+      nav: { ...DEFAULT_SHELL.nav, tabs: ['home', '课程表', 'inbox'] },
     }
     expect(items(tabItems(sources(1, 'p0'), ahead)).map((i) => i.title)).toEqual(['首页', '待办'])
   })
@@ -169,16 +168,35 @@ describe('壳决定露出哪几格、什么顺序', () => {
     }
     const rail = railItems(sources(2, 'p0'), projectsFirst)
     expect(shortcutTarget(rail, 1)).toBe('/projects/p0')
-    expect(shortcutTarget(rail, 3)).toBe('/')
+    expect(shortcutTarget(rail, 3)).toBe('/inbox')
   })
 
-  it('桌面也到得了待办，而且它不占 ⌘N', () => {
-    // 加这一格之前 ⌘2 是第一个项目；它钉在首页下面，不该把项目的编号往后挤。
+  // 桌面没有单独的「待办」格：首页那一格点开就是待办，件数画在它身上。
+  it('桌面首页那一格通向待办，并带着待处理的件数', () => {
     const rail = railItems({ ...sources(2, 'p0'), awaitingCount: 3 }, DEFAULT_SHELL)
-    const inbox = items(rail).find((i) => i.to === '/inbox')
-    expect(inbox?.badge).toBe(3)
-    expect(inbox?.shortcut).toBeUndefined()
-    expect(shortcutTarget(rail, 2)).toBe('/projects/p0')
+    const home = items(rail).find((i) => i.to === '/inbox')
+    expect(home?.title).toBe('首页')
+    expect(home?.badge).toBe(3)
+    expect(items(rail).filter((i) => i.to === '/inbox')).toHaveLength(1)
+  })
+
+  // 没有待处理的事时，没读的动态（提到你、回复你）也得有个记号，否则铃铛拆掉之后
+  // 就没人知道有人找过你。有待处理的事时件数已经在那儿，不再叠一颗点。
+  it('没有待处理的事、但有没读的动态时，首页那一格画一颗点', () => {
+    const quiet = items(railItems({ ...sources(1, 'p0'), awaitingCount: 0, unreadActivity: true }, DEFAULT_SHELL))
+    expect(quiet.find((i) => i.to === '/inbox')?.dot).toBe(true)
+    const busy = items(railItems({ ...sources(1, 'p0'), awaitingCount: 2, unreadActivity: true }, DEFAULT_SHELL))
+    expect(busy.find((i) => i.to === '/inbox')?.dot).toBe(false)
+    const none = items(railItems({ ...sources(1, 'p0'), awaitingCount: 0, unreadActivity: false }, DEFAULT_SHELL))
+    expect(none.find((i) => i.to === '/inbox')?.dot).toBe(false)
+  })
+
+  it('首页那一格在团队和空间的页面上也亮着', () => {
+    const home = items(railItems(sources(1, 'p0'), DEFAULT_SHELL)).find((i) => i.to === '/inbox')
+    for (const path of ['/inbox', '/teams/crew/members', '/spaces', '/spaces/3/tasks']) {
+      expect(home?.match?.(path), path).toBe(true)
+    }
+    expect(home?.match?.('/projects/p0')).toBe(false)
   })
 
   it('手机底栏的待办也带着件数：两端答的是同一个数', () => {
@@ -194,7 +212,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
   it('default 壳把所有格子都列了出来', () => {
     // rail 和底栏没有「更多」——一格从清单里去掉就是真的到不了。壳在这里只能
     // 重排，不能删；要收起某个平台概念，走 hidden + 「更多」（项目侧栏那条路）。
-    expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'inbox', 'projects', 'add'])
-    expect(DEFAULT_SHELL.nav.tabs).toEqual(['spaces', 'workspace', 'inbox'])
+    expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'projects', 'add'])
+    expect(DEFAULT_SHELL.nav.tabs).toEqual(['home', 'workspace', 'inbox'])
   })
 })

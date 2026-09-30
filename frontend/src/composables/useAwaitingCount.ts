@@ -1,4 +1,4 @@
-import { type Ref, ref, watch } from 'vue'
+import { readonly, type Ref, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
@@ -7,8 +7,16 @@ import { listAwaitingMe } from '@/api'
 /** 两次读之间至少隔这么久：换路由很频繁，而这个数字晚几十秒变不要紧。 */
 const MIN_INTERVAL_MS = 30_000
 
+// 全站一份：首页那一格和首页侧栏的「待办」那一行读的是同一个数。
+const count = ref(0)
+
+/** 只读这个数，不负责去取——取数由 App 里那一处 `useAwaitingCount` 管。 */
+export function awaitingCount(): Readonly<Ref<number>> {
+  return readonly(count)
+}
+
 /**
- * 「待办」那一格的件数：桌面 rail 与手机底栏各画一颗角标。
+ * 待我处理的件数：桌面首页那一格与手机底栏「待办」各画一颗角标。
  *
  * 和待办页读同一个接口（`/awaiting-me`），所以角标上的数就是点进去看到的行数。
  * 没有推送通道告诉它「有新的一件」，于是在人**做了点什么**的时候再读：换页面、
@@ -16,7 +24,6 @@ const MIN_INTERVAL_MS = 30_000
  * 立刻跟上。读失败就保持原来的数，不把一次网络抖动画成「没有待办」。
  */
 export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
-  const count = ref(0)
   const route = useRoute()
   let lastAt = 0
 

@@ -44,9 +44,9 @@ class Nav:
     does not show into 「更多」, so 默认收起 stays 收起 and never becomes 禁止.
     """
 
-    #: App rail (desktop): "home" | "inbox" | "projects" | "add".
+    #: App rail (desktop): "home" | "projects" | "add".
     rail: tuple[str, ...]
-    #: App bottom bar (mobile): "spaces" | "workspace" | "inbox".
+    #: App bottom bar (mobile): "home" | "workspace" | "inbox".
     tabs: tuple[str, ...]
     #: Project sidebar, by route name (`workspaceRoutes.ts`), "全局" excluded.
     project: tuple[str, ...]
@@ -92,8 +92,8 @@ _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
     home="workspace-running",
     nav=Nav(
-        rail=("home", "inbox", "projects", "add"),
-        tabs=("spaces", "workspace", "inbox"),
+        rail=("home", "projects", "add"),
+        tabs=("home", "workspace", "inbox"),
         project=(
             "calendar",
             "project-library",
@@ -112,8 +112,8 @@ _WORKBENCH = Shell(
     name="workbench",
     home="workspace-running",
     nav=Nav(
-        rail=("home", "inbox", "projects", "add"),
-        tabs=("workspace", "spaces", "inbox"),
+        rail=("home", "projects", "add"),
+        tabs=("workspace", "home", "inbox"),
         project=(
             "calendar",
             "project-library",
@@ -136,8 +136,8 @@ _COURSE_STUDENT = Shell(
     name="course-student",
     home="workspace-running",
     nav=Nav(
-        rail=("home", "inbox", "projects", "add"),
-        tabs=("workspace", "inbox", "spaces"),
+        rail=("home", "projects", "add"),
+        tabs=("workspace", "inbox", "home"),
         project=(
             "project-library",
             "calendar",
@@ -156,8 +156,8 @@ _COURSE_TEACHER = Shell(
     name="course-teacher",
     home="workspace-running",
     nav=Nav(
-        rail=("home", "inbox", "projects", "add"),
-        tabs=("workspace", "inbox", "spaces"),
+        rail=("home", "projects", "add"),
+        tabs=("workspace", "inbox", "home"),
         project=(
             "workspace-running",
             "project-members",

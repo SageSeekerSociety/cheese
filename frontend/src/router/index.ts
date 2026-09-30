@@ -27,7 +27,7 @@ import { SpaceBoardRoutes } from '@/views/spaces/board/routes'
 // 个人的几页（设备、连接、批准设备、打开预览/网站）不是底栏上的一级目的地，是从头像
 // 菜单或一条链接推进来的一层：手机上收起底栏、顶栏给 ← 回首页。桌面上左边有 rail，
 // 这几页照旧不画 ←。
-const PERSONAL_PAGE = { hideTabs: true, backTo: 'HomeWork', backOnPhoneOnly: true } as const
+const PERSONAL_PAGE = { hideTabs: true, backTo: 'HomeHub', backOnPhoneOnly: true } as const
 
 const routes: RouteRecordRaw[] = [
   {
@@ -94,13 +94,6 @@ const routes: RouteRecordRaw[] = [
     path: '/connect',
     component: () => import('@/views/ConnectView.vue'),
     meta: { title: '连接设备', isFullPage: true, ...PERSONAL_PAGE },
-  },
-  {
-    // 「待办」: 手机底栏三格之一，桌面是 rail 上紧贴首页的那一格。
-    name: 'inbox',
-    path: '/inbox',
-    component: () => import('@/views/InboxView.vue'),
-    meta: { title: '待办', isFullPage: true, palette: { label: 'navigation.inbox', icon: 'mdi-inbox-outline' } },
   },
   {
     name: 'market',

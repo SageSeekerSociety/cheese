@@ -160,14 +160,14 @@ export class AccountService {
 
     // 访问令牌只活 15 分钟（后端 access_token_expires_seconds），刷新令牌活 30 天。
     // 以前这里不看 exp，直接把 loggedIn 置 true——于是每次进页面（只要距上次活动
-    // 超过 15 分钟）都会拿着已经死掉的令牌去打认证接口，铃铛的
+    // 超过 15 分钟）都会拿着已经死掉的令牌去打认证接口，
     // /notifications/unread-count 必 401，未读数也就永远停在 0。
     //
     // 页面上绝大多数请求（topics/blocks/projects）在这个部署里根本不鉴权，所以
-    // 只有铃铛会把坏掉的会话喊出来——看着像"铃铛坏了"，其实是"只有铃铛说实话"。
+    // 只有未读数会把坏掉的会话喊出来。
     //
     // 令牌已过期就先续签再宣布登录：等 loggedIn 翻成 true 时手里一定是新令牌，
-    // 消费方（AppBar / useNotifications 都 watch 了 loggedIn）自然会重新取一次数。
+    // 消费方（useUnreadNotifications watch 了 loggedIn）自然会重新取一次数。
     if (isTokenExpired(accessToken)) {
       // 续签成功才宣布登录——手里没有活令牌，宣布了也只是继续撒 401。
       const outcome = await this.resumeFromCookie()

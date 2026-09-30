@@ -13,9 +13,8 @@
     @drop="onRailDrop"
   >
     <template #prepend>
+      <!-- 首页钉在顶上：项目多到滚动时它不能跟着滚出视野——待办的件数画在它身上。 -->
       <RailItem v-if="homeItem" :item="homeItem" />
-      <!-- 待办和首页一样钉在顶上：项目多到滚动时它不能跟着滚出视野。 -->
-      <RailItem v-if="inboxItem" :item="inboxItem" />
       <RailItem v-if="homeDivider" :item="homeDivider" />
     </template>
     <RailItem
@@ -98,9 +97,8 @@ const navBarProps = withDefaults(defineProps<NavBarProps>(), {
 
 const { items } = toRefs(navBarProps)
 const homeItem = computed(() => items.value.find((item) => item.key === 'Home'))
-const inboxItem = computed(() => items.value.find((item) => item.key === 'Inbox'))
 const homeDivider = computed(() => items.value.find((item) => item.type === 'divider'))
-const PINNED = ['Home', 'Inbox']
+const PINNED = ['Home']
 const scrollingItems = computed(() =>
   items.value.filter((item) => !PINNED.includes(item.key) && item.type !== 'divider')
 )

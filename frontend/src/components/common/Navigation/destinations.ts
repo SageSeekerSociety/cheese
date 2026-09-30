@@ -22,24 +22,23 @@ import { orderedNav, termParams } from '@/lib/shell'
 // 壳给的顺序，然后只画这一版前端认得出来的格子。壳比前端新的时候，多出来的 key
 // 画不出来，而不是画一格点了就去 404。
 
-const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese' }
+// 首页那一格点开是待办；它底下的团队、空间也都算在这一格里（侧栏就是这一格的目录）。
+const inHome = (path: string) =>
+  path === '/inbox' || path === '/home' || path.startsWith('/teams') || path.startsWith('/spaces')
 
-// 这一格装的是首页那一层，落点是空间；我的工作和 小队 是它并排的另外两半（手机上
-// 就是那一行页内分段），所以在 /work 和 /teams 底下这一格照样亮着——不然人在这一
-// 格里翻自己的项目或小队，底栏却整排都是灰的，看起来像已经走出了这个 app 的导航。
-const SPACES: NavItem = {
-  key: 'Spaces',
+const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/inbox', icon: 'cheese', match: inHome }
+
+// 手机底栏的「首页」：团队和空间的目录（HomeHub）。待办在手机上自己占一格。
+const HUB: NavItem = {
+  key: 'Hub',
   type: 'item',
   title: '首页',
-  to: '/spaces',
+  to: '/home',
   icon: 'mdi-home-outline',
-  match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams') || path.startsWith('/work'),
+  match: (path) => path === '/home' || path.startsWith('/teams') || path.startsWith('/spaces'),
 }
 
-// 「待办」这个词还没定（设计文档 §7 拍板 1），路径和标签都可能再改。
-//
-// 两端都有它：手机上是底栏一格，桌面上是 rail 里紧贴首页的那一格（不随项目滚走）。
-// 桌面曾经没有这一格，唯一沾边的是顶栏铃铛——那是通知，答不出「还有哪些没处理」。
+// 手机底栏的「待办」。桌面上没有这一格：待办就是首页那一格点开的那一页。
 const INBOX: NavItem = { key: 'Inbox', type: 'item', title: '待办', to: '/inbox', icon: 'mdi-inbox-outline' }
 
 export interface NavSources {
@@ -48,8 +47,10 @@ export interface NavSources {
   workspaceProjectId: string | null
   projectAvatar: (name: string) => string
   createProject: () => void
-  /** 待我处理的件数；还没读到是 0。rail 和底栏的「待办」那一格都画它。 */
+  /** 待我处理的件数；还没读到是 0。桌面首页那一格和手机底栏「待办」都画它。 */
   awaitingCount?: number
+  /** 有没有没读的动态（提到你、回复你……）。没有待处理的事时，用一颗小点提醒它。 */
+  unreadActivity?: boolean
 }
 
 /**
@@ -85,6 +86,12 @@ function workspace(src: NavSources): NavItem {
     : { ...tab, action: src.createProject }
 }
 
+/** 待办的记号：有待处理的事画件数；没有、但有没读的动态，画一颗小点。 */
+function marks(src: NavSources): Pick<NavItem, 'badge' | 'dot'> {
+  const badge = src.awaitingCount || 0
+  return { badge, dot: !badge && !!src.unreadActivity }
+}
+
 /**
  * 桌面 rail 的三格长什么样，按 key 摆好等壳来排。
  *
@@ -94,10 +101,7 @@ function workspace(src: NavSources): NavItem {
 function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem[]> {
   const terms = termParams(shell)
   return {
-    home: [{ ...HOME, title: t('navigation.home', terms) }],
-    // 不参与 ⌘N 编号：加这一格之前 ⌘2 就是第一个项目，人手已经记住了；「待办」
-    // 是看一眼的地方，不是要频繁切进去干活的地方。
-    inbox: [{ ...INBOX, title: t('navigation.inbox', terms), badge: src.awaitingCount || 0, unnumbered: true }],
+    home: [{ ...HOME, title: t('navigation.home', terms), ...marks(src) }],
     projects: [
       ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
       // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
@@ -123,14 +127,14 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
   }
 }
 
-/** 桌面左侧 rail：首页（容器，空间/小队在它的侧栏里）+ 待办 + 项目实例 + ＋新建项目。 */
+/** 桌面左侧 rail：首页（待办、团队、空间都在它的侧栏里）+ 项目实例 + ＋新建项目。 */
 export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
   const parts = railParts(src, shell)
   const items = orderedNav(shell, 'rail', Object.keys(parts)).flatMap((key) => parts[key])
   // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
   // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
   let n = 1
-  return items.map((item) => (item.type === 'item' && item.to && !item.unnumbered ? { ...item, shortcut: n++ } : item))
+  return items.map((item) => (item.type === 'item' && item.to ? { ...item, shortcut: n++ } : item))
 }
 
 /**
@@ -153,10 +157,9 @@ export function shortcutTarget(items: NavGenericItem[], digit: number): string |
 function tabParts(src: NavSources, shell: Shell): Record<string, NavItem> {
   const terms = termParams(shell)
   return {
-    // 名字是「首页」而不是「空间」：它亮着的范围是整个首页层（我的工作 / 空间 / 团队）。
-    spaces: { ...SPACES, title: t('navigation.home', terms) },
+    home: { ...HUB, title: t('navigation.home', terms) },
     workspace: workspace(src),
-    inbox: { ...INBOX, title: t('navigation.inbox', terms), badge: src.awaitingCount || 0 },
+    inbox: { ...INBOX, title: t('navigation.inbox', terms), ...marks(src) },
   }
 }
 
