@@ -292,7 +292,7 @@ async def _load_team_user_maps(
     return users_map, profiles_map
 
 
-def _application_to_api_model(
+def application_to_api_model(
     app,
     *,
     users_map: dict | None = None,
@@ -300,6 +300,9 @@ def _application_to_api_model(
     teams_map: dict | None = None,
 ) -> dict:
     """TeamMembershipApplication payload aligned with the frontend type.
+
+    Public because the `/users/me/team*` routes in `routes/users_team.py` list
+    the same rows for the signed-in user; this is the one home of the shape.
 
     The frontend ``TeamMembershipApplication`` (cheese-frontend types/teams.ts)
     embeds full ``user``, ``team``, ``initiator`` and optional ``processedBy``
@@ -347,8 +350,11 @@ def _application_to_api_model(
     return payload
 
 
-async def _load_application_maps(db, apps) -> tuple[dict, dict, dict]:
-    """Bulk-fetch User+UserProfile+Team for a batch of applications."""
+async def load_application_maps(db, apps) -> tuple[dict, dict, dict]:
+    """Bulk-fetch User+UserProfile+Team for a batch of applications.
+
+    Public for the same reason as `application_to_api_model` above.
+    """
     if not apps:
         return {}, {}, {}
     user_ids = set()
@@ -946,9 +952,9 @@ async def list_team_join_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
+    users_map, profiles_map, teams_map = await load_application_maps(db, apps)
     items = [
-        _application_to_api_model(
+        application_to_api_model(
             app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
         )
         for app in apps
@@ -1025,9 +1031,9 @@ async def list_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
+    users_map, profiles_map, teams_map = await load_application_maps(db, apps)
     items = [
-        _application_to_api_model(
+        application_to_api_model(
             app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
         )
         for app in apps
@@ -1064,12 +1070,12 @@ async def create_team_invitation(
         role=role,
         message=payload.message,
     )
-    users_map, profiles_map, teams_map = await _load_application_maps(db, [app])
+    users_map, profiles_map, teams_map = await load_application_maps(db, [app])
     return {
         "code": 201,
         "message": "Invitation created",
         "data": {
-            "invitation": _application_to_api_model(
+            "invitation": application_to_api_model(
                 app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
             )
         },
