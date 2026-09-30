@@ -216,7 +216,7 @@ const canTransfer = computed(
 )
 const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
 const currentProjectName = computed<string>(
-  () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? '选择项目'
+  () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? t('work.sidebar.chooseProject')
 )
 
 // 手机上的项目菜单（整页形态）：侧栏上摆在话题上面的那几页、项目文档、平时收在 ⋯
@@ -243,7 +243,7 @@ const projectSheetActions = computed<MenuAction[]>(() => {
     ...menuPages.value.map((p) => page(p.key)),
     {
       key: 'project-settings',
-      label: '项目设置',
+      label: t('navigation.project.settings'),
       icon: 'mdi-cog-outline',
       onSelect: () => openProjectPage('project-settings'),
     },
@@ -383,7 +383,7 @@ const onDocs = computed(() => !!props.activeDocs)
            一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
       <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
         <div v-if="projects.length > 1" class="project-switch">
-          <div class="project-switch__head t-eyebrow">切换项目</div>
+          <div class="project-switch__head t-eyebrow">{{ t('work.sidebar.switchProject') }}</div>
           <button
             v-for="p in projects"
             :key="p.id"
@@ -412,7 +412,7 @@ const onDocs = computed(() => !!props.activeDocs)
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div ref="railScroll" class="rail-scroll flex-grow-1 overflow-y-auto">
         <template v-if="!selectedProjectId">
-          <div class="t-body c-muted pa-4">先选择一个项目</div>
+          <div class="t-body c-muted pa-4">{{ t('work.sidebar.chooseProjectFirst') }}</div>
         </template>
         <template v-else>
           <!-- 列表顶上由外面填的一行（手机上是看板的摘要，见 ProjectSidebar）。 -->
@@ -442,14 +442,14 @@ const onDocs = computed(() => !!props.activeDocs)
           <v-divider class="mx-3 my-1" />
 
           <div class="t-eyebrow side-subhead side-subhead--row">
-            <span>话题</span>
+            <span>{{ t('work.sidebar.topics') }}</span>
             <v-btn
               icon="mdi-plus"
               size="x-small"
               variant="text"
               color="on-surface-variant"
-              :title="creatingTopic ? '正在创建话题' : '新建话题'"
-              :aria-label="creatingTopic ? '正在创建话题' : '新建话题'"
+              :title="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
+              :aria-label="creatingTopic ? t('work.sidebar.creatingTopic') : t('work.sidebar.newTopic')"
               :loading="creatingTopic"
               :disabled="creatingTopic"
               :class="{ 'tap-target': page }"
@@ -463,7 +463,7 @@ const onDocs = computed(() => !!props.activeDocs)
             <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
                  说清楚「空的是这一组，不是这个项目」，否则下面那个折叠组会像个谜。 -->
             <v-list v-if="mineTree.length === 0 && othersCount > 0" density="compact" nav class="py-0">
-              <v-list-item class="c-faint t-body"> 暂无与你相关的话题 </v-list-item>
+              <v-list-item class="c-faint t-body">{{ t('work.sidebar.noneMine') }}</v-list-item>
             </v-list>
 
             <!-- 分组 (C2): 两组走同一段模板。上组直接平铺；下组「其他话题」多一个
@@ -480,7 +480,7 @@ const onDocs = computed(() => !!props.activeDocs)
                 :count="section.count"
                 :open="section.open"
                 :unread="section.unread > 0"
-                unread-title="其他话题里有新消息"
+                :unread-title="t('work.sidebar.othersUnread')"
                 @toggle="toggleOthers"
               />
 
@@ -516,7 +516,7 @@ const onDocs = computed(() => !!props.activeDocs)
             </template>
 
             <v-list v-if="activeTree.length === 0" density="compact" nav class="py-0">
-              <v-list-item class="c-faint t-body"> 暂无话题 </v-list-item>
+              <v-list-item class="c-faint t-body">{{ t('work.sidebar.empty') }}</v-list-item>
             </v-list>
           </template>
 

@@ -1,3 +1,5 @@
+import { t } from '@/i18n'
+
 export const getErrorMessage = (error: any) => {
   if (typeof error === 'string') {
     return error
@@ -13,5 +15,5 @@ export const getErrorMessage = (error: any) => {
       return error.response.statusText
     }
   }
-  return '未知错误'
+  return t('global.unknownError')
 }

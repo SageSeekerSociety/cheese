@@ -128,7 +128,20 @@
         "knowledgeIds": "Knowledge entry IDs",
         "listHint": "Comma-separated"
       },
-      "displayOrderHint": "Lower numbers show first"
+      "displayOrderHint": "Lower numbers show first",
+      "loadFailed": "Couldn't load the categories",
+      "createSuccess": "Category created",
+      "createFailed": "Couldn't create the category",
+      "updateSuccess": "Category updated",
+      "updateFailed": "Couldn't update the category",
+      "deleteSuccess": "Category deleted",
+      "deleteFailed": "Couldn't delete the category",
+      "archiveSuccess": "Category archived",
+      "archiveFailed": "Couldn't archive the category",
+      "unarchiveSuccess": "Category restored",
+      "unarchiveFailed": "Couldn't restore the category",
+      "setDefaultSuccess": "Default category set",
+      "setDefaultFailed": "Couldn't set the default category"
     },
     "publishTask": {
       "createSuccess": "Challenge created",
@@ -335,6 +348,19 @@
       "confirmNote": "Once confirmed, these {n} go into the {queue} queue. They still need review before going live.",
       "cancel": "Cancel",
       "confirm": "Publish {n}"
+    },
+    "data": {
+      "loadFailed": "Couldn't load the space",
+      "updateSuccess": "Space updated",
+      "updateFailed": "Couldn't update the space",
+      "templatesFailed": "Couldn't update the templates",
+      "classificationTopicsFailed": "Couldn't update the category topics",
+      "adminAddSuccess": "Admin added",
+      "adminAddFailed": "Couldn't add the admin",
+      "adminRoleSuccess": "Admin role updated",
+      "adminRoleFailed": "Couldn't update the admin role",
+      "adminRemoveSuccess": "Admin removed",
+      "adminRemoveFailed": "Couldn't remove the admin"
     }
   },
   "domainGroups": {

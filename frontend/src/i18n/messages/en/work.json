@@ -462,7 +462,10 @@
       "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
       "pasteHint": "You can paste images",
       "placeholderDm": "Message {name}",
-      "placeholder": "Type a message, or {'@'}{name} to hand it over"
+      "placeholder": "Type a message, or {'@'}{name} to hand it over",
+      "attachFiles": "Upload files (up to 10 MB each)",
+      "sendPhotos": "Send photos",
+      "send": "Send"
     },
     "dispatched": {
       "created": "New task",
@@ -1095,7 +1098,16 @@
     "autoTitle": "Named automatically; the name updates if the topic changes direction",
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
-    "moreActions": "More actions"
+    "moreActions": "More actions",
+    "chooseProject": "Choose a project",
+    "switchProject": "Switch project",
+    "chooseProjectFirst": "Choose a project first",
+    "topics": "Topics",
+    "newTopic": "New topic",
+    "creatingTopic": "Creating topic",
+    "noneMine": "No topics involve you yet",
+    "othersUnread": "New messages in other topics",
+    "empty": "No topics yet"
   },
   "members": {
     "leave": "Leave project",
@@ -1648,5 +1660,17 @@
   "liveView": {
     "connecting": "Connecting to the live view…",
     "closed": "Live view disconnected"
+  },
+  "labels": {
+    "notifKind": {
+      "decisionRequest": "Decision request",
+      "changeAlert": "Change alert",
+      "acceptRequest": "Review"
+    },
+    "topicStatus": {
+      "active": "In progress",
+      "archived": "Archived",
+      "draft": "Draft"
+    }
   }
 }

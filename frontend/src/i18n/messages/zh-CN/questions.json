@@ -4,7 +4,25 @@
       "addTopic": "添加话题（至少一个） | 添加话题（1/{max}） | 添加话题（{count}/{max}）",
       "addTopicInfinite": "添加话题",
       "createTopic": "创建 {name} 话题"
-    }
+    },
+    "titleLabel": "问题标题",
+    "addBounty": "添加悬赏",
+    "removeBounty": "取消悬赏",
+    "bounty": "悬赏 {bounty}",
+    "submit": "发布问题",
+    "guide": {
+      "title": "提问的艺术",
+      "tried": "当提问时，请先简要分享你已经做过的尝试，这有助于展示你的积极态度，表明你不是想轻易获取答案，而是真心寻求帮助。我们更愿意帮助那些通过提问能够学到东西的人。",
+      "effort": "请确保你的问题经过深思熟虑。展现出你在求助前已经努力尝试解决问题，这样更容易获得有价值的回答。",
+      "premise": "确保你的问题建立在正确的基础上。提出有意义且具有启发性的问题，这不仅能帮助自己，也能对社区有所贡献。",
+      "willing": "最后，表示你愿意在解决问题的过程中做出努力，例如，通过问“有哪些提示可以给我？”或“我应该检查哪里？”来显示你的积极性和解决问题的决心，通常能得到更好的回答。"
+    },
+    "errors": {
+      "titleRequired": "问题标题不能为空",
+      "titleQuestionMark": "问题标题必须以问号结尾",
+      "topicRequired": "至少选择一个话题"
+    },
+    "success": "提问成功"
   },
   "detail": {
     "createdAt": "发布于 {time}",
@@ -35,7 +53,9 @@
     "bountyTip": "{before} 前回答问题，被采纳后可获得 {bounty} 芝士；未被采纳则按照点赞数比例瓜分 {bounty} 芝士",
     "addBountyTitle": "悬赏",
     "addBountySuccess": "悬赏成功，等待回答",
-    "acceptedAnswerTitle": "来自 {user} 的回答已被采纳"
+    "acceptedAnswerTitle": "来自 {user} 的回答已被采纳",
+    "searchUsers": "搜索用户",
+    "close": "关闭"
   },
   "answerList": {
     "title": "全部回答"
@@ -49,5 +69,8 @@
       "inviteFailed": "邀请失败：{reason}",
       "loadFailed": "读不到可以邀请的人。"
     }
+  },
+  "answer": {
+    "acceptSuccess": "采纳成功"
   }
 }

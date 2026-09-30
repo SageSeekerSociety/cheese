@@ -31,5 +31,22 @@
     "macAppleSilicon": "Mac（Apple 芯片）",
     "macIntel": "Mac（Intel 芯片）",
     "windows": "Windows"
-  }
+  },
+  "request": {
+    "timeout": "请求等待超时，请重试",
+    "canceled": "请求已取消",
+    "failed": "请求失败（HTTP {status}）",
+    "versionReadFailed": "未能读取这一版（HTTP {status}）",
+    "addFailed": "添加失败（HTTP {status}）",
+    "uploadFailed": "上传失败（HTTP {status}）",
+    "imageFailed": "图片加载失败（HTTP {status}）",
+    "fileReadFailed": "读取文件失败（HTTP {status}）",
+    "downloadFailed": "下载失败（HTTP {status}）",
+    "revisionFileName": "{name}（第{seq}版）{ext}"
+  },
+  "dialog": {
+    "alertTitle": "提示",
+    "promptTitle": "输入"
+  },
+  "unknownError": "未知错误"
 }

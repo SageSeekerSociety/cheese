@@ -73,7 +73,8 @@ export function shouldScan(relPath) {
  * copy and there is a lot of it in this tree — counting it would drown the
  * signal and freeze thousands of lines nobody is going to translate.
  * @param {string} code
- * @returns {Array<{start: number, end: number}>}
+ * @returns {Array<{start: number, end: number, open?: number}>} `open`, on a
+ *   template's pieces, is where that template's text starts (see `scanTemplate`)
  */
 export function stringSpans(code) {
   const src = String(code)
@@ -162,9 +163,7 @@ export function stringSpans(code) {
     }
 
     if (c === '`') {
-      const end = skipTemplate(src, i)
-      spans.push({ start: i + 1, end: Math.max(i + 1, end - 1) })
-      i = end
+      i = scanTemplate(src, i, spans, i + 1)
       prevChar = 'x'
       prevWord = ''
       continue
@@ -229,36 +228,77 @@ function skipQuoted(src, start) {
 }
 
 /**
- * Index just past the closing backtick. `${…}` is treated as part of the
- * literal — including nested backticks, which are tracked by depth — because a
- * string built as `` `剩余 ${n} 天` `` is exactly the case this gate is for.
+ * Pushes the literal chunks of the template starting at `start` onto `spans`
+ * and returns the index just past its closing backtick. The text around each
+ * `${…}` is the literal — a string built as `` `剩余 ${n} 天` `` is exactly the
+ * case this gate is for — and the code inside is scanned as code, so a comment
+ * there is a comment and a string there is a string of its own.
+ *
+ * `open` is where the outermost template's text starts. Every chunk and every
+ * string nested in it carries it, because whether a template is a developer log
+ * is decided by what precedes its opening backtick (see `isDevLog`), not by
+ * what precedes a chunk after `}`.
  */
-function skipTemplate(src, start) {
+function scanTemplate(src, start, spans, open) {
+  let chunk = start + 1
   let i = start + 1
-  let depth = 0
   while (i < src.length) {
     const c = src[i]
     if (c === '\\') {
       i += 2
       continue
     }
+    if (c === '`') {
+      spans.push({ start: chunk, end: i, open })
+      return i + 1
+    }
     if (c === '$' && src[i + 1] === '{') {
-      depth++
-      i += 2
+      spans.push({ start: chunk, end: i, open })
+      i = scanInterpolation(src, i + 2, spans, open)
+      chunk = i
       continue
     }
-    if (depth > 0) {
-      if (c === '}') depth--
-      else if (c === '`') i = skipTemplate(src, i) - 1
-      else if (c === '"' || c === "'") i = skipQuoted(src, i) - 1
-      else if (c === '/' && src[i + 1] === '/') {
-        const nl = src.indexOf('\n', i)
-        i = nl === -1 ? src.length - 1 : nl - 1
-      }
-      i++
+    i++
+  }
+  spans.push({ start: chunk, end: src.length, open })
+  return src.length
+}
+
+/**
+ * The code inside a `${…}`, from just past its brace. Returns the index just
+ * past the brace that closes it: braces are counted, so an object literal in
+ * there (`${query({ a, b })}`) does not end it early.
+ */
+function scanInterpolation(src, start, spans, open) {
+  let depth = 0
+  let i = start
+  while (i < src.length) {
+    const c = src[i]
+    if (c === '/' && src[i + 1] === '/') {
+      const nl = src.indexOf('\n', i)
+      i = nl === -1 ? src.length : nl
       continue
     }
-    if (c === '`') return i + 1
+    if (c === '/' && src[i + 1] === '*') {
+      const close = src.indexOf('*/', i + 2)
+      i = close === -1 ? src.length : close + 2
+      continue
+    }
+    if (c === '"' || c === "'") {
+      const end = skipQuoted(src, i)
+      spans.push({ start: i + 1, end: Math.max(i + 1, end - 1), open })
+      i = end
+      continue
+    }
+    if (c === '`') {
+      i = scanTemplate(src, i, spans, open)
+      continue
+    }
+    if (c === '{') depth++
+    else if (c === '}') {
+      if (depth === 0) return i + 1
+      depth--
+    }
     i++
   }
   return src.length
@@ -304,7 +344,7 @@ export function scanSource(relPath, text) {
   // of the block's body for a .vue one. Offsets are line-mapped against the
   // whole file so the reported line number is the one an editor shows.
   const addSpan = (code, span, base) => {
-    if (isDevLog(code, span.start)) return
+    if (isDevLog(code, span.open ?? span.start)) return
     const body = code.slice(span.start, span.end)
     body.split('\n').forEach((line, index) => {
       if (CJK.test(line)) found.add(lineOf(base + span.start) + index)

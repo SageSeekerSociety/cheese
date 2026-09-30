@@ -1,6 +1,12 @@
 {
   "image": {
-    "tooltip": "插入图片"
+    "tooltip": "插入图片",
+    "uploading": "图片上传中"
   },
-  "renderError": "渲染错误: {text}"
+  "renderError": "渲染错误: {text}",
+  "placeholder": "输入内容...",
+  "question": {
+    "placeholder": "问题描述",
+    "headingPlaceholder": "请输入标题"
+  }
 }
