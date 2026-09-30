@@ -32,16 +32,20 @@ THE RULE, in two halves:
   entirely — so the template must use the view's tag, and every other
   component the template renders must be standalone too: the view is where
   the rendering lives, not one of several places. Reading the template takes
-  some care: a tag in an HTML comment is not rendered, a `<template v-if>`
-  nests and a scan that stops at the inner close loses what follows, Vuetify
-  is trusted by component name and never by the V- prefix, and a local import
-  shadows a builtin (`import RouterView from './x.vue'` is that file, graded
-  like any other). What the check cannot see
-  through (a `<component :is>`, a tag no import explains) is not paired — a
-  verifiable shape is the price of the exemption. The view is then a scene of
-  its own, graded and frozen like any other — it is the part that must render
-  from props alone — and the page is judged as its container, not as a scene
-  that failed. It is the shape the recipe below already describes
+  some care, and every shortcut here was a real impostor once: a tag in an
+  HTML comment is not rendered; a `<template v-if>` nests and a scan that
+  stops at the inner close loses what follows; `title="</template>"` is an
+  attribute value, not a tag; a lowercase `<child />` is a component, native
+  only if it is a real HTML/SVG element; Vuetify is trusted by the repo's own
+  auto-import table (vuetify's `importMap.json`), never by the V- prefix; and
+  a local binding shadows a builtin — an import (`import RouterView from
+  './x.vue'`, graded like any other) or a declaration (`const RouterView =
+  ...`, which nothing can prove, so it is not exempted). What the check
+  cannot see through (a `<component :is>`, a tag no import explains) is not
+  paired — a verifiable shape is the price of the exemption. The view is then
+  a scene of its own, graded and frozen like any other — it is the part that
+  must render from props alone — and the page is judged as its container, not
+  as a scene that failed. It is the shape the recipe below already describes
   (`PanelDoc` -> `usePanelDoc` -> `PanelDocView`), named so a check can find it.
   Pages only: a route has to get its data somewhere, a panel does not — a
   panel in the same costume is a panel that fetches.
@@ -140,10 +144,50 @@ GLOBAL_TAGS = {
     "Component",
 }
 
+#: Real HTML and SVG element names, lowercased (SVG's camelCase included:
+#: `clipPath` is `clippath` here). Only these may be skipped as native — a
+#: lowercase tag outside the list (`<child />`) is a component in Vue.
+NATIVE_TAGS = {
+    # HTML
+    "a", "abbr", "address", "area", "article", "aside", "audio", "b", "base",
+    "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption",
+    "cite", "code", "col", "colgroup", "data", "datalist", "dd", "del",
+    "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset",
+    "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5",
+    "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "img",
+    "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map",
+    "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol",
+    "optgroup", "option", "output", "p", "picture", "pre", "progress", "q",
+    "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select",
+    "slot", "small", "source", "span", "strong", "style", "sub", "summary",
+    "sup", "table", "tbody", "td", "template", "textarea", "tfoot", "th",
+    "thead", "time", "title", "tr", "track", "u", "ul", "var", "video", "wbr",
+    # SVG (lowercased)
+    "svg", "animate", "animatemotion", "animatetransform", "circle",
+    "clippath", "defs", "desc", "discard", "ellipse", "feblend",
+    "fecolormatrix", "fecomponenttransfer", "fecomposite", "feconvolvematrix",
+    "fediffuselighting", "fedisplacementmap", "fedistantlight", "fedropshadow",
+    "feflood", "fefunca", "fefuncb", "fefuncg", "fefuncr", "fegaussianblur",
+    "feimage", "femerge", "femergenode", "femorphology", "feoffset",
+    "fepointlight", "fespecularlighting", "fespotlight", "fetile",
+    "feturbulence", "filter", "foreignobject", "g", "image", "line",
+    "lineargradient", "marker", "mask", "metadata", "mpath", "path",
+    "pattern", "polygon", "polyline", "radialgradient", "rect", "set", "stop",
+    "switch", "symbol", "text", "textpath", "tspan", "use", "view",
+    # Vue's own builtin element; `<component :is>` is rejected before this.
+    "component",
+}
+
+#: A local declaration: `const RouterView = ChildFetch` shadows the builtin
+#: and must not inherit its trust.
+LOCAL_DECL = re.compile(r"\b(?:const|let|var|function|class)\s+([A-Za-z_$][A-Za-z0-9_$]*)")
+
 #: Vuetify's components, auto-registered by the build: not ours to grade, so
 #: trusted — but by NAME, not by prefix. A globally registered `VReport` is
-#: indistinguishable from `VBtn` until the names are checked. The list follows
-#: the repo's vuetify (3.9.3, `components/*/index.d.ts`, component names only).
+#: indistinguishable from `VBtn` until the names are checked. The list is the
+#: repo's own auto-import table (vuetify 3.9.3, `dist/json/importMap.json`);
+#: a name it does not have (`VOverflowBtn` — exported once, never in the
+#: table) is not Vuetify.
 VUETIFY_TAGS = {
     "VAlert", "VAlertTitle", "VApp", "VAppBar", "VAppBarNavIcon", "VAppBarTitle",
     "VAutocomplete", "VAvatar", "VBadge", "VBanner", "VBannerActions",
@@ -167,7 +211,7 @@ VUETIFY_TAGS = {
     "VListImg", "VListItem", "VListItemAction", "VListItemMedia",
     "VListItemSubtitle", "VListItemTitle", "VListSubheader", "VLocaleProvider",
     "VMain", "VMenu", "VMessages", "VNavigationDrawer", "VNoSsr",
-    "VNumberInput", "VOtpInput", "VOverflowBtn", "VOverlay", "VPagination",
+    "VNumberInput", "VOtpInput", "VOverlay", "VPagination",
     "VParallax", "VProgressCircular", "VProgressLinear", "VRadio", "VRadioGroup",
     "VRangeSlider", "VRating", "VResponsive", "VRow", "VScaleTransition",
     "VScrollXReverseTransition", "VScrollXTransition", "VScrollYReverseTransition",
@@ -292,13 +336,19 @@ def import_locals(clause: str) -> list[str]:
 
 
 def template_tags(grade_module: Any, text: str) -> set[str]:
-    """Component tags the template renders, PascalCased (`v-btn` -> `VBtn`)."""
+    """Component tags the template renders, as written.
+
+    A tag is native only when it is a real HTML/SVG element: a lowercase
+    `<child />` is a component in Vue, not an element. Matching happens in
+    `paired_views` under every name Vue resolves (as written, then
+    PascalCased — Vue's own resolution order).
+    """
     tags: set[str] = set()
     for block in grade_module.template_blocks(text):
         for tag in TAG_USE.findall(block):
-            if tag[:1].islower() and "-" not in tag:
-                continue  # a native element
-            tags.add(pascal(tag))
+            if tag[:1].islower() and "-" not in tag and tag.lower() in NATIVE_TAGS:
+                continue  # a real HTML/SVG element
+            tags.add(tag)
     return tags
 
 
@@ -356,28 +406,44 @@ def paired_views(
         if DYNAMIC_TAG.search(template):
             continue
         tags = template_tags(grade_module, text)
-        if not tags & view_names:
+        # Vue resolves a tag as written, then PascalCased — in that order.
+        if not any(name in view_names for tag in tags for name in (tag, pascal(tag))):
             continue
 
         # (3) every other rendered component is standalone or not ours. A
         # local binding wins over a trusted name: `import RouterView from
-        # './LocalFetch.vue'` shadows the router's outlet and must be graded.
-        def verifiable(tag: str, imported: dict[str, Path | None] = imported) -> bool:
-            if tag in imported:
-                target = imported[tag]
-                if target is None:
-                    return True  # a package component: not ours to grade
-                if target.suffix != ".vue":
-                    return False
-                try:
-                    return grade_module.grade_component(root, target, reach).standalone
-                except OSError:
-                    return False
-            if tag in GLOBAL_TAGS:
-                return True  # a Vue / vue-router builtin
-            return tag in VUETIFY_TAGS  # Vuetify by name, never by prefix
+        # './LocalFetch.vue'` shadows the router's outlet and must be graded,
+        # and `const RouterView = ...` makes the name unprovable — what the
+        # check cannot prove is not exempted.
+        script = "\n".join(grade_module.SCRIPT_BLOCK.findall(text))
+        shadows = set(LOCAL_DECL.findall(script))
 
-        rest = tags - view_names
+        def verifiable(
+            tag: str,
+            imported: dict[str, Path | None] = imported,
+            shadows: set[str] = shadows,
+        ) -> bool:
+            for name in (tag, pascal(tag)):  # Vue's resolution order
+                if name in imported:
+                    target = imported[name]
+                    if target is None:
+                        return True  # a package component: not ours to grade
+                    if target.suffix != ".vue":
+                        continue
+                    try:
+                        if grade_module.grade_component(root, target, reach).standalone:
+                            return True
+                    except OSError:
+                        pass
+                    continue
+                if name in shadows:
+                    continue  # a local declaration hides what this name is
+                if name in GLOBAL_TAGS or name in VUETIFY_TAGS:
+                    return True  # a builtin, or Vuetify by name — never prefix
+            return False
+
+        rest = [tag for tag in tags
+                if not any(name in view_names for name in (tag, pascal(tag)))]
         if all(verifiable(tag) for tag in rest):
             pairs[rel] = view.relative_to(root).as_posix()
     return pairs
@@ -1329,6 +1395,141 @@ def self_test() -> int:
         _fixture(root)
         baseline_path = _fixture_baseline(root)
 
+        # -- 12. impostors Vue itself would execute ---------------------------
+        #    Each shape below is valid, compiled-and-renders Vue (checked
+        #    against the repo's own compiler-sfc by review): a lowercase local
+        #    component, a quoted `</template>` inside an attribute value, a
+        #    local declaration shadowing a builtin, and a V-name the vuetify
+        #    import map does not have. If the check cannot prove what a tag
+        #    is, the tag is not exempted.
+        _fixture(root)
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import child from '@/components/ChildFetch.vue'\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><child />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/ChildFetch.vue": (
+                '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                "<template><div>{{ r }}</div></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a lowercase local component is graded, not skipped as native",
+              result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # the control: a lowercase import of a grade-A component still pairs
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import note from '@/components/PlainNote.vue'\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><note />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/PlainNote.vue": (
+                '<script setup lang="ts">\ndefineProps<{ n: number }>()\n</script>\n'
+                "<template><div>{{ n }}</div></template>\n"
+            ),
+        })
+        check("a lowercase import of an A component still pairs",
+              run_cli(root, baseline_path).returncode, 0)
+
+        # a quoted `</template>` inside an attribute value is not a tag
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import ChildFetch from '@/components/ChildFetch.vue'\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" />'
+                '<div title="</template>">x</div><ChildFetch />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/ChildFetch.vue": (
+                '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                "<template><div>{{ r }}</div></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a quoted </template> in an attribute does not end the scan",
+              result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # the same hole on the grader's side: a frozen page whose route read
+        # sits after a nested template was graded A because the read was lost
+        _fixture(root, {"frontend/src/views/Home.vue": (
+            "<script setup lang=\"ts\">\ndefineProps<{ ok: boolean }>()\n</script>\n"
+            '<template><template v-if="ok"><div /></template>'
+            "<div>{{ $router.push('/') }}</div></template>\n"
+        )})
+        result = run_cli(root, baseline_path)
+        check("a route read after a nested template still counts", result.returncode, 1)
+        check("and the frozen page is named", "src/views/Home.vue: A -> D" in result.stdout, True)
+        _fixture(root)
+
+        # a local declaration shadows the builtin: `const RouterView = ...` is
+        # not the router's outlet, and the check cannot prove what it renders
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import ChildFetch from '@/components/ChildFetch.vue'\n"
+                "const RouterView = ChildFetch\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><RouterView />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/ChildFetch.vue": (
+                '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                "<template><div>{{ r }}</div></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a builtin shadowed by a local declaration is not trusted",
+              result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # a name the vuetify import map does not have is not Vuetify, however
+        # much it looks like it
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><VOverflowBtn />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        result = run_cli(root, baseline_path)
+        check("a V-name outside the vuetify import map does not pair",
+              result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # the control: a less common name the import map really has is trusted
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><v-otp-input />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        check("a name the import map really has still pairs",
+              run_cli(root, baseline_path).returncode, 0)
+
+        for rel in (
+            "frontend/src/views/Settle.vue",
+            "frontend/src/views/SettleView.vue",
+            "frontend/src/components/PlainNote.vue",
+            "frontend/src/components/ChildFetch.vue",
+        ):
+            (root / rel).unlink(missing_ok=True)
+        _fixture(root)
+        baseline_path = _fixture_baseline(root)
+
         # -- 6. cannot judge --------------------------------------------------
         _fixture(root)
         result = run_cli(root, baseline_path)
@@ -1429,9 +1630,11 @@ def self_test() -> int:
         "PASS: scene-ratchet self-test (a regressed scene, a new scene that is not "
         "ready, a container page and three ways of not being one, four container "
         "impostors — an unrendered import, a fetching co-child, a shelled freeze, "
-        "a costumed panel — and four more at the extraction layer — a view in a "
+        "a costumed panel — four more at the extraction layer — a view in a "
         "comment, a child lost to a nested template, a V-prefixed stranger, a "
-        "builtin shadowed by a local binding — with the controls that stay green, "
+        "builtin shadowed by a local binding — and four Vue itself executes — a "
+        "lowercase component, a quoted </template>, a shadowing declaration, a "
+        "V-name the import map lacks — with the controls that stay green, "
         "debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "
         "to judge, and a wrong root being a 2)"

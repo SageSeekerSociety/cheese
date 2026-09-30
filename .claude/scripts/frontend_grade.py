@@ -69,7 +69,7 @@ VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+
 VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
 SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-_TEMPLATE_TAG = re.compile(r"</?template(?:\s[^>]*)?/?>", re.DOTALL)
+_TAG_START = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9_-]*)")
 STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
 PARENT_USE = re.compile(r"\$parent|\$root")
@@ -209,37 +209,54 @@ def normalise_store(name: str) -> str:
 def template_blocks(text: str) -> list[str]:
     """The contents of every top-level `<template>` block in an SFC.
 
-    Two ways a naive `<template...>(.*?)</template>` read lies: a tag inside
-    `<!-- ... -->` is not rendered (comments are stripped first), and Vue
+    Three ways a naive `<template...>(.*?)</template>` read lies: a tag
+    inside `<!-- ... -->` is not rendered (comments are stripped first); Vue
     templates nest (`<template v-if>`), so a non-greedy match ends at the
     first *inner* `</template>` and loses everything after it (nested tags
-    are balanced here).
+    are balanced here); and `title="</template>"` is an attribute value, not
+    a tag — the scan honours quotes, so what an attribute says never becomes
+    a tag boundary.
     """
     text = _HTML_COMMENT.sub("", text)
     blocks: list[str] = []
-    pos = 0
-    while True:
-        start = _TEMPLATE_TAG.search(text, pos)
-        if start is None or start.group().startswith("</"):
-            return blocks
-        if start.group().endswith("/>"):
-            pos = start.end()
-            continue
-        cursor = start.end()
-        depth = 1
-        for tag in _TEMPLATE_TAG.finditer(text, cursor):
-            found = tag.group()
-            if found.startswith("</"):
-                depth -= 1
-            elif not found.endswith("/>"):
-                depth += 1
-            if depth == 0:
-                blocks.append(text[cursor:tag.start()])
-                pos = tag.end()
-                break
-        else:
-            blocks.append(text[cursor:])  # an unclosed template: take the rest
-            return blocks
+    i, n = 0, len(text)
+    depth = 0
+    block_start: int | None = None
+    while i < n:
+        if text[i] == "<":
+            start = _TAG_START.match(text, i)
+            if start is not None:
+                # The end of this tag, honouring quoted attribute values:
+                # `<` and `>` inside quotes are not tag boundaries.
+                j = start.end()
+                quote = ""
+                while j < n:
+                    char = text[j]
+                    if quote:
+                        if char == quote:
+                            quote = ""
+                    elif char in "\"'":
+                        quote = char
+                    elif char == ">":
+                        break
+                    j += 1
+                if start.group(1).lower() == "template":
+                    closing = text[i + 1] == "/"
+                    if closing:
+                        depth = max(0, depth - 1)
+                        if depth == 0 and block_start is not None:
+                            blocks.append(text[block_start:i])
+                            block_start = None
+                    elif text[j - 1] != "/":  # not self-closing
+                        if depth == 0:
+                            block_start = j + 1
+                        depth += 1
+                i = j + 1
+                continue
+        i += 1
+    if block_start is not None:
+        blocks.append(text[block_start:])  # an unclosed template: take the rest
+    return blocks
 
 
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
