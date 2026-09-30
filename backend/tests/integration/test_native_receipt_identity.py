@@ -3,21 +3,18 @@
 These are real PostgreSQL transaction tests, not native-model consumption tests.
 """
 
+import asyncio
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
-from app.domain.delivery.receipts import (
-    InputEffects,
-    InputIdentity,
-    InputReceipt,
-    record_receipt,
-    register_input,
-)
+from app.domain.delivery.receipts import record_receipt, register_input
 
 
 async def _registered(factory):
@@ -166,5 +163,79 @@ def test_late_receipt_cannot_settle_a_replaced_attempt(client):
         async with factory() as session:
             assert (await session.get(Delivery, delivery_id)).state == "sending"
             assert (await session.scalar(select(NativeInput))).settled_at is None
+
+    client.portal.call(run)
+
+
+@pytest.mark.parametrize("first", ["registration", "echo"])
+def test_registration_retry_and_echo_can_overlap(client, monkeypatch, first):
+    async def run():
+        factory = client.test_request_factory
+        identity, delivery_id, attempt_id = await _registered(factory)
+        effects = InputEffects(delivery_id=delivery_id, attempt_id=attempt_id)
+        locked, release = asyncio.Event(), asyncio.Event()
+        pids = {}
+        original = AsyncSession.scalar
+        holder = None
+
+        async def pause_first_lock(session, statement, *args, **kwargs):
+            result = await original(session, statement, *args, **kwargs)
+            if (
+                session is holder
+                and getattr(statement, "_for_update_arg", None) is not None
+                and not locked.is_set()
+            ):
+                locked.set()
+                await release.wait()
+            return result
+
+        monkeypatch.setattr(AsyncSession, "scalar", pause_first_lock)
+
+        async def transact(name):
+            nonlocal holder
+            async with factory() as session:
+                pids[name] = await original(session, text("SELECT pg_backend_pid()"))
+                if name == first:
+                    holder = session
+                else:
+                    await locked.wait()
+                if name == "registration":
+                    await register_input(session, identity, effects)
+                else:
+                    assert await record_receipt(
+                        session, InputReceipt(identity, "native_echo")
+                    ) is not None
+                await session.commit()
+
+        async def observe_wait():
+            await locked.wait()
+            other = "echo" if first == "registration" else "registration"
+            async with factory() as observer:
+                while True:
+                    if other in pids:
+                        blockers = await original(
+                            observer,
+                            text("SELECT pg_blocking_pids(:pid)"),
+                            {"pid": pids[other]},
+                        )
+                        if pids[first] in blockers:
+                            assert pids[first] != pids[other]
+                            release.set()
+                            return
+                    await asyncio.sleep(0.01)
+
+        async with asyncio.timeout(15):
+            async with asyncio.TaskGroup() as group:
+                group.create_task(transact("registration"))
+                group.create_task(transact("echo"))
+                group.create_task(observe_wait())
+        async with factory() as session:
+            rows = (await session.scalars(select(NativeInput))).all()
+            assert len(rows) == 1
+            assert rows[0].input_id == identity.input_id
+            assert rows[0].attempt_id == attempt_id
+            assert rows[0].echoed_at is not None
+            assert rows[0].settled_at is not None
+            assert (await session.get(Delivery, delivery_id)).state == "received"
 
     client.portal.call(run)
