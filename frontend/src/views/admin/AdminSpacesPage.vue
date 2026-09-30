@@ -324,12 +324,16 @@ onMounted(load)
   background: var(--fill-2);
 }
 
+/* 正文块。`overflow-wrap: anywhere` 是继承的，作用是让长中文和**无空格文本**也能断
+   行——否则一串没断点的字会把 min-content 顶到整句那么宽，父级的 fit-content 宽就跟着
+   被顶开（下面窄屏那一处的裁切就是这么来的）。 */
 .asp__main {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .asp__head {
@@ -419,7 +423,13 @@ onMounted(load)
 }
 
 /* 手机：一行里的两个按钮会把正文挤到一百多像素。动作挪到正文下面，仍然是这一行的
-   动作（不与别的行混）。 */
+   动作（不与别的行混）。
+
+   横轴在这里要重定一次：改成 `flex-direction: column` 之后 cross 轴变成水平，而上面那条
+   `align-items: flex-start` 还在，于是正文块只拿 fit-content 宽；标题又是 `nowrap`，
+   把那个宽度顶成整句那么宽，长卡的标题和说明整段从右边被 `.asp__list` 的
+   `overflow: hidden` 裁掉，连省略号都看不到。改成 stretch 让正文跟着行宽走，标题在
+   窄屏换行（要的是读得全，不是省略号）。行内动作和功能不动。 */
 @media (max-width: 700px) {
   .asp__body {
     padding: 12px 16px 16px;
@@ -427,7 +437,12 @@ onMounted(load)
 
   .asp__row {
     flex-direction: column;
+    align-items: stretch;
     gap: 8px;
+  }
+
+  .asp__name {
+    white-space: normal;
   }
 
   .asp__actions {
