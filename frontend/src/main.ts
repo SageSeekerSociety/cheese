@@ -42,6 +42,7 @@ import translation from 'zod-i18n-map/locales/zh-CN/zod.json'
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
+import router from './router'
 
 import i18n from '@/i18n'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
@@ -94,7 +95,7 @@ app.mount('#app')
 // Mounting is the proof that a reload recovered the tab, so the one-shot
 // guard reopens for the next release.
 clearStaleBuildGuard()
-registerPwa()
+registerPwa(router)
 // 安装机会（beforeinstallprompt）来得比任何页面都早——早到用户还没来得及打开
 // 下载页。所以在启动时就把它接住，下载页上的「添加到主屏幕」才有得用。
 watchInstallPrompt()
