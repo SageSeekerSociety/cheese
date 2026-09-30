@@ -399,3 +399,45 @@ def test_embedding_backend_still_says_the_image_is_attached(client, stub_hooks):
     prompt = stub_hooks.last_prompt or ""
     assert "已附在本条消息里" in prompt
     assert "没有附在本条消息里" not in prompt
+
+
+def test_a_deleted_library_file_does_not_wedge_the_room(client, stub_hooks):
+    """A message whose attachment has since left the library still gets its
+    turn: the turn finishes, 芝士 is told the file is gone instead of being
+    handed an image, and the next message is not held behind it."""
+    project_id, topic_id = _create_project_and_topic(client)
+    att = _upload(client, topic_id)
+    gone = client.delete(
+        f"/projects/{project_id}/library", params={"path": "screenshot.png"}
+    )
+    assert gone.status_code == 200, gone.text
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "@芝士 看看这张截图",
+                "attachments": [att],
+            }
+        )
+        frames = _drain_until_done(ws)
+
+    assert frames[-1]["type"] == "done", frames[-1]
+    prompt = stub_hooks.last_prompt or ""
+    assert att["path"] in prompt
+    assert "已经不在了" in prompt
+    assert "已附在本条消息里" not in prompt
+    session = stub_hooks._session_for(uuid.UUID(topic_id))
+    handed = [m for m in session.written if m.get("type") == "user"][-1]["message"]
+    assert isinstance(handed["content"], str) or not any(
+        block.get("type") == "image" for block in handed["content"]
+    )
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 那就先不看图了"})
+        frames = _drain_until_done(ws)
+
+    assert frames[-1]["type"] == "done", frames[-1]
+    prompt = stub_hooks.last_prompt or ""
+    assert "那就先不看图了" in prompt
+    assert att["path"] not in prompt
