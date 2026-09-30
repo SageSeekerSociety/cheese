@@ -239,17 +239,6 @@ async def test_stream_relays_text_and_usage_only():
     assert seen["body"]["max_tokens"] == assistant.MAX_ANSWER_TOKENS
 
 
-async def test_stream_reports_an_exhausted_budget():
-    transport = httpx.MockTransport(
-        lambda r: httpx.Response(
-            400, json={"error": {"message": "Budget has been exceeded"}}
-        )
-    )
-    events, result = await _collect(transport)
-    assert result.outcome == "failed"
-    assert events == [("error", {"message": "问芝士这个月的额度用完了，下个月再来。"})]
-
-
 async def test_index_source_keeps_the_last_good_copy(monkeypatch):
     rows = [{"title": "t", "heading": "h", "url": "/docs/t#h", "text": "采纳"}]
     calls = []

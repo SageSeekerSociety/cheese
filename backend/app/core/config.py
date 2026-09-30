@@ -315,16 +315,14 @@ class Settings(BaseSettings):
     # this platform's own code ("owner/repo", case-insensitive).
     docs_dev_repositories: list[str] = ["SageSeekerSociety/cheese"]
     # The gateway model 问芝士 answers with. Its virtual key is minted through
-    # `llm_gateway_admin_base` and capped at this budget per 30 days.
+    # `llm_gateway_admin_base`; what it spends is charged to the asker's
+    # personal credits, so the model must be priced on the gateway.
     docs_assistant_model: str = "deepseek-flash"
-    docs_assistant_budget_usd: float = 20.0
     # Whether 问芝士 searches and reads the docs itself, over the three tools in
     # `docs_site/tools.py`, instead of answering from one round of retrieval.
     # False keeps the old path, for a deployment that wants the cheaper one.
     docs_assistant_agentic: bool = True
-    # Per signed-in user, and across one backend process.
-    docs_assistant_hourly_limit: int = 20
-    docs_assistant_daily_limit: int = 100
+    # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
     docs_question_retention_days: int = 90
     # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
@@ -717,6 +715,9 @@ class Settings(BaseSettings):
     # usage is folded into credits and deducted from the project's grants
     # (oldest grant first). Default: 1 credit = 10k tokens.
     compute_credit_tokens: int = 10_000
+    # Credits each person gets every calendar month for the AI they ask for
+    # outside any project (问芝士 on the docs site). Unused credits lapse.
+    personal_credits_monthly: float = 200.0
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].
