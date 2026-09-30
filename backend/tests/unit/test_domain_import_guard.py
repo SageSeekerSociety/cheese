@@ -261,12 +261,19 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.agent.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
-        ("app.api.routes.topics", "app.domain.machine.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.review.repositories"),
         ("app.api.routes.topics", "app.domain.room_task.repositories"),
         ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
+        # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
+        # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有
+        # machine 一个，正是原先 topics.py 里跟着它走的那条边：`ProjectRepository`
+        # 它从 topics.py 拿（那是另一笔债，仍在 topics.py 名下），名字也跟着从
+        # topics.py 的 import 里读；`ProjectMachineRepository` 只在
+        # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
+        # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
+        ("app.api.routes.topics_compute", "app.domain.machine.repositories"),
         ("app.api.routes.users", "app.domain.answers.repositories"),
         ("app.api.routes.users", "app.domain.oauth.repositories"),
         ("app.api.routes.users", "app.domain.passkey.repositories"),
