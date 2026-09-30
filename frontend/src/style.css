@@ -849,9 +849,10 @@ button:not(.v-btn) {
      `.admin-page__body`  正文，白卡片（`.admin-card`）摆在它上面
 
    白色页头带由 `AdminPageHeader` 自己给（白底 + 底边一道 `--line`），它就住在
-   `.admin-page__col` 里，所以**页头发丝线的两端、卡片的两端、标题的左沿是同一条
-   竖线**。这条以前有三种长度：队列/成员/模型止于 1440 栏内，看板和功能数据页借负
-   margin 多出 24px，飞书页没有列宽可言。
+   `.admin-page__col` 里。于是两件事各页一致：**发丝线的两端就是 1440 栏的两端**
+   （这条以前有三种长度：队列/成员/模型止于 1440 栏内，看板和功能数据页借负 margin
+   多出 24px，飞书页没有列宽可言），**标题左沿就是卡片左沿**（都在栏内缩 24px）。
+   发丝线本身通栏不内缩：一道在白色页头带中间停住的线看着像画错。
 
    断点用**容器查询**（`.admin-page__col` 上的 `container-type`）：侧栏能手折，折出来
    的宽度视口媒体查询看不见，要看的是「这一格有多宽」（先例：`RunningWorkView`）。 */
@@ -866,6 +867,11 @@ button:not(.v-btn) {
 .admin-page__col {
   display: flex;
   flex-direction: column;
+  /* `width: 100%` 不是多余的：`container-type: inline-size` 对这一格做了**行内尺寸
+     包含**，宽度不再由内容推出来（收缩到合适宽度时直接算成 0）；再叠上 `margin: 0
+     auto` 在 flex 父级里关掉 stretch，看板/功能数据/飞书三页的整列就塌成一个字宽，
+     中文竖着排。宽度必须从外面给。 */
+  width: 100%;
   min-height: 0;
   margin: 0 auto;
   container-type: inline-size;

@@ -1,0 +1,213 @@
+/*
+ * 后台布局方案预览（只进预览构建，不进正式包）。
+ *
+ * `proto-feedback.ts` 按 `?v=a|b|c` 在 <html> 上挂 `data-admin-variant`，这里按它覆盖
+ * 后台各页的外壳样式，让同一套真实组件长成三种方案的样子。选定方案后，正式实现会收进
+ * 一个共享的后台页面外壳组件，而不是保留这份覆盖。
+ */
+
+/* ---------- 预览标签：每张截图都带着它 ---------- */
+.proto-variant-tag {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3000;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(20, 20, 20, 0.82);
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+/* ================= 三个方案共用的对齐层 ================= */
+
+/* 每页都铺画布底色、自己管滚动（飞书页原来不能滚）。 */
+html[data-admin-variant] .afi,
+html[data-admin-variant] .ad,
+html[data-admin-variant] .afs,
+html[data-admin-variant] .adoc {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--canvas);
+}
+
+/* 出错统一成一种：浅红底 + 左侧色条的整行提示（原来有四种样子）。 */
+html[data-admin-variant] .afi__error,
+html[data-admin-variant] .amd__flash,
+html[data-admin-variant] .asp__flash,
+html[data-admin-variant] .am__flash {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* 队列列表原来直接贴着工具栏铺满，其它页的表格都在卡片里：给它同样的卡片。 */
+html[data-admin-variant] .qpage .qlist,
+html[data-admin-variant] .qpage .aft {
+  margin: 16px 24px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+/* 表单页：表单进卡片，宽度与标题左对齐。 */
+html[data-admin-variant] .afi__body {
+  box-sizing: border-box;
+  width: calc(100% - 48px);
+  max-width: 720px;
+  margin: 16px 24px 24px;
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+/* ================= 方案 B：统一骨架 ================= */
+/* 顶部一条白色带 = 标题 + 说明 + 筛选；下面灰底放内容卡片。 */
+
+html[data-admin-variant='b'] .aph,
+html[data-admin-variant='c'] .aph {
+  background: var(--surface);
+}
+
+html[data-admin-variant='b'] .qpage__tools {
+  background: var(--surface);
+  border-bottom-color: var(--line-2);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+html[data-admin-variant='b'] .aph {
+  border-bottom-color: var(--line);
+}
+
+/* 队列：页头和工具栏合成一条白带，中间的分隔线去掉。 */
+html[data-admin-variant='b'] .qpage .aph {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+/* 分区间距统一 16。 */
+html[data-admin-variant='b'] .ad__row,
+html[data-admin-variant='b'] .ad__split,
+html[data-admin-variant='b'] .ad__health {
+  margin-top: 16px;
+  gap: 16px;
+}
+
+html[data-admin-variant='b'] .ad__kpis {
+  margin-top: 16px;
+}
+
+html[data-admin-variant='b'] .ad .aph {
+  margin: 0 -24px;
+}
+
+/* ================= 方案 C：卡片工作台 ================= */
+/* 页头落在画布上、不画分隔线；留白加大；卡片去边框改投影。 */
+
+html[data-admin-variant='c'] .aph {
+  padding: 28px 32px 12px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+html[data-admin-variant='c'] .aph__title {
+  font-size: 26px;
+  line-height: 34px;
+}
+
+html[data-admin-variant='c'] .qpage__tools {
+  padding: 4px 32px 8px;
+  border-bottom: 0;
+}
+
+html[data-admin-variant='c'] .am__body,
+html[data-admin-variant='c'] .asp__body,
+html[data-admin-variant='c'] .amd__body {
+  padding: 16px 32px 32px;
+}
+
+html[data-admin-variant='c'] .ad,
+html[data-admin-variant='c'] .afs,
+html[data-admin-variant='c'] .adoc {
+  padding: 0 32px 32px;
+}
+
+html[data-admin-variant='c'] .ad .aph,
+html[data-admin-variant='c'] .afs .aph,
+html[data-admin-variant='c'] .adoc .aph {
+  margin: 0 -32px;
+}
+
+html[data-admin-variant='c'] .qpage .qlist,
+html[data-admin-variant='c'] .qpage .aft {
+  margin: 16px 32px 32px;
+}
+
+html[data-admin-variant='c'] .afi__body {
+  width: calc(100% - 64px);
+  margin: 16px 32px 32px;
+  padding: 28px 32px;
+}
+
+html[data-admin-variant='c'] .ad__row,
+html[data-admin-variant='c'] .ad__split,
+html[data-admin-variant='c'] .ad__health {
+  margin-top: 24px;
+  gap: 24px;
+}
+
+html[data-admin-variant='c'] .ad__kpis {
+  margin-top: 16px;
+}
+
+html[data-admin-variant='c'] .qlist,
+html[data-admin-variant='c'] .aft,
+html[data-admin-variant='c'] .agrid,
+html[data-admin-variant='c'] .afi__body,
+html[data-admin-variant='c'] .asp__list,
+html[data-admin-variant='c'] .ad__panel,
+html[data-admin-variant='c'] .ad__kpis,
+html[data-admin-variant='c'] .ad__split-cell,
+html[data-admin-variant='c'] .ad__health-cell,
+html[data-admin-variant='c'] .als,
+html[data-admin-variant='c'] .aal,
+html[data-admin-variant='c'] .anl,
+html[data-admin-variant='c'] .abt,
+html[data-admin-variant='c'] .abr {
+  border-color: transparent !important;
+  border-radius: 16px !important;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 4px 12px rgba(15, 23, 42, 0.05);
+}
+
+/* ---------- 对齐层补充 ---------- */
+
+/* 看板出错原来是靠左的一块，其它页是居中的空态：改成同一种居中。 */
+html[data-admin-variant] .ad__none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 64px auto 0;
+  text-align: center;
+}
+
+/* 飞书页：读失败时不再同时说「还没配置」（那是没读到，不是没配过）。 */
+html[data-admin-variant] .afi__body:has(> .afi__error) > .afi__status,
+html[data-admin-variant] .afi__body:has(> .afi__error) > .afi__meta {
+  display: none;
+}
+
+/* 飞书页：Secret 的提示文字原来压在下一格的标签上。 */
+html[data-admin-variant] .afi__form .v-input {
+  margin-bottom: 12px;
+}
