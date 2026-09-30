@@ -27,6 +27,7 @@ The record's shape is fixed in docs/topics/棘轮页方案 section 3.1.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -65,6 +66,11 @@ class Check:
     rules: tuple[str, ...] = ()
     #: `ignore_imports` for a file whose baseline lives beside its rules.
     strip: str | None = None
+    #: A pytest ledger's table (`_EXEMPT`, `_LEDGER`, `BASELINE`) lives inside
+    #: the module that is also its rule. Naming it here cuts it out of the
+    #: fingerprint, because paying an entry off is the debt payment the page
+    #: counts — without this, dropping one exemption reads as a rule change.
+    baseline: str | None = None
     #: (path under cwd, expression) for a pytest ledger: how much it registers.
     #: Read by importing the module and evaluating the expression in its
     #: namespace — the ledger IS the number, and the test asserts the tree still
@@ -114,6 +120,7 @@ CHECKS: tuple[Check, ...] = (
         cwd="backend",
         rules=("backend/tests/unit/test_domain_import_guard.py",),
         probe=("tests/unit/test_domain_import_guard.py", "len(_EXEMPT)"),
+        baseline="_EXEMPT",
         ledger=True,
     ),
     Check(
@@ -123,6 +130,7 @@ CHECKS: tuple[Check, ...] = (
         cwd="backend",
         rules=("backend/tests/unit/test_harness_boundary.py",),
         probe=("tests/unit/test_harness_boundary.py", "len(_LEDGER)"),
+        baseline="_LEDGER",
         ledger=True,
     ),
     Check(
@@ -132,6 +140,7 @@ CHECKS: tuple[Check, ...] = (
         cwd="backend",
         rules=("backend/tests/unit/test_is_private_read_points.py",),
         probe=("tests/unit/test_is_private_read_points.py", "sum(BASELINE.values())"),
+        baseline="BASELINE",
         ledger=True,
     ),
     Check(
@@ -375,7 +384,38 @@ def _strip_ignore_imports(text: str) -> bytes:
     return "".join(kept).encode("utf-8")
 
 
-def fingerprint(root: Path, rules: tuple[str, ...], strip: str | None = None) -> str:
+def _strip_baseline_table(text: str, name: str) -> bytes:
+    """`text` with the top-level `name = ...` statement removed.
+
+    `_EXEMPT`, `_LEDGER` and `BASELINE` live inside the modules that also hold
+    the rules, so a fingerprint over the whole file would call every exemption
+    change a change of rule — and the exemption that just disappeared is the
+    debt payment the page is supposed to show, not a new ruler. Parsed with
+    `ast` rather than pattern-matched: where the statement ends is a question
+    the language answers exactly and a bracket counter only guesses.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text.encode("utf-8")
+    lines = text.splitlines(keepends=True)
+    for node in tree.body:
+        target = node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        if isinstance(target, ast.Name) and target.id == name and node.end_lineno:
+            for index in range(node.lineno - 1, node.end_lineno):
+                lines[index] = ""
+            break
+    return "".join(lines).encode("utf-8")
+
+
+def fingerprint(
+    root: Path,
+    rules: tuple[str, ...],
+    strip: str | None = None,
+    baseline: str | None = None,
+) -> str:
     """SHA-256 over the bytes of the files that decide this check.
 
     Baselines are not in the list: a fingerprint that moved when somebody froze
@@ -401,8 +441,11 @@ def fingerprint(root: Path, rules: tuple[str, ...], strip: str | None = None) ->
             except OSError:
                 digest.update(b"unreadable\0")
                 continue
-            if strip == "ignore_imports":
-                data = _strip_ignore_imports(data.decode("utf-8", errors="replace"))
+            text = data.decode("utf-8", errors="replace") if (strip or baseline) else None
+            if strip == "ignore_imports" and text is not None:
+                data = _strip_ignore_imports(text)
+            elif baseline and text is not None:
+                data = _strip_baseline_table(text, baseline)
             digest.update(data)
             digest.update(b"\0")
     return digest.hexdigest()
@@ -480,7 +523,7 @@ def collect(
             )
         record["id"] = check.id
         record["area"] = check.area
-        record["rule_fingerprint"] = fingerprint(root, check.rules, check.strip)
+        record["rule_fingerprint"] = fingerprint(root, check.rules, check.strip, check.baseline)
         records.append(record)
     return {
         "version": SNAPSHOT_VERSION,
@@ -721,6 +764,33 @@ def self_test() -> int:
         check("freezing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
         (root / "contracts.ini").write_text(with_two.replace("type = layers", "type = forbidden"))
         check("changing the contract is", fingerprint(root, ("contracts.ini",), "ignore_imports") != first, True)
+
+        # The pytest ledgers keep their table in the module that is also the
+        # rule. #2209 dropped one `_EXEMPT` entry and the fingerprint moved,
+        # which would read a debt payment as a new ruler.
+        ledger_src = (
+            "import pytest\n\n\n"
+            "_EXEMPT = frozenset(\n"
+            "    (\n        'app.domain.a',\n        'app.domain.b',\n    ),\n"
+            "    (\n        'app.domain.c',\n        'app.domain.d',\n    ),\n"
+            ")\n\n\n"
+            "def test_the_tree_matches():\n    assert _EXEMPT\n"
+        )
+        (root / "ledger_rule.py").write_text(ledger_src)
+        table = fingerprint(root, ("ledger_rule.py",), None, "_EXEMPT")
+        (root / "ledger_rule.py").write_text(
+            ledger_src.replace("    (\n        'app.domain.c',\n        'app.domain.d',\n    ),\n", "")
+        )
+        check("paying a ledger entry off is not a rule change",
+              fingerprint(root, ("ledger_rule.py",), None, "_EXEMPT"), table)
+        (root / "ledger_rule.py").write_text(ledger_src.replace("test_the_tree_matches", "test_the_rule_itself"))
+        check("... while changing what the test asserts is",
+              fingerprint(root, ("ledger_rule.py",), None, "_EXEMPT") != table, True)
+        check("... and the table's extent comes from the parser, not a bracket count",
+              _strip_baseline_table("X = 1\n_EXEMPT = frozenset(\n    'a',\n)\nY = 2\n", "_EXEMPT").decode(),
+              "X = 1\nY = 2\n")
+        check("every ledger names the table that is its baseline",
+              [c.id for c in CHECKS if c.ledger and not c.baseline], [])
 
         # The registry itself: an empty or duplicated list is how a check
         # silently stops being reported.
