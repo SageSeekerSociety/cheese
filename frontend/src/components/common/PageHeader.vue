@@ -3,7 +3,7 @@
     v-if="renderHeader()"
     v-scroll:#app-scrollable="onScroll"
     class="page-header text-high-emphasis"
-    :class="{ 'page-header-mobile': $vuetify.display.mobile && !showOnMobile }"
+    :class="{ 'page-header-mobile': !$vuetify.display.mdAndUp && !showOnMobile }"
     :style="{ '--app-page-header-bg-opacity': props.enableScrollEffect ? bgProgress : props.maxOpacity }"
   >
     <template v-if="$slots.default">
