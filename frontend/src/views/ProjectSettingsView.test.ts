@@ -91,7 +91,7 @@ describe('project settings', () => {
     })
     const wrapper = await openSettings('repository')
     try {
-      expect(wrapper.element.querySelector('[data-testid="forge-repository"]')?.textContent).toContain('由芝士托管')
+      expect(wrapper.element.querySelector('[data-testid="forge-repository"]')?.textContent).toContain('由平台托管')
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
       expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')?.getAttribute('href')).toBe(
         'https://forge.example/project/code'

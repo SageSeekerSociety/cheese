@@ -164,7 +164,7 @@
     "teamsEmpty": "暂无可用团队，请先创建或加入团队",
     "teamsFailed": "团队列表加载失败",
     "forge": "代码仓库",
-    "forgeHosted": "由芝士托管（默认）",
+    "forgeHosted": "平台托管（默认）",
     "forgeGithub": "连接 GitHub",
     "forgeHint": "托管服务在项目创建后不可更改",
     "forgeGithubHint": "创建后在项目设置中连接 GitHub。托管服务在项目创建后不可更改。",
@@ -504,7 +504,7 @@
     },
     "forge": {
       "title": "代码仓库",
-      "hosted": "由芝士托管",
+      "hosted": "由平台托管",
       "preparing": "仓库准备中",
       "open": "打开仓库",
       "hint": "托管服务在项目创建后不能更改"
@@ -703,7 +703,7 @@
         "missing_installation_id": "GitHub 未返回安装 ID，这次安装没有生效，重试一次",
         "project_not_found": "找不到这个项目，它可能刚被删除",
         "no_accessible_repos": "这次安装没有授权任何仓库。在 GitHub 的安装页里至少勾选一个仓库",
-        "forge_conflict": "这个项目的代码由芝士托管，不能改连 GitHub 仓库",
+        "forge_conflict": "这个项目的代码由平台托管，不能改连 GitHub 仓库",
         "github_error": "无法验证你的 GitHub 仓库权限。重新连接 GitHub 账号，确认它能访问安装和仓库后重试",
         "access_denied": "连接人的项目权限或 GitHub 账号连接已失效。由项目所有者或负责人重新连接 GitHub 账号后重试",
         "upstream_not_accessible": "这次安装没有授权项目的上游仓库，或你的 GitHub 账号无权访问。检查仓库地址和安装授权后重试",

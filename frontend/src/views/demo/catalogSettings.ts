@@ -125,7 +125,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
   {
     id: 'settings-forge-repo',
     title: 'ForgeRepoStatus',
-    about: '由芝士托管的项目（forgejo）的代码仓库那一块：一行状态，加一颗「打开仓库」。',
+    about: '由平台托管的项目（forgejo）的代码仓库那一块：一行状态，加一颗「打开仓库」。',
     file: 'src/components/settings/ForgeRepoStatus.vue',
     component: ForgeRepoStatus,
     needs: UI,
@@ -141,7 +141,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
             url: 'https://git.example/acme/code',
           }),
         },
-        expect: '由芝士托管',
+        expect: '由平台托管',
       },
       {
         name: '仓库还在准备',

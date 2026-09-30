@@ -3,7 +3,7 @@ import type { ForgeConnection } from '@/cx_types'
 
 import { t } from '@/i18n'
 
-// 由芝士托管的项目（forgejo）的「代码仓库」那一块：一行状态加一颗「打开仓库」。
+// 由平台托管的项目（forgejo）的「代码仓库」那一块：一行状态加一颗「打开仓库」。
 // 拆自 `views/ProjectSettingsView.vue`（#2143）。
 //
 // 托管服务是建项目时定下来的，所以这一块没有可编的东西：它只把当前状态画出来。

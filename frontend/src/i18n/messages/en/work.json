@@ -164,7 +164,7 @@
     "teamsEmpty": "No teams available. Create or join a team first.",
     "teamsFailed": "Could not load teams",
     "forge": "Code repository",
-    "forgeHosted": "Hosted by Cheese (default)",
+    "forgeHosted": "Hosted on the platform (default)",
     "forgeGithub": "Connect GitHub",
     "forgeHint": "The hosting service cannot be changed after the project is created",
     "forgeGithubHint": "Connect GitHub in the project settings after it is created. The hosting service cannot be changed after the project is created.",
@@ -504,7 +504,7 @@
     },
     "forge": {
       "title": "Code repository",
-      "hosted": "Hosted by Cheese",
+      "hosted": "Hosted on the platform",
       "preparing": "Preparing the repository",
       "open": "Open repository",
       "hint": "The hosting service can't be changed after the project is created"
@@ -703,7 +703,7 @@
         "missing_installation_id": "GitHub didn't return an installation ID, so the install didn't take effect. Try again",
         "project_not_found": "This project can't be found; it may have just been deleted",
         "no_accessible_repos": "This install didn't grant any repositories. Select at least one on GitHub's install page",
-        "forge_conflict": "This project's code is hosted by Cheese and can't be switched to a GitHub repository",
+        "forge_conflict": "This project's code is hosted on the platform and can't be switched to a GitHub repository",
         "github_error": "Couldn't verify your GitHub repository access. Reconnect your GitHub account, make sure it can reach the install and repository, then try again",
         "access_denied": "The connecting person's project access or GitHub account link is no longer valid. Have the project owner or a lead reconnect their GitHub account and try again",
         "upstream_not_accessible": "This install doesn't grant the project's upstream repository, or your GitHub account can't access it. Check the repository URL and the install, then try again",

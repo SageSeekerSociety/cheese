@@ -983,7 +983,7 @@ async def set_project_upstream(
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError("项目已连接代码仓库，暂不支持更换")
     if (project.settings or {}).get("forge_kind") != "github_app":
-        raise ConflictError("这个项目由芝士托管，暂不支持切换到 GitHub")
+        raise ConflictError("这个项目由平台托管，暂不支持切换到 GitHub")
     raw = str(body.get("url") or "").strip()
     parsed = parse_github_repo(raw) if raw else None
     if raw and parsed is None:
