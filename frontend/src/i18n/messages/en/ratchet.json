@@ -10,7 +10,7 @@
   "prov": {
     "collected": "Collected commit",
     "commitTime": "Collected at",
-    "archived": "{count} collections archived",
+    "archived": "archived collections: {count}",
     "deployed": "Deployed commit",
     "run": "CI run for this collection",
     "collectionFailed": "The newest collection failed: the numbers above come from an earlier one, not from it."
@@ -99,7 +99,10 @@
     "emptyAction": "Pull one now",
     "loadFailed": "The archive could not be read",
     "loadFailedDesc": "This is a read failure, not \"nothing collected yet\" — two different things, two different sentences.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "noMeasurements": "Nothing measurable in this collection",
+    "noMeasurementsFailed": "The most recent collection failed: {reason}. The archive holds {count} collection(s), but none of them left a usable measurement — blank means \"not measured\", not 0.",
+    "noMeasurementsPlain": "The archive holds {count} collection(s), but none of them left a usable measurement — blank means \"not measured\", not 0."
   },
   "foot": {
     "source": "The checks and their rules live in the repository ({repo}); this page only draws the numbers they report."

@@ -10,6 +10,7 @@
     "src/components/panels/preview/PreviewPages.vue",
     "src/components/panels/preview/PreviewSheet.vue",
     "src/views/404.vue",
+    "src/views/admin/AdminRatchetPageView.vue",
     "src/views/spaces/detail/settings/BasicInfoView.vue",
     "src/views/spaces/detail/settings/Index.vue",
     "src/views/user/settings/General.vue"

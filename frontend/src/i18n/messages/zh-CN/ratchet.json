@@ -99,7 +99,10 @@
     "emptyAction": "去拉一次",
     "loadFailed": "归档读不出来",
     "loadFailedDesc": "这是读取失败，不是「还没有采集」——两件事，两句话。",
-    "retry": "重试"
+    "retry": "重试",
+    "noMeasurements": "这次没有可用的测量",
+    "noMeasurementsFailed": "最近一次采集失败了：{reason}。归档里有 {count} 次采集，但没有一次留下可用的测量——空着的意思是「没量到」，不是 0。",
+    "noMeasurementsPlain": "归档里有 {count} 次采集，但没有一次留下可用的测量——空着的意思是「没量到」，不是 0。"
   },
   "foot": {
     "source": "检查清单与判定都在仓库里（{repo}）；这一页只画它们自己报的数。"
