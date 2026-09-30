@@ -778,7 +778,6 @@
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
       "agentBadge": "AI 队友",
-      "mark": "（{tag}）",
       "role": {
         "owner": "拥有者",
         "admin": "管理员",

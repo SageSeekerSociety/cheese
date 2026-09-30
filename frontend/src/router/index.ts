@@ -10,7 +10,6 @@ import { legacyProjectRedirects } from './legacyProjectPaths'
 import LegalRoutes from './legal'
 import { carryLoginRedirect } from './loginRedirect'
 import QuestionRoutes from './question'
-import { routeTitle } from './routeTitle'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
@@ -18,7 +17,6 @@ import { workspaceRoutes } from './workspaceRoutes'
 
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
-import { recordEntry } from '@/lib/projectEntry'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
@@ -146,18 +144,10 @@ router.beforeEach(async (to, from, next) => {
   next()
 })
 
-router.afterEach((to, from, failure) => {
+router.afterEach((to, _from, failure) => {
   const store = usePageTitleStore()
   store.triggerUpdate()
   if (!failure) rememberPageBeforeSettings(to)
-  // 走进一个项目时，把来路记下来——顶栏那颗 ← 靠它才回得去。名字必须**在这一刻**
-  // 抓下来跟路由一起存：等按 ← 的时候再去取，那一页早就卸载了，只能显示一个光秃
-  // 秃的箭头。
-  recordEntry(to, from, (route) => {
-    const dynamic = store.getDynamicTitle(route.name)
-    if (dynamic) return dynamic
-    return routeTitle(route)
-  })
 })
 
 // 话题的消息和话题页的代码同时去取。不在这里起头的话，消息要等话题页那一串

@@ -110,6 +110,10 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
         title: p.name,
         projectId: p.id,
         to: `/projects/${p.id}`,
+        // 项目里的每一页（话题、看板、设置）都算站在这一格上。选中框靠这个画：
+        // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
+        // 会盖掉链接本来算出的激活态。
+        match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
         img: src.projectAvatar(p.name),
       })),
     ],
