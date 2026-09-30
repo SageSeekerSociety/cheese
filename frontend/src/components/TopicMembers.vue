@@ -200,22 +200,25 @@ async function onSetRole(handle: string, role: string) {
       >
         <span class="members-mini__stack">
           <template v-for="(m, i) in stackFaces" :key="m.id">
+            <CheeseAvatar
+              v-if="m.agent"
+              class="members-mini__ai"
+              :size="22"
+              :name="m.name || m.member_handle"
+              :handle="m.member_handle"
+              :style="{ zIndex: MAX_FACES - i }"
+            />
             <img
-              v-if="faceSrc(m)"
+              v-else-if="faceSrc(m)"
               class="members-mini__face members-mini__face--photo"
-              :class="{ 'members-mini__face--ai': m.agent }"
               :src="faceSrc(m)!"
               :alt="m.name || m.member_handle"
               :style="{ zIndex: MAX_FACES - i }"
               @error="onFaceError(m.member_handle)"
             />
-            <span
-              v-else
-              class="members-mini__face"
-              :class="{ 'members-mini__face--ai': m.agent }"
-              :style="{ zIndex: MAX_FACES - i, backgroundColor: m.agent ? undefined : faceColor(m) }"
-              >{{ initial(m.name || m.member_handle) }}</span
-            >
+            <span v-else class="members-mini__face" :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }">{{
+              initial(m.name || m.member_handle)
+            }}</span>
           </template>
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
             >+{{ overflow }}</span
@@ -235,7 +238,7 @@ async function onSetRole(handle: string, role: string) {
       <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <CheeseAvatar v-if="m.agent" :size="26" :name="m.name || m.member_handle" />
+          <CheeseAvatar v-if="m.agent" :size="26" :name="m.name || m.member_handle" :handle="m.member_handle" />
           <img
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"
@@ -397,12 +400,17 @@ async function onSetRole(handle: string, role: string) {
   color: var(--muted);
   font-size: 0.6rem;
 }
-/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：反色的圆角方块，圆角是边长
-   的四分之一（22px → 6px，见 squareRadius）。人是圆的。 */
-.members-mini__face--ai {
-  color: var(--inverse-ink);
-  background: var(--inverse-surface);
-  border-radius: var(--radius-sm);
+/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）。叠在一起时和人的头像一样
+   描一圈底色，前后两张脸才分得开：描边压在超椭圆的边上，约 1.5px。 */
+.members-mini__ai {
+  margin-left: -7px;
+}
+.members-mini__ai:first-child {
+  margin-left: 0;
+}
+.members-mini__ai :deep(.cheese-avatar__tile) {
+  stroke: var(--surface);
+  stroke-width: 14px;
 }
 
 .roster {

@@ -22,6 +22,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
@@ -359,10 +360,16 @@ function openTask(task: RoomTask) {
                     <span class="board-card__room">{{ roomTitle(row.room_id) }}</span>
                     <span class="board-card__sep">·</span>
                     <span v-if="row.owner_handle" class="board-card__who">
+                      <CheeseAvatar
+                        v-if="isAgentHandle(row.owner_handle)"
+                        :size="18"
+                        :name="ownerName(row.owner_handle)"
+                        :handle="row.owner_handle"
+                        aria-hidden="true"
+                      />
                       <img
-                        v-if="avatarSrc(row.owner_handle)"
+                        v-else-if="avatarSrc(row.owner_handle)"
                         class="board-card__avatar"
-                        :class="{ 'board-card__avatar--agent': isAgentHandle(row.owner_handle) }"
                         :src="avatarSrc(row.owner_handle)!"
                         alt=""
                         @error="onAvatarError(row.owner_handle)"
@@ -370,7 +377,6 @@ function openTask(task: RoomTask) {
                       <span
                         v-else
                         class="board-card__avatar board-card__avatar--initial"
-                        :class="{ 'board-card__avatar--agent': isAgentHandle(row.owner_handle) }"
                         :style="{ backgroundColor: avatarColor(row.owner_handle) }"
                         aria-hidden="true"
                         >{{ avatarInitial(ownerName(row.owner_handle)) }}</span
@@ -732,10 +738,6 @@ function openTask(task: RoomTask) {
   height: 18px;
   border-radius: var(--radius-pill);
   object-fit: cover;
-}
-/* 负责人是 AI 队友时：圆角方块（人是圆的）。 */
-.board-card__avatar--agent {
-  border-radius: var(--radius-sm);
 }
 .board-card__avatar--initial {
   display: flex;

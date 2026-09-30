@@ -11,13 +11,13 @@ import CheeseAvatar from './CheeseAvatar.vue'
 
 import { t } from '@/i18n'
 
-defineProps<{ name: string | null; time: string }>()
+defineProps<{ name: string | null; handle?: string | null; time: string }>()
 </script>
 
 <template>
   <div class="notice-row" :class="{ 'agent-status': name }">
     <span v-if="name" class="notice-row__mark" :title="name" :aria-label="name" role="img">
-      <CheeseAvatar :size="20" :name="name" />
+      <CheeseAvatar :size="20" :name="name" :handle="handle" />
     </span>
     <span v-else class="notice-row__mark" :title="t('work.room.notice.platform')">
       <span class="notice-row__platform" aria-hidden="true">

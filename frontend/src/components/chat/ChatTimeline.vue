@@ -11,7 +11,7 @@ import type { Ref } from 'vue'
 import type { Block, Topic } from '../../cx_types'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
-import type { NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
 import { editableText } from '../../lib/renderMessage'
@@ -66,7 +66,7 @@ defineProps<{
   isExternal: (handle: string) => boolean
   avatarSrc: (handle: string) => string | null
   displayName: (m: Block) => string
-  noticeAgentName: (m: Block, notice: PlatformNotice) => string | null
+  noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
   parentOf: (m: Block) => Block | undefined
   showReplyCue: (m: Block) => boolean
   fmtTime: (iso: string) => string
@@ -208,7 +208,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :block="m"
           :notice="notice"
           :run="run"
-          :name="noticeAgentName(m, notice)"
+          :agent="noticeAgent(m, notice)"
           :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
           :agent-name="agentName"
           :refs="refs"

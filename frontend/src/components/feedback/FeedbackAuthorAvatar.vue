@@ -18,7 +18,7 @@
 // `/avatars/default`，也就是「所有没挑过头像的人共用同一张脸」，那比按 handle 派生
 // 的彩色首字母更难把人区分开 —— 而区分人正是头像唯一的活。传参前先判空。
 //
-// agent 走 `CheeseAvatar`（深色方块 + 名字首字），和聊天面板、现场面板同一个标记；
+// agent 走 `CheeseAvatar`，和聊天面板、现场面板同一个标记；
 // 它不看 `avatarId`：agent 没有「自己挑的图」这回事。
 //
 // 头像在这里不是装饰：一屏长列表里最先被眼睛抓住的就是「这条是谁提的」，而一行纯
@@ -50,7 +50,7 @@ const avatarUrl = computed(() => (avatarId == null ? '' : getAvatarUrl(avatarId)
 </script>
 
 <template>
-  <CheeseAvatar v-if="isAgent" class="fb-avatar" :size="size" :name="handle" />
+  <CheeseAvatar v-if="isAgent" class="fb-avatar" :size="size" :name="handle" :handle="handle" />
   <UserAvatar v-else class="fb-avatar" :size="size" :name="handle" :avatar="avatarUrl" />
 </template>
 

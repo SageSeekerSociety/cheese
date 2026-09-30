@@ -55,7 +55,7 @@
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  /* 人是圆的，AI 队友是圆角方块（CheeseAvatar）：形状照 GitHub 的规则。 */
+  /* 人是圆的，AI 队友是超椭圆（CheeseAvatar）。 */
   border-radius: var(--radius-pill);
 }
 /* 真头像：同一个 28px 圆槽，图片裁进去，不撑变消息行。 */

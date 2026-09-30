@@ -526,7 +526,7 @@ function isLive(index: number): boolean {
             <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
             <div v-else class="site-msg">
               <!-- 头像上的字和它右边写的名字同一个来源：这一行的作者。 -->
-              <CheeseAvatar :size="26" :name="authorLabel(b)" class="site-msg__av" />
+              <CheeseAvatar :size="26" :name="authorLabel(b)" :handle="b.author" class="site-msg__av" />
               <div class="site-msg__main">
                 <div class="site-msg__meta">
                   <span class="site-msg__name">{{ authorLabel(b) }}</span>

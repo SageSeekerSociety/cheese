@@ -218,6 +218,12 @@ export function mailOutcomes(blocks: Block[]): Map<string, MailOutcome> {
   return found
 }
 
+/** 平台替哪位 AI 队友写的这一条：名字给人读，handle 给头像定颜色。 */
+export interface NoticeAgent {
+  name: string
+  handle: string | null
+}
+
 export type PlatformNotice =
   /** 现场抽屉的东西（前端报错），房间里不显示。 */
   | { mode: 'hidden' }

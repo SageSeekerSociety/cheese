@@ -13,6 +13,7 @@ import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import { nextTick, ref } from 'vue'
 
 import { avatarColor, avatarInitial } from '../../utils/avatar'
+import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 
 import { t } from '@/i18n'
@@ -73,9 +74,12 @@ defineExpose({ scrollActiveIntoView })
               <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
               </span>
-              <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
-                avatarInitial(mm.label)
-              }}</span>
+              <CheeseAvatar
+                v-else-if="mm.kind === 'member' && mm.agent"
+                :size="22"
+                :name="mm.label"
+                :handle="mm.handle"
+              />
               <span
                 v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
@@ -160,7 +164,7 @@ defineExpose({ scrollActiveIntoView })
   justify-content: center;
   width: 22px;
   height: 22px;
-  /* 人是圆的；AI 队友、「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。 */
+  /* 人是圆的；「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。AI 队友画 CheeseAvatar。 */
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
@@ -170,13 +174,6 @@ defineExpose({ scrollActiveIntoView })
   /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色，底色不随主题变。 */
   color: #fff;
   flex: none;
-}
-/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来
-   是一颗琥珀圆——琥珀留给主操作，不给头像。 */
-.mention-avatar--agent {
-  color: var(--inverse-ink);
-  background: var(--inverse-surface);
-  border-radius: var(--radius-sm);
 }
 .mention-avatar--broadcast {
   /* --ink inverts with the theme (near-black → near-white), so the ink on it

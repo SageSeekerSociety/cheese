@@ -16,6 +16,7 @@
 // markup, and the decisions that belong to the page a panel is rendered from.
 import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
+import type { NoticeAgent } from '../lib/platformNotice'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -131,7 +132,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns / working-agents）是这里的事。
   const turns = useRoomTurns({ messages, agentName, agentNameOf })
-  const { awaitingReply, turnAgentName } = turns
+  const { awaitingReply, turnAgentName, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
   watch(turns.workingAgentNames, (v) => emit('working-agents', v))
@@ -718,24 +719,29 @@ export function useChatPanel(opts: ChatPanelOptions) {
     })
   )
 
-  function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
+  /** 某一轮那位队友：名字和 handle。认不出是谁的轮次，就是这个房间的那位。 */
+  function turnAgent(turnId: string | null | undefined): NoticeAgent {
+    return { name: turnAgentName(turnId), handle: turnAgentHandle(turnId) ?? agentSeat.value?.handle ?? null }
+  }
+
+  function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
     if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
     // This event contains the worker's actual result, rather than a status notice.
     if (block.meta?.event_type === 'subagent_stop') return null
     if (isPersonBlock(block)) return null
     // 关于某位 AI 队友那件事的通知，以那位队友的身份出现（头像和名字），不另署「平
-    // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgentName）。不属于任
+    // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgent）。不属于任
     // 何一位队友那一轮的平台通知（人编辑了文档之类）照旧不署队友。
     if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
-      return agentDisplayName(block.author)
+      return { name: agentDisplayName(block.author), handle: block.author }
     }
     if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
-    if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgentName(block.turn_id)
+    if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgent(block.turn_id)
     if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgentName(block.turn_id)
+      return turnAgent(block.turn_id)
     }
     if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgentName(block.turn_id)
+      return turnAgent(block.turn_id)
     }
     return null
   }
@@ -867,7 +873,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     outgoingState,
     retrySend,
     outbox,
-    noticeAgentName,
+    noticeAgent,
     parentOf,
     showReplyCue,
     fmtTime,

@@ -118,7 +118,7 @@ const {
   retrySend,
   outbox,
   clearReply,
-  noticeAgentName,
+  noticeAgent,
   parentOf,
   showReplyCue,
   fmtTime,
@@ -264,7 +264,7 @@ defineExpose({ send, connected })
         :is-external="isExternal"
         :avatar-src="avatarSrc"
         :display-name="displayName"
-        :notice-agent-name="noticeAgentName"
+        :notice-agent="noticeAgent"
         :parent-of="parentOf"
         :show-reply-cue="showReplyCue"
         :fmt-time="fmtTime"
