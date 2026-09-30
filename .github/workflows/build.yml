@@ -29,7 +29,6 @@ jobs:
     # under the jobs it gates.
     timeout-minutes: 10
     permissions:
-      actions: read
       contents: read
       packages: write
     outputs:
@@ -59,16 +58,6 @@ jobs:
       - name: Test the claude reinstall guard
         run: bash .github/scripts/test-ensure-claude-cli.sh
 
-      - name: Plan builds from the last successful image set
-        id: plan
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          CURRENT_SHA="$GITHUB_SHA" \
-          EVENT_NAME="$GITHUB_EVENT_NAME" \
-          REF_TYPE="$GITHUB_REF_TYPE" \
-            bash .github/scripts/plan-image-builds.sh
-
       # NOT `github.actor` (what GitHub's own template uses) — on a `push` that
       # is the COMMIT AUTHOR, not whoever triggered the run, and the platform
       # authors accept-merge commits as the person whose work was accepted.
@@ -77,16 +66,7 @@ jobs:
       # dev silently stayed on the previous commit; re-run via
       # `workflow_dispatch` (actor=WangChangxin0809) it succeeded. Whether an
       # image ships must not depend on who happened to author the commit.
-      - name: Log in to Container Registry for unchanged images
-        if: >-
-          steps.plan.outputs.backend == 'false' ||
-          steps.plan.outputs.sandbox == 'false' ||
-          steps.plan.outputs.frontend == 'false' ||
-          steps.plan.outputs.office_render == 'false' ||
-          steps.plan.outputs.browser_render == 'false' ||
-          steps.plan.outputs.gateway == 'false' ||
-          steps.plan.outputs.metering_proxy == 'false' ||
-          steps.plan.outputs.private_executor == 'false'
+      - name: Log in to Container Registry
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
@@ -95,6 +75,15 @@ jobs:
           command: >-
             echo "${{ secrets.GITHUB_TOKEN }}" |
             docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Plan builds from the last complete image set
+        id: plan
+        run: |
+          IMAGE_ROOT="${REGISTRY}/${IMAGE_NAME,,}" \
+          CURRENT_SHA="$GITHUB_SHA" \
+          EVENT_NAME="$GITHUB_EVENT_NAME" \
+          REF_TYPE="$GITHUB_REF_TYPE" \
+            bash .github/scripts/plan-image-builds.sh
 
       - name: Give unchanged images this commit's immutable tag
         if: >-
@@ -141,11 +130,12 @@ jobs:
             done
             return 1
           }
-          # Promotion copies the PREVIOUS successful build's tag forward, so an
-          # image added to this list has nothing to copy until it has been built
-          # once. plan-image-builds.sh forces a build while the baseline predates
-          # an image; add that check with the image, or this step fails on the
-          # merge that introduces it.
+          # Promotion copies the baseline's tag forward, so an image added to
+          # this list has nothing to copy until it has been built once.
+          # plan-image-builds.sh builds an image whose job the baseline's
+          # workflow lacks, and requires the tags of those listed in `images`
+          # there; add the image to that list and to `image_tag` if its tag
+          # differs, or the baseline lookup never asks for it.
           [ "$BUILD_BACKEND" = true ] || promote backend
           if [ "$BUILD_SANDBOX" = false ]; then
             promote sandbox
