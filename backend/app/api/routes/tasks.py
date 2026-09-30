@@ -18,13 +18,18 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    QuotaExceededError,
+    SystemBusyError,
 )
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
+from app.domain.feature_stats import pricing
+from app.domain.gateway_chat import GatewayChat
 from app.domain.llm.repositories import AIUserQuotaRepository
 from app.domain.llm.services import AiAdviceService
+from app.domain.service_keys import service_key
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -68,12 +73,16 @@ from app.domain.task.services import (
 )
 from app.domain.task.submission_state import claim_state
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
+from app.domain.task.task_pdf_draft_service import (
+    TaskPdfDraftService,
+    task_draft_key_spec,
+)
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
+from app.domain.usage.personal import PersonalCredits, Rates
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRealNameRepository,
@@ -163,8 +172,14 @@ async def get_task_ai_advice_service(db=Depends(get_db)) -> TaskAIAdviceService:
 
 
 async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    _ = db
-    return TaskPdfDraftService()
+    key = await service_key(db, task_draft_key_spec())
+    if key is None:
+        raise SystemBusyError("从 PDF 生成草稿暂未开放，稍后再试。")
+    return TaskPdfDraftService(
+        chat=GatewayChat(
+            key, settings.task_draft_model, max_tokens=settings.task_draft_max_tokens
+        )
+    )
 
 
 class ConfirmTaskPublishFromPdfRequest(BaseModel):
@@ -1640,21 +1655,47 @@ async def preview_task_from_pdf(
     if default_topic is not None:
         default_topic_ids.append(default_topic.id)
 
+    # The publisher asked for this, so it comes out of their personal credits.
+    rates = Rates.of(draft_service.model, await pricing.model_rates())
+    if rates is None:
+        raise SystemBusyError("从 PDF 生成草稿暂未开放，稍后再试。")
+    credits = PersonalCredits(db)
+    balance = await credits.balance(auth_user.user_id)
+    if balance.credits_remaining <= 0:
+        raise QuotaExceededError(balance.exhausted_message())
+
     template = draft_service.pick_template(space.task_templates or [], template_index)
-    (
-        drafts,
-        token_used,
-        illustrations,
-    ) = await draft_service.generate_task_payloads_from_pdf(
-        pdf_bytes=pdf_bytes,
-        template=template,
-        space_id=space_id,
-        category_id=resolved_category_id,
-        forced_submitter_type=forced_submitter_type,
-        user_id=auth_user.user_id,
-        default_topic_ids=default_topic_ids,
-        max_tasks=max_tasks,
-    )
+    try:
+        (
+            drafts,
+            token_used,
+            illustrations,
+        ) = await draft_service.generate_task_payloads_from_pdf(
+            pdf_bytes=pdf_bytes,
+            template=template,
+            space_id=space_id,
+            category_id=resolved_category_id,
+            forced_submitter_type=forced_submitter_type,
+            user_id=auth_user.user_id,
+            default_topic_ids=default_topic_ids,
+            max_tasks=max_tasks,
+        )
+    finally:
+        # Every page the model answered was paid for, drafts or not; committed
+        # here so a preview that fails afterwards still leaves the charge.
+        spent = draft_service.spent
+        if spent.total_tokens:
+            await credits.charge(
+                auth_user.user_id,
+                model=draft_service.model,
+                rates=rates,
+                input_tokens=spent.prompt_tokens,
+                output_tokens=spent.completion_tokens,
+                cache_read_tokens=spent.cache_read_tokens,
+                cache_write_tokens=spent.cache_write_tokens,
+                kind="task_pdf_draft",
+            )
+        await db.commit()
 
     # 解析出来的东西落成**发布者本人名下**的附件行，把 id 交回给前端去勾：原 PDF 与
     # 那几张插图在服务端手上，只有这里能登记它们。挂在 ``meta.uploaderId`` 上的名字

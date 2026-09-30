@@ -35,7 +35,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes.tasks import get_task_pdf_draft_service
-from app.domain.llm.llm_client import LLMResponse
+from app.core.config import settings
+from app.domain.feature_stats import pricing
+from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from tests.integration.conftest import (
     CreatedUser,
@@ -51,20 +53,16 @@ MARKER = "BOARD-ONLY-TEMPLATE-MARKER"
 class _FakeLLM:
     """假的模型客户端 —— 测试里不可能真调模型，但调用次数是真的要数的。"""
 
-    is_configured = True
+    model = "fake-draft-model"
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def get_completion(self, **kwargs) -> LLMResponse:
+    async def complete(self, **kwargs) -> Completion:
         self.calls.append(kwargs)
-        return LLMResponse(
-            content=json.dumps(
-                {"name": "AI 题", "intro": "简述", "description": "详细说明"}
-            ),
-            total_tokens=11,
-            prompt_tokens=5,
-            completion_tokens=6,
+        return Completion(
+            json.dumps({"name": "AI 题", "intro": "简述", "description": "详细说明"}),
+            Usage(prompt_tokens=5, completion_tokens=6),
         )
 
 
@@ -120,11 +118,18 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
 
 
 @pytest.fixture
-def fake_llm(api_client: TestClient) -> _FakeLLM:
-    """把模型的调用换成假的：路由其余部分（鉴权、库、模板行）全真。"""
+def fake_llm(api_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> _FakeLLM:
+    """把模型的调用换成假的：路由其余部分（鉴权、库、模板行、个人额度）全真。"""
     llm = _FakeLLM()
-    service = TaskPdfDraftService(llm_client=llm)
+    service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
     api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: service
+    # 这个模型在网关上的单价：预览从发起人的个人额度里扣，没有单价就扣不了。
+    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
+
+    async def rates(*_args, **_kwargs):
+        return {_FakeLLM.model: (1e-3, 2e-3, 1e-4, 1e-3)}
+
+    monkeypatch.setattr(pricing, "model_rates", rates)
     try:
         yield llm
     finally:
@@ -228,3 +233,57 @@ def test_a_space_that_does_not_exist_is_still_not_found(
     resp = _preview(api_client, 999_999_999, outsider_token)
     assert resp.status_code == 404, resp.text
     assert fake_llm.calls == []
+
+
+def test_a_preview_is_paid_for_by_the_person_who_asked_for_it(
+    api_client: TestClient,
+    user_client: UserCreator,
+    board: dict,
+    fake_llm: _FakeLLM,
+    db_session,
+) -> None:
+    """发起预览的人付钱：一次预览扣一次他的个人额度，按这个模型的单价算。"""
+    member, member_token = _member_of(user_client, api_client, board)
+
+    assert _preview(api_client, board["space_id"], member_token).status_code == 200
+
+    [grant] = _personal_grants(api_client, db_session, member.user_id)
+    cost = 5 * 1e-3 + 6 * 2e-3
+    assert grant["credits_used"] == pytest.approx(cost / 0.01)
+
+
+def test_with_no_credits_left_the_model_is_not_asked(
+    api_client: TestClient,
+    user_client: UserCreator,
+    board: dict,
+    fake_llm: _FakeLLM,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "personal_credits_monthly", 1.0)
+    member, member_token = _member_of(user_client, api_client, board)
+    # 第一次把这个月的额度用超，第二次在调模型之前就被拦下。
+    assert _preview(api_client, board["space_id"], member_token).status_code == 200
+    calls = len(fake_llm.calls)
+
+    resp = _preview(api_client, board["space_id"], member_token)
+    assert resp.status_code == 429, resp.text
+    assert "额度已用完" in resp.json()["message"]
+    assert len(fake_llm.calls) == calls
+
+
+def _personal_grants(api_client: TestClient, session, user_id: int) -> list[dict]:
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ComputeGrant
+
+    async def read() -> list[dict]:
+        rows = (
+            await session.execute(
+                select(ComputeGrant)
+                .where(ComputeGrant.user_id == user_id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalars()
+        return [{"credits_used": g.credits_used} for g in rows]
+
+    return api_client.portal.call(read)  # type: ignore[union-attr]

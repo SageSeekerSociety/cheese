@@ -34,7 +34,8 @@ from fastapi.testclient import TestClient
 
 from app.core import storage as storage_module
 from app.core.config import settings
-from app.domain.llm.llm_client import LLMResponse
+from app.domain.feature_stats import pricing
+from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from tests.integration.conftest import (
     CreatedUser,
@@ -66,11 +67,12 @@ class _EchoingLLMClient:
     留下的那张图，出处仍是 PDF 自己。
     """
 
+    model = "fake-draft-model"
+
     def __init__(self) -> None:
-        self.is_configured = True
         self.prompts: list[str] = []
 
-    async def get_completion(self, **kwargs) -> LLMResponse:
+    async def complete(self, **kwargs) -> Completion:
         prompt = str(kwargs.get("prompt") or "")
         self.prompts.append(prompt)
         # **最后一个**标记才是 PDF 里那一张：提示词开头举例用的那个 ``![描述](…)``
@@ -78,14 +80,12 @@ class _EchoingLLMClient:
         markers = re.findall(r"!\[[^\]]*\]\([^)]*\)", prompt)
         marker = markers[-1] if markers else ""
         body = f"给定一段会崩的程序，说明它为什么崩。\n\n{marker}"
-        return LLMResponse(
-            content=(
+        return Completion(
+            (
                 '{"name":"用 gdb 定位一次段错误","intro":"找出崩在哪一行。",'
                 f'"description":{_json_string(body)}}}'
             ),
-            total_tokens=321,
-            prompt_tokens=200,
-            completion_tokens=121,
+            Usage(prompt_tokens=200, completion_tokens=121),
         )
 
 
@@ -110,14 +110,22 @@ def _one_page_pdf() -> bytes:
 
 
 @pytest.fixture
-def llm(api_client: TestClient) -> Iterator[_EchoingLLMClient]:
-    """这一份用例走的那张草稿服务：真解析，假推理。"""
+def llm(
+    api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[_EchoingLLMClient]:
+    """这一份用例走的那张草稿服务：真解析，假推理，个人额度照真的扣。"""
     from app.api.routes.tasks import get_task_pdf_draft_service
 
     client = _EchoingLLMClient()
     api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: (
-        TaskPdfDraftService(llm_client=client)
+        TaskPdfDraftService(chat=client)  # type: ignore[arg-type]
     )
+    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
+
+    async def rates(*_args, **_kwargs):
+        return {_EchoingLLMClient.model: (1e-6, 2e-6, 1e-7, 1e-6)}
+
+    monkeypatch.setattr(pricing, "model_rates", rates)
     yield client
     api_client.app.dependency_overrides.pop(get_task_pdf_draft_service, None)
 

@@ -18,12 +18,8 @@ from app.core.storage import (
     generate_storage_key,
     get_storage_backend,
 )
-from app.domain.llm.llm_client import (
-    LLMAPIError,
-    LLMClient,
-    LLMConnectionError,
-    LLMTimeoutError,
-)
+from app.domain.gateway_chat import GatewayCallError, GatewayChat, Usage
+from app.domain.service_keys import KeySpec
 
 logger = logging.getLogger(__name__)
 
@@ -46,19 +42,38 @@ class UploadedIllustration:
     file_hash: str
 
 
+def task_draft_key_spec() -> KeySpec:
+    """The gateway key drafts are made on. No budget of its own: each preview
+    is paid for from the publisher's personal credits."""
+    return KeySpec(
+        name="task-draft-gateway-key",
+        alias="task-draft",
+        model=settings.task_draft_model,
+        budget_usd=None,
+        rpm=120,
+    )
+
+
 class TaskPdfDraftService:
-    """Generate task payload from a PDF document via LLM."""
+    """Generate task payload from a PDF document via the model on ``chat``.
+
+    ``spent`` adds up every call the model answered, drafts or not: a page whose
+    answer could not be read still cost its tokens, and whoever asked pays for
+    them.
+    """
 
     def __init__(
         self,
         *,
-        llm_client: LLMClient | None = None,
+        chat: GatewayChat,
         timeout_seconds: float | None = None,
         max_pages: int | None = None,
         max_concurrency: int | None = None,
     ) -> None:
-        self._llm_client = llm_client or LLMClient()
-        self._timeout_seconds = timeout_seconds or settings.openai_pdf_timeout_seconds
+        self._chat = chat
+        self.spent = Usage()
+        self.model = chat.model
+        self._timeout_seconds = timeout_seconds or settings.task_draft_timeout_s
         self._max_pages = (
             max_pages if max_pages is not None else settings.pdf_import_max_pages
         )
@@ -291,26 +306,19 @@ class TaskPdfDraftService:
         normalized_text = text.strip()
         if not normalized_text:
             raise BadRequestError("PDF content is empty or unreadable")
-        if not self._llm_client.is_configured:
-            raise BadRequestError("LLM is not configured")
-
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(text=normalized_text, template=template)
 
         try:
-            response = await self._llm_client.get_completion(
+            response = await self._chat.complete(
+                system=system_prompt,
                 prompt=user_prompt,
-                system_prompt=system_prompt,
-                model_type="reasoning",
                 json_response=True,
                 timeout=self._timeout_seconds,
             )
-        except LLMTimeoutError as exc:
+        except GatewayCallError as exc:
             raise BadRequestError(str(exc)) from exc
-        except LLMConnectionError as exc:
-            raise BadRequestError(str(exc)) from exc
-        except LLMAPIError as exc:
-            raise BadRequestError(str(exc)) from exc
+        self.spent += response.usage
 
         parsed = self._parse_llm_json(response.content)
         candidates = self._extract_task_candidates(parsed)
@@ -326,7 +334,7 @@ class TaskPdfDraftService:
             for candidate in candidates
         ]
 
-        return payloads, response.total_tokens
+        return payloads, response.usage.total_tokens
 
     async def generate_task_payload_from_text(
         self,
