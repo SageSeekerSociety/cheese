@@ -1,0 +1,111 @@
+{
+  "page": {
+    "title": "Ratchet",
+    "subtitle": "Architecture debt, per check: what it is now, what is frozen, and which way it moved"
+  },
+  "action": {
+    "refresh": "Refresh",
+    "refreshing": "Collecting…"
+  },
+  "prov": {
+    "collected": "Collected commit",
+    "commitTime": "Collected at",
+    "archived": "archived collections: {count}",
+    "deployed": "Deployed commit",
+    "run": "CI run for this collection",
+    "collectionFailed": "The newest collection failed: {reason}. Every row below is this collection's own answer — blank means \"not measured\", not 0.",
+    "collectionFailedNoReason": "The newest collection failed and the snapshot did not say why. Every row below is this collection's own answer — blank means \"not measured\", not 0."
+  },
+  "note": {
+    "singlePoint": "The archive starts here: one collection so far, so a trend has to wait for a second."
+  },
+  "legend": {
+    "actual": "\"Now\" is the number the check itself reported",
+    "notCollected": "Not collected: this check is missing from that run — never written as 0",
+    "frozen": "\"Frozen\" is the exemptions registered in the baseline, which is not how much is owed",
+    "ruleChanged": "Rule change: the deciding files changed, so the two sides are not compared",
+    "newExemptions": "New exemptions: the frozen count rose — a decision, not a discovery",
+    "stale": "Stale exemption: registered, but nothing in the tree matches it any more",
+    "failed": "Failed collection: that run collected nothing"
+  },
+  "table": {
+    "check": "Check",
+    "actual": "Now",
+    "frozen": "Frozen",
+    "stale": "Stale",
+    "change": "Since the same-rule start",
+    "verdict": "Verdict"
+  },
+  "value": {
+    "notCollected": "not collected",
+    "staleCount": "{count}",
+    "noSecondPoint": "one point only",
+    "noSecondPointHint": "Only one point under the same rule, so there is nothing to compare",
+    "holeBlocksCompare": "a collection in between was missed",
+    "holeBlocksCompareHint": "A collection in between produced no number, and the comparison stops there — a change measured across it would be one nobody collected"
+  },
+  "direction": {
+    "improving": "Paying down",
+    "worse": "Getting worse",
+    "flat": "Unchanged",
+    "unknown": "Not comparable yet"
+  },
+  "mark": {
+    "ruleChanged": "rule changed",
+    "ruleStarted": "new rule starts here",
+    "newExemptions": "{count} new exemptions",
+    "collectionFailed": "collection failed"
+  },
+  "detail": {
+    "fingerprint": "Rule fingerprint",
+    "reason": "Where the number comes from",
+    "stale": "Stale exemptions (registered, nothing left to match)",
+    "timeline": "Collection history",
+    "details": "Details",
+    "noDetails": "This check reports no per-item detail"
+  },
+  "timeline": {
+    "when": "Time",
+    "commit": "Commit",
+    "marks": "Marks"
+  },
+  "area": {
+    "scenes": "Frontend scenes that run on their own",
+    "boundaries": "Frontend–backend boundaries",
+    "size": "File size",
+    "types": "Types and styles",
+    "count": "{count} checks",
+    "passed": "{passed} passing"
+  },
+  "check": {
+    "sceneRatchet": "Scenes that run on their own",
+    "feBoundary": "Frontend boundary",
+    "beContracts": "Backend contracts",
+    "domainImportGuard": "Domain import guard",
+    "harnessBoundary": "Harness boundary",
+    "isPrivateReadPoints": "Private read points",
+    "fileSizes": "File size",
+    "vueTsc": "Vue type check",
+    "stylelintTokens": "Style tokens",
+    "palette": "Palette"
+  },
+  "pull": {
+    "done": "{listed} artifacts on CI, {stored} newly stored, {already} already archived",
+    "failed": "Nothing pulled this time: {error}",
+    "unreachable": "Nothing pulled: the request itself failed — check the server."
+  },
+  "state": {
+    "empty": "Nothing collected yet",
+    "emptyDesc": "The archive has no records at all. Press to pull one from CI; if the pull fails it says why instead of drawing \"all clear\".",
+    "emptyAction": "Pull one now",
+    "loadFailed": "The archive could not be read",
+    "loadFailedDesc": "This is a read failure, not \"nothing collected yet\" — two different things, two different sentences.",
+    "retry": "Retry",
+    "noMeasurements": "Nothing measurable in this collection",
+    "noMeasurementsFailed": "The most recent collection failed: {reason}. None of the most recent {count} collection(s) left a usable measurement — blank means \"not measured\", not 0.",
+    "noMeasurementsPlain": "None of the most recent {count} collection(s) left a usable measurement — blank means \"not measured\", not 0."
+  },
+  "foot": {
+    "source": "The checks and their rules live in the repository ({repo}); this page only draws the numbers they report."
+  }
+}

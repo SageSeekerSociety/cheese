@@ -15,7 +15,8 @@ class AgentTypeOut(BaseModel):
     description: str
     body: str
     skills: list[str] = Field(default_factory=list)
-    mcp_servers: list[str] = Field(default_factory=list)
+    # Claude Code's `mcpServers`: server names and {name: definition} entries.
+    mcp_servers: list[str | dict[str, dict]] = Field(default_factory=list)
     # Whether it ships with the platform — presets are read-only.
     builtin: bool
     space_id: int | None = None

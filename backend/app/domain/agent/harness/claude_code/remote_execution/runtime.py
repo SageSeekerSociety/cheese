@@ -19,7 +19,6 @@ import hashlib
 import hmac
 import json
 import os
-import queue
 import re
 import runpy
 import secrets
@@ -71,6 +70,9 @@ RELEASE_FILES = {
     "remote-execution/portable.py": (
         "app/domain/agent/harness/claude_code/remote_execution/portable.py"
     ),
+    "remote-execution/mcp_process.py": (
+        "app/domain/agent/harness/claude_code/remote_execution/mcp_process.py"
+    ),
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
@@ -117,6 +119,12 @@ def write_json(path, value):
 def portable():
     """The Windows primitives shipped beside this file; see portable.py."""
     return runpy.run_path(str(Path(__file__).with_name("portable.py")))
+
+
+@functools.cache
+def mcp_process():
+    """The stdio MCP client (`mcp_process.py`), shipped beside this file."""
+    return runpy.run_path(str(Path(__file__).with_name("mcp_process.py")))
 
 
 @functools.cache
@@ -314,103 +322,6 @@ def request(state, method, params=None):
     return response["result"]
 
 
-class MCPProcess:
-    def __init__(self, command, cwd, env, log):
-        self.process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=log,
-            start_new_session=True,
-        )
-        self.lock = threading.Lock()
-        self.pending = {}
-        self.sequence = 0
-        self.reader = threading.Thread(target=self._read, daemon=True)
-        self.reader.start()
-        self.call(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "cheese-execution", "version": "0.1.0"},
-            },
-        )
-        self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-
-    def send(self, value):
-        with self.lock:
-            assert self.process.stdin is not None
-            self.process.stdin.write(json.dumps(value).encode() + b"\n")
-            self.process.stdin.flush()
-
-    def _read(self):
-        try:
-            assert self.process.stdout is not None
-            for line in self.process.stdout:
-                data = json.loads(line)
-                if "method" in data:
-                    if "id" in data:
-                        self.send(
-                            {
-                                "jsonrpc": "2.0",
-                                "id": data["id"],
-                                "error": {
-                                    "code": -32601,
-                                    "message": "Executor has no client-side "
-                                    "sampling or elicitation handler",
-                                },
-                            }
-                        )
-                    continue
-                pending = self.pending.get(data.get("id"))
-                if pending:
-                    pending.put(data)
-        finally:
-            for pending in list(self.pending.values()):
-                pending.put({"error": {"message": "MCP process disconnected"}})
-
-    def begin(self, method, params=None):
-        """Send a request; its answer lands on the returned queue."""
-        with self.lock:
-            self.sequence += 1
-            key = self.sequence
-            answers = self.pending[key] = queue.Queue()
-        self.send(
-            {"jsonrpc": "2.0", "id": key, "method": method, "params": params or {}}
-        )
-        return key, answers
-
-    def finish(self, key, answers, timeout=300):
-        """Take the answer to a request begun earlier, or raise on error."""
-        try:
-            data = answers.get(timeout=timeout)
-        finally:
-            self.pending.pop(key, None)
-        if "error" in data:
-            raise RuntimeError(data["error"]["message"])
-        return data["result"]
-
-    def call(self, method, params=None):
-        key, answers = self.begin(method, params)
-        return self.finish(key, answers)
-
-    def close(self):
-        if sys.platform == "win32":
-            portable()["terminate_tree"](self.process.pid)
-            self.process.wait()
-            return
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(self.process.pid, signal.SIGTERM)
-        try:
-            self.process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            os.killpg(self.process.pid, signal.SIGKILL)
-            self.process.wait()
-
-
 class Executor:
     def __init__(self, state):
         self.state = Path(state).resolve()
@@ -455,6 +366,8 @@ class Executor:
         self.snapshot_lock = threading.Lock()
         self.cli_lock = threading.Lock()
         self.clients = {}
+        # Agent types' servers, by name: their definitions come with the calls.
+        self.agent_specs = {}
         self.client_lock = threading.Lock()
         self.log_lock = threading.Lock()
         self.db_lock = threading.Lock()
@@ -533,7 +446,7 @@ class Executor:
                         env.pop(key, None)
                     cwd = self.root
                 else:
-                    spec = self.config["mcp_servers"][server]
+                    spec = {**self.agent_specs, **self.config["mcp_servers"]}[server]
                     if spec.get("type", "stdio") != "stdio":
                         raise ValueError(
                             "Remote process servers require stdio transport"
@@ -550,7 +463,8 @@ class Executor:
                     )
                 ).open("a")
                 try:
-                    self.clients[server] = MCPProcess(command, cwd, env, log)
+                    process = mcp_process()["MCPProcess"]
+                    self.clients[server] = process(command, cwd, env, log)
                 finally:
                     log.close()
             return self.clients[server]
@@ -1909,6 +1823,8 @@ class Executor:
             return info
 
     def dispatch(self, method, params):
+        if isinstance(params, dict) and isinstance(params.get("spec"), dict):
+            self.agent_specs[params["server"]] = params["spec"]
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
@@ -2107,6 +2023,8 @@ def bridge(state, server, *, call=None):
                         "server": server,
                         "tool": params["name"],
                         "args": params.get("arguments", {}),
+                        # Claude Code, the only bridge user, fires the hooks.
+                        "platform": True,
                     },
                 )
                 result = value.get("value") or {

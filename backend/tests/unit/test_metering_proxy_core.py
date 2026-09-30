@@ -1189,7 +1189,7 @@ def _codex(*chunks: bytes) -> bytes:
 _TRANSLATED = (
     b'{"input":[{"role":"user","content":[{"type":"input_text",'
     b'"text":"a } b ] c , d \\" e \\\\ \\"max_output_tokens\\": 9"}]}],'
-    b' "max_output_tokens" : 64,"model":"gpt-6-astra",'
+    b' "max_output_tokens" : 64,"model":"gpt-6-astra","user":"user_abc",'
     b'"tools":[{"name":"t","parameters":{"store":true,"max_output_tokens":1}}],'
     b'"stream":true}'
 )
@@ -1199,6 +1199,7 @@ def test_a_translated_body_goes_out_the_way_codex_takes_it():
     sent = json.loads(_codex(_TRANSLATED))
     original = json.loads(_TRANSLATED)
     del original["max_output_tokens"]
+    del original["user"]
     assert sent == {"store": False, **original}
 
 

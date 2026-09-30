@@ -45,7 +45,7 @@ from tests.integration.conftest import (
 )
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
-#: of anything: platform admin is a platform-level fact, not a project role.
+#: of anything: feedback admin is a deployment-level fact, not a project role.
 ADMIN = "fb-admin"
 
 STRANGER = "fb-stranger"
@@ -69,11 +69,13 @@ _HEAD_START_SECONDS = 0.3
 
 @pytest.fixture
 def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Make ``ADMIN`` the platform administrator for one test.
+    """Make ``ADMIN`` the feedback administrator for one test.
 
-    `admin_handles()` re-reads settings on every call precisely so this works
-    without a restart (see `services.admin_handles`).
+    `FeedbackService.is_admin` reads settings on every call precisely so this
+    works without a restart.
     """
+    monkeypatch.setattr(settings, "feedback_triage_handles", [ADMIN])
+    # Also a platform admin: the roster tests below drive the members page.
     monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
     return ADMIN
 
@@ -2246,7 +2248,7 @@ def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
     about the credential alone; the binding half is the test below.
     """
     agent = "agent-on-the-list"
-    monkeypatch.setattr(settings, "platform_admin_handles", [agent])
+    monkeypatch.setattr(settings, "feedback_triage_handles", [agent])
     screen = _register_screen(handle=agent)
     try:
         allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
@@ -2287,7 +2289,7 @@ def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkey
     )
     assert made.status_code == 200, made.text
     agent = agent_instance_handle(made.json()["data"]["id"])
-    monkeypatch.setattr(settings, "platform_admin_handles", [agent, REPORTER])
+    monkeypatch.setattr(settings, "feedback_triage_handles", [agent, REPORTER])
 
     refused = client.get("/admin/feedback", headers=session_auth_headers(agent))
     assert refused.status_code == 403, refused.text
@@ -2863,37 +2865,37 @@ def test_whoever_the_page_added_is_an_admin_on_their_next_request(client, as_adm
 
     这条钉的是**两个来源真的合成了一个答案**：只读配置的话，页面上加的人会出现在
     名单里却什么也打不开（名单说他在，接口说他不是）；只读表的话，根管理员反而
-    进不去。
+    进不去。页面加的是**平台**管理员：反馈是另一份名单，加进来的人照样读不到
+    别人的私密反馈。
     """
     from tests.conftest import seed_user
 
     seed_user(client, "fb-hired")
     private = _report(client, REPORTER, visibility="private")
 
-    def is_admin(handle: str) -> bool:
+    def meta(handle: str) -> dict:
         r = client.get("/feedback/meta", headers=session_auth_headers(handle))
         assert r.status_code == 200, r.text
-        return bool(r.json()["data"]["is_admin"])
+        return r.json()["data"]
 
     def open_private(handle: str):
         return client.get(
             f"/feedback/{private['id']}", headers=session_auth_headers(handle)
         )
 
-    assert is_admin("fb-hired") is False
+    assert meta("fb-hired")["is_platform_admin"] is False
     assert (
-        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+        client.get("/admin/admins", headers=session_auth_headers("fb-hired"))
     ).status_code == 403
-    assert open_private("fb-hired").status_code == 404
 
     assert _add_admin(client, by=as_admin, target="fb-hired").status_code == 200
 
-    assert is_admin("fb-hired") is True
+    assert meta("fb-hired")["is_platform_admin"] is True
     assert (
-        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+        client.get("/admin/admins", headers=session_auth_headers("fb-hired"))
     ).status_code == 200
-    # 私密反馈对他是真的打开了：名单生效不只是改了一个布尔值。
-    assert open_private("fb-hired").status_code == 200
+    assert meta("fb-hired")["is_admin"] is False
+    assert open_private("fb-hired").status_code == 404
 
 
 def test_the_page_refuses_names_that_would_leave_the_roster_wrong(client, as_admin):
@@ -3261,7 +3263,7 @@ def test_the_public_surface_does_not_grant_what_the_admin_surface_refuses(
     （一个 agent 是来读它自己提过的那条的合法读者），要的只是「别把管理员那一支给它」。
     """
     agent = "agent-on-the-list"
-    monkeypatch.setattr(settings, "platform_admin_handles", [agent])
+    monkeypatch.setattr(settings, "feedback_triage_handles", [agent])
     screen = _register_screen(handle=agent)
     try:
         headers = {"X-Cheese-Screen": screen.token}
@@ -3310,7 +3312,7 @@ def test_an_agent_on_the_admin_list_is_no_admin_on_the_public_surface(
     )
     assert made.status_code == 200, made.text
     agent = agent_instance_handle(made.json()["data"]["id"])
-    monkeypatch.setattr(settings, "platform_admin_handles", [agent, REPORTER])
+    monkeypatch.setattr(settings, "feedback_triage_handles", [agent, REPORTER])
 
     headers = session_auth_headers(agent)
     private = _report(client, STRANGER, title="别人的私密", visibility="private")
@@ -3474,3 +3476,94 @@ async def test_two_sends_of_one_card_at_once_file_one_report(
             .all()
         )
     assert len(rows) == 1
+
+
+# --- 不修复 -------------------------------------------------------------------
+#
+# 不修复 (`declined`): a report that was read and will not be acted on. It is a
+# way for a report to end, not a fifth rung: the reporter's ladder does not grow
+# a step after 已上线, and the report behaves as finished everywhere a finished
+# one does — no more supports, a declined bug sinks, it is in 「已完成」.
+
+
+def _declined_report(client, title: str = "按钮点了没反应", kind: str = "bug") -> dict:
+    r = client.post(
+        "/feedback",
+        json={"title": title, "kind": kind},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _decline(client, row: dict, admin: str) -> dict:
+    r = client.post(
+        f"/admin/feedback/{row['id']}/status",
+        json={"status": "declined"},
+        headers=session_auth_headers(admin),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _declined_titles(client, **params) -> set[str]:
+    r = client.get("/feedback", params=params)
+    assert r.status_code == 200, r.text
+    return {c["title"] for c in r.json()["data"]["data"]}
+
+
+def test_an_admin_declines_a_report_and_its_reporter_sees_it(client, as_admin):
+    row = _declined_report(client)
+
+    _decline(client, row, as_admin)
+
+    r = client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    detail = r.json()["data"]
+    assert detail["status"] == "declined"
+    assert detail["timeline"][-1]["status"] == "declined"
+
+
+def test_a_declined_report_cannot_be_supported(client, as_admin):
+    row = _declined_report(client)
+    _decline(client, row, as_admin)
+
+    r = client.post(
+        f"/feedback/{row['id']}/supports", headers=session_auth_headers(STRANGER)
+    )
+
+    assert r.status_code == 412, r.text
+
+
+def test_a_declined_bug_sinks_and_is_listed_as_finished(client, as_admin):
+    bug = _declined_report(client, "不修的 bug", "bug")
+    suggestion = _declined_report(client, "不做的建议", "suggestion")
+    _decline(client, bug, as_admin)
+    _decline(client, suggestion, as_admin)
+
+    working = _declined_titles(client, tab="all")
+    assert "不修的 bug" not in working
+    assert "不做的建议" in working
+    assert {"不修的 bug", "不做的建议"} <= _declined_titles(client, tab="resolved")
+    assert {"不修的 bug", "不做的建议"} <= _declined_titles(
+        client, tab="resolved", status="declined"
+    )
+
+
+def test_the_vocabulary_offers_declined_but_the_ladder_does_not(client):
+    meta = client.get("/feedback/meta").json()["data"]
+
+    assert "declined" in meta["statuses"]
+    assert "declined" not in meta["status_ladder"]
+
+
+def test_the_board_counts_a_declined_report_as_closed(client, as_admin):
+    before = client.get(
+        "/admin/stats/feedback", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    _decline(client, _declined_report(client), as_admin)
+
+    after = client.get(
+        "/admin/stats/feedback", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    assert after["status"]["declined"] == before["status"].get("declined", 0) + 1
+    assert after["total"]["closed"] == before["total"]["closed"] + 1

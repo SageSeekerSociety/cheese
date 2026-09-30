@@ -128,14 +128,6 @@
     "submit": "提交",
     "createFailed": "创建题目失败"
   },
-  "status": {
-    "pending": "审核中",
-    "notStarted": "未开始",
-    "ongoing": "报名中",
-    "ended": "已截止",
-    "rejected": "审核未通过",
-    "joined": "已报名"
-  },
   "eligibility": {
     "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能领取",
     "REGISTRATION_NOT_STARTED": "还没到报名时间",

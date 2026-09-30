@@ -16,11 +16,14 @@ from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 
 class AgentConfiguration(BaseModel):
-    """A saved role and optional model; None inherits the project main model."""
+    """A saved role and optional model; None inherits the project main model.
+
+    MCP servers are not here: they belong to the agent's type, and a session
+    reads them from there (`agent_instance.services.type_of_seat`).
+    """
 
     body: str = ""
     skills: list[str] = Field(default_factory=list)
-    mcp_servers: list[str] = Field(default_factory=list)
     model: str | None = None
 
 

@@ -62,7 +62,7 @@ const props = defineProps<{ item: FeedbackCard }>()
 
 const store = useFeedbackStore()
 
-/** 办完了的反馈在列表里不再喊人支持：它已经做完了。收尾是两级（修复、上线），
+/** 办完了的反馈在列表里不再喊人支持：它已经办完了。收尾有几种（修复、上线、不修复），
  *  判断走 lib/feedbackMeta 的 `isClosed`，别在这里再写一次「不是 resolved」。 */
 const supportable = computed(() => !isClosed(props.item.status))
 const isPrivate = computed(() => props.item.visibility === 'private')

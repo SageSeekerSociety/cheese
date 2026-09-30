@@ -1304,7 +1304,8 @@ export interface AgentType {
   // The system prompt this type runs under (角色设定).
   body: string
   skills: string[]
-  mcp_servers: string[]
+  // Claude Code's subagent `mcpServers`: a server name, or { name: definition }.
+  mcp_servers: (string | Record<string, Record<string, unknown>>)[]
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1317,7 +1318,6 @@ export interface AgentType {
 export interface AgentConfiguration {
   body: string
   skills: string[]
-  mcp_servers: string[]
   model?: string | null
 }
 
@@ -1354,7 +1354,7 @@ export interface ProjectAgent {
 //     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
 export type FeedbackKind = 'bug' | 'suggestion' | 'other'
 /** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
-export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed'
+export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed' | 'declined'
 export type FeedbackVisibility = 'public' | 'private'
 export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
 
@@ -1503,14 +1503,14 @@ export interface FeedbackMeta {
   /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
    *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
    *  分、一个支持几天打对折、不够线时至少补几条。
-   *
    *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
    *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
    *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
   hot_score: number
   hot_half_life_days: number
   hot_min_items: number
-  is_admin: boolean
+  is_admin: boolean // 反馈管理员（队列、私密反馈）
+  is_platform_admin: boolean // 平台管理员（管理台其余各块）；两份名单互不包含
 }
 
 export interface FeedbackSupportResult {

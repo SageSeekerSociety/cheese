@@ -44,6 +44,22 @@
       <v-defaults-provider :defaults="{ VBtn: { size: 'small', variant: 'text' } }">
         <component :is="actionsComponent" v-if="actionsComponent" />
         <slot name="actions"></slot>
+        <!-- 页面用 useCommands 登记的页头命令，和 AppPage 画法一样；手机上由顶栏画。 -->
+        <template v-if="$vuetify.display.mdAndUp">
+          <v-btn
+            v-for="command in headerCommands"
+            :key="command.id"
+            :prepend-icon="command.icon"
+            :color="command.header?.accent ? 'primary' : undefined"
+            :variant="command.header?.accent ? 'flat' : 'text'"
+            :to="command.to"
+            :loading="command.loading"
+            :disabled="command.disabled"
+            @click="command.run?.()"
+          >
+            {{ command.title }}
+          </v-btn>
+        </template>
       </v-defaults-provider>
     </div>
   </div>
@@ -59,6 +75,7 @@ import { storeToRefs } from 'pinia'
 
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
 
+import { headerCommands } from '@/commands'
 import NavLink from '@/components/common/NavLink.vue'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -133,7 +150,9 @@ const displayIcon = computed((): RouteIcon | null => {
 })
 
 // 是否有动作区域
-const hasActions = computed(() => !!actionsComponent.value || !!slots.actions)
+const hasActions = computed(
+  () => !!actionsComponent.value || !!slots.actions || (display.mdAndUp.value && headerCommands.value.length > 0)
+)
 
 // 滚动效果
 const onScroll = (e: Event) => {

@@ -35,7 +35,8 @@
     "spaces": "Space applications",
     "members": "Members",
     "integrations": "Feishu app",
-    "featureStats": "Feature data"
+    "featureStats": "Feature data",
+    "ratchet": "Ratchet"
   },
   "userMenu": {
     "profile": "Profile",

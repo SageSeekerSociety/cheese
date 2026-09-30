@@ -197,6 +197,9 @@ class PiLaunch:
     #: route that calls them (`remote_mcp.session_target`). Part of the launch
     #: contract, so connecting one relaunches an idle session with it.
     remote_mcp: dict | None = None
+    #: The teammate's type's own stdio servers, by name, as definitions: the
+    #: runner starts them here beside the checkout's. Part of the contract too.
+    agent_mcp: dict | None = None
     harness: str = "pi"
 
     def arguments(self) -> list[str]:
@@ -255,6 +258,7 @@ class PiLaunch:
             # Names and a route, never a credential: the backend attaches that
             # to each call (`POST /topics/{id}/mcp/{name}`).
             "remote_mcp": self.remote_mcp,
+            "agent_mcp": self.agent_mcp,
         }
 
     def on(self, place: MachinePlace) -> MachineLaunch:

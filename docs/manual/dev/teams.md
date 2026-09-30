@@ -20,7 +20,7 @@ covers:
 `domain/team/models.py` 里只有一张 `Team`，两种用法：
 
 - **共享团队**：有 `handle`，在 URL 和 @ 里用它。handle 与用户名**同一个字母表和同一个命名空间**，所以一个 handle 只指一个人或一个团队，不会两个都是（`uq_team_handle_lower` 唯一索引；`ck_team_handle_iff_shared` 保证共享团队才有 handle）。
-- **个人团队**：`personal_owner_user_id` 非空，一个用户一个（`uq_team_personal_owner`，带 `deleted_at IS NULL` 的部分索引；`create_personal_team` 的 `ON CONFLICT` 用的是同一个谓词，Postgres 才对得上）。它**不存 handle**（名字由所有者用户名给出），是单人的真团队——个人项目属于它，它也能像任何团队一样持有算力和设备，所以「为自己注册设备」就是「注册给个人团队」。
+- **个人团队**：`personal_owner_user_id` 非空，一个用户一个（`uq_team_personal_owner`，带 `deleted_at IS NULL` 的部分索引；`create_personal_team` 的 `ON CONFLICT` 用的是同一个谓词，Postgres 才对得上）。它**不存 handle**（名字由所有者用户名给出），是单人的真团队——个人项目属于它，它也能像任何团队一样持有算力和设备，所以「为自己注册设备」就是「注册给个人团队」。**除了所有者谁也进不来**：`TeamRepository.add_member` 是所有入团路径（直接加、接受邀请、批准申请、按链接加入）最后落行的那一处，个人团队的规矩就守在那里（`refuse_anyone_but_the_owner`），发邀请时也提前拒掉，免得一条永远接受不了的邀请躺在对方的待定里。和别人一起做个人项目，走项目的外部成员；要长期一起用，另建共享团队。
 
 两个开关各自管一件事：`visibility`（`public` / `stealth`）决定**不进团队的人找不找得到它**——public 能搜到、能按 id 打开；stealth 两样都不行，只能通过 `join_token`（`/team-invites/<token>`，一直有效直到队长或管理员重置）进来。`join_approval` 决定**进来的时候等不等**，和项目上那个开关是同一个语义，默认开。
 

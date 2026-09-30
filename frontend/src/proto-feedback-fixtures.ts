@@ -57,9 +57,7 @@ const CHOSEN_AVATARS: Record<string, number> = {
   chiruotong: 4,
 }
 
-function avatarOf(handle: string): number | null {
-  return CHOSEN_AVATARS[handle] ?? null
-}
+const avatarOf = (handle: string): number | null => CHOSEN_AVATARS[handle] ?? null
 
 /** 相对时间按**打开页面的那一刻**算：预览是拿来看「长什么样」的，把一个日期写死，
  *  过几天再打开就全是「8 天前」，而那不是任何人的真实体验。 */
@@ -80,6 +78,7 @@ const META: FeedbackMeta = {
   hot_half_life_days: HOT_HALF_LIFE_DAYS,
   hot_min_items: HOT_MIN_ITEMS,
   is_admin: IS_ADMIN,
+  is_platform_admin: IS_ADMIN,
 }
 
 /** 造一条反馈。卡片字段和详情字段放在一份数据里 —— 详情页要的就是卡片 + 正文，
@@ -1152,8 +1151,8 @@ function inPublicList(item: FeedbackCard): boolean {
   return item.visibility === 'public' && !item.security
 }
 
-/** 「办完了」= 已修复 **和** 已上线，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
-const CLOSED: FeedbackStatus[] = ['resolved', 'deployed']
+/** 「办完了」= 已修复、已上线、不修复，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
+const CLOSED: FeedbackStatus[] = ['resolved', 'deployed', 'declined']
 
 /** 栏位谓词。这是 `repositories._tab_where` 的镜像，**形状也照抄**：
  *  `sunk` 一处定义、三个栏位共用，免得这里写着写着就和后端分了叉 —— 预览存在的

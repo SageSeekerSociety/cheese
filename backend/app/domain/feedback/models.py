@@ -99,6 +99,12 @@ class FeedbackStatus(enum.StrEnum):
     in_progress = "in_progress"
     resolved = "resolved"
     deployed = "deployed"
+    #: 不修复 — the report was read and will not be acted on (by design, out of
+    #: scope, not reproducible), with the reason in a comment. It is the ladder's
+    #: other way out, not a rung after `deployed`: `STATUS_LADDER` leaves it off,
+    #: and it is closed (`CLOSED_STATUSES`) because nothing more will happen. A
+    #: closed report used to have to say 「已修复」 when nothing was fixed.
+    declined = "declined"
 
 
 class FeedbackPriority(enum.StrEnum):

@@ -17,6 +17,11 @@
   text-decoration: none;
 }
 
+/* An anchor lands below the sticky bar, not under it. */
+.landing [id] {
+  scroll-margin-top: var(--bar-h);
+}
+
 .landing h1,
 .landing h2,
 .landing h3,
@@ -161,10 +166,54 @@
 }
 
 .hero-position {
+  max-width: 24em;
   font-size: clamp(23px, 2.8vw, 44px);
   font-weight: 500;
   line-height: 1.3;
   color: var(--ink);
+  text-wrap: balance;
+}
+
+/* English display type. The sizes above are tuned for four to six Chinese
+   characters, each a full em wide and set with open tracking; the same sizes
+   turn an English line of twenty letters into two lines spanning the page. Latin
+   display type is set smaller, tracked tighter and held to a measure in `ch`, so
+   it reads as a headline rather than a wall. */
+.landing:lang(en) .hero-title {
+  max-width: 14ch;
+  font-size: clamp(48px, 7.5vw, 120px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .hero-position {
+  max-width: 44ch;
+  font-size: clamp(18px, 1.8vw, 26px);
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .people-title,
+.landing:lang(en) .solutions-title {
+  max-width: 18ch;
+  font-size: clamp(40px, 5vw, 72px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .vision-quote p {
+  font-size: clamp(36px, 4.4vw, 64px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .cta-title {
+  max-width: 20ch;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
 }
 
 .hero-actions {

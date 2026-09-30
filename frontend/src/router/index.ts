@@ -109,6 +109,17 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(process.env.BASE_URL),
   routes,
+  // Only the public pages scroll the document; the workspace locks it and scrolls
+  // its own panes, which this leaves alone. Moving to another public page starts
+  // at its top (or at its #anchor), Back returns to where the reader was, and
+  // leaving the public pages for work drops whatever scroll they held.
+  scrollBehavior(to, from, savedPosition) {
+    if (!to.meta.publicLanding && !from.meta.publicLanding) return false
+    if (savedPosition) return savedPosition
+    if (to.hash) return { el: to.hash }
+    if (to.path !== from.path) return { top: 0 }
+    return false
+  },
 })
 
 router.beforeEach(carryLoginRedirect)

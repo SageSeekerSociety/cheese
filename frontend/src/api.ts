@@ -2716,7 +2716,7 @@ export interface StatsFeedback {
   /** 队列那四栏，重拼成计数。**加起来不等于 `total.all`**，理由见上。 */
   columns: { public: number; private: number; agent: number; security: number }
   /** 梯子上的每一级，全量。这是四处里唯一并排展示四级状态的地方。 */
-  status: { received: number; in_progress: number; resolved: number; deployed: number }
+  status: { received: number; in_progress: number; resolved: number; deployed: number; declined: number }
   /** 这个管理员自己的未读数 —— 人各一份，和板子有多大无关。 */
   unread: number
   /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */

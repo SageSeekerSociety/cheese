@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from app.domain.agent.compute_configs import ComputeChoice
 from app.domain.agent.executor_transport import MACHINE_OUT_OF_REACH
 from app.domain.agent.harness.claude_code.remote_execution import client as central
-from app.domain.agent.harness.claude_code.remote_execution import runtime
+from app.domain.agent.harness.claude_code.remote_execution import mcp_process
 from app.domain.agent.market import compute_listings
 
 TASK = "9f8e7d6c-0000-4000-8000-000000000000"
@@ -197,7 +197,7 @@ def _session(tmp_path, server, target):
         json.dumps({"workspace": str(tmp_path), "central_hooks": {}, **target})
     )
     log = (tmp_path / "central.log").open("w")
-    process = runtime.MCPProcess(
+    process = mcp_process.MCPProcess(
         [sys.executable, central.__file__, "transport", str(config)],
         str(tmp_path),
         {

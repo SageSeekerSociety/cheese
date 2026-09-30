@@ -105,6 +105,15 @@ export default [
         meta: { title: '功能数据', isFullPage: true },
       },
       {
+        // 架构还债进度（`/admin/ratchet`）。和看板、功能数据一样是**读**的页面，
+        // 区别只在看的是什么：看板看平台、功能数据看某个功能，这一页看仓库自己的债。
+        // 数据来自 CI 每次合入 main 后采的那份快照，页面上一个判定都不做。
+        path: 'ratchet',
+        name: 'AdminRatchet',
+        component: () => import('@/views/admin/AdminRatchetPage.vue'),
+        meta: { title: '棘轮', isFullPage: true },
+      },
+      {
         // 网关模型管理那一页。和其它分区一样是壳里的一块，不是独立域名。
         path: 'models',
         name: 'AdminModels',

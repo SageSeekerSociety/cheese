@@ -365,9 +365,10 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
-    # Handles that are platform administrators — the people who read and route
-    # the whole feedback queue (`/admin/feedback`) and who manage everything else
-    # that turns out to need an admin. JSON list in env, e.g. '["alice","bob"]'.
+    # Handles that are platform administrators — the people who run the admin
+    # screens (members, models, stats, spaces, integrations). Feedback triage is
+    # a separate roster, `feedback_triage_handles` below. JSON list in env,
+    # e.g. '["alice","bob"]'.
     # A settings list rather than a role because no production path assigns
     # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
     # and lock the surface for everyone.
@@ -396,6 +397,25 @@ class Settings(BaseSettings):
             "PLATFORM_ADMIN_HANDLES", "FEEDBACK_ADMIN_HANDLES"
         ),
     )
+    # Who works the feedback queue: the triage page (`/admin/feedback`), status
+    # changes, internal notes, private and security reports, deleting other
+    # people's reports and comments. A roster of its own, NOT the platform admins
+    # above: private feedback is what people chose not to show everyone, and the
+    # platform admins are a working group who need the admin screens for other
+    # jobs. Being one does not make you a reader of every private report.
+    #
+    # Deployment config only — there is no page that adds to it, so nobody can
+    # widen it from inside the product. JSON list in env, e.g. '["alice"]'. The
+    # dev deploy writes it (`deploy-dev.yml`); another deployment sets it in its
+    # own env file (`deploy/.env.prod.example`).
+    #
+    # Empty means nobody administers feedback: submissions still work and every
+    # admin-only branch stays closed. Not a boot failure, unlike the platform
+    # roster above: that one is the only way into the admin screens at all,
+    # while this one only gates a queue whose readers are a choice. Mind the
+    # name: `FEEDBACK_ADMIN_HANDLES` above is the OLD spelling of the PLATFORM
+    # roster, which is why this one is not called that.
+    feedback_triage_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
     # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
@@ -1110,7 +1130,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_platform_admins_on_deployment(self) -> "Settings":
-        """Fail the boot when a deployment has nobody who can work the queue.
+        """Fail the boot when a deployment has nobody who can run the admin screens.
 
         ``platform_admin_handles`` is the **root** admin list, and it is still
         the only way in: no role behind it, no default member set, nothing in the
@@ -1118,19 +1138,10 @@ class Settings(BaseSettings):
         (`platform_admins`, the 成员管理 block) — but **adding one is itself an
         admin action**, so an empty root list is not "we have not got round to
         appointing an admin yet". It is a deployment where nobody can ever
-        appoint one. Read from every seat in the product, it says *nobody is
-        looking at this*:
+        appoint one:
 
-        - A submitter writes a report, watches its status stay at 已收录, and has
-          no way to tell that apart from "someone will get to it". The feedback
-          centre looks fully functional while being a write-only table.
-        - The admin page is unreachable for everyone including the operator, who
-          finds this out by opening it and reading "你的账号不在管理员名单里" —
-          a sentence that names the wrong problem.
-        - The agent-side proposal path still spends its daily quota filing
-          proposals that no one can act on.
         - 成员管理 — the screen whose whole job is adding the next admin — is
-          admin-only too, so there is no way back in from the product at all.
+          admin-only, so there is no way back in from the product at all.
           This is why the root list is the half the page cannot delete: one
           mis-click on a list that was the only copy would lock everyone out
           permanently.
@@ -1179,18 +1190,14 @@ class Settings(BaseSettings):
                 if self.deployed_via_compose
                 else ""
             )
-            + "). This is the only thing that opens /admin/feedback — the page "
+            + "). This is the only way into the admin screens — the page "
             "itself can add admins, but only an admin can do that, so an empty "
-            "list here is a deployment nobody can get into: no one can read or "
-            "route the feedback queue, and neither a submitter nor the agent "
-            "path can tell that apart from 'nobody has picked it up yet'. The "
-            "whole feedback surface looks healthy and is write-only. Set it to "
-            "the handles that should administer feedback (they are the ones the "
-            "page cannot remove), as a JSON list: "
+            "list here is a deployment nobody can get into. Set it to the "
+            "handles that should run the platform (they are the ones the page "
+            "cannot remove), as a JSON list: "
             'PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\' (see '
-            "deploy/.env.prod.example). If you are sure nobody should administer "
-            "feedback, set it to a handle you control rather than leaving it "
-            "empty."
+            "deploy/.env.prod.example). If you are sure nobody should, set it "
+            "to a handle you control rather than leaving it empty."
         )
 
     @model_validator(mode="after")

@@ -6,7 +6,7 @@
       <v-dialog v-model="isInviteDialogActive" max-width="500">
         <template #activator="{ props: activatorProps }">
           <v-btn
-            v-if="isSelfAdmin"
+            v-if="canBringPeopleIn"
             v-bind="activatorProps"
             color="primary"
             prepend-icon="mdi-account-plus"
@@ -62,7 +62,7 @@
     </div>
 
     <TeamJoinLinkCard
-      v-if="teamData && isSelfAdmin && !teamData.personal"
+      v-if="teamData && canBringPeopleIn"
       :team="teamData"
       @updated="(team: Team) => (teamData = team)"
     />
@@ -70,7 +70,7 @@
     <!-- 标签页 -->
     <v-tabs v-model="activeTab" color="primary" class="mb-4">
       <v-tab value="members">成员列表</v-tab>
-      <v-tab v-if="isSelfAdmin" value="requests">
+      <v-tab v-if="canBringPeopleIn" value="requests">
         加入申请
         <v-badge
           v-if="pendingRequests.length > 0"
@@ -79,7 +79,7 @@
           class="ml-2"
         ></v-badge>
       </v-tab>
-      <v-tab v-if="isSelfAdmin" value="invitations">已发送邀请</v-tab>
+      <v-tab v-if="canBringPeopleIn" value="invitations">已发送邀请</v-tab>
     </v-tabs>
 
     <v-window v-model="activeTab">
@@ -327,6 +327,9 @@ const isSelfOwner = computed(() => {
 
 // 看服务端给的 role，不看 admins.examples：那份名单最多只有 3 个人，第 4 个管理员会被当成普通成员。
 const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
+// 邀请、加入链接、加入申请：把人带进团队的几样。个人团队只有它的主人，后端一概拒，
+// 这里也就一样都不给。移出成员不在其内：那是往外走，不是往里进。
+const canBringPeopleIn = computed(() => isSelfAdmin.value && !teamData.value?.personal)
 
 const updateActiveTabFromRoute = () => {
   if (route.query.tab && ['members', 'requests', 'invitations'].includes(route.query.tab as string)) {
@@ -342,7 +345,7 @@ const updateActiveTabFromRoute = () => {
   }
 
   // 首页侧栏团队那一行的「邀请成员」带着 ?invite=1 过来：直接打开邀请框。
-  if (route.query.invite === '1' && isSelfAdmin.value) isInviteDialogActive.value = true
+  if (route.query.invite === '1' && canBringPeopleIn.value) isInviteDialogActive.value = true
 }
 
 onMounted(() => {
@@ -356,7 +359,7 @@ watch(() => route.query.invite, updateActiveTabFromRoute)
 watch(
   [teamData, activeTab],
   ([newTeamData, newTab]) => {
-    if (!newTeamData || !isSelfAdmin.value) return
+    if (!newTeamData || !canBringPeopleIn.value) return
 
     const teamId = teamData.value!.id
 

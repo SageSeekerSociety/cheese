@@ -134,6 +134,14 @@ def read_attachment(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> byt
     return read_room_file(project_id, room_id, path)
 
 
+def attachment_exists(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bool:
+    """这个地址今天还读得到吗：资料库里那一份可以被人删掉，引用它的消息还在。"""
+    name = library_name(path)
+    if name is not None:
+        return _safe_path(library_root(project_id), name).is_file()
+    return room_file_exists(project_id, room_id, path)
+
+
 def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
     """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
     name = library_name(path)

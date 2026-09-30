@@ -12,6 +12,7 @@ import navigation from './navigation.json'
 import notifications from './notifications.json'
 import publicSite from './publicSite.json'
 import questions from './questions.json'
+import ratchet from './ratchet.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import toolLabels from './toolLabels.json'
@@ -26,6 +27,7 @@ export default {
   models,
   navigation,
   publicSite,
+  ratchet,
   account,
   editor,
   feedback,

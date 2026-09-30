@@ -52,6 +52,7 @@ import { MODELS_ENTRIES } from './catalogModels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
+import { SETTINGS_ENTRIES } from './catalogSettings'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
@@ -642,6 +643,9 @@ export const CATALOG: CatalogEntry[] = [
   // 发题表单那一组（从 1089 行的 TaskForm 拆出来的七张卡加两个弹窗，夹具在自己
   // 那一份里）在自己的文件里：`catalogTaskForm.ts`。
   ...TASK_FORM_ENTRIES,
+  // 项目设置那一组（从 1041 行的 ProjectSettingsView 拆出来的六块）在自己的文件里：
+  // `catalogSettings.ts`（数据在 `catalogSettingsFixtures.ts`）。
+  ...SETTINGS_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',

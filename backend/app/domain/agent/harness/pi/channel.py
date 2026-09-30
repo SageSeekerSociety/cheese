@@ -41,6 +41,7 @@ from app.domain.agent.harness.channel import (
 )
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
+from app.domain.agent_instance.services import agent_stdio_servers
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
 from app.domain.remote_mcp import service as remote_mcp
@@ -101,7 +102,10 @@ class PiChannel:
                 model=opening.model or settings.agent_model,
                 resume_session_id=opening.resume_token,
                 agent_handle=agent,
-                remote_mcp=await self._remote_mcp(session)
+                remote_mcp=await self._remote_mcp(session, agent)
+                if opening.needs_place
+                else None,
+                agent_mcp=await self._agent_mcp(session, agent)
                 if opening.needs_place
                 else None,
             ),
@@ -128,8 +132,9 @@ class PiChannel:
             self._mirror(session, str(resource_id) + agent),
         )
 
-    async def _remote_mcp(self, session: SessionRef) -> dict | None:
-        """The project's remote MCP servers this session can call now.
+    async def _remote_mcp(self, session: SessionRef, agent: str) -> dict | None:
+        """The remote MCP servers this teammate's session can call now: the
+        project's and its type's.
 
         As a central session gets them (`CentralProvider.prepare_session`): only
         the usable ones. A server someone still has to connect is a line in the
@@ -138,8 +143,15 @@ class PiChannel:
         factory = self.channel._session_factory or async_session_factory
         async with factory() as db:
             return await remote_mcp.session_target(
-                db, session.project_id, session.topic_id
+                db, session.project_id, session.topic_id, agent
             )
+
+    async def _agent_mcp(self, session: SessionRef, agent: str) -> dict | None:
+        """The teammate's type's own stdio servers, as definitions the runner
+        starts on this machine beside the checkout's."""
+        factory = self.channel._session_factory or async_session_factory
+        async with factory() as db:
+            return await agent_stdio_servers(db, session.project_id, agent) or None
 
     async def _greet(self, device_id: str, state: str) -> dict:
         """The first call into a runner that may still be starting.

@@ -139,7 +139,7 @@ def test_a_reopened_report_moves_again_when_the_next_fix_ships(
 ):
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "platform_admin_handles", [BYSTANDER])
+    monkeypatch.setattr(settings, "feedback_triage_handles", [BYSTANDER])
     row = _report(client, REPORTER)
     run_deploy(f"fix: first try (#20)\n\nFixes-feedback: FB-{_number(row)}\n")
     r = client.post(
@@ -176,7 +176,7 @@ def test_a_report_that_does_not_exist_is_skipped_not_fatal(client, run_deploy):
 def test_a_step_a_person_took_has_no_note(client, monkeypatch):
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "platform_admin_handles", [BYSTANDER])
+    monkeypatch.setattr(settings, "feedback_triage_handles", [BYSTANDER])
     row = _report(client, REPORTER)
     client.post(
         f"/admin/feedback/{row['id']}/status",

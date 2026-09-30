@@ -159,6 +159,7 @@ from app.domain.agent.prompt import (
     _sandbox_limits,
     _session_opening_lines,
     _topic_ref_lists,
+    offered_attachments,
     project_overview,
 )
 
@@ -1465,9 +1466,9 @@ class ChatService:
         return turn_id in self._active_turn_ids.get(topic_id, ())
 
     async def _unconnected_mcp(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str | None
     ) -> tuple[str, ...]:
-        """The project's remote MCP servers this room's session cannot use yet,
+        """The remote MCP servers this session cannot use yet, its type's too,
         each said once in the room: 「<name> 需要在项目设置里连接」."""
         from sqlalchemy import select
 
@@ -1477,7 +1478,7 @@ class ChatService:
         try:
             async with self._sessions() as session:
                 unusable = (
-                    await remote_mcp.session_servers(session, project_id)
+                    await remote_mcp.session_servers(session, project_id, agent_handle)
                 ).unusable
                 said = set(
                     await session.scalars(
@@ -3849,16 +3850,13 @@ class ChatService:
                 for b in pending
                 if claims_backlog or (b.meta or {}).get("agent_recipient") is not None
             ]
-            # 图片输入: every pending image is offered to the provider as
-            # {"path", "media_type"}. Whether it actually reaches the model as a
-            # native base64 block depends on the provider (`embeds_images`), and
-            # the prompt is built below — AFTER the provider is picked — so its
-            # wording can match what this backend really does.
-            turn_images = [
-                {"path": b.content, "media_type": b.mime_type or "image/png"}
-                for b in pending
-                if b.kind == BlockKind.attachment and b.content
-            ]
+            # 图片输入: every pending image is offered to the provider; whether it
+            # reaches the model as a native block depends on `embeds_images`, so
+            # the prompt is built below, after the provider is picked. A file
+            # that is gone is not offered (`offered_attachments`).
+            turn_images, gone_files = await asyncio.to_thread(
+                offered_attachments, pending, topic.project_id, topic_id
+            )
 
             # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
             # 方，问的都是下面两个答案之一，不再各自问一遍那个布尔。
@@ -4235,6 +4233,7 @@ class ChatService:
                     embeds_images=embeds_images,
                     replied=replied.get(b.id),
                     recipient=agent.handle,
+                    gone=b.id in gone_files,
                 )
                 for b in pending
             )
@@ -4439,7 +4438,7 @@ class ChatService:
             teaching=teaching,
             session_opening=_session_opening_lines(
                 unconnected_mcp=(
-                    await self._unconnected_mcp(project_id, topic_id)
+                    await self._unconnected_mcp(project_id, topic_id, acting_agent)
                     if needs_place
                     else ()
                 ),

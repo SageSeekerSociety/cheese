@@ -153,7 +153,7 @@
 
           <!-- AI回答内容 -->
           <v-card-text v-show="!isStreaming || streamingResponse" class="pa-3">
-            <div v-blinking-cursor="{ isStreaming: isStreaming }" v-html="responseHtml"></div>
+            <div v-blinking-cursor="{ isStreaming: isStreaming }" class="chat-response" v-html="responseHtml"></div>
           </v-card-text>
 
           <!-- 用量信息 -->

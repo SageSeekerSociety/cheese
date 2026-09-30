@@ -1,9 +1,15 @@
-"""What a project's committed `.mcp.json` declares about remote servers.
+"""The remote servers a project declares: its committed `.mcp.json`, and its
+teammates' types.
 
-Read from the default branch through the forge, never from a room's checkout:
-the agent can edit its checkout, and a server URL taken from there would let it
-point a connected name at a host of its choosing and receive the project's
-token. Only committed configuration decides where a token may be sent.
+`.mcp.json` is read from the default branch through the forge, never from a
+room's checkout: the agent can edit its checkout, and a server URL taken from
+there would let it point a connected name at a host of its choosing and receive
+the project's token. Only committed configuration decides where a token may be
+sent — the project's own, or an agent type's, which ships with the platform.
+
+A type's server whose name the project's `.mcp.json` also uses is left out:
+the project's committed configuration decides which host a name reaches, and a
+connection is the project's, kept by name.
 """
 
 from __future__ import annotations
@@ -13,7 +19,8 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,6 +81,8 @@ class RemoteServer:
 @dataclass(frozen=True)
 class Declared:
     servers: tuple[RemoteServer, ...] = ()
+    #: Every name `.mcp.json` uses, stdio entries included.
+    names: tuple[str, ...] = ()
     #: Why nothing could be read, when that is the answer: "missing" (no
     #: `.mcp.json` on the default branch), "invalid", or "unreadable".
     problem: str | None = None
@@ -113,22 +122,38 @@ def parse(text: str) -> Declared:
     entries = document.get("mcpServers") if isinstance(document, dict) else None
     if not isinstance(entries, dict):
         return Declared(problem="invalid")
-    servers = []
-    for name, spec in entries.items():
-        if not isinstance(spec, dict) or not isinstance(spec.get("url"), str):
-            continue
-        headers = spec.get("headers") or {}
-        if not isinstance(headers, dict):
-            headers = {}
-        servers.append(
-            RemoteServer(
-                name=str(name),
-                transport="sse" if spec.get("type") == "sse" else "http",
-                url=spec["url"],
-                headers={str(k): str(v) for k, v in headers.items()},
-            )
-        )
-    return Declared(servers=tuple(servers))
+    servers = [
+        remote(str(name), spec)
+        for name, spec in entries.items()
+        if isinstance(spec, dict) and isinstance(spec.get("url"), str)
+    ]
+    return Declared(servers=tuple(servers), names=tuple(str(n) for n in entries))
+
+
+def remote(name: str, spec: dict) -> RemoteServer:
+    """One remote entry, as `.mcp.json` or an agent type writes it."""
+    headers = spec.get("headers") or {}
+    if not isinstance(headers, dict):
+        headers = {}
+    return RemoteServer(
+        name=name,
+        transport="sse" if spec.get("type") == "sse" else "http",
+        url=spec["url"],
+        headers={str(k): str(v) for k, v in headers.items()},
+    )
+
+
+def with_types(found: Declared, types: Iterable) -> Declared:
+    """The project's servers and its teammates' types' remote ones, where the
+    types are ``AgentTypeDef``s. A name the project uses stays the project's."""
+    servers, taken = list(found.servers), set(found.names)
+    for agent_type in types:
+        for name, spec in agent_type.inline_servers().items():
+            if name in taken or not isinstance(spec.get("url"), str):
+                continue
+            taken.add(name)
+            servers.append(remote(name, spec))
+    return replace(found, servers=tuple(servers))
 
 
 async def read(

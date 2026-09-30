@@ -187,6 +187,28 @@ class GitHubAppTokens:
         granted = resp.json().get("permissions") or {}
         return {k: v for k, v in granted.items() if isinstance(v, str)}
 
+    async def core_quota(self) -> tuple[int, int] | None:
+        """(remaining, limit) of this installation's hourly REST quota, or None
+        when GitHub did not say. `GET /rate_limit` itself does not count
+        against the quota, so asking costs nothing that is being counted.
+        """
+        token, _ = await self.installation_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/rate_limit",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+        if resp.status_code != 200:
+            return None
+        core = resp.json().get("resources", {}).get("core", {})
+        remaining, limit = core.get("remaining"), core.get("limit")
+        if not isinstance(remaining, int) or not isinstance(limit, int):
+            return None
+        return remaining, limit
+
     async def _mint(
         self, slot: str, resolve: Callable[[], Awaitable[dict[str, str]]]
     ) -> tuple[str, str]:

@@ -33,6 +33,7 @@ type Manifest = {
   unavailable: string;
   mcp: ToolSpec[];
   notice: string;
+  subagents: boolean;
 };
 
 const HOME = process.env.CHEESE_PI_EXTENSION ?? "";
@@ -48,6 +49,7 @@ function manifest(): Manifest {
     unavailable: "the runner wrote no manifest",
     mcp: [],
     notice: "",
+    subagents: false,
   };
   if (!HOME) return empty;
   try {
@@ -778,7 +780,9 @@ function announceExits(pi: any, spec: Manifest) {
 // (driven/runner.py, which owns the rule: what owes one, what answers it, what
 // the refusal says, when it lapses) and names the file in this variable. Until
 // the session has answered, every other tool is refused with the runner's
-// words. pi runs no subagents, so every call here is the session's own.
+// words. A subagent is a pi of its own, started without this variable
+// (subagents.py), so every call held here is the session's own: a subagent
+// reports to the agent that started it, not to the room.
 
 const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
 
@@ -921,6 +925,157 @@ function registerYieldingBash(pi: any, spec: Manifest) {
   });
 }
 
+// --- subagents ---------------------------------------------------------------
+//
+// pi has no subagents; these three tools are the platform's (subagents.py).
+// `Task` starts one: a second pi on this machine, in this checkout, whose model
+// the platform admits as it does every native subagent's, and whose every entry
+// the runner writes into the session's log under the thread label its prompt
+// carries. `SendMessage` says more to one still running, `TaskStop` stops one
+// and leaves its siblings running. They are named and shaped as Claude Code's
+// are, so the room's instructions for delegating read the same on both.
+//
+// A `Task` in the foreground waits for its subagent's conclusion and returns
+// it. When a person writes meanwhile, the call stops waiting, as the shell does
+// (registerYieldingBash): the subagent goes on in the background, and the
+// runner tells the session when it ends.
+
+const SUBAGENT_HANDS = (id: string) =>
+  `补充要求用 SendMessage(to="${id}")，停掉它用 TaskStop(task_id="${id}")。`;
+
+function registerSubagentTools(pi: any, spec: Manifest) {
+  pi.registerTool({
+    name: "Task",
+    description:
+      "Start a subagent: a separate agent with its own context, working in this " +
+      "checkout, that returns its conclusion when it finishes. Give it a " +
+      "self-contained prompt, including any thread label the work was given. " +
+      "`model` picks the model it runs (the project's subagent default when " +
+      "omitted). With run_in_background it runs while you go on, and you are " +
+      "told when it ends; otherwise this call waits for its conclusion. " +
+      "SendMessage gives a running subagent more instructions; TaskStop stops it.",
+    parameters: {
+      type: "object",
+      properties: {
+        description: { type: "string", description: "A short (3-5 word) description of the task" },
+        prompt: { type: "string", description: "The task for the subagent to perform" },
+        model: {
+          type: "string",
+          description: "The model it runs; omit for the project's subagent default",
+        },
+        run_in_background: { type: "boolean", description: "Run it in the background" },
+        subagent_type: {
+          type: "string",
+          enum: ["general-purpose"],
+          description: "The kind of subagent; general-purpose is the only one here",
+        },
+      },
+      required: ["description", "prompt"],
+    },
+    async execute(_id: string, params: any, signal: any) {
+      const background = params.run_in_background === true;
+      const started = await ask(spec.socket, "subagent_spawn", {
+        prompt: params.prompt,
+        description: params.description ?? "",
+        model: params.model ?? null,
+        background,
+      });
+      const id: string = started.agent_id;
+      if (background) {
+        return {
+          ...text(
+            `已在后台起了分身 ${id}（模型 ${started.model}）。它结束时平台会告诉你；` +
+              SUBAGENT_HANDS(id),
+          ),
+          details: { agent_id: id, model: started.model },
+        };
+      }
+      let timer: any = null;
+      const spoken = new Promise<null>((resolve) => {
+        timer = setInterval(() => {
+          if (unanswered()) resolve(null);
+        }, YIELD_POLL_MS);
+      });
+      const aborted = new Promise<null>((resolve) => {
+        if (signal?.aborted) resolve(null);
+        signal?.addEventListener?.("abort", () => resolve(null), { once: true });
+      });
+      let ended: any = null;
+      try {
+        ended = await Promise.race([
+          ask(spec.socket, "subagent_wait", { agent_id: id }),
+          spoken,
+          aborted,
+        ]);
+      } finally {
+        clearInterval(timer);
+      }
+      if (ended) {
+        return {
+          content: [
+            { type: "text" as const, text: ended.text || "（分身没有留话）" },
+            { type: "text" as const, text: `agentId: ${id}（${ended.status}）` },
+          ],
+          details: {
+            agent_id: id,
+            model: started.model,
+            status: ended.status,
+            report: ended.text,
+            description: params.description ?? "",
+          },
+        };
+      }
+      if (signal?.aborted) {
+        await ask(spec.socket, "subagent_stop", { agent_id: id }).catch(() => {});
+        throw new Error(`${id} 随这一轮一起停了`);
+      }
+      await ask(spec.socket, "subagent_background", { agent_id: id });
+      return {
+        ...text(
+          `[有人在房间里发来了消息，分身 ${id} 转到后台继续做，结束时平台会告诉你。` +
+            `先看那条消息；${SUBAGENT_HANDS(id)}]`,
+        ),
+        details: { agent_id: id, model: started.model },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SendMessage",
+    description:
+      "Send a message to a subagent that is still running: more instructions, " +
+      "or a change of what it should do. It reads it before its next step.",
+    parameters: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "The subagent's id, as Task returned it" },
+        message: { type: "string", description: "What to tell it" },
+      },
+      required: ["to", "message"],
+    },
+    async execute(_id: string, params: any) {
+      await ask(spec.socket, "subagent_send", { agent_id: params.to, message: params.message });
+      return text(`已发给 ${params.to}`);
+    },
+  });
+
+  pi.registerTool({
+    name: "TaskStop",
+    description: "Stop one subagent. Any others keep running.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The subagent's id, as Task returned it" },
+      },
+      required: ["task_id"],
+    },
+    async execute(_id: string, params: any) {
+      const answer = await ask(spec.socket, "subagent_stop", { agent_id: params.task_id });
+      return text(answer.stopped ? `${params.task_id} 已停下` : `${params.task_id} 已经结束了`);
+    },
+  });
+}
+
 export default function (pi: any) {
   const spec = manifest();
   carryRepositoryContext(pi);
@@ -934,6 +1089,7 @@ export default function (pi: any) {
   }
   registerMcpTools(pi, spec);
   if (spec.socket) applyProjectHooks(pi, spec);
+  if (spec.socket && spec.subagents) registerSubagentTools(pi, spec);
   if (spec.background && spec.python) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);

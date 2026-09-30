@@ -143,6 +143,7 @@ else
       backend/sandbox/Dockerfile.private \
         | backend/sandbox/cheese \
         | backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/private.py)
         private_executor=true
         ;;

@@ -24,12 +24,26 @@ pi writes it as an assistant entry that stopped on ``error`` and only then
 decides, on its live stream, whether to try again. So that entry ends nothing
 here: the runner writes what pi decided into the same log right behind it
 (``journal.RETRYING`` / ``journal.GAVE_UP``), and the turn ends on the second.
+
+A subagent's entries are in the same log (``subagents.py``), each carrying its
+thread (``journal.THREAD``): what it says and calls comes out labelled with the
+card its work lands on, and nothing it does starts or ends the session's turn
+or counts towards it. That it started and how it ended are the runner's
+records. What a ``Task`` call hands back is the conclusion, and becomes an
+event of its own rather than a line on the step (``AgentToolResult``).
 """
 
 import re
 from datetime import UTC, datetime
 
-from app.domain.agent.harness.pi.journal import COMPACTING, GAVE_UP, RETRYING
+from app.domain.agent.harness.pi.journal import (
+    COMPACTING,
+    GAVE_UP,
+    RETRYING,
+    SUBAGENT_STARTED,
+    SUBAGENT_STOPPED,
+    THREAD,
+)
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
     AgentCompacting,
@@ -39,6 +53,9 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentStepFailed,
     AgentStepOutput,
+    AgentSubagentStart,
+    AgentSubagentStop,
+    AgentToolResult,
     AgentToolUse,
     AgentUsage,
 )
@@ -49,6 +66,14 @@ CONTINUES = "toolUse"
 FAILED = "error"
 #: The HTTP status pi puts at the head of a provider error ("503: {...}").
 STATUS = re.compile(r"\A(\d{3})\b")
+#: The extension's tool that starts a subagent (`platform.ts`).
+SPAWNING = "Task"
+
+
+def thread_of(entry: dict) -> dict | None:
+    """Which subagent wrote this entry, or None for the session's own."""
+    thread = entry.get(THREAD)
+    return thread if isinstance(thread, dict) else None
 
 
 def _count(value: object) -> int | None:
@@ -108,7 +133,7 @@ class Assembler:
         total resumes — the events are not re-emitted, only the arithmetic.
         """
         message = entry.get("message") or {}
-        if entry.get("type") != "message":
+        if entry.get("type") != "message" or thread_of(entry):
             return
         if message.get("role") == "user":
             self.spent = AgentUsage()
@@ -116,6 +141,9 @@ class Assembler:
             self._accumulate(message)
 
     def accept(self, entry: dict) -> list[AgentEvent]:
+        thread = thread_of(entry)
+        if thread is not None:
+            return self._subagent(entry, thread)
         if entry.get("type") == RETRYING:
             return [
                 AgentRetrying(
@@ -151,6 +179,23 @@ class Assembler:
             call = message.get("toolCallId")
             if not isinstance(call, str):
                 return []
+            details = message.get("details")
+            if (
+                message.get("toolName") == SPAWNING
+                and isinstance(details, dict)
+                and "report" in details
+                and not message.get("isError")
+            ):
+                # A subagent's conclusion, which otherwise reaches only this
+                # session's context. Only a call that waited for one carries it.
+                return [
+                    AgentToolResult(
+                        name=SPAWNING,
+                        text=str(details.get("report") or "").strip(),
+                        description=str(details.get("description") or ""),
+                        eid=f"pi:{entry['id']}",
+                    )
+                ]
             returned = _said(message.get("content"))
             steps: list[AgentEvent] = []
             if message.get("isError"):
@@ -198,6 +243,76 @@ class Assembler:
                     harness="pi",
                 )
             )
+        return events
+
+    def _subagent(self, entry: dict, thread: dict) -> list[AgentEvent]:
+        """One record of a subagent's thread: what it said and called, on its
+        card, and never anything that starts, ends or bills the session's turn."""
+        agent = str(thread.get("id") or "")
+        label = str(thread.get("label") or "")
+        if entry.get("type") == SUBAGENT_STARTED:
+            return [
+                AgentSubagentStart(
+                    agent_id=agent, thread_label=label, session_id=self.session_id
+                )
+            ]
+        if entry.get("type") == SUBAGENT_STOPPED:
+            return [
+                AgentSubagentStop(
+                    agent_id=agent,
+                    text=str(entry.get("text") or ""),
+                    thread_label=label,
+                    session_id=self.session_id,
+                )
+            ]
+        if entry.get("type") != "message":
+            return []
+        message = entry.get("message") or {}
+        role = message.get("role")
+        on = label or None
+        if role == "toolResult":
+            call = message.get("toolCallId")
+            if not isinstance(call, str):
+                return []
+            returned = _said(message.get("content"))
+            steps: list[AgentEvent] = []
+            if message.get("isError"):
+                text = " ".join(returned.split())
+                steps.append(
+                    AgentStepFailed(
+                        call_id=call, text=text[-STEP_ERROR_MAX:], thread_label=on
+                    )
+                )
+            if returned.strip():
+                steps.append(
+                    AgentStepOutput(call_id=call, text=returned, thread_label=on)
+                )
+            return steps
+        if role != "assistant" or message.get("stopReason") == FAILED:
+            return []
+        events: list[AgentEvent] = []
+        for index, part in enumerate(message.get("content") or []):
+            eid = f"pi:{entry['id']}:{index}"
+            if part.get("type") == "text" and part.get("text"):
+                events.append(
+                    AgentMessage(
+                        part["text"],
+                        eid=eid,
+                        eids=(eid,),
+                        at=_stamp(entry),
+                        thread_label=on,
+                    )
+                )
+            elif part.get("type") == "toolCall":
+                events.append(
+                    AgentToolUse(
+                        part.get("name", ""),
+                        part.get("arguments") or {},
+                        eid=eid,
+                        call_id=part.get("id"),
+                        thread_label=on,
+                    )
+                )
         return events
 
     def _gave_up(self, entry: dict) -> AgentResult:
