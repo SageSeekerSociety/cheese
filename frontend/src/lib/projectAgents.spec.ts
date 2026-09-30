@@ -3,9 +3,13 @@
 // 显示成 0。
 import type { MemoryEntryOut } from '../api'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+
+import { setLocale } from '../i18n'
 
 import { displayNameError, handleError, memoryCountsByHandle, typeLabel } from './projectAgents'
+
+beforeEach(() => setLocale('zh-CN'))
 
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 const OTHER_PROJECT = '11111111-2222-3333-4444-555555555555'

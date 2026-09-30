@@ -502,7 +502,14 @@
     "archive": {
       "title": "Archive project",
       "hint": "Removes it from every member's list and stops it running. Everything in it is kept",
-      "action": "Archive project"
+      "action": "Archive project",
+      "dialog": {
+        "failed": "Couldn't archive the project",
+        "title": "Archive project",
+        "submit": "Archive",
+        "body": "The project leaves every member's project list, can no longer be changed, and its running tasks stop. Everything in it is kept, and you can unarchive it from Archived projects",
+        "confirmLabel": "Type the project name \"{name}\" to confirm"
+      }
     },
     "forge": {
       "title": "Code repository",
@@ -595,7 +602,24 @@
       "noMemories": "No memories",
       "deactivateTitle": "Deactivate \"{name}\"",
       "deactivateHint": "New topics can't choose it after this. Topics already using it carry on, and its memory is kept",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "typeGeneral": "General",
+      "editor": {
+        "presetCustom": "Write your own",
+        "saveFailed": "Couldn't save",
+        "titleNew": "New AI teammate",
+        "titleEdit": "Edit AI teammate",
+        "save": "Save",
+        "name": "Name",
+        "handle": "ID (lowercase letters, optional)",
+        "handleReadonly": "ID · {handle}",
+        "preset": "Start from a built-in setup",
+        "body": "Role (optional)",
+        "editHint": "Changes apply only to this teammate, from its next run. Its memory is kept",
+        "handleInvalid": "Use lowercase letters, digits and . _ -, starting with a letter or digit",
+        "nameRequired": "Enter a name",
+        "nameTooLong": "Names can be up to {max} characters"
+      }
     },
     "merge": {
       "title": "Branch protection",
@@ -629,7 +653,9 @@
       "defaultReviewer": "Default review",
       "defaultReviewerHint": "Reviews tasks that don't say who should review them",
       "unassigned": "Unassigned",
-      "saveFailed": "Couldn't save branch protection"
+      "saveFailed": "Couldn't save branch protection",
+      "memberOption": "{name} ({handle})",
+      "pathSeparator": ", "
     },
     "environment": {
       "state": {
@@ -745,20 +771,96 @@
     "confirm": "Leave",
     "failed": "Failed to leave"
   },
-  "transfer": {
+  "computeChoice": {
+    "cloud": "Cloud",
+    "deviceOnline": "{name} · Online",
+    "deviceOffline": "{name} · Offline",
+    "computer": "Work computer",
+    "none": "No work computers available",
+    "custom": "Custom CPU, memory and disk",
+    "cores": "CPU cores",
+    "memory": "Memory (GB)",
+    "disk": "Disk (GB)",
+    "cloudHint": "Allocated on the first run and counted against the cloud quota. You'll be asked to adjust it if it exceeds what's available",
+    "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
+    "submit": "Use this configuration"
+  },
+  "projectTransfer": {
+    "lookupFailed": "No account found",
+    "loadFailed": "Couldn't load members",
+    "failed": "Couldn't transfer the project",
     "title": "Transfer project",
-    "submit": "Transfer",
     "confirm": "Confirm transfer",
-    "cancel": "Cancel",
+    "submit": "Transfer",
     "back": "Back",
-    "intro": "The project owner cannot leave directly. Transfer the project to someone else, then you can leave",
-    "noCandidates": "No one here can take it over",
-    "lookupTeam": "No one on the team? Find a person directly:",
+    "cancel": "Cancel",
+    "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
+    "noCandidates": "No members can take it over",
+    "lookupTeam": "No one on the team to hand it to? Find a person directly:",
     "lookupOwn": "Enter the new owner's username or email:",
-    "lookupLabel": "Username or email (in full)",
-    "notFound": "No account found",
-    "loadFailed": "Failed to load members",
-    "failed": "Failed to transfer",
-    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and cannot see any of its topics."
+    "lookupLabel": "Full username or email",
+    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and can't see any of its topics."
+  },
+  "skills": {
+    "edit": "Edit",
+    "discard": "Discard changes",
+    "drop": "Discard",
+    "history": "Version history",
+    "delete": "Delete",
+    "loadFailed": "Couldn't load methods",
+    "confirmFailed": "Couldn't confirm",
+    "discardFailed": "Couldn't discard the changes",
+    "historyFailed": "Couldn't load the version history",
+    "restoreFailed": "Couldn't restore",
+    "deleteFailed": "Couldn't delete",
+    "newTitle": "New method",
+    "editTitle": "Edit \"{title}\"",
+    "roomRequired": "Choose a room first. The method is filed under it and the whole project can use it",
+    "saveFailed": "Couldn't save",
+    "refresh": "Refresh",
+    "create": "New",
+    "intro": "When a piece of work turns out well, Cheese can write it up as a method: what inputs it needs, which steps and rules to follow, and what to deliver. The confirmed version goes into every later room in this project, and you can use it by saying \"do one with the weekly report method\" in a room",
+    "loading": "Loading methods",
+    "awaiting": "Awaiting your confirmation",
+    "proposedBy": "{name} · Written up by {user}",
+    "changeOf": "· Changes to version {revision}, which is in use",
+    "pending": "To confirm",
+    "more": "More actions",
+    "fields": {
+      "description": "Purpose",
+      "inputs": "Inputs needed",
+      "steps": "Steps and rules",
+      "outputs": "Output requirements",
+      "files": "Supporting files"
+    },
+    "listSeparator": ", ",
+    "confirm": "Confirm and save",
+    "confirmedBy": "{name} · Version {revision} · Confirmed by {user} on {time}",
+    "empty": "No saved methods yet",
+    "emptyHint": "After a piece of work goes well, say \"save how we did this as a method\" in the room",
+    "save": "Save",
+    "form": {
+      "room": "Room to file it under",
+      "name": "Name (lowercase, hyphens)",
+      "namePlaceholder": "e.g. weekly-report",
+      "title": "Title",
+      "titlePlaceholder": "e.g. Weekly project report",
+      "description": "Purpose: when to use it",
+      "files": "Supporting files (scripts, template notes and other text files)",
+      "path": "Path",
+      "content": "Content",
+      "removeFile": "Remove",
+      "addFile": "Add file"
+    },
+    "historyTitle": "Version history of \"{title}\"",
+    "revisionLine": "Version {revision} · {note} · {user} · {time}",
+    "inUse": "In use",
+    "collapse": "Hide",
+    "view": "View",
+    "restore": "Restore this version",
+    "close": "Close",
+    "deleteTitle": "Delete \"{title}\"",
+    "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
+    "cancel": "Cancel"
   }
 }
