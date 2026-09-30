@@ -3,11 +3,6 @@
     "justNow": "just now"
   },
   "notice": {
-    "who": {
-      "platform": "Handled by the platform",
-      "cheese": "Cheese is on it",
-      "human": "Needs a person"
-    },
     "legacyAction": "Cheese: {action}"
   },
   "accept": {

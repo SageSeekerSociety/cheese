@@ -9,7 +9,6 @@ import files from './files.json'
 import global from './global.json'
 import home from './home.json'
 import integrations from './integrations.json'
-import knowledge from './knowledge.json'
 import market from './market.json'
 import members from './members.json'
 import models from './models.json'
@@ -57,7 +56,6 @@ export default {
   admin,
   compute,
   files,
-  knowledge,
   project,
   routines,
   shell,

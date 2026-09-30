@@ -55,7 +55,7 @@ it('reads in English under the English locale', async () => {
   expect(view.getByRole('list', { name: 'Startup log' })).toBeTruthy()
   expect(view.getByText(/No new startup progress for 1m 20s/)).toBeTruthy()
   await view.rerender({ events: [...events, event('3', 80, 'Connected', 'ready')] })
-  expect(view.getByText(/Work computer is ready · Took 1m 20s/)).toBeTruthy()
+  expect(view.getByText(/Work computer ready · Took 1m 20s/)).toBeTruthy()
   view.unmount()
 })
 

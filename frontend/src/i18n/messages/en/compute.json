@@ -8,21 +8,12 @@
     "disk": "{n} GB disk"
   },
   "startup": {
-    "ready": "Work computer is ready",
-    "preparing": "Preparing the work computer",
     "elapsed": "Took",
     "waited": "Waiting",
     "seconds": "{s}s",
     "minutes": "{m}m {s}s",
     "quiet": "No new startup progress for {duration}. Last update: {time}.",
     "log": "Startup log"
-  },
-  "platformError": {
-    "title": "Work computer is temporarily unavailable",
-    "cleaning": "Cleaning up automatically",
-    "restoring": "Restoring",
-    "retryable": "You can retry",
-    "needsAdmin": "Needs an administrator"
   },
   "usage": {
     "unknown": "Unknown",

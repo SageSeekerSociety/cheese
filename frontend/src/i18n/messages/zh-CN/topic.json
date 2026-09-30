@@ -3,11 +3,6 @@
     "justNow": "刚刚"
   },
   "notice": {
-    "who": {
-      "platform": "平台已处理",
-      "cheese": "芝士处理中",
-      "human": "需要手动处理"
-    },
     "legacyAction": "芝士{action}"
   },
   "accept": {

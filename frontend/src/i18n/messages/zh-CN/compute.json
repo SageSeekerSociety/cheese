@@ -8,21 +8,12 @@
     "disk": "{n} GB 磁盘"
   },
   "startup": {
-    "ready": "工作电脑已就绪",
-    "preparing": "正在准备工作电脑",
     "elapsed": "共用时",
     "waited": "已等待",
     "seconds": "{s}秒",
     "minutes": "{m}分{s}秒",
     "quiet": "已 {duration} 没有新的启动进度，最近一条进度记录：{time}。",
     "log": "启动日志"
-  },
-  "platformError": {
-    "title": "工作电脑暂时不可用",
-    "cleaning": "正在自动清理",
-    "restoring": "正在恢复",
-    "retryable": "可以重试",
-    "needsAdmin": "需要管理员处理"
   },
   "usage": {
     "unknown": "未知",
