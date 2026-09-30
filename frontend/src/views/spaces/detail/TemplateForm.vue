@@ -293,7 +293,7 @@ const saveTemplate = async () => {
     toast.success(
       isEditing.value ? t('spaces.detail.templateForm.updateSuccess') : t('spaces.detail.templateForm.createSuccess')
     )
-    router.push({ name: 'SpacesDetailManageTemplates', params: { spaceId } })
+    router.push({ name: 'SpacesDetailSettingsTemplates', params: { spaceId } })
   } catch (error) {
     console.error(t('spaces.detail.templateForm.saveTemplateFailed'), error)
     toast.error(t('spaces.detail.templateForm.saveTemplateFailed'))

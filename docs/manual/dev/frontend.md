@@ -122,7 +122,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 空间页 {#space}
 
-空间的每一页都挂在 `/spaces/:spaceId/…` 下（`router/spaces.ts`），左边是 `SpaceSidebar.vue`：顶上一行「‹ 空间名」回到首页，下面是题目、公告，以及只对所有者和管理员露出的「管理」一段。每一页自己画一行和侧栏顶等高的 `PageHeader`。
+空间的每一页都挂在 `/spaces/:spaceId/…` 下（`router/spaces.ts`），左边是 `SpaceSidebar.vue`：顶上一行「‹ 空间名」回到首页，下面依次是公告、题目（全部与各分类），以及只对所有者和管理员露出的「管理」一段（待审核、成员、数据、设置）。管理页都在 `manage/…` 下；设置是一页分栏，每一栏是 `manage/settings` 的一条子路由。题目列表的「全部 / 我参与的 / 我发布的」写在地址的 `filter` 里，「我发布的」读 `GET /spaces/{id}/me/publishing/tasks`，因为通用列表不给出题人自己还没过审的题。每一页自己画一行和侧栏顶等高的 `PageHeader`。
 
 角色只有一处来源：`stores/space.ts` 的 `myRole` / `isManager` / `isOwner`，拿登录的人跟 `space.admins` 对出来。界面按它决定露不露管理入口，真正把关的是接口。
 

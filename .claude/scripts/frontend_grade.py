@@ -87,11 +87,24 @@ STORE_ALIASES = {"Title": "pageTitle", "PageTitle": "pageTitle"}
 API_EXCLUDED = ("frontend/src/utils/apiBase.ts",)
 
 
-def frontend_files(root: Path, suffix: str) -> list[Path]:
-    """Every `<suffix>` file under `frontend/src`, sorted."""
+def repo_src(root: Path) -> Path:
+    """The `frontend/src` directory of a repo root — or no grading at all.
+
+    A caller that hands the grader a directory that is not the repo root must
+    not get a green answer: with a missing `frontend/src` the import graph is
+    empty, every component looks standalone, and a gate would pass everything.
+    So this raises instead of returning an empty tree. The CLI turns the
+    LookupError into exit 2 — "cannot judge" — which is the only way a wrong
+    root is allowed to fail loud."""
     src = root / "frontend" / "src"
     if not src.is_dir():
-        return []
+        raise LookupError(f"not a repo root (frontend/src missing): {root}")
+    return src
+
+
+def frontend_files(root: Path, suffix: str) -> list[Path]:
+    """Every `<suffix>` file under `frontend/src`, sorted."""
+    src = repo_src(root)
     return sorted(p for p in src.rglob(f"*{suffix}") if p.is_file())
 
 
@@ -137,7 +150,7 @@ def api_reach(root: Path) -> set[Path]:
     import is not an edge: it is erased at build time, so a module that only
     declares a type from the API layer is not a module that reaches it.
     """
-    src = root / "frontend" / "src"
+    src = repo_src(root)
     graph: dict[Path, set[Path]] = {}
     reach: set[Path] = set()
     for path in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.vue"))):
@@ -198,7 +211,7 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     `reach` is `api_reach(root)` — passed in when grading many files, because
     building it reads the whole tree and grading one file should not.
     """
-    src = root / "frontend" / "src"
+    src = repo_src(root)
     if reach is None:
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")

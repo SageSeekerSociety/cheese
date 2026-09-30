@@ -30,10 +30,7 @@ import type {
   SpaceLearningOutline,
   SpaceLearningQuestions,
   SpaceLearningQueues,
-  SpaceMyParticipatingOverview,
-  SpaceMyParticipations,
   SpaceMyPublishedTasks,
-  SpaceMyPublishingOverview,
   SpaceSubmissionQueue,
   SpaceTaskAnalytics,
 } from './types'
@@ -330,12 +327,6 @@ export namespace SpacesApi {
       data,
     })
 
-  export const getMyPublishingOverview = (spaceId: number) =>
-    NewApiInstance.request<SpaceMyPublishingOverview>({
-      url: `/spaces/${spaceId}/me/publishing`,
-      method: 'GET',
-    })
-
   export const getMyPublishedTasks = (
     spaceId: number,
     params?: Partial<{
@@ -351,28 +342,6 @@ export namespace SpacesApi {
   ) =>
     NewApiInstance.request<SpaceMyPublishedTasks>({
       url: `/spaces/${spaceId}/me/publishing/tasks`,
-      method: 'GET',
-      params,
-    })
-
-  export const getMyParticipatingOverview = (spaceId: number) =>
-    NewApiInstance.request<SpaceMyParticipatingOverview>({
-      url: `/spaces/${spaceId}/me/participating`,
-      method: 'GET',
-    })
-
-  export const getMyParticipations = (
-    spaceId: number,
-    params?: Partial<{
-      approved: AnalyticsApproveType
-      completionStatus: AnalyticsCompletionType
-      identityType: 'USER' | 'TEAM'
-      sortBy: 'joinedAt' | 'deadline' | 'latestSubmissionAt' | 'completionStatus'
-      sortOrder: AnalyticsSortOrder
-    }>
-  ) =>
-    NewApiInstance.request<SpaceMyParticipations>({
-      url: `/spaces/${spaceId}/me/participations`,
       method: 'GET',
       params,
     })

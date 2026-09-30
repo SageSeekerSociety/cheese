@@ -1,24 +1,17 @@
-"""What a member has published and joined inside one space, seen from their side.
+"""What a member has published inside one space, seen from their side.
 
 A slice of `app/api/routes/spaces.py` (arch review, tracking issue #2143): the
-tail of the file -- the four `/me/*` routes -- one concept. Each answers the same
-question from a different angle: what has *this* member published in this space,
-and what are they participating in. Every one scopes its query to the caller
-(`auth_user.user_id`) inside the space named in the path, and every one guards it
-with `_ensure_space_visible` before the service runs -- the same 404 the rest of
-the file gives a space you are not in. It is a *suffix* of that file's route list,
-so moving it leaves every path, method, `operationId` and their order exactly
-where they were, and the module mounts itself through `app.main._discover_routers`
-like every other route module.
+`/me/publishing/tasks` route behind the task list's 我发布的 filter. It scopes its
+query to the caller (`auth_user.user_id`) inside the space named in the path, and
+guards it with `_ensure_space_visible` before the service runs -- the same 404
+the rest of the file gives a space you are not in. The module mounts itself
+through `app.main._discover_routers` like every other route module.
 
 The helpers it shares with the routes that stay -- `_ensure_space_visible` and the
-two providers `get_space_member_publishing_service` /
-`get_space_member_participating_service` -- stay in `spaces.py` and are imported
-here, the shape `users_password.py`, `topics_side_routes.py` and
-`spaces_organization.py` already use. The providers stay behind even though
-nothing else in `spaces.py` now calls them, so the wiring of the member services
-is still read in one place next to the other `get_space_*_service` factories.
-`spaces.py` imports nothing from this module, so there is no cycle.
+provider `get_space_member_publishing_service` -- stay in `spaces.py` and are
+imported here, the shape `users_password.py`, `topics_side_routes.py` and
+`spaces_organization.py` already use. `spaces.py` imports nothing from this
+module, so there is no cycle.
 
 Nothing here reads an `app.domain.*.models` module, so `.importlinter`'s C2
 (`routes-touch-no-models`) is untouched and the frozen baseline does not move.
@@ -30,16 +23,12 @@ from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.routes.spaces import (
     _ensure_space_visible,
-    get_space_member_participating_service,
     get_space_member_publishing_service,
     require_reviewed_space,
 )
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
-from app.domain.space.member_participating_service import (
-    SpaceMemberParticipatingService,
-)
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 
 router = APIRouter(
@@ -50,27 +39,6 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 # Space Member Self-Resources (NT-API aligned)
 # ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/{spaceId}/me/publishing",
-    summary="Get Space My Publishing Overview",
-)
-async def get_space_me_publishing(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberPublishingService = Depends(
-        get_space_member_publishing_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's publishing summary in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await service.get_my_publishing_overview(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-    )
-    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -108,59 +76,3 @@ async def get_space_me_published_tasks(
         sort_order=sortOrder,
     )
     return {"code": 200, "message": "OK", "data": {"tasks": items}}
-
-
-@router.get(
-    "/{spaceId}/me/participating",
-    summary="Get Space My Participating Overview",
-)
-async def get_space_me_participating(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's participation summary in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await service.get_overview(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-    )
-    return {"code": 200, "message": "OK", "data": data}
-
-
-@router.get(
-    "/{spaceId}/me/participations",
-    summary="Get Space My Participations",
-)
-async def get_space_me_participations(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    approved: str | None = Query(default=None),
-    completionStatus: str | None = Query(default=None),
-    identityType: str | None = Query(default=None),
-    sortBy: str = Query(default="joinedAt"),
-    sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's participation list in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    participations = await service.get_participations(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-        approved=approved,
-        completion_status=completionStatus,
-        identity_type=identityType,
-        sort_by=sortBy,
-        sort_order=sortOrder,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"participations": participations},
-    }

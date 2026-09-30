@@ -761,8 +761,7 @@ class TestSideDoors:
         "/analytics/participants",
         "/analytics/people",
         "/analytics/tasks",
-        "/me/publishing",
-        "/me/participating",
+        "/me/publishing/tasks",
     )
 
     def _assert_every_door_is_shut(

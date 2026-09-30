@@ -36,17 +36,8 @@
     "dismiss": "Dismiss this notice"
   },
   "detail": {
-    "editInfo": "Edit info",
-    "editSpaceInfo": "Edit space info",
-    "spaceName": "Space name",
-    "intro": "Bio",
-    "cancel": "Cancel",
-    "update": "Update",
     "announcements": "Announcements",
     "allContests": "All problems",
-    "myPublishedContests": "Problems I published",
-    "myJoinedContests": "Problems I joined",
-    "auditContests": "Review problems",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
     "dangerZone": "Danger zone",
@@ -79,13 +70,11 @@
       "rejectReasonRequired": "Enter a reason for rejecting"
     },
     "manageTemplates": {
-      "title": "Manage problem templates",
       "createTemplate": "Create template",
       "noTemplates": "No problem templates yet",
       "deleteConfirm": "Delete this template?"
     },
     "manageTopics": {
-      "title": "Manage topics",
       "addTopics": "Add topics",
       "noTopics": "No topics yet",
       "add": "Add",
@@ -94,7 +83,6 @@
       "addFailed": "Couldn't add topic"
     },
     "manageCategories": {
-      "title": "Manage categories",
       "noCategories": "No categories yet",
       "addCategory": "Add category",
       "createCategory": "Create category",
@@ -130,9 +118,6 @@
         "listHint": "Comma-separated"
       }
     },
-    "analytics": {
-      "title": "Analytics"
-    },
     "publishTask": {
       "createSuccess": "Problem created",
       "createSuccessAndWaitingAudit": "Problem created — awaiting review",
@@ -156,7 +141,14 @@
       "noTasks": "No problems yet",
       "topic": "Topic",
       "category": "Category",
-      "allTopics": "All topics"
+      "allTopics": "All topics",
+      "scope": {
+        "all": "All",
+        "participating": "Joined",
+        "publishing": "Published"
+      },
+      "loadFailed": "Couldn't load problems",
+      "pendingOnly": "Needs action only"
     },
     "templateForm": {
       "editTitle": "Edit problem template",
@@ -174,7 +166,6 @@
     }
   },
   "domainGroups": {
-    "title": "Domain groups",
     "noGroups": "No domain groups yet",
     "createGroup": "Create a domain group",
     "editGroup": "Edit domain group",
@@ -188,7 +179,6 @@
     "invalidDomain": "Enter a valid domain"
   },
   "inviteCodes": {
-    "title": "Invite codes",
     "copy": "Copy",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this space.",
@@ -203,7 +193,12 @@
   "sidebar": {
     "back": "Back to home",
     "tasks": "Tasks",
-    "manage": "Manage"
+    "manage": "Manage",
+    "announcements": "Announcements",
+    "audit": "Awaiting review",
+    "members": "Members",
+    "analytics": "Analytics",
+    "settings": "Settings"
   },
   "members": {
     "title": "Members",
@@ -226,6 +221,31 @@
       "owner": "Owner",
       "admin": "Admin",
       "member": "Member"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "basic": "Basics",
+      "categories": "Categories and topics",
+      "templates": "Problem templates",
+      "inviteCodes": "Invite codes",
+      "domainGroups": "Email domain groups"
+    },
+    "sections": {
+      "categories": "Categories",
+      "topics": "Topics"
+    },
+    "basic": {
+      "name": "Name",
+      "intro": "Introduction",
+      "save": "Save",
+      "visibleLimit": "Approved, open problems each publisher can show to members",
+      "visibleLimitUnlimited": "Unlimited",
+      "visibleLimitLimited": "Limited",
+      "visibleLimitInput": "Limit",
+      "visibleLimitRequired": "Enter a limit",
+      "visibleLimitInvalid": "The limit must be a whole number of 0 or more"
     }
   },
   "announcements": {

@@ -75,24 +75,19 @@ const props = defineProps<{
   spaceId: number
 }>()
 
-const routeQuery = { from: 'my-publishing' }
-
 const detailRoute = computed(() => ({
   name: 'TasksDetail',
   params: { spaceId: props.spaceId, taskId: props.task.taskId },
-  query: routeQuery,
 }))
 
 const participantsRoute = computed(() => ({
   name: 'TasksParticipants',
   params: { spaceId: props.spaceId, taskId: props.task.taskId },
-  query: routeQuery,
 }))
 
 const submissionsRoute = computed(() => ({
   name: 'TasksSubmissions',
   params: { spaceId: props.spaceId, taskId: props.task.taskId },
-  query: routeQuery,
 }))
 </script>
 

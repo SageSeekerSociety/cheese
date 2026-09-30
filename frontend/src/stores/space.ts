@@ -23,15 +23,8 @@ export const useSpaceStore = defineStore('space', () => {
   const loadingCategories = ref(false)
   const domainGroups = ref<DomainGroup[]>([])
 
-  const isEditingProfile = ref<boolean>(false)
-
-  const openEditProfile = () => {
-    isEditingProfile.value = true
-  }
-
-  const closeEditProfile = () => {
-    isEditingProfile.value = false
-  }
+  /** 待审核的题目数：侧栏「待审核」旁边那个数。只有管理员那一侧会去读。 */
+  const pendingAuditCount = ref(0)
 
   /** 我在这个空间里的角色：管理员名单（含所有者）里有我就是那个角色，否则是成员。 */
   const myRole = computed<SpaceAdminRoleType | 'MEMBER'>(() => {
@@ -81,6 +74,10 @@ export const useSpaceStore = defineStore('space', () => {
     domainGroups.value = next
   }
 
+  const setPendingAuditCount = (count: number) => {
+    pendingAuditCount.value = count
+  }
+
   return {
     currentSpace,
     currentSpaceId,
@@ -89,7 +86,7 @@ export const useSpaceStore = defineStore('space', () => {
     categories,
     loadingCategories,
     domainGroups,
-    isEditingProfile,
+    pendingAuditCount,
     myRole,
     isManager,
     isOwner,
@@ -98,7 +95,6 @@ export const useSpaceStore = defineStore('space', () => {
     setCategories,
     setLoadingCategories,
     setDomainGroups,
-    openEditProfile,
-    closeEditProfile,
+    setPendingAuditCount,
   }
 })

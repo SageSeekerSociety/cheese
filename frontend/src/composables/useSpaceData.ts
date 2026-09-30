@@ -15,6 +15,7 @@ import { toast } from 'vuetify-sonner'
 
 import { SpacesApi } from '@/network/api/spaces'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
+import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
 export function useSpaceData() {
@@ -25,6 +26,7 @@ export function useSpaceData() {
     if (spaceId !== space.currentSpaceId) {
       space.setSpace(null)
       space.setCategories([])
+      space.setPendingAuditCount(0)
     }
     space.setCurrentSpaceId(spaceId)
 
@@ -34,6 +36,24 @@ export function useSpaceData() {
     } catch (error) {
       console.error('获取题目板信息失败:', error)
       toast.error('获取空间信息失败')
+    }
+  }
+
+  /** 读一遍待审核的题目数：用审核队列同一个列表接口，只要总数。 */
+  const fetchPendingAuditCount = async () => {
+    const spaceId = space.currentSpaceId
+    if (!spaceId) return
+    try {
+      const { data } = await TasksApi.list({
+        space: spaceId,
+        approved: 'NONE',
+        pageSize: 1,
+        sort_by: 'createdAt',
+        sort_order: 'asc',
+      })
+      if (spaceId === space.currentSpaceId) space.setPendingAuditCount(data.page.total ?? 0)
+    } catch (error) {
+      console.error('fetch pending audit count failed', error)
     }
   }
 
@@ -253,6 +273,7 @@ export function useSpaceData() {
   }
 
   return {
+    fetchPendingAuditCount,
     fetchSpace,
     updateSpace,
     updateTemplates,

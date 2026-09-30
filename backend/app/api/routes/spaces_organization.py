@@ -1,14 +1,19 @@
 """How a space is organized, and who runs it.
 
 A slice of `app/api/routes/spaces.py` (arch review, tracking issue #2143): the
-tail of the file -- `GET /spaces/{spaceId}/topics`, the six `/categories`
-routes, the four `/domain-groups` routes and the four `/managers` routes -- one
+tail of the file -- `GET /spaces/{spaceId}/topics`, the `/categories` routes,
+the four `/domain-groups` routes and the four `/managers` routes -- one
 concept. Every route in it reads or writes the space's own organizing
 structures: what the board is about, how its work is grouped into categories
-and domain groups, and who its managers are. It is a *suffix* of that file's
-route list, so moving it leaves every path, method, `operationId` and their
-order exactly where they were, and the module mounts itself through
-`app.main._discover_routers` like every other route module.
+and domain groups, and who its managers are. The block was a *suffix* of that
+file's route list when #2198 moved it, so that move left every path, method,
+`operationId` and their order exactly where they were. Slice 4 (#2143) then
+moved the last category route, `GET /spaces/{spaceId}/categories`, here from
+the file's legacy NT-API tail, so that all seven category routes are read in one
+module: it keeps its path, method and `operationId` and only changes its index
+in the openapi `paths` map, and it needs no import this module does not already
+carry. The module mounts itself through `app.main._discover_routers` like every
+other route module.
 
 The helpers it shares with the routes that stay -- `_category_to_api_model`,
 `_domain_group_to_api_model`, `_admin_to_api_model`, `_build_full_space_payload`,
@@ -23,7 +28,8 @@ module, so there is no cycle.
 **from `spaces.py`**, which already carries that frozen import, rather than from
 the model module: the same shape `topics_side_routes.py` uses for
 `BlockRepository`, and it adds no line to the C2 baseline. The six request
-bodies the moved routes name are named nowhere else, so they move with them.
+bodies the moved routes name are defined in `spaces.py`'s shared Request Models
+block and are imported from there, like the helpers.
 """
 
 from typing import Annotated
@@ -93,6 +99,26 @@ async def get_space_topics(
         topics = await service.get_hot_topics(space_id, safe_limit)
 
     return {"code": 200, "message": "OK", "data": {"topics": topics}}
+
+
+@router.get(
+    "/{spaceId}/categories",
+    summary="List categories in a space",
+)
+async def list_space_categories(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    includeArchived: bool = Query(default=False),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    _ = auth_user
+    cats = await service.list_categories(
+        space_id=space_id, include_archived=includeArchived
+    )
+    items = [_category_to_api_model(c) for c in cats]
+    return {"code": 200, "message": "OK", "data": {"categories": items}}
 
 
 @router.post(

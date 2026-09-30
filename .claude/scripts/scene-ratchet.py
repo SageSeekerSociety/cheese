@@ -23,6 +23,16 @@ THE RULE, in two halves:
      is already here is grandfathered in the `debt` list and may sit there, but
      nothing new may join it.
 
+  A NEW PAGE MAY BE A CONTAINER. A route has to get its data from somewhere,
+  and a page is where a route lands: reading the address, fetching, saving —
+  that is a page's job, and forbidding it outright leaves a new page nowhere to
+  put it. So a page may keep that job if it hands the rendering to a view: a
+  sibling `<Page>View.vue` that the page imports. The view is then a scene of
+  its own, graded and frozen like any other — it is the part that must render
+  from props alone — and the page is judged as its container, not as a scene
+  that failed. It is the shape the recipe below already describes
+  (`PanelDoc` -> `usePanelDoc` -> `PanelDocView`), named so a check can find it.
+
   Debt is therefore a list, not a count: it is what makes "new" decidable. A
   scene is new when it is in neither list, and it is pre-existing debt when it
   is in `debt` — which is also why `--update` may add to `ready` but never to
@@ -37,6 +47,9 @@ WHAT A SCENE IS. Two kinds, both taken from the tree rather than from a list:
     to be judged — registering it in the router is what makes it a scene.
   * A PANEL is every `.vue` under `frontend/src/components/panels/`. There is no
     registry to keep in step; the directory is the set.
+  * A VIEW is the `<Page>View.vue` beside a page that the page imports: the
+    rendering half of a container page (above). It is found from the page, so
+    it too needs no registry.
 
 STANDALONE-READY means grade A from `.claude/scripts/frontend_grade.py` — the
 same function `arch-metrics.py` reports (so the board and the gate cannot
@@ -167,7 +180,35 @@ def scene_paths(root: Path) -> list[str]:
         for p in (src / "components" / "panels").rglob("*.vue")
         if p.is_file()
     }
-    return sorted(pages) + sorted(panels)
+    views = set(paired_views(root, pages).values()) - pages
+    return sorted(pages) + sorted(views) + sorted(panels)
+
+
+def paired_views(root: Path, pages: set[str]) -> dict[str, str]:
+    """`{page: view}` for every page that hands its rendering to a view.
+
+    The view is the sibling `<Page>View.vue`, and only when the page imports
+    it: a file that merely sits next to a page renders nothing for it, and a
+    pairing by name alone would let any page pass by creating an empty one.
+    """
+    src = root / "frontend" / "src"
+    grade_module = load_frontend_grade()
+    pairs: dict[str, str] = {}
+    for rel in sorted(pages):
+        page = root / rel
+        view = page.with_name(f"{page.stem}View.vue")
+        if not view.is_file():
+            continue
+        try:
+            text = page.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise Unjudgeable(f"cannot read {rel}: {exc}") from exc
+        if any(
+            not type_only and grade_module.resolve_spec(spec, page, src) == view
+            for type_only, spec in grade_module.specifiers(text)
+        ):
+            pairs[rel] = view.relative_to(root).as_posix()
+    return pairs
 
 
 def grade_scenes(root: Path) -> dict[str, Any]:
@@ -248,6 +289,8 @@ class Verdict:
     improvements: list[tuple[str, str]] = field(default_factory=list)
     #: standalone-ready scenes with no catalog entry (a warning, never a failure)
     uncatalogued: list[str] = field(default_factory=list)
+    #: pages that are not grade A but hand their rendering to a view that is: (key, view key)
+    containers: list[tuple[str, str]] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
     debt: list[str] = field(default_factory=list)
 
@@ -256,12 +299,38 @@ class Verdict:
         return not self.regressions and not self.new_debt
 
 
-def judge(baseline: Baseline, grades: dict[str, Any], catalog: set[str]) -> Verdict:
+def container_view(scene: str, grades: dict[str, Any], views: dict[str, str]) -> str | None:
+    """The standalone-ready view this scene renders through, if it is a container."""
+    view = views.get(scene)
+    if view is not None and view in grades and grades[view].standalone:
+        return view
+    return None
+
+
+def judge(
+    baseline: Baseline,
+    grades: dict[str, Any],
+    catalog: set[str],
+    views: dict[str, str] | None = None,
+) -> Verdict:
     """Compare the tree against the baseline. Pure, so it is testable."""
     verdict = Verdict()
+    views = views or {}
     for scene in sorted(grades):
         key = key_of(scene)
         grade = grades[scene]
+        view = None if grade.standalone else container_view(scene, grades, views)
+        if view is not None:
+            # A container: the page does the fetching, its view does the
+            # rendering, and the view is the scene that is frozen. A page that
+            # was frozen itself has moved its rendering out, which is the
+            # recipe, not a regression; a page that was debt has paid it.
+            verdict.containers.append((key, key_of(view)))
+            if key in baseline.known:
+                verdict.improvements.append(
+                    (key, f"is a container now; its view {key_of(view)} is what is frozen")
+                )
+            continue
         if grade.standalone:
             verdict.ready.append(key)
             if key not in baseline.ready:
@@ -289,7 +358,11 @@ def judge(baseline: Baseline, grades: dict[str, Any], catalog: set[str]) -> Verd
 
 
 def tightened(
-    baseline: Baseline, grades: dict[str, Any], *, bootstrap: bool = False
+    baseline: Baseline,
+    grades: dict[str, Any],
+    *,
+    bootstrap: bool = False,
+    views: dict[str, str] | None = None,
 ) -> tuple[Baseline, list[tuple[str, str]]]:
     """The baseline `--update` would write, and what it refused to do.
 
@@ -319,6 +392,11 @@ def tightened(
         grade = grades[scene]
         if grade.standalone:
             ready.add(key)
+            debt.discard(key)
+        elif container_view(scene, grades, views or {}) is not None:
+            # In neither list: its view carries the freeze, and the page is
+            # judged as that view's container on every run.
+            ready.discard(key)
             debt.discard(key)
         elif key in baseline.ready:
             refusals.append((key, f"stopped being standalone-ready (now {grade.letter})"))
@@ -397,8 +475,9 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
             lines.extend(f"    - {reason}" for reason in reasons)
         lines.append("")
         lines.append("A scene added from today on must render from props and emits alone:")
-        lines.append("no API layer, no route, no business store. Fetch in a composable the")
-        lines.append("page calls and pass the result down. How, in Chinese, with the recipe")
+        lines.append("no API layer, no route, no business store. A page may keep the fetching")
+        lines.append("if it renders through a sibling <Page>View.vue that does: the view is")
+        lines.append("then the scene, and it must be grade A. How, in Chinese, with the recipe")
         lines.append("for a page and a panel: docs/manual/dev/scenes.md.")
         lines.append("")
     if verdict.regressions:
@@ -426,7 +505,8 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
         lines.extend(f"  {key}" for key in verdict.uncatalogued)
         lines.append("")
     lines.append(
-        f"{len(verdict.ready)} standalone-ready, {len(verdict.debt)} pre-existing debt, "
+        f"{len(verdict.ready)} standalone-ready, {len(verdict.containers)} container(s), "
+        f"{len(verdict.debt)} pre-existing debt, "
         f"baseline has {len(baseline.ready)} ready and {len(baseline.debt)} debt"
     )
     if not verdict.ok:
@@ -440,6 +520,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
     """Judge the tree at `root` against `baseline_path` and print the answer."""
     try:
         grades = grade_scenes(root)
+        views = paired_views(root, set(grades))
         bootstrap = update and not baseline_path.is_file()
         baseline = read_baseline(baseline_path, create_if_missing=update)
     except Unjudgeable as exc:
@@ -449,7 +530,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
     catalog = catalog_entries(root)
 
     if update:
-        next_baseline, refusals = tightened(baseline, grades, bootstrap=bootstrap)
+        next_baseline, refusals = tightened(baseline, grades, bootstrap=bootstrap, views=views)
         if refusals:
             print("refusing to update: the baseline may only grow and only shrink debt", file=sys.stderr)
             for key, why in refusals:
@@ -466,9 +547,13 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
         )
         return 0
 
-    verdict = judge(baseline, grades, catalog)
+    verdict = judge(baseline, grades, catalog, views)
     if listing:
         for scene in sorted(grades):
+            view = None if grades[scene].standalone else container_view(scene, grades, views)
+            if view is not None:
+                print(f"{grades[scene].letter} {key_of(scene)}  (container of {key_of(view)})")
+                continue
             print(f"{grades[scene].letter} {key_of(scene)}")
             if not grades[scene].standalone:
                 for reason in grades[scene].reasons:
@@ -714,6 +799,90 @@ def self_test() -> int:
         result = run_cli(root, baseline_path)
         check("so it is not frozen as ready", "src/views/Wrapped.vue: is new and standalone-ready" in result.stdout, False)
 
+        # -- 9. a new page that is a container ---------------------------------
+        #    It fetches and reads the route, which is a page's job, and renders
+        #    through a sibling view that does neither. The view is the scene the
+        #    rule is about. Each control below breaks exactly one of the three
+        #    things the pairing needs: the view is imported, is a value import,
+        #    and is grade A.
+        settle = "  { name: 'settle', path: '/settle', component: () => import('@/views/Settle.vue') },\n"
+        container = (
+            '<script setup lang="ts">\nimport { useRoute } from \'vue-router\'\n'
+            "import { go } from '@/direct'\nimport SettleView from './SettleView.vue'\n"
+            "const route = useRoute()\nconst thing = go()\n</script>\n"
+            '<template><SettleView :thing="thing" :id="route.params.id" /></template>\n'
+        )
+        pure_view = (
+            '<script setup lang="ts">\ndefineProps<{ thing: unknown; id: string }>()\n'
+            "defineEmits<{ save: [] }>()\n</script>\n<template><div>{{ id }}</div></template>\n"
+        )
+        _fixture(root)
+        _fixture(root, {
+            "frontend/src/views/Settle.vue": container,
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/router/index.ts": _router(settle),
+        })
+        result = run_cli(root, baseline_path)
+        check("a new container page with a standalone view passes", result.returncode, 0)
+        check("and its view is offered to the baseline",
+              "src/views/SettleView.vue: is new and standalone-ready" in result.stdout, True)
+        listing = run_cli(root, baseline_path, "--list").stdout
+        check("--list names the page as the view's container",
+              "src/views/Settle.vue  (container of src/views/SettleView.vue)" in listing, True)
+
+        result = run_cli(root, baseline_path, "--update")
+        check("--update accepts a container", result.returncode, 0)
+        written = json.loads(baseline_path.read_text(encoding="utf-8"))
+        check("and freezes its view as ready", "src/views/SettleView.vue" in written["ready"], True)
+        check("but not the page, in either list",
+              "src/views/Settle.vue" in written["ready"] + written["debt"], False)
+        check("and the result passes", run_cli(root, baseline_path).returncode, 0)
+
+        _fixture(root, {"frontend/src/router/index.ts": _router(settle), "frontend/src/views/SettleView.vue": (
+            '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
+            "<template><div /></template>\n"
+        )})
+        result = run_cli(root, baseline_path)
+        check("a frozen view that starts fetching fails", result.returncode, 1)
+        check("and is named as the regression", "src/views/SettleView.vue: A -> C" in result.stdout, True)
+        baseline_path = _fixture_baseline(root)
+
+        # the controls: an unused sibling, a type-only import, a view that fetches
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n", ""
+            ).replace('<SettleView :thing="thing" :id="route.params.id" />', "<div />"),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        result = run_cli(root, baseline_path)
+        check("a view the page does not import does not make it a container", result.returncode, 1)
+        check("so the page is reported as new debt", "src/views/Settle.vue: D" in result.stdout, True)
+
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from", "import type SettleView from"),
+        })
+        result = run_cli(root, baseline_path)
+        check("a type-only import of the view does not pair it", result.returncode, 1)
+
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container,
+            "frontend/src/views/SettleView.vue": (
+                '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
+                "<template><div /></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a container whose view fetches fails", result.returncode, 1)
+        check("and the view is named", "src/views/SettleView.vue: C" in result.stdout, True)
+        check("with the page", "src/views/Settle.vue: D" in result.stdout, True)
+        for rel in ("frontend/src/views/Settle.vue", "frontend/src/views/SettleView.vue"):
+            (root / rel).unlink(missing_ok=True)
+        _fixture(root)
+
         # -- 6. cannot judge --------------------------------------------------
         _fixture(root)
         result = run_cli(root, baseline_path)
@@ -797,6 +966,14 @@ def self_test() -> int:
             hooks = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
             check("and a commit runs it too", "scene-ratchet" in hooks, True)
 
+        # -- 9. a wrong root is a 2, never a pass ---------------------------
+        #    The trap this gate exists for: `frontend/` instead of the repo
+        #    root has no `frontend/src` underneath, and an empty import graph
+        #    would grade every component standalone — the silent-A failure.
+        wrong = run_cli(root / "frontend", baseline_path)
+        check("a root without frontend/src exits 2", wrong.returncode, 2)
+        check("and says why", "frontend/src" in wrong.stderr, True)
+
     if failures:
         print("SELF-TEST FAIL:")
         for line in failures:
@@ -804,9 +981,9 @@ def self_test() -> int:
         return 1
     print(
         "PASS: scene-ratchet self-test (a regressed scene, a new scene that is not "
-        "ready, debt that is grandfathered, debt paid down, a type-only import that "
+        "ready, a container page and three ways of not being one, debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "
-        "to judge)"
+        "to judge, and a wrong root being a 2)"
     )
     return 0
 
@@ -828,7 +1005,14 @@ def main() -> int:
 
     root = Path(args.root).resolve()
     baseline_path = Path(args.baseline) if args.baseline else root / DEFAULT_BASELINE
-    return run(root, baseline_path, update=args.update, listing=args.list)
+    try:
+        return run(root, baseline_path, update=args.update, listing=args.list)
+    except LookupError as exc:
+        # The grader refuses to judge a root without `frontend/src` (an empty
+        # import graph would grade everything standalone). Not a violation —
+        # a 2, so a wrong root never looks like a pass.
+        print(f"cannot judge: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
