@@ -25,9 +25,6 @@ from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
-from app.domain.space.member_participating_service import (
-    SpaceMemberParticipatingService,
-)
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.models import (
     Space,
@@ -330,12 +327,6 @@ async def get_space_member_publishing_service(
     db=Depends(get_db),
 ) -> SpaceMemberPublishingService:
     return SpaceMemberPublishingService(session=db)
-
-
-async def get_space_member_participating_service(
-    db=Depends(get_db),
-) -> SpaceMemberParticipatingService:
-    return SpaceMemberParticipatingService(session=db)
 
 
 async def get_space_analytics_view_service(
@@ -1764,27 +1755,6 @@ async def export_space_analytics_publishers(
 
 
 @router.get(
-    "/{spaceId}/me/publishing",
-    summary="Get Space My Publishing Overview",
-)
-async def get_space_me_publishing(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberPublishingService = Depends(
-        get_space_member_publishing_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's publishing summary in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await service.get_my_publishing_overview(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-    )
-    return {"code": 200, "message": "OK", "data": data}
-
-
-@router.get(
     "/{spaceId}/me/publishing/tasks",
     summary="Get Space My Published Tasks",
 )
@@ -1819,62 +1789,6 @@ async def get_space_me_published_tasks(
         sort_order=sortOrder,
     )
     return {"code": 200, "message": "OK", "data": {"tasks": items}}
-
-
-@router.get(
-    "/{spaceId}/me/participating",
-    summary="Get Space My Participating Overview",
-)
-async def get_space_me_participating(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's participation summary in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await service.get_overview(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-    )
-    return {"code": 200, "message": "OK", "data": data}
-
-
-@router.get(
-    "/{spaceId}/me/participations",
-    summary="Get Space My Participations",
-)
-async def get_space_me_participations(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    approved: str | None = Query(default=None),
-    completionStatus: str | None = Query(default=None),
-    identityType: str | None = Query(default=None),
-    sortBy: str = Query(default="joinedAt"),
-    sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's participation list in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    participations = await service.get_participations(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-        approved=approved,
-        completion_status=completionStatus,
-        identity_type=identityType,
-        sort_by=sortBy,
-        sort_order=sortOrder,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"participations": participations},
-    }
 
 
 # ---------------------------------------------------------------------------

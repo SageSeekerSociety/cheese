@@ -222,24 +222,6 @@ class TestSubmissionsAndReviewsDriveTheAxis:
         assert _status(api_client, c) == REJECTED_RESUBMITTABLE
 
 
-def test_overview_counts_a_pass_as_success_and_nothing_else(user_client, api_client):
-    """「我的参与概览」的成功一档只数 SUCCESS（开关默认：判通过才算）。"""
-    c = _claim(user_client, api_client, own=True)
-
-    def overview() -> dict:
-        resp = api_client.get(
-            f"/spaces/{c.space_id}/me/participating", headers=_auth(c.student.token)
-        )
-        assert resp.status_code == 200, resp.text
-        return resp.json()["data"]
-
-    submission = _submit(api_client, c)
-    assert overview()["successfulCount"] == 0
-
-    _review(api_client, c, submission, _PASS)
-    assert overview()["successfulCount"] == 1
-
-
 # ---- 截止清扫与存量回填：直接对库，照 test_deadline_sweep_* 的写法 ----------
 
 PAST = datetime.now(UTC) - timedelta(days=1)

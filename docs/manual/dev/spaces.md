@@ -47,7 +47,7 @@ covers:
 
 ## 管理员看板 {#analytics}
 
-`space/` 下另外几个服务是老师与管理员那一侧：`analytics_service` / `analytics_view_service`（这个 1394 行，是最大的一块）、`learning_service`（学习维度：成员怎么与 AI 协作、卡在哪，issue #945）、`member_participating_service` / `member_publishing_service`（报名、发布）、`rank_service`、`tags_service`。
+`space/` 下另外几个服务是老师与管理员那一侧：`analytics_service` / `analytics_view_service`（这个 1394 行，是最大的一块）、`learning_service`（学习维度：成员怎么与 AI 协作、卡在哪，issue #945）、`member_publishing_service`（题目列表「我发布的」那一格，含还没过审的题）、`rank_service`、`tags_service`。
 
 `learning_service` 的模块说明值得整段读，因为它把**没有的东西**也写清楚了：`review_flag` 全仓没有这一列也没有这张表，所以 `reviewFlag` 那个队列只能报 `available: false`、把缺什么写进返回里，不拿别的信号冒充它；「再给一点提示」的点击同样没有落库；知识点今天也不存在，能用的是**课程分类**（`space_categories`，课程设计者自己划的格子——够用，但它不是知识点）。
 
