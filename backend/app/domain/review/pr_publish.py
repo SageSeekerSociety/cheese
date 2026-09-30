@@ -28,7 +28,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.domain.project.forge import branch_head, proposal_client, status_client
+from app.domain.project.forge import (
+    background_may_use_forge,
+    branch_head,
+    proposal_client,
+    status_client,
+)
 from app.domain.review import notes
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
@@ -548,6 +553,8 @@ async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> b
         return False
     cards = AcceptCardRepository(session)
     if await cards.list_for_task(task.id):
+        return False
+    if not await background_may_use_forge(task.project_id, session):
         return False
     pr = await _open_draft_for_task(session, task)
     if pr is None:

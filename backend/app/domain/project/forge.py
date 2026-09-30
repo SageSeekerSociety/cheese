@@ -57,6 +57,39 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
     raise GatewayUnavailableError("项目的代码托管类型无法识别")
 
 
+# A GitHub App installation has ONE hourly REST quota for everything the
+# platform does with a repository: the background pollers and sweeps, and a
+# person delivering or merging a card. Background work stops while less than
+# this share is left, so a burst of polling cannot use up what a person's
+# request needs; it resumes on a later tick, after the hourly reset at worst.
+KEPT_FOR_PEOPLE = 0.2
+
+
+async def background_may_use_forge(
+    project_id: uuid.UUID, session: AsyncSession
+) -> bool:
+    """Whether background work for this project may call its forge now.
+
+    Only a GitHub App installation has a shared quota to protect. When GitHub
+    cannot say how much is left, the work goes ahead and meets whatever GitHub
+    answers it with, as it did before this check existed.
+    """
+    binding = await binding_for_project(project_id, session)
+    if binding is None or binding.kind != "github_app":
+        return True
+    tokens = await github_app_tokens_for_project(project_id, session)
+    if tokens is None:
+        return True
+    try:
+        quota = await tokens.core_quota()
+    except (GitHubAppError, httpx.HTTPError):
+        return True
+    if quota is None:
+        return True
+    remaining, limit = quota
+    return remaining >= limit * KEPT_FOR_PEOPLE
+
+
 @dataclass(frozen=True)
 class RepoReadToken:
     """A read token for one repository's own CI, or why there is none."""
