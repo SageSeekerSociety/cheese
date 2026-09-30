@@ -27,11 +27,19 @@ THE RULE, in two halves:
   and a page is where a route lands: reading the address, fetching, saving —
   that is a page's job, and forbidding it outright leaves a new page nowhere to
   put it. So a page may keep that job if it hands the rendering to a view: a
-  sibling `<Page>View.vue` that the page imports. The view is then a scene of
+  sibling `<Page>View.vue` that the page imports AND renders. The import alone
+  proves nothing — a page can import a view and render something else
+  entirely — so the template must use the view's tag, and every other
+  component the template renders must be standalone too: the view is where
+  the rendering lives, not one of several places. What the check cannot see
+  through (a `<component :is>`, a tag no import explains) is not paired — a
+  verifiable shape is the price of the exemption. The view is then a scene of
   its own, graded and frozen like any other — it is the part that must render
   from props alone — and the page is judged as its container, not as a scene
   that failed. It is the shape the recipe below already describes
   (`PanelDoc` -> `usePanelDoc` -> `PanelDocView`), named so a check can find it.
+  Pages only: a route has to get its data somewhere, a panel does not — a
+  panel in the same costume is a panel that fetches.
 
   Debt is therefore a list, not a count: it is what makes "new" decidable. A
   scene is new when it is in neither list, and it is pre-existing debt when it
@@ -47,9 +55,9 @@ WHAT A SCENE IS. Two kinds, both taken from the tree rather than from a list:
     to be judged — registering it in the router is what makes it a scene.
   * A PANEL is every `.vue` under `frontend/src/components/panels/`. There is no
     registry to keep in step; the directory is the set.
-  * A VIEW is the `<Page>View.vue` beside a page that the page imports: the
-    rendering half of a container page (above). It is found from the page, so
-    it too needs no registry.
+  * A VIEW is the `<Page>View.vue` beside a page that the page imports and
+    renders: the rendering half of a container page (above). It is found from
+    the page, so it too needs no registry.
 
 STANDALONE-READY means grade A from `.claude/scripts/frontend_grade.py` — the
 same function `arch-metrics.py` reports (so the board and the gate cannot
@@ -104,6 +112,29 @@ DEFAULT_BASELINE = "frontend/scene-baseline.json"
 #: A spec file is not a scene and not a router module to walk from.
 SPEC = re.compile(r"\.(spec|test)\.(ts|js|vue)$")
 
+#: An import statement with its whole clause: `import A, { b, c as d } from 'x'`.
+IMPORT_CLAUSE = re.compile(
+    r"""import\s+(type\s+)?([^'"]*?)\s+from\s+['"]([^'"]+)['"]""", re.DOTALL
+)
+#: A tag in a template: `<SettleView ...>` or `</settle-view>`.
+TAG_USE = re.compile(r"</?([A-Za-z][A-Za-z0-9_-]*)")
+#: What a template renders through `<component :is>` the check cannot see.
+DYNAMIC_TAG = re.compile(r"<component\b", re.IGNORECASE)
+
+#: Tags a template may render without an import the checker can grade: Vue
+#: and vue-router builtins. Vuetify's `v-*` is covered by the `V<Upper>` rule
+#: in `paired_views`.
+GLOBAL_TAGS = {
+    "RouterView",
+    "RouterLink",
+    "Suspense",
+    "Teleport",
+    "Transition",
+    "TransitionGroup",
+    "KeepAlive",
+    "Component",
+}
+
 
 class Unjudgeable(Exception):
     """The tree or the baseline could not be read. Exit 2, never a pass."""
@@ -134,7 +165,7 @@ def load_frontend_grade() -> Any:
 # ------------------------------------------------------------------ the scenes
 
 
-def scene_paths(root: Path) -> list[str]:
+def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
     """Every scene, as a repo-relative path, sorted. Pages then panels.
 
     Pages come from the router's import graph rather than from a list of
@@ -180,19 +211,72 @@ def scene_paths(root: Path) -> list[str]:
         for p in (src / "components" / "panels").rglob("*.vue")
         if p.is_file()
     }
-    views = set(paired_views(root, pages).values()) - pages
+    views = set(paired_views(root, pages, reach).values()) - pages
     return sorted(pages) + sorted(views) + sorted(panels)
 
 
-def paired_views(root: Path, pages: set[str]) -> dict[str, str]:
+def pascal(tag: str) -> str:
+    """`settle-view` -> `SettleView`; an already-Pascal tag is unchanged."""
+    return "".join(part[:1].upper() + part[1:] for part in tag.split("-"))
+
+
+def import_locals(clause: str) -> list[str]:
+    """The local names an import clause binds: `A, { b, c as d }` -> `[A, b, d]`."""
+    clause = clause.strip()
+    locals_: list[str] = []
+    if clause.startswith("*"):
+        match = re.match(r"\*\s+as\s+([A-Za-z0-9_]+)", clause)
+        return [match.group(1)] if match else []
+    if clause.startswith("{"):
+        named = clause.strip("{} \n")
+    else:
+        head, _, brace = clause.partition("{")
+        default = head.strip().rstrip(",").strip()
+        if default:
+            locals_.append(default)
+        named = brace.strip("} \n")
+    for part in named.split(","):
+        part = re.sub(r"^type\s+", "", part.strip())
+        if part:
+            locals_.append(part.split(" as ")[-1].strip())
+    return locals_
+
+
+def template_tags(grade_module: Any, text: str) -> set[str]:
+    """Component tags the template renders, PascalCased (`v-btn` -> `VBtn`)."""
+    tags: set[str] = set()
+    for block in grade_module.TEMPLATE_BLOCK.findall(text):
+        for tag in TAG_USE.findall(block):
+            if tag[:1].islower() and "-" not in tag:
+                continue  # a native element
+            tags.add(pascal(tag))
+    return tags
+
+
+def paired_views(
+    root: Path, pages: set[str], reach: set[Path] | None = None
+) -> dict[str, str]:
     """`{page: view}` for every page that hands its rendering to a view.
 
-    The view is the sibling `<Page>View.vue`, and only when the page imports
-    it: a file that merely sits next to a page renders nothing for it, and a
-    pairing by name alone would let any page pass by creating an empty one.
+    The view is the sibling `<Page>View.vue`, and three things must hold —
+    an import alone proves nothing, since a page can import a view and render
+    something else entirely:
+
+      1. the page value-imports the view (`import type` is no import at all);
+      2. the template actually renders the view's tag;
+      3. every other component tag the template renders is a builtin
+         (RouterView, Suspense, …), a Vuetify `v-*`, a package component, or
+         resolves to a grade-A `.vue` under `src` — the view is where the
+         rendering lives, not one of several places.
+
+    What the check cannot see through — a `<component :is>`, a tag no import
+    explains — is not paired: a verifiable shape is the price of the
+    exemption, and the page is judged as an ordinary scene instead.
     """
     src = root / "frontend" / "src"
     grade_module = load_frontend_grade()
+    if reach is None:
+        reach = grade_module.api_reach(root)
     pairs: dict[str, str] = {}
     for rel in sorted(pages):
         page = root / rel
@@ -203,20 +287,57 @@ def paired_views(root: Path, pages: set[str]) -> dict[str, str]:
             text = page.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             raise Unjudgeable(f"cannot read {rel}: {exc}") from exc
-        if any(
-            not type_only and grade_module.resolve_spec(spec, page, src) == view
-            for type_only, spec in grade_module.specifiers(text)
-        ):
+
+        # (1) the value import, and the local names every import binds.
+        view_names: set[str] = set()
+        imported: dict[str, Path | None] = {}
+        for type_only, clause, spec in IMPORT_CLAUSE.findall(text):
+            if type_only:
+                continue
+            resolved = grade_module.resolve_spec(spec, page, src)
+            for local in import_locals(clause):
+                imported[local] = resolved
+                if resolved == view:
+                    view_names.add(local)
+        if not view_names:
+            continue
+
+        # (2) the template must render the view, and nothing unverifiable.
+        template = "\n".join(grade_module.TEMPLATE_BLOCK.findall(text))
+        if DYNAMIC_TAG.search(template):
+            continue
+        tags = template_tags(grade_module, text)
+        if not tags & view_names:
+            continue
+
+        # (3) every other rendered component is standalone or not ours.
+        def verifiable(tag: str, imported: dict[str, Path | None] = imported) -> bool:
+            if tag in imported:
+                target = imported[tag]
+                if target is None:
+                    return True  # a package component: not ours to grade
+                if target.suffix != ".vue":
+                    return False
+                try:
+                    return grade_module.grade_component(root, target, reach).standalone
+                except OSError:
+                    return False
+            # Auto-registered Vuetify (`<v-btn>` -> `VBtn`): trusted, not ours.
+            return tag.startswith("V") and len(tag) > 1 and tag[1].isupper()
+
+        rest = tags - view_names - GLOBAL_TAGS
+        if all(verifiable(tag) for tag in rest):
             pairs[rel] = view.relative_to(root).as_posix()
     return pairs
 
 
-def grade_scenes(root: Path) -> dict[str, Any]:
+def grade_scenes(root: Path, reach: set[Path] | None = None) -> dict[str, Any]:
     """Grade every scene. Returns `{scene: Grade}` — one `api_reach` for all."""
     grade_module = load_frontend_grade()
-    reach = grade_module.api_reach(root)
+    if reach is None:
+        reach = grade_module.api_reach(root)
     grades = {}
-    for rel in scene_paths(root):
+    for rel in scene_paths(root, reach):
         path = root / rel
         if not path.is_file():
             raise Unjudgeable(f"scene {rel} is not a file")
@@ -519,8 +640,15 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
 def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
     """Judge the tree at `root` against `baseline_path` and print the answer."""
     try:
-        grades = grade_scenes(root)
-        views = paired_views(root, set(grades))
+        grade_module = load_frontend_grade()
+        reach = grade_module.api_reach(root)
+        grades = grade_scenes(root, reach)
+        # Pages only: the container rule exists because a ROUTE has to get
+        # its data somewhere, and a panel has no route — a panel with a
+        # sibling `<Panel>View.vue` is a panel that fetches, not a container.
+        views = paired_views(
+            root, {rel for rel in grades if rel.startswith(VIEWS_DIR)}, reach
+        )
         bootstrap = update and not baseline_path.is_file()
         baseline = read_baseline(baseline_path, create_if_missing=update)
     except Unjudgeable as exc:
@@ -883,6 +1011,151 @@ def self_test() -> int:
             (root / rel).unlink(missing_ok=True)
         _fixture(root)
 
+        # -- 10. a container in name only -------------------------------------
+        #    Three impostors that satisfy "a value import of the view" — the
+        #    pairing #2209 asked for — without the rendering moving: an import
+        #    the template never renders, a template that renders the view next
+        #    to a fetching child, and a frozen page shedding its freeze into a
+        #    shell. Plus one bystander: a panel in the same costume, which the
+        #    rule never meant to cover (the docs say pages).
+        _fixture(root)
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />', "<div />"),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        result = run_cli(root, baseline_path)
+        check("an imported view the page never renders does not pair", result.returncode, 1)
+        check("and the shell page is named", "src/views/Settle.vue: D" in result.stdout, True)
+        check("and no container is claimed", "container of" in run_cli(
+            root, baseline_path, "--list").stdout, False)
+
+        # the template renders the view AND a fetching child: the view is one
+        # of several places the rendering lives, which is not the recipe
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import ChildFetch from '@/components/ChildFetch.vue'\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><ChildFetch />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/ChildFetch.vue": (
+                '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                "<template><div>{{ r }}</div></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a view rendered next to a fetching child does not pair", result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # the control for that rule: the same template with a grade-A child
+        # instead is exactly the recipe, and must stay green
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import PlainNote from '@/components/PlainNote.vue'\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><PlainNote />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/PlainNote.vue": (
+                '<script setup lang="ts">\ndefineProps<{ n: number }>()\n</script>\n'
+                "<template><div>{{ n }}</div></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a container whose other rendered child is grade A passes", result.returncode, 0)
+        check("and is listed as a container",
+              "src/views/Settle.vue  (container of src/views/SettleView.vue)"
+              in run_cli(root, baseline_path, "--list").stdout, True)
+
+        # a view rendered only through <component :is> cannot be verified, and
+        # a verifiable shape is the price of the exemption
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<component :is="SettleView" :thing="thing" :id="route.params.id" />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        result = run_cli(root, baseline_path)
+        check("a view rendered only through <component :is> does not pair", result.returncode, 1)
+
+        # a frozen page shedding its freeze into a shell: it imports the view,
+        # never renders it, and --update would otherwise launder the migration
+        ready_path = _fixture_baseline(root, {
+            "ready": FIXTURE_BASELINE["ready"] + ["src/views/Settle.vue"]})
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": (
+                "<script setup lang=\"ts\">\ndefineProps<{ n: number }>()\n</script>\n"
+                "<template><div>{{ n }}</div></template>\n"
+            ),
+            "frontend/src/views/SettleView.vue": "",
+        })
+        check("a frozen page as plain A still passes", run_cli(root, ready_path).returncode, 0)
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />', "<div />"),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        result = run_cli(root, ready_path)
+        check("a frozen page that shells out a view it never renders fails",
+              result.returncode, 1)
+        check("and is named as the regression", "src/views/Settle.vue: A -> D" in result.stdout, True)
+        before = ready_path.read_text(encoding="utf-8")
+        result = run_cli(root, ready_path, "--update")
+        check("and --update refuses to lift the freeze", result.returncode, 1)
+        check("leaving the baseline alone", ready_path.read_text(encoding="utf-8"), before)
+
+        # the control: really moving the rendering DOES move the freeze
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container,
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        check("a frozen page that really moves its rendering passes",
+              run_cli(root, ready_path).returncode, 0)
+        result = run_cli(root, ready_path, "--update")
+        check("and --update moves the freeze to the view", result.returncode, 0)
+        written = json.loads(ready_path.read_text(encoding="utf-8"))
+        check("the view is frozen now", "src/views/SettleView.vue" in written["ready"], True)
+        check("and the page is out of both lists",
+              "src/views/Settle.vue" in written["ready"] + written["debt"], False)
+
+        # a panel in the same costume: the container rule is for pages, whose
+        # route has to get its data somewhere — a panel has no such excuse
+        _fixture(root)
+        _fixture(root, {
+            "frontend/src/components/panels/Sneaky.vue": (
+                '<script setup lang="ts">\nimport { go } from \'@/direct\'\n'
+                "import SneakyView from './SneakyView.vue'\nconst thing = go()\n</script>\n"
+                '<template><SneakyView :thing="thing" /></template>\n'
+            ),
+            "frontend/src/components/panels/SneakyView.vue": pure_view,
+        })
+        result = run_cli(root, baseline_path)
+        check("a panel cannot be a container even when it really renders the view",
+              result.returncode, 1)
+        check("and is named as new debt", "src/components/panels/Sneaky.vue" in result.stdout, True)
+
+        for rel in (
+            "frontend/src/views/Settle.vue",
+            "frontend/src/views/SettleView.vue",
+            "frontend/src/components/panels/Sneaky.vue",
+            "frontend/src/components/panels/SneakyView.vue",
+            "frontend/src/components/PlainNote.vue",
+            "frontend/src/components/ChildFetch.vue",
+        ):
+            (root / rel).unlink(missing_ok=True)
+        _fixture(root)
+        baseline_path = _fixture_baseline(root)
+
         # -- 6. cannot judge --------------------------------------------------
         _fixture(root)
         result = run_cli(root, baseline_path)
@@ -981,7 +1254,10 @@ def self_test() -> int:
         return 1
     print(
         "PASS: scene-ratchet self-test (a regressed scene, a new scene that is not "
-        "ready, a container page and three ways of not being one, debt that is grandfathered, debt paid down, a type-only import that "
+        "ready, a container page and three ways of not being one, four container "
+        "impostors — an unrendered import, a fetching co-child, a shelled freeze, "
+        "a costumed panel — and the two controls that stay green, debt that is "
+        "grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "
         "to judge, and a wrong root being a 2)"
     )
