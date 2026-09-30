@@ -19,7 +19,7 @@
     "APPROVED": "已通过",
     "REJECTED": "已驳回",
     "emptyMine": "暂无空间申请",
-    "loadFailed": "加载失败，请重试。",
+    "loadFailed": "空间申请加载失败",
     "retry": "重试",
     "resubmit": "修改并重新提交",
     "enter": "进入空间",
@@ -32,7 +32,7 @@
     "approve": "通过",
     "reject": "驳回",
     "reason": "驳回原因",
-    "actionFailed": "审核未完成，请刷新确认申请状态后重试。",
+    "actionFailed": "审核未完成，刷新页面确认申请状态。",
     "dismiss": "关闭这条提示"
   },
   "detail": {

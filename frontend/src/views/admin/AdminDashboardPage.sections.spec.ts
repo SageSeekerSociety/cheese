@@ -27,7 +27,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import AdminDashboardPage from './AdminDashboardPage.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { installPreviewFetch } from '@/proto-feedback-fixtures'
+import { installPreviewFetch } from '@/proto-preview-transport'
 import { useFeedbackStore } from '@/stores/feedback'
 
 let preview: typeof window.fetch

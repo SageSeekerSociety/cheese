@@ -65,7 +65,8 @@
       "delete": "Delete",
       "block": "Block",
       "unblock": "Unblock"
-    }
+    },
+    "loadFailed": "Models failed to load"
   },
   "price": {
     "input": "Input",
@@ -185,7 +186,8 @@
       "field": "Cap (USD)",
       "hint": "The default brake is derived from credits ({derived}); entering a number overrides it on the gateway at once, and leaving it empty clears the override.",
       "clear": "Clear override"
-    }
+    },
+    "loadFailed": "Budgets failed to load"
   },
   "audit": {
     "empty": "No actions yet",
@@ -228,6 +230,7 @@
         "extraHeaders": "Extra headers",
         "other": "Other fields"
       }
-    }
+    },
+    "loadFailed": "Recent actions failed to load"
   }
 }

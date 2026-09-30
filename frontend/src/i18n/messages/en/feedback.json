@@ -46,7 +46,6 @@
     },
     "error": {
       "title": "Couldn't load the queue",
-      "desc": "Check your connection and try again.",
       "retry": "Retry"
     },
     "filtered": {
@@ -128,7 +127,6 @@
     },
     "error": {
       "title": "Couldn't load the table",
-      "desc": "Check your connection and try again.",
       "retry": "Retry"
     },
     "filtered": {

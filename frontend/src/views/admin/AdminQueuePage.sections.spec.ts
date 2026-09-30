@@ -9,14 +9,15 @@
  *      视图切换两颗的 `aria-pressed`；
  *   2. 工具行三组控件的组名、档位与选中态：栏位（radiogroup）、搜索框、状态页签；
  *   3. **总表那一档**的失败文案 —— 它和列表那一档**不是同一句**（「表格加载失败」对
- *      「队列加载失败」），而四态块外面那层 `title` 上挂的是服务端原话；
+ *      「队列加载失败」），而服务端原话是**看得见的说明行**，不是挂在 `title` 上的
+ *      悬停字（悬停字在触屏上根本没有）；
  *   4. 宽屏的**整页接管**：光标落定、详情画出来之后，队列整块从 DOM 里让位。
  *
  * 外加分诊与撤销（§9.6 / F-12）：`1` 推一格、撤销条说的是什么、`U` 撤回时写回去的
  * 是原来那一格、以及撤回那一次**不再**套出一条新的撤销条。
  *
  * 链子和 `AdminQueuePage.spec.ts` 是同一条：不 mock `@/api`、不 mock store，假数据
- * 接在 `window.fetch` 上（`proto-feedback-fixtures.ts`），于是「api → store → 页 →
+ * 接在 `window.fetch` 上（`proto-preview-transport.ts`），于是「api → store → 页 →
  * 组件」整条都真跑。文案断言用真 i18n（`setLocale('zh-CN')`），因为钉的一半是句子。
  *
  * 绿在拆之前的旧文件上；拆完必须原样绿。
@@ -34,7 +35,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import AdminQueuePage from './AdminQueuePage.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { installPreviewFetch } from '@/proto-feedback-fixtures'
+import { installPreviewFetch } from '@/proto-preview-transport'
 
 /** 管理端的列表路由。详情是 `/api/admin/feedback/{id}`，所以这里按**整段相等**匹配。 */
 const LIST_PATH = '/api/admin/feedback'
@@ -184,23 +185,22 @@ describe('工具行三组控件', () => {
 })
 
 describe('四态：总表那一档的文案', () => {
-  it('总表读失败画的是「表格加载失败」，外面那层 title 是服务端原话', async () => {
+  it('总表读失败画的是「表格加载失败」，服务端原话是看得见的说明行', async () => {
     failTimes = 1
-    const { container, findByText, getByText } = await mountQueue()
+    const { findByText, getByText, queryByText } = await mountQueue()
 
     // 列表那一档先说话。
     expect(await findByText('队列加载失败')).toBeTruthy()
-    // 四态块里只写「读失败」，为什么读失败挂在外面那层的 title 上。
-    const raw = container.querySelector('.qpage__state-raw')
-    expect(raw?.getAttribute('title')).toContain('后端炸了')
+    // 为什么读失败**看得见**：原话就是那行说明，不挂 title、也不被一句固定话盖住。
+    expect(getByText(/后端炸了/)).toBeTruthy()
+    expect(queryByText('检查网络后重试。')).toBeNull()
 
     await fireEvent.click(getByText('表格'))
 
     // 换一档之后文案跟着换 —— 两句不是同一句，这一条就是钉这个差别的。
     expect(await findByText('表格加载失败')).toBeTruthy()
-    expect(getByText('检查网络后重试。')).toBeTruthy()
+    expect(getByText(/后端炸了/)).toBeTruthy()
     expect(getByText('重试')).toBeTruthy()
-    expect(container.querySelector('.qpage__state-raw')?.getAttribute('title')).toContain('后端炸了')
   })
 })
 

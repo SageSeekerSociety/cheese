@@ -1,0 +1,115 @@
+{
+  "capturedAt": "2026-09-30T13:27:25.198Z",
+  "previewBase": "http://127.0.0.1:5210/feedback-proto.html",
+  "bundleLastModified": "Wed, 30 Sep 2026 13:18:56 GMT",
+  "targeting": {
+    "rowButtonCandidates": 3,
+    "fuzzyCandidates": 4,
+    "fuzzyWho": [
+      {
+        "index": 0,
+        "text": "已通过",
+        "tag": "button",
+        "roleAttr": "tab",
+        "ancestors": [
+          "atabs__track",
+          "atabs",
+          "aph__extra",
+          "aph"
+        ]
+      },
+      {
+        "index": 1,
+        "text": "通过",
+        "tag": "button",
+        "roleAttr": null,
+        "ancestors": [
+          "asp__actions",
+          "asp__row",
+          "asp__list",
+          "asp__panel"
+        ]
+      },
+      {
+        "index": 2,
+        "text": "通过",
+        "tag": "button",
+        "roleAttr": null,
+        "ancestors": [
+          "asp__actions",
+          "asp__row",
+          "asp__list",
+          "asp__panel"
+        ]
+      },
+      {
+        "index": 3,
+        "text": "通过",
+        "tag": "button",
+        "roleAttr": null,
+        "ancestors": [
+          "asp__actions",
+          "asp__row",
+          "asp__list",
+          "asp__panel"
+        ]
+      }
+    ],
+    "clickedTimes": 1,
+    "target": {
+      "accessibleName": "通过",
+      "roleAttr": null,
+      "tag": "button"
+    }
+  },
+  "beforePending": [
+    {
+      "id": 41,
+      "name": "算法竞赛周练",
+      "reviewStatus": "PENDING",
+      "reviewReason": null,
+      "reviewedBy": null
+    },
+    {
+      "id": 42,
+      "name": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+      "reviewStatus": "PENDING",
+      "reviewReason": null,
+      "reviewedBy": null
+    },
+    {
+      "id": 43,
+      "name": "数据库课程设计",
+      "reviewStatus": "PENDING",
+      "reviewReason": null,
+      "reviewedBy": null
+    }
+  ],
+  "posted": [
+    {
+      "via": "fetch",
+      "method": "POST",
+      "url": "/admin/spaces/41/review",
+      "body": {
+        "approved": true,
+        "reason": ""
+      },
+      "status": 200,
+      "response": "{\"code\":200,\"message\":\"ok\",\"data\":{\"item\":{\"id\":41,\"avatarId\":null,\"name\":\"算法竞赛周练\",\"intro\":\"每周一套题，赛后讲评。面向校队新人。\",\"reviewStatus\":\"APPROVED\",\"description\":\"每周一套题，赛后讲评。面向校队新人。\",\"owner\":\"maxiaoyu\",\"reviewReason\":null,\"reviewedBy\":\"andy\",\"reviewedAt\":\"2026-09-30T13:27:22.677Z\",\"createdAt\":\"2026-09-30T10:27:18.611Z\"}}}"
+    }
+  ],
+  "recordAfter": {
+    "id": 41,
+    "name": "算法竞赛周练",
+    "reviewStatus": "APPROVED",
+    "reviewReason": null,
+    "reviewedBy": "andy"
+  },
+  "afterPendingCount": 2,
+  "afterApprovedIds": [
+    41,
+    38
+  ],
+  "doorsNote": "记录器装在预览拦截之上，被接住的请求也在这里；网络层为空才算零出网",
+  "net": []
+}

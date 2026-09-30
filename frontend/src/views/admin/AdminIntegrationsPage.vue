@@ -33,8 +33,10 @@ defineOptions({ name: 'AdminIntegrationsPage' })
 const { t } = useI18n()
 
 const loading = ref(false)
-/** 读这一页失败。它说的是「这一页没读到」，和保存失败是两件事。 */
-const loadError = ref(false)
+/** 读这一页失败时是**服务端原话**（原话取不到就空串）；`null` 表示没失败。
+ *  它说的是「这一页没读到」，和保存失败是两件事。失败与否和原话是两件事，也得分开存：
+ *  原话为空时仍要给出错态，不能因为取不到原因就当成没读到、落进正常表单。 */
+const loadError = ref<string | null>(null)
 /** 保存失败。留在页顶那条错误里，表单里的东西一个字不动。 */
 const saveError = ref('')
 const saved = ref(false)
@@ -60,7 +62,7 @@ const updated = computed(() => {
 
 async function load() {
   loading.value = true
-  loadError.value = false
+  loadError.value = null
   try {
     const current = await getPlatformFeishuApp()
     app.value = current
@@ -68,8 +70,9 @@ async function load() {
     form.domain = current.domain || 'feishu'
     // Secret 不回显，所以这一格永远是空的 —— 它的空表示「不改」，见文件开头第 1 条。
     form.app_secret = ''
-  } catch {
-    loadError.value = true
+  } catch (e) {
+    // 原话存下来作说明行，不用「无法读取」这种固定话把原因吞掉。
+    loadError.value = e instanceof Error && e.message ? e.message : ''
     app.value = null
   } finally {
     loading.value = false
@@ -103,73 +106,81 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="afi">
-    <AdminPageHeader :title="t('integrations.admin.title')" :sub="t('integrations.admin.sub')" />
+  <div class="afi admin-page">
+    <div class="afi__inner admin-page__col page-container--admin">
+      <AdminPageHeader :title="t('integrations.admin.title')" :sub="t('integrations.admin.sub')" />
 
-    <div class="afi__body">
-      <!-- 读失败：只说这一页没读到，重试就在旁边。**不**接着画「还没配置」和那张表单 ——
-           见文件开头第 4 条。 -->
-      <AdminEmptyState
-        v-if="loadError"
-        tone="error"
-        :title="t('integrations.admin.loadFailed')"
-        :action="t('integrations.admin.retry')"
-        @action="load"
-      />
+      <div class="afi__body admin-form-card">
+        <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
+             **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。
+             判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，仍要给出错态。 -->
+        <AdminEmptyState
+          v-if="loadError !== null"
+          tone="error"
+          :title="t('integrations.admin.loadFailed')"
+          :desc="loadError || undefined"
+          :action="t('integrations.admin.retry')"
+          @action="load"
+        />
 
-      <template v-else>
-        <!-- 首屏还没读回来时不画状态行：这时候还没有答案。 -->
-        <p v-if="app || !loading" class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">
-          {{ status }}
-        </p>
-        <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
+        <template v-else>
+          <!-- 首屏还没读回来时不画状态行：这时候还没有答案。 -->
+          <p v-if="app || !loading" class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">
+            {{ status }}
+          </p>
+          <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
 
-        <div class="afi__form">
-          <v-text-field
-            v-model="form.app_id"
-            autocomplete="off"
-            :label="t('integrations.admin.appId')"
-            :disabled="loading"
-          />
-          <v-text-field
-            v-model="form.app_secret"
-            class="afi__secret"
-            autocomplete="new-password"
-            type="password"
-            :label="t('integrations.admin.appSecret')"
-            :hint="t('integrations.admin.secretHint')"
-            persistent-hint
-          />
-          <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
-          <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
-          <div class="afi__actions">
-            <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
-            <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
-              {{ t('integrations.admin.save') }}
-            </v-btn>
+          <div class="afi__form">
+            <v-text-field
+              v-model="form.app_id"
+              autocomplete="off"
+              :label="t('integrations.admin.appId')"
+              :disabled="loading"
+            />
+            <v-text-field
+              v-model="form.app_secret"
+              class="afi__secret"
+              autocomplete="new-password"
+              type="password"
+              :label="t('integrations.admin.appSecret')"
+              :hint="t('integrations.admin.secretHint')"
+              persistent-hint
+            />
+            <v-select
+              v-model="form.domain"
+              autocomplete="off"
+              :items="domains"
+              :label="t('integrations.admin.domain')"
+            />
+            <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
+            <div class="afi__actions">
+              <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
+              <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
+                {{ t('integrations.admin.save') }}
+              </v-btn>
+            </div>
           </div>
-        </div>
-      </template>
+        </template>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 滚动归这一页自己领（同 `AdminSpacesPage` 的 `.asp`）：外壳只给高度和宽度，
-   不自己领的话内容一长就顶出可视区，滚不动。 */
+/* 骨架三层（画布 + 1440 那一列 + 卡片）由 `.admin-page` / `__col` / `.admin-form-card`
+   给。以前这一页是「根上自己领滚动 + `.afi__body` 640 定宽、左边不内缩」，于是页头那
+   道发丝线比卡片宽出一圈、卡片左沿又和别的页对不上；现在页头和卡片住进同一列。 */
 .afi {
-  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
 }
 
-.afi__body {
-  max-width: 640px;
-  padding: 16px 24px;
+.afi__inner {
+  flex: 1 0 auto;
 }
+
+/* 卡片的宽度（720 上限）、内边距（20/24）和内缩（16/24）都由 `.admin-form-card` 给，
+   和别的表单页同一套。 */
 
 .afi__status {
   margin: 0;
@@ -205,9 +216,5 @@ onMounted(load)
   margin-top: 8px;
 }
 
-@media (width <= 700px) {
-  .afi__body {
-    padding: 12px 16px;
-  }
-}
+/* 窄屏的两侧收窄由 `.admin-form-card` 自己那条 ≤700 规则给，这一页不再各写一份。 */
 </style>

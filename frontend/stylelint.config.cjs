@@ -189,5 +189,22 @@ module.exports = {
         'declaration-property-value-allowed-list': null,
       },
     },
+    {
+      // proto-admin-variants.css is the A/B/C layout preview scaffolding, and its
+      // whole job is to render the alternatives the design system rejects — variant
+      // C gives cards shadows and an off-ladder radius so the comparison is honest.
+      // It is only ever loaded by the preview build (`?v=a|b|c`), never by the app
+      // bundle, so the rules above do not have a say over it. The tag in the corner
+      // of every screenshot is also off-theme on purpose: it must stay readable over
+      // both light and dark pages. Named as one file, not a glob — the next proto
+      // stylesheet should have to make this decision again.
+      files: ['src/proto-admin-variants.css'],
+      rules: {
+        'color-no-hex': null,
+        'color-named': null,
+        'declaration-property-value-disallowed-list': null,
+        'declaration-property-value-allowed-list': null,
+      },
+    },
   ],
 }

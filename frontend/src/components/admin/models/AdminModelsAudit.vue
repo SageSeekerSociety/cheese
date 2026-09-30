@@ -53,13 +53,16 @@ function auditActionLabel(action: string): string {
 
 <template>
   <div class="amd__audit">
-    <!-- 读失败照原话显示、并给重试；**不**显示「暂无操作」（那是把「没读到」说成
-     「没有」）。它说在这一段自己的卡里，而不是页顶那条横条上。 -->
+    <!-- 读失败给中性标题、原话落到说明行、并给重试；**不**显示「暂无操作」（那是把
+     「没读到」说成「没有」）。它说在这一段自己的卡里，而不是页顶那条横条上。
+     `!== null`：`error` 是 `null` 才算没失败，空串是「失败了但服务端没给话」——
+     用真值判会把这种失败落进「暂无操作」。 -->
     <AdminEmptyState
-      v-if="props.error"
+      v-if="props.error !== null"
       compact
       tone="error"
-      :title="props.error"
+      :title="t('models.audit.loadFailed')"
+      :desc="props.error || undefined"
       :action="t('models.page.retry')"
       @action="emit('retry')"
     />

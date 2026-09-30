@@ -19,7 +19,7 @@
     "APPROVED": "Approved",
     "REJECTED": "Rejected",
     "emptyMine": "No space applications",
-    "loadFailed": "Could not load applications. Please try again.",
+    "loadFailed": "Space applications failed to load",
     "retry": "Retry",
     "resubmit": "Edit and resubmit",
     "enter": "Open space",
@@ -32,7 +32,7 @@
     "approve": "Approve",
     "reject": "Reject",
     "reason": "Rejection reason",
-    "actionFailed": "Review could not be completed. Refresh to check the application status before retrying.",
+    "actionFailed": "Review did not finish. Refresh the page to confirm the application status.",
     "dismiss": "Dismiss this notice"
   },
   "detail": {
