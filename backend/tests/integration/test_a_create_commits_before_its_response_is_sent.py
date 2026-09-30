@@ -264,7 +264,6 @@ def _space_body(name: str) -> dict:
         "intro": "A space whose row must be readable the moment it exists.",
         "description": "Committed before the response.",
         "avatarId": 1,
-        "announcements": [],
         "taskTemplates": [],
     }
 

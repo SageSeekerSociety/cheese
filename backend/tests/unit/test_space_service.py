@@ -26,7 +26,6 @@ def _make_space(**overrides):
         "avatar_id": None,
         "enable_rank": False,
         "default_category_id": 10,
-        "announcements": [],
         "task_templates": [],
         "created_at": _NOW,
         "updated_at": _NOW,
@@ -268,7 +267,6 @@ class TestCreateSpace:
             avatar_id=5,
             enable_rank=True,
             owner_id=42,
-            announcements=[{"title": "hi"}],
             task_templates=[],
         )
 
@@ -306,7 +304,6 @@ class TestCreateSpace:
             avatar_id=None,
             enable_rank=False,
             owner_id=42,
-            announcements=[],
             task_templates=[],
         )
 
@@ -324,7 +321,6 @@ class TestCreateSpace:
                 avatar_id=None,
                 enable_rank=False,
                 owner_id=42,
-                announcements=[],
                 task_templates=[],
             )
 
@@ -340,7 +336,6 @@ class TestCreateSpace:
                 avatar_id=None,
                 enable_rank=False,
                 owner_id=42,
-                announcements=[],
                 task_templates=[],
             )
 
@@ -358,7 +353,6 @@ class TestCreateSpace:
                 avatar_id=None,
                 enable_rank=False,
                 owner_id=42,
-                announcements=[],
                 task_templates=[],
             )
 
@@ -376,12 +370,11 @@ class TestCreateSpace:
                 avatar_id=None,
                 enable_rank=False,
                 owner_id=42,
-                announcements=[],
                 task_templates=[],
             )
 
     @pytest.mark.anyio
-    async def test_normalize_none_announcements(self):
+    async def test_normalize_none_task_templates(self):
         repo = AsyncMock()
         space = _make_space(id=1)
         repo.create_space.return_value = space
@@ -398,12 +391,10 @@ class TestCreateSpace:
             avatar_id=None,
             enable_rank=False,
             owner_id=42,
-            announcements=None,  # type: ignore[arg-type]
             task_templates=None,  # type: ignore[arg-type]
         )
 
         call_kwargs = repo.create_space.call_args.kwargs
-        assert call_kwargs["announcements"] == []
         assert call_kwargs["task_templates"] == []
 
 
@@ -433,7 +424,6 @@ class TestUpdateSpace:
             description="New desc",
             avatar_id=99,
             enable_rank=True,
-            announcements=[{"a": 1}],
             task_templates=[{"t": 1}],
             default_category_id=20,
         )
@@ -443,7 +433,6 @@ class TestUpdateSpace:
         assert result.description == "New desc"
         assert result.avatar_id == 99
         assert result.enable_rank is True
-        assert result.announcements == [{"a": 1}]
         assert result.task_templates == [{"t": 1}]
         assert result.default_category_id == 20
         assert result.updated_at is not None

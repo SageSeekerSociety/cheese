@@ -11,6 +11,7 @@ import RenderProjectInviteNotification from '@/components/common/Notification/re
 import RenderReactionNotification from '@/components/common/Notification/renders/RenderReactionNotification.vue'
 import RenderReplyNotification from '@/components/common/Notification/renders/RenderReplyNotification.vue'
 import RenderRoomNoticeNotification from '@/components/common/Notification/renders/RenderRoomNoticeNotification.vue'
+import RenderSpaceAnnouncementNotification from '@/components/common/Notification/renders/RenderSpaceAnnouncementNotification.vue'
 import RenderTeamInvitationAcceptedNotification from '@/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue'
 import RenderTeamInvitationCanceledNotification from '@/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue'
 import RenderTeamInvitationDeclinedNotification from '@/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue'
@@ -38,6 +39,7 @@ const notificationRendererRegistry: Record<NotificationType, Component> = {
   ROOM_NOTICE: RenderRoomNoticeNotification,
   CHEESE_QUESTION: RenderCheeseQuestionNotification,
   DEVICE_IN_USE: RenderDeviceInUseNotification,
+  SPACE_ANNOUNCEMENT: RenderSpaceAnnouncementNotification,
 }
 
 /**
@@ -88,6 +90,8 @@ export function getNotificationIcon(type: NotificationType): string {
       return 'mdi-help-circle-outline'
     case 'DEVICE_IN_USE':
       return 'mdi-laptop-account'
+    case 'SPACE_ANNOUNCEMENT':
+      return 'mdi-bullhorn-outline'
     default:
       return 'mdi-bell'
   }

@@ -45,7 +45,6 @@ def _space(api_client: TestClient, creator_token: str) -> dict:
             "intro": "一门课",
             "description": "一块题目板",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(creator_token),

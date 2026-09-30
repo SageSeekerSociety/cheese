@@ -127,7 +127,6 @@ class SpaceRepository:
         description: str,
         avatar_id: int | None,
         enable_rank: bool,
-        announcements: list,
         task_templates: list,
         visible_task_limit: int | None = None,
     ) -> Space:
@@ -139,7 +138,6 @@ class SpaceRepository:
             avatar_id=avatar_id,
             enable_rank=enable_rank,
             visible_task_limit=visible_task_limit,
-            announcements=announcements,
             task_templates=task_templates,
             created_at=now,
             updated_at=now,

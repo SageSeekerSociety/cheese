@@ -36,12 +36,12 @@ covers:
 
 | 场景 | 一共 | A 今天就能单独跑 | C 卡在取数 | D 卡在路由 / `$parent` / `inject` |
 |---|---|---|---|---|
-| 路由页（`src/views/`，router 表里挂上去的每一页） | 111 | 2 | 38 | 71 |
+| 路由页（`src/views/`，router 表里挂上去的每一页） | 111 | 2 | 37 | 72 |
 | 工作面板（`src/components/panels/` 下的 SFC） | 27 | 8 | 19 | 0 |
 
 和上一版（2026-09-30 早先的 20 个）差十个，原因是判据修了一处**过宽**：传递依赖原来只跟 `.ts` 边，父页面 import 一个自己去取数的子组件（`.vue`）不算「到了接口层」，于是「自己干净、子组件在取数」的十个场景被当成能单独跑。`.` 这条边现在也跟（[原因](#how)），数字按修完的结果写在这里。修之前报出去的 20 是错的，不是这一版退步。
 
-一个场景可以同时踩中好几条（100 页直接 import 了取数模块，86 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
+一个场景可以同时踩中好几条（100 页直接 import 了取数模块，87 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
 
 按目录看那 130 个页面：
 
@@ -54,7 +54,7 @@ covers:
 | `views/home/` | 5 | 0 | 4 | 1 |
 | `views/legal/` | 1 | 0 | 0 | 1 |
 | `views/question/` | 4 | 0 | 1 | 3 |
-| `views/spaces/` | 23 | 0 | 10 | 13 |
+| `views/spaces/` | 23 | 0 | 9 | 14 |
 | `views/tasks/` | 7 | 0 | 3 | 4 |
 | `views/teams/` | 9 | 0 | 3 | 6 |
 | `views/user/` | 5 | 1 | 4 | 0 |
@@ -200,7 +200,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/spaces/course/Quiz.vue` | D | 读路由；直接取数（`network/api/spaces`） |
 | `views/spaces/course/Team.vue` | D | 读路由；直接取数（`network/api/spaces`）；直接取数（`network/api/teams`） |
 | `views/spaces/course/Units.vue` | D | 读路由；直接取数（`network/api/spaces`） |
-| `views/spaces/detail/Announcements.vue` | C | 直接取数（`services/account.ts`）；读 store（space） |
+| `views/spaces/detail/Announcements.vue` | D | 读路由；直接取数（`network/api/spaces`）；读 store（space） |
 | `views/spaces/detail/AuditTask.vue` | C | 直接取数（`network/api/tasks`）；读 store（space） |
 | `views/spaces/detail/CreateDiscussion.vue` | D | 读路由；直接取数（`network/api/discussions`） |
 | `views/spaces/detail/DiscussionItem.vue` | D | 读路由；直接取数（`network/api/discussions`） |

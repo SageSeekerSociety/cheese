@@ -5,6 +5,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import { relTime } from '@/lib/relTime'
 
@@ -24,13 +25,16 @@ import { relTime } from '@/lib/relTime'
 //    还没配置飞书应用」），所以这里的状态行说的正是那句话的答案。
 // 3. **保存失败说服务端原话，表单不关。** 一句「操作失败」会把这页最需要的东西 ——
 //    为什么失败 —— 丢掉。
+// 4. **读不到就只说读不到。** 第 2 条那个答案是给成员看的；读失败时我们并没有它，
+//    所以这时不画状态行、也不画表单，只画「读不到」加重试 —— 画上「还没配置」等于
+//    拿一个不知道的答案当知道的用。
 defineOptions({ name: 'AdminIntegrationsPage' })
 
 const { t } = useI18n()
 
 const loading = ref(false)
 /** 读这一页失败。它说的是「这一页没读到」，和保存失败是两件事。 */
-const loadError = ref('')
+const loadError = ref(false)
 /** 保存失败。留在页顶那条错误里，表单里的东西一个字不动。 */
 const saveError = ref('')
 const saved = ref(false)
@@ -56,7 +60,7 @@ const updated = computed(() => {
 
 async function load() {
   loading.value = true
-  loadError.value = ''
+  loadError.value = false
   try {
     const current = await getPlatformFeishuApp()
     app.value = current
@@ -65,7 +69,7 @@ async function load() {
     // Secret 不回显，所以这一格永远是空的 —— 它的空表示「不改」，见文件开头第 1 条。
     form.app_secret = ''
   } catch {
-    loadError.value = t('integrations.admin.loadFailed')
+    loadError.value = true
     app.value = null
   } finally {
     loading.value = false
@@ -103,44 +107,63 @@ onMounted(load)
     <AdminPageHeader :title="t('integrations.admin.title')" :sub="t('integrations.admin.sub')" />
 
     <div class="afi__body">
-      <p v-if="loadError" role="alert" class="afi__error t-body">{{ loadError }}</p>
+      <!-- 读失败：只说这一页没读到，重试就在旁边。**不**接着画「还没配置」和那张表单 ——
+           见文件开头第 4 条。 -->
+      <AdminEmptyState
+        v-if="loadError"
+        tone="error"
+        :title="t('integrations.admin.loadFailed')"
+        :action="t('integrations.admin.retry')"
+        @action="load"
+      />
 
-      <p class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">{{ status }}</p>
-      <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
+      <template v-else>
+        <!-- 首屏还没读回来时不画状态行：这时候还没有答案。 -->
+        <p v-if="app || !loading" class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">
+          {{ status }}
+        </p>
+        <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
 
-      <div class="afi__form">
-        <v-text-field
-          v-model="form.app_id"
-          autocomplete="off"
-          :label="t('integrations.admin.appId')"
-          :disabled="loading"
-        />
-        <v-text-field
-          v-model="form.app_secret"
-          autocomplete="new-password"
-          type="password"
-          :label="t('integrations.admin.appSecret')"
-          :hint="t('integrations.admin.secretHint')"
-          persistent-hint
-        />
-        <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
-        <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
-        <div class="afi__actions">
-          <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
-          <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
-            {{ t('integrations.admin.save') }}
-          </v-btn>
+        <div class="afi__form">
+          <v-text-field
+            v-model="form.app_id"
+            autocomplete="off"
+            :label="t('integrations.admin.appId')"
+            :disabled="loading"
+          />
+          <v-text-field
+            v-model="form.app_secret"
+            class="afi__secret"
+            autocomplete="new-password"
+            type="password"
+            :label="t('integrations.admin.appSecret')"
+            :hint="t('integrations.admin.secretHint')"
+            persistent-hint
+          />
+          <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
+          <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
+          <div class="afi__actions">
+            <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>
+            <v-btn color="primary" variant="flat" :loading="saving" :disabled="loading" @click="save">
+              {{ t('integrations.admin.save') }}
+            </v-btn>
+          </div>
         </div>
-      </div>
+      </template>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* 滚动归这一页自己领（同 `AdminSpacesPage` 的 `.asp`）：外壳只给高度和宽度，
+   不自己领的话内容一长就顶出可视区，滚不动。 */
 .afi {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .afi__body {
@@ -160,6 +183,13 @@ onMounted(load)
 
 .afi__form {
   margin-top: 16px;
+}
+
+/* Secret 那格下面挂着 hint，而下一个字段的浮动标签有一半悬在它自己框的上沿之上
+   （见 `.claude/rules/frontend.md`），中间没有余量时两行字会叠在一起。给这一格
+   留一段底距，标签就落在空处。 */
+.afi__secret {
+  margin-bottom: 12px;
 }
 
 .afi__error {

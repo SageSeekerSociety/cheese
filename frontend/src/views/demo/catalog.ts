@@ -13,6 +13,7 @@
  */
 import type { Component } from 'vue'
 
+import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import {
   ACCEPT_CARD,
   ACCEPT_DONE,
@@ -595,6 +596,9 @@ export const CATALOG: CatalogEntry[] = [
   },
   // 侧栏那一组（TopicSidebar 拆出来的那六件）在自己的文件里：`catalogRail.ts`。
   ...RAIL_ENTRIES,
+  // 看板那八件（从 2880 行的 AdminDashboardPage 拆出来的七屏 + 页头）在自己的文件里：
+  // `catalogDashboard.ts`（数据在 `catalogDashboardFixtures.ts`）。
+  ...DASHBOARD_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',

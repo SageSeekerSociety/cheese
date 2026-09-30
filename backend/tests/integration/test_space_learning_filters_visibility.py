@@ -58,7 +58,6 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
             "description": "A lengthy text. " * 100,
             "avatarId": 1,
             "enableRank": False,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(owner.token),

@@ -77,7 +77,6 @@ class CreateSpaceRequest(BaseModel):
     description: str = ""
     avatar_id: int | None = Field(default=None, alias="avatarId")
     enable_rank: bool = Field(default=False, alias="enableRank")
-    announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(
         default=None, alias="classificationTopics"
@@ -102,7 +101,6 @@ class PatchSpaceRequest(BaseModel):
     description: str | None = None
     avatar_id: int | None = Field(default=None, alias="avatarId")
     enable_rank: bool | None = Field(default=None, alias="enableRank")
-    announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(
         default=None, alias="classificationTopics"
@@ -414,7 +412,6 @@ def _space_to_api_model(space: Space) -> dict:
         "enableRank": space.enable_rank,
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
-        "announcements": json.dumps(space.announcements or []),
         "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
@@ -810,7 +807,6 @@ async def create_space(
     if await service.exists_by_name(payload.name):
         raise ConflictError(f"Space with name '{payload.name}' already exists")
 
-    announcements = _expect_list(payload.announcements, "announcements")
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []
 
@@ -821,7 +817,6 @@ async def create_space(
         avatar_id=payload.avatar_id,
         enable_rank=payload.enable_rank,
         owner_id=auth_user.user_id,
-        announcements=announcements,
         task_templates=task_templates,
         visible_task_limit=payload.visible_task_limit,
     )
@@ -875,10 +870,7 @@ async def patch_space(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    announcements = payload.announcements
     task_templates = payload.task_templates
-    if announcements is not None:
-        announcements = _expect_list(announcements, "announcements")
     if task_templates is not None:
         task_templates = _expect_list(task_templates, "taskTemplates")
 
@@ -892,7 +884,6 @@ async def patch_space(
         description=payload.description,
         avatar_id=payload.avatar_id,
         enable_rank=payload.enable_rank,
-        announcements=announcements,
         task_templates=task_templates,
         default_category_id=payload.default_category_id,
         visible_task_limit=payload.visible_task_limit,
@@ -1756,122 +1747,3 @@ async def export_space_analytics_publishers(
             "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'  # noqa: E501
         },
     )
-
-
-# ---------------------------------------------------------------------------
-# Space Member Self-Resources (NT-API aligned)
-# ---------------------------------------------------------------------------
-
-
-@router.get(
-    "/{spaceId}/me/publishing",
-    summary="Get Space My Publishing Overview",
-)
-async def get_space_me_publishing(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberPublishingService = Depends(
-        get_space_member_publishing_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's publishing summary in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await service.get_my_publishing_overview(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-    )
-    return {"code": 200, "message": "OK", "data": data}
-
-
-@router.get(
-    "/{spaceId}/me/publishing/tasks",
-    summary="Get Space My Published Tasks",
-)
-async def get_space_me_published_tasks(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    from_ts: int | None = Query(default=None, alias="from"),
-    to_ts: int | None = Query(default=None, alias="to"),
-    categoryId: int | None = Query(default=None),
-    approved: str | None = Query(default=None),
-    hasPendingParticipantApproval: bool | None = Query(default=None),
-    hasPendingReview: bool | None = Query(default=None),
-    sortBy: str = Query(default="createdAt"),
-    sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberPublishingService = Depends(
-        get_space_member_publishing_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's published tasks in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    items = await service.get_my_published_tasks(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        category_id=categoryId,
-        approved=approved,
-        has_pending_participant_approval=hasPendingParticipantApproval,
-        has_pending_review=hasPendingReview,
-        sort_by=sortBy,
-        sort_order=sortOrder,
-    )
-    return {"code": 200, "message": "OK", "data": {"tasks": items}}
-
-
-@router.get(
-    "/{spaceId}/me/participating",
-    summary="Get Space My Participating Overview",
-)
-async def get_space_me_participating(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's participation summary in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await service.get_overview(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-    )
-    return {"code": 200, "message": "OK", "data": data}
-
-
-@router.get(
-    "/{spaceId}/me/participations",
-    summary="Get Space My Participations",
-)
-async def get_space_me_participations(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    approved: str | None = Query(default=None),
-    completionStatus: str | None = Query(default=None),
-    identityType: str | None = Query(default=None),
-    sortBy: str = Query(default="joinedAt"),
-    sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
-    db=Depends(get_db),
-) -> dict:
-    """Return the authenticated user's participation list in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    participations = await service.get_participations(
-        space_id=space_id,
-        user_id=auth_user.user_id,
-        approved=approved,
-        completion_status=completionStatus,
-        identity_type=identityType,
-        sort_by=sortBy,
-        sort_order=sortOrder,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"participations": participations},
-    }

@@ -66,7 +66,6 @@ function space(id = SPACE_ID, overrides: Record<string, unknown> = {}) {
     intro: '',
     avatarId: null,
     admins: [{ user: { id: 4, nickname: '管理员' }, role: 'OWNER' }],
-    announcements: '[]',
     taskTemplates: '[]',
     classificationTopics: [],
     visibleTaskLimit: null,
@@ -330,46 +329,6 @@ describe('模板与公告', () => {
     expect(spaceUpdate).toHaveBeenCalledWith(SPACE_ID, {
       taskTemplates: JSON.stringify([{ title: '乙' }]),
     })
-  })
-
-  it('加公告是整串重写：新的接在原来的后面', async () => {
-    spaceDetail.mockResolvedValue({
-      data: { space: space(SPACE_ID, { announcements: JSON.stringify([{ title: '旧的' }]) }) },
-    })
-    await data().fetchSpace(SPACE_ID)
-    spaceUpdate.mockClear()
-
-    await data().addAnnouncement({ title: '新的' } as never)
-
-    expect(spaceUpdate).toHaveBeenCalledWith(SPACE_ID, {
-      announcements: JSON.stringify([{ title: '旧的' }, { title: '新的' }]),
-    })
-  })
-
-  it('改公告按下标整条替换 —— 弹窗里没有的字段会跟着一起没，这是它一直的样子', async () => {
-    spaceDetail.mockResolvedValue({
-      data: {
-        space: space(SPACE_ID, {
-          announcements: JSON.stringify([{ title: '置顶的', pinned: true, content: '<p>x</p>' }]),
-        }),
-      },
-    })
-    await data().fetchSpace(SPACE_ID)
-    spaceUpdate.mockClear()
-
-    await data().updateAnnouncement(0, { title: '改过标题' } as never)
-
-    expect(spaceUpdate).toHaveBeenCalledWith(SPACE_ID, {
-      announcements: JSON.stringify([{ title: '改过标题' }]),
-    })
-  })
-
-  it('公告的增删改都不自己弹提示（页面自己拼一句带名字的）', async () => {
-    await data().addAnnouncement({ title: '新的' } as never)
-    await data().deleteAnnouncement(0)
-
-    expect(toast.success).not.toHaveBeenCalled()
-    expect(toast.error).not.toHaveBeenCalled()
   })
 })
 

@@ -9,7 +9,7 @@
 // 判据留在这一层：换板要不要先清空、哪几个动作失败往外抛（调用方要接着决定弹窗关
 // 不关）、哪几个自己弹一句话就算了（调用方本来就会自己弹一句更具体的）。状态全部
 // 写进 store，这一层自己不持有任何东西。
-import type { SpaceAdminRoleType, SpaceAnnouncement, SpaceTaskTemplate } from '@/types'
+import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 
 import { toast } from 'vuetify-sonner'
 
@@ -69,34 +69,6 @@ export function useSpaceData() {
     const newTemplates = [...space.templates]
     newTemplates.splice(index, 1)
     await updateTemplates(newTemplates)
-  }
-
-  const updateAnnouncements = async (newAnnouncements: SpaceAnnouncement[]) => {
-    if (!space.currentSpace) return
-
-    try {
-      await updateSpace(space.currentSpace.id, { announcements: JSON.stringify(newAnnouncements) }, false)
-    } catch (error) {
-      console.error('更新公告失败:', error)
-      toast.error('更新公告失败')
-      throw error
-    }
-  }
-
-  const addAnnouncement = async (announcement: SpaceAnnouncement) => {
-    const updatedAnnouncements = [...space.announcements, announcement]
-    await updateAnnouncements(updatedAnnouncements)
-  }
-
-  const updateAnnouncement = async (index: number, announcement: SpaceAnnouncement) => {
-    const updatedAnnouncements = [...space.announcements]
-    updatedAnnouncements[index] = announcement
-    await updateAnnouncements(updatedAnnouncements)
-  }
-
-  const deleteAnnouncement = async (index: number) => {
-    const updatedAnnouncements = space.announcements.filter((_, i) => i !== index)
-    await updateAnnouncements(updatedAnnouncements)
   }
 
   const updateClassificationTopics = async (topicIds: number[]) => {
@@ -285,10 +257,6 @@ export function useSpaceData() {
     updateSpace,
     updateTemplates,
     deleteTemplate,
-    updateAnnouncements,
-    addAnnouncement,
-    updateAnnouncement,
-    deleteAnnouncement,
     updateClassificationTopics,
     addClassificationTopic,
     addClassificationTopics,

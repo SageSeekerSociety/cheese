@@ -57,7 +57,6 @@ const SPACE = {
   intro: '',
   avatarId: null,
   admins: [{ user: { id: OWNER_ID, nickname: '管理员' }, role: 'OWNER' }],
-  announcements: '[]',
   taskTemplates: '[]',
   classificationTopics: [],
   visibleTaskLimit: null,

@@ -46,7 +46,6 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
             "intro": "一块板",
             "description": "领取名单里的队名",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(creator_token),
