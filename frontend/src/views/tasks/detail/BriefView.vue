@@ -3,9 +3,7 @@
   <div v-if="taskData" class="tb">
     <section class="tb__sec">
       <h2 class="tb__h t-title">{{ t('tasks.brief.details') }}</h2>
-      <TipTapViewer v-if="isTipTapJson" class="tb__md" :value="tipTapContent" />
-      <div v-else-if="renderedMarkdown" class="markdown-body tb__md t-reading" v-html="renderedMarkdown" />
-      <p v-else class="tb__note">{{ t('tasks.brief.empty') }}</p>
+      <TaskDescription :source="taskData.description" :empty="t('tasks.brief.empty')" />
     </section>
 
     <!-- 视频：只嵌 B 站；别的平台给一条（过了 https 校验的）链接，不假装能放。 -->
@@ -43,11 +41,11 @@
 import type { TaskAttachmentData } from '@/network/api/tasks/types'
 import type { Task } from '@/types'
 
-import { computed, defineAsyncComponent } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import TaskAttachmentList from '@/components/tasks/TaskAttachmentList.vue'
+import TaskDescription from '@/components/tasks/TaskDescription.vue'
 
 const props = defineProps<{
   taskData: Task | null
@@ -59,33 +57,6 @@ const props = defineProps<{
 const emit = defineEmits<{ download: [file: TaskAttachmentData] }>()
 
 const { t } = useI18n()
-
-const TipTapViewer = defineAsyncComponent(() => import('@/components/common/Editor/TipTapViewer.vue'))
-const markdownRenderer = new MarkdownRenderer()
-
-/** 题目详情是富文本：TipTap JSON 或 Markdown，两种都认。 */
-const isTipTapJson = computed(() => {
-  const raw = props.taskData?.description ?? ''
-  if (!raw) return false
-  try {
-    const parsed = JSON.parse(raw)
-    return typeof parsed === 'object' && parsed !== null && parsed.type === 'doc'
-  } catch {
-    return false
-  }
-})
-const tipTapContent = computed(() => {
-  try {
-    return JSON.parse(props.taskData?.description ?? '{}')
-  } catch {
-    return { type: 'doc', content: [] }
-  }
-})
-const renderedMarkdown = computed(() => {
-  const raw = props.taskData?.description ?? ''
-  if (!raw || isTipTapJson.value) return ''
-  return markdownRenderer.render(raw)
-})
 
 const videoLink = computed(() => {
   const url = props.taskData?.videoUrl
@@ -106,27 +77,6 @@ const videoEmbed = computed(() => {
 <style scoped>
 .tb {
   max-width: 680px;
-}
-
-.tb__md :deep(h1),
-.tb__md :deep(h2),
-.tb__md :deep(h3),
-.tb__md :deep(h4) {
-  margin: 16px 0 6px;
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-}
-
-.tb__md :deep(p) {
-  margin: 0 0 8px;
-}
-
-.tb__md :deep(ul),
-.tb__md :deep(ol) {
-  margin: 0 0 8px;
-  padding-left: 20px;
 }
 
 .tb__sec + .tb__sec {

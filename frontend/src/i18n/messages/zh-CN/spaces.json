@@ -55,9 +55,6 @@
     "auditTasks": {
       "title": "待审核题目",
       "noTasks": "暂无待审核的题目",
-      "pendingReview": "待审核",
-      "published": "发布了题目",
-      "detailedInfo": "详细信息",
       "description": "题目描述",
       "submissionRequirements": "提交要求",
       "noRequirements": "暂无提交要求",
@@ -73,7 +70,16 @@
       "operationFailed": "操作失败",
       "rejectReason": "请输入驳回理由",
       "rejectReasonDialogTitle": "驳回理由",
-      "rejectReasonRequired": "请输入驳回理由"
+      "rejectReasonRequired": "请输入驳回理由",
+      "by": "{name} 发布",
+      "noDeadline": "不截止",
+      "deadline": "{date} 截止",
+      "requireRealName": "需要实名",
+      "entryType": {
+        "TEXT": "文本",
+        "FILE": "文件"
+      },
+      "noDescription": "暂无题目描述"
     },
     "manageTemplates": {
       "back": "返回",

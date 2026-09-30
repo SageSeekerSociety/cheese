@@ -48,9 +48,6 @@
     "auditTasks": {
       "title": "Problems awaiting review",
       "noTasks": "No problems awaiting review",
-      "pendingReview": "Awaiting review",
-      "published": "Published a problem",
-      "detailedInfo": "Details",
       "description": "Problem description",
       "submissionRequirements": "Submission requirements",
       "noRequirements": "No submission requirements",
@@ -66,7 +63,16 @@
       "operationFailed": "Couldn't complete the operation",
       "rejectReason": "Enter a reason for rejecting",
       "rejectReasonDialogTitle": "Reason for rejection",
-      "rejectReasonRequired": "Enter a reason for rejecting"
+      "rejectReasonRequired": "Enter a reason for rejecting",
+      "by": "By {name}",
+      "noDeadline": "No deadline",
+      "deadline": "Due {date}",
+      "requireRealName": "Real name required",
+      "entryType": {
+        "TEXT": "Text",
+        "FILE": "File"
+      },
+      "noDescription": "No description"
     },
     "manageTemplates": {
       "createTemplate": "Create template",
