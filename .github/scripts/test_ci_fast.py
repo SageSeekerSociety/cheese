@@ -9,7 +9,8 @@ that mirrors the implementation cannot catch the implementation being wrong.
 Stub hooks are `language: system` entries in the fixture's own
 .pre-commit-config.yaml: the command table still comes from a config file,
 and pre-commit is the real scheduler. Set CI_FAST_PRECOMMIT to a pre-commit
-invocation available on the machine (CI installs it with pip).
+invocation available on the machine (CI provides it via uv — `uvx pre-commit`
+— in every workflow whose discover picks this file up).
 """
 
 import json
@@ -189,7 +190,49 @@ class CiFastTest(unittest.TestCase):
         rep = self.report()
         self.assertEqual(rep["dirty"]["count"], 3)
         self.assertEqual(len(rep["dirty"]["fingerprint"]), 12)
-        self.assertIn("先 git add", proc.stdout)  # untracked warning
+
+    # --- the fingerprint binds CONTENT: same path, new bytes, new fingerprint
+    def test_fingerprint_changes_with_content(self):
+        self.write_hooks()
+        self.make_base_and_head("README.md")
+        probe = self.repo / "backend/app/base.py"
+        probe.write_text("version one")
+        first = self.run_ci_fast()
+        self.assertEqual(first.returncode, 0, first.stdout)
+        fp_one = self.report()["dirty"]["fingerprint"]
+        probe.write_text("version two")
+        second = self.run_ci_fast()
+        self.assertEqual(second.returncode, 0, second.stdout)
+        fp_two = self.report()["dirty"]["fingerprint"]
+        self.assertNotEqual(fp_one, fp_two)
+
+    # --- green requires the report on disk: an unwritable --report path
+    # --- downgrades a passing run to 2 instead of exiting 0 with no report
+    def test_unwritable_report_never_green(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        blocker = self.repo / "blocker"
+        blocker.write_text("a file, not a directory")
+        proc = self.run_ci_fast("--report", str(blocker / "report.json"))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("报告写入失败", proc.stderr)
+        self.assertFalse((blocker / "report.json").exists())
+
+    # --- full-tree hooks read the worktree: untracked content is CHECKED,
+    # --- not merely selected on (a content-reading stub hook proves it)
+    def test_untracked_content_is_checked(self):
+        self.write_hooks(extra_entries="""      - id: repo-rules
+        name: content-reading stub
+        entry: bash -c 'echo repo-rules >> .ci-fast-ran; if grep -rq LINTPROBE backend/; then echo found-probe; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+""", omit={"repo-rules"})
+        self.make_base_and_head("README.md")
+        (self.repo / "backend/app/probe.py").write_text("# LINTPROBE untracked")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("found-probe", proc.stdout)
 
     # --- deletion and rename move both the old and the new path into scope
     def test_delete_and_rename_hit_both_sides(self):

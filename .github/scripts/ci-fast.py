@@ -17,8 +17,18 @@ WHAT THIS REUSES (it is a hook-ID selector, not a second scheduler):
 
 DIFF COVERAGE: committed base..HEAD, staged, unstaged and untracked files,
 deletions, and renames on both sides (--no-renames reports the old and the
-new path). The report records base, head, and a fingerprint of the dirty
-worktree — never just HEAD.
+new path). Untracked files are not only selected on — they are CHECKED: the
+hooks here are full-tree commands (`ruff check .`, eslint, file-size) that
+read the working tree, untracked content included (verified empirically:
+an untracked file with a lint error fails the ruff hook). The report
+records base, head, and a CONTENT fingerprint of the dirty worktree —
+never just HEAD, and never just path names.
+
+--base DIVERGENCE: --base changes selection only. The file-size and
+migration-fork hooks take a --base flag, but the pre-commit command table
+invokes them without one, so they always judge against origin/main. With a
+custom --base the selector and those hooks can disagree; ci:fast says so
+loudly instead of hiding it.
 
 CONSERVATIVE FALLBACK: with no merge base (shallow clone, missing
 origin/main), the selector falls back to selecting everything — but checks
@@ -37,10 +47,10 @@ EXIT CODES (machine-readable, mirrored in the JSON report's status):
               never installs anything; the message names the setup command.
 
 REPORT: JSON at <gitdir>/ci-fast-report.json (worktree-aware; override with
---report). Any stale
-report is deleted before the first hook runs, so a killed run leaves NO
-report — and no report means "not passed". A report claiming pass is only
-written after every selected hook actually returned 0.
+--report). Any stale report is deleted before the first hook runs, so a
+killed run leaves NO report — and no report means "not passed". Green
+requires the report to hit disk: if the write fails, a passing run is
+downgraded to 2 (cannot verify); a failing run keeps its original code.
 
 OPTIONAL TYPE CHECKS (--types): adds pyright and vue-tsc via their manual-
 stage hooks. They are off by default because of memory footprint and layer
@@ -138,7 +148,7 @@ def configured_hook_ids():
 
 
 def collect_changes(base_ref):
-    """Return (changed_paths, base_sha, head_sha, dirty_files, merge_base_ok)."""
+    """Return (changed, base_sha, head, staged, unstaged, untracked, merge_base_ok)."""
     head = sh(["git", "rev-parse", "HEAD"]).stdout.strip()
     merge_base = sh(["git", "merge-base", base_ref, "HEAD"])
     base_sha = merge_base.stdout.strip() if merge_base.returncode == 0 else None
@@ -146,13 +156,39 @@ def collect_changes(base_ref):
     staged = git_lines("diff", "--cached", "--name-only", "--no-renames")
     unstaged = git_lines("diff", "--name-only", "--no-renames")
     untracked = git_lines("ls-files", "--others", "--exclude-standard")
-    dirty = sorted(set(staged + unstaged + untracked))
-    changed = sorted(set(committed) | set(dirty))
-    return changed, base_sha, head, dirty, base_sha is not None
+    changed = sorted(set(committed) | set(staged) | set(unstaged) | set(untracked))
+    return changed, base_sha, head, staged, unstaged, untracked, base_sha is not None
 
 
-def fingerprint(paths):
-    return hashlib.sha256("\n".join(paths).encode()).hexdigest()[:12]
+def dirty_fingerprint(staged, unstaged, untracked):
+    """Content fingerprint of the dirty worktree.
+
+    A path list cannot bind the verified version: the same path with new
+    content must produce a new fingerprint. Staged paths contribute their
+    index blob id; every dirty path contributes its worktree content hash,
+    or a deletion marker when the file is gone.
+    """
+    index_oids = {}
+    if staged:
+        out = subprocess.run(
+            ["git", "ls-files", "-s", "-z", "--", *staged],
+            cwd=REPO_ROOT, capture_output=True, text=True,
+        ).stdout
+        for rec in out.split("\0"):
+            if rec:
+                meta, path = rec.split("\t", 1)
+                index_oids[path] = meta.split()[1]
+    entries = []
+    for path in sorted(set(staged + unstaged + untracked)):
+        if path in staged:
+            entries.append(f"{path}|idx:{index_oids.get(path, '?')}")
+        worktree = Path(REPO_ROOT, path)
+        if worktree.is_file():
+            digest = hashlib.sha256(worktree.read_bytes()).hexdigest()[:16]
+            entries.append(f"{path}|wt:{digest}")
+        else:
+            entries.append(f"{path}|deleted")
+    return hashlib.sha256("\n".join(entries).encode()).hexdigest()[:12]
 
 
 def main(argv):
@@ -189,9 +225,14 @@ def main(argv):
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
         except OSError as exc:
-            # A report that cannot be written must not turn the run green or
-            # mask the exit code: say so on stderr, return the code anyway.
-            print(f"ci:fast: 警告 — 报告写入失败（{exc}），退出码不变", file=sys.stderr)
+            # No report on disk means "not passed" — a green exit without a
+            # report would be exactly the false green this rule exists to
+            # prevent. Failing runs keep their original (already non-zero) code.
+            print(f"ci:fast: 报告写入失败（{exc}）", file=sys.stderr)
+            report["reasons"].append(f"report write failed: {exc}")
+            if code == PASS:
+                print("ci:fast: 无法验证 — 检查通过但报告未落盘，按未通过处理", file=sys.stderr)
+                return UNKNOWN
         return code
 
     try:
@@ -220,12 +261,22 @@ def run(args, report, finish):
         report["reasons"].append("pre-commit unavailable")
         return finish("blocked", BLOCKED)
 
-    changed, base_sha, head, dirty, merge_base_ok = collect_changes(args.base)
+    changed, base_sha, head, staged, unstaged, untracked, merge_base_ok = collect_changes(args.base)
+    dirty = sorted(set(staged + unstaged + untracked))
+    fp = dirty_fingerprint(staged, unstaged, untracked)
     report.update(
         base={"ref": args.base, "merge_base": base_sha},
         head=head,
-        dirty={"count": len(dirty), "fingerprint": fingerprint(dirty), "files": dirty},
+        dirty={"count": len(dirty), "fingerprint": fp, "files": dirty},
     )
+    if args.base != "origin/main":
+        # The hooks file-size and migration-fork accept --base but the
+        # pre-commit command table invokes them without one: they always
+        # judge against origin/main while the selector used args.base.
+        divergence = (f"--base={args.base} 只影响选测；file-size/migration-fork "
+                      "仍按 origin/main 判定（pre-commit 命令表不传参），两者可能不一致")
+        print(f"ci:fast: 注意 — {divergence}")
+        report["reasons"].append(divergence)
     if not merge_base_ok:
         report["fallback"] = True
         report["reasons"].append(f"no merge base with {args.base}; selector fell back to all suites")
@@ -281,13 +332,9 @@ def run(args, report, finish):
 
     failures, timed_out = [], []
     print(f"ci:fast: base={base_sha or 'NONE'} head={head[:12]} "
-          f"dirty={len(dirty)}(fp {fingerprint(dirty)}) scope={[s for s, v in scope.items() if v]}")
+          f"dirty={len(dirty)}(fp {fp}) scope={[s for s, v in scope.items() if v]}")
     if unknown_paths:
         print(f"ci:fast: 未知路径已扩大范围: {', '.join(unknown_paths)}")
-    if dirty:
-        untracked_dirty = [p for p in dirty if p in git_lines("ls-files", "--others", "--exclude-standard")]
-        if untracked_dirty:
-            print(f"ci:fast: 未跟踪文件参与选测但 hook 不会检查其内容，先 git add: {', '.join(untracked_dirty)}")
 
     for hook_id in runnable:
         t0 = time.time()
