@@ -18,10 +18,20 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The discover below also picks up test_ci_fast.py, which drives real
+      # pre-commit against fixture repos — so the tool has to be present in
+      # this job too, provided the repo's way (uv, same pin as test.yml).
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
       - name: Check monitor behavior
         # Every test beside a script in .github/scripts, not one named file:
         # the next script added there is covered without anyone remembering to
         # extend this line.
+        env:
+          CI_FAST_PRECOMMIT: uvx pre-commit
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Assess heartbeat execution and observation coverage
         env:
