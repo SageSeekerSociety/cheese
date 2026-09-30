@@ -54,7 +54,12 @@ def room(**kw) -> RoomFacts:
 
 
 def card(status: AcceptStatus, **kw) -> CardFacts:
-    base = {"note_code": None, "merge_state_word": None, "merge_who": None}
+    base = {
+        "note_code": None,
+        "merge_state_word": None,
+        "merge_who": None,
+        "decided": False,
+    }
     return CardFacts(status=status, **{**base, **kw})
 
 
@@ -244,6 +249,41 @@ TASK_CASES = [
         task(card=card(AcceptStatus.pending, note_code=NoteCode.merge_conflict)),
         Column.delivering,
         Delivering.resolving_conflict,
+    ),
+    # 采纳已经点过、PR 进了 GitHub 的合并队列：这个窗口里 GitHub 对合并态报的是
+    # unknown，人会去读那张卡（读卡又会补一次快照），所以镜像随时可能被写成
+    # unknown/平台 (#2046)。那一步在平台和队列手上，不是把球交回给人。
+    (
+        "已采纳，合并态还没算完",
+        task(
+            card=card(
+                AcceptStatus.pending,
+                merge_state_word="unknown",
+                merge_who="platform",
+                decided=True,
+            )
+        ),
+        Column.delivering,
+        Delivering.awaiting_checks,
+    ),
+    # 平台入队时亲手记下的那一笔比轮询读到的 unknown 硬：有它就不看镜像了。
+    (
+        "note 记着已进合并队列",
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.waiting_merge_queue)),
+        Column.delivering,
+        Delivering.awaiting_checks,
+    ),
+    # 没采纳的卡读到 unknown 是另一回事：那是「还没算出来 / 读不出来」，采纳按钮
+    # 还在人手上，不能因为读不出来就替他把球收走。
+    (
+        "没采纳，合并态读不出来",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="unknown", merge_who="platform"
+            )
+        ),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
     ),
     (
         "等人采纳",

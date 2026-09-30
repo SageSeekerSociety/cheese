@@ -194,6 +194,11 @@ class CardFacts:
     #: CLEAN 才真的在等人。None = 还没镜像过（或这张卡不骑 PR）。
     merge_state_word: str | None = None
     merge_who: str | None = None
+    #: 人已经采纳过这张卡（`decided_by`），或者布防了「绿了自动合」
+    #: （`auto_merge_armed_by`）—— 和 `card_is_merging` 同一份判据，也是「这一步
+    #: 交出去了」的那条线。它要和镜像合起来读：合并队列里的 PR，GitHub 对合并态
+    #: 报的是 unknown，没有这一位那张卡会掉进默认格，被说成「等你审阅」(#2046)。
+    decided: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +264,7 @@ def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
         note_code=card.note_code,
         merge_state_word=state_word if isinstance(state_word, str) else None,
         merge_who=who if isinstance(who, str) else None,
+        decided=bool(card.decided_by or card.auto_merge_armed_by),
     )
 
 
@@ -400,6 +406,14 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     if card.status == "pending":
         # 等采纳的卡按「谁的活」分列 (#718，合并态镜像)：CI 在跑 / 检查红了 /
         # 平台在换基，都不是在等人；CLEAN（或还没镜像）才真的把球放在人手上。
+        #
+        # 进合并队列的那张卡是这条规矩的一个例外 (#2046)：平台入队时亲手记下
+        # 「已进合并队列」，而此后 GitHub 对它的合并态报的是 unknown，下一轮轮询
+        # （以及浏览器读卡时补的陈旧快照）会把镜像写成 unknown/平台。那一格不该
+        # 掉进默认的「等你审阅」—— 队里在跑检查，谁都不用动。note 记着这件事时就不
+        # 再看镜像了：它是平台写下的入队凭据，比轮询读到的 unknown 硬。
+        if card.note_code is NoteCode.waiting_merge_queue:
+            return _show(Delivering.awaiting_checks)
         match card.merge_who:
             case "agent":
                 if card.merge_state_word == "dirty":
@@ -408,6 +422,11 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
             case "platform" if card.merge_state_word == "behind":
                 return _show(Delivering.updating_branch)
             case "ci":
+                return _show(Delivering.awaiting_checks)
+            # 已经采纳（或布防了自动合）之后，GitHub 还没算完合并态：镜像是
+            # unknown 也好、是别的没见过的词也好，这一步都不在等人手上。还没采纳
+            # 的卡不适用 —— 那时 unknown 就是「读不出来」，仍旧等你去点。
+            case "platform" if card.decided:
                 return _show(Delivering.awaiting_checks)
             case _:
                 return _show(NeedsYou.awaiting_review)
