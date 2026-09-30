@@ -125,10 +125,6 @@ SPEC = re.compile(r"\.(spec|test)\.(ts|js|vue)$")
 IMPORT_CLAUSE = re.compile(
     r"""import\s+(type\s+)?([^'"]*?)\s+from\s+['"]([^'"]+)['"]""", re.DOTALL
 )
-#: A tag in a template: `<SettleView ...>` or `</settle-view>`.
-TAG_USE = re.compile(r"</?([A-Za-z][A-Za-z0-9_-]*)")
-#: What a template renders through `<component :is>` the check cannot see.
-DYNAMIC_TAG = re.compile(r"<component\b", re.IGNORECASE)
 
 #: Tags a template may render without an import the checker can grade: Vue
 #: and vue-router builtins. A local binding wins over these names — see
@@ -313,6 +309,19 @@ def pascal(tag: str) -> str:
     return "".join(part[:1].upper() + part[1:] for part in tag.split("-"))
 
 
+def camelize(tag: str) -> str:
+    """`settle-view` -> `settleView`; an already-camel tag is unchanged."""
+    head, *rest = tag.split("-")
+    return head + "".join(part[:1].upper() + part[1:] for part in rest)
+
+
+def resolve_names(tag: str) -> tuple[str, str, str]:
+    """The names Vue resolves a tag to, in Vue's order: as written, camelized,
+    PascalCased (`<router-view />` tries `router-view`, `routerView`,
+    `RouterView`)."""
+    return tag, camelize(tag), pascal(tag)
+
+
 def import_locals(clause: str) -> list[str]:
     """The local names an import clause binds: `A, { b, c as d }` -> `[A, b, d]`."""
     clause = clause.strip()
@@ -339,13 +348,14 @@ def template_tags(grade_module: Any, text: str) -> set[str]:
     """Component tags the template renders, as written.
 
     A tag is native only when it is a real HTML/SVG element: a lowercase
-    `<child />` is a component in Vue, not an element. Matching happens in
-    `paired_views` under every name Vue resolves (as written, then
-    PascalCased — Vue's own resolution order).
+    `<child />` is a component in Vue, not an element. Only real tags count —
+    `title="<SettleView />"` is an attribute value, not a render. Matching
+    happens in `paired_views` under every name Vue resolves (see
+    `resolve_names`).
     """
     tags: set[str] = set()
     for block in grade_module.template_blocks(text):
-        for tag in TAG_USE.findall(block):
+        for tag in grade_module.tag_names(block):
             if tag[:1].islower() and "-" not in tag and tag.lower() in NATIVE_TAGS:
                 continue  # a real HTML/SVG element
             tags.add(tag)
@@ -402,19 +412,21 @@ def paired_views(
             continue
 
         # (2) the template must render the view, and nothing unverifiable.
-        template = "\n".join(grade_module.template_blocks(text))
-        if DYNAMIC_TAG.search(template):
-            continue
+        names = [name for block in grade_module.template_blocks(text)
+                 for name in grade_module.tag_names(block)]
+        if any(name.lower() == "component" for name in names):
+            continue  # <component :is> — what it renders cannot be seen
         tags = template_tags(grade_module, text)
-        # Vue resolves a tag as written, then PascalCased — in that order.
-        if not any(name in view_names for tag in tags for name in (tag, pascal(tag))):
+        if not any(name in view_names for tag in tags for name in resolve_names(tag)):
             continue
 
-        # (3) every other rendered component is standalone or not ours. A
-        # local binding wins over a trusted name: `import RouterView from
-        # './LocalFetch.vue'` shadows the router's outlet and must be graded,
-        # and `const RouterView = ...` makes the name unprovable — what the
-        # check cannot prove is not exempted.
+        # (3) every other rendered component is standalone or not ours. Vue's
+        # resolution order decides what a tag IS: the first name a local
+        # import binds wins, and its grade is the verdict — there is no
+        # falling back to a builtin's trust past a real binding. A local
+        # declaration makes the name unprovable, and what the check cannot
+        # prove is not exempted. Only a tag no binding claims may be a
+        # builtin or Vuetify.
         script = "\n".join(grade_module.SCRIPT_BLOCK.findall(text))
         shadows = set(LOCAL_DECL.findall(script))
 
@@ -423,27 +435,24 @@ def paired_views(
             imported: dict[str, Path | None] = imported,
             shadows: set[str] = shadows,
         ) -> bool:
-            for name in (tag, pascal(tag)):  # Vue's resolution order
+            names = resolve_names(tag)
+            for name in names:
                 if name in imported:
                     target = imported[name]
                     if target is None:
                         return True  # a package component: not ours to grade
                     if target.suffix != ".vue":
-                        continue
+                        return False
                     try:
-                        if grade_module.grade_component(root, target, reach).standalone:
-                            return True
+                        return grade_module.grade_component(root, target, reach).standalone
                     except OSError:
-                        pass
-                    continue
+                        return False
                 if name in shadows:
-                    continue  # a local declaration hides what this name is
-                if name in GLOBAL_TAGS or name in VUETIFY_TAGS:
-                    return True  # a builtin, or Vuetify by name — never prefix
-            return False
+                    return False  # a local declaration hides what this name is
+            return any(name in GLOBAL_TAGS or name in VUETIFY_TAGS for name in names)
 
         rest = [tag for tag in tags
-                if not any(name in view_names for name in (tag, pascal(tag)))]
+                if not any(name in view_names for name in resolve_names(tag))]
         if all(verifiable(tag) for tag in rest):
             pairs[rel] = view.relative_to(root).as_posix()
     return pairs
@@ -1530,6 +1539,86 @@ def self_test() -> int:
         _fixture(root)
         baseline_path = _fixture_baseline(root)
 
+        # -- 13. the binding decides, and attributes do not render ------------
+        #    Two more, reproduced green by review and compiled by the repo's
+        #    own compiler-sfc: a local import under a trusted name (the check
+        #    saw the miss, then fell through to the builtin's trust), and a
+        #    `<SettleView />` that lives inside an attribute value (the tag
+        #    scan read strings as renders).
+        _fixture(root)
+        for label, tag in (("camelCase", "<routerView />"), ("kebab", "<router-view />")):
+            _fixture(root, {
+                "frontend/src/router/index.ts": _router(settle),
+                "frontend/src/views/Settle.vue": container.replace(
+                    "import SettleView from './SettleView.vue'\n",
+                    "import SettleView from './SettleView.vue'\n"
+                    "import routerView from '@/components/ChildFetch.vue'\n").replace(
+                    '<SettleView :thing="thing" :id="route.params.id" />',
+                    f'<SettleView :thing="thing" :id="route.params.id" />{tag}'),
+                "frontend/src/views/SettleView.vue": pure_view,
+                "frontend/src/components/ChildFetch.vue": (
+                    '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                    "<template><div>{{ r }}</div></template>\n"
+                ),
+            })
+            result = run_cli(root, baseline_path)
+            check(f"a local binding under a builtin name ({label}) decides",
+                  result.returncode, 1)
+            check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                "import SettleView from './SettleView.vue'\n",
+                "import SettleView from './SettleView.vue'\n"
+                "import vBtn from '@/components/ChildFetch.vue'\n").replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" /><v-btn />'),
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/components/ChildFetch.vue": (
+                '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                "<template><div>{{ r }}</div></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a local binding under a vuetify name decides", result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # an attribute value is not a render
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<div title="<SettleView />">x</div>'),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        result = run_cli(root, baseline_path)
+        check("a view named only inside an attribute value does not pair",
+              result.returncode, 1)
+        check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
+
+        # the control: attribute strings add no phantom tags either — a real
+        # container whose other attribute mentions a component stays green
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container.replace(
+                '<SettleView :thing="thing" :id="route.params.id" />',
+                '<SettleView :thing="thing" :id="route.params.id" />'
+                '<div title="<PlainNote />">x</div>'),
+            "frontend/src/views/SettleView.vue": pure_view,
+        })
+        check("a tag string inside an attribute does not break a real container",
+              run_cli(root, baseline_path).returncode, 0)
+
+        for rel in (
+            "frontend/src/views/Settle.vue",
+            "frontend/src/views/SettleView.vue",
+            "frontend/src/components/ChildFetch.vue",
+        ):
+            (root / rel).unlink(missing_ok=True)
+        _fixture(root)
+        baseline_path = _fixture_baseline(root)
+
         # -- 6. cannot judge --------------------------------------------------
         _fixture(root)
         result = run_cli(root, baseline_path)
@@ -1634,7 +1723,9 @@ def self_test() -> int:
         "comment, a child lost to a nested template, a V-prefixed stranger, a "
         "builtin shadowed by a local binding — and four Vue itself executes — a "
         "lowercase component, a quoted </template>, a shadowing declaration, a "
-        "V-name the import map lacks — with the controls that stay green, "
+        "V-name the import map lacks — and two more — a trusted name claimed by "
+        "a local binding, a view mentioned only inside an attribute value — "
+        "with the controls that stay green, "
         "debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "
         "to judge, and a wrong root being a 2)"

@@ -25,7 +25,7 @@ covers:
 |---|---|---|
 | **A** | 只吃 props 和事件 | 不用补，只差一份形状数据 |
 | **B** | 只读应用外壳的 store（`usePageTitleStore`、`useNavigationStore`） | 在外壳里装一个空的同名 store，或者把那两个读点改成 props |
-| **C** | 自己取数——直接 import、经中间模块绕、自己写 `fetch`/`axios`——或者读业务 store | 把取数那一段挪出去：外面拿数据，它只收结果（`PanelDoc` → `usePanelDoc.ts` → `PanelDocView` 就是这条路） |
+| **C** | 自己取数——直接 import、经中间模块绕、自己写 `fetch`/`axios`——或者读业务 store | 把取数那一段挪出去：外面拿数据，它只收结果。已合的样板：#2193 的 `views/spaces/detail/settings/BasicInfo.vue` 取数、读 store、保存、删除后跳转，同目录 `BasicInfoView.vue` 只收 props 和事件，A 级、已冻结在 ready |
 | **D** | 还绑在挂载位置上：读路由、`$parent` / `$root`、事件总线、`provide` / `inject` | 先把「从哪来」改成 props 或事件，再谈数据 |
 
 判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。**A 档在这一页就叫「能单独跑」**，[基线](#ratchet)冻的就是它。
@@ -94,7 +94,7 @@ covers:
 
 | 卡在哪 | 怎么改 |
 |---|---|
-| 直接取数（`@/api`、`@/network/*`、`@/services/*`） | 把取数挪到 composable 或页面里，场景只收 props。样板是房间面板那条路：`PanelDoc`（外壳，C）→ `composables/usePanelDoc.ts`（取数）→ `PanelDocView`（视图，A） |
+| 直接取数（`@/api`、`@/network/*`、`@/services/*`） | 把取数挪到 composable 或页面里，场景只收 props。已合的样板：#2193 的 `views/spaces/detail/settings/BasicInfo.vue` 当容器（经 `@/network/api/spaces` 取数、读 store、保存、删除后跳转），画面全在同目录 `BasicInfoView.vue`——只吃 props 和事件，A 级，已冻结在 ready |
 | 读路由（`useRoute` / `$route`） | 页面读地址，把要用的值作为 props 交给它的 `<页面名>View.vue` |
 | 读业务 store（`space`、`workspace`、`feedback`……） | 同上：读 store 的那一层留在页面或 composable 里，视图收结果 |
 | 新页面要读写数据 | 页面当容器：取数、保存、读地址都留在页面，画面放进同目录的 `<页面名>View.vue`，数据按 props 进，操作按事件出 |

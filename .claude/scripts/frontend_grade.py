@@ -259,6 +259,37 @@ def template_blocks(text: str) -> list[str]:
     return blocks
 
 
+def tag_names(block: str) -> list[str]:
+    """Every real tag name in a template block, in order.
+
+    Quote-aware like `template_blocks`: `title="<SettleView />"` is an
+    attribute value, and the string it holds is not a render.
+    """
+    names: list[str] = []
+    i, n = 0, len(block)
+    while i < n:
+        if block[i] == "<":
+            start = _TAG_START.match(block, i)
+            if start is not None:
+                j = start.end()
+                quote = ""
+                while j < n:
+                    char = block[j]
+                    if quote:
+                        if char == quote:
+                            quote = ""
+                    elif char in "\"'":
+                        quote = char
+                    elif char == ">":
+                        break
+                    j += 1
+                names.append(start.group(1))
+                i = j + 1
+                continue
+        i += 1
+    return names
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
