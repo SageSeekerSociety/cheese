@@ -35,6 +35,37 @@ class TaskRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def joined_by(user_id: int):
+        """The tasks ``user_id`` takes part in: as themselves on an individual
+        task, through one of their teams on a team task."""
+        user_member_exists = exists().where(
+            TaskMembership.task_id == Task.id,
+            TaskMembership.member_id == user_id,
+            TaskMembership.deleted_at.is_(None),
+        )
+        team_member_exists = exists().where(
+            TaskMembership.task_id == Task.id,
+            TaskMembership.deleted_at.is_(None),
+            TaskMembership.member_id == TeamUserRelation.team_id,
+            TeamUserRelation.user_id == user_id,
+            TeamUserRelation.deleted_at.is_(None),
+        )
+        return or_(
+            and_(Task.submitter_type == 0, user_member_exists),
+            and_(Task.submitter_type == 1, team_member_exists),
+        )
+
+    async def list_joined(self, user_id: int, *, limit: int) -> Sequence[Task]:
+        """Every task ``user_id`` takes part in, across spaces, latest first."""
+        stmt = (
+            select(Task)
+            .where(Task.deleted_at.is_(None), self.joined_by(user_id))
+            .order_by(Task.updated_at.desc(), Task.id.desc())
+            .limit(limit)
+        )
+        return (await self._session.execute(stmt)).scalars().all()
+
     async def list_tasks(
         self,
         *,
@@ -92,24 +123,7 @@ class TaskRepository:
 
         # joined 过滤：如果传入 joined 且当前用户已知，则根据用户是否参与任务过滤。
         if joined is not None and current_user_id is not None:
-            user_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.member_id == current_user_id,
-                TaskMembership.deleted_at.is_(None),
-            )
-
-            team_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.deleted_at.is_(None),
-                TaskMembership.member_id == TeamUserRelation.team_id,
-                TeamUserRelation.user_id == current_user_id,
-                TeamUserRelation.deleted_at.is_(None),
-            )
-
-            joined_predicate = or_(
-                and_(Task.submitter_type == 0, user_member_exists),
-                and_(Task.submitter_type == 1, team_member_exists),
-            )
+            joined_predicate = self.joined_by(current_user_id)
 
             if joined:
                 stmt = stmt.where(joined_predicate)
@@ -225,24 +239,7 @@ class TaskRepository:
             )
 
         if joined is not None and current_user_id is not None:
-            user_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.member_id == current_user_id,
-                TaskMembership.deleted_at.is_(None),
-            )
-
-            team_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.deleted_at.is_(None),
-                TaskMembership.member_id == TeamUserRelation.team_id,
-                TeamUserRelation.user_id == current_user_id,
-                TeamUserRelation.deleted_at.is_(None),
-            )
-
-            joined_predicate = or_(
-                and_(Task.submitter_type == 0, user_member_exists),
-                and_(Task.submitter_type == 1, team_member_exists),
-            )
+            joined_predicate = self.joined_by(current_user_id)
 
             if joined:
                 stmt = stmt.where(joined_predicate)

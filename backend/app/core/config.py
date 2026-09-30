@@ -328,6 +328,15 @@ class Settings(BaseSettings):
     docs_assistant_agentic: bool = True
     # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
+
+    # --- A person's 芝士 outside any project (app/domain/assistant, #2285) ---
+    # The gateway model it answers with; charged to the asker's personal
+    # credits at this model's rates, so the model must be priced on the gateway.
+    assistant_model: str = "deepseek-flash"
+    assistant_max_tokens: int = 1500
+    # When one question's prompt passes this many tokens, the older part of the
+    # conversation is summarised and dropped from what the model is sent.
+    assistant_history_cap_tokens: int = 16_000
     docs_question_retention_days: int = 90
     # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
     docs_dev_session_seconds: int = 3600

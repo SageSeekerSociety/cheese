@@ -12,6 +12,7 @@ from app.domain.agent import models as agent  # noqa: F401
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
 from app.domain.agent_session import models as agent_session  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401
+from app.domain.assistant import models as assistant  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401
 from app.domain.block import models as block  # noqa: F401
