@@ -345,10 +345,11 @@ def test_the_deployed_count_sits_beside_the_resolved_pair(client, as_admin):
         "in_progress",
         "resolved",
         "deployed",
+        "declined",
     }
     assert body["status"]["deployed"] == 1
     # 「已修复」那一级只数**现在停在 resolved** 的，和用户侧 `resolved` 栏（修复+上线
-    # 那一对）不是一个口径 —— 那个是筛选，这个是划分（四级加起来等于 total.all）。
+    # 那一对）不是一个口径 —— 那个是筛选，这个是划分（各状态加起来等于 total.all）。
     assert body["status"]["resolved"] == 0
     assert body["total"]["closed"] == 1
     # 上线也是「办完了」，所以它从「还没人管」里出去了 —— 同一个 `CLOSED_STATUSES`。

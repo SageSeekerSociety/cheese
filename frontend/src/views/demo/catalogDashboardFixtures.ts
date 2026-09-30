@@ -297,7 +297,7 @@ export const DASH_FEEDBACK: StatsFeedback = {
   days: 30,
   total: { all: 50, open: 35, closed: 15, unassigned: 19, urgent_open: 9 },
   columns: { public: 42, private: 4, agent: 6, security: 4 },
-  status: { received: 24, in_progress: 11, resolved: 8, deployed: 7 },
+  status: { received: 24, in_progress: 11, resolved: 8, deployed: 7, declined: 2 },
   unread: 12,
   series: week([3, 5, 2, 6, 4, 7, 3], 'created').map((row, i) => ({
     ...row,

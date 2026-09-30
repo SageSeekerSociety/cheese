@@ -123,14 +123,14 @@ PUBLIC_ONLY: tuple[Any, ...] = (
     Feedback.security.is_(False),
 )
 
-#: The two rungs that mean 「办完了」. Three places ask "is this still open?" and
-#: all three mean the same thing by it — the working tabs (a finished item stops
-#: competing for attention), the agent's daily quota, and the 分诊台's 「还没人管」
-#: count. Written once so a fifth rung lands in all three at the same time; the
-#: shape of the bug when it does not is a tab whose number disagrees with its list.
+#: 「办完了」: fixed, shipped, or declined. The working tabs (a finished item stops
+#: competing for attention), the agent's daily quota and the 分诊台's 「还没人管」
+#: count all ask "is this still open?" — written once so a new status lands in all
+#: three at once; otherwise a tab's number disagrees with its list.
 CLOSED_STATUSES: tuple[FeedbackStatus, ...] = (
     FeedbackStatus.resolved,
     FeedbackStatus.deployed,
+    FeedbackStatus.declined,
 )
 
 
@@ -679,12 +679,12 @@ class FeedbackRepository:
         (§8.23) did not take. The narrow one is also the easier to notice going
         wrong: the wide version quietly removes content nobody is looking for.
 
-        「办完了」 is `CLOSED_STATUSES` — both `resolved` and `deployed`. The
-        `resolved` tab is therefore 修复 **和** 上线: to the person who filed it
-        those are two halves of one answer (「我的问题没人管了」 is false the moment
-        either happens), and listing only the first makes the deployed ones look
-        like they went missing. The tab is labelled 「已完成」 rather than after
-        either status, because it is named for the pair. `active` is the single
+        「办完了」 is `CLOSED_STATUSES` — `resolved`, `deployed` and `declined`. The
+        `resolved` tab is therefore every way a report ends: to the person who
+        filed it 修复 and 上线 are two halves of one answer, and 不修复 is an answer
+        too; listing only the first makes the others look like they went
+        missing. The tab is labelled 「已完成」 rather than after any one status,
+        because it is named for the set. `active` is the single
         working rung (`in_progress`); 「已收录」 is not in it, because nobody has
         picked those up yet and 「活跃」 would then mean "everything that is not
         done".
@@ -779,9 +779,9 @@ class FeedbackRepository:
         all_count = await self._count([*where, *self._tab_where("all")])
         active_count = await self._count([*where, *self._tab_where("active")])
         resolved_count = await self._count([*where, *self._tab_where("resolved")])
-        # 「上线」那一个数，单独给。`resolved` 那一栏装的是**修复 + 上线**这一对
-        # （见 `_tab_where` 的 docstring），那个口径不改：对提交的人来说那是同一个
-        # 答复的两半。这只是**另外**多报一个数，让看板上「解决」和「上线」两条线画
+        # 「上线」那一个数，单独给。`resolved` 那一栏装的是全部办完的
+        # （见 `_tab_where` 的 docstring），那个口径不改：对提交的人来说那都是一个
+        # 答复。这只是**另外**多报一个数，让看板上「解决」和「上线」两条线画
         # 得出来 —— 缺了它，「上线了多少」在这个平台上从来没有被数过。
         deployed_count = await self._count(
             [*where, Feedback.status == FeedbackStatus.deployed]

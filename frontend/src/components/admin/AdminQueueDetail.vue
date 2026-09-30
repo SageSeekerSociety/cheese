@@ -7,7 +7,7 @@ import { useI18n } from 'vue-i18n'
 import AdminAssigneeSelect from '@/components/admin/AdminAssigneeSelect.vue'
 import StatusRail from '@/components/admin/StatusRail.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
-import { KIND_LABEL, PRIORITY_META, SOURCE_LABEL, statusMeta } from '@/lib/feedbackMeta'
+import { allStatuses, KIND_LABEL, PRIORITY_META, SOURCE_LABEL, statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -62,6 +62,7 @@ const NEXT: Record<FeedbackStatus, FeedbackStatus | null> = {
   in_progress: 'resolved',
   resolved: 'deployed',
   deployed: null,
+  declined: null,
 }
 
 /** 按钮文案按**目标**状态取（和队列行同一个理由：按钮说出口的是它要做的那件事）。
@@ -71,14 +72,16 @@ const ADVANCE_LABEL: Record<FeedbackStatus, string> = {
   resolved: 'feedback.queue.advance.resolved',
   deployed: 'feedback.queue.advance.deployed',
   received: '',
+  declined: '',
 }
 
 const next = computed(() => (props.item ? NEXT[props.item.status] : null))
 const advanceLabel = computed(() => (next.value ? t(ADVANCE_LABEL[next.value]) : ''))
 
-/** 状态梯子用**服务端**那份（meta 里的 `status_ladder`）：管理员看到的顺序就是这条
- *  反馈真会走的顺序，前端不另存一份。 */
-const statusItems = computed(() => store.statusLadder.map((s) => ({ title: statusMeta(s).label, value: s })))
+/** 状态选项用**服务端**那份（meta 里的 `statuses`）：梯子四级，外加梯子之外的「不修复」。 */
+const statusItems = computed(() =>
+  allStatuses(store.meta?.statuses).map((s) => ({ title: statusMeta(s).label, value: s }))
+)
 const priorityItems = computed(() =>
   Object.entries(PRIORITY_META).map(([value, meta]) => ({ title: meta.label, value }))
 )

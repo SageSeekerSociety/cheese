@@ -3474,3 +3474,94 @@ async def test_two_sends_of_one_card_at_once_file_one_report(
             .all()
         )
     assert len(rows) == 1
+
+
+# --- 不修复 -------------------------------------------------------------------
+#
+# 不修复 (`declined`): a report that was read and will not be acted on. It is a
+# way for a report to end, not a fifth rung: the reporter's ladder does not grow
+# a step after 已上线, and the report behaves as finished everywhere a finished
+# one does — no more supports, a declined bug sinks, it is in 「已完成」.
+
+
+def _declined_report(client, title: str = "按钮点了没反应", kind: str = "bug") -> dict:
+    r = client.post(
+        "/feedback",
+        json={"title": title, "kind": kind},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _decline(client, row: dict, admin: str) -> dict:
+    r = client.post(
+        f"/admin/feedback/{row['id']}/status",
+        json={"status": "declined"},
+        headers=session_auth_headers(admin),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _declined_titles(client, **params) -> set[str]:
+    r = client.get("/feedback", params=params)
+    assert r.status_code == 200, r.text
+    return {c["title"] for c in r.json()["data"]["data"]}
+
+
+def test_an_admin_declines_a_report_and_its_reporter_sees_it(client, as_admin):
+    row = _declined_report(client)
+
+    _decline(client, row, as_admin)
+
+    r = client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    detail = r.json()["data"]
+    assert detail["status"] == "declined"
+    assert detail["timeline"][-1]["status"] == "declined"
+
+
+def test_a_declined_report_cannot_be_supported(client, as_admin):
+    row = _declined_report(client)
+    _decline(client, row, as_admin)
+
+    r = client.post(
+        f"/feedback/{row['id']}/supports", headers=session_auth_headers(STRANGER)
+    )
+
+    assert r.status_code == 412, r.text
+
+
+def test_a_declined_bug_sinks_and_is_listed_as_finished(client, as_admin):
+    bug = _declined_report(client, "不修的 bug", "bug")
+    suggestion = _declined_report(client, "不做的建议", "suggestion")
+    _decline(client, bug, as_admin)
+    _decline(client, suggestion, as_admin)
+
+    working = _declined_titles(client, tab="all")
+    assert "不修的 bug" not in working
+    assert "不做的建议" in working
+    assert {"不修的 bug", "不做的建议"} <= _declined_titles(client, tab="resolved")
+    assert {"不修的 bug", "不做的建议"} <= _declined_titles(
+        client, tab="resolved", status="declined"
+    )
+
+
+def test_the_vocabulary_offers_declined_but_the_ladder_does_not(client):
+    meta = client.get("/feedback/meta").json()["data"]
+
+    assert "declined" in meta["statuses"]
+    assert "declined" not in meta["status_ladder"]
+
+
+def test_the_board_counts_a_declined_report_as_closed(client, as_admin):
+    before = client.get(
+        "/admin/stats/feedback", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    _decline(client, _declined_report(client), as_admin)
+
+    after = client.get(
+        "/admin/stats/feedback", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    assert after["status"]["declined"] == before["status"].get("declined", 0) + 1
+    assert after["total"]["closed"] == before["total"]["closed"] + 1

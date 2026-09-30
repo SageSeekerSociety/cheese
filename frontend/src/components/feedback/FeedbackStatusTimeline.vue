@@ -55,9 +55,17 @@ function noteParts(note: string | null | undefined): NotePart[] {
     .map((part) => ({ text: part, href: /^https?:\/\//.test(part) ? part : null }))
 }
 
+// 「不修复」不在梯子上：它是另一种结局，不是「已上线」之后的一级。这时梯子画到它就停 ——
+// 走过的那几级照画，后面的「已修复 / 已上线」不画，免得读的人以为还会轮到它们。
+const rungs = computed<FeedbackStatus[]>(() =>
+  props.ladder.includes(props.status)
+    ? props.ladder
+    : [...props.ladder.filter((s) => props.timeline.some((e) => e.status === s)), props.status]
+)
+
 const steps = computed<Step[]>(() => {
-  const currentIndex = props.ladder.indexOf(props.status)
-  return props.ladder.map((status, index) => {
+  const currentIndex = rungs.value.indexOf(props.status)
+  return rungs.value.map((status, index) => {
     // 同一状态可能被推进过两次（回退再推进），取**最早**那一次：时间线记的是
     // 「什么时候到过这里」，不是「最后一次是什么时候改回来的」。
     const entry = props.timeline.find((e) => e.status === status)

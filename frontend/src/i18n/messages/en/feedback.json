@@ -263,7 +263,8 @@
       "received": "Received",
       "inProgress": "In progress",
       "resolved": "Resolved",
-      "deployed": "Deployed"
+      "deployed": "Deployed",
+      "declined": "Won't fix"
     },
     "health": {
       "title": "Platform health",
@@ -524,14 +525,15 @@
       "title": "You haven't filed any feedback, and none is assigned to you",
       "action": "File one"
     },
-    "foot": "Finished feedback (fixed, shipped) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the room where it was filed."
+    "foot": "Finished feedback (fixed, shipped, won't fix) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the room where it was filed."
   },
   "status": {
     "received": "Received",
     "in_progress": "In progress",
     "resolved": "Resolved",
     "deployed": "Deployed",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "declined": "Won't fix"
   },
   "timeline": {
     "notStarted": "Not started"

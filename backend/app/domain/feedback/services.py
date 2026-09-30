@@ -86,7 +86,8 @@ SORTS: tuple[str, ...] = ("new", "supports")
 #: are reachable from any state, and a reopen (resolved → in_progress) is
 #: allowed: reports do get re-opened, and a status set that forbids it gets
 #: worked around by filing a duplicate instead — which loses the history that
-#: makes the report useful.
+#: makes the report useful. `declined` (不修复) is not on it: it is the other way
+#: out, not a fifth rung, and the reporter's ladder ends there instead.
 STATUS_LADDER: tuple[FeedbackStatus, ...] = (
     FeedbackStatus.received,
     FeedbackStatus.in_progress,
@@ -264,8 +265,8 @@ class FeedbackService:
         的 `statuses` / `kinds`），所以走到这里的一定是客户端版本落后了，而不是有人
         手打了什么。
         """
-        # 「办完了」那一栏装的是两级（修复 + 上线），而状态筛选是**单级**的。两者
-        # 不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
+        # 「办完了」那一栏装的是几种结局（修复、上线、不修复），状态筛选是**单级**的。
+        # 两者不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
         # `_tab_where` 合并，只保证两边都成立。
         if status is not None and status not in {s.value for s in FeedbackStatus}:
             raise BadRequestError(f"未知的状态：{status}")
@@ -365,7 +366,7 @@ class FeedbackService:
         rows they cannot open. It rides on `/admin/feedback` and nowhere else.
 
         `deployed` rides along from `public_counts` — a separate number beside
-        `resolved`, which keeps meaning 修复 + 上线 as a pair. See `_tab_where`.
+        `resolved`, which keeps meaning every closed status. See `_tab_where`.
         """
         counts = await self._repo.public_counts()
         if is_admin:
