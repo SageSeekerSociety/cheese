@@ -15,6 +15,8 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
 import argparse
 import base64
 import contextlib
+import functools
+import io
 import json
 import logging
 import os
@@ -903,6 +905,7 @@ def run_on_the_machine(target, command):
                 "command_id": command_id,
                 **params,
             },
+            preparing=sys.stderr if bash else None,  # a hook's stderr is its answer
         )
 
     # A stop has to reach the command even when this process does not live to
@@ -921,8 +924,7 @@ def run_on_the_machine(target, command):
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, on_signal)
 
-    # Started once, whatever it takes: the id makes a retried start the same
-    # start.
+    # Started once, whatever it takes: the id makes a retried start the same start.
     deadline = time.monotonic() + SHELL_START_RETRY_S
     while True:
         try:
@@ -1569,7 +1571,7 @@ def transport(config, target_path):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
-    def invoke_on_the_machine(payload, args, abandoned=None):
+    def invoke_on_the_machine(payload, args, abandoned=None, preparing=None):
         """项目工具的唯一出口 —— 机器够不着时它当场答，不去撞那条超时。"""
         gone_for = (
             None
@@ -1583,6 +1585,7 @@ def transport(config, target_path):
                 "invoke",
                 {"id": payload["id"], "tool": payload["tool"], "args": args},
                 abandoned=abandoned,
+                preparing=preparing,
             )
         except MachineOutOfReach:
             unreachable_since[0] = time.monotonic()
@@ -1594,8 +1597,8 @@ def transport(config, target_path):
     # 活在这条会话的 MCP 进程里：进程重起就当没读过，那是安全的方向。
     doc_versions: dict[str, int] = {}
 
-    def platform_tool(tool, args, call_id):
-        host = PlatformHost(client, invoke_on_the_machine, call_id, doc_versions)
+    def platform_tool(tool, args, call_id, invoke):
+        host = PlatformHost(client, invoke, call_id, doc_versions)
         try:
             text = cheese.run_platform_tool(tool, args, host)
         except MachineOutOfReach:
@@ -1735,38 +1738,18 @@ def transport(config, target_path):
                 ) and (tool not in cheese.PLATFORM_TOOLS):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
-                if tool == "chat_send":
+                # The arguments each of these takes, from the call's.
+                picked = {
+                    "chat_send": ("content", "reply_to", "request_id"),
+                    "project_tools": ("server", "name", "arguments"),
+                    "platform_request": ("method", "path", "body"),
+                }
+                if tool in picked:
                     payload = {
                         "id": payload["id"],
                         "session_id": payload["session_id"],
-                        "tool": "mcp__native__chat_send",
-                        "args": {
-                            key: payload[key]
-                            for key in ("content", "reply_to", "request_id")
-                            if key in payload
-                        },
-                    }
-                elif tool == "project_tools":
-                    payload = {
-                        "id": payload["id"],
-                        "session_id": payload["session_id"],
-                        "tool": "mcp__native__project_tools",
-                        "args": {
-                            key: payload[key]
-                            for key in ("server", "name", "arguments")
-                            if key in payload
-                        },
-                    }
-                elif tool == "platform_request":
-                    payload = {
-                        "id": payload["id"],
-                        "session_id": payload["session_id"],
-                        "tool": "mcp__native__platform_request",
-                        "args": {
-                            key: payload[key]
-                            for key in ("method", "path", "body")
-                            if key in payload
-                        },
+                        "tool": "mcp__native__" + tool,
+                        "args": {k: payload[k] for k in picked[tool] if k in payload},
                     }
                 elif tool == "send_user_file":
                     payload = {
@@ -1798,6 +1781,9 @@ def transport(config, target_path):
                 if tool == "invoke" and payload["tool"] not in NATIVE_TOOLS:
                     raise ValueError("Unknown native tool")
                 args = payload["args"]
+                # A call that waits for its machine is told so (`acquire`).
+                notice = io.StringIO()
+                invoke = functools.partial(invoke_on_the_machine, preparing=notice)
 
                 def abandoned():
                     # Checked again once the machine is ready: a call cancelled
@@ -1811,21 +1797,22 @@ def transport(config, target_path):
                             "project_tools",
                             {**args, "id": payload["id"]},
                             abandoned=abandoned,
+                            preparing=notice,
                         )
                     }
                 elif tool == "send_user_file":
                     receipt = deliver_send_user_file(
-                        client, config, payload, args, invoke_on_the_machine
+                        client, config, payload, args, invoke
                     )
                 elif tool != "chat_send" and tool in cheese.PLATFORM_TOOLS:
-                    receipt = platform_tool(tool, args, payload["id"])
+                    receipt = platform_tool(tool, args, payload["id"], invoke)
                 else:
                     receipt = (
                         client.platform_request(args)
                         if tool == "platform_request"
                         else client.publish_message(payload, args)
                         if tool == "chat_send"
-                        else invoke_on_the_machine(payload, args, abandoned)
+                        else invoke(payload, args, abandoned)
                     )
                 if "error" in receipt:
                     outcome = {"deny": receipt["error"]}
@@ -1833,6 +1820,8 @@ def transport(config, target_path):
                     outcome = {"result": receipt["value"]}
                     if tool == "invoke":
                         reached_skills(target_path, config, args)
+                if notice.getvalue():
+                    outcome["context"] = [notice.getvalue().strip()]
                 image = outcome.get("result", {})
                 if isinstance(image, dict) and image.get("type") == "image":
                     # Base64 in text hits Claude Code's MCP text-output limit.

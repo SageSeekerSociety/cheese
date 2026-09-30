@@ -20,9 +20,9 @@
         <span v-if="title" class="text-subtitle-1">{{ title }}</span>
         <template v-else>
           <template v-for="(item, index) in displayItems" :key="index">
-            <router-link v-if="item.isClickable" :to="item.path" class="text-subtitle-1 breadcrumb-link">
+            <NavLink v-if="item.isClickable" :to="item.path" class="text-subtitle-1 breadcrumb-link">
               {{ item.title }}
-            </router-link>
+            </NavLink>
             <span v-else class="text-subtitle-1">{{ item.title }}</span>
             <v-icon v-if="index < displayItems.length - 1" size="16">mdi-chevron-right</v-icon>
           </template>
@@ -59,6 +59,7 @@ import { storeToRefs } from 'pinia'
 
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
 
+import NavLink from '@/components/common/NavLink.vue'
 import { useNavigationStore } from '@/stores/navigation'
 
 interface Props {

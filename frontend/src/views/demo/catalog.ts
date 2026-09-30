@@ -24,6 +24,7 @@ import {
   CARD_FILED,
   CHEESE_LINES,
   EXCERPTS,
+  FEEDBACK_ROWS,
   KPI_STATES,
   LONG_ROW,
   NAV_ITEMS,
@@ -42,6 +43,7 @@ import {
   WANG_LINES,
 } from './catalogFixtures'
 
+import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
@@ -51,6 +53,7 @@ import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
+import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
@@ -249,8 +252,8 @@ export const CATALOG: CatalogEntry[] = [
     about: '平台在房间里说的话：本轮摘要、验收卡的动静、谁采纳了。',
     file: 'src/components/room/RoomNotice.vue',
     component: RoomNotice,
-    // 这一件里面还留着一个 `router-link`（「去确认」那颗按钮，见文件里 287 行），
-    // 所以它还不是「一件都不用装」的那一档 —— 目录里写着，免得有人以为漏了。
+    // 「去确认」那颗按钮是一条真链接（`NavLink`），所以路由还是要装：不装也画得出来，
+    // 但那一颗会退化成一行点不动的字。Vuetify 是它自己那几颗图标要的。
     needs: ['vuetify', 'router'],
     states: [
       {
@@ -654,6 +657,24 @@ export const CATALOG: CatalogEntry[] = [
     ],
   },
   {
+    id: 'legal-links',
+    title: 'LegalLinks',
+    about: '注册表单底下那两句协议：各是一条真链接，各去各的那一页。',
+    file: 'src/components/account/LegalLinks.vue',
+    component: LegalLinks,
+    // 一个字都不吃 props。装路由只为让那两条有 href —— 不装也画得出同样两句话，
+    // 只是点不动（`NavLink` 没路由就不给 href）。
+    needs: ['router'],
+    states: [
+      {
+        name: '两句',
+        note: '各自通到协议页 / 隐私政策页，而且新开一页：在注册表单里点开协议，填了一半的表单不会因此没了。',
+        props: {},
+        expect: '《用户协议》',
+      },
+    ],
+  },
+  {
     id: 'topic-rail-row',
     title: 'TopicRailRow',
     about: '话题列表里的一行：左边一个 16px 状态槽，右边未读和 hover 才浮现的 ⋯。',
@@ -952,6 +973,60 @@ export const CATALOG: CatalogEntry[] = [
           unreadOf: () => 0,
         },
         expect: '已归档',
+      },
+    ],
+  },
+  {
+    id: 'feedback-card',
+    title: 'FeedbackCard',
+    about: '反馈列表里的一行：正文那一块整块点进详情，支持按钮在链接外面。',
+    file: 'src/components/feedback/FeedbackCard.vue',
+    component: FeedbackCard,
+    // 支持那颗按钮读反馈 store（`toggleSupport`），所以 store 要在场；路由是给正文
+    // 那条链接用的（不装就画成一行点不动的字）。Vuetify 是按钮和图标要的。
+    needs: ['vuetify', 'pinia', 'router'],
+    states: [
+      {
+        name: '一行',
+        note: '一行一屏里的一行：标题一行、摘要两行封顶，底行是「哪一类、谁提的、多少人参与、走到哪一步」。',
+        props: { item: FEEDBACK_ROWS.plain },
+        expect: '导出一个月的数据要等四十秒',
+      },
+      {
+        name: '支持过了',
+        note: '支持是三个信号一起变（实心图标、数字颜色、底色），不只换颜色 —— 色觉障碍的读者也要看得出自己点没点过；标签挤在底行那一格里。',
+        props: { item: FEEDBACK_ROWS.supported },
+        expect: '性能',
+      },
+      {
+        name: '摘要和标题是同一句话',
+        note: '那就只画标题：把上面那行字再念一遍，占掉 40px 却一个字都没多说。',
+        props: { item: FEEDBACK_ROWS.sameLine },
+        expect: '导出一个月的数据要等四十秒',
+      },
+      {
+        name: '长标题',
+        note: '标题一行就截，摘要两行封顶：列表是用来扫的，一行的高度不能被一条撑开。',
+        props: { item: FEEDBACK_ROWS.long },
+        expect: '导出一个月的数据要等四十秒，而且导出到一半',
+      },
+      {
+        name: '不能公开的条目',
+        note: '私密（或管理员标了安全问题）就没有支持按钮：它不该让人知道它存在，而支持是公开表态。',
+        props: { item: FEEDBACK_ROWS.private },
+        expect: '私密',
+      },
+      {
+        name: '芝士提的',
+        note: '来源那一颗写「Agent 发现」；谁按的发送是另一件事（提案卡那条规矩），这里管不着。',
+        props: { item: FEEDBACK_ROWS.agent },
+        expect: 'Agent 发现',
+      },
+      {
+        name: '办完了的',
+        note: '已上线的条目支持按钮变灰、提示语换成「这条已经处理完了」——它已经做完了，不该再喊人支持。',
+        props: { item: FEEDBACK_ROWS.closed },
+        expect: '导出一个月的数据要等四十秒',
       },
     ],
   },

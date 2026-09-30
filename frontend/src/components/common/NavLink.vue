@@ -14,7 +14,8 @@
 // 都不发生的东西，比不画更糟（同 AdminKpiCard 文件头那条纪律）。
 //
 // class 由使用方给（`.akpi__link`、`.anl__row` 这些），透传到这一颗 `<a>` 上，
-// 所以换过来的时候样式一行不用改。
+// 所以换过来的时候样式一行不用改。`target="_blank"` 同理（协议那两句就是），而它
+// 还多一层意思：**带 `target` 的点击也是「交给浏览器」**，见下面 `onClick`。
 import type { NavTarget } from '@/lib/navTarget'
 
 import { computed } from 'vue'
@@ -33,6 +34,10 @@ function onClick(e: MouseEvent): void {
   if (!href.value || e.defaultPrevented || e.button !== 0) return
   // 带组合键的点击是「新开一个」的意思，交给浏览器按 href 去办。
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  // `target="_blank"` 也是「新开一个」：替它 preventDefault 会把新标签页吞掉，
+  // 原地跳走 —— 而用了 `_blank` 的地方（注册表单里的协议、重签协议那个弹窗）正是
+  // 最不能原地跳走的两种。判据和 router-link 的 `guardEvent` 一字不差。
+  if (/\b_blank\b/i.test((e.currentTarget as Element | null)?.getAttribute('target') ?? '')) return
   e.preventDefault()
   nav?.navigate(props.to)
 }

@@ -58,6 +58,25 @@ describe('NavLink：装了路由就是一条真链接', () => {
     expect(router.currentRoute.value.fullPath).toBe('/')
   })
 
+  it('`target="_blank"` 的点击也交给浏览器（新开一页，不在原地跳）', async () => {
+    const router = makeRouter()
+    await router.push('/')
+    const { getByText } = render(Link, {
+      props: { to: TO },
+      attrs: { target: '_blank' },
+      slots: { default: '爱丽丝' },
+      global: { plugins: [router] },
+    })
+    const a = getByText('爱丽丝')
+    // 属性照透传到 `<a>` 上：没有它浏览器也不会开新标签页。
+    expect(a.getAttribute('target')).toBe('_blank')
+    await fireEvent.click(a)
+    // 替它 preventDefault 会把新标签页吞掉、原地跳走 —— 用了 `_blank` 的地方（协议
+    // 那两句）正是最不能原地跳走的。判据与 router-link 的 `guardEvent` 一致。
+    await new Promise((r) => setTimeout(r, 0))
+    expect(router.currentRoute.value.fullPath).toBe('/')
+  })
+
   it('这条路不认识这个去处（少一个必填参数）：画得出来，但不是一条链接', async () => {
     const router = makeRouter()
     await router.push('/')
