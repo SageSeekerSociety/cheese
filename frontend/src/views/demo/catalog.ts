@@ -13,6 +13,7 @@
  */
 import type { Component } from 'vue'
 
+import { CHAT_ENTRIES } from './catalogChat'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import {
   ACCEPT_CARD,
@@ -603,6 +604,8 @@ export const CATALOG: CatalogEntry[] = [
   // 队列那三件（从 1309 行的 AdminQueuePage 拆出来的页头、工具行、四态块）在自己的
   // 文件里：`catalogQueue.ts`（数据在 `catalogQueueFixtures.ts`）。
   ...QUEUE_ENTRIES,
+  // 聊天面板那一组（ChatPanel 拆出来的那四件）在自己的文件里：`catalogChat.ts`。
+  ...CHAT_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',
