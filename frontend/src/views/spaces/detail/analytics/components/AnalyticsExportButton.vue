@@ -9,6 +9,7 @@
 import type { AnalyticsExportSection, SpaceAnalyticsQueryState } from '../utils'
 
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import { buildAnalyticsExportUrl } from '../utils'
@@ -22,6 +23,7 @@ const props = defineProps<{
   label?: string
 }>()
 
+const { t } = useI18n()
 const loading = ref(false)
 
 const download = async () => {
@@ -49,7 +51,7 @@ const download = async () => {
     URL.revokeObjectURL(url)
   } catch (error) {
     console.error(error)
-    toast.error('导出失败，请稍后重试')
+    toast.error(t('spaces.analytics.export.failed'))
   } finally {
     loading.value = false
   }

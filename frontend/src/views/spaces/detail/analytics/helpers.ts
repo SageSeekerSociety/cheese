@@ -7,6 +7,9 @@ export const formatCount = (value?: number | null) => new Intl.NumberFormat('zh-
 
 export const formatPercent = (value?: number | null, digits = 1) => `${((value || 0) * 100).toFixed(digits)}%`
 
+/** 表里的日期：只到日，数字写法，中英文一样。 */
+export const formatDate = (value: number) => dayjs(value).format('YYYY-MM-DD')
+
 export const withDistributionPercent = (distribution?: AnalyticsDistribution | null) => {
   const items = distribution?.items || []
   const total = items.reduce((sum, item) => sum + item.count, 0)

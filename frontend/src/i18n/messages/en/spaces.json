@@ -388,6 +388,224 @@
       "SUCCESS": "Passed",
       "WITH_REAL_NAME": "Verified",
       "WITHOUT_REAL_NAME": "Not verified"
-    }
+    },
+    "sortBy": "Sort",
+    "sortOrder": {
+      "label": "Order",
+      "desc": "Descending",
+      "asc": "Ascending"
+    },
+    "groupBy": {
+      "label": "Interval",
+      "day": "Daily",
+      "week": "Weekly",
+      "month": "Monthly"
+    },
+    "publisher": {
+      "label": "Publisher",
+      "all": "All"
+    },
+    "export": {
+      "failed": "Export failed. Try again later"
+    },
+    "alerts": {
+      "empty": "No alerts",
+      "loadFailed": "Couldn't load alerts",
+      "pendingTasks": {
+        "label": "Problems to review",
+        "hint": "Open the problems awaiting review"
+      },
+      "pendingClaims": {
+        "label": "Claims to approve",
+        "hint": "Open problems with claims to approve"
+      },
+      "pendingReviews": {
+        "label": "Submissions to review",
+        "hint": "Open problems with submissions to review"
+      },
+      "stalledTasks": {
+        "label": "Stalled problems",
+        "hint": "Claimed, but nothing submitted in 14 days"
+      },
+      "overdueReviews": {
+        "label": "Overdue reviews",
+        "hint": "Submitted over 7 days ago, not reviewed"
+      },
+      "inactivePublishers": {
+        "label": "Inactive publishers",
+        "hint": "No problem published in 30 days"
+      }
+    },
+    "tasks": {
+      "pendingClaims": "Claims to approve",
+      "pendingReviews": "Submissions to review",
+      "export": "Export problems",
+      "loadFailed": "Couldn't load problem data",
+      "sort": {
+        "createdAt": "Created",
+        "participantCount": "Claims",
+        "successRate": "Success rate",
+        "pendingReviewCount": "To review"
+      },
+      "col": {
+        "taskName": "Problem",
+        "publisher": "Publisher",
+        "category": "Category",
+        "approved": "Review",
+        "createdAt": "Created",
+        "deadline": "Deadline",
+        "participantCount": "Claims",
+        "pendingParticipantApprovalCount": "Claims to approve",
+        "pendingReviewCount": "To review",
+        "submissionConversionRate": "Submit rate",
+        "successRate": "Success rate"
+      }
+    },
+    "publishers": {
+      "export": "Export publisher data",
+      "loadFailed": "Couldn't load publisher data",
+      "col": {
+        "publisherName": "Publisher",
+        "taskCount": "Problems",
+        "participantCount": "Claims",
+        "approvedParticipantCount": "Approved claims",
+        "submittedParticipantCount": "Submitted",
+        "successfulParticipantCount": "Succeeded",
+        "avgParticipantsPerTask": "Claims per problem",
+        "submissionConversionRate": "Submit rate",
+        "successRate": "Success rate",
+        "lastTaskCreatedAt": "Last published"
+      },
+      "sort": {
+        "taskCount": "Problems",
+        "participantCount": "Claims",
+        "successRate": "Success rate",
+        "lastTaskCreatedAt": "Last published"
+      },
+      "rank": {
+        "mostTasks": "Most problems",
+        "tasks": "{n} problems",
+        "bestRate": "Best success rate",
+        "mostClaims": "Most claims",
+        "claims": "{n} claims"
+      }
+    },
+    "participants": {
+      "approval": "Claim review",
+      "completion": "Completion",
+      "realName": "Real name",
+      "realNameOption": {
+        "all": "All",
+        "with": "Verified",
+        "without": "Not verified"
+      },
+      "export": "Export participants",
+      "loadFailed": "Couldn't load participant data",
+      "empty": "No participant data",
+      "metric": {
+        "claims": {
+          "label": "Claims",
+          "hint": "A person or a team counts once"
+        },
+        "approved": {
+          "label": "Approved claims",
+          "hint": "Claims that were approved"
+        },
+        "succeeded": {
+          "label": "Succeeded",
+          "hint": "Claims marked successful"
+        },
+        "realName": {
+          "label": "Verified members",
+          "hint": "Members with a verified real name"
+        }
+      },
+      "trend": {
+        "joined": "Claims",
+        "submitted": "Submissions",
+        "succeeded": "Successes"
+      },
+      "distribution": {
+        "approval": "Claim review",
+        "completion": "Completion",
+        "realName": "Real name",
+        "grade": "Grade",
+        "major": "Major",
+        "className": "Class"
+      }
+    },
+    "overview": {
+      "loadFailed": "Couldn't load the overview",
+      "empty": "No overview data",
+      "alerts": "Needs attention",
+      "trend": {
+        "joined": "Claims",
+        "succeeded": "Successes"
+      },
+      "distribution": {
+        "category": "Categories",
+        "approval": "Problem review",
+        "completion": "Completion"
+      },
+      "metric": {
+        "tasks": {
+          "label": "Problems",
+          "hint": "Problems counted"
+        },
+        "publishers": {
+          "label": "Publishers",
+          "hint": "Published at least one counted problem"
+        },
+        "claims": {
+          "label": "Claims",
+          "hint": "A person or a team counts once"
+        },
+        "submitted": {
+          "label": "Submitted",
+          "hint": "Submit rate {rate}"
+        },
+        "succeeded": {
+          "label": "Succeeded",
+          "hint": "Success rate {rate}"
+        },
+        "members": {
+          "label": "Members",
+          "hint": "Teams counted by member"
+        }
+      }
+    },
+    "learning": {
+      "lede": "Where members got stuck talking to the AI, to pick what the next lecture covers",
+      "student": "Member",
+      "knowledgePoint": "Topic",
+      "allStudents": "All",
+      "allKnowledgePoints": "All",
+      "summary": "{projects} member projects · {students} members · {questions} messages · {stuck} shared sticking points",
+      "noProjects": "No member projects visible",
+      "queue": {
+        "title": "To handle",
+        "hint": "Shared sticking points, ordered by how many members hit them",
+        "flagged": "Questions members marked as unanswerable",
+        "noFlagged": "No marked questions",
+        "unavailable": "Nothing to show",
+        "noStuck": "No shared sticking points"
+      },
+      "questions": {
+        "title": "Member messages",
+        "hint": "{n} in all. Tick the ones to include in the outline",
+        "empty": "No member messages"
+      },
+      "selected": "{n} messages selected",
+      "clear": "Clear",
+      "buildOutline": "Build lecture outline",
+      "outlineHint": "Sections follow the order you ticked",
+      "toast": {
+        "filtersFailed": "Couldn't load learning filters",
+        "queuesFailed": "Couldn't load the queue",
+        "questionsFailed": "Couldn't load member messages",
+        "outlineFailed": "Couldn't build the outline"
+      }
+    },
+    "all": "All"
   }
 }

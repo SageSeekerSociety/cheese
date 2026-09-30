@@ -440,6 +440,224 @@
       "SUCCESS": "通过",
       "WITH_REAL_NAME": "已实名",
       "WITHOUT_REAL_NAME": "未实名"
-    }
+    },
+    "sortBy": "排序",
+    "sortOrder": {
+      "label": "排序方向",
+      "desc": "降序",
+      "asc": "升序"
+    },
+    "groupBy": {
+      "label": "粒度",
+      "day": "按日",
+      "week": "按周",
+      "month": "按月"
+    },
+    "publisher": {
+      "label": "出题人",
+      "all": "全部"
+    },
+    "export": {
+      "failed": "导出失败，稍后重试"
+    },
+    "alerts": {
+      "empty": "暂无告警",
+      "loadFailed": "加载告警失败",
+      "pendingTasks": {
+        "label": "待审核题目",
+        "hint": "点开看待审核的题目"
+      },
+      "pendingClaims": {
+        "label": "待审核报名",
+        "hint": "点开看有报名待审核的题目"
+      },
+      "pendingReviews": {
+        "label": "待评审提交",
+        "hint": "点开看有提交待评审的题目"
+      },
+      "stalledTasks": {
+        "label": "停滞题目",
+        "hint": "有人报名，但 14 天没有提交"
+      },
+      "overdueReviews": {
+        "label": "超时未评审",
+        "hint": "提交超过 7 天没有评审"
+      },
+      "inactivePublishers": {
+        "label": "长期不活跃出题人",
+        "hint": "30 天没有发题"
+      }
+    },
+    "tasks": {
+      "pendingClaims": "待审核报名",
+      "pendingReviews": "待评审提交",
+      "export": "导出题目清单",
+      "loadFailed": "加载题目数据失败",
+      "sort": {
+        "createdAt": "创建时间",
+        "participantCount": "报名主体数",
+        "successRate": "成功率",
+        "pendingReviewCount": "待评审数"
+      },
+      "col": {
+        "taskName": "题目",
+        "publisher": "出题人",
+        "category": "分类",
+        "approved": "审核状态",
+        "createdAt": "创建时间",
+        "deadline": "截止时间",
+        "participantCount": "报名主体",
+        "pendingParticipantApprovalCount": "待审核报名",
+        "pendingReviewCount": "待评审",
+        "submissionConversionRate": "提交转化率",
+        "successRate": "成功率"
+      }
+    },
+    "publishers": {
+      "export": "导出出题人数据",
+      "loadFailed": "加载出题人数据失败",
+      "col": {
+        "publisherName": "出题人",
+        "taskCount": "题目数",
+        "participantCount": "报名主体",
+        "approvedParticipantCount": "审核通过报名",
+        "submittedParticipantCount": "提交主体",
+        "successfulParticipantCount": "成功主体",
+        "avgParticipantsPerTask": "平均每题报名",
+        "submissionConversionRate": "提交转化率",
+        "successRate": "成功率",
+        "lastTaskCreatedAt": "最近发题"
+      },
+      "sort": {
+        "taskCount": "题目数",
+        "participantCount": "报名主体数",
+        "successRate": "成功率",
+        "lastTaskCreatedAt": "最近发题时间"
+      },
+      "rank": {
+        "mostTasks": "发题最多",
+        "tasks": "{n} 个题目",
+        "bestRate": "成功率最高",
+        "mostClaims": "报名最多",
+        "claims": "{n} 个报名主体"
+      }
+    },
+    "participants": {
+      "approval": "报名审核",
+      "completion": "完成状态",
+      "realName": "实名",
+      "realNameOption": {
+        "all": "全部",
+        "with": "已实名",
+        "without": "未实名"
+      },
+      "export": "导出参与者明细",
+      "loadFailed": "加载参与者数据失败",
+      "empty": "暂无参与者数据",
+      "metric": {
+        "claims": {
+          "label": "报名主体数",
+          "hint": "个人和团队都按一个主体计算"
+        },
+        "approved": {
+          "label": "审核通过报名",
+          "hint": "审核通过的报名主体"
+        },
+        "succeeded": {
+          "label": "成功主体数",
+          "hint": "完成状态为成功的主体"
+        },
+        "realName": {
+          "label": "实名成员数",
+          "hint": "已实名的成员"
+        }
+      },
+      "trend": {
+        "joined": "报名趋势",
+        "submitted": "提交趋势",
+        "succeeded": "成功趋势"
+      },
+      "distribution": {
+        "approval": "报名审核状态",
+        "completion": "完成状态",
+        "realName": "实名状态",
+        "grade": "年级",
+        "major": "专业",
+        "className": "班级"
+      }
+    },
+    "overview": {
+      "loadFailed": "加载总览失败",
+      "empty": "暂无总览数据",
+      "alerts": "待处理",
+      "trend": {
+        "joined": "报名主体趋势",
+        "succeeded": "成功趋势"
+      },
+      "distribution": {
+        "category": "题目分类",
+        "approval": "题目审核状态",
+        "completion": "参与完成状态"
+      },
+      "metric": {
+        "tasks": {
+          "label": "题目总数",
+          "hint": "纳入统计的题目"
+        },
+        "publishers": {
+          "label": "发题人数",
+          "hint": "发过有效题目的出题人"
+        },
+        "claims": {
+          "label": "报名主体数",
+          "hint": "个人或团队都按一个主体计算"
+        },
+        "submitted": {
+          "label": "提交主体数",
+          "hint": "提交转化率 {rate}"
+        },
+        "succeeded": {
+          "label": "成功主体数",
+          "hint": "成功率 {rate}"
+        },
+        "members": {
+          "label": "真实成员人数",
+          "hint": "团队按成员展开"
+        }
+      }
+    },
+    "learning": {
+      "lede": "成员与 AI 对话时卡住的地方，用来挑下一讲要讲的内容",
+      "student": "成员",
+      "knowledgePoint": "知识点",
+      "allStudents": "全部",
+      "allKnowledgePoints": "全部",
+      "summary": "可查看的成员项目 {projects} 个 · 成员 {students} 人 · 发言 {questions} 条 · 共性卡点 {stuck} 个",
+      "noProjects": "暂无可查看的成员项目",
+      "queue": {
+        "title": "待处理队列",
+        "hint": "共性卡点按有多少个成员撞上排序",
+        "flagged": "成员标记「这道题我答不了」的问题",
+        "noFlagged": "暂无成员标记的问题",
+        "unavailable": "暂无可显示的内容",
+        "noStuck": "暂无共性卡点"
+      },
+      "questions": {
+        "title": "成员发言",
+        "hint": "共 {n} 条，勾选要带进提纲的",
+        "empty": "暂无成员发言"
+      },
+      "selected": "已选 {n} 条发言",
+      "clear": "清空",
+      "buildOutline": "生成讲解提纲",
+      "outlineHint": "讲次按勾选顺序排列",
+      "toast": {
+        "filtersFailed": "加载学习筛选条件失败",
+        "queuesFailed": "加载待处理队列失败",
+        "questionsFailed": "加载成员发言失败",
+        "outlineFailed": "生成讲解提纲失败"
+      }
+    },
+    "all": "全部"
   }
 }
