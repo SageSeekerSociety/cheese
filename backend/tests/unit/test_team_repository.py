@@ -30,6 +30,7 @@ def _team(**overrides):
         "id": 1,
         "name": "Team Alpha",
         "avatar_id": None,
+        "personal_owner_user_id": None,
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,
@@ -334,7 +335,8 @@ class TestTeamRepository:
     async def test_add_member_conflict(self):
         session = _mock_session()
         existing = _relation()
-        session.execute.return_value = _mock_scalar(existing)
+        # The team is read first, then the member's existing relation.
+        session.execute.side_effect = [_mock_scalar(_team()), _mock_scalar(existing)]
         repo = TeamRepository(session)
 
         with pytest.raises(ConflictError, match="already a member"):

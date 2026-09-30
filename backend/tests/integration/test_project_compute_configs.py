@@ -25,13 +25,26 @@ from tests.integration.conftest import post_project
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
-def setup_project(client, monkeypatch):
+def setup_project(client, monkeypatch, *, shared_team: bool = False):
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     client.headers["Authorization"] = f"Bearer {seed_user(client, 'config_owner')}"
-    response = post_project(
-        client, json={"name": "Compute", "owner_handle": "config_owner"}
-    )
+    body = {"name": "Compute", "owner_handle": "config_owner"}
+    if shared_team:
+        # Without it the project sits in the owner's personal team, which
+        # nobody else can join.
+        response = client.post(
+            "/teams",
+            json={
+                "name": "Compute Team",
+                "intro": "",
+                "description": "",
+                "avatarId": 1,
+            },
+        )
+        assert response.status_code == 201, response.text
+        body["team_id"] = response.json()["data"]["team"]["id"]
+    response = post_project(client, json=body)
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]
 
@@ -139,7 +152,7 @@ def test_team_device_can_be_project_default_without_project_assignment(
 
 
 def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeypatch):
-    pid = setup_project(client, monkeypatch)
+    pid = setup_project(client, monkeypatch, shared_team=True)
     tid = new_room(client, pid)
     member_token = seed_user(client, "config_member")
 
