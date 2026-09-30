@@ -83,8 +83,8 @@
 |---|---|---|
 | G1 | 没有 `note`，自由输入写不进去 | `answer_options` 只读 `body["option"]` |
 | G2 | 自动补的「以上都不是」过不了逐字校验 | `option not in options` |
-| G3 | 已答 400，没有更正路径 | `if meta.get("answered"): raise` |
-| G4 | 无版本号、无幂等键、无持久存储 | 并发后写被拒但前一次已落库；重试拿 400 |
+| G3 | 已答 422，没有更正路径 | `if meta.get("answered"): raise` |
+| G4 | 无版本号、无幂等键、无持久存储 | 并发后写被拒但前一次已落库；重试拿 422 |
 | G5 | 回执单值装不下「原答案 + 更正」 | `answered`/`answered_by` 各一个 |
 | G6 | 待办行不指到题 | `WaitingItem` 无 `blockId` |
 | G7 | 多题没有实体，也没有一次建一组的入口 | CLI 一次一题 |
@@ -182,11 +182,11 @@ POST /topics/blocks/{id}/answer
    - payload 与已存那一版**相同** → 200 返回那一版，不追加、不唤醒
    - payload **不同** → 409「同一个 client_op_id 换了内容」
 1. `resolver.resolve(fallback_handle=body["author"], …)` 取 `actor`，`authorize_topic(actor, …)`。**授权比较一律用 `actor.handle`**；`body.author` 不参与授权（`auth.py:115` 明写 *Legacy authorship fallback does not authenticate*）。
-2. `kind='option'` 时 `option` 必须在 `options[].text` 里，否则 400「不在选项里」。`kind='note'` / `'reject'` 时 `option` 必须为空 —— **不伪造合法项**。
-3. `kind='note'` 需要 `allow_other`（读建题 meta，不是读请求）；没有就 400「这道题不接受自由输入」。
+2. `kind='option'` 时 `option` 必须在 `options[].text` 里，否则 422「不在选项里」。`kind='note'` / `'reject'` 时 `option` 必须为空 —— **不伪造合法项**。
+3. `kind='note'` 需要 `allow_other`（读建题 meta，不是读请求）；没有就 422「这道题不接受自由输入」。
 4. `note` 与 `kind='option'` 可同给（选项 + 补充）。
 5. 已有 `answer_log` 走**更正**：
-   - `actor.handle != answer_log[-1].by` → 400「只有原答者能更正」
+   - `actor.handle != answer_log[-1].by` → 422「只有原答者能更正」
    - `expect_version != answer_log[-1].v` → 409
    - 旧版本留着，追加 `{v: len+1, …}`
 6. **CAS**：`UPDATE … SET meta = … WHERE id = :id AND (meta->'answer_log' 的长度 == expect_version + 1)`，或对行 `SELECT … FOR UPDATE`；两并发只出一版，落败的那个拿 409。
@@ -195,6 +195,8 @@ POST /topics/blocks/{id}/answer
 9. 之后才 `publish`（`block_updated` + 新消息块）。广播是尽力而为，状态已经落库，前端可以重取。
 
 `event_id` 用 `event_id_for(type, f"{block_id}:{v}")` —— **只取决于 block 和版本**，所以同版本重算是同一个 id、`record_agent` 的 `on_conflict_do_nothing` 保证不重复记账；不同版本是不同的 event，更正的唤醒不会被第一版的去重键吞掉。
+
+**状态码跟仓库现有的类走**（`app/core/errors.py`）：内容不合法用 `ValidationError` → **422**（今天「不在选项里」「已由 X 选过」就是它，`test_answer_validates_option_and_single_shot` 钉的也是 422）；版本与并发冲突用 `ConflictError` → **409**。不用 400（那是 `BadRequestError`，本仓这条链路上没用过），也不用 403（那是 `ForbiddenError`，说的是「你不是这个话题的成员」，和「你在房间里但不能改别人的答案」不是一回事）。
 
 `seat` 仍按现状：问题署名者（还在名册上时），否则房间默认席位。**`asked=None` 维持现有范围**，不新定多人规则。
 
@@ -212,7 +214,7 @@ POST /topics/asks/{group_id}/settle
 }
 ```
 
-- 三个列表**合起来必须恰好覆盖组内全部 `block_id`**，多一个少一个都 400 —— 这就是「一次表达所交题与明确未答/稍后题」。
+- 三个列表**合起来必须恰好覆盖组内全部 `block_id`**，多一个少一个都 422 —— 这就是「一次表达所交题与明确未答/稍后题」。
 - `answered` 里的每一项按 4.4 的规则逐个写 `answer_log`（各自幂等键）。
 - `group_settle` 写到组内**每一块**上（同值冗余），任何一块都能自己说清「本组 2/3 已交」，不用 join。
 - **唤醒文案照实写**：`3 题里交了 2 题，1 题标了稍后（第 3 题）。` 而不是「整组都答完了」。文案由 settle 的三个列表拼，不从 `answer_log` 数量倒推。
@@ -310,18 +312,18 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 
 | # | 输入 | 必须 |
 |---|---|---|
-| R1 | `kind` 与内容都空 | 400 |
-| R2 | `kind='option'` 但 `option` 不在 `options[].text` | 400「不在选项里」 |
+| R1 | `kind` 与内容都空 | 422 |
+| R2 | `kind='option'` 但 `option` 不在 `options[].text` | 422「不在选项里」 |
 | R3 | `kind='reject'`（界面上的「以上都不是」） | 成功；`answer_log.kind='reject'`、`option=null` |
-| R4 | `kind='note'` 但建题 `allow_other=false` | 400「这道题不接受自由输入」 |
+| R4 | `kind='note'` 但建题 `allow_other=false` | 422「这道题不接受自由输入」 |
 | R5 | `kind='note'` 且 `allow_other=true` | 成功；`option=null`，**不伪造合法项** |
-| R6 | A 答完，B 想更正 | 400「只有原答者能更正」（比较 `actor.handle`） |
+| R6 | A 答完，B 想更正 | 422「只有原答者能更正」（比较 `actor.handle`） |
 | R7 | A 并发两次，`expect_version` 都是 0 | 只出一版；落败那次 409 |
 | R8 | 同 `client_op_id` 同 payload 重发 | 200，`answer_log` 长度不变，**不重复记账、不重复唤醒** |
 | R9 | 同 `client_op_id` 换 payload | 409「同一个 client_op_id 换了内容」 |
 | R10 | `expect_version` 与 `answer_log[-1].v` 不符 | 409 |
 | R11 | `body.author` 写成别人的名字（有凭据时） | 仍按 `actor.handle` 记录与授权，`body.author` 无效 |
-| R12 | 提问方给 1 项或 4 项 | 400（`2 ≤ 提问方选项 ≤ 3`，界面自动补的那项不计入） |
+| R12 | 提问方给 1 项或 4 项 | 422（`2 ≤ 提问方选项 ≤ 3`，界面自动补的那项不计入） |
 | R13 | `kind='reject'` 或纯 note | **不**把「以上都不是」写进 `options`，**不**造出一条假的 `options[].text` |
 | R14 | 平台轮次问的题（`asked=None`） | 谁都能答；更正仍限原答者；谁也不通知 |
 | R15 | 已答的题再点按钮 | 前端不出按钮；直接打 API 走更正路径 |
@@ -330,7 +332,7 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 | R18 | **postcommit 通知故障**（`answer_log` 已提交、唤醒那步抛异常） | `Delivery` 行已在同事务里落成 `pending`；`dispatch_pending` 之后补送，**恰好一次**；不允许永久不接续 |
 | R19 | 出题席位在跑时更正 | 注入/排队接新指令，**不重放原回答** |
 | R20 | 出题席位空闲时更正 | 正常唤醒接下一轮 |
-| R21 | settle 的三个列表没覆盖全组 / 多出一个 | 400 |
+| R21 | settle 的三个列表没覆盖全组 / 多出一个 | 422 |
 | R22 | settle 后唤醒文案 | 明写「交了 X 题、稍后 Y 题、未答 Z 题」，**不得**称整组全答 |
 | R23 | `later` 的题 | 不写 `answer_log`；待我处理里能按 `blockId` 找回 |
 | R24 | 迁移前的旧答案 | `answer_log` 一条、`at=null`、`by` 是原 `answered_by`、`option` 是原 `answered`；**没有伪造的时间** |
