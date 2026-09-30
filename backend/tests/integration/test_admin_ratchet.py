@@ -19,6 +19,7 @@ import json
 import zipfile
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -428,6 +429,39 @@ def test_a_mint_github_refuses_is_reported_instead_of_raised(
     refresh = response.json()["data"]["refresh"]
     assert "403" in refresh["error"]
     assert "签发" in refresh["error"]
+    assert refresh["listed"] == 0
+
+
+def test_a_mint_that_cannot_reach_github_is_reported_too(
+    client, as_admin, monkeypatch: pytest.MonkeyPatch
+):
+    """网络不通和对方拒签是两件事，但都不能穿成 500。
+
+    铸牌子那次 httpx 请求抛 `ConnectError` / `TimeoutException` 时，原来只有
+    `GitHubAppError` 被接住，其余从路由直逃 —— 形状和 403 那次一样，只是原因该换成
+    「没问到话」。所以这句要读得出是连不上，而不是 GitHub 拒绝了什么。
+    """
+
+    class _UnreachableMint:
+        async def installation_token(self) -> tuple[str, str]:
+            raise httpx.ConnectError("connection refused")
+
+    async def _unreachable(project_id, session) -> _UnreachableMint:
+        return _UnreachableMint()
+
+    seed_user(client, ADMIN)
+    _connect_repo(client)
+    monkeypatch.setattr(project_forge, "github_app_tokens_for_project", _unreachable)
+
+    response = client.post(
+        "/admin/ratchet/refresh", headers=session_auth_headers(ADMIN)
+    )
+
+    assert response.status_code == 200
+    refresh = response.json()["data"]["refresh"]
+    assert "连不上" in refresh["error"]
+    assert "connection refused" in refresh["error"]
+    assert "拒绝" not in refresh["error"]
     assert refresh["listed"] == 0
 
 

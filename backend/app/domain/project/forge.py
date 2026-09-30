@@ -74,9 +74,13 @@ async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoRe
     只该问这一句。按仓库查这一步复用 `ProjectGitInstallationRepository.get_by_repo`
     （仓库名大小写不敏感的那条既有查法），不另写一遍。
 
-    铸牌子也在这里做完，理由相同：App 拒签（403、安装信息读不到）是**这一块**的
-    故障。调用方要的是「没有凭据，原因是这句」；让异常穿出去，采集那侧只剩一个
-    500 —— 页面上已存下的点还在，却没人知道这次为什么没有新的。
+    铸牌子也在这里做完，理由相同：App 拒签（403、安装信息读不到）和**网络本身不通**
+    都是这一块的故障。调用方要的是「没有凭据，原因是这句」；让异常穿出去，采集那侧
+    只剩一个 500 —— 页面上已存下的点还在，却没人知道这次为什么没有新的。
+
+    两种失败分开写，因为它们是两件事：`GitHubAppError` 是对方答复了、拒绝了；httpx
+    的 `HTTPError`（ConnectError、TimeoutException 都是它的子类）是我们根本没问到话。
+    合成一句会让人以为 GitHub 说了什么。
     """
     installation = await ProjectGitInstallationRepository(session).get_by_repo(repo)
     if installation is None:
@@ -88,6 +92,8 @@ async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoRe
         return RepoReadToken(None, f"{repo} 所属的项目没有可用的 GitHub App 凭据")
     try:
         token, _expires = await tokens.installation_token()
+    except httpx.HTTPError as exc:
+        return RepoReadToken(None, f"连不上 GitHub，没能为 {repo} 取到凭据：{exc}")
     except GitHubAppError as exc:
         return RepoReadToken(None, f"GitHub 拒绝为 {repo} 签发凭据：{exc}")
     return RepoReadToken(token, "")
