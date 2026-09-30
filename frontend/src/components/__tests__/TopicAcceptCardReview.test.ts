@@ -123,6 +123,9 @@ beforeAll(() => {
     addEventListener() {},
     removeEventListener() {},
   })
+  // 菜单量尺寸时还要读 devicePixelRatio，happy-dom 里也没有。少了这个，定位在
+  // 测试收尾之后才跑，报出来的是「unhandled rejection」，比断言失败更难认。
+  vi.stubGlobal('devicePixelRatio', 1)
 })
 afterAll(() => vi.unstubAllGlobals())
 
