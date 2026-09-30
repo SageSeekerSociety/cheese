@@ -28,6 +28,14 @@ const days = ref<ChangelogDay[]>([])
 const showAll = ref(false)
 const downloaded = ref(false)
 const copied = ref(false)
+const menuOpen = ref(false)
+
+const OS_ICON = { mac: 'mdi-apple', windows: 'mdi-microsoft-windows' } as const
+
+// What the file is, read off its name, so the row says what will land in Downloads.
+function fileKind(href: string): string {
+  return href.endsWith('.exe') ? t('publicSite.downloadPage.exeFile') : t('publicSite.downloadPage.dmgFile')
+}
 
 const primaryLabel = computed(() =>
   primary.value.os === 'windows' ? t('publicSite.downloadPage.forWindows') : t('publicSite.downloadPage.forMac')
@@ -108,33 +116,44 @@ onMounted(async () => {
             <v-btn
               color="primary"
               size="x-large"
+              rounded="s-lg"
               class="dl-split__main"
               prepend-icon="mdi-download"
               :href="primary.href"
               @click="downloaded = true"
               >{{ primaryLabel }}</v-btn
             >
-            <v-menu location="bottom end">
+            <v-menu v-model="menuOpen" location="bottom end" :offset="8">
               <template #activator="{ props: menu }">
                 <v-btn
                   v-bind="menu"
                   color="primary"
                   size="x-large"
+                  rounded="e-lg"
                   class="dl-split__more"
                   :aria-label="t('publicSite.downloadPage.otherVersions')"
-                  ><v-icon icon="mdi-chevron-down"
+                  ><v-icon icon="mdi-chevron-down" class="dl-split__chevron" :class="{ 'is-open': menuOpen }"
                 /></v-btn>
               </template>
-              <v-list density="compact" min-width="260">
-                <v-list-item
-                  v-for="d in DOWNLOADS"
-                  :key="d.href"
-                  :href="d.href"
-                  :title="t(d.labelKey)"
-                  @click="downloaded = true"
-                />
+              <v-list class="menu-list dl-menu" nav density="compact" min-width="260">
+                <v-list-item v-for="d in DOWNLOADS" :key="d.href" :href="d.href" @click="downloaded = true">
+                  <template #prepend>
+                    <v-icon :icon="OS_ICON[d.os]" size="18" class="dl-menu__icon" aria-hidden="true" />
+                  </template>
+                  <v-list-item-title>{{ t(d.labelKey) }}</v-list-item-title>
+                  <v-list-item-subtitle class="dl-menu__sub">{{ fileKind(d.href) }}</v-list-item-subtitle>
+                </v-list-item>
                 <v-divider class="my-1" />
-                <v-list-item href="#phone" :title="t('publicSite.downloadPage.phone')" />
+                <!-- Not a file: the phone uses the web app, so this row goes to the QR code below. -->
+                <v-list-item href="#phone">
+                  <template #prepend>
+                    <v-icon icon="mdi-cellphone" size="18" class="dl-menu__icon" aria-hidden="true" />
+                  </template>
+                  <v-list-item-title>{{ t('publicSite.downloadPage.phone') }}</v-list-item-title>
+                  <v-list-item-subtitle class="dl-menu__sub">{{
+                    t('publicSite.downloadPage.phoneHint')
+                  }}</v-list-item-subtitle>
+                </v-list-item>
               </v-list>
             </v-menu>
           </div>
@@ -237,11 +256,15 @@ onMounted(async () => {
   color: var(--ink);
 }
 
-/* One button in two parts: the build for this computer, and the others. */
+/* One button in two parts: the build for this computer, and the others. The
+   halves touch, split by a hairline in the pressed amber, so they read as one
+   control; the chevron turns over while the menu is open. Each half is rounded
+   on its outer side only (`rounded="s-lg"` / `"e-lg"`): the theme's default
+   `rounded-lg` is an !important utility that rounded the inner corners too and
+   left a notch between the halves. */
 .dl-split {
   display: flex;
   margin-top: 36px;
-  gap: 1px;
 }
 
 .dl-split__main {
@@ -251,9 +274,45 @@ onMounted(async () => {
 
 .dl-split__more {
   min-width: 0;
-  padding: 0 14px;
+  padding: 0 12px;
+  border-inline-start: 1px solid var(--accent-press);
   border-start-start-radius: 0;
   border-end-start-radius: 0;
+}
+
+/* The open menu is shown by the chevron, not by Vuetify's open-menu tint, which
+   made this half a lighter amber than the other. */
+.dl-split__more.dl-split__more[aria-expanded='true'] > :deep(.v-btn__overlay) {
+  opacity: 0;
+}
+
+.dl-split__chevron {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+.dl-split__chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* Vuetify leaves 32px after a prepended icon; the rows here sit 12px from it. */
+.dl-menu :deep(.v-list-item__spacer) {
+  width: 12px;
+}
+
+.dl-menu__icon {
+  color: var(--muted);
+}
+
+.dl-menu__sub.dl-menu__sub {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* The page's anchors (#changelog, #phone) land below the sticky bar. */
+.dl [id] {
+  scroll-margin-top: var(--bar-h);
 }
 
 .dl-note {
