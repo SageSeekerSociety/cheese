@@ -27,20 +27,6 @@
       />
       <v-list-item
         rounded="lg"
-        prepend-icon="mdi-pencil-box-multiple-outline"
-        :to="{ name: 'SpacesDetailMyPublishing', params: { spaceId } }"
-        :active="isMyPublishingLinkActive"
-        :title="t('spaces.detail.myPublishedContests')"
-      />
-      <v-list-item
-        rounded="lg"
-        prepend-icon="mdi-account-check-outline"
-        :to="{ name: 'SpacesDetailMyParticipating', params: { spaceId } }"
-        :active="isMyParticipatingLinkActive"
-        :title="t('spaces.detail.myJoinedContests')"
-      />
-      <v-list-item
-        rounded="lg"
         prepend-icon="mdi-bullhorn-outline"
         :to="{ name: 'SpacesAnnouncements', params: { spaceId } }"
         :title="t('spaces.detail.announcements')"
@@ -110,24 +96,11 @@ const activeCategories = computed(() =>
 )
 
 const spaceId = computed(() => Number(route.params.spaceId))
-const taskOrigin = computed(() => (typeof route.query.from === 'string' ? route.query.from : undefined))
 const isUnderTasksSection = computed(() => route.matched.some((record) => record.name === 'SpacesDetailTasks'))
 
-const isMyPublishingLinkActive = computed(
-  () => isUnderTasksSection.value && (route.name === 'SpacesDetailMyPublishing' || taskOrigin.value === 'my-publishing')
-)
-
-const isMyParticipatingLinkActive = computed(
-  () =>
-    isUnderTasksSection.value &&
-    (route.name === 'SpacesDetailMyParticipating' || taskOrigin.value === 'my-participating')
-)
-
-/** 题目列表那几格（全部 / 各分类）亮不亮：只看地址里的分类，从「我的」点进来的题目详情不算。 */
+/** 题目列表那几格（全部 / 各分类）亮不亮：只看地址里的分类。 */
 function isTasksLinkActive(query: Record<string, string> = {}): boolean {
   if (!isUnderTasksSection.value) return false
-  if (taskOrigin.value === 'my-publishing' || taskOrigin.value === 'my-participating') return false
-  if (route.name === 'SpacesDetailMyPublishing' || route.name === 'SpacesDetailMyParticipating') return false
   const current = typeof route.query.category === 'string' ? route.query.category : undefined
   return current === query.category
 }

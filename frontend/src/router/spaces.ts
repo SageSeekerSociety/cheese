@@ -43,30 +43,6 @@ export default {
           },
         },
         {
-          path: 'my/publishing',
-          name: 'SpacesDetailMyPublishing',
-          components: {
-            default: () => import('@/views/spaces/detail/member-tasks/MyPublishing.vue'),
-            header: () => import('@/components/common/PageHeader.vue'),
-          },
-          meta: {
-            titleKey: 'spaces.detail.myPublishedContests',
-            backTo: 'SpacesDetailTasksList',
-          },
-        },
-        {
-          path: 'my/participating',
-          name: 'SpacesDetailMyParticipating',
-          components: {
-            default: () => import('@/views/spaces/detail/member-tasks/MyParticipating.vue'),
-            header: () => import('@/components/common/PageHeader.vue'),
-          },
-          meta: {
-            titleKey: 'spaces.detail.myJoinedContests',
-            backTo: 'SpacesDetailTasksList',
-          },
-        },
-        {
           path: 'publish',
           name: 'SpacesDetailPublishTask',
           // 页头由页面自己画：那两条路的切换放在页头的操作区里。

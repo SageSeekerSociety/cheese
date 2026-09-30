@@ -49,8 +49,6 @@
     "expandSidebar": "展开侧边栏",
     "contests": "题目",
     "allContests": "全部题目",
-    "myPublishedContests": "我发布的题目",
-    "myJoinedContests": "我参与的题目",
     "auditContests": "审核题目",
     "deleteAnnouncement": "删除公告",
     "publishedAt": "发布于 {time}",
@@ -200,7 +198,13 @@
       "category": "所属分类",
       "noCategory": "无分类",
       "allTopics": "全部话题",
-      "moreTopics": "更多话题"
+      "moreTopics": "更多话题",
+      "scope": {
+        "all": "全部",
+        "participating": "我参与的",
+        "publishing": "我发布的"
+      },
+      "loadFailed": "无法加载题目"
     },
     "templateForm": {
       "editTitle": "编辑题目模板",

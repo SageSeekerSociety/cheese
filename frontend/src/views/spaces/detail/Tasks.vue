@@ -15,8 +15,23 @@
         ></v-select>
       </div>
 
-      <!-- New Layout: Toolbar functionality -->
       <div class="filter-toolbar mb-4">
+        <!-- 全部 / 我参与的 / 我发布的：写在地址的 filter 里，和分类一起可分享 -->
+        <div class="scope-chips d-flex flex-wrap align-center gap-2 mb-3" role="group">
+          <v-chip
+            v-for="option in scopeOptions"
+            :key="option.value"
+            :color="scope === option.value ? 'primary' : undefined"
+            :variant="scope === option.value ? 'flat' : 'outlined'"
+            :aria-pressed="scope === option.value"
+            class="filter-chip"
+            label
+            @click="selectScope(option.value)"
+          >
+            {{ option.title }}
+          </v-chip>
+        </div>
+
         <!-- Row 1: Search + Sort + Publish -->
         <div class="d-flex align-center flex-wrap gap-4 mb-3">
           <!-- Search -->
@@ -35,8 +50,9 @@
             ></v-text-field>
           </v-form>
 
-          <!-- Sort Dropdown -->
+          <!-- 「我发布的」由专门的接口给，不按这里的排序与话题筛 -->
           <v-select
+            v-if="scope !== 'publishing'"
             v-model="selectedSortOption"
             autocomplete="off"
             :items="sortOptions"
@@ -74,7 +90,7 @@
         </div>
 
         <!-- Row 2: Topic Filter Bar -->
-        <div class="topic-filter-bar d-flex flex-wrap align-center gap-2">
+        <div v-if="scope !== 'publishing'" class="topic-filter-bar d-flex flex-wrap align-center gap-2">
           <!-- All Topics Chip -->
           <v-chip
             :color="selectedTopic === null ? 'primary' : undefined"
@@ -116,7 +132,28 @@
 
     <v-divider class="mt-0"></v-divider>
 
-    <div class="tasks-list">
+    <!-- 「我发布的」包括还没过审和被驳回的题：通用列表对出题人自己也只给已通过的，
+         所以这一格走「我发布的题目」接口，卡片上带审核状态。 -->
+    <div v-if="scope === 'publishing'" class="tasks-list">
+      <template v-if="publishedLoading && !publishedTasks.length">
+        <v-skeleton-loader v-for="index in 3" :key="index" type="article" rounded="lg" class="tasks-list-item" />
+      </template>
+      <v-empty-state
+        v-else-if="!visiblePublishedTasks.length"
+        icon="mdi-pencil-box-multiple-outline"
+        :title="t('spaces.detail.tasks.noTasks')"
+      />
+      <template v-else>
+        <MyPublishedTaskCard
+          v-for="task in visiblePublishedTasks"
+          :key="task.taskId"
+          :task="task"
+          :space-id="Number(route.params.spaceId)"
+          class="tasks-list-item"
+        />
+      </template>
+    </div>
+    <div v-else class="tasks-list">
       <infinite-scroll
         :loading="loadingMore"
         :has-more="hasMore"
@@ -134,14 +171,18 @@
 </template>
 
 <script setup lang="ts">
+import type { SpaceMyPublishedTask } from '@/network/api/spaces/types'
 import type { Task, Topic } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
+
+import MyPublishedTaskCard from './member-tasks/components/MyPublishedTaskCard.vue'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
@@ -160,7 +201,12 @@ type QueryOptions = {
   keywords?: string
   topics?: number[]
   categoryId?: number
+  joined?: boolean
 }
+
+/** 列表的范围：全部、我参与的、我发布的。地址里 `filter` 缺省即全部。 */
+type TaskScope = 'all' | 'participating' | 'publishing'
+
 const route = useRoute()
 const router = useRouter()
 const searchQueryInput = ref('')
@@ -208,6 +254,24 @@ const selectedCategoryId = computed<number | null>(() => {
   return activeCategories.value.some((cat) => cat.id === categoryId) ? categoryId : null
 })
 
+const scope = computed<TaskScope>(() => {
+  const value = route.query.filter
+  return value === 'participating' || value === 'publishing' ? value : 'all'
+})
+
+const scopeOptions = computed<{ title: string; value: TaskScope }[]>(() => [
+  { title: t('spaces.detail.tasks.scope.all'), value: 'all' },
+  { title: t('spaces.detail.tasks.scope.participating'), value: 'participating' },
+  { title: t('spaces.detail.tasks.scope.publishing'), value: 'publishing' },
+])
+
+const selectScope = (value: TaskScope) => {
+  const query = { ...route.query }
+  if (value === 'all') delete query.filter
+  else query.filter = value
+  router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
+}
+
 const categoryFilterOptions = computed(() => [
   { title: t('spaces.detail.allContests'), value: null },
   ...activeCategories.value.map((category) => ({
@@ -221,11 +285,10 @@ const selectedCategoryIdModel = computed({
     return selectedCategoryId.value
   },
   set(value: null | number) {
-    router.push({
-      name: 'SpacesDetailTasksList',
-      params: { spaceId: route.params.spaceId },
-      query: value ? { category: String(value) } : {},
-    })
+    const query = { ...route.query }
+    if (value) query.category = String(value)
+    else delete query.category
+    router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
   },
 })
 
@@ -242,6 +305,7 @@ const queryOptions = computed<QueryOptions>(() => ({
   keywords: searchQuery.value ? searchQuery.value : undefined,
   topics: selectedTopic.value !== null ? [selectedTopic.value] : undefined,
   categoryId: selectedCategoryId.value || undefined,
+  joined: scope.value === 'participating' ? true : undefined,
 }))
 
 const {
@@ -263,6 +327,7 @@ const {
       approved: 'APPROVED',
       topics: queryOptions.topics,
       categoryId: queryOptions.categoryId,
+      joined: queryOptions.joined,
       queryTopics: true,
       queryJoined: true,
     })
@@ -271,6 +336,35 @@ const {
   undefined,
   queryOptions.value
 )
+
+const publishedTasks = ref<SpaceMyPublishedTask[]>([])
+const publishedLoading = ref(false)
+
+const loadPublishedTasks = async () => {
+  const spaceId = Number(route.params.spaceId)
+  if (!spaceId) return
+  publishedLoading.value = true
+  try {
+    const { data } = await SpacesApi.getMyPublishedTasks(spaceId, {
+      categoryId: selectedCategoryId.value ?? undefined,
+      sortBy: 'publishedAt',
+      sortOrder: 'desc',
+    })
+    publishedTasks.value = data.tasks
+  } catch (error) {
+    console.error('load my published tasks failed', error)
+    toast.error(t('spaces.detail.tasks.loadFailed'))
+  } finally {
+    publishedLoading.value = false
+  }
+}
+
+/** 接口一次给全，搜索在本地按题目名筛。 */
+const visiblePublishedTasks = computed(() => {
+  const keywords = searchQuery.value?.trim().toLowerCase()
+  if (!keywords) return publishedTasks.value
+  return publishedTasks.value.filter((task) => task.taskName.toLowerCase().includes(keywords))
+})
 
 const submitSearch = () => {
   searchQuery.value = searchQueryInput.value
@@ -308,11 +402,12 @@ const navigateToPublishTask = async () => {
 }
 
 watch(
-  queryOptions,
-  (newVal) => {
-    reset(undefined, newVal)
+  [queryOptions, scope],
+  ([options, value]) => {
+    if (value === 'publishing') loadPublishedTasks()
+    else reset(undefined, options)
   },
-  { deep: true }
+  { deep: true, immediate: true }
 )
 
 onMounted(async () => {

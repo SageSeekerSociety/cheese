@@ -108,7 +108,7 @@ function makeRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/spaces/:spaceId/tasks/publish', name: 'SpacesDetailPublishTask', component: stub },
-      { path: '/spaces/:spaceId/tasks/my/publishing', name: 'SpacesDetailMyPublishing', component: stub },
+      { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: stub },
       { path: '/spaces/:spaceId/tasks/audit', name: 'SpacesDetailAuditTasks', component: stub },
       { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: stub },
     ],
@@ -394,8 +394,9 @@ describe('发题页：手写一道', () => {
     // 后端读到的与「没有这一项」是同一个意思，这一页照旧。
     expect(sent.attachmentIds).toBeUndefined()
 
-    // 发完不跳走也不留在原地：落到新外壳自己的「我的」。
-    await waitFor(() => expect(view.router.currentRoute.value.name).toBe('SpacesDetailMyPublishing'))
+    // 发完落到题目列表的「我发布的」：还没过审的题只在那里看得到。
+    await waitFor(() => expect(view.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
+    expect(view.router.currentRoute.value.query.filter).toBe('publishing')
   })
 
   it('「提交审核」那颗按钮走的是真表单的提交：拦着的时候点不动，放行了才发出去', async () => {
@@ -581,7 +582,7 @@ describe('发题页：从 PDF 生成', () => {
     expect(textOf(view.container, 'pdf-receipt') ?? '').toContain('刚发的 1 道题已经进了待审核队列')
     const hrefs = Array.from(view.container.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(hrefs).toContain(`/spaces/${SPACE_ID}/tasks/audit`)
-    expect(hrefs).toContain(`/spaces/${SPACE_ID}/tasks/my/publishing`)
+    expect(hrefs).toContain(`/spaces/${SPACE_ID}/tasks?filter=publishing`)
   })
 
   it('附件：两颗勾默认都勾着，标签写的是哪一份、几张，取消勾的那一份就不跟着走', async () => {

@@ -44,8 +44,6 @@
     "update": "Update",
     "announcements": "Announcements",
     "allContests": "All problems",
-    "myPublishedContests": "Problems I published",
-    "myJoinedContests": "Problems I joined",
     "auditContests": "Review problems",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
@@ -156,7 +154,13 @@
       "noTasks": "No problems yet",
       "topic": "Topic",
       "category": "Category",
-      "allTopics": "All topics"
+      "allTopics": "All topics",
+      "scope": {
+        "all": "All",
+        "participating": "Joined",
+        "publishing": "Published"
+      },
+      "loadFailed": "Couldn't load problems"
     },
     "templateForm": {
       "editTitle": "Edit problem template",
