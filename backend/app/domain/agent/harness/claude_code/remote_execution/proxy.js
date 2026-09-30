@@ -58,6 +58,14 @@ function skillPaths(text, places = {}) {
   }
 }
 
+// A call that waited for its machine carries the platform's line about the
+// wait (`client.py` `transport`): the model reads it after the result, as
+// `context`; a refusal has no such place, so it leads the refusal's text.
+function told(outcome) {
+  if (!outcome.context || !outcome.deny) return outcome;
+  return { deny: [...outcome.context, outcome.deny].join("\n") };
+}
+
 function remotePath(path, places) {
   return path.startsWith(skills) ? skillPaths(path, places) : path;
 }
@@ -132,7 +140,7 @@ async function sendUserFile($, tool_use_id, args) {
     session_id: await $.session.id(),
   });
   if (response.isError) return { deny: JSON.stringify(response.content) };
-  return JSON.parse(response.content[0].text);
+  return told(JSON.parse(response.content[0].text));
 }
 
 // A person's message the session has not answered yet (`driven/runner.py`,
@@ -197,7 +205,7 @@ export function register(on) {
         if (outcome.receipt_path) {
           outcome = JSON.parse(await $.fs.read(outcome.receipt_path, { as: "text" }));
         }
-        if (outcome.deny) return outcome;
+        if (outcome.deny) return told(outcome);
         // Only a non-empty half becomes a block. A `text` block holding the
         // empty string is not harmless padding: a provider that validates text
         // content rejects the WHOLE request over it (Moonshot's Anthropic
@@ -208,7 +216,7 @@ export function register(on) {
         const result = [outcome.result.stdout, outcome.result.stderr]
           .filter((text) => typeof text === "string" && text !== "")
           .map((text) => ({ type: "text", text }));
-        return { result };
+        return outcome.context ? { result, context: outcome.context } : { result };
       } catch (error) {
         return { deny: "Cheese tool failed: " + String(error) };
       }
@@ -252,7 +260,7 @@ export function register(on) {
         if (outcome.result?.type === "image") {
           outcome.result.file.base64 = response.content.find(block => block.type === "image").source.data;
         }
-        return outcome;
+        return told(outcome);
       } catch (error) {
         return { deny: "Remote execution failed: " + String(error) };
       }

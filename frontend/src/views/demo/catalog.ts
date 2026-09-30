@@ -21,13 +21,19 @@ import {
   BAR_ROWS,
   BAR_ROWS_LONG,
   CARD_FILED,
+  CHANGES_EMPTY,
+  changesPanelProps,
   CHEESE_LINES,
+  docPanelProps,
   EXCERPTS,
+  FEEDBACK_ROWS,
   KPI_STATES,
   LONG_ROW,
   NAV_ITEMS,
   NUMBER_ROWS,
   OPEN_FILES,
+  PREVIEW_EMPTY,
+  previewPanelProps,
   roomMessageProps,
   roomNoticeProps,
   SHEET_ACTIONS,
@@ -35,7 +41,9 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { RAIL_ENTRIES } from './catalogRail'
 
+import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
@@ -45,6 +53,10 @@ import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
+import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
+import PanelChangesView from '@/components/panels/PanelChangesView.vue'
+import PanelDocView from '@/components/panels/PanelDocView.vue'
+import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
@@ -217,8 +229,8 @@ export const CATALOG: CatalogEntry[] = [
     about: '平台在房间里说的话：本轮摘要、验收卡的动静、谁采纳了。',
     file: 'src/components/room/RoomNotice.vue',
     component: RoomNotice,
-    // 这一件里面还留着一个 `router-link`（「去确认」那颗按钮，见文件里 287 行），
-    // 所以它还不是「一件都不用装」的那一档 —— 目录里写着，免得有人以为漏了。
+    // 「去确认」那颗按钮是一条真链接（`NavLink`），所以路由还是要装：不装也画得出来，
+    // 但那一颗会退化成一行点不动的字。Vuetify 是它自己那几颗图标要的。
     needs: ['vuetify', 'router'],
     states: [
       {
@@ -578,6 +590,243 @@ export const CATALOG: CatalogEntry[] = [
         note: 'selectable 才画前面那颗勾选框（队列页要一批一批挑）。',
         props: { excerpt: EXCERPTS[0], selectable: true },
         expect: '查看原文',
+      },
+    ],
+  },
+  // 侧栏那一组（TopicSidebar 拆出来的那六件）在自己的文件里：`catalogRail.ts`。
+  ...RAIL_ENTRIES,
+  {
+    id: 'legal-links',
+    title: 'LegalLinks',
+    about: '注册表单底下那两句协议：各是一条真链接，各去各的那一页。',
+    file: 'src/components/account/LegalLinks.vue',
+    component: LegalLinks,
+    // 一个字都不吃 props。装路由只为让那两条有 href —— 不装也画得出同样两句话，
+    // 只是点不动（`NavLink` 没路由就不给 href）。
+    needs: ['router'],
+    states: [
+      {
+        name: '两句',
+        note: '各自通到协议页 / 隐私政策页，而且新开一页：在注册表单里点开协议，填了一半的表单不会因此没了。',
+        props: {},
+        expect: '《用户协议》',
+      },
+    ],
+  },
+  {
+    id: 'feedback-card',
+    title: 'FeedbackCard',
+    about: '反馈列表里的一行：正文那一块整块点进详情，支持按钮在链接外面。',
+    file: 'src/components/feedback/FeedbackCard.vue',
+    component: FeedbackCard,
+    // 支持那颗按钮读反馈 store（`toggleSupport`），所以 store 要在场；路由是给正文
+    // 那条链接用的（不装就画成一行点不动的字）。Vuetify 是按钮和图标要的。
+    needs: ['vuetify', 'pinia', 'router'],
+    states: [
+      {
+        name: '一行',
+        note: '一行一屏里的一行：标题一行、摘要两行封顶，底行是「哪一类、谁提的、多少人参与、走到哪一步」。',
+        props: { item: FEEDBACK_ROWS.plain },
+        expect: '导出一个月的数据要等四十秒',
+      },
+      {
+        name: '支持过了',
+        note: '支持是三个信号一起变（实心图标、数字颜色、底色），不只换颜色 —— 色觉障碍的读者也要看得出自己点没点过；标签挤在底行那一格里。',
+        props: { item: FEEDBACK_ROWS.supported },
+        expect: '性能',
+      },
+      {
+        name: '摘要和标题是同一句话',
+        note: '那就只画标题：把上面那行字再念一遍，占掉 40px 却一个字都没多说。',
+        props: { item: FEEDBACK_ROWS.sameLine },
+        expect: '导出一个月的数据要等四十秒',
+      },
+      {
+        name: '长标题',
+        note: '标题一行就截，摘要两行封顶：列表是用来扫的，一行的高度不能被一条撑开。',
+        props: { item: FEEDBACK_ROWS.long },
+        expect: '导出一个月的数据要等四十秒，而且导出到一半',
+      },
+      {
+        name: '不能公开的条目',
+        note: '私密（或管理员标了安全问题）就没有支持按钮：它不该让人知道它存在，而支持是公开表态。',
+        props: { item: FEEDBACK_ROWS.private },
+        expect: '私密',
+      },
+      {
+        name: '芝士提的',
+        note: '来源那一颗写「Agent 发现」；谁按的发送是另一件事（提案卡那条规矩），这里管不着。',
+        props: { item: FEEDBACK_ROWS.agent },
+        expect: 'Agent 发现',
+      },
+      {
+        name: '办完了的',
+        note: '已上线的条目支持按钮变灰、提示语换成「这条已经处理完了」——它已经做完了，不该再喊人支持。',
+        props: { item: FEEDBACK_ROWS.closed },
+        expect: '导出一个月的数据要等四十秒',
+      },
+    ],
+  },
+  {
+    id: 'panel-changes',
+    title: 'PanelChangesView',
+    about: '改动那一格：一棵标着增删的树，点开是这一份文件自己的逐行 diff。',
+    file: 'src/components/panels/PanelChangesView.vue',
+    component: PanelChangesView,
+    needs: UI,
+    states: [
+      {
+        name: '读改动的时候',
+        note: '转圈，不是骨架：这一格等的东西说不准是一份 diff、一个编辑器、一张图，还是「只读 / 二进制」那一句提示 —— 等的是什么形状，它并不知道。',
+        props: changesPanelProps({
+          loading: true,
+          openPath: null,
+          openDiff: null,
+          openDiffLines: [],
+          fileToolReady: false,
+        }),
+      },
+      {
+        name: '这一轮什么都没改',
+        note: '树上写「暂无改动」，右边那一半装的是提交记录 —— 它也没有，于是写「暂无提交」。',
+        props: CHANGES_EMPTY,
+        expect: '暂无提交',
+      },
+      {
+        name: '一份文件自己的 diff',
+        note: '树上每行一个文件（+N −M 标着改了多少），点开的是它自己那一段：文件头、hunk 头、增删各自着色，定位得到行。',
+        props: changesPanelProps(),
+        expect: '这个项目放本课程的课件和作业',
+      },
+      {
+        name: '保存冲突',
+        note: '你编辑期间芝士又改了同一份文件：两个版本都留着，由人按一下决定谁赢 —— 静默替人选一个，就是改动消失的方式。',
+        props: changesPanelProps({ fileConflict: true, fileDirty: true }),
+        expect: '你编辑期间，这个文件已被修改',
+      },
+      {
+        name: '没绑仓库',
+        note: '这个项目没有代码仓库：一句话说清，不画一棵空树。',
+        props: changesPanelProps({ noRepo: true }),
+        expect: '暂无代码仓库',
+      },
+      {
+        name: '读不到改动',
+        note: '取 diff 失败：说清失败的是什么，还留着「回到已提交版本」这条出路。',
+        props: changesPanelProps({ errorMsg: '拉取改动失败：请求超时', fileSource: 'live' }),
+        expect: '拉取改动失败',
+      },
+    ],
+  },
+  {
+    id: 'panel-preview',
+    title: 'PanelPreviewView',
+    about: '预览那一格：芝士最后摆出来的那一样 —— 一篇文档、一张表、一个跑着的应用，或者一句「还没有」。',
+    file: 'src/components/panels/PanelPreviewView.vue',
+    component: PanelPreviewView,
+    needs: UI,
+    states: [
+      {
+        name: '读预览的时候',
+        note: '转圈，不是骨架：底下那一格可能是网页、文档、表格、图片，等完才知道是哪一样。',
+        props: previewPanelProps({ loading: true }),
+      },
+      {
+        name: '还没有东西可看',
+        note: '房间里还没摆出过任何东西：一句话，不是一块空白。',
+        props: PREVIEW_EMPTY,
+        expect: '暂无预览',
+      },
+      {
+        name: '一篇 markdown',
+        note: '正文直接画出来（和聊天用的是同一个渲染器）：标题、清单都在，顶上是文件名和类型。',
+        props: previewPanelProps(),
+        expect: '课件和作业都在这里',
+      },
+      {
+        name: '这一份读不到了',
+        note: '文件还在清单上、字节取不到：说的是「无法读取文件」，和「预览加载失败」不是同一件事。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: false,
+          previewReadError: '这个文件已经不在了',
+        }),
+        expect: '无法读取文件',
+      },
+      {
+        name: '跑着的应用断了',
+        note: '机器上没在跑，还是跑了但应用自己没了 —— 两句不同的话。这里给的是第一句。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: true,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: false,
+        }),
+        expect: '应用预览暂不可用',
+      },
+      {
+        name: '取预览失败',
+        note: '读这一格本身失败：一句「预览加载失败」，底下一行是这个错。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewError: '接口返回 502',
+        }),
+        expect: '预览加载失败',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc',
+    title: 'PanelDocView',
+    about: '总览那一格的文档：右上角一条工具条、中间一栏正文、底下评论区。',
+    file: 'src/components/panels/PanelDocView.vue',
+    component: PanelDocView,
+    needs: UI,
+    states: [
+      {
+        name: '没有话题',
+        note: '这一格属于一个话题；没有话题时说的话和「文档是空的」不一样。',
+        props: docPanelProps({ topic: null }),
+        expect: '选择一个话题查看文档',
+      },
+      {
+        name: '文档还在路上的时候',
+        note: '加载期间摆的是骨架，编辑器让位 —— 空编辑器会亮出「芝士会在这里维护文档」，那句话的意思是「这篇是空的」，而它还没到。',
+        props: docPanelProps({ loading: true, saveStatus: 'loading' }),
+      },
+      {
+        name: '一篇文档',
+        note: '标题（话题名）、右上角那条工具条、正文那一栏和底下的评论区都在。正文由容器取到之后装进编辑器，不由 props 进。',
+        props: docPanelProps(),
+        expect: '课程资料',
+      },
+      {
+        name: '芝士也改了这篇',
+        note: '服务端和你手上都动了：两个版本都留着，谁都不静默赢 —— 上面一条说清楚，两条出路（看它的 / 留我的）。',
+        props: docPanelProps({ externalDoc: '# 课程资料\n\n芝士刚写的一版。', saveStatus: 'dirty' }),
+        expect: '更新了这篇文档',
+      },
+      {
+        name: '这篇里有编辑器存不下的格式',
+        note: '自动保存停下并说明原因（保存会丢格式），源码模式是无损的那条出路。',
+        props: docPanelProps({ lossy: true, saveStatus: 'paused', paused: true, pausedHint: '编辑器无法显示部分格式' }),
+        expect: '保存会丢失这些格式',
+      },
+      {
+        name: '保存失败',
+        note: '存不上时说清是保存失败，不是把改动悄悄吞掉。',
+        props: docPanelProps({ errorMsg: '保存失败：请求超时', saveStatus: 'dirty' }),
+        expect: '保存失败',
       },
     ],
   },

@@ -38,6 +38,9 @@ PG_PASSWORD=cheesex
 
 # Named for the major: a cluster initdb'd by another major will not start.
 PGDATA="$DATA_DIR/pg17"
+# Written into the cluster when it starts: the pins of the server running it.
+# A server of ours whose record differs predates the current pins; see start_pg.
+PG_STAMP=dev-db.pins
 REDIS_DIR="$DATA_DIR/redis"
 PG_LOG="$DATA_DIR/pg.log"
 REDIS_LOG="$DATA_DIR/redis.log"
@@ -266,6 +269,7 @@ install_pg_search_macos() {
 }
 
 pg_running() { [ -d "$PGDATA" ] && "$PG_BIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; }
+pg_pins() { printf '%s' "$PG_WHEEL pg_search==$PG_SEARCH_VERSION"; }
 redis_running() { "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; }
 
 # --- identity guards -------------------------------------------------------
@@ -295,7 +299,72 @@ redis_is_ours() {
     [ -n "$got" ] && [ "$got" = "$want" ]
 }
 
+# The cluster directory under $DATA_DIR whose live postmaster serves $PG_PORT,
+# whichever version of this script started it (older ones used other directory
+# names, e.g. `pg` for PostgreSQL 16). Proof of ownership is the postmaster.pid
+# inside our own data dir naming this port, with its pid alive and a postgres
+# process; a pid file left behind by a crash can name a pid since reused.
+our_cluster_on_port() {
+    local pidfile pid
+    for pidfile in "$DATA_DIR"/*/postmaster.pid; do
+        [ -s "$pidfile" ] || continue
+        [ "$(awk 'NR==4' "$pidfile")" = "$PG_PORT" ] || continue
+        pid="$(head -1 "$pidfile")"
+        kill -0 "$pid" 2>/dev/null || continue
+        case "$(ps -o args= -p "$pid" 2>/dev/null)" in *postgres*) ;; *) continue ;; esac
+        dirname "$pidfile"
+        return
+    done
+    return 1
+}
+
+# Stop our server in $1 so the current pins can take the port: fast shutdown by
+# signal, since the pg_ctl of the version that started it may be gone from the
+# uv cache. A cluster in another directory belongs to another major and will
+# never start again, so its (throwaway) data goes with it.
+stop_our_cluster() {
+    local dir="$1" pid i
+    pid="$(head -1 "$dir/postmaster.pid")"
+    kill -INT "$pid" 2>/dev/null || true
+    for i in $(seq 1 120); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    kill -0 "$pid" 2>/dev/null && die "postgres (pid $pid, $dir) did not shut down within 60s"
+    [ "$dir" = "$PGDATA" ] || rm -rf "$dir"
+}
+
+# A server of ours started under other pins (another PostgreSQL or pg_search)
+# is replaced, but only while nobody is using it: stopping it would drop some
+# other run's connections mid-suite. With clients, refuse and say so.
+replace_outdated_pg() {
+    local dir="$1" had clients
+    had="$(cat "$dir/$PG_STAMP" 2>/dev/null)" || had="no pins recorded"
+    clients="$("$PG_BIN/psql" -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d postgres -Atc \
+        "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()" \
+        2>/dev/null)" \
+        || die "the postgres on port $PG_PORT ($dir) was started by this script under other pins ($had),
+       but asking it for its clients failed, so it is left running. Stop it by hand
+       once it is idle, then start again."
+    if [ "$clients" != 0 ]; then
+        die "the postgres on port $PG_PORT ($dir) was started by this script under other pins
+       ($had; now $(pg_pins)), and it has $clients client connection(s).
+       Replacing it would cut them off mid-run, so it is left running. Start again once
+       it is idle, or use CHEESEX_DEV_PG_PORT/CHEESEX_DEV_DB_DIR for a server of your own."
+    fi
+    log "replacing the idle postgres on port $PG_PORT ($dir; $had → $(pg_pins))"
+    stop_our_cluster "$dir"
+}
+
 start_pg() {
+    local ours
+    if ours="$(our_cluster_on_port)"; then
+        if [ "$ours" = "$PGDATA" ] && [ "$(cat "$PGDATA/$PG_STAMP" 2>/dev/null)" = "$(pg_pins)" ]; then
+            log "postgres already running on port $PG_PORT ($PGDATA)"
+            return
+        fi
+        replace_outdated_pg "$ours"
+    fi
     if pg_running; then
         local running_port
         running_port="$(pg_pidfile_port)" || running_port=""
@@ -304,8 +373,7 @@ start_pg() {
        Exporting TEST_PG_BASE for $PG_PORT would point the suite at a server that
        is not this one. Re-run with CHEESEX_DEV_PG_PORT=${running_port:-<its port>}, or stop it first."
         fi
-        log "postgres already running on port $PG_PORT ($PGDATA)"
-        return
+        die "the cluster in $PGDATA is up but does not serve port $PG_PORT (see its postmaster.pid)."
     fi
     if port_in_use "$PG_PORT"; then
         die "port $PG_PORT is already taken by a server this script did not start.
@@ -339,6 +407,7 @@ start_pg() {
         || { log "--- postgres log ---"; tail -30 "$PG_LOG" >&2; die "postgres failed to start"; }
     "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -t 30 >/dev/null 2>&1 \
         || die "postgres started but never became ready"
+    pg_pins >"$PGDATA/$PG_STAMP"
 }
 
 start_redis() {
@@ -442,6 +511,13 @@ cmd_stop() {
             || log "pg_ctl stop reported an error — check $PG_LOG"
     else
         log "postgres not running"
+    fi
+    # One an older version of this script started, in another directory: without
+    # this, --purge would delete its data dir from under a server still running.
+    local ours
+    if ours="$(our_cluster_on_port)" && [ "$ours" != "$PGDATA" ]; then
+        log "stopping the older postgres in $ours"
+        stop_our_cluster "$ours"
     fi
     if redis_running; then
         # Same guard as start, for a bigger reason: an unconditional SHUTDOWN here

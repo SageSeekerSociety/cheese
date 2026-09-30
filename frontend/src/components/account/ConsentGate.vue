@@ -6,13 +6,13 @@
         <p class="mb-3">{{ t('account.rulesUpdatedBody') }}</p>
         <ul class="pl-4">
           <li v-for="doc in pending" :key="doc.document">
-            <router-link
+            <NavLink
               :to="{ name: doc.document === 'terms' ? 'LegalTerms' : 'LegalPrivacy' }"
               target="_blank"
               class="text-primary text-decoration-none"
             >
               {{ doc.title }}
-            </router-link>
+            </NavLink>
             <span style="color: var(--muted)">
               · {{ t('account.legalEffectiveDate', { date: doc.effectiveDate }) }}
             </span>
@@ -46,6 +46,7 @@ import type { LegalDocumentSummary } from '@/network/api/legal/types'
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { LegalApi } from '@/network/api/legal'
 import { UserApi } from '@/network/api/users'

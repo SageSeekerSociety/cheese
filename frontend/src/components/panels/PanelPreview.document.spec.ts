@@ -62,6 +62,34 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 
+// 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
+// 那个约定：改完、恢复完，面板按新版本重取这一页。两个替身各自把手势变成一个事件。
+//
+// 这两个是异步装上的（defineAsyncComponent），Vue 只有在载入结果上认出 ESM 时才会
+// 取它的 default —— 所以 `__esModule` 不是装饰，少了它这一格拿到的是整个模块对象。
+vi.mock('./preview/RoomFileHistory.vue', () => ({
+  __esModule: true,
+  default: {
+    name: 'RoomFileHistory',
+    props: ['topicId', 'path', 'version'],
+    emits: ['restored'],
+    template: '<button data-testid="restore" @click="$emit(\'restored\', { id: 1 })">恢复</button>',
+  },
+}))
+vi.mock('./preview/RoomFileEditor.vue', () => ({
+  __esModule: true,
+  default: {
+    name: 'RoomFileEditor',
+    props: ['topicId', 'path'],
+    emits: ['close', 'opened'],
+    template:
+      '<div data-testid="editor">' +
+      '<button data-testid="editor-opened" @click="$emit(\'opened\', path)">已打开</button>' +
+      '<button data-testid="editor-close" @click="$emit(\'close\')">关闭</button>' +
+      '</div>',
+  },
+}))
+
 import PanelPreview from './PanelPreview.vue'
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -85,6 +113,12 @@ function mount() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 编辑器装在一个全屏对话框里，而 Vuetify 那层浮出物会挂 visualViewport 的
+  // resize/scroll —— happy-dom 没有这个对象（它连引用都会抛），补一个空壳。
+  Object.defineProperty(window, 'visualViewport', {
+    configurable: true,
+    value: { addEventListener() {}, removeEventListener() {} },
+  })
   getPreview.mockResolvedValue(artifact('output/评审简报.docx', DOCX))
   readPreviewFile.mockResolvedValue(fileContent('output/评审简报.docx'))
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
@@ -239,4 +273,31 @@ it('sends a .pdf whose bytes read as text to the document viewer, not a blank fr
   // The viewer is what can say the file is broken; a frame just stays empty.
   expect(await screen.findByTestId('pages')).toBeTruthy()
   expect(requestPreviewSession).not.toHaveBeenCalled()
+})
+
+// 在线编辑和草稿历史各改一次文件本身。这一页的字节是按文件版本缓存的，而这两件事
+// 改的都是同一份文件、版本却由别的路径带回来——所以得有人按一下，让它重取。
+it('关掉编辑器之后这一页按新版本重取，期间把这份文件交给房间开成页签', async () => {
+  const { emitted } = mount()
+  expect(await screen.findByTestId('pages')).toBeTruthy()
+  expect(previewDocumentPdf).toHaveBeenCalledTimes(1)
+
+  await fireEvent.click(screen.getByTestId('edit-file'))
+  await fireEvent.click(await screen.findByTestId('editor-opened'))
+  // 编辑器里改的是房间里那一份，所以这一格之外也得有一份它的页签。
+  expect((emitted()['open-file'] as unknown[][])[0][0]).toBe('output/评审简报.docx')
+
+  await fireEvent.click(screen.getByTestId('editor-close'))
+  await waitFor(() => expect(previewDocumentPdf).toHaveBeenCalledTimes(2))
+})
+
+it('恢复了一版之后这一页按新版本重取', async () => {
+  mount()
+  expect(await screen.findByTestId('pages')).toBeTruthy()
+  expect(previewDocumentPdf).toHaveBeenCalledTimes(1)
+
+  await fireEvent.click(screen.getByTestId('file-history'))
+  await fireEvent.click(await screen.findByTestId('restore'))
+
+  await waitFor(() => expect(previewDocumentPdf).toHaveBeenCalledTimes(2))
 })

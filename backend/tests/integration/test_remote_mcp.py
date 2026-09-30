@@ -9,6 +9,7 @@ room's session.
 
 import asyncio
 import json
+import logging
 import uuid
 from urllib.parse import parse_qs, urlsplit
 
@@ -256,6 +257,29 @@ def test_disconnect_revokes_at_the_authorization_server(client, upstream):
     assert _servers(client, pid)["tracker"]["status"] == "disconnected"
     answer = _call(client, tid, pid, "tracker", "tools/list")
     assert answer["error"] == "tracker 需要在项目设置里连接"
+
+
+def test_a_refused_revocation_is_logged_and_the_server_still_disconnects(
+    client, upstream, caplog
+):
+    pid = _project(client, upstream)
+    _connect(client, pid)
+    access = upstream.issued[-1]
+    upstream.refuse_revocation = True
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.domain.remote_mcp"):
+            response = client.delete(
+                f"/projects/{pid}/mcp/servers/tracker/connection",
+                headers=session_auth_headers("alice"),
+            )
+    finally:
+        upstream.refuse_revocation = False
+    assert response.status_code == 200, response.text
+    assert _servers(client, pid)["tracker"]["status"] == "disconnected"
+    refused = [r.getMessage() for r in caplog.records if "refused" in r.getMessage()]
+    assert refused, caplog.text
+    assert all("server=tracker" in line and "400" in line for line in refused)
+    assert access not in caplog.text
 
 
 def test_a_header_server_takes_its_key_from_a_project_secret(client, upstream):

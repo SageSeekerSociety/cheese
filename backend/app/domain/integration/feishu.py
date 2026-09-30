@@ -1,11 +1,11 @@
 """Feishu / Lark documents over the open platform API.
 
-Two ways in, both configured by the owner: the owner's own custom app
-(app_id + app_secret, tenant token — sees the documents shared with the app),
-or the owner's user authorization (sees what the owner sees, and is the only
-way the search API answers). Every failure becomes ``IntegrationError`` with a
-kind: expired or missing authorization, no permission on that document, not
-found, or the service failing.
+Two ways in: the platform's own app (app_id + app_secret, held by the platform
+administrator, tenant token — sees the documents shared with the app), or the
+owner's user authorization (sees what the owner sees, and is the only way the
+search API answers). Every failure becomes ``IntegrationError`` with a kind:
+expired or missing authorization, no permission on that document, not found, or
+the service failing.
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ class FeishuClient:
     async def refresh_user_token(self) -> None:
         if not self.settings.refresh_token:
             raise IntegrationError(
-                "auth_failed", "飞书用户授权已过期，到「我的连接」里重新授权"
+                "auth_failed", "授权已失效，到「我的连接」里重新授权"
             )
         await self._user_token(
             {

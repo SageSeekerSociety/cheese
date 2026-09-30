@@ -7,6 +7,10 @@
 //
 // 看板那六格（`AnalyticsNavigationTabs` 的页签，名字见 `spaceRouteNames.ts`）同理：
 // 那一排「总览 / 告警 / 出题人 / …」在组件预览站上也得画得出来。
+//
+// 组件里的链接现在走 `NavLink`，而它对不认识的 name 是**画成一行点不动的字**（不抛、
+// 也不警告）：名字缺了不会红，只会让那一颗在预览站上悄悄退化成死的。所以目录里凡是
+// 用 name 指路的，名字都在下面这张表里。
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
@@ -20,12 +24,20 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
+/** 目录里有几件是用 name 指路的（协议那两句、反馈详情），它们各要一条真名字。 */
+const catalogTargets = [
+  { path: '/legal/terms', name: 'LegalTerms', component: blank },
+  { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
+  { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+]
+
 export function demoRouter() {
   return createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/projects/:projectId/running', name: 'workspace-running', component: blank },
       ...analytics,
+      ...catalogTargets,
       { path: '/:any(.*)*', component: blank },
     ],
   })

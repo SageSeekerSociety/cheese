@@ -133,12 +133,8 @@ class PatchSpaceRequest(BaseModel):
     #: either version alone); omitting it leaves it exactly as it is, so a PATCH
     #: that renames a 题目版 does not clear the switches. Look at
     #: `app.domain.space.course_modules`: an absent key means ON, so the frontend
-    #: may send either the whole map or only the exceptions.
-    #:
-    #: Typed `object`, not `bool`, on purpose: the checks live in the route
-    #: (`_validate_course_modules`) because a validator here would have its
-    #: `ValueError` land in pydantic's `ctx`, and the API's RequestValidationError
-    #: handler cannot serialize that — a bad body would 500 instead of 400.
+    #: may send either the whole map or only the exceptions. The route checks
+    #: its keys and values (`_validate_course_modules`).
     course_modules: dict[str, object] | None = Field(
         default=None, alias="courseModules"
     )

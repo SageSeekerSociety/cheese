@@ -35,6 +35,7 @@
     "models": "Models",
     "spaces": "Space applications",
     "members": "Members",
+    "integrations": "Feishu app",
     "featureStats": "Feature data"
   },
   "userMenu": {

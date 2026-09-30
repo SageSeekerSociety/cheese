@@ -29,14 +29,6 @@
 | 27 | GET | `/admin/stats/pipeline` | `pipeline_stats` | routes/admin_stats.py | 157 |
 | 28 | GET | `/admin/stats/product` | `product_stats` | routes/admin_stats.py | 172 |
 | 29 | GET | `/admin/stats/integrations` | `integrations_stats` | routes/admin_stats.py | 187 |
-| 30 | POST | `/admin/subscriptions/device-flows` | `start_device_flow` | routes/admin_subscriptions.py | 93 |
-| 31 | POST | `/admin/subscriptions/device-flows/{flow_id}/poll` | `poll_device_flow` | routes/admin_subscriptions.py | 121 |
-| 32 | POST | `/admin/subscriptions/device-flows/{flow_id}/cancel` | `cancel_device_flow` | routes/admin_subscriptions.py | 135 |
-| 33 | GET | `/admin/subscriptions` | `list_subscriptions` | routes/admin_subscriptions.py | 148 |
-| 34 | POST | `/admin/subscriptions/{subscription_id}/refresh` | `refresh_subscription` | routes/admin_subscriptions.py | 157 |
-| 35 | GET | `/admin/subscriptions/{subscription_id}/quota` | `subscription_quota` | routes/admin_subscriptions.py | 172 |
-| 36 | PATCH | `/admin/subscriptions/{subscription_id}/upstream-model` | `update_upstream_model` | routes/admin_subscriptions.py | 187 |
-| 37 | DELETE | `/admin/subscriptions/{subscription_id}` | `revoke_subscription` | routes/admin_subscriptions.py | 208 |
 | 38 | GET | `/ai/quota` | `get_ai_quota` | routes/ai.py | 37 |
 | 39 | GET | `/ai/models` | `list_ai_models` | routes/ai.py | 57 |
 | 40 | GET | `/ai/conversations` | `list_conversations` | routes/ai.py | 65 |

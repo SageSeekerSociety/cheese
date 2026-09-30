@@ -1,5 +1,6 @@
 """A person's own mailbox or Feishu account, lent to the AI teammates of the
-projects they name, and the mail drafts those teammates write into it.
+projects they name, the mail drafts those teammates write into it, and the one
+Feishu app the platform administrator configures for everybody.
 
 The secret is sealed at rest and bound to its row. Nothing is sent from a
 mailbox without its owner confirming the exact draft that was written.
@@ -8,12 +9,17 @@ mailbox without its owner confirming the exact draft that was written.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+
+#: The platform's Feishu app is a singleton; its row id is the constant below, so
+#: "has an administrator configured it" is one ``get`` and a second row cannot
+#: appear by accident.
+FEISHU_APP_ROW_ID = 1
 
 
 class Integration(UuidPk, Timestamps, Base):
@@ -64,3 +70,29 @@ class MailDraft(UuidPk, Timestamps, Base):
     sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class FeishuApp(Timestamps, Base):
+    """The Feishu app the platform administrator configures once for everybody.
+
+    Members used to create a custom app each and paste its App ID and Secret into
+    «我的连接». Now one app belongs to the platform: an administrator fills it in
+    on the admin page, a member clicks once to authorize, and the member's own
+    row (``Integration``) keeps only that person's ``user_access_token`` and
+    ``refresh_token``. Which app credentials a call uses is read from here at
+    the moment of the call, so rotating the secret reaches every connection.
+
+    ``app_id`` is not a secret; ``app_secret`` is sealed exactly like a
+    connection's secret (``Purpose.INTEGRATION_SECRET``, bound to this row).
+    """
+
+    __tablename__ = "feishu_apps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(64))
+    #: feishu | lark
+    domain: Mapped[str] = mapped_column(String(16), default="feishu")
+    #: {"app_secret": …}, sealed.
+    secret: Mapped[str] = mapped_column(Text)
+    #: The platform administrator who last saved it.
+    updated_by: Mapped[str] = mapped_column(String(64))

@@ -53,6 +53,7 @@ const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.models': '模型',
   'navigation.admin.spaces': '空间申请',
   'navigation.admin.members': '成员',
+  'navigation.admin.integrations': '飞书应用',
 }
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')

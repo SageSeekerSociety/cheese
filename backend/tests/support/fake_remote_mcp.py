@@ -69,6 +69,7 @@ class Fake:
     seen_credentials: list[str] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     refuse_refresh: bool = False
+    refuse_revocation: bool = False
     sse_queues: dict[str, asyncio.Queue] = field(default_factory=dict)
 
     @property
@@ -180,6 +181,8 @@ class Fake:
     async def revoke(self, request: Request) -> Response:
         form = {k: str(v) for k, v in (await request.form()).items()}
         token = form.get("token", "")
+        if self.refuse_revocation:
+            return JSONResponse({"error": "unauthorized_client"}, status_code=400)
         self.revoked.append(token)
         self.access.pop(token, None)
         self.refresh.pop(token, None)
