@@ -41,6 +41,8 @@ vi.mock('@/stores/workspace', () => ({
 
 import DmView from './DmView.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Dm = DmView as unknown as Component
 
 const dmTopic = {
@@ -90,6 +92,8 @@ function stubChatBackend() {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   getPrivateChat.mockReset()
   listProjectAgents.mockReset().mockResolvedValue({
     data: [{ handle: 'reviewer', display_name: '评审', is_default: false, is_active: true }],
@@ -99,7 +103,7 @@ beforeEach(() => {
 })
 
 function open(peer = 'agent:reviewer') {
-  return render(Dm, { props: { projectId: 'p1', peer }, global: { plugins: [vuetify, createPinia()] } })
+  return render(Dm, { props: { projectId: 'p1', peer }, global: { plugins: [vuetify, createPinia(), i18n] } })
 }
 
 const settle = async () => {

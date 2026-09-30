@@ -1,6 +1,8 @@
 // 一个文件「是哪种类型」只能有一个答案。预览面板用它挑阅读器，输入栏的附件块用
 // 它挑图标：两份表各自演进的结果是同一个 .docx 在两处显示成不同的东西。
 
+import { t } from '@/i18n'
+
 export interface FileKind {
   label: string
   icon: string
@@ -8,19 +10,27 @@ export interface FileKind {
   view: 'pages' | 'sheet' | 'markdown'
 }
 
+/** 类型名按当前语言取：`label` 是 getter，每次读都查一次目录，切换语言后跟着变。 */
+function named<T extends { icon: string; view?: FileKind['view'] }>(labelKey: string, rest: T): T & { label: string } {
+  return Object.defineProperty({ ...rest }, 'label', {
+    enumerable: true,
+    get: () => t(`work.room.fileKind.${labelKey}`),
+  }) as T & { label: string }
+}
+
 /** 认得出的文档类型。读者能指着什么决定了 view，见 PanelPreview 的说明。 */
 export const DOCUMENT_TYPES: Record<string, FileKind> = {
   pdf: { label: 'PDF', icon: 'mdi-file-pdf-box', view: 'pages' },
-  docx: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  doc: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  odt: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  rtf: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  pptx: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  ppt: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  odp: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  xlsx: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  xls: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  csv: { label: 'CSV 表格', icon: 'mdi-file-delimited-outline', view: 'sheet' },
+  docx: named('word', { icon: 'mdi-file-word-outline', view: 'pages' }),
+  doc: named('word', { icon: 'mdi-file-word-outline', view: 'pages' }),
+  odt: named('document', { icon: 'mdi-file-document-outline', view: 'pages' }),
+  rtf: named('document', { icon: 'mdi-file-document-outline', view: 'pages' }),
+  pptx: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
+  ppt: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
+  odp: named('slides', { icon: 'mdi-file-powerpoint-outline', view: 'pages' }),
+  xlsx: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
+  xls: named('sheet', { icon: 'mdi-file-excel-outline', view: 'sheet' }),
+  csv: named('csv', { icon: 'mdi-file-delimited-outline', view: 'sheet' }),
   md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
   markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
 }
@@ -113,9 +123,9 @@ export function fileIcon(path: string): string {
  *  阅读器。这里只管「它叫什么」，不管「谁来显示它」——所以「房间里那一种开在哪里」
  *  是 `previewCanShowInRoom` 说的，它多认这一档。 */
 const WEB_TYPES: Record<string, { label: string; icon: string }> = {
-  html: { label: '网页', icon: 'mdi-language-html5' },
-  htm: { label: '网页', icon: 'mdi-language-html5' },
-  svg: { label: '矢量图', icon: 'mdi-vector-square' },
+  html: named('webPage', { icon: 'mdi-language-html5' }),
+  htm: named('webPage', { icon: 'mdi-language-html5' }),
+  svg: named('vector', { icon: 'mdi-vector-square' }),
 }
 
 const WEB_MIME: Record<string, string> = {
@@ -128,5 +138,5 @@ const WEB_MIME: Record<string, string> = {
  *  一个说不出的类型不该在界面上变成一段后缀。 */
 export function fileLabel(path: string): string {
   const suffix = suffixOf(path)
-  return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? '文件'
+  return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? t('work.room.fileKind.file')
 }

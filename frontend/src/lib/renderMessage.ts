@@ -6,6 +6,8 @@
 // handle→name and id→title maps are provided by the caller (roster / topics).
 import type { Block } from '../cx_types'
 
+import { t } from '../i18n'
+
 import { isAgentBlock } from './authorship'
 import { markdown, sanitizeRendered } from './markdown'
 import { userRefHtml } from './userRef'
@@ -30,7 +32,7 @@ function tokenChip(kind: string, id: string, maps: RefMaps): string {
     const base = id.split('/').pop() || id
     return `<span class="mention file-ref" data-file="${escapeHtml(id)}" title="${escapeHtml(id)}"><i class="mdi mdi-file-document-outline file-ref__icon" aria-hidden="true"></i>${escapeHtml(base)}</span>`
   }
-  const title = maps.topicTitles[id] || '话题'
+  const title = maps.topicTitles[id] || t('work.room.chat.topicFallback')
   return `<span class="mention topic-ref" data-topic="${id}">#${escapeHtml(title)}</span>`
 }
 
@@ -58,7 +60,7 @@ export function plainTokens(text: string, maps: RefMaps): string {
   return text.replace(RAW_TOKEN, (_m, k, id, fid) => {
     if (fid) return fid.split('/').pop() || fid
     if (k === '@') return `@${maps.mentionNames[id] || id}`
-    return `#${maps.topicTitles[id] || '话题'}`
+    return `#${maps.topicTitles[id] || t('work.room.chat.topicFallback')}`
   })
 }
 

@@ -4,6 +4,7 @@
 import type { AcceptCard } from '@/cx_types'
 
 import UserRef from '@/components/common/UserRefLink.vue'
+import { t } from '@/i18n'
 
 defineProps<{
   card: AcceptCard
@@ -16,7 +17,9 @@ defineEmits<{ (e: 'revoke'): void }>()
 <template>
   <v-card variant="outlined" class="merge-box">
     <div class="pa-3">
-      <div class="text-body-2 c-muted mb-3"><UserRef :handle="card.decided_by" /> 已采纳</div>
+      <i18n-t scope="global" keypath="work.room.accept.acceptedBy" tag="div" class="text-body-2 c-muted mb-3">
+        <template #who><UserRef :handle="card.decided_by" /></template>
+      </i18n-t>
       <v-btn
         variant="outlined"
         class="btn-secondary"
@@ -25,7 +28,7 @@ defineEmits<{ (e: 'revoke'): void }>()
         prepend-icon="mdi-undo"
         @click="$emit('revoke')"
       >
-        撤回采纳
+        {{ t('work.room.accept.revoke') }}
       </v-btn>
     </div>
   </v-card>

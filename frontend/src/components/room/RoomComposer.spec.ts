@@ -34,6 +34,8 @@ import { listProjectLibrary } from '../../api'
 
 import RoomComposer from './RoomComposer.vue'
 
+import { setLocale } from '@/i18n'
+
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
 
 const POOL = [
@@ -125,6 +127,8 @@ async function flush() {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.mocked(listProjectLibrary)
     .mockReset()
     .mockResolvedValue({ data: [], total: 0 } as never)

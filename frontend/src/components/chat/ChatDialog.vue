@@ -25,7 +25,7 @@
           <template #activator="{ props }">
             <v-btn icon variant="text" class="ml-2" v-bind="props">
               <v-icon>mdi-format-list-bulleted</v-icon>
-              <v-tooltip activator="parent" location="bottom">切换对话</v-tooltip>
+              <v-tooltip activator="parent" location="bottom">{{ t('aiChat.switch') }}</v-tooltip>
             </v-btn>
           </template>
           <ConversationGroupList
@@ -38,7 +38,7 @@
                 <template #prepend>
                   <v-icon>mdi-plus</v-icon>
                 </template>
-                <v-list-item-title>创建新对话</v-list-item-title>
+                <v-list-item-title>{{ t('aiChat.create') }}</v-list-item-title>
               </v-list-item>
             </template>
           </ConversationGroupList>
@@ -62,7 +62,7 @@
 
         <v-btn v-if="!mdAndUp" icon variant="text" @click="createNewConversation(true)">
           <v-icon>mdi-plus</v-icon>
-          <v-tooltip activator="parent" location="bottom">创建新对话</v-tooltip>
+          <v-tooltip activator="parent" location="bottom">{{ t('aiChat.create') }}</v-tooltip>
         </v-btn>
       </v-toolbar>
 
@@ -120,8 +120,8 @@
             <!-- Empty state -->
             <div v-else class="d-flex flex-column align-center justify-center h-100">
               <v-icon size="48" color="primary" class="mb-3">mdi-robot</v-icon>
-              <div class="text-h6">有什么可以帮你？</div>
-              <div class="text-body-2 text-center mx-4 text-medium-emphasis">你的第一个问题将开启智慧对话</div>
+              <div class="text-h6">{{ t('aiChat.emptyTitle') }}</div>
+              <div class="text-body-2 text-center mx-4 text-medium-emphasis">{{ t('aiChat.emptyBody') }}</div>
             </div>
           </div>
 
@@ -156,6 +156,7 @@ import ChatMessageComponent from './ChatMessage.vue'
 import ConversationGroupList from './ConversationGroupList.vue'
 import { ReasoningStatus } from './types'
 
+import { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 
 // Get screen size
@@ -201,7 +202,7 @@ const activeTitle = computed(() => {
       return activeConv.title
     }
   }
-  return props.title || '智能助手'
+  return props.title || t('aiChat.defaultTitle')
 })
 
 // UI state
@@ -249,7 +250,7 @@ const loadGroupedConversations = async () => {
     }
   } catch (error) {
     console.error('Failed to load conversations:', error)
-    toast.error('加载对话列表失败')
+    toast.error(t('aiChat.listFailed'))
   }
 }
 
@@ -272,13 +273,13 @@ const loadConversation = async (conversationId: string) => {
     await scrollToBottom()
   } catch (error) {
     console.error('Failed to load conversation:', error)
-    toast.error('加载对话失败')
+    toast.error(t('aiChat.loadFailed'))
   }
 }
 
 // Delete a conversation
 const deleteConversation = async (conversationId: string) => {
-  const confirmed = await dialogs.confirm('确定要删除这个对话吗？').wait()
+  const confirmed = await dialogs.confirm(t('aiChat.deleteConfirm')).wait()
   if (confirmed) {
     await chatService.value.deleteConversation(contextId.value, conversationId)
     await loadGroupedConversations()
@@ -447,7 +448,7 @@ const sendMessage = async (
         },
         // Error
         onError: (err) => {
-          toast.error(`流式响应错误: ${err}`)
+          toast.error(t('aiChat.streamError', { error: String(err) }))
           streaming.value = false
           branchManager.setProcessingState(false, false)
           reasoningStatus.value = ReasoningStatus.NONE
@@ -461,7 +462,7 @@ const sendMessage = async (
       },
     })
   } catch (error) {
-    toast.error('发送消息失败')
+    toast.error(t('aiChat.sendFailed'))
     streaming.value = false
     branchManager.setProcessingState(false, false)
     reasoningStatus.value = ReasoningStatus.NONE

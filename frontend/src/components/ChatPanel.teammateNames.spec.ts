@@ -28,7 +28,7 @@ vi.mock('@/api', async () => {
 
 import ChatPanel from './ChatPanel.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const topic = {
   id: 'room',
@@ -130,7 +130,7 @@ async function flush() {
 function mount() {
   return render(ChatPanel, {
     props: { topic, topicList: [topic], members },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 

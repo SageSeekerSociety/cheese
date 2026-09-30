@@ -58,6 +58,11 @@ vi.mock('@/stores/workspace', () => ({
 
 import RunningWorkView from './RunningWorkView.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const Board = RunningWorkView as unknown as Component
 
 function task(over: Partial<RoomTask> = {}): RoomTask {

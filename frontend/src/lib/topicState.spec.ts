@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { topicPhase, topicPhaseBadge, topicShortId, topicStateBadge } from './topicState'
+
+import { setLocale } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。
+beforeEach(() => setLocale('zh-CN'))
 
 describe('话题状态标', () => {
   it('归档的话题读作「已采纳」，不是 git 的 merged', () => {

@@ -28,6 +28,8 @@ vi.mock('../../api', async () => {
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 function mergeState(over: Partial<MergeStateInfo>): MergeStateInfo {
   return {
     state: 'unknown',
@@ -102,6 +104,8 @@ function acceptButton(container: Element): HTMLButtonElement {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -113,7 +117,7 @@ describe('待采纳的卡会自己跟上后端', () => {
     getAcceptCards.mockResolvedValue({ data: [pendingCard(JUST_LANDED)], has_more: false })
     const { container } = render(TopicAcceptCard, {
       props: { topicId: 't1', topicStatus: 'active' },
-      global: { plugins: [createVuetify({ components, directives })] },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
     await flush()
     expect(acceptButton(container).disabled, '刚递到手的卡还不能采纳').toBe(true)
@@ -131,7 +135,7 @@ describe('待采纳的卡会自己跟上后端', () => {
     getAcceptCards.mockResolvedValue({ data: [pendingCard(SETTLED)], has_more: false })
     const { container, getByText } = render(TopicAcceptCard, {
       props: { topicId: 't1', topicStatus: 'active' },
-      global: { plugins: [createVuetify({ components, directives })] },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
     await flush()
     ;(getByText('退回').closest('button') as HTMLButtonElement).click()

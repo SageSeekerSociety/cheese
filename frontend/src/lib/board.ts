@@ -12,6 +12,8 @@
 
 import type { BoardColumn } from '@/cx_types'
 
+import { t } from '@/i18n'
+
 export interface BoardColumnSpec {
   key: BoardColumn
   label: string
@@ -19,16 +21,9 @@ export interface BoardColumnSpec {
   cls: string
 }
 
-const COLUMN_LABEL: Record<BoardColumn, string> = {
-  building: '施工中',
-  delivering: '交付中',
-  needs_you: '待处理',
-  done: '已完成',
-  archived: '已归档',
-}
-
+// 列名按当前语言现取，不存成常量：切换语言后要跟着变。
 export function columnLabel(column: BoardColumn): string {
-  return COLUMN_LABEL[column]
+  return t(`work.board.column.${column}`)
 }
 
 /** 色点的 class。列色是这套界面里唯一说「该谁动」的颜色，所以看板、房间总览、侧栏
@@ -60,7 +55,9 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
  *  也不在：活不归档（只有房间会），一条活永远落不到那一列。 */
 export const BOARD_COLUMNS: BoardColumnSpec[] = (['building', 'delivering', 'needs_you'] as const).map((key) => ({
   key,
-  label: COLUMN_LABEL[key],
+  get label() {
+    return columnLabel(key)
+  },
   cls: columnDotClass(key),
 }))
 
@@ -110,6 +107,6 @@ export function boardColumnCounts(
     counts.set(task.presentation.column, (counts.get(task.presentation.column) ?? 0) + 1)
   }
   return (['needs_you', 'building', 'delivering'] as const)
-    .map((key) => ({ key, label: COLUMN_LABEL[key], count: counts.get(key) ?? 0 }))
+    .map((key) => ({ key, label: columnLabel(key), count: counts.get(key) ?? 0 }))
     .filter((column) => column.count > 0)
 }

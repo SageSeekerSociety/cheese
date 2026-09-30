@@ -16,6 +16,8 @@ import PanelCard from './PanelCard.vue'
 import PanelProgress from './PanelProgress.vue'
 import TaskProgress from './TaskProgress.vue'
 
+import { t } from '@/i18n'
+
 // 文档那一格带着整个编辑器（tiptap + ProseMirror + 代码高亮，约 250 KB gzip），
 // 静态引入的话打开一个房间要先把它下完、解析完，左边的消息才画得出来。它在这一列
 // 的最底下，晚一点到不会把别的东西往下推。
@@ -43,7 +45,7 @@ const props = withDefaults(
     refreshTick: 0,
     openCardId: null,
     cardFocusBlock: null,
-    agentName: '芝士',
+    agentName: () => t('work.room.defaultAgentName'),
     memberNames: () => ({}),
   }
 )
@@ -96,8 +98,8 @@ defineExpose({
         />
         <PanelProgress :topic="props.topic" :refresh-tick="props.refreshTick" />
         <PanelDoc
-          :agent-name="props.agentName"
           ref="docRef"
+          :agent-name="props.agentName"
           class="panel-overview__doc"
           :topic="props.topic"
           :activity-tick="props.activityTick"

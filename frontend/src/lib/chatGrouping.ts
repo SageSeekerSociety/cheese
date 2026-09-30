@@ -13,6 +13,8 @@
 // 09:32 / 14:07 with nothing to tell today's from last week's.
 import type { Block } from '../cx_types'
 
+import i18n, { t } from '../i18n'
+
 /** 一天有多少毫秒。算「隔了几天」用整天的边界，不是按 24 小时除。 */
 export const DAY_MS = 86_400_000
 
@@ -49,11 +51,13 @@ export function dayLabel(iso: string): string {
   const today = new Date()
   const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
   const days = Math.round((startOf(today) - startOf(d)) / DAY_MS)
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 7 && days > 0) return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  if (days === 0) return t('work.room.chat.today')
+  if (days === 1) return t('work.room.chat.yesterday')
+  const locale = i18n.global.locale.value
+  // zh-CN 的 short weekday 就是「周一」…「周日」。
+  if (days < 7 && days > 0) return new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(d)
   const sameYear = d.getFullYear() === today.getFullYear()
-  return d.toLocaleDateString([], sameYear ? { month: 'long', day: 'numeric' } : undefined)
+  return d.toLocaleDateString(locale, sameYear ? { month: 'long', day: 'numeric' } : undefined)
 }
 
 /**

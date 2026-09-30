@@ -1,6 +1,6 @@
 import type { Block } from '@/cx_types'
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DAY_MS,
@@ -13,6 +13,13 @@ import {
   sameSpeaker,
   unreadAnchorBlock,
 } from './chatGrouping'
+
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 /** A block at local noon `daysAgo` days back: noon so a DST shift cannot move it. */
 function atDaysAgo(daysAgo: number, minutes = 0): string {

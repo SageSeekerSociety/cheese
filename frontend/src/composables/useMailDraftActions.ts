@@ -8,6 +8,7 @@ import type { MailOutcome } from '../lib/platformNotice'
 import { ref } from 'vue'
 
 import { discardMailDraft, sendMailDraft } from '../api'
+import { t } from '../i18n'
 
 export function useMailDraftActions(draftId: () => string) {
   const busy = ref<'' | 'send' | 'discard'>('')
@@ -28,13 +29,13 @@ export function useMailDraftActions(draftId: () => string) {
   }
 
   const send = () =>
-    act('send', '没有发出去', async () => {
+    act('send', t('work.room.mail.notSent'), async () => {
       const result = await sendMailDraft(draftId())
       return { status: 'sent', sentAt: result.draft.sent_at ?? null, reason: null }
     })
 
   const discard = () =>
-    act('discard', '没有放弃成功', async () => {
+    act('discard', t('work.room.mail.discardFailed'), async () => {
       await discardMailDraft(draftId())
       return { status: 'discarded', sentAt: null, reason: null }
     })

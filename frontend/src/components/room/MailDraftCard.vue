@@ -9,6 +9,7 @@ import type { MailDraftView, MailOutcome } from '../../lib/platformNotice'
 import { computed } from 'vue'
 
 import { useMailDraftActions } from '../../composables/useMailDraftActions'
+import i18n, { t } from '../../i18n'
 import { myHandle } from '../../me'
 
 const props = defineProps<{
@@ -27,52 +28,54 @@ const mine = computed(() => {
 })
 
 function when(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : ''
+  return iso ? new Date(iso).toLocaleString(i18n.global.locale.value, { hour12: false }) : ''
 }
 </script>
 
 <template>
   <div class="mail-card" data-testid="mail-draft-card">
     <div class="mail-card__head">
-      <span class="mail-card__title">{{ mail.subject || '（无主题）' }}</span>
-      <span class="mail-card__from">从 {{ mail.account }}</span>
+      <span class="mail-card__title">{{ mail.subject || t('work.room.mail.noSubject') }}</span>
+      <span class="mail-card__from">{{ t('work.room.mail.from', { account: mail.account }) }}</span>
     </div>
     <dl class="mail-card__fields">
-      <dt>收件人</dt>
-      <dd>{{ mail.to.join('、') }}</dd>
+      <dt>{{ t('work.room.mail.to') }}</dt>
+      <dd>{{ mail.to.join(t('work.room.roster.listSeparator')) }}</dd>
       <template v-if="mail.cc.length">
-        <dt>抄送</dt>
-        <dd>{{ mail.cc.join('、') }}</dd>
+        <dt>{{ t('work.room.mail.cc') }}</dt>
+        <dd>{{ mail.cc.join(t('work.room.roster.listSeparator')) }}</dd>
       </template>
       <template v-if="mail.attachments.length">
-        <dt>附件</dt>
-        <dd>{{ mail.attachments.map((a) => a.name).join('、') }}</dd>
+        <dt>{{ t('work.room.mail.attachments') }}</dt>
+        <dd>{{ mail.attachments.map((a) => a.name).join(t('work.room.roster.listSeparator')) }}</dd>
       </template>
     </dl>
     <details class="mail-card__body">
-      <summary>正文</summary>
+      <summary>{{ t('work.room.mail.body') }}</summary>
       <pre>{{ mail.body }}</pre>
     </details>
 
     <div v-if="ended" class="mail-card__state" :class="`mail-card__state--${ended.status}`" data-testid="mail-state">
       <template v-if="ended.status === 'sent'"
-        >已发送<template v-if="ended.sentAt"> · {{ when(ended.sentAt) }}</template></template
+        >{{ t('work.room.mail.sent') }}<template v-if="ended.sentAt"> · {{ when(ended.sentAt) }}</template></template
       >
-      <template v-else-if="ended.status === 'discarded'">已放弃</template>
-      <template v-else
-        >没有发出去<template v-if="ended.reason">：{{ ended.reason }}</template></template
-      >
+      <template v-else-if="ended.status === 'discarded'">{{ t('work.room.mail.discarded') }}</template>
+      <template v-else>{{
+        ended.reason ? t('work.room.mail.notSentReason', { reason: ended.reason }) : t('work.room.mail.notSent')
+      }}</template>
     </div>
     <div v-else-if="mine" class="mail-card__actions">
       <v-btn size="small" color="primary" variant="flat" :loading="busy === 'send'" :disabled="!!busy" @click="send">
-        确认发送
+        {{ t('work.room.mail.confirmSend') }}
       </v-btn>
       <v-btn size="small" variant="text" :loading="busy === 'discard'" :disabled="!!busy" @click="discard">
-        放弃
+        {{ t('work.room.mail.discard') }}
       </v-btn>
-      <span class="mail-card__hint">发出去的就是上面这封；芝士不能替你发。</span>
+      <span class="mail-card__hint">{{ t('work.room.mail.hint') }}</span>
     </div>
-    <div v-else class="mail-card__state" data-testid="mail-waiting">等 {{ mail.owner }} 确认后才会发送</div>
+    <div v-else class="mail-card__state" data-testid="mail-waiting">
+      {{ t('work.room.mail.waiting', { owner: mail.owner }) }}
+    </div>
     <div v-if="error" class="mail-card__error" role="alert">{{ error }}</div>
   </div>
 </template>

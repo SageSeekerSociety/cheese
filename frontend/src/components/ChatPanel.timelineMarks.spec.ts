@@ -14,6 +14,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 
 function topicOf(id: string): Topic {
@@ -60,6 +62,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   history = []
   // 未读只数「别人发的」，所以这些测试必须有一个真实的自己。没有它，
   // myHandle() 返回空串，那条过滤永远不成立，测试会因为别的原因通过。
@@ -94,7 +98,7 @@ describe('日期分隔线', () => {
     history = [msg('a', 'other', daysAgo(2)), msg('b', 'other', daysAgo(2, 14)), msg('c', 'other', daysAgo(0))]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -108,7 +112,7 @@ describe('日期分隔线', () => {
     history = [msg('a', 'other', daysAgo(1))]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(container.querySelector('.tl-mark')?.textContent?.trim()).toBe('昨天')
@@ -124,7 +128,7 @@ describe('新消息分隔线', () => {
     ]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true, unreadOnOpen: 2 },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -139,7 +143,7 @@ describe('新消息分隔线', () => {
     history = [msg('a', 'other', daysAgo(0))]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true, unreadOnOpen: 0 },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(container.querySelector('.tl-mark--unread')).toBeNull()
@@ -150,7 +154,7 @@ describe('新消息分隔线', () => {
     history = [msg('theirs', 'other', daysAgo(0, 9)), msg('mine', 'me', daysAgo(0, 10))]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true, unreadOnOpen: 1 },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(container.querySelector('.tl-mark--unread')?.nextElementSibling?.getAttribute('data-mid')).toBe('theirs')
@@ -169,21 +173,21 @@ describe('同一个人连着说的话', () => {
 
   it('一小时之内说的几句合成一段，名字只出现一次', async () => {
     history = [msg('a', 'other', at(9, 0)), msg('b', 'other', at(9, 20)), msg('c', 'other', at(9, 55))]
-    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify] } })
+    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify, i18n] } })
     await settle()
     expect(speakerLines(container)).toBe(1)
   })
 
   it('同一天隔了一小时以上再开口，重新带上名字和时间', async () => {
     history = [msg('a', 'other', at(9, 0)), msg('b', 'other', at(10, 30))]
-    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify] } })
+    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify, i18n] } })
     await settle()
     expect(speakerLines(container)).toBe(2)
   })
 
   it('跨了天就断开，哪怕只隔了几分钟', async () => {
     history = [msg('a', 'other', at(23, 58, 1)), msg('b', 'other', at(0, 1))]
-    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify] } })
+    const { container } = render(Panel, { props: { topic: topicOf('t1') }, global: { plugins: [vuetify, i18n] } })
     await settle()
     expect(speakerLines(container)).toBe(2)
   })
@@ -192,7 +196,7 @@ describe('同一个人连着说的话', () => {
     history = [msg('a', 'other', at(9, 0)), msg('b', 'other', at(9, 5))]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), unreadOnOpen: 1 },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(speakerLines(container)).toBe(2)

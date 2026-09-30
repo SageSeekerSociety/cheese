@@ -23,7 +23,7 @@ vi.mock('@/api', async () => {
 
 import ChatPanel from './ChatPanel.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const topic: Topic = {
   id: 'session-activity-topic',
@@ -104,7 +104,7 @@ describe('session activity', () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 
@@ -131,7 +131,7 @@ describe('session activity', () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 
@@ -177,7 +177,7 @@ describe('session activity', () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 
@@ -198,7 +198,7 @@ describe('session activity', () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 
@@ -224,7 +224,7 @@ describe('谁在干活（多座位并行）', () => {
     const vuetify = createVuetify({ components, directives })
     return render(ChatPanel, {
       props: { topic, topicList: [topic] },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
   }
 

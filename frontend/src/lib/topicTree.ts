@@ -15,6 +15,8 @@
 //      （`hiddenRunning` / `hiddenAwaits`）。未读是数字要相加，状态是"有没有"
 //      所以取或——父行的折叠开关凭它上色，"这里面有动静"才不会被折叠吞掉。
 
+import { t } from '@/i18n'
+
 export interface TopicNodeLike {
   id: string
   parent_id?: string | null
@@ -48,13 +50,13 @@ export function inferTopicKind(topic: TopicKindLike): string {
 
 /** 边栏画的是房间。房间里派出去的活是**卡**，不是地点，所以这里只有两种。 */
 const KIND_LABELS: Record<string, string> = {
-  root: '全局',
-  topic: '话题',
+  root: 'navigation.project.general',
+  topic: 'work.sidebar.kind.topic',
 }
 
 /** 行尾那个种类词（已归档那一段平列表用）。 */
 export function kindLabel(topic: TopicKindLike): string {
-  return KIND_LABELS[inferTopicKind(topic)] ?? '话题'
+  return t(KIND_LABELS[inferTopicKind(topic)] ?? 'work.sidebar.kind.topic')
 }
 
 /** 拍平树的一行：话题 + 缩进深度（TopicSidebar 里的 `TreeRow`）。 */

@@ -19,6 +19,8 @@ import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
 import { postPreviewSession, roomFileDestination } from '../lib/previewSession'
 
+import { t } from '@/i18n'
+
 export interface PanelPreviewProps {
   topicId: string | null
   projectId: string | null
@@ -101,7 +103,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     } catch (e) {
       if (current !== generation) return
       previewFile.value = null
-      previewReadError.value = e instanceof Error ? e.message : '无法读取这个文件'
+      previewReadError.value = e instanceof Error ? e.message : t('work.room.preview.fileReadFailed')
     } finally {
       if (current === generation) {
         loading.value = false
@@ -134,7 +136,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     } catch (e) {
       // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
       if (current !== generation) return
-      previewError.value = e instanceof Error ? e.message : '预览授权失败'
+      previewError.value = e instanceof Error ? e.message : t('work.room.preview.authFailed')
       return
     }
     if (current !== generation) return
@@ -166,7 +168,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       } catch (e) {
         if (!stillCurrent()) return
         previewUrl.value = null
-        previewError.value = e instanceof Error ? e.message : '加载失败'
+        previewError.value = e instanceof Error ? e.message : t('work.room.preview.loadFailedShort')
         return
       }
       if (!stillCurrent()) return
@@ -203,7 +205,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           if (!stillCurrent()) return
           previewUrl.value = null
           previewFile.value = null
-          previewReadError.value = e instanceof Error ? e.message : '无法读取这个文件'
+          previewReadError.value = e instanceof Error ? e.message : t('work.room.preview.fileReadFailed')
           return
         }
         if (!stillCurrent()) return
@@ -229,7 +231,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       if (unchanged && !opts.reload) return
       if (!art.url) {
         previewUrl.value = null
-        previewError.value = '预览地址暂不可用'
+        previewError.value = t('work.room.preview.urlUnavailable')
         return
       }
       try {
@@ -245,7 +247,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       } catch (e) {
         if (!stillCurrent()) return
         previewUrl.value = null
-        previewError.value = e instanceof Error ? e.message : '预览授权失败'
+        previewError.value = e instanceof Error ? e.message : t('work.room.preview.authFailed')
       }
     } finally {
       if (stillCurrent()) {
@@ -308,7 +310,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     try {
       await downloadFile(attachmentRawUrl(props.topicId, path), documentName.value || 'file')
     } catch (e) {
-      downloadError.value = e instanceof Error ? e.message : '下载失败'
+      downloadError.value = e instanceof Error ? e.message : t('work.room.preview.downloadFailed')
     }
   }
 

@@ -31,7 +31,7 @@ vi.mock('../../api', async () => {
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 let seq = 0
 function card(over: Partial<AcceptCard>): AcceptCard {
@@ -87,7 +87,7 @@ async function mountWith(cards: AcceptCard[]) {
   const vuetify = createVuetify({ components, directives })
   const utils = render(TopicAcceptCard, {
     props: { topicId: 't1', topicStatus: 'active' },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await flush()
   return utils
