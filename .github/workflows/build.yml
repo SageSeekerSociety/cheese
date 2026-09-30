@@ -53,6 +53,9 @@ jobs:
       - name: Test the apt guard
         run: bash .github/scripts/test-ensure-apt.sh
 
+      - name: Test the apt guard's network bounds
+        run: python3 .github/scripts/test_ensure_apt.py
+
       - name: Test the claude reinstall guard
         run: bash .github/scripts/test-ensure-claude-cli.sh
 
