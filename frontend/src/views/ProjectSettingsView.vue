@@ -225,7 +225,9 @@ function close() {
           </section>
         </template>
 
-        <ProjectTopicNamingSettings v-else-if="section === 'topic-naming'" :project-id="projectId" />
+        <section v-else-if="section === 'topic-naming'" class="page-section">
+          <ProjectTopicNamingSettings :project-id="projectId" />
+        </section>
 
         <template v-else-if="section === 'computer'">
           <section class="page-section">
@@ -336,38 +338,48 @@ function close() {
   align-items: center;
   justify-content: space-between;
 }
+/* 每一块是一张卡片：细线描边、白底、不加阴影，和个人设置、空间设置同一个样子。
+   块标题是卡片标题。标题行、标题、正文三条用 :deep()，因为队友、工作电脑、额度那几块
+   是子组件自己画的区块头，只写 scoped 的话样式到不了它们里面。子组件的根元素带着这一页
+   的作用域戳，所以 `.page-section` 本身不用 :deep()。 */
 .settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   container-type: inline-size;
 }
-/* 一栏里的第一块紧接着这一栏的标题，不再画那条分隔线。 */
-.settings-body > .page-section:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-/* 区块节奏。区块不是卡片：区块标题是 eyebrow，划分靠留白加一条顶部发丝线。
-   标题行、标题、正文三条用 :deep()，因为队友、工作电脑、额度那几块是子组件自己画
-   的区块头，只写 scoped 的话样式到不了它们里面，标题就按浏览器默认的 16px 画。 */
 .page-section {
-  padding-top: 18px;
-  margin-bottom: 22px;
-  border-top: 1px solid var(--line);
+  margin: 0;
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
 }
 :deep(.page-section-head) {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 :deep(.page-section-title) {
-  font-size: 12px;
+  color: var(--ink);
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--faint);
+  line-height: var(--lh-15);
 }
 :deep(.page-section-body) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* 队友那一块里每个队友原本自己是一张卡；放进卡片里就成了卡中卡，改成用细线分开的行。 */
+.agent-team :deep(.v-card) {
+  margin-bottom: 0 !important;
+  padding: 14px 0 !important;
+  border: 0 !important;
+  border-top: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  background: transparent;
 }
 .whose {
   display: flex;
@@ -397,6 +409,9 @@ function close() {
 @media (max-width: 599.98px) {
   .settings-page-body {
     padding: 16px 16px 32px;
+  }
+  .page-section {
+    padding: 16px;
   }
 }
 </style>
