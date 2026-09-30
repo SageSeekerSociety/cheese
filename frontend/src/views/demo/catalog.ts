@@ -43,8 +43,8 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
-import { QUEUE_ENTRIES } from './catalogQueue'
 import { MODELS_ENTRIES } from './catalogModels'
+import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
