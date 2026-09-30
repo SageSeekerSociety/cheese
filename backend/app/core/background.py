@@ -371,6 +371,7 @@ def periodic_jobs(
         reconcile_repository_webhooks,
         sweep_orphan_accounts,
     )
+    from app.domain.ratchet.ingest import ingest_snapshots as ingest_ratchet_snapshots
     from app.domain.review import pr_poll
     from app.domain.routine.service import sweep as sweep_routines
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
@@ -522,5 +523,14 @@ def periodic_jobs(
             "memory dream",
             settings.memory_dream_sweep_interval_s,
             chat.sweep_memory_dreams,
+        ),
+        # 棘轮快照入库：the CI artifact is the only thing the 棘轮 page reads
+        # from, and an artifact expires after 90 days. Unrun, the page is not
+        # merely stale — its oldest points disappear one by one and the line
+        # starts where the last cleanup ran.
+        PeriodicRunner(
+            "ratchet ingest",
+            settings.ratchet_ingest_interval_s,
+            lambda: ingest_ratchet_snapshots(sessions),
         ),
     ]
