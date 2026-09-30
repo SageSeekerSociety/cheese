@@ -43,13 +43,14 @@ vi.mock('vuetify-sonner', () => ({
 
 import { toast } from 'vuetify-sonner'
 
+import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 
 const SPACE_ID = 647
 
 /** 被测的那一层：取数。 */
 function data() {
-  return useSpaceStore()
+  return useSpaceData()
 }
 
 /** 它写进去的地方：状态。 */

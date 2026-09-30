@@ -56,6 +56,7 @@ import { useTaskData, useTaskManagement } from './composables'
 
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { TasksApi } from '@/network/api/tasks'
+import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 
 // Router
@@ -71,6 +72,7 @@ const taskManagementModule = useTaskManagement(taskDataModule)
 const { submitEditTask } = taskManagementModule
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { domainGroups } = storeToRefs(spaceStore)
 
 // 状态
@@ -124,8 +126,8 @@ const navigateToDetail = () => {
 onMounted(async () => {
   await loadTaskData()
   if (taskData.value?.space?.id) {
-    spaceStore.currentSpaceId = taskData.value.space.id
-    await spaceStore.fetchDomainGroups()
+    spaceStore.setCurrentSpaceId(taskData.value.space.id)
+    await spaceData.fetchDomainGroups()
   }
 })
 </script>

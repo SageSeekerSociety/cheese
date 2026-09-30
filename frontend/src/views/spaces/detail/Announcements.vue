@@ -20,6 +20,7 @@ import { storeToRefs } from 'pinia'
 
 import { compareAnnouncements } from '../model'
 
+import { useSpaceData } from '@/composables/useSpaceData'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { relTime } from '@/lib/relTime'
 import { useDialog } from '@/plugins/dialog'
@@ -33,11 +34,12 @@ const { t } = useI18n()
 const route = useRoute()
 const dialog = useDialog()
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { announcements, isManager } = storeToRefs(spaceStore)
 
 // 公告是空间的一部分：直接读空间 store 的那一份，不另开一条取数的路 —— 换空间时
 // 它自己会跟着换（`fetchSpace` 按 id 判过一次）。
-spaceStore.fetchSpace(Number(route.params.spaceId))
+spaceData.fetchSpace(Number(route.params.spaceId))
 
 const editing = ref(false)
 const editingIndex = ref<number | undefined>(undefined)
@@ -98,7 +100,7 @@ function read(announcement: SpaceAnnouncement) {
 async function remove(index: number) {
   const ok = await dialog.confirm('删除这条公告？').wait()
   if (!ok) return
-  await spaceStore.deleteAnnouncement(index)
+  await spaceData.deleteAnnouncement(index)
   toast.success('已删除')
 }
 
@@ -113,7 +115,7 @@ async function togglePin(index: number) {
   const next = !target.pinned
   try {
     // 整条写回：`updateAnnouncement` 是按下标替换的，只带 `pinned` 会把标题正文弄丢。
-    await spaceStore.updateAnnouncement(index, { ...target, pinned: next })
+    await spaceData.updateAnnouncement(index, { ...target, pinned: next })
     toast.success(next ? '已置顶' : '已取消置顶')
   } catch {
     toast.error(next ? '置顶失败' : '取消置顶失败')
@@ -139,8 +141,8 @@ async function submit() {
     pinned: target ? target.pinned : draftPinned.value,
   }
   try {
-    if (editingIndex.value === undefined) await spaceStore.addAnnouncement(next)
-    else await spaceStore.updateAnnouncement(editingIndex.value, next)
+    if (editingIndex.value === undefined) await spaceData.addAnnouncement(next)
+    else await spaceData.updateAnnouncement(editingIndex.value, next)
     editing.value = false
     toast.success('已发布')
   } catch {
