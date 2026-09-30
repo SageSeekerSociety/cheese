@@ -3,13 +3,12 @@
 //
 // 过去确认要去「我的连接 → 待发送」，一个人读到「芝士写好了草稿」时并不在那一页
 // （chiruotong 2026-09-27）。卡片上摆出发出去的全部内容：收件人、抄送、主题、正文、
-// 附件名。只有邮箱主人看得到按钮；发送仍由后端核对主人身份和附件有没有被改过，
-// 这里的按钮只是入口，不是闸门。
+// 附件名。只有邮箱主人看得到按钮；两个动作在 `useMailDraftActions` 里。
 import type { MailDraftView, MailOutcome } from '../../lib/platformNotice'
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 
-import { discardMailDraft, sendMailDraft } from '../../api'
+import { useMailDraftActions } from '../../composables/useMailDraftActions'
 import { myHandle } from '../../me'
 
 const props = defineProps<{
@@ -20,10 +19,7 @@ const props = defineProps<{
   me?: string | null
 }>()
 
-const busy = ref<'' | 'send' | 'discard'>('')
-const error = ref('')
-/** 刚在这里点完、房间事件还没回来的那一刻，先按自己的结果画。 */
-const local = ref<MailOutcome | null>(null)
+const { busy, error, local, send, discard } = useMailDraftActions(() => props.mail.draftId)
 const ended = computed(() => local.value ?? props.outcome)
 const mine = computed(() => {
   const me = props.me ?? myHandle()
@@ -32,32 +28,6 @@ const mine = computed(() => {
 
 function when(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : ''
-}
-
-async function send() {
-  busy.value = 'send'
-  error.value = ''
-  try {
-    const result = await sendMailDraft(props.mail.draftId)
-    local.value = { status: 'sent', sentAt: result.draft.sent_at ?? null, reason: null }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '没有发出去'
-  } finally {
-    busy.value = ''
-  }
-}
-
-async function discard() {
-  busy.value = 'discard'
-  error.value = ''
-  try {
-    await discardMailDraft(props.mail.draftId)
-    local.value = { status: 'discarded', sentAt: null, reason: null }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '没有放弃成功'
-  } finally {
-    busy.value = ''
-  }
 }
 </script>
 
