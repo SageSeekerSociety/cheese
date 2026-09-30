@@ -65,18 +65,16 @@ THE GRADE, ported from the frontend audit's `analyze.py` (B-data) and simplified
      OR any module that transitively reaches one of those, OR uses `fetch`/
      `axios` itself — or it reads a business store.
   B  it reads only app-chrome stores (`usePageTitleStore`, `useNavigationStore`).
-  A  none of the above: it can be rendered from props and emits alone.
+  A  none of the above: it can be rendered from props and emits alone. This is
+     the grade `.claude/scripts/scene-ratchet.py` calls standalone-ready and
+     fails a new scene on, so the ratchet is a second reader of this number
+     rather than a second opinion about it.
 
-  Simplifications, and what they cost:
-    - Regex, not a compiler, over the `<script>` block and template (the audit's
-      own method). `import type` never counts — it is erased at build time.
-    - The transitive API reach is computed over `.ts` files by the same regex;
-      a specifier this parser cannot resolve is treated as external rather than
-      as an edge. A component that reaches the API through a resolvable chain
-      the regex misses is graded one letter too high.
-    - `defineProps`/`defineEmits` are not counted at all: no grade uses them.
-      The audit's A-level count is therefore reproduced without its prop census.
-    - `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
+  The method itself — every regex, every simplification and what each costs —
+  lives in `.claude/scripts/frontend_grade.py`, which this board and the scene
+  ratchet both load. A copy here would be a second answer to "can this run
+  alone", and the two would eventually disagree about a component that one of
+  them fails.
 
 Exit codes: 0 the board was produced, 1 the self-test failed, 2 could not judge
 (git missing, `--compare` given a ref this checkout does not have). A number
@@ -135,177 +133,34 @@ def git_meta(root: Path) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- the frontend
 
-VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]""", re.S)
-VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
-SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
-TEMPLATE_BLOCK = re.compile(r"<template[^>]*>(.*?)</template>", re.S)
-STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
-ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
-PARENT_USE = re.compile(r"\$parent|\$root")
-BUS_USE = re.compile(r"\beventBus\b|\$eventBus\b")
-INJECT_USE = re.compile(r"\binject\s*\(")
-PROVIDE_USE = re.compile(r"\bprovide\s*\(")
-RAW_HTTP = re.compile(r"\bfetch\s*\(|\baxios\b")
+def load_frontend_grade() -> Any:
+    """The grader, imported from the module this board and the gate both read.
 
-#: Stores whose identity is app chrome rather than business data (the audit's list).
-BENIGN_STORES = {"pageTitle", "navigation"}
-#: `usePageTitleStore` -> `pageTitle`; the audit also folded `Title` into it.
-STORE_ALIASES = {"Title": "pageTitle", "PageTitle": "pageTitle"}
-
-#: The API surface: the fetch stack, the axios stack, and the service wrappers.
-#: `utils/apiBase.ts` is excluded — it is the base URL, not a call.
-API_EXCLUDED = ("frontend/src/utils/apiBase.ts",)
-
-
-def _frontend_files(root: Path, suffix: str) -> list[Path]:
-    src = root / "frontend" / "src"
-    if not src.is_dir():
-        return []
-    return sorted(p for p in src.rglob(f"*{suffix}") if p.is_file())
-
-
-def _is_api_root(rel: str) -> bool:
-    """Is this module part of the API surface?"""
-    if rel in API_EXCLUDED:
-        return False
-    return (
-        rel in ("frontend/src/api.ts", "frontend/src/network/index.ts")
-        or rel.startswith("frontend/src/network/api/")
-        or rel.startswith("frontend/src/services/")
-    )
-
-
-def _resolve_spec(spec: str, importer: Path, src: Path) -> Path | None:
-    """Resolve an import specifier to a file under `src`, or None if external."""
-    if spec.startswith("@/"):
-        base = src / spec[2:]
-    elif spec.startswith("."):
-        base = importer.parent / spec
-    else:
-        return None  # a package: not part of this graph
-    candidates = [base, *(Path(f"{base}{ext}") for ext in (".ts", ".vue", ".js"))]
-    candidates += [base / "index.ts", base / "index.vue"]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
-
-
-def _api_reach(root: Path) -> set[Path]:
-    """Modules under `frontend/src` whose import graph reaches an API root.
-
-    Direct reach is an import of an API root or a bare `fetch`/`axios`; the rest
-    is closed transitively over `.ts` and `.vue` edges, exactly as the audit did.
+    Loaded from THIS script's directory, never from a `--root` tree: the rules
+    a board measures against are the repository's, and a tree to measure is
+    only a tree to measure. `frontend_grade.py` is the single definition of
+    what "standalone-ready" means — `scene-ratchet.py` fails a scene on the
+    same function this reports, which is the one thing the two must not
+    disagree about. (The caps above are loaded the same way, from the gate
+    that enforces them.)
     """
-    src = root / "frontend" / "src"
-    graph: dict[Path, set[Path]] = {}
-    reach: set[Path] = set()
-    for path in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.vue"))):
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        specs = [(bool(t), s) for t, s in VUE_IMPORT.findall(text)]
-        specs += [(False, s) for s in VUE_DYN_IMPORT.findall(text)]
-        deps: set[Path] = set()
-        direct = bool(RAW_HTTP.search(text))
-        for is_type, spec in specs:
-            resolved = _resolve_spec(spec, path, src)
-            if resolved is None:
-                continue
-            try:
-                rel = resolved.relative_to(root).as_posix()
-            except ValueError:
-                continue
-            if not is_type and _is_api_root(rel):
-                direct = True
-            if resolved.suffix in (".ts", ".vue"):
-                deps.add(resolved)
-        graph[path.resolve()] = deps
-        if direct:
-            reach.add(path.resolve())
-    changed = True
-    while changed:  # transitive closure; the graph has cycles, so no topo order
-        changed = False
-        for node, deps in graph.items():
-            if node in reach:
-                continue
-            if deps & reach:
-                reach.add(node)
-                changed = True
-    return reach
+    source = Path(__file__).resolve().parent / "frontend_grade.py"
+    spec = importlib.util.spec_from_file_location("_frontend_grade", source)
+    if spec is None or spec.loader is None:  # pragma: no cover - unreadable script
+        raise ImportError(f"cannot load {source}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_frontend_grade"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def grade_frontend(root: Path) -> dict[str, Any]:
-    """Count `.vue` components and grade each one A/B/C/D."""
-    src = root / "frontend" / "src"
-    reach = _api_reach(root)
-    grades: Counter[str] = Counter()
-    lines_by_grade: Counter[str] = Counter()
-    total_lines = 0
-    for path in _frontend_files(root, ".vue"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        script = "\n".join(SCRIPT_BLOCK.findall(text))
-        template = "\n".join(TEMPLATE_BLOCK.findall(text))
-        whole = script + "\n" + template
-        lines = text.count("\n") + 1
+    """Count `.vue` components and grade each one A/B/C/D.
 
-        specs = [(bool(t), s) for t, s in VUE_IMPORT.findall(text)]
-        specs += [(False, s) for s in VUE_DYN_IMPORT.findall(text)]
-        api_direct = bool(RAW_HTTP.search(script))
-        for is_type, spec in specs:
-            if is_type:
-                continue  # a type-only import pulls in no runtime dependency
-            resolved = _resolve_spec(spec, path, src)
-            if resolved is None:
-                continue
-            try:
-                rel = resolved.relative_to(root).as_posix()
-            except ValueError:
-                continue
-            if _is_api_root(rel):
-                api_direct = True
-            elif (
-                resolved in reach
-                and not rel.startswith("frontend/src/stores/")
-                and resolved.suffix == ".ts"
-            ):
-                api_direct = True  # reaches the network through a chain
-
-        stores = {
-            STORE_ALIASES.get(name, name[:1].lower() + name[1:])
-            for name in STORE_USE.findall(whole)
-        }
-        hard = bool(
-            ROUTER_USE.search(whole)
-            or "vue-router" in script
-            or PARENT_USE.search(text)
-            or BUS_USE.search(text)
-            or INJECT_USE.search(script)
-            or PROVIDE_USE.search(script)
-        )
-        business = api_direct or bool(stores - BENIGN_STORES)
-        if hard:
-            grade = "D"
-        elif business:
-            grade = "C"
-        elif stores:
-            grade = "B"
-        else:
-            grade = "A"
-        grades[grade] += 1
-        lines_by_grade[grade] += lines
-        total_lines += lines
-
-    n = sum(grades.values())
-    return {
-        "components": n,
-        "lines": total_lines,
-        "grades": {g: grades.get(g, 0) for g in "ABCD"},
-        "grade_pct": {
-            g: round(100 * grades.get(g, 0) / n, 1) if n else None for g in "ABCD"
-        },
-        "grade_lines": {g: lines_by_grade.get(g, 0) for g in "ABCD"},
-    }
+    What each letter means, how it is read out of a file, and what a regex
+    over a template cannot see live in `.claude/scripts/frontend_grade.py`.
+    """
+    return load_frontend_grade().grade_frontend(root)
 
 
 def frontend_boundary(root: Path) -> dict[str, Any]:
@@ -1130,6 +985,9 @@ def main() -> int:
         board = collect(root, caps, windows)
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         print(f"cannot judge: git failed: {exc}", file=sys.stderr)
+        return 2
+    except ImportError as exc:
+        print(f"cannot judge: {exc}", file=sys.stderr)
         return 2
 
     payload = dict(board)
