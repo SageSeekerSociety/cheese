@@ -129,7 +129,7 @@ describe('帮助与反馈入口', () => {
     const { container } = await mount({}, { admin: false, platformAdmin: true })
     await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
     await waitFor(() => expect(document.body.textContent).toContain('管理后台'))
-    const link = [...document.querySelectorAll('a')].find((a) => a.textContent?.includes('管理后台'))
+    const link = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('管理后台'))
     expect(link?.getAttribute('href')).toContain('/admin/dashboard')
   })
 
