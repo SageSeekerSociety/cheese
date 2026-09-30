@@ -1,0 +1,20 @@
+{
+  "source": "a3b7ea982ef35aec948324a47fab27da298e745d",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/unit/test_receipt_retention.py",
+    "tests/unit/test_claude_code_drain.py",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--tb=short"
+  ],
+  "cwd": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend",
+  "start": "2026-09-30T21:00:30.834148+00:00",
+  "end": "2026-09-30T21:00:39.982391+00:00",
+  "exit_code": 0,
+  "output": "retention-final.txt",
+  "sha256": "8acc35ac78c82d826177b91e4fbaea659d4086ba858206733c2b4d4397e0eb42"
+}

@@ -1,6 +1,6 @@
 # Native receipt evidence
 
-These tests exercise real PostgreSQL transactions. They do not prove live native-model consumption, runtime integration, a process restart, or injected commit failure.
+The primitive and lock-order tests exercise real PostgreSQL transactions. The retention tests use real SQLite journals and controlled callbacks. Neither proves live native-model consumption, complete runtime integration, a process restart, or injected PostgreSQL commit failure.
 
 ## Primitive baseline
 
@@ -19,4 +19,14 @@ The parameterized test pauses whichever transaction holds its first real row loc
 
 The implementation locks Delivery before NativeInput in both functions. Receipt first discovers the immutable link without a row lock and then revalidates identity/link after locking. Registration after settlement may verify an identical existing registration, but cannot create a new input for a non-sending attempt.
 
-Runtime registration before RPC, journal cursor retry, seen reactions and complete group effects remain unfinished at this checkpoint. The migration is not independently releasable.
+## Journal retention checkpoint
+
+Source: `a3b7ea982ef35aec948324a47fab27da298e745d`.
+
+`retention-final.txt` and its JSON manifest record 9 passed, exit 0: three new retention cases plus six existing drain cases. New cases rebuild the reader after five callback failures spaced beyond the refusal threshold, for fresh and three-day-old echoes. They verify the durable landing cursor stays behind the echo, backend pruning preserves it, successful settlement then advances the cursor, and the next drain does not repeat it. A separate runner-journal case verifies output expiry keeps echoes while deleting ordinary output.
+
+These are reconstructed objects in the same test process, with an `OSError` callback, not process restart or database commit fault injection. The callback protocol is still topic/text at this checkpoint; durable identity runtime wiring is pending. The existing ChatService swallowing of transaction errors is NOT yet removed, so the complete product receipt pipeline is not fixed by these tests alone.
+
+`retention-first.txt` records 3 passed before formatting. `drain-integration-first.txt` records 5 failed/1 passed because existing test subscriptions omitted a receipt callback. Those tests now provide one explicitly; the bulk-old-output fixture excludes receipts because receipts must no longer be discarded as output. The final nine-case run uses the committed source above.
+
+Runtime registration before RPC, structured settlement callbacks, seen reactions and complete group effects remain unfinished. The migration is not independently releasable.
