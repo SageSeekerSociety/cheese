@@ -85,7 +85,7 @@ def test_a_card_routed_to_me_is_on_my_list_and_not_on_anyone_elses(client):
     (item,) = _mine(client, "alice")
     assert item["topicId"] == room
     assert item["topicTitle"] == "预算复核"
-    assert item["displayStatus"] == NeedsYou.awaiting_review
+    assert item["phrase"] == NeedsYou.awaiting_review
     assert item["reason"] == "reviewer"
     assert _mine(client, "bob") == []
 
@@ -120,7 +120,7 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(client):
     _ask(client, room, "alice")
 
     (item,) = _mine(client, "alice")
-    assert item["displayStatus"] == NeedsYou.awaiting_answer
+    assert item["phrase"] == NeedsYou.awaiting_answer
     assert item["reason"] == "asked"
     assert item["taskId"] is None  # 房间自己那条线上的提问
 

@@ -40,7 +40,7 @@ function task(id: string, createdAt: string, extra: Partial<RoomTask> = {}): Roo
     created_at: createdAt,
     updated_at: createdAt,
     // 落哪一列、写哪句话，全由后端给。这一份用例不关心是哪一列，但字段必须在。
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
     ...extra,
   }
 }

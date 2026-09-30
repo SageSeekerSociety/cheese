@@ -607,7 +607,7 @@ const CHANGES_TREE: WorkspaceFile[] = filesOf(CHANGES_SCENE)
 
 /** 改动那一支活自己（面板顶上那条「来源」读的就是它）。 */
 const CHANGES_TASK: RoomTask = roomTask(
-  { id: 'demo-task-1', title: '整理第一周的课件', column: 'needs_you', status: '等你验收' },
+  { id: 'demo-task-1', title: '整理第一周的课件', column: 'needs_you', phrase: 'awaiting_review' },
   0
 )
 

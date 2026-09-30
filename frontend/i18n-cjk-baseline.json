@@ -21,7 +21,6 @@
     "src/views/question/Ask.vue": 13,
     "src/views/question/Detail.vue": 4,
     "src/views/spaces/detail/PdfGenerate.vue": 2,
-    "src/views/spaces/detail/publishLimits.ts": 1,
-    "src/views/workspace/RunningWorkView.vue": 1
+    "src/views/spaces/detail/publishLimits.ts": 1
   }
 }

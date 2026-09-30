@@ -375,13 +375,13 @@ describe('C6 等你的那一颗点', () => {
       {
         ...topic('mine', 'root'),
         awaits_me: true,
-        presentation: { column: 'needs_you', display_status: '待回答' },
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
       },
       {
         ...topic('theirs', 'root'),
-        presentation: { column: 'needs_you', display_status: '待审阅' },
+        presentation: { column: 'needs_you', phrase: 'awaiting_review' },
       },
-      { ...topic('busy', 'root'), presentation: { column: 'building', display_status: '运行中' } },
+      { ...topic('busy', 'root'), presentation: { column: 'building', phrase: 'running' } },
     ]
   }
   function rowOf(container: Element, title: string): HTMLElement {
