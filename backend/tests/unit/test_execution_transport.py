@@ -1635,7 +1635,7 @@ def test_a_claude_code_file_tool_waiting_for_its_machine_says_so_once(
         )
     )
     log = (tmp_path / "bridge.log").open("w")
-    bridge = runtime.MCPProcess(
+    bridge = mcp_process.MCPProcess(
         [sys.executable, central.__file__, "transport", str(config)],
         str(tmp_path),
         {
