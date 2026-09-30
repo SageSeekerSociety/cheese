@@ -271,8 +271,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.users", "app.domain.oauth.repositories"),
         ("app.api.routes.users", "app.domain.passkey.repositories"),
         ("app.api.routes.users", "app.domain.questions.repositories"),
-        ("app.api.routes.users", "app.domain.team.repositories"),
         ("app.api.routes.users", "app.domain.user.repositories"),
+        # --- users_team --- (#2143) the six /users/me/team* routes left
+        # users.py; `leave_team` still builds a TeamRepository itself and the
+        # `get_team_membership_service` dependency that moved with them builds
+        # TeamMembershipApplicationRepository. The same debt as the users.py
+        # lines above, re-attributed to the module the code now lives in.
+        ("app.api.routes.users_team", "app.domain.team.repositories"),
         ("app.api.routes.webhooks", "app.domain.topic.repositories"),
     }
 )
