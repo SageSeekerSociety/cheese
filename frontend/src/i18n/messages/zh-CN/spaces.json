@@ -384,7 +384,11 @@
       "avatar": "头像",
       "changeAvatar": "更换头像",
       "visibleLimitLabel": "题目可见上限"
-    }
+    },
+    "overlay": "空间设置",
+    "close": "关闭空间设置",
+    "closeHint": "关闭空间设置（Esc）",
+    "back": "返回空间设置"
   },
   "announcements": {
     "publish": "发布公告",

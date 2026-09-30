@@ -12,7 +12,7 @@
     "src/views/404.vue",
     "src/views/admin/AdminRatchetPageView.vue",
     "src/views/spaces/detail/settings/BasicInfoView.vue",
-    "src/views/spaces/detail/settings/Index.vue",
+    "src/views/spaces/detail/settings/IndexView.vue",
     "src/views/tasks/detail/Brief.vue",
     "src/views/tasks/detail/BriefView.vue",
     "src/views/tasks/detail/InsightsView.vue",

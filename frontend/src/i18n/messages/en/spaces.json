@@ -334,7 +334,11 @@
       "avatar": "Avatar",
       "changeAvatar": "Change avatar",
       "visibleLimitLabel": "Visible problem limit"
-    }
+    },
+    "overlay": "Space settings",
+    "close": "Close space settings",
+    "closeHint": "Close space settings (Esc)",
+    "back": "Back to space settings"
   },
   "announcements": {
     "publish": "Post announcement",
