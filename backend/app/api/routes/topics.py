@@ -40,7 +40,6 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
     announce_stale,
 )
-from app.domain.agent.step_output import without_output
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -721,111 +720,6 @@ async def read_chat_message(
     item = BlockOut.model_validate(block).model_dump(mode="json")
     item["reactions"] = await repo.reactions_for_block(block_id)
     return ok(item)
-
-
-@router.get("/{topic_id}/transcript")
-async def topic_transcript(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    limit: int | None = Query(None, ge=1, le=200),
-    before: uuid.UUID | None = None,
-    author: str | None = Query(None, min_length=1, max_length=120),
-) -> dict:
-    """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
-    read-only, newest window first.
-
-    Paged for the same reason the conversation is: events are the MOST numerous
-    kind of block (one per tool call), so a topic that has run for a while makes
-    this the largest response the app can ask for, and it only ever grows.
-    `limit=None` keeps the whole-history behaviour for callers that still want
-    it.
-
-    `author` narrows it to one teammate's steps (一个人/一个队友的 handle). A room
-    can seat several of them, and 现场 can be read one of them at a time; that
-    filter belongs INSIDE the paging, exactly like `kinds` — filtering a page
-    after the fact returns fewer rows than asked for and reports `has_more`
-    against the wrong set, so the caller pages through holes.
-
-    The room's own line. What one of its 分身 did is on that card, and is read
-    through it (`GET /topics/{room}/tasks/{card}`) — interleaving every card's
-    actions here would bury what the room itself did."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    repo = BlockRepository(db)
-    # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
-    # to the conversation pane — mirroring them here just duplicates the chat.
-    kinds = {BlockKind.event}
-    cursor: Block | None = None
-    if before is not None:
-        cursor = await repo.get(before)
-        # Same rule as the conversation's pager: an unknown cursor must not
-        # degrade into "newest N", which the caller cannot tell from a real page.
-        # A cursor from one of this room's CARDS is as wrong as one from
-        # another room.
-        if (
-            cursor is None
-            or cursor.topic_id != place.room_id
-            or cursor.task_id is not None
-        ):
-            raise NotFoundError("游标事件不存在")
-    if limit is None:
-        site = [
-            b
-            for b in await repo.list_for_topic(place.room_id)
-            if b.kind in kinds and (author is None or b.author == author)
-        ]
-        has_more = False
-    else:
-        result = await repo.page_for_topic(
-            place.room_id,
-            limit=limit,
-            before=cursor,
-            kinds=kinds,
-            author=author,
-        )
-        site, has_more = result.items, result.has_more
-    # What a step printed stays behind: a page of 120 steps would otherwise
-    # carry up to 120 × 8 KiB. The row says it has some (`output_bytes`), and
-    # `step_output` below hands it over when somebody opens it.
-    items = [
-        without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
-    ]
-    return ok(
-        {
-            **page(items, len(items)),
-            "has_more": has_more,
-            "oldest_id": str(site[0].id) if site else None,
-        }
-    )
-
-
-@router.get("/{topic_id}/transcript/{block_id}/output")
-async def step_output(
-    topic_id: uuid.UUID,
-    block_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The tail of what one 现场 step printed, as kept (``step_output``)."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    block = await BlockRepository(db).get(block_id)
-    # Same door as the transcript: this room's own line, never a card's.
-    if (
-        block is None
-        or block.topic_id != place.room_id
-        or block.task_id is not None
-        or block.kind != BlockKind.event
-    ):
-        raise NotFoundError("步骤不存在")
-    meta = block.meta or {}
-    return ok(
-        {
-            "output": str(meta.get("output") or ""),
-            "bytes": int(meta.get("output_bytes") or 0),
-        }
-    )
 
 
 @router.get("/{topic_id}/usage")
