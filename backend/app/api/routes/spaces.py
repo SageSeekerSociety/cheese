@@ -1,7 +1,6 @@
 import json
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
@@ -1017,130 +1016,6 @@ async def leave_space(
 ) -> Response:
     await service.leave_space(space_id=space_id, user_id=auth_user.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get(
-    "/{spaceId}/invite-codes",
-    summary="List Space Invite Codes",
-)
-async def list_space_invite_codes(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    codes = await service.list_invite_codes(
-        space_id=space_id, actor_user_id=auth_user.user_id
-    )
-    items = await _invite_codes_to_api_models(
-        codes,
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-    return {"code": 200, "message": "OK", "data": {"inviteCodes": items}}
-
-
-@router.post(
-    "/{spaceId}/invite-codes",
-    summary="Create Space Invite Code",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_space_invite_code(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: CreateSpaceInviteCodeRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    expires_at = None
-    if payload.expires_at is not None:
-        expires_at = datetime.fromtimestamp(payload.expires_at / 1000.0, tz=UTC)
-    invite = await service.create_invite_code(
-        space_id=space_id,
-        actor_user_id=auth_user.user_id,
-        max_uses=payload.max_uses,
-        expires_at=expires_at,
-        note=payload.note,
-    )
-    items = await _invite_codes_to_api_models(
-        [invite],
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-    return {"code": 201, "message": "Created", "data": {"inviteCode": items[0]}}
-
-
-@router.patch(
-    "/{spaceId}/invite-codes/{codeId}",
-    summary="Update Space Invite Code",
-)
-async def patch_space_invite_code(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    code_id: Annotated[int, Path(ge=1, alias="codeId")],
-    payload: PatchSpaceInviteCodeRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    expires_at = None
-    if payload.expires_at is not None:
-        expires_at = datetime.fromtimestamp(payload.expires_at / 1000.0, tz=UTC)
-    invite = await service.update_invite_code(
-        space_id=space_id,
-        actor_user_id=auth_user.user_id,
-        code_id=code_id,
-        max_uses=payload.max_uses,
-        max_uses_set="max_uses" in payload.model_fields_set,
-        expires_at=expires_at,
-        expires_at_set="expires_at" in payload.model_fields_set,
-        note=payload.note,
-        note_set="note" in payload.model_fields_set,
-    )
-    items = await _invite_codes_to_api_models(
-        [invite],
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-    return {"code": 200, "message": "OK", "data": {"inviteCode": items[0]}}
-
-
-@router.delete(
-    "/{spaceId}/invite-codes/{codeId}",
-    summary="Revoke Space Invite Code",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def revoke_space_invite_code(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    code_id: Annotated[int, Path(ge=1, alias="codeId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-) -> Response:
-    await service.revoke_invite_code(
-        space_id=space_id,
-        actor_user_id=auth_user.user_id,
-        code_id=code_id,
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get(
-    "/{spaceId}/categories",
-    summary="List categories in a space",
-)
-async def list_space_categories(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    includeArchived: bool = Query(default=False),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    _ = auth_user
-    cats = await service.list_categories(
-        space_id=space_id, include_archived=includeArchived
-    )
-    items = [_category_to_api_model(c) for c in cats]
-    return {"code": 200, "message": "OK", "data": {"categories": items}}
 
 
 @router.get(
