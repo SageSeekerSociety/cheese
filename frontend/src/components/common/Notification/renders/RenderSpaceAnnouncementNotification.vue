@@ -71,7 +71,7 @@ defineExpose({
   background: var(--fill);
   color: var(--muted);
   font-size: 12px;
-  line-height: 20px;
+  line-height: var(--lh-12);
 }
 
 .announcement-excerpt {

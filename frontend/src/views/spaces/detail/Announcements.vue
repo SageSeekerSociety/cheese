@@ -158,7 +158,7 @@ async function remove(a: SpaceAnnouncement) {
     <button
       v-if="expired.length"
       type="button"
-      class="ann__fold"
+      class="ann__fold t-body"
       :aria-expanded="showExpired"
       @click="showExpired = !showExpired"
     >
@@ -178,11 +178,13 @@ async function remove(a: SpaceAnnouncement) {
       />
     </template>
 
-    <p v-if="loaded && !current.length && !expired.length" class="ann__empty">{{ t('spaces.announcements.empty') }}</p>
+    <p v-if="loaded && !current.length && !expired.length" class="ann__empty t-body">
+      {{ t('spaces.announcements.empty') }}
+    </p>
 
     <v-dialog v-model="editing" max-width="600">
       <v-card rounded="lg" class="pa-5">
-        <h3 class="ann__dialog-title">
+        <h3 class="ann__dialog-title t-dialog-title">
           {{ t(editingId === null ? 'spaces.announcements.publish' : 'spaces.announcements.editTitle') }}
         </h3>
         <v-text-field
@@ -240,7 +242,6 @@ async function remove(a: SpaceAnnouncement) {
 .ann__empty {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
 }
 
 .ann__fold {
@@ -253,8 +254,7 @@ async function remove(a: SpaceAnnouncement) {
   border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--muted);
-  font: inherit;
-  font-size: 14px;
+  font-family: inherit;
   text-align: left;
   cursor: pointer;
 }
@@ -269,8 +269,6 @@ async function remove(a: SpaceAnnouncement) {
 
 .ann__dialog-title {
   margin: 0 0 16px;
-  font-size: 17px;
-  font-weight: 600;
 }
 
 .ann__opts {
@@ -293,6 +291,6 @@ async function remove(a: SpaceAnnouncement) {
   background: var(--fill);
   color: var(--muted);
   font-size: 13px;
-  line-height: 20px;
+  line-height: var(--lh-13);
 }
 </style>

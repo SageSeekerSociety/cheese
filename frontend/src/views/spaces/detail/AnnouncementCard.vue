@@ -37,10 +37,10 @@ const byline = computed(() => {
       <span v-if="announcement.pinned && !expired" class="acard__pin">
         <v-icon icon="mdi-pin-outline" size="12" />{{ t('spaces.announcements.pinnedTag') }}
       </span>
-      <h3 class="acard__title">{{ announcement.title }}</h3>
+      <h3 class="acard__title t-title">{{ announcement.title }}</h3>
     </div>
-    <TipTapViewer v-if="announcement.content" class="acard__body" :value="announcement.content" />
-    <div class="acard__meta">
+    <TipTapViewer v-if="announcement.content" class="acard__body t-body-readable" :value="announcement.content" />
+    <div class="acard__meta t-meta-read">
       <span>{{ byline }}</span>
       <span v-if="announcement.expiresAt !== null">
         {{ t('spaces.announcements.expiresOn', { day: dayText(expiryDay(announcement.expiresAt)) }) }}
@@ -98,8 +98,6 @@ const byline = computed(() => {
 .acard__title {
   margin: 0;
   color: var(--ink);
-  font-size: 15px;
-  font-weight: 600;
 }
 
 .acard--expired .acard__title {
@@ -117,13 +115,11 @@ const byline = computed(() => {
   color: var(--warn-ink);
   font-size: 12px;
   font-weight: 600;
-  line-height: 20px;
+  line-height: var(--lh-12);
 }
 
 .acard__body {
   margin-top: 8px;
-  font-size: 14px;
-  line-height: 22px;
 }
 
 .acard__meta {
@@ -131,9 +127,7 @@ const byline = computed(() => {
   flex-wrap: wrap;
   gap: 4px 12px;
   align-items: center;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 12px;
+  margin-top: 12px;
 }
 
 .acard__ops {

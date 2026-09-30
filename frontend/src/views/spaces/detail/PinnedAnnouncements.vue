@@ -35,12 +35,12 @@ function when(createdAt: number, expiresAt: number | null): string {
 
 <template>
   <nav v-if="pinned.length" class="pinned" :aria-label="t('spaces.detail.announcements')">
-    <router-link v-for="a in shown" :key="a.id" :to="target" class="pinned__row">
+    <router-link v-for="a in shown" :key="a.id" :to="target" class="pinned__row t-body">
       <span class="pinned__tag"
         ><v-icon icon="mdi-pin-outline" size="12" />{{ t('spaces.announcements.pinnedTag') }}</span
       >
       <span class="pinned__title">{{ a.title }}</span>
-      <span class="pinned__when">{{ when(a.createdAt, a.expiresAt) }}</span>
+      <span class="pinned__when t-meta-read">{{ when(a.createdAt, a.expiresAt) }}</span>
     </router-link>
     <router-link v-if="more > 0" :to="target" class="pinned__row pinned__more">
       {{ t('spaces.announcements.morePinned', { count: more }) }}
@@ -65,7 +65,6 @@ function when(createdAt: number, expiresAt: number | null): string {
   padding: 0 16px;
   border-top: 1px solid var(--line);
   color: var(--ink);
-  font-size: 14px;
   text-decoration: none;
 }
 
@@ -88,7 +87,7 @@ function when(createdAt: number, expiresAt: number | null): string {
   color: var(--warn-ink);
   font-size: 12px;
   font-weight: 600;
-  line-height: 20px;
+  line-height: var(--lh-12);
 }
 
 .pinned__title {
@@ -102,14 +101,13 @@ function when(createdAt: number, expiresAt: number | null): string {
 .pinned__when {
   flex-shrink: 0;
   margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
   white-space: nowrap;
 }
 
 .pinned__more {
   color: var(--muted);
   font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 .pinned__chev {
