@@ -57,6 +57,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.delivery.input_identity import (
     InputIdentity,
+    InputOutcomeUnconfirmed,
     InputReceipt,
     InputRegistrar,
 )
@@ -704,8 +705,9 @@ class DrivenRuntime[H: Handle]:
         )
         await register_input(identity)
         try:
-            await self.channel.call(
+            await self._submit_registered(
                 handle,
+                identity,
                 "send",
                 {
                     "input_id": str(work_id),
@@ -715,8 +717,6 @@ class DrivenRuntime[H: Handle]:
                     **({"owes_reply": True} if owes_reply else {}),
                 },
             )
-            if self.receipts:
-                await self.receipts(InputReceipt(identity, "accepted"))
         finally:
             # A lost acknowledgement does not mean the session stopped working.
             self._listen(self._seat_of(session))
@@ -763,8 +763,9 @@ class DrivenRuntime[H: Handle]:
         )
         images_payload = await self.channel.images(handle, images or [])
         await register_input(identity)
-        await self.channel.call(
+        await self._submit_registered(
             handle,
+            identity,
             self.steer,
             {
                 "input_id": str(identity.input_id),
@@ -774,9 +775,22 @@ class DrivenRuntime[H: Handle]:
                 **({"owes_reply": True} if owes_reply else {}),
             },
         )
-        if self.receipts:
-            await self.receipts(InputReceipt(identity, "accepted"))
         return True
+
+    async def _submit_registered(
+        self, handle: H, identity: InputIdentity, method: str, params: dict
+    ) -> None:
+        accepted = False
+        try:
+            await self.channel.call(handle, method, params)
+            accepted = True
+            if self.receipts is None:
+                raise RuntimeError("Receipt consumer is not bound")
+            await self.receipts(InputReceipt(identity, "accepted"))
+        except Exception as exc:
+            # Even a transport error can follow admission at the remote end.
+            # Keep the committed identity; the caller must not queue a new UUID.
+            raise InputOutcomeUnconfirmed(identity, accepted=accepted) from exc
 
     def _deliver_seat(self, topic_id, expected_work_id, agent_handle) -> Seat | None:
         """Which seat a topic-addressed delivery means, or None when ambiguous."""

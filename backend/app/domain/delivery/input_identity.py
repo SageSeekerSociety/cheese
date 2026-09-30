@@ -32,5 +32,17 @@ class InputEffects:
     attempt_id: uuid.UUID | None = None
 
 
+class InputOutcomeUnconfirmed(Exception):
+    """An external call began; failure is not permission to send a new input."""
+
+    def __init__(self, identity: InputIdentity, *, accepted: bool):
+        self.identity = identity
+        self.accepted = accepted
+        super().__init__(
+            f"Input {identity.input_id} requires reconciliation "
+            f"(transport accepted={accepted})"
+        )
+
+
 InputRegistrar = Callable[[InputIdentity], Awaitable[None]]
 ReceiptConsumer = Callable[[InputReceipt], Awaitable[None]]

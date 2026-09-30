@@ -232,6 +232,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputIdentity,
+    InputOutcomeUnconfirmed,
     InputReceipt,
     InputRegistrar,
 )
@@ -890,18 +891,9 @@ class ChatService:
                 yield {"type": "done"}
                 return
 
-            # 芝士's 👀 is NOT placed here. This point is "the platform took
-            # the message" — the delivery below has not been attempted yet, and
-            # the branch right after this one handles it FAILING. A mark put
-            # here says the AI has the message while the message may still end
-            # up back in the queue.
-            #
-            # It is placed where the harness says the session took the input:
-            # `arm_seen_receipt` names the blocks, `confirm_prompt_receipt`
-            # places the mark. That receipt is harness-independent — Claude
-            # Code's UserPromptSubmit hook, pi's and codex's app-server response
-            # — and every one of them means the same thing: it is in front of
-            # 芝士 now.
+            # The read marker belongs to the structured native echo's database
+            # transaction. Neither accepting the human message here nor an RPC
+            # acknowledgement proves the native session read the input.
 
         # A turn is already running on this topic. Don't queue behind it —
         # hand the message to the session that is running RIGHT NOW.
@@ -1131,7 +1123,16 @@ class ChatService:
                         owes_reply=owes_reply,
                     )
                 )
-        except Exception:  # noqa: BLE001 — caller reports the queued fallback
+        except InputOutcomeUnconfirmed as exc:
+            # The registered input may already be in the native session. Leave
+            # it with that session for reconciliation, never enqueue a new input.
+            logger.exception(
+                "live input requires reconciliation (topic=%s, input=%s)",
+                topic_id,
+                exc.identity.input_id,
+            )
+            return True
+        except Exception:  # noqa: BLE001 — pre-send failure may queue a fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
         if not delivered:
@@ -1270,6 +1271,13 @@ class ChatService:
                     agent_handle=seat_agent,
                 )
             )
+        except InputOutcomeUnconfirmed as exc:
+            logger.exception(
+                "notice input requires reconciliation (topic=%s, input=%s)",
+                topic_id,
+                exc.identity.input_id,
+            )
+            return True
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id
@@ -4542,6 +4550,22 @@ class ChatService:
                 register_input=self._input_registrar(effects),
                 owes_reply=summoned,
             )
+        except InputOutcomeUnconfirmed as exc:
+            # The session still owns this work. Its structured echo can settle
+            # the committed identity even after this ChatService is replaced.
+            logger.exception(
+                "initial input requires reconciliation (topic=%s, input=%s)",
+                topic_id,
+                exc.identity.input_id,
+            )
+            payload = await self.post_system_event(
+                topic_id,
+                "输入已登记，发送结果正在核对；不会重复发送",
+                turn_id,
+            )
+            if payload is not None:
+                yield {"type": "event_block", "block": payload}
+            return
         except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
             # Nothing else will close this turn. `session_lifecycle` above told
             # the runner that the session owns the ending, and the session this
