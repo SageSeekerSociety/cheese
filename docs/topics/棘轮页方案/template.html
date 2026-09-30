@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>后台管理 · 棘轮（预览）</title>
+<title>后台管理 · 棘轮（预览二稿）</title>
 <style>
 :root{--ink:#191A1C;--text:#36383C;--muted:#5A5E66;--faint:#747A82;--line:#ECEDEF;--line-2:#E2E3E6;--fill:#F4F5F7;--fill-2:#EEEFF1;--canvas:#F7F8FA;--surface:#FFFFFF;--accent:#F57F17;--accent-ink:#9A5413;--accent-wash:#FDF1E2;--ok:#1F9D55;--ok-ink:#12703A;--ok-wash:#E8F6EE;--warn:#E8901C;--warn-ink:#8F5406;--warn-wash:#FAF0DC;--danger:#DC2626;--danger-ink:#B91C1C;--danger-wash:#FDECEC;--info-ink:#2F5AA8;--info-wash:#EAF0FB;--radius-lg:10px}
 *{box-sizing:border-box}
@@ -37,7 +37,7 @@ body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Noto Sans CJK SC","Mic
 .t-pass{background:var(--ok-wash);color:var(--ok-ink)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);margin-top:16px}
 .card h3{margin:0;font-size:15px;color:var(--ink)}
-.card-h{display:flex;align-items:center;gap:10px;padding:14px 16px 10px}
+.card-h{display:flex;align-items:center;gap:10px;padding:14px 16px 10px;flex-wrap:wrap}
 .card-h .why{color:var(--muted);font-size:12.5px}
 .card-h .st{margin-left:auto}
 .overview{width:100%;border-collapse:collapse}
@@ -47,7 +47,7 @@ body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Noto Sans CJK SC","Mic
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin:0 16px 12px;border:1px solid var(--line);border-radius:var(--radius-lg);overflow:hidden}
 .kpi{padding:12px 16px;min-height:92px;border-right:1px solid var(--line)}
 .kpi:last-child{border-right:0}
-.kpi .l{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.kpi .l{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .kpi .v{font-size:24px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;margin-top:2px}
 .kpi .v small{font-size:12px;font-weight:400;color:var(--muted);margin-left:4px}
 .kpi .f{font-size:12px;color:var(--muted);margin-top:2px}
@@ -64,16 +64,18 @@ body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Noto Sans CJK SC","Mic
 .delta-flat{color:var(--muted)}
 .dim{color:var(--faint)}
 .spark{display:block}
-.detail{background:var(--fill);}
+.detail{background:var(--fill)}
 .detail td{padding:12px 16px 14px!important}
 .dl{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12.5px}
 .dl dt{color:var(--faint)}
 .dl dd{margin:0;color:var(--text)}
 .events{margin:8px 0 0;padding:0;list-style:none;font-size:12.5px}
-.events li{display:flex;gap:8px;align-items:baseline;padding:3px 0}
+.events li{display:flex;gap:8px;align-items:baseline;padding:3px 0;flex-wrap:wrap}
 .foot{font-size:12px;color:var(--faint);padding:10px 16px 14px}
 .tip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;font-size:12px;padding:6px 8px;border-radius:6px;max-width:320px;display:none;z-index:9}
 a.pr{color:var(--info-ink);text-decoration:none}
+.fp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--info-ink);background:var(--info-wash);border-radius:5px;padding:1px 5px}
+.none{color:var(--faint)}
 </style>
 </head>
 <body>
@@ -85,7 +87,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
   </aside>
   <main class="page">
   <div class="page-container--admin">
-    <div class="banner">预览页，未上线。数字是芝士在工作机上对 main 实跑的结果和 CI 的 53 份历史记录；带「人工标注」的变化分类和「刷新」按钮是示意。</div>
+    <div class="banner">第二版预览，未上线。数字来自采集脚本的一次真实运行（<span id="chk-count">0</span> 道检查 + 看板），页面按检查名取数、不手抄；走势来自 CI 存下的 <span id="hist-count">0</span> 次看板记录。本页不是 CI 跑出来的那一份，采集提交见下。<br>两份数据的提交不同：快照是分支 <span class="mono" id="banner-sha">—</span>（含 main 的 #2199 拆 AdminDashboardPage），CI 历史最后一点是 05:51 的 <span class="mono">27a2619b1</span>，早于 <span class="mono">#2199</span>——所以 ③ 里 29 → 28 的差有一部分出在这条历史还没记上。</div>
 
     <div class="ph">
       <div>
@@ -96,14 +98,15 @@ a.pr{color:var(--info-ink);text-decoration:none}
     </div>
 
     <div class="prov">
-      <span>检查结果：<b class="mono">main@ccc8a18e</b>（#2182 合入）</span>
-      <span>采集：<b>2026-09-30 06:00:56–06:06:52 UTC</b>，芝士工作机实跑</span>
-      <span>历史：CI「Architecture metrics」<b>53 次</b> main 运行，2026-09-29 15:24 至本次采集的提交</span>
+      <span>采集提交：<b class="mono" id="snap-sha">—</b></span>
+      <span>提交时间 <b id="snap-date">—</b> · 采集时间 <b id="snap-collected">—</b>（UTC）</span>
+      <span>采集器 <b class="mono">.claude/scripts/ratchet-snapshot.py</b></span>
+      <span>带规则指纹 <b id="fp-count">0</b> / <b id="chk-count-2">0</b> 道</span>
     </div>
     <div class="legend">
       <span class="tag t-real">真实值</span>
       <span class="tag t-sample">样例 / 示意</span>
-      <span class="tag t-missing">未采集</span>
+      <span class="tag t-missing">没跑到（<span class="mono">not_collected</span>）</span>
       <span class="tag t-recal">口径修正中</span>
       <span class="tag t-rule">规则变更 / 新口径起点</span>
       <span class="tag t-del">删除功能</span>
@@ -116,39 +119,66 @@ a.pr{color:var(--info-ink);text-decoration:none}
       <table class="overview">
         <thead><tr><th>方面</th><th>检查</th><th>结果</th><th>还冻结着的债</th><th>同口径起点 → 现在</th><th>判断</th></tr></thead>
         <tbody>
-          <tr><td><a href="#s1">能独立运行的前端场景</a></td><td>2 道</td><td><span class="tag t-pass">通过</span></td><td>128 个场景评分未达标</td><td><span class="tag t-rule">新口径起点</span> 评分达标 10 / 138，其中 1 个有挂载证据</td><td>第一次采集，还没有可比的点</td></tr>
-          <tr><td><a href="#s2">前后端依赖边界</a></td><td>7 道</td><td><span class="tag t-pass">7 通过</span></td><td>前端 116 处 · 后端契约 253 条（冻结 255）</td><td>前端 127 → 116 · C3 178 → 173</td><td><span class="delta-down">在降</span>；C1、C2 无变化</td></tr>
-          <tr><td><a href="#s3">文件规模</a></td><td>1 道</td><td><span class="tag t-pass">通过</span></td><td>29 个文件超标，共超 27,887 行</td><td>34 → 29 个 · 34,753 → 27,887 行</td><td><span class="delta-down">在降</span>；其中 3 个文件靠删除功能下线</td></tr>
-          <tr><td><a href="#s4">类型与样式</a></td><td>3 道</td><td><span class="tag t-pass">3 通过</span></td><td>样式令牌 37 处 · 固定色 7 处（冻结）</td><td><span class="tag t-missing">历史未采集</span></td><td>无历史，不判断方向</td></tr>
+          <tr>
+            <td><a href="#s1">能独立运行的前端场景</a></td><td>2 道</td>
+            <td><span class="tag t-recal">口径修正中</span></td>
+            <td>规则评分未达标 <span data-c="scene-ratchet.frozen">—</span> 个</td>
+            <td>规则在改（#2182 之后仍在修），修好前不与任何起点比</td>
+            <td>等规则定稿</td>
+          </tr>
+          <tr>
+            <td><a href="#s2">前后端依赖边界</a></td><td>7 道</td>
+            <td><span class="tag t-pass" id="s2-pass-tag"><span id="s2-pass">0</span> 道通过</span></td>
+            <td>前端 <span data-c="fe-boundary.actual">—</span> 处 · 后端契约 <span data-c="be-contracts.actual">—</span> 条（冻结 <span data-c="be-contracts.frozen">—</span>）</td>
+            <td>前端 <span id="fe-start">—</span> → <span id="fe-now">—</span> · C3 <span id="c3-start">—</span> → <span id="c3-now">—</span></td>
+            <td><span id="t2-verdict">—</span></td>
+          </tr>
+          <tr>
+            <td><a href="#s3">文件规模</a></td><td>1 道</td>
+            <td><span class="tag t-pass">通过</span></td>
+            <td><span id="sz-over">—</span> 个文件超标，共超 <span id="sz-excess">—</span> 行</td>
+            <td><span id="sz-over-start">—</span> → <span id="sz-over-2">—</span> 个 · <span id="sz-excess-start">—</span> → <span id="sz-excess-2">—</span> 行</td>
+            <td><span id="t3-verdict">—</span></td>
+          </tr>
+          <tr>
+            <td><a href="#s4">类型与样式</a></td><td>3 道</td>
+            <td><span class="tag t-pass">3 通过</span></td>
+            <td>样式令牌 <span data-c="stylelint-tokens.actual">—</span> 处 · 固定色 <span data-c="palette.actual">—</span> 处（冻结 <span data-c="palette.frozen">—</span>）</td>
+            <td><span class="tag t-missing">历史未采集</span></td>
+            <td>无历史，不判断方向</td>
+          </tr>
         </tbody>
       </table>
     </section>
 
     <!-- 1 -->
     <section class="card" id="s1">
-      <div class="card-h"><h3>① 能独立运行的前端场景</h3><span class="why">页面或面板只靠 props 和事件就能渲染</span><span class="st tag t-pass">2 道通过</span></div>
+      <div class="card-h">
+        <h3>① 能独立运行的前端场景</h3>
+        <span class="why">页面或面板只靠 props 和事件就能渲染</span>
+        <span class="st tag t-recal">口径修正中</span>
+      </div>
       <div class="kpis">
-        <div class="kpi"><div class="l">评分达标 <span class="tag t-real">真实值</span></div><div class="v">10<small>/ 138 个</small></div><div class="f">页面 2 · 面板 8。按规则评分，不代表已单独挂载运行过</div></div>
-        <div class="kpi"><div class="l">已挂载验证 <span class="tag t-real">真实值</span></div><div class="v">1<small>个</small></div><div class="f">PanelTabs：预览站 3 格在 catalog.spec 里挂载通过</div></div>
-        <div class="kpi"><div class="l">达标但未验证 <span class="tag t-real">真实值</span></div><div class="v">9<small>个</small></div><div class="f">没登记预览站，没有挂载证据。补登记本身不算还债</div></div>
-        <div class="kpi"><div class="l">评分未达标 <span class="tag t-real">真实值</span></div><div class="v">128<small>个</small></div><div class="f">C 57（自己取数）· D 71（读路由等）；冻结 128</div></div>
+        <div class="kpi"><div class="l">评分达标 <span class="tag t-recal">口径修正中</span></div><div class="v dim">不显示</div><div class="f">现行判定把「自己取数的容器」和「展示层」当成同一个对象：一个合法的新写法（route-shell 取数、子树是纯 props 的 View）仍被判 C。修好前显示这个数会误导</div></div>
+        <div class="kpi"><div class="l">已挂载验证 <span class="tag t-real">真实值</span></div><div class="v" id="mount-count">—</div><div class="f" id="mount-detail">—</div></div>
+        <div class="kpi"><div class="l">规则评分未达标 <span class="tag t-real">真实值</span></div><div class="v"><span data-c="scene-ratchet.actual">—</span><small>个</small></div><div class="f">冻结 <span data-c="scene-ratchet.frozen">—</span>；<b>这是现行规则的数，不代表这些场景都该改</b></div></div>
+        <div class="kpi"><div class="l">挂载证据来源</div><div class="v dim">另一列</div><div class="f">只认预览站登记、并被 <span class="mono">catalog.spec.ts</span> 逐格挂载通过的场景；不并进检查器数出来的那个数</div></div>
       </div>
       <table class="grid">
-        <thead><tr><th>检查</th><th class="num">当前</th><th class="num">基线</th><th>结果</th><th>数据来源</th></tr></thead>
+        <thead><tr><th>检查</th><th class="num">当前</th><th class="num">基线</th><th>结果</th><th>规则指纹</th><th>数据来源</th></tr></thead>
         <tbody>
-          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · <span class="mono">pnpm run lint:scenes</span></div></td><td class="num">10 / 128</td><td class="num">10 / 128</td><td><span class="tag t-pass">通过</span></td><td class="src">ready / debt；基线 <span class="mono">frontend/scene-baseline.json</span></td></tr>
-          <tr class="detail" id="d-scene" hidden><td colspan="5"><dl class="dl">
+          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · <span class="mono">pnpm run lint:scenes</span></div></td><td class="num" data-c="scene-ratchet.actual">—</td><td class="num" data-c="scene-ratchet.frozen">—</td><td><span data-c="scene-ratchet.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="scene-ratchet.fingerprint">—</span></td><td class="src">ready / debt；基线 <span class="mono">frontend/scene-baseline.json</span></td></tr>
+          <tr class="detail" id="d-scene" hidden><td colspan="6"><dl class="dl">
             <dt>规则</dt><dd>已经能独立运行的场景不许退化；新加的页面或面板从第一天起就要能独立运行</dd>
             <dt>判定来源</dt><dd><span class="mono">.claude/scripts/frontend_grade.py</span>，指标板和闸门共用这一份，本页只读它的输出</dd>
-            <dt>口径</dt><dd>#2182 合入时修正了漏判：子组件自己取数，父页面不再被评为 A。本次是修正后的第一次采集，作为新口径起点；之前的「20 个」属于旧口径，不与之比较</dd>
-            <dt>重构负责人的拆分</dt><dd>旧口径到新口径的差异里，有规则修正、24 个场景随功能删除、5 个是 main 上既有的新增，三者分开记。<span class="dim">（来自重构话题，本页未独立复核这份拆分）</span></dd>
-            <dt>挂载证据</dt><dd>只认 /demo/catalog 登记、并被 <span class="mono">views/demo/catalog.spec.ts</span> 逐格挂载通过的场景。本次在 ccc8a18e 上单独跑了这份测试（06:20 UTC）：PanelTabs 的 3 格全部挂载通过</dd>
-            <dt>未验证的 9 个</dt><dd class="mono">ChangesFileTree · TodoChecklist · DocOverlays · DocSlashMenu · DocSurface · PreviewPages · PreviewSheet · views/404 · user/settings/General</dd>
+            <dt>为什么标「口径修正中」</dt><dd>已核实：现行判定把取数容器和展示层混作同一对象。一个合理的新写法——route-shell 取数、子树是纯 props 的 View——仍被判 C 而拒绝合入；反过来 PanelDoc 那批样例是因为<b>已经存在的旧债</b>才通过。规则由重构话题（#2182）修，本页在规则定稿前不显示方向，也不与修好前的数比较</dd>
+            <dt>修好之后</dt><dd>规则一改，这一道的<b>规则指纹</b>就变，本页自动开一个新的比较起点。改前改后的 ready 数量跳变不会被算成重构成果</dd>
+            <dt>挂载证据（另列）</dt><dd id="mount-evidence">—</dd>
             <dt>相关</dt><dd><a class="pr">#2182</a> · <a class="pr">#2143</a></dd>
           </dl></td></tr>
-          <tr class="row" data-d="d-grade"><td><div class="name">组件 A/B/C/D 分级</div><div class="src">arch-metrics.py · 看板，不拦 PR</div></td><td class="num">A 147 / 392</td><td class="num dim">无冻结</td><td><span class="tag t-rule">新口径起点</span></td><td class="src">B 1 · C 144 · D 100；CI 每次 push main 的 JSON</td></tr>
-          <tr class="detail" id="d-grade" hidden><td colspan="5"><dl class="dl">
-            <dt>口径</dt><dd>从 ccc8a18e 起是新判定。旧判定的 52 次记录（最后一次 A 180 / 392）单独保留，不和新口径连成一条线</dd>
+          <tr class="row" data-d="d-grade"><td><div class="name">组件 A/B/C/D 分级</div><div class="src">arch-metrics.py · 看板，不拦 PR</div></td><td class="num dim">待重算</td><td class="num dim">无冻结</td><td><span class="tag t-recal">口径修正中</span></td><td><span class="fp">看板脚本</span></td><td class="src">与上一行同一份 <span class="mono">frontend_grade.py</span>，同样等规则定稿</td></tr>
+          <tr class="detail" id="d-grade" hidden><td colspan="6"><dl class="dl">
+            <dt>口径</dt><dd>旧判定的记录（最后一次 A <span id="grade-a">—</span>）单独保留，不和新口径连成一条线</dd>
             <dt>旧口径里的一步</dt><dd>#2154 删除课程与讨论后组件数 442 → 392，这是删除功能，不是还债</dd>
           </dl></td></tr>
         </tbody>
@@ -157,76 +187,94 @@ a.pr{color:var(--info-ink);text-decoration:none}
 
     <!-- 2 -->
     <section class="card" id="s2">
-      <div class="card-h"><h3>② 前后端依赖边界</h3><span class="why">组件不自己取数、后端分层不倒挂、同级领域不成环</span><span class="st tag t-pass">7 道全部通过</span></div>
+      <div class="card-h"><h3>② 前后端依赖边界</h3><span class="why">组件不自己取数、后端分层不倒挂、同级领域不成环</span><span class="st tag t-pass" id="s2-head">— 道全部通过</span></div>
       <div class="kpis">
-        <div class="kpi"><div class="l">前端：组件越界导入 <span class="tag t-real">真实值</span></div><div class="v">116<small>处 · 75 个文件</small></div><div class="f"><span class="delta-down">−11</span> 比同口径起点 127（#2163 之后）</div></div>
-        <div class="kpi"><div class="l">后端：三条契约的实际违规 <span class="tag t-real">真实值</span></div><div class="v">253<small>条</small></div><div class="f">冻结 255 条，其中 2 条豁免已失效</div></div>
-        <div class="kpi"><div class="l">领域直连别域 repository <span class="tag t-real">真实值</span></div><div class="v">154<small>条</small></div><div class="f">与登记一致；历史未采集</div></div>
+        <div class="kpi"><div class="l">前端：组件越界导入 <span class="tag t-real">真实值</span></div><div class="v"><span data-c="fe-boundary.actual">—</span><small>处</small></div><div class="f"><span id="fe-delta">—</span> 比同口径起点 <span id="fe-start-2">—</span>（#2163 之后）</div></div>
+        <div class="kpi"><div class="l">后端：三条契约的实际违规 <span class="tag t-real">真实值</span></div><div class="v"><span data-c="be-contracts.actual">—</span><small>条</small></div><div class="f">冻结 <span data-c="be-contracts.frozen">—</span> 条，其中 <span id="be-stale">—</span> 条豁免已失效</div></div>
+        <div class="kpi"><div class="l">领域直连别域 repository <span class="tag t-real">真实值</span></div><div class="v"><span data-c="domain-import-guard.actual">—</span><small>条</small></div><div class="f">与登记一致；历史未采集</div></div>
       </div>
       <table class="grid" id="t2">
-        <thead><tr><th>检查</th><th class="num">实际</th><th class="num">冻结</th><th class="num">失效豁免</th><th class="num">同口径起点</th><th class="num">变化</th><th>结果</th><th>走势（每点一次 main 运行）</th></tr></thead>
+        <thead><tr><th>检查</th><th class="num">实际</th><th class="num">冻结</th><th class="num">失效豁免</th><th class="num">同口径起点</th><th class="num">变化</th><th>结果</th><th>规则指纹</th><th>走势（每点一次 main 运行）</th></tr></thead>
         <tbody>
-          <tr class="row" data-d="d-feb"><td><div class="name">组件不取数、不读路由</div><div class="src">ESLint · <span class="mono">pnpm run lint:boundary</span></div></td><td class="num">116</td><td class="num">116</td><td class="num">0</td><td class="num">127</td><td class="num delta-down">−11</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="fe_boundary" data-mark="14565ff91" width="180" height="30"></svg></td></tr>
-          <tr class="detail" id="d-feb" hidden><td colspan="8"><dl class="dl">
+          <tr class="row" data-d="d-feb"><td><div class="name">组件不取数、不读路由</div><div class="src">ESLint · <span class="mono">pnpm run lint:boundary</span></div></td><td class="num" data-c="fe-boundary.actual">—</td><td class="num" data-c="fe-boundary.frozen">—</td><td class="num" data-c="fe-boundary.stale">—</td><td class="num" id="fe-start-3">—</td><td class="num" id="fe-delta-2">—</td><td><span data-c="fe-boundary.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="fe-boundary.fingerprint">—</span></td><td><svg class="spark" data-key="fe_boundary" data-mark="14565ff91" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-feb" hidden><td colspan="9"><dl class="dl">
             <dt>规则</dt><dd><span class="mono">src/components/**</span> 不许导入 API 层、services、network 或 vue-router；按解析后的路径判</dd>
-            <dt>基线文件</dt><dd><span class="mono">frontend/import-boundary-baseline.json</span>（75 个文件）</dd>
+            <dt>基线文件</dt><dd><span class="mono">frontend/import-boundary-baseline.json</span><span class="dim">（基线不进指纹：多冻结一条豁免不是改规则，那正是本页要数的债）</span></dd>
             <dt>变化记录</dt><dd><ul class="events">
-              <li><span class="tag t-real">还债</span><span>91 → 84</span><span class="mono">2d33703fc</span><a class="pr">#2137</a> 路由缝，12 个组件不再需要路由</li>
-              <li><span class="tag t-del">删除功能</span><span>84 → 83</span><span class="mono">4dcb876b4</span><a class="pr">#2132</a></li>
-              <li><span class="tag t-rule">规则变更</span><span>83 → 127</span><span class="mono">14565ff91</span><a class="pr">#2163</a> 开始数相对路径导入；此后为新口径，之前的点不与之比较</li>
-              <li><span class="tag t-real">还债</span><span>127 → 124</span><span class="mono">e047ab95f</span><a class="pr">#2172</a> 拆 TopicSidebar</li>
-              <li><span class="tag t-real">减少</span><span>124 → 120</span><span class="mono">f78e52c54</span><a class="pr">#2152</a></li>
-              <li><span class="tag t-del">删除功能</span><span>120 → 116</span><span class="mono">90f83ddb2</span><a class="pr">#2154</a> 删除课程与讨论</li>
-            </ul><div class="dim" style="font-size:11.5px;margin-top:4px">分类为预览中人工按 PR 标注 <span class="tag t-sample">样例</span></div></dd>
+              <li><span class="tag t-real">还债</span><span>91 → 84</span><span class="mono">2d33703fc</span><span>#2137 路由缝，12 个组件不再需要路由</span></li>
+              <li><span class="tag t-del">删除功能</span><span>84 → 83</span><span class="mono">4dcb876b4</span><span>#2132</span></li>
+              <li><span class="tag t-rule">规则变更</span><span>83 → 127</span><span class="mono">14565ff91</span><span>#2163 开始数相对路径导入；此后为新口径，之前的点不与之比较</span></li>
+              <li><span class="tag t-real">还债</span><span>127 → 124</span><span class="mono">e047ab95f</span><span>#2172 拆 TopicSidebar</span></li>
+              <li><span class="tag t-real">减少</span><span>124 → 120</span><span class="mono">f78e52c54</span><span>#2152</span></li>
+              <li><span class="tag t-del">删除功能</span><span>120 → 116</span><span class="mono">90f83ddb2</span><span>#2154 删除课程与讨论</span></li>
+            </ul><div class="dim" style="font-size:11.5px;margin-top:4px">分类为人工按 PR 标注 <span class="tag t-sample">样例</span>。上线版只自动识别规则变更（靠指纹），其余变化只列 PR</div></dd>
           </dl></td></tr>
-          <tr class="row" data-d="d-c1"><td><div class="name">C1 分层：api → domain → core 不倒挂</div><div class="src">import-linter · <span class="mono">check_boundaries.py</span></div></td><td class="num">26</td><td class="num">26</td><td class="num">0</td><td class="num">26</td><td class="num delta-flat">0</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c1" width="180" height="30"></svg></td></tr>
-          <tr class="detail" id="d-c1" hidden><td colspan="8"><dl class="dl"><dt>判断</dt><dd>自 09-29 15:24 起 53 次运行都是 26，没有一条被还掉</dd><dt>基线文件</dt><dd><span class="mono">backend/.importlinter</span> 的 ignore_imports</dd></dl></td></tr>
-          <tr class="row" data-d="d-c2"><td><div class="name">C2 路由不碰别的领域的 models</div><div class="src">import-linter</div></td><td class="num">54</td><td class="num">56</td><td class="num" style="color:var(--warn-ink)">2</td><td class="num">56<span class="dim">（冻结）</span></td><td class="num dim">实际历史未采集</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c2" width="180" height="30"></svg></td></tr>
-          <tr class="detail" id="d-c2" hidden><td colspan="8"><dl class="dl">
-            <dt>失效豁免</dt><dd><span class="mono">app.api.routes.spaces -&gt; app.domain.teaching.models</span><br><span class="mono">app.api.routes.spaces -&gt; app.domain.task.models</span><br>#2153 删掉了空间讨论接口，这两条已无对应导入</dd>
+          <tr class="row" data-d="d-c1"><td><div class="name">C1 分层：api → domain → core 不倒挂</div><div class="src">import-linter · <span class="mono">check_boundaries.py</span> · 检查器自称 <span class="mono" data-c="be-contracts.details.api-domain-core.name">—</span></div></td><td class="num" data-c="be-contracts.details.api-domain-core.actual">—</td><td class="num" data-c="be-contracts.details.api-domain-core.frozen">—</td><td class="num" data-c="be-contracts.details.api-domain-core.stale">—</td><td class="num" id="c1-start">—</td><td class="num" id="c1-delta">—</td><td><span data-c="be-contracts.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="be-contracts.fingerprint">—</span></td><td><svg class="spark" data-key="c1" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-c1" hidden><td colspan="9"><dl class="dl"><dt>判断</dt><dd id="c1-note">—</dd><dt>基线文件</dt><dd><span class="mono">backend/.importlinter</span> 的 ignore_imports；指纹前先剥掉这个块，只留契约声明</dd></dl></td></tr>
+          <tr class="row" data-d="d-c2"><td><div class="name">C2 路由不碰别的领域的 models</div><div class="src">import-linter · 检查器自称 <span class="mono" data-c="be-contracts.details.routes-touch-no-models.name">—</span></div></td><td class="num" data-c="be-contracts.details.routes-touch-no-models.actual">—</td><td class="num" data-c="be-contracts.details.routes-touch-no-models.frozen">—</td><td class="num" style="color:var(--warn-ink)" data-c="be-contracts.details.routes-touch-no-models.stale">—</td><td class="num" id="c2-start">—<span class="dim">（冻结）</span></td><td class="num dim">实际历史未采集</td><td><span data-c="be-contracts.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="be-contracts.fingerprint">—</span></td><td><svg class="spark" data-key="c2" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-c2" hidden><td colspan="9"><dl class="dl">
+            <dt>失效豁免</dt><dd id="stale-c2">—</dd>
             <dt>怎么清</dt><dd><span class="mono">uv run python scripts/boundary_baseline.py --update</span>（只会删，不会加）</dd>
-            <dt>为什么分两列</dt><dd>冻结数只在有人跑 --update 时才降；实际数每次检查都会重算。走势线画的是冻结数，因为 CI 历史里只存了它</dd>
+            <dt>为什么分两列</dt><dd>冻结数只在有人跑 --update 时才降；实际数每次检查都会重算。看板的走势线画的是冻结数，因为 CI 历史里只存了它</dd>
           </dl></td></tr>
-          <tr class="row" data-d="d-c3"><td><div class="name">C3 同级领域不成环</div><div class="src">import-linter</div></td><td class="num">173</td><td class="num">173</td><td class="num">0</td><td class="num">178</td><td class="num delta-down">−5</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c3" width="180" height="30"></svg></td></tr>
-          <tr class="detail" id="d-c3" hidden><td colspan="8"><dl class="dl"><dt>变化记录</dt><dd><ul class="events">
-            <li><span class="tag t-del">删除功能</span><span>178 → 172</span><span class="mono">4dcb876b4</span><a class="pr">#2132</a> 删除后端 ChatGPT 订阅导入</li>
-            <li><span class="tag t-up">新增豁免</span><span>172 → 173</span><span class="mono">49d769b2d</span><a class="pr">#2180</a> 拆 review/services.py 时新冻结 1 条</li>
+          <tr class="row" data-d="d-c3"><td><div class="name">C3 同级领域不成环</div><div class="src">import-linter · 检查器自称 <span class="mono" data-c="be-contracts.details.domains-acyclic.name">—</span></div></td><td class="num" data-c="be-contracts.details.domains-acyclic.actual">—</td><td class="num" data-c="be-contracts.details.domains-acyclic.frozen">—</td><td class="num" data-c="be-contracts.details.domains-acyclic.stale">—</td><td class="num" id="c3-start-2">—</td><td class="num" id="c3-delta">—</td><td><span data-c="be-contracts.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="be-contracts.fingerprint">—</span></td><td><svg class="spark" data-key="c3" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-c3" hidden><td colspan="9"><dl class="dl"><dt>变化记录</dt><dd><ul class="events">
+            <li><span class="tag t-del">删除功能</span><span>178 → 172</span><span class="mono">4dcb876b4</span><span>#2132 删除后端 ChatGPT 订阅导入</span></li>
+            <li><span class="tag t-up">新增豁免</span><span>172 → 173</span><span class="mono">49d769b2d</span><span>#2180 拆 review/services.py 时新冻结 1 条</span></li>
           </ul></dd></dl></td></tr>
-          <tr class="row"><td><div class="name">领域不直连别域 repository</div><div class="src">pytest · test_domain_import_guard.py</div></td><td class="num">154</td><td class="num">154</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
-          <tr class="row"><td><div class="name">Claude Code 适配器跨界账本</div><div class="src">pytest · test_harness_boundary.py</div></td><td class="num">6<span class="dim"> 个模块</span></td><td class="num">6</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
-          <tr class="row"><td><div class="name">is_private 读点登记</div><div class="src">pytest · test_is_private_read_points.py</div></td><td class="num">20<span class="dim"> 处</span></td><td class="num">20</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+          <tr class="row" data-d="d-dig"><td><div class="name">领域不直连别域 repository</div><div class="src">pytest · test_domain_import_guard.py</div></td><td class="num" data-c="domain-import-guard.actual">—</td><td class="num" data-c="domain-import-guard.frozen">—</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span data-c="domain-import-guard.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="domain-import-guard.fingerprint">—</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+          <tr class="detail" id="d-dig" hidden><td colspan="9"><dl class="dl"><dt>数从哪来</dt><dd>这道检查没有 <span class="mono">--json</span> 出口。采集器跑 pytest 拿退出码，再 import 测试模块读它自己的登记表（<span class="mono">len(_EXEMPT)</span>）；测试失败时数量记 <span class="mono">null</span>，不记 0</dd></dl></td></tr>
+          <tr class="row" data-d="d-har"><td><div class="name">Claude Code 适配器跨界账本</div><div class="src">pytest · test_harness_boundary.py</div></td><td class="num"><span data-c="harness-boundary.actual">—</span><span class="dim"> 个模块</span></td><td class="num" data-c="harness-boundary.frozen">—</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span data-c="harness-boundary.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="harness-boundary.fingerprint">—</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+          <tr class="detail" id="d-har" hidden><td colspan="9"><dl class="dl"><dt>数从哪来</dt><dd>同上；登记表 <span class="mono">len(_LEDGER)</span></dd></dl></td></tr>
+          <tr class="row" data-d="d-ipr"><td><div class="name">is_private 读点登记</div><div class="src">pytest · test_is_private_read_points.py</div></td><td class="num"><span data-c="is-private-read-points.actual">—</span><span class="dim"> 处</span></td><td class="num" data-c="is-private-read-points.frozen">—</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span data-c="is-private-read-points.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="is-private-read-points.fingerprint">—</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+          <tr class="detail" id="d-ipr" hidden><td colspan="9"><dl class="dl"><dt>数从哪来</dt><dd>登记表按<b>文件计次</b>：<span id="ipr-files">—</span> 个文件、合计 <span class="mono">sum(BASELINE.values())</span> 处读点。数的是读点，不是文件</dd></dl></td></tr>
         </tbody>
       </table>
-      <div class="foot">后三道是 pytest 账本：多一条、少一条都会红，所以通过即「实际 = 登记」。参考指标（不是棘轮）：后端函数内导入 726 条。</div>
+      <div class="foot">后三道是 pytest 账本：多一条、少一条都会红，所以「通过」即「实际 = 登记」。看板的参考指标（30/90 天热点、函数内导入）不在本页——要不要放进来是待你定的一件事。</div>
     </section>
 
     <!-- 3 -->
     <section class="card" id="s3">
       <div class="card-h"><h3>③ 文件规模</h3><span class="why">前端单文件 ≤ 1000 行，后端 ≤ 1500 行；超标的只许变小</span><span class="st tag t-pass">通过</span></div>
       <div class="kpis">
-        <div class="kpi"><div class="l">超标文件 <span class="tag t-real">真实值</span></div><div class="v">29<small>个</small></div><div class="f"><span class="delta-down">−5</span> 比起点 34 · 前端 13 · 后端 16</div></div>
-        <div class="kpi"><div class="l">超出上限的行数合计 <span class="tag t-real">真实值</span></div><div class="v">27,887<small>行</small></div><div class="f"><span class="delta-down">−6,866</span> 比起点 34,753</div></div>
-        <div class="kpi"><div class="l"><span class="mono">agent/chat.py</span> <span class="tag t-real">真实值</span></div><div class="v">5,487<small>行</small></div><div class="f"><span class="delta-down">−1,150</span> 比起点 6,637 · 上限 1,500</div></div>
+        <div class="kpi"><div class="l">超标文件 <span class="tag t-real">真实值</span></div><div class="v"><span id="sz-kpi-over">—</span><small>个</small></div><div class="f"><span id="sz-kpi-over-delta">—</span> 比起点 <span id="sz-kpi-over-start">—</span> · 前端 <span id="sz-kpi-fe">—</span> · 后端 <span id="sz-kpi-be">—</span></div></div>
+        <div class="kpi"><div class="l">超出上限的行数合计 <span class="tag t-real">真实值</span></div><div class="v"><span id="sz-kpi-excess">—</span><small>行</small></div><div class="f"><span id="sz-kpi-excess-delta">—</span> 比起点 <span id="sz-kpi-excess-start">—</span></div></div>
+        <div class="kpi"><div class="l"><span class="mono" id="sz-kpi-top">—</span> <span class="tag t-real">真实值</span></div><div class="v"><span id="sz-kpi-toplines">—</span><small>行</small></div><div class="f">上限 1,500 · 前 10 名里排第一</div></div>
       </div>
       <table class="grid">
         <thead><tr><th>超出最多的 10 个文件</th><th class="num">行数</th><th class="num">上限</th><th class="num">超出</th><th class="num">起点行数</th><th class="num">变化</th></tr></thead>
         <tbody id="worst"></tbody>
       </table>
-      <div class="foot">闸门只在 PR 上判（与合并基点比，不维护冻结清单）；这里的数来自 CI 看板。起点 = 2026-09-29 15:24 UTC 第一次记录；起点行数「—」表示那个文件当时不在前 10，CI 只存了前 10。超标文件 32 → 29 那一步来自 #2154 删除功能。</div>
+      <div class="foot"><b>这一道闸门只判改动文件</b>（与合并基点比，不维护冻结清单），所以它在快照里的 actual 是「本次改动里超标的文件数」，在 main 上通常是 0——不是「超标文件 0 个」。上面的文件数和行数来自看板，是树的全量统计。<br><b>走势最后一点比快照旧</b>：CI 历史停在 <span class="mono">27a2619b1</span>（05:51 UTC），快照是 <span class="mono" id="foot-sha">—</span>（08:17 UTC，含 #2199 拆 AdminDashboardPage），两者之间的差值不全是同一棵树上的变化。</div>
     </section>
 
     <!-- 4 -->
     <section class="card" id="s4">
-      <div class="card-h"><h3>④ 类型与样式</h3><span class="why">类型错误、写死的设计值和固定色</span><span class="st tag t-pass">3 道全部通过</span></div>
+      <div class="card-h"><h3>④ 类型与样式</h3><span class="why">类型错误、写死的设计值和固定色</span><span class="st tag t-pass" id="s4-head">—</span></div>
       <table class="grid">
-        <thead><tr><th>检查</th><th class="num">实际</th><th class="num">冻结</th><th>结果</th><th>历史</th></tr></thead>
+        <thead><tr><th>检查</th><th class="num">实际</th><th class="num">冻结</th><th class="num">失效豁免</th><th>结果</th><th>规则指纹</th><th>历史</th></tr></thead>
         <tbody>
-          <tr><td><div class="name">vue-tsc 类型错误</div><div class="src"><span class="mono">pnpm run typecheck</span> · tsc-baseline.json</div></td><td class="num">0</td><td class="num">0</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">未采集</span></td></tr>
-          <tr><td><div class="name">设计令牌（写死颜色、间距）</div><div class="src"><span class="mono">pnpm run lint:style</span> · stylelint-baseline.json</div></td><td class="num">37</td><td class="num">37</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">未采集</span></td></tr>
-          <tr><td><div class="name">Vuetify 固定色（grey-*、bg-white）</div><div class="src">check-repo-rules.sh · palette-baseline.json</div></td><td class="num dim">未采集</td><td class="num">7</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">未采集</span></td></tr>
+          <tr><td><div class="name">vue-tsc 类型错误</div><div class="src"><span class="mono">pnpm run typecheck</span> · tsc-baseline.json</div></td><td class="num" data-c="vue-tsc.actual">—</td><td class="num" data-c="vue-tsc.frozen">—</td><td class="num" data-c="vue-tsc.stale">—</td><td><span data-c="vue-tsc.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="vue-tsc.fingerprint">—</span></td><td><span class="tag t-missing">未采集</span></td></tr>
+          <tr><td><div class="name">设计令牌（写死颜色、间距）</div><div class="src"><span class="mono">pnpm run lint:style</span> · stylelint-baseline.json</div></td><td class="num" data-c="stylelint-tokens.actual">—</td><td class="num" data-c="stylelint-tokens.frozen">—</td><td class="num" data-c="stylelint-tokens.stale">—</td><td><span data-c="stylelint-tokens.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="stylelint-tokens.fingerprint">—</span></td><td><span class="tag t-missing">未采集</span></td></tr>
+          <tr><td><div class="name">Vuetify 固定色（grey-*、bg-white）</div><div class="src">check-repo-rules.sh · palette-baseline.json</div></td><td class="num" data-c="palette.actual">—</td><td class="num" data-c="palette.frozen">—</td><td class="num" data-c="palette.stale">—</td><td><span data-c="palette.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="palette.fingerprint">—</span></td><td><span class="tag t-missing">未采集</span></td></tr>
         </tbody>
       </table>
-      <div class="foot">固定色脚本只报通过或失败，不输出实际数，要显示实际值得先让它输出计数。这三道都不在 CI 看板里，所以没有历史。</div>
+      <div class="foot">上一版这三行的「实际」有两处是「未采集」——固定色脚本当时不输出计数，pytest 账本也没有机器可读的出口。现在都由采集器取到了，见下一节。</div>
+    </section>
+
+    <!-- 5 -->
+    <section class="card">
+      <div class="card-h"><h3>⑤ 采集：每合入一次，一份快照</h3><span class="why">页面只读检查器自己的输出，不重算、不另写评分规则</span></div>
+      <table class="grid" id="t5">
+        <thead><tr><th>检查</th><th>区</th><th class="num">实际</th><th class="num">冻结</th><th class="num">失效豁免</th><th>状态</th><th>规则指纹</th></tr></thead>
+        <tbody id="records"></tbody>
+      </table>
+      <div class="foot">
+        采集在 <span class="mono">arch-metrics.yml</span> 里、合入 main 之后跑：装前后端依赖、按各道检查自己的命令跑一遍、把每道吐出的一条 JSON 记录合成 <span class="mono">ratchet-snapshot.json</span> 存进 CI 产物（保留 90 天），后端读最新一份存库。<br>
+        <b>没跑到的检查记 <span class="mono">not_collected</span>，不记 0</b>——命令不在、超时、没吐记录、吐了两行，都算没跑到，快照里 <span class="mono">actual</span> 是 <span class="mono">null</span>。0 的意思是「量过了，没有问题」，这正是这套东西要避免的说法。<br>
+        <b>每条记录带规则指纹</b>（判定脚本与配置的 SHA-256；基线文件不算，多冻结一条豁免不是改规则）。指纹一变，本页开一个新的比较起点，前后不画成一条线。<br>
+        <b>退出码仍是判据</b>：0 通过 / 1 违规 / 2 判不了，<span class="mono">--json</span> 只加输出、不改判定；默认模式的 stdout 逐字节不变。
+      </div>
     </section>
   </div>
   </main>
@@ -234,25 +282,166 @@ a.pr{color:var(--info-ink);text-decoration:none}
 <div class="tip" id="tip"></div>
 <script>
 const DATA = /*__DATA__*/null;
-const S = DATA.series;
+const S = DATA.series, FIRST = S[0], LAST = S[S.length - 1];
 const tip = document.getElementById('tip');
-document.querySelectorAll('tr.row[data-d]').forEach(tr=>tr.addEventListener('click',()=>{const d=document.getElementById(tr.dataset.d); d.hidden=!d.hidden;}));
-function fmt(n){return n==null?'—':n.toLocaleString('en-US')}
-document.querySelectorAll('svg.spark').forEach(svg=>{
-  const key=svg.dataset.key, mark=svg.dataset.mark, W=+svg.getAttribute('width'), H=+svg.getAttribute('height');
-  const vals=S.map(r=>r[key]); const lo=Math.min(...vals), hi=Math.max(...vals); const pad=4;
-  const x=i=>pad+i*(W-2*pad)/(S.length-1), y=v=>hi===lo?H/2:H-pad-(v-lo)*(H-2*pad)/(hi-lo);
-  const ns='http://www.w3.org/2000/svg'; let d='';
-  vals.forEach((v,i)=>{d+=(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)});
-  if(mark){const i=S.findIndex(r=>r.sha===mark); if(i>=0){const l=document.createElementNS(ns,'line');l.setAttribute('x1',x(i));l.setAttribute('x2',x(i));l.setAttribute('y1',1);l.setAttribute('y2',H-1);l.setAttribute('stroke','#2F5AA8');l.setAttribute('stroke-dasharray','2 2');svg.appendChild(l);}}
-  const p=document.createElementNS(ns,'path');p.setAttribute('d',d);p.setAttribute('fill','none');p.setAttribute('stroke','#5A5E66');p.setAttribute('stroke-width','1.6');svg.appendChild(p);
-  const dot=document.createElementNS(ns,'circle');dot.setAttribute('r',3);dot.setAttribute('fill','#191A1C');dot.style.display='none';svg.appendChild(dot);
-  svg.addEventListener('mousemove',e=>{const b=svg.getBoundingClientRect();const i=Math.max(0,Math.min(S.length-1,Math.round((e.clientX-b.left-pad)/((W-2*pad)/(S.length-1)))));const r=S[i];dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(r[key]));dot.style.display='';tip.style.display='block';tip.innerHTML=`<b>${fmt(r[key])}</b> · ${r.date.replace('T',' ').slice(0,16)} UTC<br><span style="font-family:monospace">${r.sha}</span> ${r.subject.replace(/</g,'&lt;')}`;const tw=tip.offsetWidth;tip.style.left=(e.clientX+12+tw>innerWidth?e.clientX-12-tw:e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px';});
-  svg.addEventListener('mouseleave',()=>{dot.style.display='none';tip.style.display='none'});
+const CHECKS = Object.fromEntries(DATA.snap.checks.map(c => [c.id, c]));
+const SIZE = DATA.board.size;
+const fmt = n => (n == null ? '—' : n.toLocaleString('en-US'));
+const SHORT = {pass: ['通过', 't-pass'], fail: ['失败', 't-up'], cannot_judge: ['判不了', 't-recal'], not_collected: ['没跑到', 't-missing']};
+const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+// A signed change, coloured by whether it went down (good) or up (bad).
+function delta(id, now, was) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (now == null || was == null) { el.textContent = '—'; el.className = 'dim'; return; }
+  const d = now - was;
+  el.textContent = (d > 0 ? '+' : d < 0 ? '−' : '') + fmt(Math.abs(d));
+  el.className = d < 0 ? 'delta-down' : d > 0 ? 'delta-up' : 'delta-flat';
+}
+
+// A dotted path into a record, where a step that names a row picks that row out
+// of the list it is looking at: `be-contracts.details.domains-acyclic.actual`
+// reads the way the table does.
+function pick(path) {
+  let v = CHECKS;
+  for (const step of path.split('.')) {
+    if (v == null) return null;
+    v = Array.isArray(v) ? v.find(row => row.file === step) : v[step];
+  }
+  return v;
+}
+document.querySelectorAll('[data-c]').forEach(el => {
+  const path = el.dataset.c;
+  if (path === 'pass-count' || path.endsWith('.fingerprint')) return;
+  if (path.endsWith('.status')) {
+    const [label, cls] = SHORT[pick(path)] || ['—', 't-missing'];
+    el.className = 'tag ' + cls; el.textContent = label; return;
+  }
+  const raw = pick(path);
+  const v = Array.isArray(raw) ? raw.length : raw;
+  el.textContent = fmt(v);
+  el.classList.toggle('none', v == null);
 });
-const tb=document.getElementById('worst');
-DATA.worst_now.forEach(w=>{const f=DATA.worst_first[w.file];const dl=f==null?null:w.lines-f;
-  tb.insertAdjacentHTML('beforeend',`<tr><td class="mono">${w.file}</td><td class="num">${fmt(w.lines)}</td><td class="num">${fmt(w.cap)}</td><td class="num">${fmt(w.over)}</td><td class="num ${f==null?'dim':''}">${fmt(f)}</td><td class="num ${dl==null?'dim':dl<0?'delta-down':dl>0?'delta-up':'delta-flat'}">${dl==null?'—':(dl>0?'+':'')+fmt(dl)}</td></tr>`)});
+// Fingerprints: the short form in the cell, the whole hash on hover.
+document.querySelectorAll('[data-c$=".fingerprint"]').forEach(el => {
+  const fp = pick(el.dataset.c.replace(/\.fingerprint$/, '.rule_fingerprint'));
+  if (!fp) { el.textContent = '—'; el.classList.add('none'); return; }
+  el.textContent = fp.slice(0, 12); el.title = fp;
+});
+
+// The snapshot's own provenance.
+set('snap-sha', DATA.snap.commit.slice(0, 9));
+set('banner-sha', DATA.snap.commit.slice(0, 9));
+set('foot-sha', DATA.snap.commit.slice(0, 9));
+set('snap-date', (DATA.snap.commit_date || '').replace('T', ' ').slice(0, 16));
+set('snap-collected', (DATA.snap.collected_at || '').replace('T', ' ').slice(0, 16));
+set('hist-count', S.length);
+set('chk-count', DATA.snap.checks.length);
+set('chk-count-2', DATA.snap.checks.length);
+set('fp-count', DATA.snap.checks.filter(c => c.rule_fingerprint).length);
+// How many rows each area shows on this page (the backend contracts are three
+// rows off one record), and whether the records behind them all pass.
+const ROWS = {'场景': 2, '边界': 7, '规模': 1, '类型与样式': 3};
+const area = a => DATA.snap.checks.filter(c => c.area === a);
+const areaOk = a => area(a).every(c => c.status === 'pass');
+for (const [a, id] of [['边界', 's2'], ['类型与样式', 's4']]) {
+  const el = document.getElementById(id + '-head');
+  if (areaOk(a)) { el.textContent = `${ROWS[a]} 道全部通过`; }
+  else { el.className = 'st tag t-up'; el.textContent = `${area(a).filter(c => c.status === 'pass').length}/${area(a).length} 道通过`; }
+}
+if (areaOk('边界')) { set('s2-pass', ROWS['边界']); }
+else { document.getElementById('s2-pass-tag').outerHTML = `<span class="tag t-up">${area('边界').filter(c => c.status === 'pass').length}/${area('边界').length} 道通过</span>`; }
+
+// ① The rule number is real; the mounting evidence is kept in its own column.
+// Mounting evidence, from a real run at the same commit the snapshot is from:
+//   cd frontend && pnpm exec vitest run src/views/demo/catalog.spec.ts
+//   118 passed / 0 failed, 2026-09-30 08:22 UTC, 17.4s. This is not part of the
+// snapshot — the collector collects checkers' records, and this is deliberately
+// a separate column, not folded into the rule's number.
+const MOUNT = {components: 34, cases: 115, tests: 118, when: '2026-09-30 08:22'};
+set('grade-a', fmt(FIRST.A));
+set('mount-count', `${MOUNT.components} 个`);
+set('mount-detail', `${MOUNT.cases} 格在预览站挂载通过`);
+document.getElementById('mount-evidence').innerHTML =
+  `在 <b>${DATA.snap.commit.slice(0, 9)}</b>（${MOUNT.when} UTC）跑 ` +
+  `<span class="mono">vitest run src/views/demo/catalog.spec.ts</span>：` +
+  `<b>${MOUNT.components}</b> 个组件、<b>${MOUNT.cases}</b> 格全部挂载通过，` +
+  `${MOUNT.tests} passed / 0 failed。<b>评分是规则给的，挂载是跑出来的，两者不合并成一个数</b>`;
+
+// ② The same-ruler start for the frontend boundary is where #2163 changed the
+// rule, not the first point of the CI history.
+const iMark = S.findIndex(r => r.sha.startsWith('14565ff91'));
+const feStart = S[Math.max(iMark, 0)].fe_boundary;
+const feNow = CHECKS['fe-boundary'].actual;
+set('fe-start', fmt(feStart)); set('fe-start-2', fmt(feStart)); set('fe-start-3', fmt(feStart));
+set('fe-now', fmt(feNow));
+delta('fe-delta', feNow, feStart); delta('fe-delta-2', feNow, feStart);
+set('be-stale', (CHECKS['be-contracts'].stale || []).length);
+const c1Now = (CHECKS['be-contracts'].details.find(d => d.file === 'api-domain-core') || {}).actual;
+const c3Now = (CHECKS['be-contracts'].details.find(d => d.file === 'domains-acyclic') || {}).actual;
+set('c1-start', fmt(FIRST.c1)); delta('c1-delta', c1Now, FIRST.c1);
+set('c3-start', fmt(FIRST.c3)); set('c3-start-2', fmt(FIRST.c3)); set('c3-now', fmt(c3Now));
+delta('c3-delta', c3Now, FIRST.c3);
+set('c2-start', FIRST.c2 + ' ');
+const dir = (a, b) => (b == null || a == null ? '未知' : b < a ? '在降' : b > a ? '在涨' : '没动');
+set('t2-verdict', `前端${dir(feStart, feNow)}；C1 ${dir(FIRST.c1, c1Now)}、C2 ${dir(FIRST.c2, LAST.c2)}（冻结数）`);
+set('c1-note', `${S.length} 次运行从 ${fmt(FIRST.c1)} 到 ${fmt(LAST.c1)}，没有一条被还掉`);
+
+// ③ Size reads the board: the size check itself is diff-scoped, so its own
+// record would read 0 on main.
+set('sz-over', fmt(SIZE.offenders)); set('sz-over-2', fmt(SIZE.offenders));
+set('sz-over-start', fmt(FIRST.over));
+set('sz-excess', fmt(SIZE.excess_lines)); set('sz-excess-2', fmt(SIZE.excess_lines));
+set('sz-excess-start', fmt(FIRST.excess));
+set('sz-kpi-over', fmt(SIZE.offenders)); set('sz-kpi-over-start', fmt(FIRST.over));
+delta('sz-kpi-over-delta', SIZE.offenders, FIRST.over);
+set('sz-kpi-excess', fmt(SIZE.excess_lines)); set('sz-kpi-excess-start', fmt(FIRST.excess));
+delta('sz-kpi-excess-delta', SIZE.excess_lines, FIRST.excess);
+set('sz-kpi-fe', fmt(SIZE.per_cap['frontend/src/'].over_cap));
+set('sz-kpi-be', fmt(SIZE.per_cap['backend/app/'].over_cap));
+set('sz-kpi-top', SIZE.worst[0].file);
+set('sz-kpi-toplines', fmt(SIZE.worst[0].lines));
+set('t3-verdict', `${dir(FIRST.over, SIZE.offenders)}；拆文件和删功能都有`);
+// The board's reference metrics (30/90-day hotspots, deferred imports) are not
+// on this page: whether they belong here is one of the open questions.
+
+// The stale exemptions C2 still carries, named one by one.
+const staleC2 = (CHECKS['be-contracts'].stale || []).filter(s => s.file === 'routes-touch-no-models');
+document.getElementById('stale-c2').innerHTML = staleC2.length === 0
+  ? '<span class="none">没有失效豁免</span>'
+  : staleC2.map(s => `<span class="mono">${s.why}</span>`).join('<br>');
+
+// Every record, as collected — the collection mechanism made visible.
+document.getElementById('records').innerHTML = DATA.snap.checks.map(c => {
+  const [label, cls] = SHORT[c.status] || ['—', 't-missing'];
+  const fp = c.rule_fingerprint || '';
+  return `<tr><td><div class="name">${c.id}</div></td><td class="src">${c.area}</td>` +
+    `<td class="num ${c.actual == null ? 'none' : ''}">${fmt(c.actual)}</td>` +
+    `<td class="num ${c.frozen == null ? 'none' : ''}">${fmt(c.frozen)}</td>` +
+    `<td class="num">${fmt((c.stale || []).length)}</td>` +
+    `<td><span class="tag ${cls}">${label}</span></td>` +
+    `<td><span class="fp" title="${fp}">${fp.slice(0, 12) || '—'}</span></td></tr>`;
+}).join('');
+
+document.querySelectorAll('tr.row[data-d]').forEach(tr => tr.addEventListener('click', () => { const d = document.getElementById(tr.dataset.d); if (d) d.hidden = !d.hidden; }));
+
+document.querySelectorAll('svg.spark').forEach(svg => {
+  const key = svg.dataset.key, mark = svg.dataset.mark, W = +svg.getAttribute('width'), H = +svg.getAttribute('height');
+  const vals = S.map(r => r[key]); const lo = Math.min(...vals), hi = Math.max(...vals); const pad = 4;
+  const x = i => pad + i * (W - 2 * pad) / (S.length - 1), y = v => hi === lo ? H / 2 : H - pad - (v - lo) * (H - 2 * pad) / (hi - lo);
+  const ns = 'http://www.w3.org/2000/svg'; let d = '';
+  vals.forEach((v, i) => { d += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1) });
+  if (mark) { const i = S.findIndex(r => r.sha.startsWith(mark)); if (i >= 0) { const l = document.createElementNS(ns, 'line'); l.setAttribute('x1', x(i)); l.setAttribute('x2', x(i)); l.setAttribute('y1', 1); l.setAttribute('y2', H - 1); l.setAttribute('stroke', '#2F5AA8'); l.setAttribute('stroke-dasharray', '2 2'); svg.appendChild(l); } }
+  const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', '#5A5E66'); p.setAttribute('stroke-width', '1.6'); svg.appendChild(p);
+  const dot = document.createElementNS(ns, 'circle'); dot.setAttribute('r', 3); dot.setAttribute('fill', '#191A1C'); dot.style.display = 'none'; svg.appendChild(dot);
+  svg.addEventListener('mousemove', e => { const b = svg.getBoundingClientRect(); const i = Math.max(0, Math.min(S.length - 1, Math.round((e.clientX - b.left - pad) / ((W - 2 * pad) / (S.length - 1))))); const r = S[i]; dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(r[key])); dot.style.display = ''; tip.style.display = 'block'; tip.innerHTML = `<b>${fmt(r[key])}</b> · ${r.date.replace('T', ' ').slice(0, 16)} UTC<br><span style="font-family:monospace">${r.sha}</span> ${(r.subject || '').replace(/</g, '&lt;')}`; const tw = tip.offsetWidth; tip.style.left = (e.clientX + 12 + tw > innerWidth ? e.clientX - 12 - tw : e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px'; });
+  svg.addEventListener('mouseleave', () => { dot.style.display = 'none'; tip.style.display = 'none' });
+});
+const tb = document.getElementById('worst');
+DATA.worst_now.forEach(w => {
+  const f = DATA.worst_first[w.file]; const dl = f == null ? null : w.lines - f;
+  tb.insertAdjacentHTML('beforeend', `<tr><td class="mono">${w.file}</td><td class="num">${fmt(w.lines)}</td><td class="num">${fmt(w.cap)}</td><td class="num">${fmt(w.over)}</td><td class="num ${f == null ? 'dim' : ''}">${fmt(f)}</td><td class="num ${dl == null ? 'dim' : dl < 0 ? 'delta-down' : dl > 0 ? 'delta-up' : 'delta-flat'}">${dl == null ? '—' : (dl > 0 ? '+' : dl < 0 ? '−' : '') + fmt(Math.abs(dl))}</td></tr>`)
+});
 </script>
 </body>
 </html>
