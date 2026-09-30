@@ -1,5 +1,7 @@
 """领取一道题的规矩。
 
+- 团队题：队里只要有人已经通过别的团队领了这道题（等批也算），这个团队就领不了；
+  那份领取被拒绝之后可以。
 - 出题人的领取名单里能看到每人的截止时间和申请理由。
 """
 
@@ -100,10 +102,59 @@ def _team(api_client: TestClient, token: str) -> int:
     return resp.json()["data"]["team"]["id"]
 
 
+def _claim_as_team(api_client: TestClient, task_id: int, team_id: int, token: str):
+    return api_client.post(
+        f"/tasks/{task_id}/participations/team",
+        json={"teamId": team_id},
+        headers=_auth(token),
+    )
 def _participants(api_client: TestClient, task_id: int, token: str) -> list[dict]:
     resp = api_client.get(f"/tasks/{task_id}/participants", headers=_auth(token))
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["participants"]
+def _team_eligibility(api_client: TestClient, task_id: int, token: str) -> dict:
+    resp = api_client.get(
+        f"/tasks/{task_id}", params={"queryJoinability": True}, headers=_auth(token)
+    )
+    assert resp.status_code == 200, resp.text
+    teams = resp.json()["data"]["task"]["participationEligibility"]["teams"]
+    return {t["team"]["id"]: t["eligibility"] for t in teams}
+def test_a_person_cannot_claim_a_task_again_through_another_team(
+    api_client: TestClient, user_client: UserCreator, board: dict
+):
+    _, token = _member(user_client, api_client, board)
+    first, second = _team(api_client, token), _team(api_client, token)
+    task_id = _task(api_client, board, "TEAM")
+
+    assert _claim_as_team(api_client, task_id, first, token).status_code in (200, 201)
+
+    # 两支队里都有这个人：第二支队伍在资格里就是不可领，硬领也被拒。
+    eligibility = _team_eligibility(api_client, task_id, token)
+    assert eligibility[second]["eligible"] is False
+    assert "MEMBER_ALREADY_PARTICIPATING" in {
+        r["code"] for r in eligibility[second]["reasons"]
+    }
+    assert _claim_as_team(api_client, task_id, second, token).status_code == 400
+    assert [
+        p["memberId"] for p in _participants(api_client, task_id, board["token"])
+    ] == [first]
+def test_a_rejected_claim_frees_its_members_to_claim_with_another_team(
+    api_client: TestClient, user_client: UserCreator, board: dict
+):
+    _, token = _member(user_client, api_client, board)
+    first, second = _team(api_client, token), _team(api_client, token)
+    task_id = _task(api_client, board, "TEAM")
+    assert _claim_as_team(api_client, task_id, first, token).status_code in (200, 201)
+
+    claim = _participants(api_client, task_id, board["token"])[0]
+    resp = api_client.patch(
+        f"/tasks/{task_id}/participants/{claim['id']}",
+        json={"approved": "DISAPPROVED"},
+        headers=_auth(board["token"]),
+    )
+    assert resp.status_code == 200, resp.text
+
+    assert _claim_as_team(api_client, task_id, second, token).status_code in (200, 201)
 def test_the_roster_shows_each_claims_deadline_and_reason(
     api_client: TestClient, user_client: UserCreator, board: dict
 ):

@@ -159,8 +159,11 @@
 import type { Task, TeamSummary, TeamTaskEligibility } from '@/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 
 const props = defineProps<{
   open: boolean
@@ -168,6 +171,8 @@ const props = defineProps<{
   availableTeams: TeamTaskEligibility[]
   loading: boolean
 }>()
+
+const { t } = useI18n()
 
 defineEmits<{
   (e: 'close'): void
@@ -231,8 +236,7 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
     return '不满足参与条件'
   }
 
-  // 直接使用后端提供的消息
-  return teamEligibility.eligibility.reasons[0].message
+  return t(eligibilityReasonKey(teamEligibility.eligibility.reasons[0].code))
 }
 </script>
 

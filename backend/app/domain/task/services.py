@@ -17,6 +17,7 @@ from app.core.domain_errors import (
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import SpaceRepository, SpaceUserRankRepository
+from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.models import (
     Task,
     TaskMembership,
@@ -239,6 +240,19 @@ class TaskMembershipService:
         ):
             raise BadRequestError("Member already participating in this task.")
 
+        # 一个人一道题只领一次：团队来领时，队里不能有人已经通过别的团队领了它。
+        if is_team and approved != 1:
+            already = await members_claiming_through_another_team(
+                self._repo._session,
+                task_id=task.id,  # type: ignore[arg-type]
+                team_id=member_id,
+            )
+            if already:
+                raise BadRequestError(
+                    "A member of this team has already claimed this task "
+                    "through another team."
+                )
+
         # requireRealName：简化为只校验提交者本人
         if task.require_real_name and self._realname_repo is not None and approved == 0:
             has_identity = await self._realname_repo.has_identity(member_id)
@@ -257,6 +271,7 @@ class TaskMembershipService:
             updated_at=now,
             deadline=deadline,
             deleted_at=None,
+            pitch=(apply_reason or "").strip(),
         )
         return await self._repo.save(membership)
 
@@ -300,7 +315,6 @@ class TaskMembershipService:
                     raise TaskParticipantsReachedLimitError(
                         task.id, task.participant_limit
                     )  # type: ignore[arg-type]
-            pitch=(apply_reason or "").strip(),
 
             # TEAM 任务时，检查队伍规模是否在 min/maxTeamSize 范围内。
             if membership.is_team:
@@ -541,6 +555,23 @@ class TaskMembershipService:
                         "message": "This team is already participating in this task.",
                     }
                 )
+
+            # 一个人一道题只领一次：队里有人已经通过别的团队领了，这个团队就不能再领。
+            if existing is None or existing.approved == 1:
+                already = await members_claiming_through_another_team(
+                    self._repo._session,
+                    task_id=task.id,  # type: ignore[arg-type]
+                    team_id=team_id,
+                )
+                if already:
+                    reasons.append(
+                        {
+                            "code": "MEMBER_ALREADY_PARTICIPATING",
+                            "message": "A member of this team has already claimed "
+                            "this task through another team.",
+                            "details": {"userIds": already},
+                        }
+                    )
 
             if task.min_team_size is not None and team_size < task.min_team_size:
                 reasons.append(
