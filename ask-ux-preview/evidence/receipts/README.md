@@ -41,4 +41,12 @@ The commit hook flushes real writes and executes `SELECT 1 / 0` on the same Post
 
 `send-fault-first.txt` records an earlier 4-pass dirty-worktree run. Its manifest HEAD is the pre-edit base, NOT the tested source; do not use it as fixed-source evidence. It also includes an async connection teardown error. The fixed-source six-case run above supersedes it.
 
-The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete group effects, durable pending-claim exclusion, native echo → commit → journal cursor fault tests, and new-process recovery remain incomplete. The migration and this draft PR are not independently releasable.
+## Durable held batch read from a new process
+
+Source: `64d4e4ec0dd83dff11a7b2eb75d1778c6433b655`.
+
+`held-input-process.txt` and its manifest record 1 passed, exit 0. A separate Python interpreter connects to PostgreSQL and reads the exact registered batch, excluding other projects/topics/receiver seats. Repeating that child-process read after a direct echo transaction still finds the initial held batch: an echo must not authorize a different input UUID before model work completes. Held IDs remain distinct from consumption IDs.
+
+This proves the hold query is process-independent. It does not restart ChatService, its runtime, a journal reader or a native executor; it does not exercise full prompt assembly, concurrent registration of overlapping batches or explicit safe re-admission after a never-sent outcome. Those gates remain open.
+
+The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete group effects, native echo → commit → journal cursor fault tests, and full new-process recovery remain incomplete. The migration and this draft PR are not independently releasable.
