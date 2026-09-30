@@ -274,7 +274,6 @@ onMounted(load)
 
     <section class="settings-card" :aria-label="t('account.connections.pendingTitle')">
       <div class="settings-card__title">{{ t('account.connections.pendingTitle') }}</div>
-      <div class="settings-card__desc">{{ t('account.connections.pendingDesc') }}</div>
       <p v-if="!pending.length" class="settings-empty">{{ t('account.connections.pendingEmpty') }}</p>
       <div v-for="d in pending" :key="d.id" class="conn-row" :data-draft="d.id">
         <dl class="conn-spec">
