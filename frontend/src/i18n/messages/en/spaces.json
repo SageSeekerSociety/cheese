@@ -272,7 +272,8 @@
       "owner": "Owner",
       "admin": "Admin",
       "member": "Member"
-    }
+    },
+    "count": "{n} people"
   },
   "settings": {
     "title": "Settings",
