@@ -8,6 +8,15 @@ name: Architecture metrics
 # three checks in `.claude/rules/architecture.md` are what block a change, and
 # this exists so that "did the last month help" has an answer that is not an
 # argument.
+#
+# Since the ratchet board was added, this job also COLLECTS: it runs every gate
+# check against the merged commit and stores what each one said, beside the
+# commit and the fingerprint of the rules that decided it, as
+# ratchet-snapshot.json. The board alone could not answer the page's question —
+# it reads the baseline files, so "116 frontend boundary exemptions" was a
+# number about what had been frozen, not about the tree. The checks are run
+# here, after the merge, on purpose: a gate's own verdict on a PR is what blocks
+# the PR, and this records what the gate said about what actually landed.
 on:
   push:
     branches: [main]
@@ -28,7 +37,10 @@ concurrency:
 jobs:
   board:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The board alone was a minute of python. Collecting needs both toolchains
+    # installed and every check run: measured at 4m35s for the checks on a warm
+    # checkout, plus whatever pnpm and uv have to do on a cold one.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,9 +63,70 @@ jobs:
       # Job-level continue-on-error is not used: GitHub documents it for matrix
       # jobs, and a key that silently does nothing on the one job here is the
       # kind of yes that means no.
+      #
+      # The checks the snapshot records are the real gates, run by the same
+      # commands their own workflows use, so both toolchains have to be here.
+      # An install that failed leaves the checks it feeds `not_collected` in the
+      # snapshot, which is what happened and reads as such — better than a
+      # snapshot that quietly leaves them out.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        continue-on-error: true
+        with:
+          node-version: 22
+
+      # pnpm comes from frontend/package.json's `packageManager` field, same as
+      # frontend.yml — the repo pins the version, this job does not.
+      - name: Enable corepack
+        continue-on-error: true
+        run: corepack enable
+
+      # The same key frontend.yml restores; warm-caches.yml saves it on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install frontend dependencies
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      - name: Install uv
+        continue-on-error: true
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        continue-on-error: true
+        run: uv python install 3.13
+
+      # The dev group carries pytest and import-linter, which the contract check
+      # and the three ledger checks run on.
+      - name: Install backend dependencies
+        continue-on-error: true
+        working-directory: backend
+        run: uv sync --frozen --all-extras
+
       - name: Self-test
         continue-on-error: true
         run: python3 .claude/scripts/arch-metrics.py --self-test
+
+      # Same rule as the checks themselves: a collector nobody has watched
+      # mistake a check that did not run for a check that passed is not a
+      # collector. Uses git and the stdlib only, so the system python is enough.
+      - name: Self-test the collector
+        continue-on-error: true
+        run: python3 .claude/scripts/ratchet-snapshot.py --self-test
 
       # The comparison target is the last commit before the 30-day window, so
       # the delta always reads "this month". A checkout too young to have one
@@ -72,6 +145,20 @@ jobs:
             python3 .claude/scripts/arch-metrics.py --out "$OUT" --quiet
           fi
 
+      # What each gate check said about this commit, with the fingerprint of the
+      # rules that decided it. Run through `uv run` so the checks that need
+      # pytest and import-linter get the environment that was just installed —
+      # the collector runs its checkers with its own interpreter on purpose.
+      - name: Collect the ratchet snapshot
+        continue-on-error: true
+        working-directory: backend
+        env:
+          OUT: ${{ runner.temp }}
+        run: |
+          uv run python ../.claude/scripts/ratchet-snapshot.py \
+            --out "$OUT/ratchet-snapshot.json" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       - name: Job summary
         continue-on-error: true
         if: always()
@@ -88,4 +175,16 @@ jobs:
           # A weekly board is kept to be compared with, so the artifact matters
           # more than the retention default suggests — but not enough to fight
           # the organization's storage policy over.
+          retention-days: 90
+
+      # Kept at least as long as the board: a snapshot is only useful as a
+      # series, and the page reads this one. No `if-no-files-found: error` — a
+      # run where the collector could not write one has a red step already, and
+      # a second failure would only obscure it.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: ratchet-snapshot
+          path: ${{ runner.temp }}/ratchet-snapshot.json
           retention-days: 90
