@@ -118,6 +118,19 @@ const a = 1
   assert.deepEqual(scanSource('src/a.vue', vue), [8])
 })
 
+test('scanSource: a MIME wildcard in a template does not open a comment', () => {
+  const vue = `<template>
+  <input accept="image/*" />
+  <span>上传头像</span>
+</template>
+
+<style>
+/* 样式 */
+</style>
+`
+  assert.deepEqual(scanSource('src/a.vue', vue), [3])
+})
+
 test('scanSource: an inner <template #slot> still belongs to the outer block', () => {
   const vue = `<template>
   <v-data-table>
