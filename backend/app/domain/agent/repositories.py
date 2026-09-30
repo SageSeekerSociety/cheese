@@ -219,6 +219,28 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def open_of(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these intervals are still open. One query for however many
+        are asked about — the board asks it for every row of a project at once.
+
+        This is the durable half of 「这条活现在有没有人在做」: the id a piece of
+        work filed when its worker started (`Task.execution_turn_id`), asked a
+        second time after the process that watched it start has forgotten. The
+        interval outlives all three ways that happens — a restart, a replaced
+        room session, a subagent handing something back — and it is closed by
+        the thing that knows the difference: the orphan sweep, on a dead
+        container or a wedged turn. So "still open" is a fact somebody maintains,
+        not an inference from silence, which is what lets the board answer
+        「有人在做」 without trusting one process's memory.
+        """
+        ids = list(turn_ids)
+        if not ids:
+            return set()
+        stmt = select(AgentTurn.id).where(
+            AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None)
+        )
+        return set((await self._session.execute(stmt)).scalars())
+
     async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
         """End these intervals. Closing is not deleting — the ids stay readable
         next to the blocks that carry them."""
