@@ -85,6 +85,16 @@ async function fromMenu(container: Element, name: string) {
 }
 
 describe('文档横条', () => {
+  it('formats loaded content through the real panel editor and blocks formatting in read-only mode', async () => {
+    const { container } = await mountDoc()
+    await fireEvent.click(screen.getByRole('button', { name: '标题 1', exact: true }))
+    await waitFor(() => expect(container.querySelector('.doc-prose h1')?.textContent).toBe('第一段'))
+    await fromMenu(container, '设为只读')
+    await fireEvent.click(screen.getByRole('button', { name: '标题 2', exact: true }))
+    expect(container.querySelector('.doc-prose h1')?.textContent).toBe('第一段')
+    expect(container.querySelector('.doc-prose h2')).toBeNull()
+  })
+
   it('平常这一条上没有只读和源码两颗按钮', async () => {
     const { container } = await mountDoc()
 
