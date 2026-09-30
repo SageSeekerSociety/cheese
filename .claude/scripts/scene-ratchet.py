@@ -690,6 +690,30 @@ def self_test() -> int:
         check("so a plain import of the same module still fails", result.returncode, 1)
         check("for the same scene the type-only one passed", "src/views/Typed.vue: A -> C" in result.stdout, True)
 
+        # -- 7. the chain through a `.vue` edge ------------------------------
+        #    The same rule as case 5, one edge further out: a page that renders
+        #    a child component which fetches needs the network just as much as
+        #    one that calls it itself. Only `.ts` edges were followed once, and
+        #    this is what that cost: the page was graded A and frozen as ready.
+        _fixture(root)
+        wrapped = "  { name: 'wrapped', path: '/wrapped', component: () => import('@/views/Wrapped.vue') },\n"
+        _fixture(root, {
+            "frontend/src/components/ChildFetch.vue": (
+                '<script setup lang="ts">\nconst r = await fetch(\'/api/things\')\n</script>\n'
+                "<template><div>{{ r }}</div></template>\n"
+            ),
+            "frontend/src/views/Wrapped.vue": (
+                '<script setup lang="ts">\nimport ChildFetch from \'@/components/ChildFetch.vue\'\n'
+                "</script>\n<template><ChildFetch /></template>\n"
+            ),
+            "frontend/src/router/index.ts": _router(wrapped),
+        })
+        result = run_cli(root, baseline_path, "--list")
+        check("the page that renders a fetching child is graded C",
+              "C src/views/Wrapped.vue" in result.stdout, True)
+        result = run_cli(root, baseline_path)
+        check("so it is not frozen as ready", "src/views/Wrapped.vue: is new and standalone-ready" in result.stdout, False)
+
         # -- 6. cannot judge --------------------------------------------------
         _fixture(root)
         result = run_cli(root, baseline_path)
