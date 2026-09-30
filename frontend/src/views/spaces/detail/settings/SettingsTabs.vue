@@ -1,6 +1,8 @@
 <template>
   <v-tabs class="settings-tabs" color="primary" show-arrows>
-    <v-tab v-for="tab in tabs" :key="tab.name" :to="{ name: tab.name, params: { spaceId } }" :value="tab.name">
+    <!-- exact：「基本信息」的地址就是设置页本身，其余几栏都在它下面；按前缀认选中，
+         它在哪一栏都亮着。 -->
+    <v-tab v-for="tab in tabs" :key="tab.name" :to="{ name: tab.name, params: { spaceId } }" :value="tab.name" exact>
       {{ t(tab.label) }}
     </v-tab>
   </v-tabs>
