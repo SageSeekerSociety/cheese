@@ -89,7 +89,7 @@
           <v-list>
             <v-list-item v-for="member in teamMembers" :key="member.user.id" class="member-item">
               <template #prepend>
-                <v-avatar size="40" color="surface-variant" class="mr-3">
+                <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(member.user.avatarId)" />
                 </v-avatar>
               </template>
@@ -178,7 +178,7 @@
               :class="{ 'pending-request': request.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" color="surface-variant" class="mr-3">
+                <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(request.user.avatarId)" />
                 </v-avatar>
               </template>
@@ -259,7 +259,7 @@
               :class="{ 'pending-invitation': invitation.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" color="surface-variant" class="mr-3">
+                <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(invitation.user.avatarId)" />
                 </v-avatar>
               </template>

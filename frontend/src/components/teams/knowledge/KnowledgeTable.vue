@@ -53,7 +53,7 @@ const emit = defineEmits<{
         <td>{{ resourceTypeName(resource.type, resource.material?.type) }}</td>
         <td>
           <div class="d-flex align-center">
-            <v-avatar size="24" color="surface-variant" class="mr-2">
+            <v-avatar size="24" rounded="circle" color="surface-variant" class="mr-2">
               <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
             </v-avatar>
             <span>{{ resource.creator.nickname }}</span>

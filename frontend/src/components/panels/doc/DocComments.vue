@@ -10,6 +10,7 @@ import type { Block } from '../../../cx_types'
 import { nextTick, ref } from 'vue'
 
 import { addComment } from '../../../api'
+import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
 import { myHandle } from '../../../me'
 
@@ -179,7 +180,7 @@ defineExpose({ open, locate })
         </div>
       </div>
       <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-        <span class="doc-comments__avatar">
+        <span class="doc-comments__avatar" :class="{ 'doc-comments__avatar--agent': isAgentHandle(c.author ?? '') }">
           {{ (c.author || '?').slice(0, 1).toUpperCase() }}
         </span>
         <div class="doc-comments__main">
@@ -363,6 +364,10 @@ defineExpose({ open, locate })
   color: #fff;
   /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
   background: #8a94a3;
+}
+/* AI 队友写的评论：圆角方块（人是圆的，形状照 GitHub 的规则）。 */
+.doc-comments__avatar--agent {
+  border-radius: var(--radius-sm);
 }
 .doc-comments__main {
   flex: 1 1 auto;

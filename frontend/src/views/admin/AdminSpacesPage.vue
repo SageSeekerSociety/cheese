@@ -196,7 +196,12 @@ onMounted(load)
                 <div class="asp__head">
                   <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。 -->
                   <span class="asp__pfp" aria-hidden="true">
-                    <UserAvatar :name="item.owner ?? item.name" :avatar="avatarUrl(item.avatarId)" :size="22" />
+                    <UserAvatar
+                      :name="item.owner ?? item.name"
+                      :avatar="avatarUrl(item.avatarId)"
+                      :size="22"
+                      kind="org"
+                    />
                   </span>
                   <span class="asp__name" :title="item.name">{{ item.name }}</span>
                   <span v-if="item.reviewStatus !== 'PENDING'" class="asp__chip">

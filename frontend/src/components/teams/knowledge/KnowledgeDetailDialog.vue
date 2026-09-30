@@ -191,7 +191,7 @@ const richText = computed({
           <div class="d-flex resource-info-row">
             <div class="resource-info-label">添加者</div>
             <div class="d-flex align-center">
-              <v-avatar size="24" color="surface-variant" class="mr-2">
+              <v-avatar size="24" rounded="circle" color="surface-variant" class="mr-2">
                 <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
               </v-avatar>
               <span>{{ resource.creator.nickname }}</span>
@@ -224,7 +224,7 @@ const richText = computed({
           <div class="text-subtitle-1 font-weight-medium mb-2">原始讨论</div>
           <div v-if="resource.originalMessage" class="original-message-context">
             <div class="d-flex">
-              <v-avatar size="36" color="surface-variant" class="mt-1">
+              <v-avatar size="36" rounded="circle" color="surface-variant" class="mt-1">
                 <v-img :src="getAvatarUrl(resource.originalMessage.sender.avatarId)"></v-img>
               </v-avatar>
               <div class="ml-3">

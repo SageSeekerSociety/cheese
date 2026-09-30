@@ -175,7 +175,8 @@ const groups = computed(() => [
   font-size: 12px;
   font-weight: 600;
   color: var(--inverse-ink);
-  border-radius: var(--radius-md);
+  /* 人是圆的，旁边的 AI 队友是 CheeseAvatar 的圆角方块。 */
+  border-radius: var(--radius-pill);
   align-items: center;
   justify-content: center;
 }

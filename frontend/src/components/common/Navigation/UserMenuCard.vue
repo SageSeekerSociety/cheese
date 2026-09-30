@@ -7,7 +7,7 @@
     <div class="user-menu-head">
       <v-avatar
         size="40"
-        rounded="lg"
+        rounded="circle"
         :style="menu.avatar.value ? undefined : { backgroundColor: menu.avatarColor.value }"
       >
         <v-img v-if="menu.avatar.value" :src="menu.avatar.value">

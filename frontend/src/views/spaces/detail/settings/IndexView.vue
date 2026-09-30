@@ -11,7 +11,7 @@
   >
     <template #head>
       <div class="whose">
-        <UserAvatar :avatar="avatar" :name="spaceName" size="32" rounded="md" />
+        <UserAvatar :avatar="avatar" :name="spaceName" size="32" kind="org" />
         <div class="whose__text">
           <span class="whose__name">{{ spaceName }}</span>
           <span class="whose__sub">{{ t('spaces.settings.overlay') }}</span>

@@ -370,7 +370,13 @@ onMounted(load)
                    `aria-hidden` 而不是把属性透传给 `UserAvatar` —— 它的根是组件，
                    属性不保证落到底层的 `<img>`/`<div>` 上。 -->
                   <span class="am__pfp" aria-hidden="true">
-                    <UserAvatar class="am__avatar" :name="row.handle" :avatar="avatarUrl(row.avatarId)" :size="20" />
+                    <UserAvatar
+                      class="am__avatar"
+                      :name="row.handle"
+                      :avatar="avatarUrl(row.avatarId)"
+                      :size="20"
+                      :kind="row.isAgent ? 'agent' : 'person'"
+                    />
                   </span>
                   <span class="am__name-main">{{ row.primary }}</span>
                   <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
@@ -432,7 +438,13 @@ onMounted(load)
               <td class="am__cell" data-card="primary" :title="row.label">
                 <span class="am__who">
                   <span class="am__pfp" aria-hidden="true">
-                    <UserAvatar class="am__avatar" :name="row.handle" :avatar="avatarUrl(row.avatarId)" :size="20" />
+                    <UserAvatar
+                      class="am__avatar"
+                      :name="row.handle"
+                      :avatar="avatarUrl(row.avatarId)"
+                      :size="20"
+                      :kind="row.isAgent ? 'agent' : 'person'"
+                    />
                   </span>
                   <span class="am__name-main">{{ row.primary }}</span>
                   <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>

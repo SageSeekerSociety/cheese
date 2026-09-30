@@ -26,6 +26,7 @@ import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
+import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
@@ -359,6 +360,7 @@ function openTask(task: RoomTask) {
                       <img
                         v-if="avatarSrc(row.owner_handle)"
                         class="board-card__avatar"
+                        :class="{ 'board-card__avatar--agent': isAgentHandle(row.owner_handle) }"
                         :src="avatarSrc(row.owner_handle)!"
                         alt=""
                         @error="onAvatarError(row.owner_handle)"
@@ -366,6 +368,7 @@ function openTask(task: RoomTask) {
                       <span
                         v-else
                         class="board-card__avatar board-card__avatar--initial"
+                        :class="{ 'board-card__avatar--agent': isAgentHandle(row.owner_handle) }"
                         :style="{ backgroundColor: avatarColor(row.owner_handle) }"
                         aria-hidden="true"
                         >{{ avatarInitial(ownerName(row.owner_handle)) }}</span
@@ -727,6 +730,10 @@ function openTask(task: RoomTask) {
   height: 18px;
   border-radius: var(--radius-pill);
   object-fit: cover;
+}
+/* 负责人是 AI 队友时：圆角方块（人是圆的）。 */
+.board-card__avatar--agent {
+  border-radius: var(--radius-sm);
 }
 .board-card__avatar--initial {
   display: flex;
