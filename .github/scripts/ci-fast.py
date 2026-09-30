@@ -340,9 +340,9 @@ def run(args, report, finish):
 
     blocked = []
     if scope.get("backend") and not Path(REPO_ROOT, "backend/.venv").is_dir():
-        blocked.append("backend/.venv 不存在 — 先 task be:deps:sync")
+        blocked.append("backend/.venv 不存在 — 先 task be:deps:sync（无 task 时 (cd backend && uv sync)）")
     if scope.get("frontend") and not Path(REPO_ROOT, "frontend/node_modules").is_dir():
-        blocked.append("frontend/node_modules 不存在 — 先 task fe:install")
+        blocked.append("frontend/node_modules 不存在 — 先 task fe:install（无 task 时 (cd frontend && pnpm install --frozen-lockfile)）")
     if blocked:
         for line in blocked:
             print(f"ci:fast: blocked — {line}")
