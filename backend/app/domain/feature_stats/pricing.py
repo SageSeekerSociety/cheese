@@ -29,6 +29,8 @@ page draws a dash — the same discipline as everywhere else in the admin:
 
 import logging
 import time
+from collections.abc import Mapping
+from typing import NamedTuple
 
 import httpx
 
@@ -43,8 +45,20 @@ logger = logging.getLogger(__name__)
 _TTL_S = 300
 _TIMEOUT_S = 8.0
 
-# ``model_name`` -> (input rate, output rate), both per token and both > 0.
-_cache: tuple[float, dict[str, tuple[float, float]] | None] | None = None
+
+class Rate(NamedTuple):
+    """USD per token. ``input`` and ``output`` are > 0; a cached prompt token is
+    billed at ``cache_read`` and a token written to the cache at
+    ``cache_write``, each ``input`` when the gateway names no price for it."""
+
+    input: float
+    output: float
+    cache_read: float
+    cache_write: float
+
+
+# ``model_name`` -> its rates.
+_cache: tuple[float, dict[str, Rate] | None] | None = None
 
 
 def _rate(sources: tuple[object, ...], field: str) -> float:
@@ -59,14 +73,27 @@ def _rate(sources: tuple[object, ...], field: str) -> float:
     return 0.0
 
 
-def _rates_from_info(payload: object) -> dict[str, tuple[float, float]]:
+def _price(sources: tuple[object, ...], field: str) -> float | None:
+    """The first rate among the places LiteLLM may carry it, zero included: a
+    cache price of nothing is a price. None when neither place names one."""
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        value = source.get(field)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            if value >= 0:
+                return float(value)
+    return None
+
+
+def _rates_from_info(payload: object) -> dict[str, Rate]:
     """``/model/info`` rows -> rates, keyed by the name this platform uses.
 
     A model priced on one side only is left out entirely rather than priced at
     zero on that side: half a rate is the same silent under-count as no rate,
     and it would be the harder one to notice.
     """
-    rates: dict[str, tuple[float, float]] = {}
+    rates: dict[str, Rate] = {}
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return rates
@@ -81,13 +108,20 @@ def _rates_from_info(payload: object) -> dict[str, tuple[float, float]]:
         inp = _rate((params, info), "input_cost_per_token")
         out = _rate((params, info), "output_cost_per_token")
         if inp > 0 and out > 0:
-            rates[name] = (inp, out)
+            cache_read = _price((params, info), "cache_read_input_token_cost")
+            cache_write = _price((params, info), "cache_creation_input_token_cost")
+            rates[name] = Rate(
+                inp,
+                out,
+                inp if cache_read is None else cache_read,
+                inp if cache_write is None else cache_write,
+            )
     return rates
 
 
 async def model_rates(
     transport: httpx.AsyncBaseTransport | None = None,
-) -> dict[str, tuple[float, float]] | None:
+) -> dict[str, Rate] | None:
     """The gateway's rates, cached briefly; ``None`` when it cannot be asked."""
     global _cache
     if not (settings.llm_gateway_admin_base and settings.llm_gateway_admin_key):
@@ -121,7 +155,7 @@ def forget() -> None:
 async def estimate(
     tokens_by_model: dict[str, tuple[int, int]],
     *,
-    rates: dict[str, tuple[float, float]] | None = None,
+    rates: Mapping[str, tuple[float, ...]] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict:
     """Price ``{model: (prompt_tokens, completion_tokens)}`` at gateway rates.

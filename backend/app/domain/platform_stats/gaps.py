@@ -61,7 +61,11 @@ class GapRepository:
         grants = (
             (
                 await self._session.execute(
-                    select(ComputeGrant).order_by(ComputeGrant.created_at)
+                    # Personal grants pay for no project and lapse monthly; they
+                    # have no place among project and team balances.
+                    select(ComputeGrant)
+                    .where(ComputeGrant.user_id.is_(None))
+                    .order_by(ComputeGrant.created_at)
                 )
             )
             .scalars()
@@ -131,6 +135,9 @@ class GapRepository:
                 .where(
                     ResourceUsage.created_at >= since,
                     ResourceUsage.created_at < until,
+                    # The rate project and team credits burn at; personal
+                    # spend draws on other grants.
+                    ResourceUsage.project_id.is_not(None),
                 )
                 .group_by(ResourceUsage.route)
             )
