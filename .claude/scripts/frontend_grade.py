@@ -68,7 +68,8 @@ STANDALONE = "A"
 VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]""", re.S)
 VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
 SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
-TEMPLATE_BLOCK = re.compile(r"<template[^>]*>(.*?)</template>", re.S)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_TAG_START = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9_-]*)")
 STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
 PARENT_USE = re.compile(r"\$parent|\$root")
@@ -205,6 +206,90 @@ def normalise_store(name: str) -> str:
     return STORE_ALIASES.get(name, name[:1].lower() + name[1:])
 
 
+def template_blocks(text: str) -> list[str]:
+    """The contents of every top-level `<template>` block in an SFC.
+
+    Three ways a naive `<template...>(.*?)</template>` read lies: a tag
+    inside `<!-- ... -->` is not rendered (comments are stripped first); Vue
+    templates nest (`<template v-if>`), so a non-greedy match ends at the
+    first *inner* `</template>` and loses everything after it (nested tags
+    are balanced here); and `title="</template>"` is an attribute value, not
+    a tag — the scan honours quotes, so what an attribute says never becomes
+    a tag boundary.
+    """
+    text = _HTML_COMMENT.sub("", text)
+    blocks: list[str] = []
+    i, n = 0, len(text)
+    depth = 0
+    block_start: int | None = None
+    while i < n:
+        if text[i] == "<":
+            start = _TAG_START.match(text, i)
+            if start is not None:
+                # The end of this tag, honouring quoted attribute values:
+                # `<` and `>` inside quotes are not tag boundaries.
+                j = start.end()
+                quote = ""
+                while j < n:
+                    char = text[j]
+                    if quote:
+                        if char == quote:
+                            quote = ""
+                    elif char in "\"'":
+                        quote = char
+                    elif char == ">":
+                        break
+                    j += 1
+                if start.group(1).lower() == "template":
+                    closing = text[i + 1] == "/"
+                    if closing:
+                        depth = max(0, depth - 1)
+                        if depth == 0 and block_start is not None:
+                            blocks.append(text[block_start:i])
+                            block_start = None
+                    elif text[j - 1] != "/":  # not self-closing
+                        if depth == 0:
+                            block_start = j + 1
+                        depth += 1
+                i = j + 1
+                continue
+        i += 1
+    if block_start is not None:
+        blocks.append(text[block_start:])  # an unclosed template: take the rest
+    return blocks
+
+
+def tag_names(block: str) -> list[str]:
+    """Every real tag name in a template block, in order.
+
+    Quote-aware like `template_blocks`: `title="<SettleView />"` is an
+    attribute value, and the string it holds is not a render.
+    """
+    names: list[str] = []
+    i, n = 0, len(block)
+    while i < n:
+        if block[i] == "<":
+            start = _TAG_START.match(block, i)
+            if start is not None:
+                j = start.end()
+                quote = ""
+                while j < n:
+                    char = block[j]
+                    if quote:
+                        if char == quote:
+                            quote = ""
+                    elif char in "\"'":
+                        quote = char
+                    elif char == ">":
+                        break
+                    j += 1
+                names.append(start.group(1))
+                i = j + 1
+                continue
+        i += 1
+    return names
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
@@ -216,7 +301,7 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")
     script = "\n".join(SCRIPT_BLOCK.findall(text))
-    template = "\n".join(TEMPLATE_BLOCK.findall(text))
+    template = "\n".join(template_blocks(text))
     whole = script + "\n" + template
 
     reasons: list[str] = []
