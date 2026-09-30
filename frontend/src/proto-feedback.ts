@@ -61,6 +61,9 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     ...feedbackRoutes,
+    // 出错态文案的「现状 / 建议」对照页。只在预览入口上开这一条：它是评审用的脚手架，
+    // 不是产品里的一屏，所以不进 `router/feedback.ts`（那个文件产品也读）。
+    { path: '/copy-preview', component: () => import('./proto-copy-preview.vue') },
     { path: '/', redirect: '/feedback' },
     { path: '/:pathMatch(.*)*', redirect: '/feedback' },
   ],
