@@ -108,5 +108,8 @@
     "leaveScope": "Remove project scope and search names across projects",
     "searchAll": "View all results",
     "weekly": "Weekly report"
+  },
+  "sidebar": {
+    "resize": "Drag to resize"
   }
 }

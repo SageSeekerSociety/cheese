@@ -34,7 +34,6 @@ import { myHandle } from '@/me'
 const LAYOUT_KEY = 'cheesex.layout'
 
 interface StoredLayout {
-  railWidth?: number
   chatPct?: number
   lastProjectId?: string
 }
@@ -127,21 +126,15 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const activeDmPeer = ref<string | null>(null)
 
   const stored = loadLayout()
-  const railWidth = ref(typeof stored.railWidth === 'number' ? stored.railWidth : 280)
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
   function persistLayout() {
     localStorage.setItem(
       LAYOUT_KEY,
       JSON.stringify({
-        railWidth: railWidth.value,
         chatPct: chatPct.value,
         lastProjectId: projectId.value ?? undefined,
       })
     )
-  }
-  function setRailWidth(w: number) {
-    railWidth.value = clampNum(w, 190, 480)
-    persistLayout()
   }
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
@@ -545,12 +538,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     privateUnreadMap,
     activeTopicId,
     activeDmPeer,
-    railWidth,
     chatPct,
     error,
     rootTopic,
     projectName,
-    setRailWidth,
     setChatPct,
     reportError,
     refreshProjects,

@@ -50,8 +50,6 @@ const props = defineProps<{
   // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
-  // Drawer width (px), made resizable by the parent.
-  width?: number
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
   unreadMap?: Record<string, number>
   // 私聊未读: {peerHandle: count}, `cheese` = 和芝士那一间。侧栏只用它的**总数**，
@@ -80,25 +78,7 @@ const emit = defineEmits<{
   // Open 项目文档 in the main area. The rail always asks for 章程 — the page
   // itself carries the tabs that reach the other three.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
-  // Live drawer width while dragging the right edge.
-  (e: 'update:width', w: number): void
 }>()
-
-// Drag the rail's right edge — emit the cursor's x (= rail width from the left).
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  const move = (ev: MouseEvent) => emit('update:width', ev.clientX)
-  const stop = () => {
-    window.removeEventListener('mousemove', move)
-    window.removeEventListener('mouseup', stop)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-  }
-  window.addEventListener('mousemove', move)
-  window.addEventListener('mouseup', stop)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-}
 
 // ---- 数据那一半 ----
 // 直接把 props 递进去：composable 里每个 computed 都在读它，而 props 本身是响应式
@@ -366,13 +346,9 @@ const onDocs = computed(() => !!props.activeDocs)
 <template>
   <component
     :is="page ? 'div' : SecondaryNavigation"
-    :width="page ? undefined : width ?? 280"
     :custom-class="page ? undefined : 'topic-rail'"
     :class="page ? 'topic-rail topic-rail--page' : undefined"
   >
-    <!-- Drag handle on the right edge to resize the rail. 整页形态下没有可拖的
-         宽度——它占满内容区。 -->
-    <div v-if="!page" class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <!-- 两段式: 头固定 / 下面唯一滚动。原来还有第三段（尾固定的私聊栏），它
          撤掉了：私聊的未读改挂在「成员」那一行上，而那一行在头下面的置顶组里，
          本来就不随话题列表滚。 -->
@@ -568,35 +544,11 @@ const onDocs = computed(() => !!props.activeDocs)
 </template>
 
 <style scoped>
-/* Right-edge resize handle (sits on top of the drawer's border). */
 /* 整页形态（手机上的话题列表）：占满内容区，不画抽屉那条右边线。这时它是内容，
    不是侧栏，底色跟着内容区走（design-system §1.4）。 */
 .topic-rail--page {
   width: 100%;
   height: 100%;
-}
-.rail-resizer {
-  position: absolute;
-  top: 0;
-  right: -3px;
-  bottom: 0;
-  width: 11px;
-  cursor: col-resize;
-  z-index: 4;
-}
-/* A thin visible handle centered in the wider (grabbable) hit area. */
-.rail-resizer::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 3px;
-  width: 2px;
-  background: transparent;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.rail-resizer:hover::after {
-  background: var(--accent);
 }
 .side-subhead {
   padding: 14px 16px 4px;
