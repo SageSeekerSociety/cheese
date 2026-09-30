@@ -1,17 +1,13 @@
 <template>
   <div class="analytics-section">
     <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">出题人分析</h2>
-      </div>
-
       <div class="section-toolbar__actions">
         <v-select
           v-model="sortByModel"
           autocomplete="off"
           :items="sortByItems"
           label="排序字段"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
           class="sort-field"
@@ -21,7 +17,7 @@
           autocomplete="off"
           :items="sortOrderItems"
           label="排序方向"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
           class="sort-field"
@@ -39,7 +35,7 @@
     </div>
 
     <v-card flat rounded="xl" class="table-card mt-4">
-      <v-data-table :headers="headers" :items="publishers" :loading="loading" density="comfortable" items-per-page="10">
+      <v-data-table :headers="headers" :items="publishers" :loading="loading" density="compact" items-per-page="10">
         <template #[`item.taskCount`]="{ item }">{{ formatCount(item.taskCount) }}</template>
         <template #[`item.participantCount`]="{ item }">{{ formatCount(item.participantCount) }}</template>
         <template #[`item.avgParticipantsPerTask`]="{ item }">{{ item.avgParticipantsPerTask.toFixed(1) }}</template>

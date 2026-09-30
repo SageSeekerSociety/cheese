@@ -1,5 +1,5 @@
 <template>
-  <v-btn :loading="loading" rounded="lg" color="primary" variant="flat" @click="download">
+  <v-btn :loading="loading" variant="outlined" color="on-surface" @click="download">
     <v-icon start>mdi-download</v-icon>
     {{ label }}
   </v-btn>

@@ -5,7 +5,7 @@
     :items="items"
     :loading="loading"
     label="出题人"
-    density="comfortable"
+    density="compact"
     hide-details
     variant="outlined"
     clearable

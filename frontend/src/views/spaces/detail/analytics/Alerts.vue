@@ -1,10 +1,6 @@
 <template>
   <div class="analytics-section">
-    <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">治理告警</h2>
-      </div>
-    </div>
+    <div class="section-toolbar"></div>
 
     <v-progress-linear v-if="loading && !alerts" indeterminate color="primary" class="mb-4" />
 
@@ -19,7 +15,7 @@
       >
         <div class="alert-card__meta">
           <span class="alert-card__label">{{ item.label }}</span>
-          <v-icon color="warning">mdi-arrow-top-right</v-icon>
+          <v-icon class="c-faint">mdi-arrow-top-right</v-icon>
         </div>
         <div class="alert-card__value">{{ item.value }}</div>
         <div class="alert-card__hint">{{ item.hint }}</div>

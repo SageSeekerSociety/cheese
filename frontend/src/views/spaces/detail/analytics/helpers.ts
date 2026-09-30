@@ -17,6 +17,21 @@ export const withDistributionPercent = (distribution?: AnalyticsDistribution | n
   }))
 }
 
+/**
+ * 后端按状态码分组（APPROVED、NO_PARTICIPANTS、WITH_REAL_NAME …），画出来要换成人读的
+ * 名字；分类、年级这类本来就是名字的原样留着。
+ */
+export const labelDistributionCodes = (
+  items: AnalyticsDistributionItem[],
+  t: (key: string) => string,
+  te: (key: string) => boolean
+) =>
+  items.map((item) =>
+    te(`spaces.analytics.distribution.${item.label}`)
+      ? { ...item, label: t(`spaces.analytics.distribution.${item.label}`) }
+      : item
+  )
+
 // ---------------------------------------------------------------------------
 // 学习那一格: 没归类、时间、勾选顺序、原文坐标
 // ---------------------------------------------------------------------------

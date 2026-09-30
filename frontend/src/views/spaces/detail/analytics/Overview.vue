@@ -1,10 +1,6 @@
 <template>
   <div class="analytics-section">
     <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">总览</h2>
-      </div>
-
       <div class="section-toolbar__controls">
         <AnalyticsPublisherSelect
           v-model="publisherIdModel"
@@ -17,7 +13,7 @@
           autocomplete="off"
           :items="groupByItems"
           label="趋势粒度"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
           class="control-field"
@@ -28,11 +24,15 @@
     <v-progress-linear v-if="loading && !overview" indeterminate color="primary" class="mb-4" />
 
     <template v-if="overview">
-      <v-row>
-        <v-col v-for="item in metricCards" :key="item.label" cols="12" md="6" lg="4" xl="2">
-          <AnalyticsMetricCard v-bind="item" />
-        </v-col>
-      </v-row>
+      <AnalyticsStatStrip>
+        <AnalyticsMetricCard
+          v-for="item in metricCards"
+          :key="item.label"
+          :label="item.label"
+          :value="item.value"
+          :description="item.description"
+        />
+      </AnalyticsStatStrip>
 
       <v-row class="mt-1">
         <v-col cols="12" lg="8">
@@ -92,14 +92,16 @@ import type { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/network/api
 import type { AnalyticsGroupBy } from './utils'
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
 import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
+import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
 import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
-import { formatCount, formatPercent, withDistributionPercent } from './helpers'
+import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
@@ -170,42 +172,31 @@ const metricCards = computed(() => {
       label: '题目总数',
       value: formatCount(overview.value.entityMetrics.taskCount),
       description: '纳入统计的题目量',
-      icon: 'mdi-clipboard-text-outline',
     },
     {
       label: '发题人数',
       value: formatCount(overview.value.entityMetrics.publisherCount),
       description: '产生过有效题目的出题人',
-      icon: 'mdi-account-tie-outline',
-      tone: 'info' as const,
     },
     {
       label: '报名主体数',
       value: formatCount(overview.value.entityMetrics.participantCount),
       description: '个人或团队都按一个主体计算',
-      icon: 'mdi-account-group-outline',
-      tone: 'primary' as const,
     },
     {
       label: '提交主体数',
       value: formatCount(overview.value.entityMetrics.submittedParticipantCount),
       description: `提交转化率 ${formatPercent(overview.value.entityMetrics.submissionConversionRate)}`,
-      icon: 'mdi-tray-arrow-up',
-      tone: 'warning' as const,
     },
     {
       label: '成功主体数',
       value: formatCount(overview.value.entityMetrics.successfulParticipantCount),
       description: `成功率 ${formatPercent(overview.value.entityMetrics.successRate)}`,
-      icon: 'mdi-trophy-outline',
-      tone: 'success' as const,
     },
     {
       label: '真实成员人数',
       value: formatCount(overview.value.studentMetrics.studentCount),
       description: '团队按成员快照展开',
-      icon: 'mdi-school-outline',
-      tone: 'info' as const,
     },
   ]
 })
@@ -219,11 +210,17 @@ const categoryDistribution = computed(() =>
     : null
 )
 
+const { t, te } = useI18n()
+
 const approvalDistribution = computed(() =>
   overview.value
     ? {
         ...overview.value.taskDistributions.byApprovalStatus,
-        items: withDistributionPercent(overview.value.taskDistributions.byApprovalStatus),
+        items: labelDistributionCodes(
+          withDistributionPercent(overview.value.taskDistributions.byApprovalStatus),
+          t,
+          te
+        ),
       }
     : null
 )
@@ -232,7 +229,11 @@ const completionDistribution = computed(() =>
   overview.value
     ? {
         ...overview.value.taskDistributions.byCompletionStatus,
-        items: withDistributionPercent(overview.value.taskDistributions.byCompletionStatus),
+        items: labelDistributionCodes(
+          withDistributionPercent(overview.value.taskDistributions.byCompletionStatus),
+          t,
+          te
+        ),
       }
     : null
 )

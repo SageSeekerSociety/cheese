@@ -2,7 +2,6 @@
   <div class="analytics-section">
     <div class="section-toolbar">
       <div>
-        <h2 class="section-toolbar__title">学习</h2>
         <p class="section-toolbar__hint">成员与 AI 对话时卡住的地方，用来挑下一讲要讲的内容</p>
       </div>
     </div>
@@ -14,7 +13,7 @@
           autocomplete="off"
           :items="studentItems"
           label="成员"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
         />
@@ -23,7 +22,7 @@
           autocomplete="off"
           :items="knowledgePointItems"
           label="知识点"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
         />

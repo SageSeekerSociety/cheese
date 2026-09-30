@@ -1,10 +1,6 @@
 <template>
   <div class="analytics-section">
     <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">参与者分析</h2>
-      </div>
-
       <AnalyticsExportButton section="participants" :space-id="spaceId" :filters="filters" label="导出参与者明细" />
     </div>
 
@@ -16,7 +12,7 @@
           autocomplete="off"
           :items="participationItems"
           label="报名审批状态"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
           clearable
@@ -26,7 +22,7 @@
           autocomplete="off"
           :items="completionItems"
           label="完成状态"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
           clearable
@@ -36,7 +32,7 @@
           autocomplete="off"
           :items="realNameItems"
           label="实名状态"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
         />
@@ -45,7 +41,7 @@
           autocomplete="off"
           :items="groupByItems"
           label="趋势粒度"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
         />
@@ -54,43 +50,28 @@
 
     <v-progress-linear v-if="loading && !participants" indeterminate color="primary" class="mt-4" />
 
-    <v-row v-if="participants" class="mt-1">
-      <v-col cols="12" md="6" lg="3">
-        <AnalyticsMetricCard
-          label="报名主体数"
-          :value="formatCount(participants.entityMetrics.participantCount)"
-          description="个人和团队都按主体计算"
-          icon="mdi-account-group-outline"
-        />
-      </v-col>
-      <v-col cols="12" md="6" lg="3">
-        <AnalyticsMetricCard
-          label="审核通过报名"
-          :value="formatCount(participants.entityMetrics.approvedParticipantCount)"
-          description="审核通过的报名主体"
-          icon="mdi-account-check-outline"
-          tone="success"
-        />
-      </v-col>
-      <v-col cols="12" md="6" lg="3">
-        <AnalyticsMetricCard
-          label="成功主体数"
-          :value="formatCount(participants.entityMetrics.successfulParticipantCount)"
-          description="完成状态为成功的主体"
-          icon="mdi-trophy-outline"
-          tone="warning"
-        />
-      </v-col>
-      <v-col cols="12" md="6" lg="3">
-        <AnalyticsMetricCard
-          label="实名成员数"
-          :value="formatCount(participants.studentMetrics.studentsWithRealNameCount)"
-          description="已实名的真实成员"
-          icon="mdi-card-account-details-outline"
-          tone="info"
-        />
-      </v-col>
-    </v-row>
+    <AnalyticsStatStrip v-if="participants" class="mt-4">
+      <AnalyticsMetricCard
+        label="报名主体数"
+        :value="formatCount(participants.entityMetrics.participantCount)"
+        description="个人和团队都按主体计算"
+      />
+      <AnalyticsMetricCard
+        label="审核通过报名"
+        :value="formatCount(participants.entityMetrics.approvedParticipantCount)"
+        description="审核通过的报名主体"
+      />
+      <AnalyticsMetricCard
+        label="成功主体数"
+        :value="formatCount(participants.entityMetrics.successfulParticipantCount)"
+        description="完成状态为成功的主体"
+      />
+      <AnalyticsMetricCard
+        label="实名成员数"
+        :value="formatCount(participants.studentMetrics.studentsWithRealNameCount)"
+        description="已实名的真实成员"
+      />
+    </AnalyticsStatStrip>
 
     <v-row v-if="participants" class="mt-1">
       <v-col cols="12" lg="4">
@@ -139,15 +120,17 @@ import type { SpaceAnalyticsParticipants } from '@/network/api/spaces/types'
 import type { AnalyticsGroupBy, AnalyticsRealNameFilter } from './utils'
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
+import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
 import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
-import { formatCount, withDistributionPercent } from './helpers'
+import { formatCount, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
 import { SpacesApi } from '@/network/api/spaces'
@@ -230,11 +213,17 @@ const groupByItems = [
   { title: '按月', value: 'month' },
 ]
 
+const { t, te } = useI18n()
+
 const approvalDistribution = computed(() =>
   participants.value
     ? {
         ...participants.value.distributions.byApprovalStatus,
-        items: withDistributionPercent(participants.value.distributions.byApprovalStatus),
+        items: labelDistributionCodes(
+          withDistributionPercent(participants.value.distributions.byApprovalStatus),
+          t,
+          te
+        ),
       }
     : null
 )
@@ -243,7 +232,11 @@ const completionDistribution = computed(() =>
   participants.value
     ? {
         ...participants.value.distributions.byCompletionStatus,
-        items: withDistributionPercent(participants.value.distributions.byCompletionStatus),
+        items: labelDistributionCodes(
+          withDistributionPercent(participants.value.distributions.byCompletionStatus),
+          t,
+          te
+        ),
       }
     : null
 )
@@ -252,7 +245,11 @@ const realNameDistribution = computed(() =>
   participants.value
     ? {
         ...participants.value.distributions.byRealNameStatus,
-        items: withDistributionPercent(participants.value.distributions.byRealNameStatus),
+        items: labelDistributionCodes(
+          withDistributionPercent(participants.value.distributions.byRealNameStatus),
+          t,
+          te
+        ),
       }
     : null
 )

@@ -1,10 +1,6 @@
 <template>
   <div class="analytics-section">
     <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">题目分析</h2>
-      </div>
-
       <AnalyticsExportButton section="tasks" :space-id="spaceId" :filters="filters" label="导出题目清单" />
     </div>
 
@@ -16,7 +12,7 @@
           autocomplete="off"
           :items="sortByItems"
           label="排序字段"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
         />
@@ -25,24 +21,24 @@
           autocomplete="off"
           :items="sortOrderItems"
           label="排序方向"
-          density="comfortable"
+          density="compact"
           hide-details
           variant="outlined"
         />
       </div>
 
       <div class="toolbar-chips">
-        <v-chip :variant="hasPendingApprovalModel ? 'flat' : 'outlined'" color="warning" @click="togglePendingApproval">
+        <v-chip :variant="hasPendingApprovalModel ? 'flat' : 'outlined'" @click="togglePendingApproval">
           待审核报名
         </v-chip>
-        <v-chip :variant="hasPendingReviewModel ? 'flat' : 'outlined'" color="error" @click="togglePendingReview">
+        <v-chip :variant="hasPendingReviewModel ? 'flat' : 'outlined'" @click="togglePendingReview">
           待评审提交
         </v-chip>
       </div>
     </v-card>
 
     <v-card flat rounded="lg" class="table-card mt-4">
-      <v-data-table :headers="headers" :items="tasks" :loading="loading" density="comfortable" items-per-page="10">
+      <v-data-table :headers="headers" :items="tasks" :loading="loading" density="compact" items-per-page="10">
         <template #[`item.publisher`]="{ item }">{{ item.publisher?.name || '-' }}</template>
         <template #[`item.category`]="{ item }">{{ item.category?.name || '-' }}</template>
         <template #[`item.approved`]="{ item }">

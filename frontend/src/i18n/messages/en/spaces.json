@@ -335,5 +335,59 @@
       "unpinFailed": "Could not unpin"
     },
     "morePinned": "{count} more pinned"
+  },
+  "analytics": {
+    "title": "Data",
+    "tabs": {
+      "overview": "Overview",
+      "alerts": "Alerts",
+      "publishers": "Publishers",
+      "tasks": "Problems",
+      "participants": "Participants",
+      "learning": "Learning"
+    },
+    "filter": {
+      "presetLabel": "Time range",
+      "preset": {
+        "30d": "Last 30 days",
+        "180d": "Last 6 months",
+        "all": "All"
+      },
+      "from": "From",
+      "to": "To",
+      "category": "Category",
+      "approval": "Review",
+      "allCategories": "All categories",
+      "approvalOption": {
+        "ALL": "All",
+        "NONE": "Pending",
+        "APPROVED": "Approved only",
+        "DISAPPROVED": "Rejected only"
+      },
+      "reset": "Reset",
+      "apply": "Apply"
+    },
+    "chart": {
+      "summary": "{total} / {points} points",
+      "noTrend": "No trend data",
+      "noDistribution": "No distribution data"
+    },
+    "distribution": {
+      "APPROVED": "Approved",
+      "DISAPPROVED": "Rejected",
+      "NONE": "Pending",
+      "NO_PARTICIPANTS": "No claims",
+      "NOT_STARTED": "Nothing submitted",
+      "IN_PROGRESS": "Submitted",
+      "PARTIAL_SUCCESS": "Some passed",
+      "ALL_SUCCESS": "All passed",
+      "NOT_SUBMITTED": "Not submitted",
+      "PENDING_REVIEW": "Awaiting review",
+      "REJECTED_RESUBMITTABLE": "Returned, can resubmit",
+      "FAILED": "Failed",
+      "SUCCESS": "Passed",
+      "WITH_REAL_NAME": "Verified",
+      "WITHOUT_REAL_NAME": "Not verified"
+    }
   }
 }

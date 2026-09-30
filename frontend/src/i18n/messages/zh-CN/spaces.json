@@ -387,5 +387,59 @@
       "unpinFailed": "取消置顶失败"
     },
     "morePinned": "另有 {count} 条置顶公告"
+  },
+  "analytics": {
+    "title": "数据",
+    "tabs": {
+      "overview": "总览",
+      "alerts": "告警",
+      "publishers": "出题人",
+      "tasks": "题目",
+      "participants": "参与者",
+      "learning": "学习"
+    },
+    "filter": {
+      "presetLabel": "时间段",
+      "preset": {
+        "30d": "最近 30 天",
+        "180d": "最近半年",
+        "all": "全部"
+      },
+      "from": "从",
+      "to": "到",
+      "category": "分类",
+      "approval": "审核",
+      "allCategories": "全部分类",
+      "approvalOption": {
+        "ALL": "全部",
+        "NONE": "待审核",
+        "APPROVED": "仅已通过",
+        "DISAPPROVED": "仅未通过"
+      },
+      "reset": "重置",
+      "apply": "应用"
+    },
+    "chart": {
+      "summary": "{total} / {points} 个时间点",
+      "noTrend": "暂无趋势数据",
+      "noDistribution": "暂无分布数据"
+    },
+    "distribution": {
+      "APPROVED": "已通过",
+      "DISAPPROVED": "未通过",
+      "NONE": "待审核",
+      "NO_PARTICIPANTS": "无人领取",
+      "NOT_STARTED": "未提交",
+      "IN_PROGRESS": "已提交",
+      "PARTIAL_SUCCESS": "部分通过",
+      "ALL_SUCCESS": "全部通过",
+      "NOT_SUBMITTED": "未提交",
+      "PENDING_REVIEW": "待评审",
+      "REJECTED_RESUBMITTABLE": "退回可重交",
+      "FAILED": "未通过",
+      "SUCCESS": "通过",
+      "WITH_REAL_NAME": "已实名",
+      "WITHOUT_REAL_NAME": "未实名"
+    }
   }
 }
