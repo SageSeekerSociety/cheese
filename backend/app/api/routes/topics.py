@@ -1,7 +1,5 @@
 """Topic routes."""
 
-import base64
-import binascii
 import shutil
 import uuid
 from collections.abc import Mapping
@@ -29,7 +27,6 @@ from app.core.errors import (
 )
 from app.domain.agent.announce import announce, notify_question
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.platform_notices import (
     EVENT_MENTION_FUSED,
@@ -37,14 +34,12 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import (
     AgentWorkRunner,
     addressed_to_agent,
     announce_stale,
 )
-from app.domain.agent.step_output import without_output
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -60,12 +55,11 @@ from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.mentions import canonicalize_refs
-from app.domain.project import room_files
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task import binding, presentation
+from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
@@ -86,7 +80,6 @@ from app.domain.topic.repositories import (
 )
 from app.domain.topic.schemas import (
     CheckResultIn,
-    ConclusionIn,
     DocEditIn,
     LockIn,
     RelayIn,
@@ -727,459 +720,6 @@ async def read_chat_message(
     item = BlockOut.model_validate(block).model_dump(mode="json")
     item["reactions"] = await repo.reactions_for_block(block_id)
     return ok(item)
-
-
-@router.get("/{topic_id}/tasks")
-async def list_room_tasks(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    resolver: ActorResolverDep,
-    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
-) -> dict:
-    """This room's threads — every piece of work in it, each with its own
-    conversation.
-
-    The room's own line is `/blocks` beside this; nothing appears in both, and
-    together they are everything said in the room. That separation is the whole
-    reason a task no longer needs a room of its own: the thread is a key on the
-    block, not a second row in `topics`.
-
-    Authorized exactly like `/blocks`, and for the same reason — this carries
-    conversation, so holding a topic id must not be enough to read it.
-
-    `limit` caps EACH thread at its newest N blocks; with none, every thread
-    comes back whole (agents read this to review history, and a silent default
-    window would truncate them with no way to notice).
-
-    That default is inherited from `/blocks`, and it costs more here: this fans
-    out over a room's whole history of work, and a long-lived room already
-    holds close to two hundred of them. No cap is imposed because an invented
-    number truncates silently — the exact failure the neighbouring default
-    exists to avoid — but a caller rendering a room should be passing `limit`,
-    and whoever builds that view should decide what it is.
-    """
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    threads = await TaskService(db).threads_for_room(topic_id, limit=limit)
-    # The card each thread rides on, in ONE query for the whole room (the same
-    # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
-    # 人验收" are indistinguishable on screen — both are quiet — and the room
-    # overview would have to ask per thread to tell them apart.
-    thread_ids = [t.id for t, _ in threads]
-    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
-    beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
-    asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
-    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
-    # `tasks` 上没有一列存它。
-    spent = await UsageRepository(db).last_model_by_task(thread_ids)
-    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
-    # 构造几百遍。
-    project = await ProjectRepository(db).get(topic.project_id)
-    choices = binding.catalog(project.settings if project else None)
-    # One answer for the whole room: every thread's worker lives in this room's
-    # one session, so the screen is alive for all of them or for none.
-    live = await task_liveness(chat, db, [t for t, _ in threads])
-    now = datetime.now(UTC)
-    items = []
-    for task, blocks in threads:
-        card = cards.get(task.id)
-        items.append(
-            {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
-                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
-                "model": presentation.card_model(
-                    task, spent=spent.get(task.id), choices=choices
-                ),
-                # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
-                "presentation": presentation.task_presentation(
-                    presentation.facts_for_task(
-                        task,
-                        card,
-                        beats.get(task.id),
-                        room_screen_live=live[task.id].screen,
-                        # 每条活的分身是它自己的，所以逐条答；上面一次问完。
-                        worker_live=live[task.id].worker,
-                        awaiting_answer=task.id in asked,
-                    ),
-                    now=now,
-                ).as_dict(),
-                "blocks": [
-                    BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
-                ],
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
-            }
-        )
-    return ok(page(items, len(items)))
-
-
-@router.get("/{topic_id}/tasks/{task_id}")
-async def get_room_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    db: DbSession,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    resolver: ActorResolverDep,
-    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
-    through: uuid.UUID | None = None,
-) -> dict:
-    """One card, with its conversation — the same shape `/tasks` lists.
-
-    Through the room, because a card is not a place: `GET /topics/{card}` is a
-    404 by construction, and the person reading a card is standing in the room
-    it belongs to anyway.
-
-    `limit` caps the timeline at its newest N blocks; with none it comes back
-    whole. Same default as `/blocks` and for the same reason — an invented
-    window truncates an agent reading history with no way to notice.
-    `through=<block_id>` stretches that window back to the named block (a card
-    opened at one of its messages); a block of another conversation is a 404.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    tasks = TaskService(db)
-    task = await tasks.get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
-    blocks = await tasks.blocks_for_thread(task_id, limit=limit, through=through)
-    if blocks is None:
-        raise NotFoundError("这条消息不在这个任务里")
-    cards = await AcceptCardRepository(db).latest_by_task([task.id])
-    beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
-    live = await task_liveness(chat, db, [task])
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    # 看板那一格，和它在列表里显示的是同一句话——同一个函数算的，所以深链接进来
-    # 和从看板点进来不可能给出两种说法。
-    out["presentation"] = presentation.task_presentation(
-        presentation.facts_for_task(
-            task,
-            cards.get(task.id),
-            beats.get(task.id),
-            # 两位当下事实见 `agent.liveness`：屏幕先看，屏幕没了分身也没了。
-            room_screen_live=live[task.id].screen,
-            worker_live=live[task.id].worker,
-            awaiting_answer=bool(
-                await BlockRepository(db).tasks_awaiting_an_answer([task.id])
-            ),
-        ),
-        now=datetime.now(UTC),
-    ).as_dict()
-    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
-    # 就是它绑的那个。和列表里显示的是同一个函数算的。
-    project = await ProjectRepository(db).get(place.project_id)
-    out["model"] = presentation.card_model(
-        task,
-        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        choices=binding.catalog(project.settings if project else None),
-    )
-    card = cards.get(task.id)
-    out["card"] = (
-        None
-        if card is None
-        else {
-            "id": str(card.id),
-            "status": str(card.status),
-            "pr_number": card.pr_number,
-            "pr_url": card.pr_url,
-        }
-    )
-    out["blocks"] = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
-    return ok(out)
-
-
-@router.post("/{topic_id}/tasks/{task_id}/messages")
-async def say_on_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """在一张卡下面说话 —— 落在这条活的时间线上，房间被叫来转达。
-
-    A person watching a card cannot reach the 分身 doing it: that worker lives
-    inside the room's session and only the room's 芝士 can pass it a message.
-    So this lands what was said WHERE THE WORK IS, and wakes the ROOM to act on
-    it. Nothing is woken on the card — there is no session there to wake.
-
-    Through the room's id for the same reason `/conclude` and `/title` are: a card
-    is not a place, so it has no address of its own and no token scoped to it.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    task = await TaskService(db).get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
-    content = (body.get("content") or "").strip()
-    if not content:
-        raise ValidationError("消息内容不能为空")
-    actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    content = await project_refs_text(db, place.project_id, place.room_id, content)
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=place.room_id,
-        task_id=task.id,
-        author=actor.handle,
-        author_type=AuthorType.participant,
-        content=content,
-        kind=BlockKind.message,
-    )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    members = TopicMemberService(db)
-    relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
-    if relay_to_parent:
-        from app.domain.delivery.agent import record_task_instruction
-        from app.domain.delivery.ledger import DeliveryEvent
-        from app.domain.notification.models import NotificationType
-
-        await record_task_instruction(
-            db,
-            DeliveryEvent(
-                id=block.id,
-                type=NotificationType.ROOM_NOTICE,
-                payload={
-                    "projectId": str(place.project_id),
-                    "topicId": str(place.room_id),
-                },
-                occurred_at=block.created_at,
-            ),
-            task=task,
-            content=thread_relay_prompt(
-                task_id=task.id,
-                task_title=task.title,
-                author=actor.handle,
-                message=f"说：{content}",
-            ),
-        )
-    # Visible before the turn that reads it — same ordering as the doc comment.
-    await db.commit()
-    # 卡下的实时帧走这条活自己的频道，因为块落在这条活上：发给房间的话，看着房间
-    # 的人会看见一条刷新之后就搬走了的消息。
-    await get_broker().publish(
-        str(task.id), {"type": "assistant_block", "block": payload}
-    )
-    if relay_to_parent:
-        from app.domain.delivery.agent import dispatch_pending
-
-        await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
-    return ok(payload)
-
-
-@router.post("/{topic_id}/tasks/{task_id}/title")
-async def set_task_title(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """给房间里的一条活起/改标题, said by the ROOM.
-
-    Naming is the room's because nothing else is left to do it: a card
-    dispatched by /split is named by whoever dispatched it, but one upgraded
-    out of a message starts untitled, and the session that used to name itself
-    on its first turn is exactly what 任务=分身 removed.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    task = await TaskService(db).get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
-    title = (body.get("title") or "").strip()
-    if not title:
-        raise ValidationError("title 不能为空")
-    task.title = title[:80]
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    await db.commit()
-    return ok(out)
-
-
-@router.post("/{topic_id}/tasks/{task_id}/close")
-async def conclude_task(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: ConclusionIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """收卡, said by the ROOM about one of its threads.
-
-    The worker's conclusion is already on the card: the platform writes it there
-    on every `SubagentStop` whose label names this card. This is the other half
-    — the room saying the work is over — and it is deliberately a separate act,
-    done by hand.
-
-    It has to be. A worker reports finished more than once (parking a long
-    command in its own background counts as finishing), and stops arrive from
-    sub-threads the harness started for its own purposes — measured on 2.1.224:
-    after the session's own Stop, with an unknown id, an empty label and a
-    fragment of a prompt as their closing message. Closing on either of those
-    would collapse work that is still going. The room decides when work has
-    ended; code acceptance merges the task's branch and closes it through the
-    separate acceptance flow.
-
-    `conclusion` is optional: given, it overwrites the worker's last word (which
-    is sometimes the fragment above); omitted, that last word stands.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    tasks = TaskService(db)
-    task = await tasks.get(task_id)
-    if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
-    # Friendly "@名字/@话题名" → structured tokens, same as every other write
-    # path that lands text a person will read.
-    text = (body.conclusion or "").strip()
-    conclusion = (
-        await canonicalize_refs(
-            db, place.project_id, text, exclude_topic_id=place.room_id
-        )
-        if text
-        else None
-    )
-    if {"reporter_handle", "contributor_handles"} & body.model_fields_set:
-        await tasks.set_credits(
-            task,
-            reporter_handle=(
-                body.reporter_handle
-                if "reporter_handle" in body.model_fields_set
-                else task.reporter_handle
-            ),
-            contributor_handles=(
-                body.contributor_handles
-                if body.contributor_handles is not None
-                else task.contributor_handles
-            ),
-        )
-    task = await tasks.close_thread(task, conclusion=conclusion)
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    await db.commit()
-    return ok(out)
-
-
-@router.get("/{topic_id}/transcript")
-async def topic_transcript(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    limit: int | None = Query(None, ge=1, le=200),
-    before: uuid.UUID | None = None,
-    author: str | None = Query(None, min_length=1, max_length=120),
-) -> dict:
-    """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
-    read-only, newest window first.
-
-    Paged for the same reason the conversation is: events are the MOST numerous
-    kind of block (one per tool call), so a topic that has run for a while makes
-    this the largest response the app can ask for, and it only ever grows.
-    `limit=None` keeps the whole-history behaviour for callers that still want
-    it.
-
-    `author` narrows it to one teammate's steps (一个人/一个队友的 handle). A room
-    can seat several of them, and 现场 can be read one of them at a time; that
-    filter belongs INSIDE the paging, exactly like `kinds` — filtering a page
-    after the fact returns fewer rows than asked for and reports `has_more`
-    against the wrong set, so the caller pages through holes.
-
-    The room's own line. What one of its 分身 did is on that card, and is read
-    through it (`GET /topics/{room}/tasks/{card}`) — interleaving every card's
-    actions here would bury what the room itself did."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    repo = BlockRepository(db)
-    # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
-    # to the conversation pane — mirroring them here just duplicates the chat.
-    kinds = {BlockKind.event}
-    cursor: Block | None = None
-    if before is not None:
-        cursor = await repo.get(before)
-        # Same rule as the conversation's pager: an unknown cursor must not
-        # degrade into "newest N", which the caller cannot tell from a real page.
-        # A cursor from one of this room's CARDS is as wrong as one from
-        # another room.
-        if (
-            cursor is None
-            or cursor.topic_id != place.room_id
-            or cursor.task_id is not None
-        ):
-            raise NotFoundError("游标事件不存在")
-    if limit is None:
-        site = [
-            b
-            for b in await repo.list_for_topic(place.room_id)
-            if b.kind in kinds and (author is None or b.author == author)
-        ]
-        has_more = False
-    else:
-        result = await repo.page_for_topic(
-            place.room_id,
-            limit=limit,
-            before=cursor,
-            kinds=kinds,
-            author=author,
-        )
-        site, has_more = result.items, result.has_more
-    # What a step printed stays behind: a page of 120 steps would otherwise
-    # carry up to 120 × 8 KiB. The row says it has some (`output_bytes`), and
-    # `step_output` below hands it over when somebody opens it.
-    items = [
-        without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
-    ]
-    return ok(
-        {
-            **page(items, len(items)),
-            "has_more": has_more,
-            "oldest_id": str(site[0].id) if site else None,
-        }
-    )
-
-
-@router.get("/{topic_id}/transcript/{block_id}/output")
-async def step_output(
-    topic_id: uuid.UUID,
-    block_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The tail of what one 现场 step printed, as kept (``step_output``)."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    block = await BlockRepository(db).get(block_id)
-    # Same door as the transcript: this room's own line, never a card's.
-    if (
-        block is None
-        or block.topic_id != place.room_id
-        or block.task_id is not None
-        or block.kind != BlockKind.event
-    ):
-        raise NotFoundError("步骤不存在")
-    meta = block.meta or {}
-    return ok(
-        {
-            "output": str(meta.get("output") or ""),
-            "bytes": int(meta.get("output_bytes") or 0),
-        }
-    )
 
 
 @router.get("/{topic_id}/usage")
@@ -2272,78 +1812,6 @@ async def record_weekly(
     return ok(out)
 
 
-@router.post("/{topic_id}/title")
-async def set_title(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """给这个地方起/改标题 — used by both `cheese_title` (a person asked 芝士
-    for this name) and the frontend sidebar rename UI (dual-use, like doc/split).
-    Either way a person chose it, so the platform's naming leaves it alone from
-    now on (`topic/naming.py`).
-
-    Names the THREAD when the id is a thread's. Resolving only rooms did not
-    fail here, which is what made it dangerous: a 分身 naming the piece of work
-    it had just been handed would have renamed the whole room around it.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.get("by"),
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    title = (body.get("title") or "").strip()
-    if not title:
-        raise ValidationError("title 不能为空")
-    await naming.rename_by_person(
-        db,
-        place.room,
-        title[:80],
-        by=actor.handle,
-        reason="rename",
-    )
-    await db.flush()
-    out = TopicOut.model_validate(place.room).model_dump(mode="json")
-    await db.commit()
-    await announce_stale(place.room_id, "topics")
-    return ok(out)
-
-
-async def _title_actor(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> tuple[Topic, str]:
-    """The room and the signed-in person acting on its title."""
-    room = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=room.id, project_id=room.project_id
-    )
-    await resolver.authorize_topic(actor, project_id=room.project_id, topic_id=room.id)
-    if not actor.authenticated:
-        raise ForbiddenError("改标题需要登录")
-    return room, actor.handle
-
-
-@router.post("/{topic_id}/title/undo")
-async def undo_title(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """撤销一次自动改名 (the button on the line that announced it). The old
-    title comes back and, being a person's choice now, stays."""
-    room, handle = await _title_actor(topic_id, db, resolver)
-    try:
-        event_id = uuid.UUID(str(body.get("event_id")))
-    except ValueError as exc:
-        raise ValidationError("event_id 不是有效的 id") from exc
-    await naming.undo(db, room, event_id, by=handle)
-    await db.flush()
-    out = TopicOut.model_validate(room).model_dump(mode="json")
-    await db.commit()
-    await announce_stale(room.id, "topics")
-    return ok(out)
-
-
 @router.post("/{topic_id}/read")
 async def mark_topic_read(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -2755,12 +2223,6 @@ def artifact_kind_for(path: str) -> str:
     return _ARTIFACT_KIND_BY_SUFFIX.get(suffix[dot:].lower() if dot > 0 else "", "html")
 
 
-# How long ``cheese serve`` may wait for the helper it just started to finish its
-# upgrade. It declares the preview in the same breath as starting the tunnel, so
-# without this the platform would refuse a preview that is one round trip away.
-_PREVIEW_ATTACH_WAIT_S = 8.0
-
-
 def _clean_artifact_path(raw: str) -> str:
     """A workspace-relative pointer — reject absolute paths, traversal, and .git.
     The file itself is read later via the guarded workspace reader."""
@@ -2809,29 +2271,6 @@ async def _source_bytes(
     return library.read_attachment(project_id, room_id, path)
 
 
-async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
-    """Refuse an app artifact the platform provably cannot render (``cheese serve``).
-
-    Setting it used to always succeed, so 芝士 announced 「预览已就绪」 while the
-    panel showed 「应用暂时不在线」. Two separate things can be missing and they
-    read differently to whoever has to fix them: the tunnel (nothing on that
-    machine is carrying a preview out) and the app behind it (the tunnel is up and
-    the declared port answers nothing).
-    """
-    if not await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S):
-        raise ValidationError(
-            "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
-            "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
-            "或报告、表格这类文档。"
-        )
-    if not await preview_hub.probe(topic_id, seat):
-        raise ValidationError(
-            "登记的端口上没有服务在应答，预览会是一个白框。"
-            "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"
-        )
-
-
 async def record_shown(
     db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
 ) -> dict:
@@ -2856,132 +2295,3 @@ async def record_shown(
         str(place.room_id), {"type": "assistant_block", "block": payload}
     )
     return payload
-
-
-@router.post("/{topic_id}/shown")
-async def show_in_room(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
-
-    摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
-    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    # The teammate that showed it, when a teammate did. A room may seat several,
-    # and for an app the author is also WHICH app: each teammate serves from its
-    # own checkout through its own tunnel, and the preview follows the author.
-    # Taken from the credential, because the helper's tunnel is keyed by the
-    # same claim of the same credential.
-    seat = resolver.credential_agent() if actor.via == "cheese" else None
-    author = seat or await TopicMemberService(db).resolve_agent_handle(
-        topic_id, room_id=place.room_id
-    )
-    declared = (body.get("as") or "").strip().lower()
-    if declared == "app":
-        # An app artifact points at the running server, not a file — the stored
-        # content is a human note ("Vue dev server"), not a path.
-        path = (body.get("path") or "app").strip()[:120]
-        await _reject_unreachable_app(topic_id, author)
-    else:
-        path = _clean_artifact_path(body.get("path") or "")
-    as_ = declared or artifact_kind_for(path)
-    mime = _ARTIFACT_MIME.get(as_)
-    if mime is None:
-        allowed = "、".join(_ARTIFACT_MIME)
-        raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
-    if as_ != "app" and ("content" in body or "content_b64" in body):
-        # A remote machine's file is not in the backend worktree until published.
-        # Office files and PDFs are not text, so they travel base64-encoded; a
-        # caller that sends them as `content` would either fail to read them or
-        # corrupt them on the way, which is why the two fields are separate
-        # rather than one field that guesses.
-        if "content_b64" in body:
-            encoded = body["content_b64"]
-            if not isinstance(encoded, str):
-                raise ValidationError("content_b64 必须是文本")
-            try:
-                raw = base64.b64decode(encoded, validate=True)
-            except (ValueError, binascii.Error) as exc:
-                raise ValidationError("content_b64 不是合法的 base64") from exc
-        else:
-            content = body["content"]
-            if not isinstance(content, str):
-                raise ValidationError("content 必须是文本")
-            raw = content.encode()
-        if len(raw) > MAX_ARTIFACT_BYTES:
-            raise ValidationError(
-                f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
-            )
-    if as_ != "app" and ("content" in body or "content_b64" in body):
-        # Through the draft history: the state this replaces stays restorable,
-        # and `base_version` (the version `cheese pull` read) turns an overwrite
-        # of somebody's newer save into a 409.
-        base = body.get("base_version")
-        note = body.get("note")
-        await room_files.save_room_file(
-            db,
-            project_id=place.project_id,
-            room_id=place.room_id,
-            path=path,
-            data=raw,
-            author=author if actor.via == "cheese" else actor.handle,
-            author_kind="agent" if actor.via == "cheese" else "human",
-            source="ai" if actor.via == "cheese" else "upload",
-            note=note if isinstance(note, str) else None,
-            base_version=base if isinstance(base, str) and base else None,
-        )
-    return ok(await record_shown(db, place, path, author=author, mime=mime))
-
-
-@router.get("/{topic_id}/shown")
-async def list_shown(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """这个房间里摆出来过的东西 (#1085 结论四)。
-
-    一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
-    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    shown = await BlockRepository(db).shown_in_room(place.room_id)
-    items = [
-        {
-            "path": block.content,
-            "mime": block.mime_type,
-            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
-            "shown_at": block.created_at.isoformat(),
-        }
-        for block in shown
-    ]
-    return ok(page(items, len(items)))
-
-
-@router.post("/{topic_id}/shown/save")
-async def save_shown_to_library(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
-
-    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
-    它：这份东西以后还用不用得上，是人的判断。"""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.require_verified_caller(project_id=place.project_id)
-    await resolver.authorize_project(actor, project_id=place.project_id)
-    name = await room_files.save_to_library(
-        db,
-        project_id=place.project_id,
-        room_id=place.room_id,
-        path=_clean_artifact_path(str(body.get("path") or "")),
-        by=actor.handle,
-    )
-    await db.commit()
-    return ok({"name": name})

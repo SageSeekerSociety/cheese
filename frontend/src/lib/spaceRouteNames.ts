@@ -55,5 +55,9 @@ export const ANALYTICS_ROUTE_NAMES: AnalyticsRouteNames = {
   learning: 'SpacesDetailAnalyticsLearning',
 }
 
-/** 发完题之后落到哪一页：「我发布的」。 */
-export const PUBLISH_DONE_ROUTE = 'SpacesDetailMyPublishing'
+/** 发完题之后落到哪一页：题目列表的「我发布的」，还没过审的题也在里面。 */
+export const publishDoneRoute = (spaceId: number | string) => ({
+  name: 'SpacesDetailTasksList',
+  params: { spaceId },
+  query: { filter: 'publishing' },
+})

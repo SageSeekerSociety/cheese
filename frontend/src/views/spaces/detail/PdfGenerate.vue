@@ -9,7 +9,7 @@ import { useRoute } from 'vue-router'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
 import PanelCard from '@/components/spaces/PanelCard.vue'
-import { PUBLISH_DONE_ROUTE, TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { publishDoneRoute, TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
@@ -304,7 +304,7 @@ async function confirmPdf() {
       <div class="pdf__actions">
         <v-btn variant="text" @click="resetPdf">再解析一份 PDF</v-btn>
         <v-spacer />
-        <v-btn variant="tonal" :to="{ name: PUBLISH_DONE_ROUTE, params: { spaceId } }">去「我的」看这几道</v-btn>
+        <v-btn variant="tonal" :to="publishDoneRoute(spaceId)">查看我发布的题目</v-btn>
         <v-btn color="primary" variant="flat" :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId } }">
           去审核队列
         </v-btn>

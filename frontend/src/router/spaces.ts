@@ -43,30 +43,6 @@ export default {
           },
         },
         {
-          path: 'my/publishing',
-          name: 'SpacesDetailMyPublishing',
-          components: {
-            default: () => import('@/views/spaces/detail/member-tasks/MyPublishing.vue'),
-            header: () => import('@/components/common/PageHeader.vue'),
-          },
-          meta: {
-            titleKey: 'spaces.detail.myPublishedContests',
-            backTo: 'SpacesDetailTasksList',
-          },
-        },
-        {
-          path: 'my/participating',
-          name: 'SpacesDetailMyParticipating',
-          components: {
-            default: () => import('@/views/spaces/detail/member-tasks/MyParticipating.vue'),
-            header: () => import('@/components/common/PageHeader.vue'),
-          },
-          meta: {
-            titleKey: 'spaces.detail.myJoinedContests',
-            backTo: 'SpacesDetailTasksList',
-          },
-        },
-        {
           path: 'publish',
           name: 'SpacesDetailPublishTask',
           // 页头由页面自己画：那两条路的切换放在页头的操作区里。
@@ -146,41 +122,19 @@ export default {
         },
       ],
     },
+    // 管理那一段（所有者与管理员）：都在 manage/ 下，侧栏「管理」四格各对一条。
     {
-      path: 'tasks/audit',
+      path: 'manage/audit',
       name: 'SpacesDetailAuditTasks',
       component: () => import('@/views/spaces/detail/AuditTask.vue'),
     },
     {
-      path: 'members',
+      path: 'manage/members',
       name: 'SpacesDetailMembers',
       component: () => import('@/views/spaces/detail/Members.vue'),
     },
     {
-      path: 'templates',
-      name: 'SpacesDetailManageTemplates',
-      component: () => import('@/views/spaces/detail/ManageTemplates.vue'),
-    },
-    {
-      path: 'templates/create',
-      name: 'SpacesDetailCreateTemplate',
-      meta: { backTo: 'SpacesDetailManageTemplates' },
-      component: () => import('@/views/spaces/detail/TemplateForm.vue'),
-    },
-    {
-      path: 'templates/:templateIndex/edit',
-      name: 'SpacesDetailEditTemplate',
-      meta: { backTo: 'SpacesDetailManageTemplates' },
-      component: () => import('@/views/spaces/detail/TemplateForm.vue'),
-    },
-    {
-      path: 'select-template',
-      name: 'SpacesDetailSelectTemplate',
-      meta: { backTo: 'SpacesDetailTasksList' },
-      component: () => import('@/views/spaces/detail/SelectTemplate.vue'),
-    },
-    {
-      path: 'analytics',
+      path: 'manage/analytics',
       name: 'SpacesDetailAnalytics',
       component: () => import('@/views/spaces/detail/analytics/Index.vue'),
       redirect: { name: 'SpacesDetailAnalyticsOverview' },
@@ -223,24 +177,61 @@ export default {
       ],
     },
     {
-      path: 'manage/topics',
-      name: 'SpacesDetailManageTopics',
-      component: () => import('@/views/spaces/detail/ManageTopics.vue'),
+      // 设置：一页分栏，每一栏是一条子路由，可以单独链接。
+      path: 'manage/settings',
+      name: 'SpacesDetailSettings',
+      component: () => import('@/views/spaces/detail/settings/Index.vue'),
+      redirect: { name: 'SpacesDetailSettingsBasic' },
+      meta: { titleKey: 'spaces.settings.title' },
+      children: [
+        {
+          path: '',
+          name: 'SpacesDetailSettingsBasic',
+          component: () => import('@/views/spaces/detail/settings/BasicInfo.vue'),
+        },
+        {
+          // 分类与话题是两页现成的管理页，并排画在这一栏里：设置页给话题留了一个具名出口。
+          path: 'categories',
+          name: 'SpacesDetailSettingsCategories',
+          components: {
+            default: () => import('@/views/spaces/detail/ManageCategories.vue'),
+            topics: () => import('@/views/spaces/detail/ManageTopics.vue'),
+          },
+        },
+        {
+          path: 'templates',
+          name: 'SpacesDetailSettingsTemplates',
+          component: () => import('@/views/spaces/detail/ManageTemplates.vue'),
+        },
+        {
+          path: 'invite-codes',
+          name: 'SpacesDetailSettingsInviteCodes',
+          component: () => import('@/views/spaces/detail/InviteCodes.vue'),
+        },
+        {
+          path: 'domain-groups',
+          name: 'SpacesDetailSettingsDomainGroups',
+          component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
+        },
+      ],
     },
     {
-      path: 'manage/categories',
-      name: 'SpacesDetailManageCategories',
-      component: () => import('@/views/spaces/detail/ManageCategories.vue'),
+      path: 'manage/settings/templates/create',
+      name: 'SpacesDetailCreateTemplate',
+      meta: { backTo: 'SpacesDetailSettingsTemplates' },
+      component: () => import('@/views/spaces/detail/TemplateForm.vue'),
     },
     {
-      path: 'manage/domain-groups',
-      name: 'SpacesDetailManageDomainGroups',
-      component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
+      path: 'manage/settings/templates/:templateIndex/edit',
+      name: 'SpacesDetailEditTemplate',
+      meta: { backTo: 'SpacesDetailSettingsTemplates' },
+      component: () => import('@/views/spaces/detail/TemplateForm.vue'),
     },
     {
-      path: 'manage/invite-codes',
-      name: 'SpacesDetailManageInviteCodes',
-      component: () => import('@/views/spaces/detail/InviteCodes.vue'),
+      path: 'select-template',
+      name: 'SpacesDetailSelectTemplate',
+      meta: { backTo: 'SpacesDetailTasksList' },
+      component: () => import('@/views/spaces/detail/SelectTemplate.vue'),
     },
   ],
 } as RouteRecordRaw

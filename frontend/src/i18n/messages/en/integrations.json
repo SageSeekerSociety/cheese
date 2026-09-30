@@ -15,6 +15,7 @@
     "saved": "Saved",
     "saveFailed": "Could not save",
     "loadFailed": "Could not load",
+    "retry": "Retry",
     "configured": "Configured",
     "notConfigured": "Not configured",
     "updatedBy": "Last updated by {handle}",

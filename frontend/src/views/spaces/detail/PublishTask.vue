@@ -24,7 +24,7 @@ import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimi
 
 import PageHeader from '@/components/common/PageHeader.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
-import { PUBLISH_DONE_ROUTE } from '@/lib/spaceRouteNames'
+import { publishDoneRoute } from '@/lib/spaceRouteNames'
 import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
@@ -204,7 +204,7 @@ async function submitTask(taskData: TaskFormSubmitData) {
         toast.success(t('spaces.detail.publishTask.createSuccess'))
       }
 
-      router.replace({ name: PUBLISH_DONE_ROUTE, params: { spaceId: id } })
+      router.replace(publishDoneRoute(id))
       return approved
     },
     {
@@ -326,7 +326,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
     quickDrafts.value = []
     quickTokens.value = null
     initialTaskData.value = {}
-    router.replace({ name: PUBLISH_DONE_ROUTE, params: { spaceId: id } })
+    router.replace(publishDoneRoute(id))
     return true
   } catch (error) {
     console.error('PDF 批量发布失败:', error)
