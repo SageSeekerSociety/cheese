@@ -36,6 +36,7 @@ from app.core.github_install_state import (
     verify_account_link_state,
 )
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
+from app.domain.block.notice_text import say
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 
@@ -83,7 +84,7 @@ async def get_github_account_authorize_url(
         logger.exception(
             "github account link: cannot reserve state uid=%s", auth_user.user_id
         )
-        raise InternalServerError("暂时无法发起 GitHub 账号连接，请稍后重试") from None
+        raise InternalServerError(say("githubAccountConnectUnavailable")) from None
     url = oauth_service.generate_authorization_url(_PROVIDER_ID, minted.state)
     return ok({"url": url})
 

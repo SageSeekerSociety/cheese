@@ -158,7 +158,7 @@ async def save_room_file(
         and not own_earlier_save
     ):
         raise ConflictError(
-            "这份文件在你读取之后被人改过，先取最新的一版再改",
+            say("fileChangedSinceRead"),
             data={"path": path, "version": now_version, "base_version": base_version},
         )
     if latest is None and before is not None:
@@ -291,7 +291,7 @@ async def revision_or_404(
 ) -> RoomFileRevision:
     row = await session.get(RoomFileRevision, revision_id)
     if row is None or row.room_id != room_id:
-        raise NotFoundError("没有这一版")
+        raise NotFoundError(say("versionNotFound"))
     return row
 
 
@@ -414,8 +414,8 @@ def clean_artifact_path(raw: str) -> str:
     The file itself is read later via the guarded workspace reader."""
     path = (raw or "").strip()
     if not path:
-        raise ValidationError("path 不能为空")
+        raise ValidationError(say("pathEmpty"))
     parts = path.split("/")
     if path.startswith("/") or ".." in parts or ".git" in parts:
-        raise ValidationError("path 必须是工作区相对路径")
+        raise ValidationError(say("pathMustBeRelative"))
     return path

@@ -113,7 +113,7 @@ class FeishuEditIn(BaseModel):
 async def _person(resolver: ActorResolver) -> Actor:
     actor = await resolver.resolve(fallback_handle=None)
     if actor.via != "token" or actor.user_id is None:
-        raise AuthenticationRequiredError("连接只能由本人登录后管理")
+        raise AuthenticationRequiredError(say("integrationSignInOwner"))
     return actor
 
 

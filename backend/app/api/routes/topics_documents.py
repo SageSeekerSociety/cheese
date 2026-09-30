@@ -54,6 +54,7 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
+from app.domain.block.notice_text import exception_text, say
 from app.domain.documents.convert import (
     ConvertFailed,
     ConvertUnavailable,
@@ -106,9 +107,9 @@ async def recalc_spreadsheet(
     try:
         book, bad = await recalculate(raw, path, settings.office_render_endpoint)
     except SpreadsheetRecalcUnavailable as exc:
-        raise SystemBusyError(str(exc)) from exc
+        raise SystemBusyError(exception_text(exc)) from exc
     except SpreadsheetRecalcFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return ok(
         {
             "path": path,
@@ -140,9 +141,9 @@ async def convert_document(
     try:
         made = await convert(raw, path, target, settings.office_render_endpoint)
     except ConvertUnavailable as exc:
-        raise SystemBusyError(str(exc)) from exc
+        raise SystemBusyError(exception_text(exc)) from exc
     except ConvertFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return ok(
         {
             "path": upgraded_name(path, target.lower().lstrip(".")),
@@ -181,9 +182,9 @@ async def list_document_revisions(
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     except RevisionsFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return ok(
         {
             "path": clean,
@@ -224,7 +225,7 @@ async def decide_document_revisions(
         # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
-        raise ValidationError("项目资料里的原件不能修改，可以基于它新建一份")
+        raise ValidationError(say("libraryOriginalReadOnly"))
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
@@ -238,15 +239,15 @@ async def decide_document_revisions(
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
-            "文件已被修改，这份清单基于旧内容，刷新后重试",
+            say("revisionListStale"),
             data={"path": clean, "version": actual},
         )
     try:
         made, left = decide(raw, clean, accept=accept, reject=reject)
     except RevisionsUnsupported as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     except RevisionsFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     if task is not None:
         from app.domain.repository.forge_files import ProjectFiles
 

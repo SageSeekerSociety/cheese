@@ -32,6 +32,7 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
 from app.domain.admin.services import AdminService
 from app.domain.authz import policy
+from app.domain.block.notice_text import say
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
     Feedback,
@@ -227,7 +228,7 @@ async def mark_feedback_read(
     """
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     at = await service.mark_read(handle=who.handle)
     await db.commit()
     return ok({"last_read_at": at.isoformat()})
@@ -317,7 +318,7 @@ async def create_feedback(
     """
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     row = await service.create(
         body,
         actor_handle=who.handle,
@@ -367,7 +368,7 @@ async def delete_feedback(
     """
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     await service.delete_feedback(
         feedback_id,
         handle=who.handle,
@@ -450,7 +451,7 @@ async def create_feedback_comment(
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     is_admin = await _is_admin(db, service, who)
     comment, _ = await service.comment(
         feedback_id,
@@ -484,7 +485,7 @@ async def delete_feedback_comment(
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     await service.delete_comment(
         feedback_id,
         comment_id,
@@ -511,7 +512,7 @@ async def like_feedback_comment(
     """
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     count, liked = await service.like_comment(
         feedback_id,
         comment_id,
@@ -532,7 +533,7 @@ async def unlike_feedback_comment(
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     count, liked = await service.unlike_comment(
         feedback_id,
         comment_id,
@@ -556,7 +557,7 @@ async def support_feedback(
     """
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     count, supported = await service.support(
         feedback_id, handle=who.handle, is_admin=await _is_admin(db, service, who)
     )
@@ -573,7 +574,7 @@ async def unsupport_feedback(
 ) -> dict:
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     count, supported = await service.unsupport(
         feedback_id, handle=who.handle, is_admin=await _is_admin(db, service, who)
     )

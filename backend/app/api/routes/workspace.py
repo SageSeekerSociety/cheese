@@ -16,6 +16,7 @@ from app.core.db import get_db
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.notice_text import say
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.models import TaskStatus
@@ -80,10 +81,10 @@ async def require_project_access(
         )
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
         if request.method == "PUT" and room.status == TopicStatus.archived:
-            raise ValidationError("房间已归档，文件只读")
+            raise ValidationError(say("roomArchivedFilesReadOnly"))
     if work is not None:
         if request.method == "PUT" and work.status != TaskStatus.open:
-            raise ValidationError("任务已结束，文件只读")
+            raise ValidationError(say("taskEndedFilesReadOnly"))
         if work.branch_name is None:
             raise NotFoundError("Historical task has no individual workspace")
 
@@ -186,7 +187,7 @@ async def write_file(
     if not path:
         raise ValidationError("path is required")
     if task is None:
-        raise ValidationError("请选择要修改的任务")
+        raise ValidationError(say("chooseTaskToEdit"))
     saved = await ProjectFiles(db, project_id, task, release_session=True).write(
         path, content, version
     )
@@ -263,5 +264,5 @@ async def topic_work_summary(
                         ).changed_files()
                     )
     except TimeoutError as exc:
-        raise GatewayUnavailableError("改动摘要加载超时，请稍后刷新") from exc
+        raise GatewayUnavailableError(say("changeSummaryTimeout")) from exc
     return ok({"changed_files": sorted(paths), "has_run": has_run})
