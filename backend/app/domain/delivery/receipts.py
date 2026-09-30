@@ -151,9 +151,14 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     ):
         return None
     row.echoed_at = row.echoed_at or stamp
-    await BlockRepository(session).mark_consumed(
+    blocks = BlockRepository(session)
+    await blocks.mark_consumed(
         [uuid.UUID(block) for block in row.block_ids], row.work_id
     )
+    for block in row.seen_block_ids:
+        await blocks.add_reaction_if_absent(
+            uuid.UUID(block), "👀", row.seen_by or row.recipient_handle
+        )
     if delivery is not None:
         delivery.state = "received"
         delivery.sent_at = stamp

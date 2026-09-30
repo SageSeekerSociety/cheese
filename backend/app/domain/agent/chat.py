@@ -229,6 +229,13 @@ from app.domain.block.models import (
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.input_identity import (
+    InputEffects,
+    InputIdentity,
+    InputReceipt,
+    InputRegistrar,
+)
+from app.domain.delivery.receipts import record_receipt, register_input
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -571,28 +578,9 @@ class ChatService:
         self._dream_refusals: dict[uuid.UUID, str] = {}
         # 同一间房的对账一次只跑一场（`_sync_memory`）。
         self._memory_syncs: dict[uuid.UUID, asyncio.Lock] = {}
-        # Mid-turn messages whose write the transport accepted but whose
-        # UserPromptSubmit receipt has not arrived yet (#539 decision A):
-        # topic → [(injected text, block ids, consuming turn)]. The receipt
-        # stamps them consumed; until then they stay pending, so a session
-        # death replays them (宁可重复不可丢失).
-        # The loop clock reading is the fourth field, and it is what
-        # `oldest_unread_at` reports: how long something has been waiting is a
-        # different question from whether it was written, and only the first one
-        # can tell a session that stopped reading from one that is busy.
-        self._pending_receipts: dict[
-            uuid.UUID, list[tuple[str, list[uuid.UUID], uuid.UUID, float]]
-        ] = {}
-        # 写进会话、还没等到 harness 说「收下了」的人类消息：topic → [(写下去的
-        # 那段文本, 该打 👀 的 block)]。
-        #
-        # 和 `_pending_receipts` 分开，因为两者回答的是不同的问题。那一份管重放
-        # 和「有人在等、会话却不读了」（`oldest_unread_at`）——把一轮新对话塞进
-        # 去，冷启动那一分多钟就会读成「会话不读了」，而那时根本还没有会话。这一
-        # 份只管屏幕上那个记号落在哪条消息上，落完就没了。
-        self._awaiting_seen: dict[
-            uuid.UUID, list[tuple[str, list[uuid.UUID], str | None]]
-        ] = {}
+        # Liveness only, keyed by durable input UUID. Settlement never depends
+        # on this process cache; cold-start inputs are not mid-turn unread probes.
+        self._unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1096,30 +1084,14 @@ class ChatService:
             )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         line = publication_prompt("\n".join(lines))
-        # Register BEFORE the write so a fast receipt cannot race the entry
-        # (#539 decision A). The receipt is still the consumed boundary — it
-        # just no longer gates the delivery verdict: write-accept is delivery,
-        # and the stamp lands whenever the session actually consumes the text
-        # (confirm_prompt_receipt). Until then the message stays pending, so a
-        # session death replays it — 宁可重复不可丢失.
-        pending = self._pending_receipts.setdefault(topic_id, [])
-        # 同一个回执，两件事：把消息标记成被消费（上面那段说的重放边界），以及在
-        # 它身上落下 👀。人说的话才有记号——平台自己塞进去的通知走的是同一条登记，
-        # 但它不是谁发的消息，不该被 ack。
-        self.arm_seen_receipt(
-            topic_id,
-            line,
-            list(user_block_ids),
-            by=state.acting_agent if state else None,
+        registrar = self._input_registrar(
+            InputEffects(
+                block_ids=tuple(user_block_ids),
+                seen_block_ids=tuple(user_block_ids),
+                seen_by=state.acting_agent if state else None,
+            ),
+            probe_unread=True,
         )
-        entry = (
-            line,
-            list(user_block_ids),
-            consuming_turn_id,
-            asyncio.get_running_loop().time(),
-        )
-        pending.append(entry)
-        del pending[:-16]  # a dead session must not grow this forever
         try:
             # Read the room's status, then deliver with no transaction open: a
             # row lock held across the device call queues every writer of the
@@ -1144,20 +1116,25 @@ class ChatService:
                         topic_id,
                         line,
                         images=images,
+                        register_input=registrar,
+                        expected_work_id=consuming_turn_id,
                         agent_handle=seat_agent,
                         owes_reply=owes_reply,
                     )
                     if images
                     else await self._compute.deliver(
-                        topic_id, line, agent_handle=seat_agent, owes_reply=owes_reply
+                        topic_id,
+                        line,
+                        register_input=registrar,
+                        expected_work_id=consuming_turn_id,
+                        agent_handle=seat_agent,
+                        owes_reply=owes_reply,
                     )
                 )
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
         if not delivered:
-            if entry in pending:
-                pending.remove(entry)
             return False
         return True
 
@@ -1276,19 +1253,9 @@ class ChatService:
         if consuming_turn_id is None:
             return False
         line = platform_prompt(strip_platform_notice(notice))
-        if blocks:
-            # Registered BEFORE the write, for the reason the human-message path
-            # registers first: a fast receipt must not race its own entry.
-            pending = self._pending_receipts.setdefault(topic_id, [])
-            pending.append(
-                (
-                    line,
-                    list(blocks),
-                    consuming_turn_id,
-                    asyncio.get_running_loop().time(),
-                )
-            )
-            del pending[:-16]  # a dead session must not grow this forever
+        registrar = self._input_registrar(
+            InputEffects(block_ids=tuple(blocks)), probe_unread=bool(blocks)
+        )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         seat_agent = (
             (state.agent_instance_handle or state.acting_agent) if state else None
@@ -1298,6 +1265,7 @@ class ChatService:
                 await self._compute.deliver(
                     topic_id,
                     line,
+                    register_input=registrar,
                     expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,
                 )
@@ -1319,55 +1287,54 @@ class ChatService:
         produce output forever with its input queue frozen. What it cannot do is
         answer anybody, so this is the check that has a person behind it.
         """
-        pending = self._pending_receipts.get(topic_id)
-        if not pending:
-            return None
-        return min(entry[3] for entry in pending)
+        pending = self._unread_inputs.get(topic_id)
+        return min(pending.values()) if pending else None
 
-    async def confirm_prompt_receipt(self, topic_id: uuid.UUID, prompt: str) -> None:
-        """A UserPromptSubmit receipt from the topic's screen: the session
-        consumed an input. If it is one we injected mid-turn, stamp its blocks
-        consumed now — this is the boundary that keeps the next turn's pending
-        window honest. A provider may append native-image mentions to the text
-        it types, so the receipt matches on equality or on carrying our text
-        as its prefix."""
-        # 落记号是尽力而为的，而它下面那段是功能性的（把消息标记成已消费，也就是
-        # 下一轮不再重发它的那个边界）。一个纯装饰的东西不许把功能路径带下去：
-        # 记号丢了只是少一个 👀，标记丢了会让这条消息在下一轮被重发一遍。
-        try:
-            await self._place_seen_receipts(topic_id, prompt)
-        except Exception:  # noqa: BLE001 — the consumed stamp matters more
-            logger.exception("failed to place the seen receipt (topic=%s)", topic_id)
-        pending = self._pending_receipts.get(topic_id)
-        if not pending:
+    def _input_registrar(
+        self, effects: InputEffects, *, probe_unread: bool = False
+    ) -> InputRegistrar:
+        async def persist(identity: InputIdentity) -> None:
+            async with self._sessions() as session:
+                await register_input(session, identity, effects)
+                await session.commit()
+            if probe_unread:
+                self._unread_inputs.setdefault(identity.topic_id, {}).setdefault(
+                    identity.input_id, time.monotonic()
+                )
+
+        return persist
+
+    async def confirm_prompt_receipt(self, receipt: InputReceipt) -> None:
+        """Commit identity-bound effects before the journal may acknowledge.
+
+        No in-memory candidate is needed. Commit failure propagates so the same
+        journal input is retried, even by a newly reconstructed ChatService.
+        """
+        async with self._sessions() as session:
+            row = await record_receipt(session, receipt)
+            if row is None:
+                # Unknown evidence cannot settle another input. Keep it replayable
+                # rather than advancing the journal past a missing registration.
+                raise ValidationError("Native receipt identity is unknown or conflicts")
+            seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
+            reactions = (
+                await BlockRepository(session).reactions_for_blocks(seen_ids)
+                if row.settled_at is not None
+                else {}
+            )
+            await session.commit()
+        if receipt.evidence != "native_echo":
             return
-        for entry in pending:
-            text, block_ids, consuming_turn_id, _written_at = entry
-            if prompt == text or (text and prompt.startswith(text)):
-                pending.remove(entry)
-                try:
-                    async with self._sessions() as session:
-                        await BlockRepository(session).mark_consumed(
-                            block_ids, consuming_turn_id
-                        )
-                        from app.domain.delivery.agent import receive_attempt
+        pending = self._unread_inputs.get(receipt.identity.topic_id)
+        if pending is not None:
+            pending.pop(receipt.identity.input_id, None)
+        from app.domain.agent.runtime import get_broker
 
-                        await receive_attempt(
-                            session, consuming_turn_id, datetime.now(UTC)
-                        )
-                        await session.commit()
-                    logger.info(
-                        "prompt receipt matched an injected message — %d "
-                        "block(s) stamped consumed (topic=%s, turn=%s)",
-                        len(block_ids),
-                        topic_id,
-                        consuming_turn_id,
-                    )
-                except Exception:  # noqa: BLE001 — a failed stamp just replays
-                    logger.exception(
-                        "consumed stamp failed on receipt (topic=%s)", topic_id
-                    )
-                return
+        for block_id, value in reactions.items():
+            await get_broker().publish(
+                str(receipt.identity.topic_id),
+                {"type": "reaction", "block_id": str(block_id), "reactions": value},
+            )
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
@@ -1723,7 +1690,7 @@ class ChatService:
         session that stopped reading, and replays like one.
         """
         deadline = time.monotonic() + timeout_s
-        while any(self._pending_receipts.values()) and time.monotonic() < deadline:
+        while any(self._unread_inputs.values()) and time.monotonic() < deadline:
             await asyncio.sleep(0.2)
         # A replay still running reads its sessions too; the next process
         # replays them again from where this one landed.
@@ -3006,63 +2973,6 @@ class ChatService:
         if names_a_person(author):
             naming.nudge(place.room_id, "message")
         return payloads, anchor_id, block_ids, False
-
-    #: How many un-marked messages one topic keeps waiting for a receipt.
-    _SEEN_RECEIPT_BACKLOG = 8
-
-    def arm_seen_receipt(
-        self,
-        topic_id: uuid.UUID,
-        text: str,
-        block_ids: list[uuid.UUID],
-        by: str | None = None,
-    ) -> None:
-        """Say which blocks get 芝士's 👀 when the session says it took ``text``,
-        and whose 👀 it is — ``by`` is the agent running the turn; None means
-        the room's seat.
-
-        Called BEFORE the write, for the same reason the consumed-stamp entry is:
-        the receipt can come back before the caller gets its next line in.
-        """
-        if not text or not block_ids:
-            return
-        waiting = self._awaiting_seen.setdefault(topic_id, [])
-        waiting.append((text, list(block_ids), by))
-        # A receipt that never comes (the session died before reading, a harness
-        # that does not report one) leaves its entry behind, and this process
-        # runs for weeks. The mark is worth nothing once the next messages have
-        # gone by, so the oldest simply fall off — dropping one costs one 👀,
-        # never a message.
-        del waiting[: -self._SEEN_RECEIPT_BACKLOG]
-
-    async def _place_seen_receipts(self, topic_id: uuid.UUID, prompt: str) -> None:
-        """The session took ``prompt`` — put 👀 on whatever that text carried.
-
-        Matching is the same as the consumed stamp's: equality, or our text as
-        the prefix of what the session reports (a provider may append its own
-        native-image mentions to the line it types).
-        """
-        waiting = self._awaiting_seen.get(topic_id)
-        if not waiting:
-            return
-        for entry in list(waiting):
-            text, block_ids, by = entry
-            if prompt != text and not (text and prompt.startswith(text)):
-                continue
-            waiting.remove(entry)
-            if not waiting:
-                self._awaiting_seen.pop(topic_id, None)
-            from app.domain.agent.runtime import get_broker
-
-            for block_id in block_ids:
-                ack = await self.ack_summon(block_id, topic_id, by=by)
-                if ack is None:
-                    continue
-                # 这条不是从 converse 的那个生成器里出去的——回执是会话过一阵子
-                # 自己说的，那时候请求早就返回了——所以走 broker，房间里开着的
-                # 客户端照样收得到。
-                await get_broker().publish(str(topic_id), {"type": "reaction", **ack})
-            return
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
@@ -4584,16 +4494,15 @@ class ChatService:
             if prompt_text not in state.user_text:
                 state.user_text = f"{state.user_text}\n{prompt_text}"
 
-        # 这一轮的提示词写下去之前先登记：会话说「收下了」的时候，记号落在召唤它
-        # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
-        # 同一个条件也是「这一轮欠人一句回话」：召唤它的是人，会话就得先在房间里
-        # 回一句，再做别的（`driven/runner.py`）。
-        summoned = False
-        if user_block_id is not None and not is_resume and not platform_turn:
-            summoned = True
-            self.arm_seen_receipt(
-                topic_id, prompt_text, [user_block_id], by=acting_agent
-            )
+        summoned = user_block_id is not None and not is_resume and not platform_turn
+        effects = InputEffects(
+            # Initial prompt consumption remains tied to the clean turn ending;
+            # native echo settles the delivery and its summoning read marker.
+            seen_block_ids=(user_block_id,) if summoned else (),
+            seen_by=acting_agent if summoned else None,
+            delivery_id=delivery_id,
+            attempt_id=turn_id if delivery_id is not None else None,
+        )
         try:
             # The same key `_assemble_turn` read this turn's resume token under
             # — where this conversation runs is recorded under it too, and a ref
@@ -4614,11 +4523,6 @@ class ChatService:
                     turn_id,
                     parent_session_id=resume_session_id,
                 )
-                # Staging a prompt on a booting machine is not receiver input.
-                # Register before send so a fast native receipt cannot race it.
-                self._pending_receipts.setdefault(topic_id, []).append(
-                    (prompt_text, [], turn_id, time.monotonic())
-                )
             ready = await runtime.send(
                 session_ref,
                 prompt_text,
@@ -4635,6 +4539,7 @@ class ChatService:
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
+                register_input=self._input_registrar(effects),
                 owes_reply=summoned,
             )
         except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
