@@ -248,6 +248,7 @@ def _option_entries(raw: object) -> list[dict]:
         out.append(item)
     return out
 
+
 @router.post("/{topic_id}/ask")
 async def ask_options(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -377,4 +378,15 @@ async def leave_a_note(
         to_thread=to_thread,
         content=body.get("content") or "",
     )
+    from app.domain.delivery.input_identity import InputReconciliationPending
+
+    if isinstance(delivered, InputReconciliationPending):
+        return ok(
+            {
+                "delivered": None,
+                "status": "reconciling",
+                "input_id": str(delivered.identity.input_id),
+                "transport_accepted": delivered.accepted,
+            }
+        )
     return ok({"delivered": delivered})

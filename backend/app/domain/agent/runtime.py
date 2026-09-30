@@ -51,6 +51,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
+from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import names_a_person, recipient_seat
@@ -2095,6 +2096,14 @@ class AgentWorkRunner:
                     else {}
                 ),
             )
+            if isinstance(delivered, InputReconciliationPending):
+                await self._post_event(
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    "输入已登记，发送结果正在核对；不会重复发送",
+                )
+                return True
             if delivered is True:
                 # 这里曾经打 👀。现在不打了：这一句证明的是「传输层收下了这次写
                 # 入」，而 harness 说「会话把它读进去了」是另一件事，由

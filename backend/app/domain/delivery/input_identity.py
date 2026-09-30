@@ -32,6 +32,12 @@ class InputEffects:
     attempt_id: uuid.UUID | None = None
 
 
+@dataclass(frozen=True)
+class InputReconciliationPending:
+    identity: InputIdentity
+    accepted: bool
+
+
 class InputOutcomeUnconfirmed(Exception):
     """An external call began; failure is not permission to send a new input."""
 

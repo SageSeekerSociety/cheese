@@ -159,10 +159,6 @@ class DrivenRuntime[H: Handle]:
     logger: logging.Logger
     #: The runner method that takes words said to a session mid-turn.
     steer: str
-    #: Whether the runner's acceptance of an input is the session reading it.
-    #: False for a harness whose records say when an input was read; its
-    #: subscription reports the receipt from there (``Subscription.receipt``).
-    receipt_on_accept = True
 
     def __init__(
         self,

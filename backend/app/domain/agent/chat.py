@@ -234,6 +234,7 @@ from app.domain.delivery.input_identity import (
     InputIdentity,
     InputOutcomeUnconfirmed,
     InputReceipt,
+    InputReconciliationPending,
     InputRegistrar,
 )
 from app.domain.delivery.receipts import record_receipt, register_input
@@ -917,6 +918,15 @@ class ChatService:
                 author,
                 attachments,
             )
+            if isinstance(delivered, InputReconciliationPending):
+                payload = await self.post_system_event(
+                    topic_id,
+                    "输入已登记，发送结果正在核对；不会重复发送",
+                    turn_id,
+                )
+                if payload is not None:
+                    yield {"type": "event_block", "block": payload}
+                return
             if delivered is True:
                 # The answer streams out of the turn already in flight, which
                 # every client in this topic is subscribed to — this request has
@@ -1021,7 +1031,7 @@ class ChatService:
         recipient_handle: str | None = None,
         *,
         owes_reply: bool = True,
-    ) -> bool | None:
+    ) -> bool | InputReconciliationPending | None:
         """Inject a just-posted human message into the turn already running on
         this topic.
 
@@ -1029,10 +1039,9 @@ class ChatService:
         the session answers it in the room before it uses any other tool. One
         said to somebody else in the room is only for the agent to know about.
 
-        ``True`` means the live session acknowledged the message, ``False``
-        means live delivery was attempted but failed, and ``None`` means no live
-        work remained by the time this method checked. Callers use that third
-        state to distinguish a normal new message from a raced fallback.
+        ``True`` means transport acceptance was recorded. A reconciliation
+        result holds the registered identity without authorizing a queued retry.
+        ``False`` means a pre-send failure; ``None`` means no live work remained.
 
         The text is labelled the same way `prompt_line` labels a pending block,
         so a message that arrives mid-turn reads identically to one that came in
@@ -1131,7 +1140,7 @@ class ChatService:
                 topic_id,
                 exc.identity.input_id,
             )
-            return True
+            return InputReconciliationPending(exc.identity, exc.accepted)
         except Exception:  # noqa: BLE001 — pre-send failure may queue a fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
@@ -1203,7 +1212,7 @@ class ChatService:
                     minutes,
                     delivered,
                 )
-                return delivered
+                return delivered is True
             except Exception:  # noqa: BLE001 — one room must not stop the sweep
                 logger.exception(
                     "chat progress reminder failed (topic=%s)", state.topic_id
@@ -1219,7 +1228,7 @@ class ChatService:
         *,
         blocks: Sequence[uuid.UUID] = (),
         recipient_seat: str | None = None,
-    ) -> bool:
+    ) -> bool | InputReconciliationPending:
         """Tell the turn already running on this topic that the world changed
         under it. Returns whether the live session took it.
 
@@ -1277,7 +1286,7 @@ class ChatService:
                 topic_id,
                 exc.identity.input_id,
             )
-            return True
+            return InputReconciliationPending(exc.identity, exc.accepted)
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id

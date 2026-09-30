@@ -66,8 +66,6 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     # after its turn ended opens a turn of its own instead of the one it was
     # said to.
     steer = "steer"
-    # Written is not read: the echo of the input is (`Subscription.receipt`).
-    receipt_on_accept = False
     controls = CONTROLS
     # The files live on the executor, so it answers these.
     executor_controls = frozenset(REMOTE_CONTROLS)

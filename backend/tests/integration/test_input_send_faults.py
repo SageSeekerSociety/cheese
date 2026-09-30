@@ -21,6 +21,7 @@ from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
     InputReceipt,
+    InputReconciliationPending,
 )
 from app.domain.delivery.models import Delivery, NativeInput
 from app.main import app
@@ -199,5 +200,106 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
         assert len(channel.admitted) == 1
         assert identity.work_id == work
         assert (identity.input_id == work) is (mode == "initial")
+
+    client.portal.call(run)
+
+
+@pytest.mark.parametrize("fault", ["registration", "accepted"])
+def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
+    client, monkeypatch, fault
+):
+    from app.domain.agent.runtime import AgentWorkRunner
+    from tests.integration.test_same_handle_note_and_timed_delivery import (
+        _project,
+        _room,
+    )
+
+    project = _project(client, "input fault routing")
+    topic = _room(client, project, "live input fault")
+
+    async def run():
+        chat = app.dependency_overrides[get_chat_service]()
+        factory = client.test_request_factory
+        ref = SessionRef(
+            uuid.UUID(project), uuid.UUID(topic), "cheese-test", harness="claude_code"
+        )
+        work = uuid.uuid4()
+        handle = SimpleNamespace(
+            session=ref,
+            agent_handle=ref.agent_handle,
+            native_session_id=str(uuid.uuid4()),
+        )
+        channel = Channel(handle)
+        runtime = Runtime(channel)
+        runtime.live[(ref.topic_id, ref.agent_handle)] = handle
+        runtime.work[(ref.topic_id, ref.agent_handle)] = work
+        runtime.bind_receipts(chat.confirm_prompt_receipt)
+        monkeypatch.setattr(chat._compute, "_runtimes", lambda: [runtime])
+        chat._active_turn_ids[ref.topic_id] = {work}
+        injected = []
+
+        def fail_commit(session):
+            phase = (
+                "accepted"
+                if any(
+                    isinstance(row, NativeInput) and row.accepted_at is not None
+                    for row in session.dirty
+                )
+                else "registration"
+            )
+            if phase == fault:
+                session.flush()
+                injected.append(phase)
+                session.execute(text("SELECT 1 / 0"))
+
+        event.listen(Session, "before_commit", fail_commit)
+        try:
+            # The real ChatService -> ComputePool -> runtime -> channel ->
+            # ChatService commit path is retained, not a fake exception result.
+            delivered = await chat.merge_into_running_turn(
+                ref.topic_id, [], "new answer", "user-1"
+            )
+        finally:
+            event.remove(Session, "before_commit", fail_commit)
+        assert injected == [fault]
+        if fault == "registration":
+            assert delivered is False
+            assert channel.admitted == []
+            async with factory() as session:
+                assert list(await session.scalars(select(NativeInput))) == []
+        else:
+            assert isinstance(delivered, InputReconciliationPending)
+            assert delivered.accepted is True
+            assert len(channel.admitted) == 1
+            async with factory() as session:
+                rows = list(await session.scalars(select(NativeInput)))
+                assert len(rows) == 1
+                assert rows[0].input_id == delivered.identity.input_id
+                assert rows[0].accepted_at is None
+
+            # Run the caller's decision too: a reconciliation result must stop
+            # normal queue admission and must not be reported as delivered=True.
+            async def pending(*args, **kwargs):
+                return delivered
+
+            monkeypatch.setattr(chat, "merge_into_running_turn", pending)
+            notices = []
+
+            async def post_event(*args, **kwargs):
+                notices.append(args[3])
+
+            runner = AgentWorkRunner.__new__(AgentWorkRunner)
+            monkeypatch.setattr(runner, "_post_event", post_event)
+            assert await runner._deliver_message(
+                chat,
+                ref.topic_id,
+                uuid.uuid4(),
+                landed_user_block_id=uuid.uuid4(),
+                content="new answer",
+                author="user-1",
+            )
+            assert len(notices) == 1
+            assert len(channel.admitted) == 1
+        chat._active_turn_ids.pop(ref.topic_id, None)
 
     client.portal.call(run)
