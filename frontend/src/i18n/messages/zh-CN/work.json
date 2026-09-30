@@ -589,7 +589,12 @@
       "loadNew": "载入新版本",
       "copyName": "在房间里存成",
       "makeCopy": "复制一份来编辑",
-      "originalKept": "原件留在资料库里不动。"
+      "originalKept": "原件留在资料库里不动。",
+      "unavailable": {
+        "not_configured": "这个部署没有启用在线编辑",
+        "unsupported": "这种文件不能在线编辑",
+        "library_original": "项目资料里的原件只读，先在房间里复制一份再编辑"
+      }
     },
     "fileHistory": {
       "source": {

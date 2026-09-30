@@ -589,7 +589,12 @@
       "loadNew": "Load the new version",
       "copyName": "Save in the room as",
       "makeCopy": "Make a copy to edit",
-      "originalKept": "The original stays in the library unchanged."
+      "originalKept": "The original stays in the library unchanged.",
+      "unavailable": {
+        "not_configured": "Online editing is not enabled on this deployment",
+        "unsupported": "This kind of file can't be edited online",
+        "library_original": "Originals in the project library are read-only. Make a copy in the room to edit it"
+      }
     },
     "fileHistory": {
       "source": {
