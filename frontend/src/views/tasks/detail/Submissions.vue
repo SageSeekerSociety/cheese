@@ -6,7 +6,7 @@
       v-model="selectedIdentity"
       autocomplete="off"
       :items="identityOptions"
-      label="查看身份"
+      :label="t('tasks.submissions.identity')"
       hide-details
       variant="outlined"
       density="compact"
@@ -20,7 +20,7 @@
       hide-title
       :highlight-latest="true"
       :outlined="false"
-      empty-text="暂无提交记录"
+      :empty-text="t('tasks.submissions.empty')"
     />
   </div>
 </template>
@@ -30,9 +30,12 @@ import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network
 import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { TasksApi } from '@/network/api/tasks'
 import AccountService from '@/services/account'
+
+const { t } = useI18n()
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 
@@ -60,10 +63,13 @@ const identityOptions = computed(() => {
 
   // 将所有身份转换为选择项
   return props.participationInfo.identities.map((identity) => {
-    let title = identity.type === 'TEAM' ? `队伍: ${identity.teamName || '未命名队伍'}` : '个人参与'
+    let title =
+      identity.type === 'TEAM'
+        ? t('tasks.submissions.teamIdentity', { name: identity.teamName || t('tasks.submissions.unnamedTeam') })
+        : t('tasks.submissions.individualIdentity')
 
     if (identity.approved !== 'APPROVED') {
-      const statusText = identity.approved === 'NONE' ? '(待审核)' : '(已驳回)'
+      const statusText = identity.approved === 'NONE' ? t('tasks.submissions.pending') : t('tasks.submissions.rejected')
       title = `${title} ${statusText}`
     }
 

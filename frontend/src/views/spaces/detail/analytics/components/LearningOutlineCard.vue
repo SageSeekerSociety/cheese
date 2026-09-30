@@ -2,17 +2,21 @@
   <v-card flat rounded="lg" class="outline-card">
     <div v-for="section in outline.sections" :key="section.session" class="outline-session">
       <div class="outline-session__head">
-        <span class="outline-session__session">建议第 {{ section.session }} 讲</span>
+        <span class="outline-session__session">{{
+          t('spaces.analytics.learning.outline.session', { n: section.session })
+        }}</span>
         <span class="outline-session__point">{{ section.knowledgePoint }}</span>
       </div>
 
       <LearningQuoteItem v-for="excerpt in section.excerpts" :key="excerpt.blockId" :excerpt="excerpt" />
     </div>
 
-    <p v-if="!outline.sections.length" class="outline-card__empty">暂无可讲解的内容</p>
+    <p v-if="!outline.sections.length" class="outline-card__empty">
+      {{ t('spaces.analytics.learning.outline.empty') }}
+    </p>
 
     <p v-if="outline.missing.length" class="outline-card__missing">
-      有 {{ outline.missing.length }} 条发言已经读不到，没有放进这份提纲
+      {{ t('spaces.analytics.learning.outline.missing', { n: outline.missing.length }) }}
     </p>
   </v-card>
 </template>
@@ -20,7 +24,11 @@
 <script setup lang="ts">
 import type { SpaceLearningOutline } from '@/network/api/spaces/types'
 
+import { useI18n } from 'vue-i18n'
+
 import LearningQuoteItem from './LearningQuoteItem.vue'
+
+const { t } = useI18n()
 
 defineProps<{
   outline: SpaceLearningOutline

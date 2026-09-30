@@ -4,6 +4,8 @@ import { provide, readonly, ref } from 'vue'
 
 import { useEvents } from '../events'
 
+import { t } from '@/i18n'
+
 export function useAIChat() {
   const selectedContext = ref<TaskAIAdviceConversationContext | undefined>()
   const events = useEvents()
@@ -19,16 +21,16 @@ export function useAIChat() {
 
   const getDisplayName = (section: TaskAIAdviceConversationContext['section'], index: number) => {
     if (section === 'knowledge_fields') {
-      return `知识领域 #${index + 1}`
+      return t('tasks.advice.section.knowledge', { n: index + 1 })
     }
     if (section === 'learning_paths') {
-      return `学习路径 #${index + 1}`
+      return t('tasks.advice.section.learningPath', { n: index + 1 })
     }
     if (section === 'methodology') {
-      return `方法论步骤 #${index + 1}`
+      return t('tasks.advice.section.methodology', { n: index + 1 })
     }
     if (section === 'team_tips') {
-      return `团队角色 #${index + 1}`
+      return t('tasks.advice.section.teamRole', { n: index + 1 })
     }
     return null
   }

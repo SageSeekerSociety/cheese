@@ -4,6 +4,8 @@
 // 两句话分岔：筛过（搜索框 / 类型 / 标签里有东西）说的是「换个条件试试」，
 // 没筛过说的是「先去聊天里放点东西进来」—— 这两种「空」不是同一件事，
 // 说错哪一种都会让人以为是坏了。判据由页递进来（`hasFilters`）。
+import { t } from '@/i18n'
+
 defineOptions({ name: 'KnowledgeEmpty' })
 
 defineProps<{ hasFilters: boolean }>()
@@ -12,11 +14,11 @@ defineProps<{ hasFilters: boolean }>()
 <template>
   <div class="empty-knowledge-state text-center py-12">
     <v-icon icon="mdi-book-open-page-variant" size="64" class="mb-4 empty-state-icon"></v-icon>
-    <h3 class="text-h6 font-weight-medium mb-2">知识库暂无内容</h3>
+    <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.knowledge.emptyTitle') }}</h3>
     <p v-if="hasFilters" class="text-body-2 text-medium-emphasis mb-4">
-      没有找到匹配当前筛选条件的资料，请尝试调整筛选条件
+      {{ t('teams.knowledge.emptyFiltered') }}
     </p>
-    <p v-else class="text-body-2 text-medium-emphasis mb-6">在频道聊天中添加有价值的内容到知识库，方便团队随时查阅</p>
+    <p v-else class="text-body-2 text-medium-emphasis mb-6">{{ t('teams.knowledge.emptyHint') }}</p>
   </div>
 </template>
 

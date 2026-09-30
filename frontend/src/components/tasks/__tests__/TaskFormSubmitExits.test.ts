@@ -47,6 +47,8 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 
 import TaskForm from '../TaskForm.vue'
 
+import i18n from '@/i18n'
+
 beforeAll(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -92,7 +94,7 @@ function mountForm(options: MountOptions = {}) {
       descriptionFormat: options.descriptionFormat ?? 'tiptap',
       originalDescription: options.originalDescription ?? '',
     },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 
@@ -125,7 +127,7 @@ async function toggle(input: HTMLInputElement) {
 }
 
 const realNameSwitch = (view: View) =>
-  view.getByLabelText('要求参与者提供实名信息', { exact: false }) as HTMLInputElement
+  view.getByLabelText('tasks.form.requireRealName', { exact: false }) as HTMLInputElement
 
 describe('发题表单：实名要求的隐私确认闸', () => {
   it('第一次勾上实名再交：先弹确认框，一个 submit 都不发', async () => {
@@ -133,7 +135,7 @@ describe('发题表单：实名要求的隐私确认闸', () => {
     await toggle(realNameSwitch(view))
 
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('实名信息隐私保护')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(true))
     expect(view.emitted().submit).toBeUndefined()
   })
 
@@ -141,11 +143,11 @@ describe('发题表单：实名要求的隐私确认闸', () => {
     const view = mountForm({ initialData: FILLED })
     await toggle(realNameSwitch(view))
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('实名信息隐私保护')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(true))
 
-    await fireEvent.click(view.getByText('取消'))
+    await fireEvent.click(view.getByText('global.cancel'))
 
-    await waitFor(() => expect(dialogOpen('实名信息隐私保护')).toBe(false))
+    await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(false))
     expect(realNameSwitch(view).checked).toBe(false)
     expect(view.emitted().submit).toBeUndefined()
   })
@@ -154,28 +156,28 @@ describe('发题表单：实名要求的隐私确认闸', () => {
     const view = mountForm({ initialData: FILLED })
     await toggle(realNameSwitch(view))
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('实名信息隐私保护')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(true))
 
-    await fireEvent.click(view.getByText('了解并接受'))
+    await fireEvent.click(view.getByText('tasks.form.privacy.understood'))
 
     await waitFor(() => expect(view.emitted().submit).toBeTruthy())
     const payload = (view.emitted().submit as unknown[][])[0][0] as { requireRealName?: boolean }
     expect(payload.requireRealName).toBe(true)
-    expect(dialogOpen('实名信息隐私保护')).toBe(false)
+    expect(dialogOpen('tasks.form.privacy.title')).toBe(false)
   })
 
   it('答应了之后不再问第二遍：同一份表单再交一次直接出去', async () => {
     const view = mountForm({ initialData: FILLED })
     await toggle(realNameSwitch(view))
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('实名信息隐私保护')).toBe(true))
-    await fireEvent.click(view.getByText('了解并接受'))
+    await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(true))
+    await fireEvent.click(view.getByText('tasks.form.privacy.understood'))
     await waitFor(() => expect(view.emitted().submit).toBeTruthy())
 
     await trySubmit(view)
 
     await waitFor(() => expect((view.emitted().submit as unknown[][]).length).toBe(2))
-    expect(dialogOpen('实名信息隐私保护')).toBe(false)
+    expect(dialogOpen('tasks.form.privacy.title')).toBe(false)
   })
 
   it('本来就开着实名（打开时就是要求的）：交的时候不拦，直接出去', async () => {
@@ -186,53 +188,53 @@ describe('发题表单：实名要求的隐私确认闸', () => {
     await waitFor(() => expect(view.emitted().submit).toBeTruthy())
     const payload = (view.emitted().submit as unknown[][])[0][0] as { requireRealName?: boolean }
     expect(payload.requireRealName).toBe(true)
-    expect(dialogOpen('实名信息隐私保护')).toBe(false)
+    expect(dialogOpen('tasks.form.privacy.title')).toBe(false)
   })
 })
 
 describe('发题表单：视频链接的确认闸', () => {
   it('填写能当视频看的链接（哔哩哔哩）：不拦，直接出去', async () => {
     const view = mountForm({ initialData: FILLED })
-    await fireEvent.update(view.getByLabelText('视频链接（选填）'), 'https://www.bilibili.com/video/BV1xx411c7mD')
+    await fireEvent.update(view.getByLabelText('tasks.form.video.label'), 'https://www.bilibili.com/video/BV1xx411c7mD')
 
     await trySubmit(view)
 
     await waitFor(() => expect(view.emitted().submit).toBeTruthy())
-    expect(dialogOpen('视频链接提示')).toBe(false)
+    expect(dialogOpen('tasks.form.video.dialogTitle')).toBe(false)
   })
 
   it('https 但不是能播的视频：先弹提示框，一个 submit 都不发', async () => {
     const view = mountForm({ initialData: FILLED })
-    await fireEvent.update(view.getByLabelText('视频链接（选填）'), 'https://example.com/video')
+    await fireEvent.update(view.getByLabelText('tasks.form.video.label'), 'https://example.com/video')
 
     await trySubmit(view)
 
-    await waitFor(() => expect(dialogOpen('视频链接提示')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.video.dialogTitle')).toBe(true))
     expect(view.emitted().submit).toBeUndefined()
   })
 
   it('点「取消」：什么都不发，链接还摆在那儿，再交一次照样拦', async () => {
     const view = mountForm({ initialData: FILLED })
-    await fireEvent.update(view.getByLabelText('视频链接（选填）'), 'https://example.com/video')
+    await fireEvent.update(view.getByLabelText('tasks.form.video.label'), 'https://example.com/video')
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('视频链接提示')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.video.dialogTitle')).toBe(true))
 
-    await fireEvent.click(view.getByText('取消'))
-    await waitFor(() => expect(dialogOpen('视频链接提示')).toBe(false))
+    await fireEvent.click(view.getByText('global.cancel'))
+    await waitFor(() => expect(dialogOpen('tasks.form.video.dialogTitle')).toBe(false))
     expect(view.emitted().submit).toBeUndefined()
 
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('视频链接提示')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.video.dialogTitle')).toBe(true))
     expect(view.emitted().submit).toBeUndefined()
   })
 
   it('点「继续保存」：链接原样带走，这一份真的发出去了', async () => {
     const view = mountForm({ initialData: FILLED })
-    await fireEvent.update(view.getByLabelText('视频链接（选填）'), 'https://example.com/video')
+    await fireEvent.update(view.getByLabelText('tasks.form.video.label'), 'https://example.com/video')
     await trySubmit(view)
-    await waitFor(() => expect(dialogOpen('视频链接提示')).toBe(true))
+    await waitFor(() => expect(dialogOpen('tasks.form.video.dialogTitle')).toBe(true))
 
-    await fireEvent.click(view.getByText('继续保存'))
+    await fireEvent.click(view.getByText('tasks.form.video.dialogContinue'))
 
     await waitFor(() => expect(view.emitted().submit).toBeTruthy())
     const payload = (view.emitted().submit as unknown[][])[0][0] as { videoUrl?: string | null }
@@ -245,8 +247,8 @@ describe('发题表单：几张卡在不在', () => {
     const view = mountForm({ parametersOnly: true, initialData: FILLED })
 
     expect(view.queryByLabelText('tasks.form.taskName')).toBeNull()
-    expect(view.queryByLabelText('题目详情（Markdown 格式）')).toBeNull()
-    expect(view.queryByLabelText('视频链接（选填）')).toBeNull()
+    expect(view.queryByLabelText('tasks.form.markdownDescription')).toBeNull()
+    expect(view.queryByLabelText('tasks.form.video.label')).toBeNull()
   })
 
   it('parametersOnly：名字是那份「PDF 批量发布参数」，交出去的正文是空的', async () => {
@@ -255,7 +257,7 @@ describe('发题表单：几张卡在不在', () => {
 
     const payload = await submitted(view)
 
-    expect(payload.name).toBe('PDF 批量发布参数')
+    expect(payload.name).toBe('tasks.form.pdfParametersName')
     expect(payload.description).toBe('')
     expect(payload.intro).toBe('')
   })
@@ -264,9 +266,9 @@ describe('发题表单：几张卡在不在', () => {
     const view = mountForm({ initialData: FILLED })
 
     expect(view.getByLabelText('tasks.form.taskName')).toBeTruthy()
-    expect(view.queryByLabelText('题目详情（Markdown 格式）')).toBeNull()
+    expect(view.queryByLabelText('tasks.form.markdownDescription')).toBeNull()
     expect(view.container.querySelector('.tiptap-editor')).toBeTruthy()
-    expect(view.getByLabelText('视频链接（选填）')).toBeTruthy()
+    expect(view.getByLabelText('tasks.form.video.label')).toBeTruthy()
   })
 
   it('markdown 格式：走纯文本那一路，存下来的就是那段 markdown 本身', async () => {
@@ -276,7 +278,7 @@ describe('发题表单：几张卡在不在', () => {
       originalDescription: '# 课程资料\n\n先读这一篇。',
     })
 
-    const box = view.getByLabelText('题目详情（Markdown 格式）') as HTMLTextAreaElement
+    const box = view.getByLabelText('tasks.form.markdownDescription') as HTMLTextAreaElement
     expect(box.value).toBe('# 课程资料\n\n先读这一篇。')
 
     await fireEvent.update(box, '# 改过的标题')
@@ -300,8 +302,8 @@ describe('发题表单：队伍那几栏只在团队时算数', () => {
   it('团队：三栏都在，交出去带着它们', async () => {
     const view = mountForm({ initialData: { ...FILLED, submitterType: 'TEAM' } })
 
-    expect(view.getByLabelText('最小队伍人数')).toBeTruthy()
-    expect(view.getByLabelText('最大队伍人数')).toBeTruthy()
+    expect(view.getByLabelText('tasks.form.minTeamSize')).toBeTruthy()
+    expect(view.getByLabelText('tasks.form.maxTeamSize')).toBeTruthy()
 
     const payload = await submitted(view)
 
@@ -313,8 +315,8 @@ describe('发题表单：队伍那几栏只在团队时算数', () => {
   it('个人：那三栏根本不画，交出去的也不带它们', async () => {
     const view = mountForm({ initialData: FILLED })
 
-    expect(view.queryByLabelText('最小队伍人数')).toBeNull()
-    expect(view.queryByLabelText('最大队伍人数')).toBeNull()
+    expect(view.queryByLabelText('tasks.form.minTeamSize')).toBeNull()
+    expect(view.queryByLabelText('tasks.form.maxTeamSize')).toBeNull()
 
     const payload = await submitted(view)
 
@@ -330,7 +332,7 @@ describe('发题表单：队伍那几栏只在团队时算数', () => {
 
     await trySubmit(view)
 
-    await waitFor(() => expect(view.queryByText('最大人数不能小于最小人数')).toBeTruthy())
+    await waitFor(() => expect(view.queryByText('tasks.form.validation.teamSizeOrder')).toBeTruthy())
     expect(view.emitted().submit).toBeUndefined()
   })
 })

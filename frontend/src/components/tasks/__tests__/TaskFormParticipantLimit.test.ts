@@ -42,6 +42,8 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 
 import TaskForm from '../TaskForm.vue'
 
+import i18n from '@/i18n'
+
 beforeAll(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -72,14 +74,14 @@ const FILLED = { name: '用 gdb 定位一次段错误', submitterType: 'USER', r
 function mountForm(initialData: Record<string, unknown> = {}, isEditing = false) {
   return render(TaskForm as Component, {
     props: { submitButtonText: '提交', initialData, isEditing },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 
 type View = ReturnType<typeof mountForm>
 
-const limitBox = (view: View) => view.getByLabelText('参与者人数限制') as HTMLInputElement
-const unlimitedBox = (view: View) => view.getByRole('checkbox', { name: '不限' }) as HTMLInputElement
+const limitBox = (view: View) => view.getByLabelText('tasks.form.participantLimit') as HTMLInputElement
+const unlimitedBox = (view: View) => view.getByRole('checkbox', { name: 'tasks.form.unlimited' }) as HTMLInputElement
 
 /** 点一下那个勾。走**原生 click**：`fireEvent.click` 派发的是合成事件，勾选框的
  *  `checked` 不会跟着翻，Vuetify 那次 `onInput` 读到的就还是旧值。 */

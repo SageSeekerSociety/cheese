@@ -1,10 +1,1 @@
-[
-  "questions.detail.bountyTip",
-  "tasks.form.team",
-  "tasks.form.teamLockingPolicy",
-  "tasks.form.teamLockingPolicyLockOnApproval",
-  "tasks.form.teamLockingPolicyLockOnApprovalDesc",
-  "tasks.form.teamLockingPolicyNoLock",
-  "tasks.form.teamLockingPolicyNoLockDesc",
-  "tasks.form.teamMemberManagement"
-]
+["questions.detail.bountyTip"]

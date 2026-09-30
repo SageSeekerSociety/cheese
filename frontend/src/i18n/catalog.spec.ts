@@ -76,12 +76,23 @@ const callSite = new RegExp(`(?:\\$?t|te|tm)\\(\\s*['"\`](${NS})\\.${PATH}['"\`]
 // A key named in a comment is not a call site, and a commented-out call does not
 // show the user a raw key. Strip comments before looking for references, so this
 // scan reports what the running code actually asks for.
-const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/gm, '$1')
+const stripJsComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/gm, '$1')
+// A .vue template has no JS comments: `accept="image/*"` there is an attribute, and
+// treating its `/*` as a comment opener would blank everything up to the next `*/`
+// in the script block — the keys in between would read as unused. So in a .vue
+// file only the <script> and <style> blocks get JS comment stripping.
+const stripComments = (path: string, text: string) =>
+  path.endsWith('.vue')
+    ? text.replace(
+        /(<(script|style)\b[^>]*>)([\s\S]*?)(<\/\2>)/g,
+        (_m, open: string, _tag: string, body: string, close: string) => open + stripJsComments(body) + close
+      )
+    : stripJsComments(text)
 
 const sourceText = new Map(
   sourceFiles(SRC)
     .filter((p) => !relative(SRC, p).startsWith('i18n/messages/'))
-    .map((p) => [relative(SRC, p), stripComments(readFileSync(p, 'utf8'))])
+    .map((p) => [relative(SRC, p), stripComments(p, readFileSync(p, 'utf8'))])
 )
 
 // A key built at run time — t(`spaces.members.role.${role}`) — names a family of
@@ -202,7 +213,20 @@ describe('every message compiles', () => {
 describe('source and catalog agree', () => {
   it('does not start a block comment inside a line comment', () => {
     const source = "// The response has image/* content.\nt('tasks.preview.unavailable')\n/* style */"
-    expect(stripComments(source)).toContain("t('tasks.preview.unavailable')")
+    expect(stripComments('Example.ts', source)).toContain("t('tasks.preview.unavailable')")
+  })
+
+  it('does not read an attribute in a .vue template as a block comment', () => {
+    const source = [
+      '<template><input accept="image/*" :label="t(\'tasks.preview.unavailable\')" /></template>',
+      '<script setup lang="ts">',
+      '/** docs */',
+      "// t('tasks.preview.appUnavailable')",
+      '</script>',
+    ].join('\n')
+    const stripped = stripComments('Example.vue', source)
+    expect(stripped).toContain("t('tasks.preview.unavailable')")
+    expect(stripped).not.toContain("t('tasks.preview.appUnavailable')")
   })
 
   it('resolves every key the source calls by name', () => {

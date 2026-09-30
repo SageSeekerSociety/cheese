@@ -7,6 +7,7 @@ import feedback from './feedback.json'
 import global from './global.json'
 import home from './home.json'
 import integrations from './integrations.json'
+import market from './market.json'
 import members from './members.json'
 import models from './models.json'
 import navigation from './navigation.json'
@@ -17,6 +18,7 @@ import ratchet from './ratchet.json'
 import roomNotice from './roomNotice.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
+import teams from './teams.json'
 import toolLabels from './toolLabels.json'
 import users from './users.json'
 import work from './work.json'
@@ -30,6 +32,7 @@ export default {
   global,
   home,
   integrations,
+  market,
   members,
   models,
   navigation,
@@ -43,6 +46,7 @@ export default {
   users,
   comments,
   tasks,
+  teams,
   spaces,
   notifications,
   roomNotice,
