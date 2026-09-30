@@ -587,7 +587,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-
 /* 人数：页头工具槽里的一格元信息。`min-height` 是给「名单还没回来」那一帧留位，
    否则数字到货时工具槽会长一行、页头跟着跳一下。 */
 .am__count {

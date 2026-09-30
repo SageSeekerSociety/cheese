@@ -18,9 +18,6 @@
  * 已修复的 bug（默认沉底）、走完四级停在「已上线」的（沉底规则必须和「已修复」一致）、
  * 支持数过门槛的（进「热门」）、带安全标记的（管理端第四栏）。
  */
-import axios from 'axios'
-
-import { adminRoutes } from './proto-admin-fixtures'
 import type {
   FeedbackCard,
   FeedbackComment,
@@ -34,6 +31,10 @@ import type {
   FeedbackStatus,
   FeedbackVisibility,
 } from '@/cx_types'
+
+import axios from 'axios'
+
+import { adminRoutes } from './proto-admin-fixtures'
 
 /** 预览里「我」是谁。管理端入口和「我的」那一栏都看它。 */
 const ME = 'andy'
@@ -1950,7 +1951,13 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   if (admin) return admin
   if (path === '/admin/integrations/feishu' && method === 'GET') return { data: FEISHU_APP }
   if (path === '/admin/integrations/feishu' && method === 'PUT') {
-    Object.assign(FEISHU_APP, { configured: true, app_id: payload.app_id, domain: payload.domain, updated_by: 'andy', updated_at: new Date().toISOString() })
+    Object.assign(FEISHU_APP, {
+      configured: true,
+      app_id: payload.app_id,
+      domain: payload.domain,
+      updated_by: 'andy',
+      updated_at: new Date().toISOString(),
+    })
     return { data: FEISHU_APP }
   }
   if (path === '/feedback/counts' && method === 'GET') return { data: counts() }
@@ -2655,7 +2662,12 @@ export function installPreviewFetch(): void {
         body = null
       }
     }
-    if (PREVIEW_SLOW && method === 'GET' && !url.pathname.endsWith('/feedback/meta') && !url.pathname.endsWith('/feedback/counts')) {
+    if (
+      PREVIEW_SLOW &&
+      method === 'GET' &&
+      !url.pathname.endsWith('/feedback/meta') &&
+      !url.pathname.endsWith('/feedback/counts')
+    ) {
       await new Promise(() => {})
     }
     const hit = routes(url, method, body)

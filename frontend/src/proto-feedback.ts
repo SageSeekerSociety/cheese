@@ -18,7 +18,6 @@
 import '@/styles/content.scss'
 import '@/styles/fonts.css'
 import './style.css'
-import './proto-admin-variants.css'
 
 import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
@@ -36,14 +35,24 @@ import pinia from '@/stores'
 // 就跑到真网络上去了（在预览域上那是一页 404）。
 installPreviewFetch()
 
-// 布局方案预览：`?v=a|b|c` 在 <html> 上挂一个属性，`proto-admin-variants.css` 按它覆盖
-// 后台各页的外壳样式。不带参数就是现状。右下角那枚标签说明这是预览、数据是样例。
-const variant = new URLSearchParams(location.search).get('v') ?? ''
-if (variant) document.documentElement.dataset.adminVariant = variant
-const VARIANT_NAME: Record<string, string> = { '': '现状', a: '方案 A · 轻量对齐', b: '方案 B · 统一骨架', c: '方案 C · 卡片工作台' }
+// 右下角那枚标签说明这是预览、数据是样例。样式直接写在元素上：它是预览脚手架的
+// 标记，不是界面的一部分，不该占用产品样式表里的一条规则（也就不必为它放宽
+// 设计令牌的检查）。它故意用固定的深底浅字，好让标签在浅色和深色页面上都读得清。
 const tag = document.createElement('div')
-tag.className = 'proto-variant-tag'
-tag.textContent = `预览 · ${VARIANT_NAME[variant] ?? variant} · 样例数据`
+tag.textContent = '预览 · 样例数据'
+Object.assign(tag.style, {
+  position: 'fixed',
+  right: '16px',
+  bottom: '16px',
+  zIndex: '3000',
+  padding: '6px 12px',
+  borderRadius: '999px',
+  background: 'rgba(20, 20, 20, 0.82)',
+  color: '#fff',
+  fontSize: '12px',
+  lineHeight: '18px',
+  pointerEvents: 'none',
+})
 document.body.appendChild(tag)
 
 // hash 路由：预览域只按路径找文件，没有 SPA 回退，history 模式下刷新 /feedback

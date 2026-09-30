@@ -935,7 +935,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-
 .amd__kpis {
   display: grid;
   /* 六张卡，每档都**整除**：6 / 3 / 2。auto-fit 那类写法会在某些宽度上留下最后

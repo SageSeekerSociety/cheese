@@ -278,8 +278,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-
-
 /* 列表是一张卡：外描边 + 圆角，行与行之间是发丝线。`overflow: hidden` 让首末两行
    自己不去画圆角（这里没有 sticky 表头，不存在 `AdminGrid` 那条坑）。 */
 .asp__panel {

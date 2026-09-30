@@ -141,7 +141,12 @@ onMounted(load)
               :hint="t('integrations.admin.secretHint')"
               persistent-hint
             />
-            <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
+            <v-select
+              v-model="form.domain"
+              autocomplete="off"
+              :items="domains"
+              :label="t('integrations.admin.domain')"
+            />
             <p v-if="saveError" role="alert" class="afi__error t-body">{{ saveError }}</p>
             <div class="afi__actions">
               <span v-if="saved" role="status" class="t-meta c-faint">{{ t('integrations.admin.saved') }}</span>

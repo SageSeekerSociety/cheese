@@ -33,13 +33,7 @@ const emit = defineEmits<{ dismiss: [] }>()
       aria-hidden="true"
     />
     <span class="afl__text">{{ text }}</span>
-    <button
-      v-if="dismissAria"
-      type="button"
-      class="afl__close"
-      :aria-label="dismissAria"
-      @click="emit('dismiss')"
-    >
+    <button v-if="dismissAria" type="button" class="afl__close" :aria-label="dismissAria" @click="emit('dismiss')">
       <v-icon icon="mdi-close" size="14" aria-hidden="true" />
     </button>
   </div>
