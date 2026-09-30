@@ -34,7 +34,9 @@ covers:
 | `allow` | `true` / `false` | 代理决定转发还是拒 |
 | `reason` | 人能读的一句话 | 拒绝时进响应正文 |
 | `reason_kind` | `"budget"` / `"binding"` | 代理据此决定拒绝的姿态：`budget` 走 429 `rate_limit_error`（正文前缀 `cheese project budget: …`），`binding` 走 400 `invalid_request_error` |
-| `supply` | `{pool, model}`；网关池且放行时多一个 `key` | 代理拿它选路、改请求体里的模型名 |
+| `supply` | `{pool, model}`；网关池、放行、且调用方同时出示了计量代理自己的凭据（`X-Cheese-Token` 为后端的 `SANDBOX_TOKEN`）时多一个 `key` | 代理拿它选路、改请求体里的模型名 |
+
+只凭会话的 scoped token 问，拿到的是判定、不带 `key`：会话手里就是这枚令牌，把项目的网关 key 答给它，等于把一把共用的池子凭据放进每个房间。pi 的 runner 为分身问准入就是这样问的，它只要模型名。
 
 `reason_kind` 不是装饰：代理把它见过的每一个 `allow=false` 都渲染成 429 加「cheese project budget」，一张写着目录服务不了的模型的项目卡会被告诉「额度用完了」。拒绝必须说出真实原因，否则 I27 也没满足——一个没人能照着行动的拒绝，只是静默换池换了个帽子。
 
