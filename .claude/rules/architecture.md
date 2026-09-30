@@ -120,6 +120,14 @@ listed in the same file as debt and are allowed to sit there; `--update` may add
 to the ready set and subtract from the debt set and will refuse to do either
 backwards.
 
+A new page that has to read the address or fetch and save is not stuck: it may
+be a **container** if it renders through a sibling `<Page>View.vue` it imports.
+The view is then the scene — graded, frozen, required to be A — and the page
+is judged as its container on every run, in neither list. That is the
+`PanelDoc` → `usePanelDoc` → `PanelDocView` shape, named so the check can find
+it: the rule is about the rendering being standalone, and a route has to get
+its data somewhere.
+
 Two things about it are worth knowing from this file:
 
 - The page list is derived from the router's import graph, so hanging a new route
