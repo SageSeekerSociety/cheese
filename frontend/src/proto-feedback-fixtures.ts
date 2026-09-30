@@ -32,8 +32,6 @@ import type {
   FeedbackVisibility,
 } from '@/cx_types'
 
-import axios from 'axios'
-
 import { adminRoutes } from './proto-admin-fixtures'
 
 /** 预览里「我」是谁。管理端入口和「我的」那一栏都看它。 */
@@ -1910,7 +1908,7 @@ function isAdminHandle(handle: string): boolean {
  *  并进 `refused` 的 412 —— 412 对客户端说的是「这件事现在不能做，别重试」，而这两条
  *  说的是「你请求里那个名字有问题」，改个名字就能成。并进去的话，预览里给根管理员
  *  按删除会得到一句「别重试」，人就会去查一个不存在的重试开关。 */
-type MockReply =
+export type MockReply =
   | { data: unknown }
   | { missing: true }
   | { refused: string }
@@ -1920,14 +1918,7 @@ type MockReply =
   | { failed: string }
   | undefined
 
-/** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
- *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。 */
-// 空间申请走 axios（XHR），不经过 `fetch`；让 axios 也改走 fetch，同一处假数据才接得住。
-// 放在模块顶层：要赶在任何 `axios.create()` 之前（实例创建时复制一份默认值）。
-axios.defaults.adapter = 'fetch'
-
-// `?slow=1`：读接口一直不回，用来看各页的「加载中」。
-const PREVIEW_SLOW = typeof location !== 'undefined' && new URLSearchParams(location.search).get('slow') === '1'
+// `?fail=1`：布局预览用的开关，判定写在 `routes()` 里、紧挨着用它的地方。
 const PREVIEW_FAIL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('fail') === '1'
 
 /** 飞书应用（样例）。App ID 是编的，不对应任何真实应用。 */
@@ -1939,7 +1930,11 @@ const FEISHU_APP = {
   updated_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
 }
 
-function routes(url: URL, method: string, body: unknown): MockReply {
+/** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
+ *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。
+ *
+ *  导出给 `proto-preview-transport.ts` 调 —— 那一层管出口，这里只管「这条路由回什么」。 */
+export function routes(url: URL, method: string, body: unknown): MockReply {
   const path = url.pathname.replace(/^\/api/, '')
   const payload = (body ?? {}) as Record<string, never> & Record<string, unknown>
 
@@ -2643,95 +2638,4 @@ function create(body: FeedbackCreateBody): FeedbackDetail {
   nextId += 1
   ROWS.unshift(created)
   return created
-}
-
-/** 把 `/api/*` 上的那几条路由接到假数据上。**只拦 `/api/`**：图标、字体那些请求照旧
- *  走真正的网络栈。
- *
- *  出口有两条，都要汇到同一份假数据上：
- *    * `src/api.ts` 那一层用 `fetch`，直接落在下面这个补丁上；
- *    * `network/api` 那一层用 axios（空间申请、成员管理走它），而 axios 在浏览器里
- *      默认用 XHR 适配器，**根本不经过 `window.fetch`** —— 只补 fetch 的话，那几页
- *      会照样去打真网络，在预览域上就是一页 404，画成「加载失败」。 */
-export function installPreviewFetch(): void {
-  const real = window.fetch.bind(window)
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-    const url = new URL(raw, window.location.origin)
-    if (!url.pathname.startsWith('/api/')) return real(input as RequestInfo, init)
-    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
-    let body: unknown = null
-    // 请求体要么在 `init.body` 里（`src/api.ts` 那条出口），要么整个请求是一个
-    // `Request` 对象（axios 的 fetch 适配器是这么发的），后者得先把体读出来。
-    const rawBody = typeof init?.body === 'string' && init.body ? init.body : await requestBody(input)
-    if (rawBody) {
-      try {
-        body = JSON.parse(rawBody)
-      } catch {
-        body = null
-      }
-    }
-    if (
-      PREVIEW_SLOW &&
-      method === 'GET' &&
-      !url.pathname.endsWith('/feedback/meta') &&
-      !url.pathname.endsWith('/feedback/counts')
-    ) {
-      await new Promise(() => {})
-    }
-    const hit = routes(url, method, body)
-    if (hit === undefined) {
-      // 走到这里说明页面调了一个这里没写的接口。预览里它不该发生；真发生了，
-      // 报出来比在界面上留一个没有原因的空列表好。
-      console.warn('[preview] 没有假数据的请求', method, url.pathname)
-      return envelope(null)
-    }
-    if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
-    if ('refused' in hit) return envelope(null, 412, hit.refused)
-    if ('forbidden' in hit) return envelope(null, 403, hit.forbidden)
-    if ('invalid' in hit) return envelope(null, 400, hit.invalid)
-    if ('conflict' in hit) return envelope(null, 409, hit.conflict)
-    if ('failed' in hit) return envelope(null, 500, hit.failed)
-    return envelope(hit.data)
-  }
-  forceAxiosThroughFetch()
-}
-
-/** 读一个 `Request` 的请求体；不是 `Request`（或者读不出来）就当没有体。 */
-async function requestBody(input: RequestInfo | URL): Promise<string | null> {
-  if (!(input instanceof Request)) return null
-  try {
-    return await input.clone().text()
-  } catch {
-    return null
-  }
-}
-
-/** 让 axios 也从 `window.fetch` 出去（也就是上面那个补丁），不再用它默认的 XHR 适配器。
- *
- *  为什么不写 `axios.defaults.adapter = 'fetch'`：`network/api/index.ts` 在模块加载时
- *  就 `axios.create()` 了，那一步会把当时的 defaults（`['xhr', 'http', 'fetch']`）
- *  **抄进实例配置**，之后再改 defaults 已经赶不上。`Axios.prototype.request` 是每次
- *  请求都要过的一道门，把适配器写进当次 config，实例是先建的还是后建的都一样。 */
-function forceAxiosThroughFetch(): void {
-  const proto = axios.Axios.prototype as unknown as {
-    request: (this: unknown, ...args: unknown[]) => Promise<unknown>
-  }
-  const original = proto.request
-  proto.request = function (this: unknown, ...args: unknown[]) {
-    const withFetch = (cfg: unknown) =>
-      cfg && typeof cfg === 'object' ? { ...(cfg as Record<string, unknown>), adapter: 'fetch' } : cfg
-    // 两种调用形状：`request(config)` 与 `request(url, config)`。
-    const out = [...args]
-    if (typeof out[0] === 'string' || out[0] instanceof URL) out[1] = withFetch(out[1])
-    else out[0] = withFetch(out[0])
-    return original.apply(this, out)
-  }
-}
-
-function envelope(data: unknown, code = 200, message = 'ok'): Response {
-  return new Response(JSON.stringify({ code, message, data }), {
-    status: code === 200 ? 200 : code,
-    headers: { 'content-type': 'application/json' },
-  })
 }

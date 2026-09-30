@@ -11,8 +11,8 @@
  * 挂在话题预览上直接点。
  *
  * 与上一轮的差别只有一处：那时候页面本身读内存里的 mock，这一轮页面读真接口，
- * 而预览通道上没有后端，所以这里在 `fetch` 那一层接上假数据（见
- * `proto-feedback-fixtures.ts`）。**界面是真的，数据是假的**；要看真实数据请在本机
+ * 而预览通道上没有后端，所以这里在 `fetch` 那一层接上假数据（出口见
+ * `proto-preview-transport.ts`，样例数据见 `proto-feedback-fixtures.ts`）。**界面是真的，数据是假的**；要看真实数据请在本机
  * 起 backend + frontend。
  */
 import '@/styles/content.scss'
@@ -22,7 +22,7 @@ import './style.css'
 import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 
-import { installPreviewFetch } from './proto-feedback-fixtures'
+import { installPreviewFetch } from './proto-preview-transport'
 import Shell from './proto-shell.vue'
 
 import i18n from '@/i18n'

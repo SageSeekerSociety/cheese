@@ -16,7 +16,7 @@
  * 是原来那一格、以及撤回那一次**不再**套出一条新的撤销条。
  *
  * 链子和 `AdminQueuePage.spec.ts` 是同一条：不 mock `@/api`、不 mock store，假数据
- * 接在 `window.fetch` 上（`proto-feedback-fixtures.ts`），于是「api → store → 页 →
+ * 接在 `window.fetch` 上（`proto-preview-transport.ts`），于是「api → store → 页 →
  * 组件」整条都真跑。文案断言用真 i18n（`setLocale('zh-CN')`），因为钉的一半是句子。
  *
  * 绿在拆之前的旧文件上；拆完必须原样绿。
@@ -34,7 +34,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import AdminQueuePage from './AdminQueuePage.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { installPreviewFetch } from '@/proto-feedback-fixtures'
+import { installPreviewFetch } from '@/proto-preview-transport'
 
 /** 管理端的列表路由。详情是 `/api/admin/feedback/{id}`，所以这里按**整段相等**匹配。 */
 const LIST_PATH = '/api/admin/feedback'
