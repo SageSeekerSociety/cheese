@@ -67,7 +67,7 @@ covers:
 | 档 | 条件 |
 | --- | --- |
 | 公开 | `visibility == public` **且** `security == False` |
-| 管理员 | `is_admin`（判据在 `AdminService.is_admin`，不在反馈里） |
+| 管理员 | `is_admin`：反馈管理员名单 `FEEDBACK_TRIAGE_HANDLES`（`FeedbackService.is_admin`），不是平台管理员，见[管理员](/dev/admins#feedback-admins) |
 | 我提的 | `handle` ∈ (`author_handle`, `submitted_by_handle`) |
 | 提出它的那个房间 | 提出那一刻在那个房间的名册里，**且**今天还读得到那个房间 |
 
@@ -101,7 +101,7 @@ Fixes-feedback: FB-12, FB-15
 
 这一行要顶格写，和 git 的 trailer 一样；缩进的行算引用，不生效，所以在提交信息里举例说明这个写法时要缩进。`FB-` 前缀不能省：在 GitHub 上 `#12` 是第 12 号 issue 或 PR，`Fixes #12` 还会把那个 issue 关掉。行首的键大小写都认，同一行可以列多条。**写在提交信息里，不写在 PR 描述里**：main 是 squash 合并，squash 提交的正文是这个 PR 里各个提交的信息拼起来的，PR 描述进不了 main 的历史。
 
-测试环境的部署（`deploy-dev.yml`）在部署前记下正在跑的版本，最后一步（前面每一步都成功之后）用 GitHub 的 compare 取出「被替换的版本 → 这次的版本」之间的提交，交给正在跑的后端容器里的 `scripts/ship_feedback.py`。它按上面那行找到每条反馈（`shipping.py`），通过 `set_status` 推到 `deployed`——和管理员按按钮是同一条路，所以时间线照写、提交者的未读数照涨。这一步没有推它的人（`by_handle` 为 NULL），时间线那一步的 `note` 写「已由 PR #N 修复并上线」加 PR 链接，PR 号取自 squash 标题末尾的 `(#N)`，没有就链到提交。
+测试环境的部署（`deploy-dev.yml`）在部署前记下正在跑的版本，最后一步（前面每一步都成功之后）用 GitHub 的 compare 取出「被替换的版本 → 这次的版本」之间的提交，交给正在跑的后端容器里的 `scripts/ship_feedback.py`。它按上面那行找到每条反馈（`shipping.py`），通过 `set_status` 推到 `deployed`——和管理员按按钮是同一条路，所以时间线照写、提交者的未读数照涨。提交者收到的这条通知是有意的：修复上线就告诉提的人，和管理员手动改状态时一样。这一步没有推它的人（`by_handle` 为 NULL），时间线那一步的 `note` 写「已由 PR #N 修复并上线」加 PR 链接，PR 号取自 squash 标题末尾的 `(#N)`，没有就链到提交。
 
 - 只读这次新增的提交：一条后来被重新打开的反馈，不会被一次不相干的部署改回去。下一个写了它编号的修复上线时，它会再被推一次。
 - 已经是 `deployed` 的不动（不写第二条时间线）；编号不存在或已删除的跳过，照样打一行日志。

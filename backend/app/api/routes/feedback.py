@@ -30,6 +30,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
+from app.domain.admin.services import AdminService
 from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
@@ -116,9 +117,9 @@ async def _is_admin(
     service: feedback_services.FeedbackService,
     who: Actor,
 ) -> bool:
-    """这个人在**这个面上**算不算平台管理员 —— 全路由只有这一处答案。
+    """这个人在**这个面上**算不算反馈管理员 —— 全路由只有这一处答案。
 
-    名单回答的是「是不是管理员」（`AdminService.admin_handles`），它不是全部：
+    名单回答的是「是不是反馈管理员」（`FeedbackService.is_admin`），它不是全部：
     `authz.policy.refuse_management_action` 还要问两件名单问不到的事 —— 凭证是不是
     作用域设备凭证（`via == "cheese"`），以及这条 handle 带不带 agent 绑定。管理面
     （`/admin/*` 的 `require_platform_admin`）两个问题都问，而这里以前只问名单，
@@ -137,10 +138,23 @@ async def _is_admin(
         return False
     if not await service.is_admin(who.handle):
         return False
+    return await _may_manage(db, who)
+
+
+async def _may_manage(db: DbSession, who: Actor) -> bool:
     refusal = await policy.refuse_management_action(
         who, carries_agent_binding=IdentityService(db).is_agent
     )
     return refusal is None
+
+
+async def _is_platform_admin(db: DbSession, who: Actor) -> bool:
+    """The other roster, for the admin shell's other sections. Same demotion."""
+    if not who.authenticated or not who.handle:
+        return False
+    if not await AdminService(db).is_admin(who.handle):
+        return False
+    return await _may_manage(db, who)
 
 
 @router.get("/meta")
@@ -167,6 +181,7 @@ async def get_feedback_meta(
         hot_half_life_days=feedback_services.repo.HOT_HALF_LIFE_DAYS,
         hot_min_items=feedback_services.repo.HOT_MIN_ITEMS,
         is_admin=await _is_admin(db, service, who),
+        is_platform_admin=await _is_platform_admin(db, who),
     )
     return ok(meta.model_dump(mode="json"))
 

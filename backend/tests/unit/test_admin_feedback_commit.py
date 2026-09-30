@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 
 from app.api.routes import admin_feedback
-from app.api.routes.admin_common import require_platform_admin
+from app.api.routes.admin_feedback import require_feedback_admin
 from app.core import db
 
 
@@ -75,7 +75,7 @@ async def test_admin_write_response_follows_commit(
 
     app = FastAPI()
     app.include_router(admin_feedback.router)
-    app.dependency_overrides[require_platform_admin] = lambda: "admin"
+    app.dependency_overrides[require_feedback_admin] = lambda: "admin"
     response_started = []
 
     async def observe(scope, receive, send):

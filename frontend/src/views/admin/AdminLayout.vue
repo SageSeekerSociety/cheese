@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -20,8 +20,11 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 分区到第三块之后，横排要么折行（拿高度换导航）要么进 `⋯` 菜单（多一次点击），两条都
 // 不如一条竖栏。竖栏还顺带给了「未读 12」一个不用跟标题抢位置的地方。
 //
-// 「我是不是管理员」由**服务端**答（`GET /feedback/meta` 的 `is_admin`，判据是
-// `AdminService` 那份名单），三个状态在**这里画一次**：
+// 「我是不是管理员」由**服务端**答（`GET /feedback/meta`），而且是**两份名单**：
+// `is_admin` 是反馈管理员（队列那一块，私密反馈），`is_platform_admin` 是平台管理员
+// （其余各块）。两份互不包含，哪一份都能进壳，各自只看见自己那几块 —— 进了壳却落在
+// 一块自己进不去的分区上（`/admin` 默认去队列），就换到第一块能进的。三个状态在
+// **这里画一次**：
 //
 // - meta 还在路上 → 「正在确认权限…」。少了这一档，一个真管理员打开页面看到的第一句话
 //   是「你的账号不在管理员名单里」—— 一句假话，比一张空表更难查。
@@ -126,6 +129,23 @@ const shortcutOpen = ref(false)
 
 const unread = computed(() => store.counts.unread ?? 0)
 
+const isPlatformAdmin = computed(() => !!store.meta?.is_platform_admin)
+const canEnter = computed(() => store.isAdmin || isPlatformAdmin.value)
+/** 这个人看得见的那几块：队列归反馈管理员，其余归平台管理员。 */
+const visibleSections = computed(() =>
+  SECTIONS.filter((section) => (section.name === 'AdminQueue' ? store.isAdmin : isPlatformAdmin.value))
+)
+
+watch(
+  () => [store.metaChecked, route.name, visibleSections.value] as const,
+  ([checked]) => {
+    if (!checked || !canEnter.value) return
+    if (visibleSections.value.some((section) => isCurrent(section.name))) return
+    void router.replace(visibleSections.value[0].to)
+  },
+  { immediate: true }
+)
+
 /** `G` 之后那一颗（§8 的序列键）。1s 内有效，超时就算没按过 —— 不然「按了 G 去泡咖啡、
  *  回来顺手按了个 D」会把人送去看板。 */
 let gPressedAt = 0
@@ -218,12 +238,12 @@ onBeforeUnmount(() => {
     <aside class="admin-shell__nav">
       <div class="admin-shell__brand t-eyebrow">芝士 · 管理</div>
 
-      <nav v-if="store.isAdmin" class="admin-shell__items" aria-label="管理后台分区">
+      <nav v-if="canEnter" class="admin-shell__items" aria-label="管理后台分区">
         <!-- 选中态是**中性**的（`--fill` 底 + `--ink` 字）加上左边那道 2px 的 `--accent`
              竖条 —— 琥珀在这一套规范里只当填充色（§7.3：对比度 2.65:1，当不了线色），
              而导航这一处是它在全站唯一的例外（§7.4 的「既有的导航豁免」，一屏一条）。 -->
         <RouterLink
-          v-for="section in SECTIONS"
+          v-for="section in visibleSections"
           :key="section.to"
           :to="section.to"
           class="admin-shell__item"
@@ -273,7 +293,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-else-if="!store.isAdmin" class="admin-shell__gate">
+    <div v-else-if="!canEnter" class="admin-shell__gate">
       <div class="admin-shell__gate-inner">
         <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
         <div class="t-body mb-1">这一页是管理员后台</div>
@@ -282,7 +302,7 @@ onBeforeUnmount(() => {
              要知道的是「我为什么进不去」和「那我去哪」，不是这条规则的适用范围。
              还有一处更硬的：那一截挤在 `t-meta`（12.5px 等宽）那一档上，而它是一句
              正常的句子 —— 一句话不该坐在元信息的刻度上。现在整句是 `t-body`。 -->
-        <div class="t-body mb-3">你的账号不在平台管理员名单里，无法访问管理后台。</div>
+        <div class="t-body mb-3">你的账号不在管理员名单里，无法访问管理后台。</div>
         <!-- 这一屏只有这一个动作，所以它是 `primary`。 -->
         <v-btn variant="text" color="primary" size="small" to="/feedback">回到反馈中心</v-btn>
       </div>

@@ -5,10 +5,11 @@
 「一个模块一个 router」—— 第二个 router 会被静默丢掉（`_discover_routers` 用
 `id(value)` 去重）。所以这是两个文件，不是一个文件里的两个 router。
 
-进来先过 `PlatformAdminDep`（`admin_common.py`）：平台管理员的判据是**配置里的根
-管理员 ∪ `platform_admins` 表**（`AdminService.admin_handles`，理由见
-`app/domain/admin/services.py` 顶部）。名单本身在隔壁 `admin_members.py`
-（`/admin/admins`）里改 —— 管理台两块问的是同一个问题，判据写两份就会漂开。
+进来先过 `FeedbackAdminDep`（本文件）：反馈管理员是**反馈自己的名单**
+（`settings.feedback_triage_handles`，见 `FeedbackService.is_admin`），不是平台管理员
+——平台管理员要用管理台做别的事，但那不等于能读每一条私密反馈。拒绝 agent 与作用域
+凭证的那一问和 `admin_common.require_platform_admin` 是同一个
+（`policy.refuse_management_action`）。
 
 这里**没有**把某条反馈改成公开的入口 —— 公开与否是提交者一次性的选择，管理员能改
 的话，就是唯一一个本人无法撤销的改动。
@@ -21,9 +22,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
-from app.api.routes.admin_common import PlatformAdminDep
 from app.core.db import get_db
+from app.core.errors import ForbiddenError
+from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
 from app.domain.feedback.schemas import (
@@ -32,6 +35,7 @@ from app.domain.feedback.schemas import (
     FeedbackStatusIn,
     NoteCreate,
 )
+from app.domain.identity.services import IdentityService
 
 router = APIRouter(prefix="/admin/feedback", tags=["feedback"])
 
@@ -45,6 +49,28 @@ async def get_feedback_service(db: DbSession) -> feedback_services.FeedbackServi
 FeedbackServiceDep = Annotated[
     feedback_services.FeedbackService, Depends(get_feedback_service)
 ]
+
+
+async def require_feedback_admin(
+    db: DbSession,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+) -> str:
+    """The gate for every handler here: returns the handle.
+
+    `require_platform_admin`'s shape with feedback's own roster: the agent and
+    scoped-credential refusal first, then the list.
+    """
+    who = await resolver.resolve(fallback_handle=None)
+    refusal = await policy.refuse_management_action(
+        who, carries_agent_binding=IdentityService(db).is_agent
+    )
+    if refusal is not None:
+        raise ForbiddenError(refusal)
+    return await service.require_admin(who.handle if who.authenticated else None)
+
+
+FeedbackAdminDep = Annotated[str, Depends(require_feedback_admin)]
 
 
 async def _cards(
@@ -84,7 +110,7 @@ async def _detail(
 @router.get("")
 async def list_admin_feedback(
     service: FeedbackServiceDep,
-    handle: PlatformAdminDep,
+    handle: FeedbackAdminDep,
     tab: str = Query(default="public"),
     assignee: str | None = Query(default=None, max_length=64),
     q: str | None = Query(default=None, max_length=200),
@@ -137,7 +163,7 @@ async def list_admin_feedback(
 async def get_admin_feedback(
     feedback_id: uuid.UUID,
     service: FeedbackServiceDep,
-    handle: PlatformAdminDep,
+    handle: FeedbackAdminDep,
 ) -> dict:
     row = await service.visible_row(feedback_id, handle=handle, is_admin=True)
     return ok(await _detail(service, row, handle=handle))
@@ -148,7 +174,7 @@ async def patch_admin_feedback(
     feedback_id: uuid.UUID,
     body: FeedbackPatch,
     service: FeedbackServiceDep,
-    handle: PlatformAdminDep,
+    handle: FeedbackAdminDep,
     db: DbSession,
 ) -> dict:
     """改优先级 / 指派人 / 是否安全问题。**不接受 visibility，也不接受 status。**
@@ -167,7 +193,7 @@ async def set_admin_feedback_status(
     feedback_id: uuid.UUID,
     body: FeedbackStatusIn,
     service: FeedbackServiceDep,
-    handle: PlatformAdminDep,
+    handle: FeedbackAdminDep,
     db: DbSession,
 ) -> dict:
     """推一个状态。和它那条时间线在同一个事务里落库（`services.set_status`）。
@@ -186,7 +212,7 @@ async def create_admin_feedback_note(
     feedback_id: uuid.UUID,
     body: NoteCreate,
     service: FeedbackServiceDep,
-    handle: PlatformAdminDep,
+    handle: FeedbackAdminDep,
     db: DbSession,
 ) -> dict:
     """管理员之间的内部备注。只增不改。

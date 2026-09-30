@@ -153,7 +153,7 @@ describe('管理后台外壳', () => {
   })
 
   it('是管理员就画分区，切分区换的是右边那一块', async () => {
-    getFeedbackMeta.mockResolvedValue({ is_admin: true, hot_min_items: 5 })
+    getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: true, hot_min_items: 5 })
 
     const { findByText, queryByText, router } = await mountAt('/admin/feedback')
 
@@ -215,5 +215,29 @@ describe('外壳上的全局键', () => {
 
     expect(queryByText('键盘快捷键')).toBeNull()
     expect(queryByText('队列内容')).toBeTruthy()
+  })
+
+  it('只是平台管理员：看不见队列，从队列的地址进来会换到看板', async () => {
+    getFeedbackMeta.mockResolvedValue({ is_admin: false, is_platform_admin: true, hot_min_items: 5 })
+
+    const { findByText, queryByText, router } = await mountAt('/admin/feedback')
+
+    expect(await findByText('看板内容')).toBeTruthy()
+    expect(router.currentRoute.value.path).toBe('/admin/dashboard')
+    expect(queryByText('反馈管理的表')).toBeNull()
+    expect(queryByText('队列')).toBeNull()
+    expect(queryByText('成员')).toBeTruthy()
+  })
+
+  it('只是反馈管理员：只有队列那一块，平台的那几块不画', async () => {
+    getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: false, hot_min_items: 5 })
+
+    const { findByText, queryByText, router } = await mountAt('/admin/members')
+
+    expect(await findByText('队列内容')).toBeTruthy()
+    expect(router.currentRoute.value.path).toBe('/admin/queue')
+    expect(queryByText('成员管理的名单')).toBeNull()
+    expect(queryByText('看板')).toBeNull()
+    expect(queryByText('成员')).toBeNull()
   })
 })
