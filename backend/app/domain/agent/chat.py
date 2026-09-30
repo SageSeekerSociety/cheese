@@ -237,7 +237,7 @@ from app.domain.delivery.input_identity import (
     InputReconciliationPending,
     InputRegistrar,
 )
-from app.domain.delivery.receipts import record_receipt, register_input
+from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1087,6 +1087,7 @@ class ChatService:
         line = publication_prompt("\n".join(lines))
         registrar = self._input_registrar(
             InputEffects(
+                held_block_ids=tuple(user_block_ids),
                 block_ids=tuple(user_block_ids),
                 seen_block_ids=tuple(user_block_ids),
                 seen_by=state.acting_agent if state else None,
@@ -1264,7 +1265,8 @@ class ChatService:
             return False
         line = platform_prompt(strip_platform_notice(notice))
         registrar = self._input_registrar(
-            InputEffects(block_ids=tuple(blocks)), probe_unread=bool(blocks)
+            InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
+            probe_unread=bool(blocks),
         )
         state = self._hook_work.get((topic_id, consuming_turn_id))
         seat_agent = (
@@ -3756,6 +3758,14 @@ class ChatService:
                     )
                 )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
+            held = await held_blocks(
+                session,
+                project_id=topic.project_id,
+                topic_id=place.room_id,
+                recipient_handle=await self._acting_handle(session, topic.id, agent),
+            )
+            pending = [block for block in pending if block.id not in held]
+            notices = [block for block in notices if block.id not in held]
             prompt_pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
                 # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
@@ -4513,6 +4523,7 @@ class ChatService:
 
         summoned = user_block_id is not None and not is_resume and not platform_turn
         effects = InputEffects(
+            held_block_ids=tuple(consumed_ids),
             # Initial prompt consumption remains tied to the clean turn ending;
             # native echo settles the delivery and its summoning read marker.
             seen_block_ids=(user_block_id,) if summoned else (),

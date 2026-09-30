@@ -55,6 +55,7 @@ async def register_input(
         "delivery_id": effects.delivery_id,
         "attempt_id": effects.attempt_id,
         "event_id": event_id,
+        "held_block_ids": [str(block) for block in effects.held_block_ids],
         "block_ids": [str(block) for block in effects.block_ids],
         "seen_block_ids": [str(block) for block in effects.seen_block_ids],
         "seen_by": effects.seen_by,
@@ -90,6 +91,19 @@ async def register_input(
     )
     if row is None or any(getattr(row, key) != value for key, value in values.items()):
         raise ValidationError("Native input identity was reused for another input")
+
+
+async def held_blocks(session, *, project_id, topic_id, recipient_handle):
+    """Unsettled registered inputs own their batch, including after a restart."""
+    batches = await session.scalars(
+        select(NativeInput.held_block_ids).where(
+            NativeInput.project_id == project_id,
+            NativeInput.topic_id == topic_id,
+            NativeInput.recipient_handle == recipient_handle,
+            NativeInput.settled_at.is_(None),
+        )
+    )
+    return {uuid.UUID(block) for batch in batches for block in batch}
 
 
 async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:

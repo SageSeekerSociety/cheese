@@ -116,6 +116,7 @@ class NativeInput(UuidPk, Base):
     delivery_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    held_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
     block_ids: Mapped[list] = mapped_column(JSONB, default=list)
     seen_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
     seen_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

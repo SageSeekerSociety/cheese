@@ -25,6 +25,7 @@ class InputReceipt:
 
 @dataclass(frozen=True)
 class InputEffects:
+    held_block_ids: tuple[uuid.UUID, ...] = ()
     block_ids: tuple[uuid.UUID, ...] = ()
     seen_block_ids: tuple[uuid.UUID, ...] = ()
     seen_by: str | None = None
