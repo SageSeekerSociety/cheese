@@ -64,6 +64,7 @@ from app.domain.room_task.schemas import TaskOut
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
+from app.domain.task.services import claim_backs_project
 from app.domain.team.services import team_service
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
@@ -139,6 +140,22 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
         raise ForbiddenError("你不是这个团队的成员，不能把项目建在这个团队里")
 
 
+async def _require_claim(
+    db: DbSession, who: Actor, task_id: int, team_id: int | None
+) -> None:
+    """用一道题建项目的，得先领了这道题。
+
+    个人题看建项目的这个人有没有领，团队题看项目要挂的那个团队有没有领。等批的申请
+    也算领了（领题那一刻就给它开了项目）；被拒绝或退出的不算。
+    """
+    if not who.authenticated or who.user_id is None:
+        raise AuthenticationRequiredError("登录后才能用题目新建项目")
+    if not await claim_backs_project(
+        db, task_id=task_id, user_id=who.user_id, team_id=team_id
+    ):
+        raise ForbiddenError("领取这道题之后才能用它新建项目")
+
+
 @router.get("/resource-limits")
 async def resource_limits(db: DbSession) -> dict:
     """Creation defaults, available before a project exists."""
@@ -162,6 +179,9 @@ async def create_project(
     # 过一道：问的不是「这个团队在不在」，是「你是不是这个团队的人」。
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
+    # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
+    if body.external_task_id is not None:
+        await _require_claim(db, who, body.external_task_id, body.team_id)
     # An unidentified caller resolves to the literal `anonymous` (auth.py), and
     # storing that as the owner is worse than storing nothing: it reads like a
     # person everywhere downstream, and it blocks the ownerless-room escape

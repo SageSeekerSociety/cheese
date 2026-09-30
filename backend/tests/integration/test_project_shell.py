@@ -9,13 +9,14 @@ nothing errors.
 
 import uuid
 
-from tests.conftest import seed_task_with_protocol
+from tests.conftest import seed_claim, seed_task_with_protocol
 from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "shell-owner"
 
 
 def _project_from(client, task_id: int) -> dict:
+    seed_claim(client, task_id, handle=OWNER)
     return post_project(
         client,
         json={"name": "壳测试", "owner_handle": OWNER, "external_task_id": task_id},

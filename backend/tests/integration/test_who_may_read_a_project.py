@@ -21,7 +21,7 @@
 
 import asyncio
 
-from tests.conftest import seed_space, seed_user
+from tests.conftest import seed_claim, seed_space, seed_user
 from tests.integration.conftest import add_external_member, post_project
 from tests.integration.test_project_reads_need_membership import off_the_street
 from tests.integration.test_team_member_enters_team_project import (
@@ -127,6 +127,7 @@ def _task_by(client, handle: str) -> int:
 
 def _project_from_task(client, task_id: int, *, student: str) -> str:
     """报名者开的项目：他拥有它，出题者不在名册上。"""
+    seed_claim(client, task_id, handle=student)
     r = post_project(
         client,
         json={"name": "赛题项目", "owner_handle": student, "external_task_id": task_id},
