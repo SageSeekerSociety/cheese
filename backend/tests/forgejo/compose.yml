@@ -8,7 +8,8 @@ services:
       MINIO_ROOT_USER: e2e-snapshots
       MINIO_ROOT_PASSWORD: e2e-snapshots-secret
   forgejo:
-    image: codeberg.org/forgejo/forgejo:15.0.9-rootless
+    # Forgejo 自己的镜像站：codeberg.org 的镜像仓库挂掉时（503），CI 的 e2e 一律起不来。
+    image: data.forgejo.org/forgejo/forgejo:15.0.9-rootless
     ports:
       - "127.0.0.1:${FORGEJO_TEST_PORT:-33086}:3000"
     environment:
