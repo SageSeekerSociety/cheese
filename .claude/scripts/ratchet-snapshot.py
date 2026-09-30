@@ -65,9 +65,13 @@ class Check:
     rules: tuple[str, ...] = ()
     #: `ignore_imports` for a file whose baseline lives beside its rules.
     strip: str | None = None
-    #: (path under cwd, attribute) for a pytest ledger: how many entries it
-    #: registers. Read by importing the module — the ledger IS the number, and
-    #: the test asserts the tree still matches it.
+    #: (path under cwd, expression) for a pytest ledger: how much it registers.
+    #: Read by importing the module and evaluating the expression in its
+    #: namespace — the ledger IS the number, and the test asserts the tree still
+    #: matches it. An expression rather than an attribute name because a
+    #: ledger's unit is not always its length: `BASELINE` in the is_private
+    #: check maps each file to HOW MANY read points it holds, so those 12 files
+    #: are 20 read points and `len()` would report the files instead.
     probe: tuple[str, str] | None = None
     #: True for a check whose verdict comes from a test run rather than a record.
     ledger: bool = False
@@ -109,7 +113,7 @@ CHECKS: tuple[Check, ...] = (
         argv=("python", "-m", "pytest", "tests/unit/test_domain_import_guard.py", "-q"),
         cwd="backend",
         rules=("backend/tests/unit/test_domain_import_guard.py",),
-        probe=("tests/unit/test_domain_import_guard.py", "_EXEMPT"),
+        probe=("tests/unit/test_domain_import_guard.py", "len(_EXEMPT)"),
         ledger=True,
     ),
     Check(
@@ -118,7 +122,7 @@ CHECKS: tuple[Check, ...] = (
         argv=("python", "-m", "pytest", "tests/unit/test_harness_boundary.py", "-q"),
         cwd="backend",
         rules=("backend/tests/unit/test_harness_boundary.py",),
-        probe=("tests/unit/test_harness_boundary.py", "_LEDGER"),
+        probe=("tests/unit/test_harness_boundary.py", "len(_LEDGER)"),
         ledger=True,
     ),
     Check(
@@ -127,7 +131,7 @@ CHECKS: tuple[Check, ...] = (
         argv=("python", "-m", "pytest", "tests/unit/test_is_private_read_points.py", "-q"),
         cwd="backend",
         rules=("backend/tests/unit/test_is_private_read_points.py",),
-        probe=("tests/unit/test_is_private_read_points.py", "BASELINE"),
+        probe=("tests/unit/test_is_private_read_points.py", "sum(BASELINE.values())"),
         ledger=True,
     ),
     Check(
@@ -217,7 +221,7 @@ def _not_collected(check: Check, reason: str) -> dict:
 
 
 def _probe(check: Check, cwd: Path) -> int | None:
-    """How many entries a pytest ledger registers, or None if it cannot be read.
+    """How much a pytest ledger registers, or None if it cannot be read.
 
     Importing the test module is the cheapest way to read a registry that lives
     in it. None rather than 0 whenever it fails: a ledger nobody could read is
@@ -225,12 +229,12 @@ def _probe(check: Check, cwd: Path) -> int | None:
     """
     if check.probe is None:
         return None
-    path, attribute = check.probe
+    path, expression = check.probe
     module = Path(path).stem
     code = (
         "import sys; from pathlib import Path; "
         f"sys.path[:0] = ['.', str(Path({path!r}).parent.absolute())]; "
-        f"import {module} as m; print(len(m.{attribute}))"
+        f"import {module} as m; print(eval({expression!r}, vars(m)))"
     )
     try:
         result = subprocess.run(
@@ -671,22 +675,28 @@ def self_test() -> int:
               fingerprint(root, ("no-such-rule",)) != fingerprint(root, ("rule.txt",)), True)
 
         # A ledger check: its verdict is pytest's exit code, and how far the
-        # tree is from the ledger is a number only when the test passed.
+        # tree is from the ledger is a number only when the test passed. The
+        # fixture holds two files and three entries, so a probe that counted
+        # files instead of entries would report 2 here — which is the mistake
+        # the is_private ledger's BASELINE invites.
         (root / "ledger_probe.py").write_text('_EXEMPT = {"a": 1, "b": 2}\n')
         ledger = Check(
             id="ledger",
             area=BOUNDARY,
             argv=("python", "-m", "pytest", "x.py", "-q"),
-            probe=("ledger_probe.py", "_EXEMPT"),
+            probe=("ledger_probe.py", "sum(_EXEMPT.values())"),
             ledger=True,
         )
         passing = _ledger_record(ledger, 0, "", "", root)
-        check("a passing ledger counts its own entries", (passing["status"], passing["actual"]), ("pass", 2))
-        check("... and its baseline is the same number", passing["frozen"], 2)
+        check("a passing ledger counts its entries, not its files",
+              (passing["status"], passing["actual"]), ("pass", 3))
+        check("... and its baseline is the same number", passing["frozen"], 3)
+        check("the probe is the ledger's own expression",
+              _probe(Check(id="l", area=BOUNDARY, argv=(), probe=("ledger_probe.py", "len(_EXEMPT)")), root), 2)
         failing = _ledger_record(ledger, 1, "", "AssertionError: the tree does not match", root)
         check("a failing ledger is a failure", failing["status"], "fail")
         check("... and does not claim to have counted anything", failing["actual"], None)
-        check("... while its baseline survives", failing["frozen"], 2)
+        check("... while its baseline survives", failing["frozen"], 3)
         for code in (2, 3, 4, 5):
             other = _ledger_record(ledger, code, "", "pytest could not run", root)
             check(f"pytest exit {code} is not a verdict", other["status"], "cannot_judge")
