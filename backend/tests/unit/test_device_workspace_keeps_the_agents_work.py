@@ -108,6 +108,17 @@ def device(tmp_path, monkeypatch):
             backups = home / "backups" / task
             backups.mkdir(parents=True, exist_ok=True)
             (backups / f"{snapshot}.bundle").write_bytes(payload)
+            # The platform's latest backup of the task is the last one it took.
+            (backups / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "id": snapshot,
+                        "snapshot_sha": snapshot,
+                        "head_sha": self.headers["X-Cheese-Head"],
+                        "digest": digest,
+                    }
+                )
+            )
             self.send_response(200)
             self.end_headers()
             self.wfile.write(json.dumps({"data": {"digest": digest}}).encode())
@@ -116,15 +127,16 @@ def device(tmp_path, monkeypatch):
             if "/snapshots/" in self.path:
                 # What `cheese recover` reads: a task's backup, described or whole.
                 task, _, which = self.path.rsplit("/", 3)[1:]
-                (bundle,) = (home / "backups" / task).glob("*.bundle")
-                body = bundle.read_bytes()
+                backups = home / "backups" / task
                 if which == "latest":
-                    latest = {
-                        "id": bundle.stem,
-                        "snapshot_sha": bundle.stem,
-                        "digest": hashlib.sha256(body).hexdigest(),
-                    }
+                    if not (backups / "latest.json").exists():
+                        self.send_response(404)
+                        self.end_headers()
+                        return
+                    latest = json.loads((backups / "latest.json").read_text())
                     body = json.dumps({"data": latest}).encode()
+                else:
+                    body = (backups / f"{which}.bundle").read_bytes()
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(body)
@@ -499,6 +511,37 @@ def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
         git(recovered, "show", "FETCH_HEAD:leftover.txt")
         == "written after the task closed"
     )
+
+
+def test_files_already_backed_up_are_not_sent_again(device, monkeypatch, tmp_path):
+    """A closed task's leftover files are backed up once. Every sync after that
+    finds them again, and a room switch waits on every sync: one that finds
+    them unchanged sends nothing, and one that finds them changed sends the
+    new files, which are what a recovery then gets."""
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    tasks[task]["closed"] = True
+    git(work, "checkout", "-q", "--detach")
+    (work / "leftover.txt").write_text("first\n")
+
+    def uploads():
+        return (home / "requests.log").read_text().count("PUT ")
+
+    cli._sync_all_tasks()
+    cli._sync_all_tasks()
+    assert uploads() == 1
+
+    (work / "leftover.txt").write_text("second\n")
+    cli._sync_all_tasks()
+    assert uploads() == 2
+
+    elsewhere = tmp_path / "another-machine"
+    elsewhere.mkdir()
+    monkeypatch.setenv("HOME", str(elsewhere))
+    cli._recover_task(task)
+    (recovered,) = (elsewhere / ".cheese" / "recovered").iterdir()
+    assert (recovered / "leftover.txt").read_text() == "second\n"
 
 
 def test_a_backup_refused_once_is_rebuilt_against_the_base_it_has_now(device):

@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import subprocess
+import urllib.error
 import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -69,6 +70,9 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
     captured = {}
 
     def upload(request, **kwargs):
+        if request.data is None:
+            # Asked for the task's latest backup: there is none yet.
+            raise urllib.error.HTTPError(request.full_url, 404, "", {}, None)
         captured["bundle"] = request.data.read()
         captured["snapshot_sha"] = request.full_url.rsplit("/", 1)[1]
         captured["digest"] = hashlib.sha256(captured["bundle"]).hexdigest()

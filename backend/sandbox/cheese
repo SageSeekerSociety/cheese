@@ -1761,17 +1761,24 @@ def _sync_task(task_id: str) -> None:
             if data["room_id"] != TOPIC:
                 raise RuntimeError("Task belongs to another room")
             closed = data["closed"]
-            _git_task(worktree, "config", "--replace-all", "credential.helper", "")
-            _git_task(
-                worktree,
-                "config",
-                "--add",
-                "credential.helper",
-                "!cheese git-credential",
-            )
-            _git_task(worktree, "config", "credential.useHttpPath", "true")
-            _git_task(worktree, "remote", "set-url", "origin", data["remote"])
-            _configure_git_transport(worktree, data)
+            if not closed:
+                # Only a delivery talks to the forge. A closed task is only
+                # backed up, to the platform, so it skips the forge probe that
+                # otherwise costs every one of a room's closed tasks a round
+                # trip while a switch waits.
+                _git_task(
+                    worktree, "config", "--replace-all", "credential.helper", ""
+                )
+                _git_task(
+                    worktree,
+                    "config",
+                    "--add",
+                    "credential.helper",
+                    "!cheese git-credential",
+                )
+                _git_task(worktree, "config", "credential.useHttpPath", "true")
+                _git_task(worktree, "remote", "set-url", "origin", data["remote"])
+                _configure_git_transport(worktree, data)
             head = _git_task(worktree, "rev-parse", "HEAD")
             # Keep unfinished work off the PR. An alternate index preserves the
             # worker's staging choices while backing up its files at turn end.
@@ -1945,6 +1952,31 @@ def _is_ancestor(worktree: Path, commit: str, of: str) -> bool:
     return True
 
 
+def _backed_up_already(worktree, task_id, head, snapshot) -> bool:
+    """Whether the platform's latest backup of this task is these same files on
+    this same commit.
+
+    Without this a checkout that has not changed is uploaded again at every
+    sync: its snapshot commit is made afresh each time, so the bundle is new
+    even when nothing in it is, and a room switch waits for every such task.
+    Any doubt goes to the upload: no backup yet, a call that fails, a snapshot
+    this machine no longer has.
+    """
+    request = urllib.request.Request(
+        f"{API}/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest"
+    )
+    request.add_header("X-Cheese-Token", TOKEN)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            latest = json.load(response)["data"]
+        if latest["head_sha"] != head:
+            return False
+        tree = _git_task(worktree, "rev-parse", f"{latest['snapshot_sha']}^{{tree}}")
+        return tree == _git_task(worktree, "rev-parse", f"{snapshot}^{{tree}}")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
+
+
 def _backup_task_snapshot(worktree, admin, data, head, snapshot):
     task_id = data["task_id"]
     ref = f"refs/cheese/snapshots/{task_id}"
@@ -1959,6 +1991,8 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
         known = ["--not", "--remotes=origin"]
     if _git_task(worktree, "rev-list", "--count", snapshot, *known) == "0":
         return  # Every object is already on the forge; there is no unfinished work.
+    if _backed_up_already(worktree, task_id, head, snapshot):
+        return
     _git_task(worktree, "update-ref", ref, snapshot)
     bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
     try:
