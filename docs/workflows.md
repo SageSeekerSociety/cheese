@@ -152,13 +152,13 @@ task ci:fast                 # 开 PR 前跑；先把分支跟进 main（fetch +
 task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc
 ```
 
-**机器上没有 `task` 时**：平台云执行机镜像不预装 task（README 第 13 行的安装脚本可装到 `~/.local/bin`）。Taskfile 只是薄封装，不装 task 时用等价入口，只需 python3 + uv（镜像里已有，pre-commit 由 uvx 解析）：
+**机器上没有 `task` 时**：本次核查覆盖的平台云执行机样本（cheese-de808b-27）未预装 task，422 作者当时所在执行机同样没有；可按 README 第 13 行的脚本装到 `~/.local/bin`（样本机上实测可装）。Taskfile 只是薄封装，不装 task 时用下面的等价入口——前提是机器上有 python3 和 uv/uvx（pre-commit 由 uvx 解析），装前端依赖还需要 pnpm：
 
 ```bash
-python3 .github/scripts/ci-fast.py             # ≡ task ci:fast
-python3 .github/scripts/ci-fast.py --types     # ≡ task ci:fast -- --types
-cd backend && uv sync                          # ≡ task be:deps:sync（备 backend/.venv）
-cd frontend && pnpm install --frozen-lockfile  # ≡ task fe:install（备 node_modules）
+python3 .github/scripts/ci-fast.py               # ≡ task ci:fast
+python3 .github/scripts/ci-fast.py --types       # ≡ task ci:fast -- --types
+(cd backend && uv sync)                          # ≡ task be:deps:sync（备 backend/.venv）
+(cd frontend && pnpm install --frozen-lockfile)  # ≡ task fe:install（备 node_modules）
 ```
 
 - **它证明什么**：本次 merge diff 命中的静态检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
