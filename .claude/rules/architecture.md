@@ -6,19 +6,20 @@ paths:
 
 # Module boundaries, and which of them a machine actually checks
 
-Three checks run on every commit and in CI. Everything below says *why* each
+Four checks run on every commit and in CI. Everything below says *why* each
 rule exists and what enforces it, so that a rule nobody checks is not mistaken
 for one that is. Rules marked **建议** are conventions: no tool will stop you.
 
-One command runs all three: `task boundaries`. Individually:
+One command runs all four: `task boundaries`. Individually:
 
 | Check | Command |
 |---|---|
 | Backend import graph | `cd backend && uv run python scripts/check_boundaries.py` |
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
+| Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
 
-All three print their baseline and their refresh command when they fail, and all
+All four print their baseline and their refresh command when they fail, and all
 three carry `--self-test` (also run in CI — a check nobody has watched fail is
 not a check).
 
@@ -105,6 +106,36 @@ the baseline after you fix some. (The 83 → 127 jump is the resolved-path rule
 seeing the 44 relative-path imports the glob-based one could not, not new debt.
 `lint:boundary:update` only ever lowers a frozen count, so this rule change
 rebuilt the baseline from zero — see the commit that fixed it.)
+
+## A scene runs standalone, and the set only grows
+
+`docs/manual/dev/scenes.md` (发布在文档站的「场景清单」一页) grades every scene —
+a router page under `frontend/src/views` or an SFC under
+`frontend/src/components/panels` — by the same A/B/C/D rule as the metrics board
+(standalone-ready = A: props and events only). What changed on 2026-09-30 is that
+the grade became a ratchet rather than a report: `pnpm run lint:scenes` freezes
+the scenes that are A today in `frontend/scene-baseline.json`, and a scene that
+falls off, or a **new** scene that is not A, fails. Pre-existing non-A scenes are
+listed in the same file as debt and are allowed to sit there; `--update` may add
+to the ready set and subtract from the debt set and will refuse to do either
+backwards.
+
+Two things about it are worth knowing from this file:
+
+- The page list is derived from the router's import graph, so hanging a new route
+  puts a new scene under the gate with no registry to update. The panel list is
+  every SFC under `components/panels/`.
+- The grader is one module, `.claude/scripts/frontend_grade.py`, imported by both
+  this gate and `arch-metrics.py`. A definition of "standalone" that could drift
+  between the board and the gate would be worth less than neither. Its rule that
+  a type-only import is not reach — `import type` is erased at build time — is
+  what makes `PanelPreviewView` an A; before that fix the board counted 195 A
+  components and the scene set 19.
+
+Missing `/demo/catalog` entries are reported as a warning count, never a failure:
+what belongs in the preview site is a product decision, and
+`pnpm exec vitest run src/views/demo/catalog.spec.ts` is the mechanical claim
+that a catalogued component really does render alone.
 
 ## Files have a size cap, and cap it where it stands
 
