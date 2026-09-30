@@ -812,7 +812,12 @@
       "discardFailed": "Couldn't discard"
     },
     "mention": {
-      "escBack": "Press Esc to go back",
+      "back": "Back",
+      "notInTopic": "Not in topic",
+      "outsideNotice": "{names} aren't in this topic and won't be notified",
+      "addToTopic": "Add to topic",
+      "dismissOutside": "Dismiss",
+      "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
       "all": "Everyone",

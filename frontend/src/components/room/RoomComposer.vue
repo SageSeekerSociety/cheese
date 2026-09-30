@@ -13,25 +13,29 @@
 // 发送）、以及把拖进来的东西交给房间（#2143）。@ 补全的状态机在
 // `composables/useRoomMentionPicker.ts`，菜单、待发条和动作行各自是一件只管画的
 // 东西（`MentionMenu.vue` / `ComposerChipRow.vue` / `ComposerActions.vue`）。
+import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
 
 import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
+import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import MentionMenu from './MentionMenu.vue'
+import OutsideMentionNotice from './OutsideMentionNotice.vue'
 
 import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
-  mentionPool: { handle: string; label: string; agent: boolean; external?: boolean }[]
+  mentionPool: MentionPoolEntry[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
   topicList: Topic[]
   /** 这个房间交给的那位 AI 队友。名册还没到时是 null，两个召唤入口都关着。 */
@@ -109,6 +113,15 @@ const {
 function pickActiveMention(): boolean {
   return picker.pickActive()
 }
+
+// 发出去的那条 @ 了不在话题里的人：输入框上方说一句，能管名册的人顺手拉进来。
+const outsidePrompt = useOutsideMentionPrompt({
+  topic: () => props.topic,
+  mentionPool: () => props.mentionPool,
+  me: myHandle,
+})
+const { outside: outsideMentioned, names: outsideNames, canAdd: canAddOutside } = outsidePrompt
+const { busy: addingOutside, error: addOutsideError } = outsidePrompt
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
@@ -205,7 +218,12 @@ coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.val
 
 function onComposerKey(e: KeyboardEvent) {
   // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
-  if (e.key === 'Escape' && mentionLevel.value === 'library') {
+  // ← 也是；`@` 后面什么都没打时的退格也是——那一下要是删掉了 `@`，整个菜单就没了，
+  // 人只是想回上一级。输入法选字时这几个键是给输入法的。
+  const back =
+    e.key === 'Escape' ||
+    ((e.key === 'ArrowLeft' || (e.key === 'Backspace' && picker.query.value === '')) && !isImeKey(e))
+  if (back && mentionLevel.value === 'library') {
     e.preventDefault()
     picker.backToRoot()
     return
@@ -262,6 +280,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
+  outsidePrompt.noteSent(content)
 }
 
 // 发送键亮不亮：有字，或者有东西跟着走。
@@ -294,6 +313,16 @@ defineExpose({
       :enter-sends="enterSends"
       @pick="picker.pick"
       @hover="picker.hover"
+      @back="picker.backToRoot"
+    />
+    <OutsideMentionNotice
+      v-if="outsideMentioned.length"
+      :names="outsideNames"
+      :can-add="canAddOutside"
+      :busy="addingOutside"
+      :error="addOutsideError"
+      @add="outsidePrompt.add"
+      @dismiss="outsidePrompt.dismiss"
     />
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的

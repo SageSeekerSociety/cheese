@@ -812,7 +812,12 @@
       "discardFailed": "没有放弃成功"
     },
     "mention": {
-      "escBack": "按 Esc 返回",
+      "back": "返回上一级",
+      "notInTopic": "不在话题中",
+      "outsideNotice": "{names} 不在话题中，他们不会收到通知",
+      "addToTopic": "拉进话题",
+      "dismissOutside": "知道了",
+      "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
       "all": "所有人",
