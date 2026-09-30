@@ -197,7 +197,7 @@
       </template>
     </AdaptiveDialog>
 
-    <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
+    <v-snackbar v-model="showProjectListWarning" :timeout="8000">
       {{ projectListWarning }}
       <template #actions>
         <v-btn variant="text" @click="loadCxProjects">{{ t('work.newProject.retry') }}</v-btn>

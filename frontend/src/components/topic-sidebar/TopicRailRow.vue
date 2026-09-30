@@ -21,6 +21,8 @@ import { computed, ref, watch } from 'vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 
+import { menuActionOf } from '@/commands'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { stallReasonText } from '@/lib/replyWait'
 import { TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { countLabel } from '@/lib/topicTree'
@@ -209,9 +211,10 @@ watch(
       <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
            整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
       <div v-if="!page" class="row-actions" @click.stop>
-        <v-menu
+        <AdaptiveMenu
           :model-value="menuOpen"
-          location="bottom end"
+          :actions="actions(row.topic).map(menuActionOf)"
+          :title="row.topic.title"
           @update:model-value="(open: boolean) => emit('update:menu-open', open)"
         >
           <template #activator="{ props: menuProps }">
@@ -226,16 +229,7 @@ watch(
               class="row-actions__btn"
             />
           </template>
-          <v-list density="compact" nav>
-            <v-list-item
-              v-for="action in actions(row.topic)"
-              :key="action.id"
-              :prepend-icon="action.icon"
-              :title="action.title"
-              @click="action.run?.()"
-            />
-          </v-list>
-        </v-menu>
+        </AdaptiveMenu>
       </div>
     </template>
   </v-list-item>
@@ -249,7 +243,7 @@ watch(
    1.4em ≈ 19.6px）比 16px 的行盒还高，标题又自带 overflow: hidden —— 高出来的
    那 1.8px 上下各切一刀，g / y / p 这些下伸的字母下缘就被切平。汉字不下伸，
    所以只有拉丁字母看得出来。行盒高度是字号阶梯的属性（docs/design-system.md
-   §3.2），这里照 --lh-14 取，和 .menu-list 里那条同名的规则一致。 */
+   §3.2），这里照 --lh-14 取，和 style.css 里菜单列表项那条规则一致。 */
 .topic-row :deep(.v-list-item-title) {
   font-size: 14px;
   line-height: var(--lh-14);

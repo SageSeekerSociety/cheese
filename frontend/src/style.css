@@ -50,6 +50,10 @@
 
   --canvas: #f7f8fa; /* app bg */
   --surface: #ffffff; /* cards / panels */
+  /* Floating layers (menus, dropdowns, dialogs, sheets). The same white as
+     --surface here, where the shadow is what lifts them; one step lighter in
+     the dark block, where shadows do not show. */
+  --raised: #ffffff;
 
   /* ---- Accent (amber, sparingly) ---- */
   --accent: #f57f17;
@@ -302,6 +306,10 @@
 
   --canvas: #141517;
   --surface: #1b1d20;
+  /* Floating layers sit a step above what they cover (design-system §1.4):
+     the --fill step. Inside them --fill moves up one step as well (see the
+     floating-layer rules below), so hover and inset blocks still show. */
+  --raised: #212429;
 
   /* ---- Accent ---- */
   --accent: #ffa733;
@@ -563,45 +571,224 @@
   font-feature-settings: 'tnum';
 }
 
-/* 浮层菜单里的列表（「我」的菜单、帮助与反馈）：每一项只有一行字，不带图标。
-   Vuetify 的 compact 密度是 40px，这里再收到 36px；悬停与选中都是中性色（同
-   TopicSidebar 的 .nav-row），琥珀在导航里只留给左栏那一格「当前在哪」。
-   两个菜单共用这一份，各写一份的时候它们的行高和间距已经不一样过一次。 */
-/* 用 Vuetify 自己的 nav 形态（`<v-list nav>`）：列表左右 8px、每项左右 8px，字落在
-   离菜单边 16px 的地方，和偏好行、菜单头对齐；悬停底色是一块缩进的圆角。这里只收
-   上下的留白。 */
-.menu-list.menu-list {
-  padding-block: 4px;
+/* ---- 浮层：菜单、下拉、悬停提示、提示条、对话框 ----
+   design-system §3.4：投影只给浮在页面之上的东西。这里把 Vuetify 浮层的默认长相
+   （4px 圆角、Material 的 8/24 级投影、深色下没有边、16px 的字、32px 的图标空隙）
+   换成设计系统的那一套，所以页面里写一个裸的 <v-menu> / <v-select> / <v-tooltip>
+   就是对的，不用各自再写一份外壳。
+
+   选择器里重复的类名是为了特异度：Vuetify 各组件的样式表按需注入，排在这份文件
+   之后，同特异度时它赢。 */
+
+/* 浮层（菜单、下拉、对话框、底部面板）比它盖住的东西亮一档：底色是 --raised。
+   浅色下它就是 --surface，靠投影浮起来；深色下投影看不见，靠亮一档浮起来。浮层里
+   手写的 var(--surface)（输入框底、头像描边）跟着浮层走，所以在这一层把 --surface
+   换成 --raised（@ 提及菜单是手写的浮层，同样处理）。深色下 --raised 就是 --fill 那一档，浮层里的 --fill（悬停、内嵌块）
+   再上移一档，不然会和浮层底一样亮、看不见；浅色下两者本来就分得开，不动。 */
+.v-menu > .v-overlay__content,
+.v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
+.mention-menu {
+  --surface: var(--raised);
 }
 
-/* 类名写两遍：Vuetify 的 .v-list-item--density-compact.v-list-item--one-line（40px）
-   和这里同特异度，而它的样式表在这份文件之后注入。 */
-.menu-list .v-list-item.v-list-item {
-  min-height: 36px;
+:root[data-theme='dark'] .v-menu > .v-overlay__content,
+:root[data-theme='dark'] .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
+:root[data-theme='dark'] .mention-menu {
+  --fill: var(--fill-2);
+}
+
+/* Vuetify 的卡片、面板、工具条、列表、表格默认画主题里的 surface，那一层不跟着上面
+   换过的 --surface 走：每个组件都带自己的 v-theme--* 类，把主题变量重设了一遍。所以
+   深色对话框里的折叠面板会比对话框暗一块。浮层里把它们的默认底也换成浮层底；显式写了
+   color / bg-color 的组件走 Vuetify 带 !important 的工具类，不受影响。 */
+:is(.v-menu, .v-dialog:not(.v-dialog--fullscreen))
+  > .v-overlay__content
+  :is(.v-card, .v-sheet, .v-list, .v-toolbar, .v-expansion-panel, .v-table) {
+  background-color: var(--surface);
+}
+
+/* 菜单与下拉（v-select / v-autocomplete / v-combobox 的下拉也是一个 v-menu）：
+   --raised 底，--line-2 描边，12px 圆角，--shadow-2。外壳画在 .v-overlay__content
+   上，里面的 v-list / v-card / v-sheet 不再各画一层底和投影。 */
+.v-menu.v-menu > .v-overlay__content {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.v-menu.v-menu > .v-overlay__content > .v-list,
+.v-menu.v-menu > .v-overlay__content > .v-card,
+.v-menu.v-menu > .v-overlay__content > .v-sheet {
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 菜单里的列表：上下 4px、左右 4px，每项左右 12px，字落在离菜单边 16px 的地方，
+   和「我」的菜单里的头像行、偏好行对齐；悬停底色是一块缩进的 8px 圆角。 */
+.v-menu .v-list.v-list {
+  padding: 4px;
+  background: transparent;
+}
+
+/* 桌面 36px；手机上手指点的行至少 44px（§10.1），同 .side-nav。选择器这么长是为了
+   压过 Vuetify 按密度给的左右留白（`.v-list-item--density-compact:not(.v-list-item--nav)
+   .v-list-item--one-line`，四个类）。 */
+.v-menu.v-menu .v-list .v-list-item.v-list-item {
+  min-height: 44px;
+  padding-block: 6px;
+  padding-inline: 12px;
+  margin: 0;
+  border-radius: var(--radius-md);
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-.menu-list .v-list-item-title {
+@media (min-width: 960px) {
+  .v-menu.v-menu .v-list .v-list-item.v-list-item {
+    min-height: 36px;
+  }
+}
+
+.v-menu .v-list-item-title.v-list-item-title {
   font-size: 14px;
+  font-weight: 400;
   line-height: var(--lh-14);
+  letter-spacing: 0;
   color: var(--text);
 }
 
-.menu-list .v-list-item:hover {
+.v-menu .v-list-item-subtitle.v-list-item-subtitle {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  letter-spacing: 0;
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* 悬停与选中都是中性色：琥珀只留给左栏那一格「当前在哪」，
+   选中行不用琥珀底（§1.6）。Vuetify 自己那层半透明的 overlay 关掉，不然和底色叠成
+   第三种灰。 */
+.v-menu .v-list-item:hover {
   background: var(--fill);
 }
 
-.menu-list .v-list-item--active {
+.v-menu .v-list-item--active,
+.v-menu .v-list-item--active:hover {
   background: var(--line-2);
 }
 
-.menu-list .v-list-item--active > .v-list-item__overlay {
+.v-menu .v-list-item:hover > .v-list-item__overlay,
+.v-menu .v-list-item--active > .v-list-item__overlay {
   opacity: 0;
 }
 
-.menu-list .v-list-item--active .v-list-item-title {
+.v-menu .v-list-item--active .v-list-item-title.v-list-item-title {
   font-weight: 600;
   color: var(--ink);
+}
+
+/* 图标：18px、--muted，和字之间 12px（Vuetify 默认 32px，把两列拉得太开）。 */
+.v-menu .v-list-item__prepend > .v-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+  color: var(--muted);
+  opacity: 1;
+}
+
+.v-menu .v-list-item__prepend > .v-icon ~ .v-list-item__spacer,
+.v-menu .v-list-item__prepend > .v-avatar ~ .v-list-item__spacer {
+  width: 12px;
+}
+
+/* 小标题的字和下面每一行的字对齐（12px）。Vuetify 按密度给小标题的左留白写了
+   !important（VList.css 的 `.v-list--density-* .v-list-subheader`），只能同样写。 */
+.v-menu .v-list-subheader.v-list-subheader {
+  min-height: 28px;
+  padding-inline-start: 12px !important;
+  padding-inline-end: 12px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+}
+
+.v-menu .v-list .v-divider.v-divider {
+  margin-block: 4px;
+  border-color: var(--line);
+  opacity: 1;
+}
+
+/* 悬停提示：和页面反着色调的小块（§2.5），同左栏项目格的悬停浮层。 */
+.v-tooltip.v-tooltip > .v-overlay__content {
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  box-shadow: var(--shadow-1);
+}
+
+/* 提示条（v-snackbar）：同一块反色，一种长相。状态不靠整条刷成状态色——琥珀底
+   白字只有 2.3:1，而且状态色的底只能是 -wash（§1.5）；要说状态，文字自己说。 */
+.v-snackbar.v-snackbar .v-snackbar__wrapper {
+  border-radius: var(--radius-md);
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
+  box-shadow: var(--shadow-2);
+}
+
+.v-snackbar.v-snackbar .v-snackbar__content {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  letter-spacing: 0;
+}
+
+.v-snackbar.v-snackbar .v-snackbar__actions .v-btn {
+  color: var(--inverse-ink);
+}
+
+/* vuetify-sonner 的提示（`toast()` / `toast.error()`）是一张 v-card，和提示条同一块
+   反色。它把 toast.error() 这类画成整张刷成状态色的卡片（color → Vuetify 的 bg-error，
+   一个带 !important 的工具类），默认圆角又是卡片的 24px 胶囊，所以这里只能也写
+   !important。是什么状态由它自带的图标（✓ / ⊘ / ⚠）说，不靠底色。 */
+.v-card.card-snackbar {
+  border-width: 0 !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--inverse-surface) !important;
+  color: var(--inverse-ink) !important;
+  box-shadow: var(--shadow-2) !important;
+}
+
+/* 状态落在图标上：记号色（§1.5），一眼分得出成功和失败。量过，压在 --inverse-surface
+   上两套主题都过图形的 3:1：浅色 --ok 4.4、--warn 6.2、--danger 3.2；深色 --ok 4.7、
+   --warn 5.4、--danger 3.4。 */
+.v-card.card-snackbar.bg-success .v-icon {
+  color: var(--ok);
+}
+
+.v-card.card-snackbar.bg-warning .v-icon {
+  color: var(--warn);
+}
+
+.v-card.card-snackbar.bg-error .v-icon {
+  color: var(--danger);
+}
+
+/* 对话框：遮罩用 --overlay，卡片是 --raised 底、--shadow-2（不是 Material 的 24 级投影）。
+   整页的对话框（手机上的 AdaptiveDialog）和底部面板不是浮在页面上的一块，没有投影。 */
+.v-dialog.v-dialog > .v-overlay__scrim {
+  background: var(--overlay);
+  opacity: 1;
+}
+
+.v-dialog.v-dialog:not(.v-dialog--fullscreen, .v-bottom-sheet) > .v-overlay__content > .v-card,
+.v-dialog.v-dialog:not(.v-dialog--fullscreen, .v-bottom-sheet) > .v-overlay__content > form > .v-card {
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
 }
 
 /* 密集读数：13 / 19 / 600。**此前它被 5 个模板引用、却在 style.css 里没有任何

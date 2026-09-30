@@ -173,19 +173,25 @@ export default createVuetify({
       color: 'primary',
       autoGrow: true,
     },
+    // `itemColor` is the colour of the SELECTED row in the dropdown. Left unset it
+    // falls back to `color` (primary), and the chosen option rendered as an amber
+    // row — design-system §1.6 keeps amber off selected rows. Neutral here; the
+    // row's grey fill and weight come from the menu rules in style.css.
     VSelect: {
       variant: 'outlined',
       density: 'comfortable',
       rounded: 'lg',
       color: 'primary',
-      menuProps: { rounded: 'lg' },
+      itemColor: 'on-surface',
     },
     VAutocomplete: {
       variant: 'outlined',
       density: 'comfortable',
       rounded: 'lg',
       color: 'primary',
+      itemColor: 'on-surface',
     },
+    VCombobox: { itemColor: 'on-surface' },
     // VCheckbox keeps it: a checkbox's label sits beside the box, not on a
     // border, so there is no collision to fix here — only 28px to lose.
     VCheckbox: { density: 'compact', hideDetails: 'auto', color: 'primary' },
@@ -194,7 +200,12 @@ export default createVuetify({
     VList: { density: 'comfortable' },
     VListItem: { rounded: 'lg' },
     VAlert: { variant: 'tonal', rounded: 'lg', border: 'start' },
-    VMenu: { rounded: 'lg' },
+    // The floating shell (surface, --line-2 hairline, 12px radius, --shadow-2)
+    // is drawn once on the overlay in style.css, so a bare <v-menu> is already
+    // right. Here: 4px off its activator instead of touching it, and a v-card
+    // placed in a menu drops its own card border so there is one edge, not two.
+    // (VMenu has no `rounded` prop — the old `rounded: 'lg'` did nothing.)
+    VMenu: { offset: 4, VCard: { border: false } },
     VDialog: { rounded: 'xl' },
     VTooltip: { location: 'top' },
     VTable: { density: 'comfortable' },

@@ -88,7 +88,7 @@ watch(loggedIn, refresh, { immediate: true })
       </v-btn>
     </template>
 
-    <v-list class="menu-list" nav density="compact" min-width="160">
+    <v-list min-width="160">
       <v-list-item v-for="item in items" :key="item.key" :to="item.to" :href="item.href">
         <v-list-item-title>{{ item.label }}</v-list-item-title>
       </v-list-item>

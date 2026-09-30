@@ -357,25 +357,21 @@ function warmDestination() {
   border-radius: var(--radius-pill);
 }
 
-/* Discord-style hover flyout, tuned to our light/amber aesthetic. Rendered at the
-   <body>, so this is global (the style block is unscoped). */
-.rail-flyout.rail-flyout {
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  opacity: 1;
+/* Discord-style hover flyout. The inverse block itself is every v-tooltip's
+   (style.css); the rail's one is a size up — it names a whole destination and
+   carries a shortcut. Rendered at the <body>, so this is global (the style block
+   is unscoped). */
+.v-tooltip.v-tooltip > .v-overlay__content.rail-flyout {
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  box-shadow: var(--shadow-2);
 }
 .rail-flyout .rail-flyout__inner {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--inverse-surface);
-  color: var(--inverse-ink);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: var(--shadow-2);
 }
 .rail-flyout .rail-flyout__kbd {
   display: inline-flex;

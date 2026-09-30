@@ -7,6 +7,7 @@
 // 团队在原地展开：一个团队只有四样东西（项目、成员、知识库、工作电脑），点哪样
 // 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
 // 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Team } from '@/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -18,6 +19,7 @@ import { awaitingCount } from '@/composables/useAwaitingCount'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
@@ -109,6 +111,28 @@ const pagesOf = (team: Team) =>
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
 const editing = ref<Team | null>(null)
+
+/** 管理员在一个团队那一行的 ⋯ 里能做的事。 */
+function teamActions(team: Team): MenuAction[] {
+  return [
+    ...(team.personal
+      ? []
+      : [
+          {
+            key: 'invite',
+            label: t('home.nav.inviteMembers'),
+            icon: 'mdi-account-plus-outline',
+            to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
+          },
+        ]),
+    {
+      key: 'edit',
+      label: t('work.teamProfile.edit'),
+      icon: 'mdi-pencil-outline',
+      onSelect: () => (editing.value = team),
+    },
+  ]
+}
 const editOpen = computed({
   get: () => editing.value !== null,
   set: (value: boolean) => {
@@ -160,7 +184,7 @@ const joinOpen = ref(false)
         </template>
         <v-list-item-title class="home-nav__name">{{ team.name }}</v-list-item-title>
         <template #append>
-          <v-menu v-if="isAdmin(team)" location="bottom end">
+          <AdaptiveMenu v-if="isAdmin(team)" :actions="teamActions(team)" :title="team.name">
             <template #activator="{ props }">
               <v-btn
                 v-bind="props"
@@ -172,15 +196,7 @@ const joinOpen = ref(false)
                 @click.stop
               />
             </template>
-            <v-list density="compact">
-              <v-list-item
-                v-if="!team.personal"
-                :to="{ name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } }"
-                :title="t('home.nav.inviteMembers')"
-              />
-              <v-list-item :title="t('work.teamProfile.edit')" @click="editing = team" />
-            </v-list>
-          </v-menu>
+          </AdaptiveMenu>
         </template>
       </v-list-item>
       <template v-if="isOpen(team)">

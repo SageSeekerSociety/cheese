@@ -3,7 +3,7 @@
        一遍的时候，手机那份就漏掉了一项。
        四段：我是谁 / 我的东西 / 我的偏好 / 退出。「了解知是」讲的是产品而不是我，
        住在「帮助与反馈」菜单里。 -->
-  <v-card class="user-menu-card pa-0" rounded="lg" width="280">
+  <v-card class="pa-0" width="280">
     <div class="user-menu-head">
       <v-avatar
         size="40"
@@ -30,7 +30,7 @@
 
     <v-divider />
 
-    <v-list class="menu-list" nav density="compact" bg-color="transparent">
+    <v-list>
       <v-list-item :to="{ name: 'UserPage', params: { handle: menu.currentUser.value?.username } }">
         <v-list-item-title>{{ t('navigation.userMenu.profile') }}</v-list-item-title>
       </v-list-item>
@@ -54,7 +54,7 @@
 
     <v-divider />
 
-    <v-list class="menu-list" nav density="compact" bg-color="transparent">
+    <v-list>
       <v-list-item class="user-menu-logout" @click="menu.onLogout">
         <v-list-item-title>{{ t('navigation.userMenu.logout') }}</v-list-item-title>
       </v-list-item>
@@ -73,13 +73,6 @@ defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
 </script>
 
 <style scoped>
-/* 菜单浮在页面之上，所以它（而不是卡片）可以有投影。 */
-.user-menu-card {
-  border: 1px solid var(--line);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-}
-
 .user-menu-head {
   display: flex;
   gap: 12px;
@@ -123,7 +116,7 @@ defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
 }
 
 /* 偏好行（ThemeToggle / LanguagePreference）：左边是名字，右边是分段控件，高度
-   和列表项（style.css 的 .menu-list）一样是 36px。 */
+   和菜单里的列表项（style.css 的浮层规则）一样是 36px。 */
 .user-menu-prefs :deep(.pref-row) {
   display: flex;
   gap: 12px;

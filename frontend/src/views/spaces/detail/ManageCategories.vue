@@ -47,40 +47,11 @@
             @click="openEditDialog(category)"
           ></v-btn>
 
-          <v-menu location="bottom end">
+          <AdaptiveMenu :actions="categoryActions(category)" :title="category.name">
             <template #activator="{ props }">
               <v-btn icon="mdi-dots-horizontal" variant="text" size="small" v-bind="props"></v-btn>
             </template>
-            <v-list density="compact">
-              <v-list-item v-if="!category.archivedAt" @click="teachingCategory = category">
-                <template #prepend>
-                  <v-icon>mdi-school-outline</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.teaching.menu') }}</v-list-item-title>
-              </v-list-item>
-
-              <v-list-item v-if="category.archivedAt" @click="unarchiveCategory(category.id)">
-                <template #prepend>
-                  <v-icon>mdi-archive-arrow-up-outline</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.unarchiveCategory') }}</v-list-item-title>
-              </v-list-item>
-
-              <v-list-item v-else @click="archiveCategory(category.id)">
-                <template #prepend>
-                  <v-icon>mdi-archive-arrow-down-outline</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.archiveCategory') }}</v-list-item-title>
-              </v-list-item>
-
-              <v-list-item @click="deleteCategory(category.id)">
-                <template #prepend>
-                  <v-icon color="error">mdi-delete-outline</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.deleteCategory') }}</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
+          </AdaptiveMenu>
         </template>
       </v-list-item>
     </v-list>
@@ -141,6 +112,8 @@
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
+
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -154,6 +127,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
 
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -170,6 +144,42 @@ const dialogOpen = ref(false)
 const editingCategory = ref<SpaceCategory | null>(null)
 /** 正在编辑「给芝士的指导」的那个分类。 */
 const teachingCategory = ref<SpaceCategory | null>(null)
+
+/** 一个分类那一行的 ⋯：归档了的只剩「恢复」和「删除」。 */
+function categoryActions(category: SpaceCategory): MenuAction[] {
+  return [
+    ...(category.archivedAt
+      ? [
+          {
+            key: 'unarchive',
+            label: t('spaces.detail.manageCategories.unarchiveCategory'),
+            icon: 'mdi-archive-arrow-up-outline',
+            onSelect: () => void unarchiveCategory(category.id),
+          },
+        ]
+      : [
+          {
+            key: 'teaching',
+            label: t('spaces.detail.manageCategories.teaching.menu'),
+            icon: 'mdi-school-outline',
+            onSelect: () => (teachingCategory.value = category),
+          },
+          {
+            key: 'archive',
+            label: t('spaces.detail.manageCategories.archiveCategory'),
+            icon: 'mdi-archive-arrow-down-outline',
+            onSelect: () => void archiveCategory(category.id),
+          },
+        ]),
+    {
+      key: 'delete',
+      label: t('spaces.detail.manageCategories.deleteCategory'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => void deleteCategory(category.id),
+    },
+  ]
+}
 
 // 表单校验
 const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
