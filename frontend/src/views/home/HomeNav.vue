@@ -263,7 +263,13 @@ const joinOpen = ref(false)
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  width: 44px;
+  /* 箭头 16 + 6 + 头像 22 + 6：团队行最宽，这一格按它定，别的行只是左边空着。 */
+  width: 50px;
+}
+/* Vuetify 在图标后面的 spacer 留 8px、头像后面留 0，于是图标行的图标比团队头像往左
+   错出 8px。统一成 0，前缀里只剩上面那个 6px 的间隔。 */
+.home-nav :deep(.v-list-item__prepend > .v-list-item__spacer) {
+  width: 0 !important;
 }
 /* 图标占头像那一格（22px 宽）居中，名字才和团队名、空间名从同一条竖线开始。 */
 .home-nav :deep(.v-list-item__prepend > .v-icon) {
@@ -271,6 +277,8 @@ const joinOpen = ref(false)
 }
 .home-nav__mark {
   flex: none;
+  /* 团队头像、自己名下的头像和空间首字一个形状：圆角方块。 */
+  border-radius: var(--radius-md) !important;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
@@ -303,7 +311,7 @@ const joinOpen = ref(false)
   font-size: 14px;
 }
 .home-nav__leaf {
-  padding-inline-start: 62px !important;
+  padding-inline-start: 58px !important;
 }
 .home-nav__leaf :deep(.v-list-item-title) {
   color: var(--muted);
