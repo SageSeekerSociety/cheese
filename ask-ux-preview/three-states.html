@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>提问三态对照 · 现状与最小改动</title>
+<style>
+  /* 配色与圆角取自产品现有设计变量（frontend/src/style.css），预览与产品一致。 */
+  :root{
+    --ink:#191a1c; --muted:#5a5e66; --faint:#747a82;
+    --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+    --canvas:#f7f8fa; --surface:#ffffff;
+    --radius-sm:6px; --radius-md:8px;
+    --accent:#c2570b;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:28px 32px 40px;
+    background:var(--canvas); color:var(--ink);
+    font-family:"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px; line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  h1{font-size:21px; margin:0 0 6px; letter-spacing:.2px}
+  .lede{color:var(--muted); margin:0 0 22px; max-width:72ch}
+  .band-label{
+    display:flex; align-items:baseline; gap:10px;
+    margin:26px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--line-2);
+  }
+  .band-label h2{font-size:16px; margin:0}
+  .band-label span{color:var(--faint); font-size:12.5px}
+
+  .row{display:flex; gap:16px; align-items:stretch}
+  .panel{
+    flex:1; background:var(--surface); border:1px solid var(--line-2);
+    border-radius:var(--radius-md); padding:14px 16px 16px;
+  }
+  .panel__state{
+    display:inline-block; font-size:11.5px; color:var(--muted);
+    background:var(--fill); border-radius:var(--radius-sm);
+    padding:2px 9px; margin-bottom:10px;
+  }
+  .panel__state--gone{background:#fdecea; color:#a3402c}
+
+  /* —— 聊天消息本体，形状照产品 RoomMessage —— */
+  .msg{display:flex; gap:10px}
+  .avatar{
+    width:30px;height:30px;border-radius:50%;flex:none;
+    background:var(--fill-2); color:var(--muted);
+    display:flex;align-items:center;justify-content:center;font-size:13px;
+  }
+  .msg__body{flex:1; min-width:0}
+  .msg__head{display:flex;align-items:baseline;gap:8px}
+  .msg__name{font-size:13px;font-weight:600}
+  .msg__time{font-size:11.5px;color:var(--faint)}
+  .msg__text{font-size:14px;margin:2px 0 0}
+
+  .ask-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .ask-option{
+    border:1px solid var(--line-2); background:var(--surface);
+    border-radius:var(--radius-md); padding:5px 14px; font-size:13px;
+    color:var(--ink); cursor:pointer;
+  }
+  .ask-option:hover{border-color:var(--faint); background:var(--fill)}
+  .ask-option--picked{border-color:var(--muted); background:var(--line-2)}
+  .ask-option--dim{opacity:.45}
+  .ask-answered{
+    display:inline-flex;align-items:center;gap:5px;
+    font-size:13px;color:var(--muted);margin-top:6px;
+  }
+  .tick{color:#2e7d4f}
+
+  .panel__note{
+    margin:12px 0 0; padding-top:10px; border-top:1px dashed var(--line-2);
+    font-size:12.5px; color:var(--muted);
+  }
+  .panel__note b{color:var(--ink); font-weight:600}
+
+  /* —— 建议形态里新增的两样 —— */
+  .ask-free{
+    margin-top:8px; display:flex; gap:6px;
+  }
+  .ask-free input{
+    flex:1; border:1px solid var(--line-2); border-radius:var(--radius-md);
+    padding:5px 10px; font-size:13px; color:var(--ink); background:var(--surface);
+  }
+  .ask-free input::placeholder{color:var(--faint)}
+  .ask-submit{
+    margin-top:8px; display:flex; gap:8px; align-items:center;
+  }
+  .btn-primary{
+    border:1px solid var(--accent); background:var(--accent); color:#fff;
+    border-radius:var(--radius-md); padding:5px 16px; font-size:13px; cursor:pointer;
+  }
+  .btn-quiet{
+    border:1px solid var(--line-2); background:var(--surface); color:var(--muted);
+    border-radius:var(--radius-md); padding:5px 12px; font-size:13px; cursor:pointer;
+  }
+  .hint{font-size:12px;color:var(--faint)}
+
+  .legend{
+    margin-top:26px; background:var(--surface); border:1px solid var(--line-2);
+    border-radius:var(--radius-md); padding:14px 18px;
+  }
+  .legend h3{font-size:14px;margin:0 0 8px}
+  .legend ul{margin:0;padding-left:18px;color:var(--muted)}
+  .legend li{margin:3px 0}
+  .sample{
+    margin-top:16px;font-size:12px;color:var(--faint);
+    border-left:3px solid var(--line-2); padding-left:10px;
+  }
+  /* 截图用：#now 只留现状那条带，#next 只留建议那条带。
+     PDF 横版页放不下整张，所以切成两条横图各占一页。 */
+  body[data-band="now"] .band-next,
+  body[data-band="now"] .legend,
+  body[data-band="now"] .band-intro{display:none}
+  body[data-band="next"] .band-now,
+  body[data-band="next"] .legend,
+  body[data-band="next"] .band-intro{display:none}
+</style>
+</head>
+<body>
+
+<h1 class="band-intro">提问三态对照：现状 与 最小改动</h1>
+<p class="lede band-intro">
+  同一个问题在界面上的三个时刻：<b>刚问出来</b>、<b>你正在回答</b>、<b>已经回答</b>。
+  上排是现在的产品样子，下排是建议的最小改动。方框里用的是示例数据，不是线上真实内容。
+</p>
+
+<!-- ══════════ 现状 ══════════ -->
+<div class="band-now">
+<div class="band-label">
+  <h2>现在的产品样子</h2>
+  <span>点一下按钮就发出去，中间没有停顿；没有「写别的」和「先不答」</span>
+</div>
+
+<div class="row">
+
+  <!-- 现状 · 一 -->
+  <div class="panel">
+    <div class="panel__state">① 刚问出来</div>
+    <div class="msg">
+      <div class="avatar">芝</div>
+      <div class="msg__body">
+        <div class="msg__head">
+          <span class="msg__name">芝士</span><span class="msg__time">14:02</span>
+        </div>
+        <div class="msg__text">数据用哪一份？</div>
+        <div class="ask-row">
+          <button class="ask-option">课程发的那份 sales.csv</button>
+          <button class="ask-option">项目里的演示数据</button>
+        </div>
+      </div>
+    </div>
+    <p class="panel__note">
+      问题就是聊天里的一条消息，按钮挂在下面。<b>没有标题，也没有任何标记说明「这题在等你答」</b>，
+      它看起来和一句普通说话一样。
+    </p>
+  </div>
+
+  <!-- 现状 · 二 -->
+  <div class="panel">
+    <div class="panel__state">② 点下去的那一瞬间</div>
+    <div class="msg">
+      <div class="avatar">芝</div>
+      <div class="msg__body">
+        <div class="msg__head">
+          <span class="msg__name">芝士</span><span class="msg__time">14:02</span>
+        </div>
+        <div class="msg__text">数据用哪一份？</div>
+        <div class="ask-row">
+          <button class="ask-option ask-option--picked">课程发的那份 sales.csv</button>
+          <button class="ask-option ask-option--dim">项目里的演示数据</button>
+        </div>
+      </div>
+    </div>
+    <p class="panel__note">
+      鼠标点下的那一刻答案就已经发出去了。<b>没有「选中了，确认一下」这一步</b>，
+      手一滑点错也没法收回。这一格与其说是「回答中」，不如说是「已经交了、正在送达」。
+    </p>
+  </div>
+
+  <!-- 现状 · 三 -->
+  <div class="panel">
+    <div class="panel__state">③ 已经回答</div>
+    <div class="msg">
+      <div class="avatar">芝</div>
+      <div class="msg__body">
+        <div class="msg__head">
+          <span class="msg__name">芝士</span><span class="msg__time">14:02</span>
+        </div>
+        <div class="msg__text">数据用哪一份？</div>
+        <div class="ask-answered">
+          <span class="tick">✔</span> 王长鑫 选了「课程发的那份 sales.csv」
+        </div>
+      </div>
+    </div>
+    <p class="panel__note">
+      回答之后会留下一行「谁选了什么」，所有人都看得见，这一点是好的。
+      但<b>不能改答案</b>；而且另一处（首页「待我处理」）答完是整条直接消失，什么都不留。
+    </p>
+  </div>
+
+</div>
+</div>
+
+<!-- ══════════ 建议 ══════════ -->
+<div class="band-next">
+<div class="band-label">
+  <h2>建议的最小改动</h2>
+  <span>多两样东西：一个「写别的」的输入框，和一个「提交」按钮</span>
+</div>
+
+<div class="row">
+
+  <!-- 建议 · 一 -->
+  <div class="panel">
+    <div class="panel__state">① 刚问出来</div>
+    <div class="msg">
+      <div class="avatar">芝</div>
+      <div class="msg__body">
+        <div class="msg__head">
+          <span class="msg__name">芝士</span><span class="msg__time">14:02</span>
+        </div>
+        <div class="msg__text">数据用哪一份？</div>
+        <div class="ask-row">
+          <button class="ask-option">课程发的那份 sales.csv</button>
+          <button class="ask-option">项目里的演示数据</button>
+        </div>
+        <div class="ask-free">
+          <input placeholder="或者写一句别的…">
+        </div>
+        <div class="ask-submit">
+          <button class="btn-primary">提交回答</button>
+          <button class="btn-quiet">先不答</button>
+          <span class="hint">等你回答</span>
+        </div>
+      </div>
+    </div>
+    <p class="panel__note">
+      选项照旧，下面多一个<b>「或者写一句别的」</b>的输入框，两个选项都不合适时不用改道去聊天框打字。
+      右边一行小字<b>「等你回答」</b>，一眼看得出这不是一条普通消息。
+    </p>
+  </div>
+
+  <!-- 建议 · 二 -->
+  <div class="panel">
+    <div class="panel__state">② 选好了，还没交</div>
+    <div class="msg">
+      <div class="avatar">芝</div>
+      <div class="msg__body">
+        <div class="msg__head">
+          <span class="msg__name">芝士</span><span class="msg__time">14:02</span>
+        </div>
+        <div class="msg__text">数据用哪一份？</div>
+        <div class="ask-row">
+          <button class="ask-option ask-option--picked">课程发的那份 sales.csv</button>
+          <button class="ask-option">项目里的演示数据</button>
+        </div>
+        <div class="ask-free">
+          <input placeholder="或者写一句别的…">
+        </div>
+        <div class="ask-submit">
+          <button class="btn-primary">提交回答</button>
+          <button class="btn-quiet">先不答</button>
+          <span class="hint">已选，按「提交回答」发出</span>
+        </div>
+      </div>
+    </div>
+    <p class="panel__note">
+      点选项只是<b>选中</b>，可以反悔、可以换，也还可以改成写一句别的。
+      按下「提交回答」才发出去。手滑点错不再是不可逆的事。
+    </p>
+  </div>
+
+  <!-- 建议 · 三 -->
+  <div class="panel">
+    <div class="panel__state">③ 已经回答</div>
+    <div class="msg">
+      <div class="avatar">芝</div>
+      <div class="msg__body">
+        <div class="msg__head">
+          <span class="msg__name">芝士</span><span class="msg__time">14:02</span>
+        </div>
+        <div class="msg__text">数据用哪一份？</div>
+        <div class="ask-answered">
+          <span class="tick">✔</span> 王长鑫 选了「课程发的那份 sales.csv」
+        </div>
+        <div class="ask-submit">
+          <span class="hint">已交给芝士，它下一轮会接着往下做 · <b style="color:var(--muted)">改答案</b></span>
+        </div>
+      </div>
+    </div>
+    <p class="panel__note">
+      留下「谁选了什么」不变，但下面多一句<b>「已交给芝士，它下一轮会接着往下做」</b>，
+      让你知道对方收到了。另给一个<b>「改答案」</b>，答错能自己救回来，不用打字解释。
+      「待我处理」里答完也改成留这一行，而不是整条消失。
+    </p>
+  </div>
+
+</div>
+</div>
+
+<div class="legend">
+  <h3>三样东西具体变了什么</h3>
+  <ul>
+    <li><b>多一个「写别的」输入框</b> —— 选项不合适时能直接说自己的话，不用放弃按钮改去聊天框。</li>
+    <li><b>多一个「提交回答」按钮</b> —— 选中和提交分成两步，点错能反悔。</li>
+    <li><b>多一个「先不答」</b> —— 暂时答不了可以放着，问题标成「等你回答」而不是永远挂着没人知道。</li>
+  </ul>
+  <p class="sample">
+    示例数据说明：以上消息、选项、人名均为编造的演示内容，用于说明界面形态，不是线上真实记录。
+    界面画法（按钮、颜色、圆角、字级）取自产品现有样式，因此改动前后是同一套视觉。
+  </p>
+</div>
+
+<script>
+  // #now / #next 只留一条带，给 PDF 切横图用；不带 hash 就是完整的对照页。
+  var b = location.hash.replace('#', '')
+  if (b === 'now' || b === 'next') document.body.dataset.band = b
+</script>
+</body>
+</html>
