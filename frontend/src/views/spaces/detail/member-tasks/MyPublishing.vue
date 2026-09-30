@@ -144,6 +144,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import MemberOverviewCard from './components/MemberOverviewCard.vue'
 import MyPublishedTaskCard from './components/MyPublishedTaskCard.vue'
 import { formatCount } from './helpers'
@@ -163,8 +165,8 @@ const route = useRoute()
 const router = useRouter()
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpaceId, currentSpace, categories } = storeToRefs(spaceStore)
-const { fetchCategories } = spaceStore
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const filters = computed(() => normalizePublishingQuery(route.query as Record<string, unknown>))
@@ -313,7 +315,7 @@ watch(
   currentSpaceId,
   (value) => {
     if (value) {
-      fetchCategories().catch(() => undefined)
+      spaceData.fetchCategories().catch(() => undefined)
     }
   },
   { immediate: true }
@@ -336,7 +338,7 @@ watch(
 )
 
 onMounted(() => {
-  fetchCategories().catch(() => undefined)
+  spaceData.fetchCategories().catch(() => undefined)
 })
 </script>
 

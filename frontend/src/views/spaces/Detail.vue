@@ -80,6 +80,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useSpaceData } from '@/composables/useSpaceData'
 
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { AvatarsApi } from '@/network/api/avatars'
@@ -94,6 +95,7 @@ const { t } = useI18n()
 const { setDynamicTitle } = usePageTitle()
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { closeEditProfile } = spaceStore
 const {
   currentSpace: space,
@@ -125,8 +127,8 @@ const closeUpdating = () => {
 }
 
 const getSpace = async (spaceId: number) => {
-  await spaceStore.fetchSpace(spaceId)
-  spaceStore.fetchCategories()
+  await spaceData.fetchSpace(spaceId)
+  spaceData.fetchCategories()
   resetForm({
     values: {
       name: space.value?.name,

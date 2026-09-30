@@ -27,6 +27,8 @@ import type { SpaceAnalyticsQueryState } from './utils'
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import AnalyticsFilterBar from './components/AnalyticsFilterBar.vue'
 import AnalyticsHero from './components/AnalyticsHero.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
@@ -35,8 +37,8 @@ import { formatUtcDate, inferAnalyticsGroupBy } from './utils'
 import { useSpaceStore } from '@/stores/space'
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { categories, currentSpaceId } = storeToRefs(spaceStore)
-const { fetchCategories } = spaceStore
 
 const { filters, resetFilters, replaceFilters } = useSpaceAnalyticsFilters()
 
@@ -91,7 +93,7 @@ watch(
   currentSpaceId,
   (value) => {
     if (value) {
-      fetchCategories().catch(() => undefined)
+      spaceData.fetchCategories().catch(() => undefined)
     }
   },
   { immediate: true }
