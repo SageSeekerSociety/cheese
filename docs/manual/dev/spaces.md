@@ -5,6 +5,7 @@ summary: 题目版、成员与审批、机构协议落在哪一层，以及管�
 covers:
   - backend/app/domain/space/
   - backend/app/api/routes/spaces.py
+  - backend/app/api/routes/space_announcements.py
 ---
 
 # 空间与题目 {#spaces}
@@ -26,7 +27,7 @@ covers:
 | `review_status` / `review_reason` / `reviewed_by` / `reviewed_at` | 审批（见下） |
 | `enable_rank` | 这门课开不开排名 |
 | `visible_task_limit` | 对成员露出前几道题（`None` = 不限） |
-| `announcements` / `task_templates` | 声明式数据，各自一组 |
+| `task_templates` | 声明式数据，一组发题模板 |
 
 **机构协议（#370）落在 `SpaceCategory` 上**，不在 `Space` 上：`resource_pack` / `conditions` / `default_role` 和壳的 `shell` 在分组上声明一次，下面每道题目继承，题目可以整键覆盖（`Task.protocol_override`）。理由是「一门课为『作业』整体说一次条件，不是每道题说一次」。它们只能通过 `app.domain.task.protocol.resolve`（壳走 `app.domain.shell.service`）读，**永远不要直接读列**。
 
@@ -40,6 +41,14 @@ covers:
 `SpaceMember` 上有一条必须留意的索引：`uq_space_member_active` 是 `(space_id, user_id)` 在 `deleted_at IS NULL` 上的部分唯一索引。没有它，两个请求同时读到「还不是成员」就都会写，之后每个 `get_member` 都抛 `MultipleResultsFound`——一次文档里写着「重复点等于没点」的操作变成一个 500。部分索引的另一个用处：软删掉的行是「移除」的记录，**重新加入是复活它而不是加第二行**，那些行在索引之外，所以移除不会挡住随后的加入。另有一条非部分索引 `ix_space_member_space_user` 服务「连删除行一起按对读」的那个读法（那正是它存在的理由）。
 
 `SpaceInviteCode` 是入板用的码：一块板子建出来时**就带着一个**，因为一块谁都进不去的板子没什么用。它和平台注册用的 `invite_code` **故意不是同一张表**——形状像，别的一点关系没有。码有 `max_uses` / `use_count` / `expires_at` / `created_by` / `note`（「十月这批同学」这种，制造者自己的话），吊销是软删，所以码指过的那一行之后仍然读得出来。`SpaceMember.invite_code_id` 记这个人是从哪个码进来的，值为 `NULL` 时**有两种情况而这一列分不出**：这列存在之前写下的行（迁移故意不回填——给老成员编一个码就是发明历史），以及所有者直接加的人（真相是「没有码」）。两者都读作「未知」，而「未知」和「没有码」不是同一句话。
+
+## 公告 {#announcements}
+
+公告一条一行，存在 `SpaceAnnouncement`（`space_announcement` 表）：作者、标题、富文本正文、`pinned`、可空的 `expires_at`。路由在 `api/routes/space_announcements.py`，逻辑在 `domain/space/announcement_service.py`。
+
+- **读是成员，写是管理员。** 列表和空间本身同一道门（`_ensure_space_visible`），发布、修改、删除走 `is_space_admin`。每条有自己的地址，改一条只写那一条。
+- **到没到期由服务端答。** 列表回 `current`（置顶在前，再按新到旧）和 `expired` 两组；题目列表顶上那一栏只读 `current` 里置顶的。`updated_at` 只在标题、正文、到期日变化时挪动，置顶不算「已编辑」。
+- **发布时通知一次。** 收件人是发布那一刻空间里除作者以外的每个人（成员加管理员），经投递账本发出，类型 `SPACE_ANNOUNCEMENT`，只进站内（见[通知与待办](/dev/notifications#ledger)）。修改不再通知，只把已发出的标题和摘要改成新的（`ledger.amend`）；删除连同它发出的通知一起撤回（`ledger.retract`）。
 
 ## 审批 {#review}
 

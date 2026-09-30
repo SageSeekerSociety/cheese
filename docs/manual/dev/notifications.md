@@ -39,7 +39,11 @@ covers:
 - **入库时间是「现在」，不是事件发生的时刻**。收件箱按 `created_at DESC` 翻页，落一个旧时间戳会把这一条插进二十分钟前的位置——未读数加一，人打开收件箱却看不到新东西。事件发生的时刻记在账本的 `deliveries.event_at` 上。
 - **渠道说没收到，就不算送到**。`NotificationEventHandler.dispatch` 的返回值是「每个渠道都收下了」，而账本靠这个返回值决定回不回写 `sent_at`；吞掉一个渠道的异常还报成功，账本就会记下一笔根本没发出去的投递，而那正是补发要救的那一档。
 
-`build_notification_event_handler`（`publisher.py`）装配两个渠道：`InAppNotificationHandler` 和 `ChannelIntentHandler`。前者写站内行，**包在一个 savepoint 里**——只 try/except 不够：一个写库的 handler 可能在 flush 中途失败，那样整个共享 session 的事务在 Postgres 里已经废了，即使 Python 层抓住了异常，调用方之后的 commit 也会无声地坏掉；savepoint 把这个失败圈在它自己的写入里。后者（`outbox.py` 的 `ChannelIntentHandler`）只**记意图**：把每一笔展开成 `email` 行、以及（`push_enabled` 且类型在 `PUSHABLE` 里时）一行 `push`，带标题正文和 project/topic id，`on_conflict_do_nothing` 撞唯一约束 `uq_delivery_channel`。真正打网络是别的循环的事。
+`build_notification_event_handler`（`publisher.py`）装配两个渠道：`InAppNotificationHandler` 和 `ChannelIntentHandler`。前者写站内行，**包在一个 savepoint 里**——只 try/except 不够：一个写库的 handler 可能在 flush 中途失败，那样整个共享 session 的事务在 Postgres 里已经废了，即使 Python 层抓住了异常，调用方之后的 commit 也会无声地坏掉；savepoint 把这个失败圈在它自己的写入里。后者（`outbox.py` 的 `ChannelIntentHandler`）只**记意图**：把每一笔展开成 `email` 行（类型在 `MAILBOX_ONLY` 里的除外）、以及（`push_enabled` 且类型在 `PUSHABLE` 里时）一行 `push`，带标题正文和 project/topic id，`on_conflict_do_nothing` 撞唯一约束 `uq_delivery_channel`。真正打网络是别的循环的事。
+
+`MAILBOX_ONLY` 目前只有 `SPACE_ANNOUNCEMENT`：一条空间公告同时发给全空间，按人发邮件就是一个班的信箱各收一封，它要的只是人回到平台时在「动态」里看得见。它也不在 `PUSHABLE` 里，所以只落站内那一行。
+
+账本另有两个事后的动作，都按事件 id 找回那件事发出去的每一笔（`deliveries.event_id` 上有索引）：`amend` 把已发出的收件箱行和账本行的 `payload` 换成新的说法，不改已读未读，也不再发一遍；`retract` 删掉收件箱行、外发意图和账本行；账本行留着的话，补发会把收件箱那一行写回来。公告的修改和删除走的就是这两个。
 
 ## 外发渠道：租约、重试、死信 {#outbox}
 
