@@ -1,0 +1,186 @@
+EEEEEE                                                                   [100%]
+==================================== ERRORS ====================================
+__ ERROR at setup of test_overlapping_answers_keep_one_winner[same_operation] __
+tests/conftest.py:1742: in _pg_schema
+    _create_and_migrate(_INTG_DB_NAME, settings.database_url)
+tests/conftest.py:1524: in _create_and_migrate
+    _migrate_fresh_db(db_name, db_url)
+tests/conftest.py:1471: in _migrate_fresh_db
+    asyncio.run(_admin_recreate_db(db_name))
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1234: in _admin_recreate_db
+    conn = await asyncpg.connect(dsn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: in __connect_addr
+    await connected
+E   asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+_ ERROR at teardown of test_overlapping_answers_keep_one_winner[same_operation] _
+tests/conftest.py:1692: in pytest_runtest_teardown
+    leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1637: in _terminate_open_transactions
+    conn = await asyncpg.connect(dsn, timeout=10)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: in __connect_addr
+    await connected
+E   asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+_ ERROR at setup of test_overlapping_answers_keep_one_winner[different_operations] _
+tests/conftest.py:1742: in _pg_schema
+    _create_and_migrate(_INTG_DB_NAME, settings.database_url)
+tests/conftest.py:1524: in _create_and_migrate
+    _migrate_fresh_db(db_name, db_url)
+tests/conftest.py:1471: in _migrate_fresh_db
+    asyncio.run(_admin_recreate_db(db_name))
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1234: in _admin_recreate_db
+    conn = await asyncpg.connect(dsn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: in __connect_addr
+    await connected
+E   asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+_ ERROR at teardown of test_overlapping_answers_keep_one_winner[different_operations] _
+tests/conftest.py:1692: in pytest_runtest_teardown
+    leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1637: in _terminate_open_transactions
+    conn = await asyncpg.connect(dsn, timeout=10)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: in __connect_addr
+    await connected
+E   asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+___ ERROR at setup of test_overlapping_answers_keep_one_winner[corrections] ____
+tests/conftest.py:1742: in _pg_schema
+    _create_and_migrate(_INTG_DB_NAME, settings.database_url)
+tests/conftest.py:1524: in _create_and_migrate
+    _migrate_fresh_db(db_name, db_url)
+tests/conftest.py:1471: in _migrate_fresh_db
+    asyncio.run(_admin_recreate_db(db_name))
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1234: in _admin_recreate_db
+    conn = await asyncpg.connect(dsn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: in __connect_addr
+    await connected
+E   asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+__ ERROR at teardown of test_overlapping_answers_keep_one_winner[corrections] __
+tests/conftest.py:1692: in pytest_runtest_teardown
+    leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1637: in _terminate_open_transactions
+    conn = await asyncpg.connect(dsn, timeout=10)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: in __connect_addr
+    await connected
+E   asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+=============================== warnings summary ===============================
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/_pytest/runner.py:250: PluggyTeardownRaisedWarning: A plugin raised an exception during an old-style hookwrapper teardown.
+  Plugin: /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/tests/conftest.py, Hook: pytest_runtest_teardown
+  InvalidAuthorizationSpecificationError: role "postgres" does not exist
+  For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning
+    lambda: runtest_hook(item=item, **kwds),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+ERROR tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+ERROR tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+ERROR tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+ERROR tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+ERROR tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+3 warnings, 6 errors in 1.47s
