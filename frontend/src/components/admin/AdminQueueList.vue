@@ -98,7 +98,7 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="qlist">
+  <div class="qlist admin-card">
     <div
       ref="gridEl"
       class="qlist__grid"
@@ -179,16 +179,22 @@ function onKeydown(e: KeyboardEvent) {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+  /* 卡片的形状（白底、一道 `--line`、`--radius-lg`）由 `.admin-card` 给，和看板、
+     成员、模型页的表格卡片同一份定义。 */
+  margin: 16px 24px 24px;
   /* `overflow: auto` 而不是 `hidden`：窄屏（< 约 1100）时整条队列横着滚，而不是把
      右边的按钮裁掉。顺带把行 hover 的底色裁在圆角里。队列没有 sticky 表头，所以
      不像 `AdminGrid` 那样必须避开 `overflow`。 */
   overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-lg);
-  border-bottom-left-radius: var(--radius-lg);
+}
+
+/* 内缩 16/24：数字和 `.admin-page__body` 的 padding 是同一套。窄屏两侧收到 16px
+   （和页头 / 后台壳同一条线）。 */
+@media (max-width: 700px) {
+  .qlist {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
 }
 
 .qlist__head {

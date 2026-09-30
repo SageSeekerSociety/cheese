@@ -892,8 +892,8 @@ button:not(.v-btn) {
   box-sizing: border-box;
   width: calc(100% - 48px);
   max-width: 720px;
-  margin: 16px 24px 24px;
   padding: 20px 24px;
+  margin: 16px 24px 24px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -907,9 +907,9 @@ button:not(.v-btn) {
 
   .admin-form-card {
     width: calc(100% - 32px);
+    padding: 16px;
     margin-right: 16px;
     margin-left: 16px;
-    padding: 16px;
   }
 }
 
