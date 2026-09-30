@@ -4,6 +4,7 @@
     python3 .claude/scripts/scene-ratchet.py               check (exit 1 on new debt)
     python3 .claude/scripts/scene-ratchet.py --update      the baseline may only grow
     python3 .claude/scripts/scene-ratchet.py --list        every scene, its grade, its reasons
+    python3 .claude/scripts/scene-ratchet.py --json        one JSON record on stdout, same exit code
     python3 .claude/scripts/scene-ratchet.py --self-test   prove it catches what it claims
 
 WHY A GATE AND NOT A COUNT. `docs/manual/dev/scenes.md` says which scenes can be
@@ -86,6 +87,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from ratchet_report import as_json, cannot_judge, emit, verdict as json_verdict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -516,6 +519,30 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
     return "\n".join(lines)
 
 
+def debt_details(
+    grades: dict[str, Any], views: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
+    """One row per scene that is not standalone-ready, for the JSON record.
+
+    The scenes that are fine are not listed: the record is expanded to find out
+    what to work on, and 128 rows of "grade A" would bury the ten that are not.
+
+    A container page is left out too: it is judged as the container of a view
+    that is standalone-ready, so it is not one of the scenes costing a slot —
+    listing it would put a row in the record that the count above does not have.
+    """
+    views = views or {}
+    return [
+        {
+            "file": key_of(scene),
+            "grade": grades[scene].letter,
+            "reasons": list(grades[scene].reasons),
+        }
+        for scene in sorted(grades)
+        if not grades[scene].standalone and container_view(scene, grades, views) is None
+    ]
+
+
 def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
     """Judge the tree at `root` against `baseline_path` and print the answer."""
     try:
@@ -525,7 +552,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
         baseline = read_baseline(baseline_path, create_if_missing=update)
     except Unjudgeable as exc:
         print(f"cannot judge: {exc}", file=sys.stderr)
-        return 2
+        cannot_judge("scene-ratchet", exc)
 
     catalog = catalog_entries(root)
 
@@ -548,6 +575,28 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
         return 0
 
     verdict = judge(baseline, grades, catalog, views)
+    if as_json():
+        # The unit here is a scene, and a scene costs at most one: `frozen` is
+        # 1 for an allowance the baseline carries and `actual` is 0 once the
+        # scene no longer needs it. A scene that got better without ever being
+        # frozen (a brand new standalone-ready one) is not a stale allowance and
+        # is left out — there is nothing on the books to clear.
+        emit(
+            json_verdict(
+                check_id="scene-ratchet",
+                ok=verdict.ok,
+                actual=len(verdict.debt) + len(verdict.regressions) + len(verdict.new_debt),
+                frozen=len(baseline.debt),
+                stale=[
+                    {"file": key, "frozen": 1, "actual": 0, "why": why}
+                    for key, why in verdict.improvements
+                    if key in baseline.ready or key in baseline.debt
+                ],
+                details=debt_details(grades, views),
+            )
+        )
+        return 0 if verdict.ok else 1
+
     if listing:
         for scene in sorted(grades):
             view = None if grades[scene].standalone else container_view(scene, grades, views)
@@ -997,6 +1046,11 @@ def main() -> int:
     parser.add_argument("--baseline", default=None, help=f"default: {DEFAULT_BASELINE}")
     parser.add_argument("--update", action="store_true", help="add ready scenes, drop paid debt")
     parser.add_argument("--list", action="store_true", help="print every scene with its grade")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print one JSON record instead of the report (the collector reads it)",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -1012,7 +1066,7 @@ def main() -> int:
         # import graph would grade everything standalone). Not a violation —
         # a 2, so a wrong root never looks like a pass.
         print(f"cannot judge: {exc}", file=sys.stderr)
-        return 2
+        cannot_judge("scene-ratchet", exc)
 
 
 if __name__ == "__main__":

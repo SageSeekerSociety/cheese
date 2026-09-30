@@ -4,6 +4,7 @@
 //
 //   node scripts/import-boundary-ratchet.mjs            check (exit 1 on any new violation)
 //   node scripts/import-boundary-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/import-boundary-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
 // The rule itself is declared in import-boundary-ratchet-core.mjs (as an eslint
 // rule object) and applied by eslint.boundary.config.mjs; the counting and the
@@ -21,6 +22,7 @@ import {
   parseEslintJson,
   tightenedBaseline,
 } from './import-boundary-ratchet-core.mjs'
+import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -35,6 +37,7 @@ function option(name, fallback) {
 }
 
 const update = process.argv.includes('--update')
+const ID = 'fe-boundary'
 // Overridable so the self-test can judge a planted file against a throwaway
 // baseline instead of editing the committed one.
 const baselinePath = resolve(ROOT, option('--baseline', 'import-boundary-baseline.json'))
@@ -65,7 +68,7 @@ const run = spawnSync(BIN, ['--config', CONFIG, '--format', 'json', '--no-color'
 if (run.error) {
   console.error(`could not run eslint: ${run.error.message}`)
   console.error('run `pnpm install --frozen-lockfile` first')
-  process.exit(2)
+  cannotJudge({ id: ID }, `could not run eslint: ${run.error.message}`)
 }
 
 const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
@@ -78,7 +81,7 @@ try {
   // a crash. Never a pass, and never a violation either.
   console.error(`eslint did not report a usable JSON result: ${error.message}`)
   console.error(output.trim() || '(no output)')
-  process.exit(2)
+  cannotJudge({ id: ID }, `eslint did not report a usable JSON result: ${error.message}`)
 }
 
 if (parsed.unjudged.length) {
@@ -87,13 +90,13 @@ if (parsed.unjudged.length) {
   // how a gate goes green over files it never parsed.
   console.error('eslint could not judge these files, so neither can this check:')
   for (const line of parsed.unjudged) console.error(`  ${line}`)
-  process.exit(2)
+  cannotJudge({ id: ID }, `eslint could not judge ${parsed.unjudged.length} file(s)`)
 }
 
 if (run.status === 2) {
   console.error('eslint exited 2 (configuration or internal error):')
   console.error(output.trim() || '(no output)')
-  process.exit(2)
+  cannotJudge({ id: ID }, 'eslint exited 2 (configuration or internal error)')
 }
 
 const current = parsed.counts
@@ -124,6 +127,19 @@ if (update) {
 }
 
 const result = compare(baseline, current)
+const scanned = (scan.length ? scan : ROOTS).join(', ')
+
+if (asJson) {
+  // Per-file counts, not the violations themselves: eslint's JSON does not
+  // carry a line number this check keeps, and a count per file is what the
+  // board groups by anyway.
+  const details = Object.entries(current)
+    .filter(([, count]) => count > 0)
+    .map(([file, count]) => ({ file, count }))
+  emit(verdict({ id: ID, result, details }))
+  process.exit(result.ok ? 0 : 1)
+}
+
 console.log(formatBoundaryReport(result))
-console.log(`scanned ${(scan.length ? scan : ROOTS).join(', ')} — ${currentTotal} violation(s)`)
+console.log(`scanned ${scanned} — ${currentTotal} violation(s)`)
 process.exit(result.ok ? 0 : 1)

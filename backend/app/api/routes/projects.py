@@ -1,14 +1,11 @@
 """Project routes."""
 
-import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -16,7 +13,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
-from app.api.place import project_reader, readable_room_titles
+from app.api.place import project_reader
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -29,22 +26,12 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute_configs import (
-    ProjectComputeConfigs,
-    project_configs,
-    validate_choice,
-)
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
 from app.domain.agent.liveness import task_liveness
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    COMPUTE_TIERS,
-    compute_selectable,
-)
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -59,16 +46,10 @@ from app.domain.agent_instance.services import (
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.documents.text import delivered_comparison
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
-from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
-from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
-from app.domain.policy import gate
-from app.domain.preview import office
-from app.domain.project import artifacts
 from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -85,11 +66,9 @@ from app.domain.project.repositories import (
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
-    ProjectDefaultModelUpdate,
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.repositories import TaskRepository
@@ -525,246 +504,6 @@ async def set_project_default_agent(
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
-@router.get("/{project_id}/artifacts")
-async def list_artifacts(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
-) -> dict:
-    """产物清单：这个项目交出去的东西，一项一行 (#1085 结论二、三)。
-
-    清单只读，而且没有配套的新建入口：它由交付长出来 —— 交出去一次合并的，落在项目
-    那个仓库那一项上（平台自己认）；交出去一份文件或一个地址的，递卡时点名的名字不
-    在清单上就当场多一项。所以这里没有 POST，不是还没做。"""
-    await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    rows = await artifacts.list_for_project(db, project_id)
-    items = [
-        {
-            "id": str(a.id),
-            "name": a.name,
-            "about": a.about,
-            "version": a.version,
-            "delivered_at": a.delivered_at.isoformat() if a.delivered_at else None,
-        }
-        for a in rows
-    ]
-    return ok(page(items, len(items)))
-
-
-@router.get("/{project_id}/artifacts/{artifact_id}")
-async def read_artifact(
-    project_id: uuid.UUID,
-    artifact_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    topic: str = "",
-) -> dict:
-    """清单上这一项自己的那一页 (#1085 结论二)：现在是第几版，以及交付过的每一版。
-
-    一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
-    纳，它后面几版的号自己往前挪。"""
-    await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
-    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    listed = await artifacts.summary(db, row.id)
-    history = await artifacts.versions(db, row.id)
-    # 每一版出自哪个房间，能点回去；读不了的房间不写名字。
-    titles = await readable_room_titles(db, resolver, actor, project_id)
-    return ok(
-        {
-            "id": str(row.id),
-            "name": row.name,
-            "about": row.about,
-            "version": listed.version if listed else 0,
-            "delivered_at": (
-                listed.delivered_at.isoformat()
-                if listed and listed.delivered_at
-                else None
-            ),
-            "versions": [
-                artifacts.version_payload(project_id, v, titles) for v in history
-            ],
-        }
-    )
-
-
-@router.get("/{project_id}/artifacts/{artifact_id}/compare")
-async def compare_artifact_versions(
-    project_id: uuid.UUID,
-    artifact_id: uuid.UUID,
-    before: uuid.UUID,
-    after: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    topic: str = "",
-) -> dict:
-    await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    history = {v.card_id: v for v in await artifacts.versions(db, artifact_id)}
-    if before not in history or after not in history:
-        raise NotFoundError("这一项没有所选的交付版本")
-    left, right = history[before], history[after]
-    result = {
-        "kind": "unavailable",
-        "identical": None,
-        "files": [],
-        "note": "unavailable",
-    }
-    if left.kind == right.kind == "file" and left.filename and right.filename:
-        old = library.read_artifact_snapshot(project_id, before, left.filename)
-        new = library.read_artifact_snapshot(project_id, after, right.filename)
-        comparison = await asyncio.to_thread(
-            delivered_comparison, old, new, left.filename, right.filename
-        )
-        result = {
-            "kind": "file",
-            "identical": comparison["identical"],
-            "files": [{"path": right.filename, **comparison}],
-            "note": None,
-        }
-    elif left.kind == right.kind == "merge" and left.revision and right.revision:
-        changes = await ProjectFiles(db, project_id, None).compare_revisions(
-            left.revision, right.revision
-        )
-        result = {
-            "kind": "merge",
-            "identical": not changes,
-            "files": changes,
-            "note": "source",
-        }
-    elif left.kind == right.kind == "link":
-        result = {
-            "kind": "link",
-            "identical": left.url == right.url,
-            "files": [],
-            "note": "link",
-        }
-    return ok(result)
-
-
-@router.get("/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file")
-async def download_artifact_version(
-    project_id: uuid.UUID,
-    artifact_id: uuid.UUID,
-    card_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    topic: str = "",
-    preview_pdf: bool = False,
-) -> Response:
-    """这一版交出去的那一份字节 (#1085 结论五)。
-
-    取的是当时交出去的那个快照，不是现在从源重建一次的结果：半年之后依赖变了、字
-    体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
-    一份。"""
-    await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    version = next(
-        (v for v in await artifacts.versions(db, artifact_id) if v.card_id == card_id),
-        None,
-    )
-    if version is None:
-        raise NotFoundError("这一项没有这一版")
-    if version.kind != "file" or not version.filename:
-        # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
-        raise NotFoundError("这一版交出去的不是一份文件")
-    data = library.read_artifact_snapshot(project_id, card_id, version.filename)
-    if preview_pdf:
-        data = await office.preview_pdf(data, version.filename)
-    filename = quote(version.filename, safe="")
-    return Response(
-        content=data,
-        media_type="application/pdf" if preview_pdf else "application/octet-stream",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
-        },
-    )
-
-
-async def _artifact_keeper(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> None:
-    """改清单的只有人。
-
-    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 改不了、合不了、删不
-    了清单上的东西 —— 它只能在交付时声明，而「这两项是不是同一个东西」「这个名字
-    对不对」正是要人判断的那部分。"""
-    await ProjectService(db).get_or_404(project_id)
-    actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-
-
-@router.patch("/{project_id}/artifacts/{artifact_id}")
-async def rename_artifact(
-    project_id: uuid.UUID,
-    artifact_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """给清单上这一项换个名字。
-
-    卡指着的是这一行的 id，所以改名之后，之前的每一次交付照样算这一项的版本 ——
-    名字起错了的正解是改名，不是删掉重来。"""
-    await _artifact_keeper(project_id, db, resolver)
-    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    renamed = await artifacts.rename(db, row, name=str(body.get("name") or ""))
-    await db.commit()
-    return ok({"id": str(renamed.id), "name": renamed.name})
-
-
-@router.post("/{project_id}/artifacts/{artifact_id}/merge")
-async def merge_artifact(
-    project_id: uuid.UUID,
-    artifact_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """这两项其实是同一个东西：把这一项的交付都算到 `into` 那一项上。
-
-    留哪个名字是人的判断，所以方向由调用方给，平台不挑。"""
-    await _artifact_keeper(project_id, db, resolver)
-    source = await artifacts.get_or_404(
-        db, project_id=project_id, artifact_id=artifact_id
-    )
-    target = await artifacts.get_or_404(
-        db, project_id=project_id, artifact_id=_artifact_ref(body.get("into"))
-    )
-    kept = await artifacts.merge(db, source=source, target=target)
-    await db.commit()
-    return ok({"id": str(kept.id), "name": kept.name})
-
-
-@router.delete("/{project_id}/artifacts/{artifact_id}")
-async def delete_artifact(
-    project_id: uuid.UUID,
-    artifact_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """把这一项从清单上去掉 —— 用户说它本来就不该是一项。
-
-    声明过它的那些卡留在原处，只是不再指向任何一项：那些交付确实发生过。"""
-    await _artifact_keeper(project_id, db, resolver)
-    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    await artifacts.delete(db, row)
-    await db.commit()
-    return ok({"deleted": True})
-
-
-def _artifact_ref(raw: object) -> uuid.UUID:
-    """合并的目标 —— 清单上另一项的 id。"""
-    try:
-        return uuid.UUID(str(raw or ""))
-    except ValueError as exc:
-        raise ValidationError("into 必须是清单上另一项的 id") from exc
-
-
 @router.get("/{project_id}/decisions")
 async def list_decisions(
     project_id: uuid.UUID,
@@ -1011,253 +750,6 @@ async def save_forge_attribution(
     project.settings = values
     await db.flush()
     return await get_forge_attribution(project_id, db, resolver)
-
-
-# --- Project main and native subagent model defaults ---
-
-
-def _default_model_state(project_settings: dict | None) -> dict:
-    from app.domain.agent_instance.configuration import model_choices, project_pool
-
-    choices = model_choices(project_settings)
-    chosen = (project_settings or {}).get("default_model")
-    # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
-    # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
-    known_ids = {c["id"] for c in choices}
-    effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
-    deployment_settings = dict(project_settings or {})
-    deployment_settings.pop("default_model", None)
-    deployment_choices = model_choices(deployment_settings)
-    return {
-        "model": effective,
-        "subagent_model": (project_settings or {}).get("default_subagent_model"),
-        "deployment_default": next(
-            (c["id"] for c in deployment_choices if c["default"]), None
-        ),
-        "choices": choices,
-        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
-        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
-        "pool": project_pool(project_settings),
-        "can_manage": False,  # 由路由层按权限填
-    }
-
-
-@router.get("/{project_id}/default-model")
-async def get_default_model(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    state = _default_model_state(project.settings)
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-        state["can_manage"] = True
-    except ForbiddenError:
-        state["can_manage"] = False
-    return ok(state)
-
-
-@router.put("/{project_id}/default-model")
-async def save_default_model(
-    project_id: uuid.UUID,
-    body: ProjectDefaultModelUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
-    from app.domain.agent_instance.configuration import model_choices
-
-    valid = {c["id"] for c in model_choices(values)}
-    for field, key in (
-        ("model", "default_model"),
-        ("subagent_model", "default_subagent_model"),
-    ):
-        if field not in body.model_fields_set:
-            continue
-        chosen = getattr(body, field)
-        if chosen is None:
-            values.pop(key, None)
-        elif chosen not in valid:
-            raise ValidationError(f"当前项目无法使用模型 {chosen!r}，请选择可用模型")
-        else:
-            values[key] = chosen
-    project.settings = values
-    await db.flush()
-    state = _default_model_state(project.settings)
-    state["can_manage"] = True
-    return ok(state)
-
-
-# --- Compute pool (design §3): which machine runs this project's sandbox ---
-
-
-@router.get("/{project_id}/compute-configs")
-async def get_compute_configs(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    from app.domain.agent.device_hub import device_hub
-    from app.domain.device.wiring import sql_device_service
-
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    can_manage = True
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-    except ForbiddenError:
-        can_manage = False
-    devices = await sql_device_service(db).list_devices_for_project(project_id)
-    from app.domain.machine.session_work import project_distribution
-
-    return ok(
-        {
-            **project_configs(project.settings).model_dump(),
-            "can_manage": can_manage,
-            # Where the project's agents are working now; the default only
-            # decides for agents that have not started.
-            "distribution": await project_distribution(db, project_id),
-            "devices": [
-                {
-                    "device_id": d.device_id,
-                    "name": d.name,
-                    "online": device_hub.is_online(d.device_id),
-                }
-                for d in devices
-            ],
-            "cloud_available": any(
-                p.id == COMPUTE_CLOUD for p in compute_selectable(settings)
-            ),
-        }
-    )
-
-
-@router.get("/{project_id}/devices/{device_id}/sessions")
-async def list_device_sessions(
-    project_id: uuid.UUID,
-    device_id: str,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The project's agent sessions on one self-hosted device, for a project
-    manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
-
-    Each switch then goes through the room's own route, with its checks. A
-    session in a room the caller cannot open is counted in ``hidden`` and not
-    listed, so its room's title stays in that room.
-    """
-    from app.domain.machine.session_work import device_sessions
-
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    listed, hidden = [], 0
-    for topic, session in await device_sessions(db, project_id, device_id):
-        try:
-            await resolver.authorize_topic(
-                actor, project_id=project_id, topic_id=topic.id
-            )
-        except ForbiddenError:
-            hidden += 1
-            continue
-        listed.append(session)
-    return ok({"sessions": listed, "hidden": hidden})
-
-
-@router.put("/{project_id}/compute-configs")
-async def save_compute_configs(
-    project_id: uuid.UUID,
-    body: ProjectComputeConfigs,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    await MemberService(db).require_manager(project_id, actor)
-    await validate_choice(db, project_id, body.default)
-    if body.default.profile == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(project_id, actor)
-    values = dict(project.settings or {})
-    values.pop("compute_profile", None)
-    values["compute_configs"] = body.model_dump()
-    project.settings = values
-    await db.flush()
-    return ok(body.model_dump())
-
-
-# --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
-
-
-@router.get("/{project_id}/tier-policy")
-async def get_tier_policy(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """这个项目允许哪几档资源自己发生，以及超档怎么办。
-
-    `tiers` 一并给出目录里现在存在的档位，所以调用方不必自己维护一份档位表——
-    那正是闸门拒绝按型号列白名单的同一个理由（`domain/policy/gate.py`）。
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    policy = gate.policy_of(project.settings)
-    return ok(
-        {
-            gate.ALLOWED_TIERS_KEY: (
-                None if policy.allowed_tiers is None else sorted(policy.allowed_tiers)
-            ),
-            gate.OVER_TIER_KEY: policy.over_tier,
-            "tiers": sorted(
-                {choice["tier"] for choice in model_choices(project.settings)}
-                | set(COMPUTE_TIERS.values())
-            ),
-        }
-    )
-
-
-@router.put("/{project_id}/tier-policy")
-async def set_tier_policy(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """改档位策略。只有项目管理者能改——它决定谁的点头才能放行一次调用。
-
-    `allowed_tiers` 传 `null` 是不限档（默认），传一个列表是只有这几档可以自己
-    发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
-    档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
-    if gate.ALLOWED_TIERS_KEY in body:
-        tiers = body.get(gate.ALLOWED_TIERS_KEY)
-        if tiers is None:
-            values.pop(gate.ALLOWED_TIERS_KEY, None)
-        elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
-            values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
-        else:
-            raise ValidationError("allowed_tiers 必须是字符串数组或 null")
-    if gate.OVER_TIER_KEY in body:
-        disposition = body.get(gate.OVER_TIER_KEY)
-        if disposition not in gate.DISPOSITIONS:
-            raise ValidationError(f"over_tier 只能是 {sorted(gate.DISPOSITIONS)} 之一")
-        values[gate.OVER_TIER_KEY] = disposition
-    project.settings = values
-    await db.flush()
-    return await get_tier_policy(project_id, db, resolver)
 
 
 @router.get("/{project_id}/topic-naming")

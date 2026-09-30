@@ -21,6 +21,7 @@ import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
 import NavLink from '../common/NavLink.vue'
 
+import MailDraftCard from './MailDraftCard.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import { t } from '@/i18n'
@@ -301,6 +302,12 @@ const ACTION_META: Record<string, { btn: string }> = {
         </div>
       </div>
     </details>
+    <div v-else-if="notice.mode === 'mail-draft'" class="sys-row">
+      <div class="sys-line">
+        <span class="sys-text" v-html="renderPlain(block.content)" />
+      </div>
+      <MailDraftCard :mail="notice.mail" :outcome="notice.outcome" />
+    </div>
     <div v-else-if="notice.mode === 'plain'" class="sys-row im-event">
       <div class="sys-line">
         <span class="sys-text" v-html="renderPlain(block.content)" />
