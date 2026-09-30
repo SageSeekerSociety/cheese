@@ -12,7 +12,7 @@ import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
-const props = defineProps<{ topicId: string; profile: TopicComputeProfile }>()
+const props = defineProps<{ topicId: string; projectId: string; profile: TopicComputeProfile }>()
 const emit = defineEmits<{ changed: [] }>()
 const saving = ref(false)
 const error = ref('')
@@ -96,6 +96,7 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
         v-if="more"
         :devices="profile.devices"
         :cloud-available="cloudAvailable"
+        :project-id="projectId"
         :busy="saving"
         @select="pick"
       />

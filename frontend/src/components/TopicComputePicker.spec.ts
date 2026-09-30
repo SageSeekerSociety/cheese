@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const setTopicComputeChoice = vi.fn()
+const getCloudSupply = vi.fn()
 const ApiError = vi.hoisted(
   () =>
     class extends Error {
@@ -24,6 +25,7 @@ const ApiError = vi.hoisted(
 vi.mock('../api', () => ({
   ApiError,
   setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
+  getCloudSupply: (...args: unknown[]) => getCloudSupply(...args),
 }))
 
 import { setLocale } from '../i18n'
@@ -85,7 +87,7 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
 
 function mountPicker(state: TopicComputeProfile) {
   return render(TopicComputePicker, {
-    props: { topicId: 'topic-1', profile: state },
+    props: { topicId: 'topic-1', projectId: 'p1', profile: state },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -132,6 +134,7 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   setTopicComputeChoice.mockReset()
+  getCloudSupply.mockReset()
 })
 
 afterEach(() => cleanup())
@@ -212,5 +215,87 @@ describe('room work computer choice', () => {
       expect(setTopicComputeChoice).toHaveBeenLastCalledWith('topic-1', lab, { abandonUnpushed: true })
     )
     expect(emitted().changed).toHaveLength(1)
+  })
+})
+
+describe('custom cloud spec against the current supply', () => {
+  // MicroCloud's offering met with the platform's own limits: memory starts at
+  // 512 MB even though the provider would build 128 MB.
+  const supply = {
+    available: true,
+    offering: 'standard-lxc',
+    selectable: {
+      cores: { min: 1, max: 32 },
+      memory_mb: { min: 512, max: 131072 },
+      disk_gb: { min: 2, max: 128 },
+    },
+    provider: {
+      cores: { min: 1, max: 32 },
+      memory_mb: { min: 128, max: 131072 },
+      disk_gb: { min: 2, max: 128 },
+    },
+    capacity_known: false,
+  }
+
+  async function openCustom() {
+    mountPicker(profile())
+    await fireEvent.click(screen.getByRole('button', { name: '改' }))
+    await fireEvent.click(screen.getByRole('button', { name: /其他配置与设备/ }))
+    await fireEvent.click(screen.getByLabelText('自定义 CPU、内存和磁盘'))
+  }
+  async function setField(label: string, value: string) {
+    await fireEvent.update(screen.getByLabelText(label), value)
+  }
+
+  it('shows the range before saving and will not send a spec outside it', async () => {
+    getCloudSupply.mockResolvedValue(supply)
+    await openCustom()
+    expect(getCloudSupply).toHaveBeenCalledWith('p1')
+    expect((await screen.findByTestId('supply-range')).textContent).toContain('128')
+    await setField('磁盘 GB', '256')
+    const save = screen.getByRole('button', { name: '使用此配置' })
+    await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(true))
+    await fireEvent.click(save)
+    expect(setTopicComputeChoice).not.toHaveBeenCalled()
+  })
+
+  it('offers only what the platform allows, not the provider floor', async () => {
+    getCloudSupply.mockResolvedValue(supply)
+    await openCustom()
+    await screen.findByTestId('supply-range')
+    await setField('内存 GB', '0.25')
+    const save = screen.getByRole('button', { name: '使用此配置' })
+    await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(true))
+  })
+
+  it('sends a spec at the edge of the range unchanged', async () => {
+    getCloudSupply.mockResolvedValue(supply)
+    setTopicComputeChoice.mockResolvedValue({ choice: cloud, proposal: null })
+    await openCustom()
+    await screen.findByTestId('supply-range')
+    await setField('CPU 核', '32')
+    await setField('内存 GB', '128')
+    await setField('磁盘 GB', '128')
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+    await waitFor(() =>
+      expect(setTopicComputeChoice).toHaveBeenCalledWith(
+        'topic-1',
+        expect.objectContaining({ profile: 'cloud', cores: 32, memory_mb: 131072, disk_gb: 128 }),
+        {}
+      )
+    )
+  })
+
+  it('says plainly when the range cannot be read, and leaves the check to the cloud', async () => {
+    getCloudSupply.mockResolvedValue({ available: false, reason: 'MicroCloud unreachable' })
+    setTopicComputeChoice.mockResolvedValue({ choice: cloud, proposal: null })
+    await openCustom()
+    expect((await screen.findByTestId('supply-unknown')).textContent).toContain('MicroCloud unreachable')
+    expect(screen.queryByTestId('supply-range')).toBeNull()
+    await setField('磁盘 GB', '256')
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+    await waitFor(() =>
+      expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', expect.objectContaining({ disk_gb: 256 }), {})
+    )
   })
 })

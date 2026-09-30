@@ -35,7 +35,6 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
-from app.domain.machine.supply import SupplyRange, pick_offering
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -47,6 +46,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.supply import SupplyRange, pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus

@@ -1073,6 +1073,29 @@ export interface TopicComputeDevice {
   online: boolean
 }
 
+// GET /projects/{id}/cloud-supply — what a Cloud work computer can be asked for
+// now. `selectable` is what a choice may hold (the provider's offering met with
+// the platform's own limits); `provider` is the offering as MicroCloud states it.
+// Remaining capacity is not reported, so a spec inside the range can still fail.
+export interface SupplyBound {
+  min: number
+  max: number
+}
+export interface CloudSupplyRanges {
+  cores: SupplyBound | null
+  memory_mb: SupplyBound | null
+  disk_gb: SupplyBound | null
+}
+export type CloudSupply =
+  | {
+      available: true
+      offering: string
+      selectable: CloudSupplyRanges
+      provider: CloudSupplyRanges
+      capacity_known: boolean
+    }
+  | { available: false; reason: string }
+
 // GET /topics/{id}/compute-profile — the room's one work computer (一个话题一个容器, 2026-09-28).
 // `choice` is what an agent that has not started yet will be given (room choice
 // → project default → deployment default); `sessions` is each agent session and

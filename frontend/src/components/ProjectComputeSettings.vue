@@ -73,6 +73,7 @@ watch(() => props.projectId, load)
         v-if="editing && state.can_manage"
         :devices="state.devices"
         :cloud-available="state.cloud_available"
+        :project-id="projectId"
         :busy="busy"
         @select="save"
       />
