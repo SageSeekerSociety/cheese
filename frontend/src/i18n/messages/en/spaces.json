@@ -148,7 +148,12 @@
         "publishing": "Published"
       },
       "loadFailed": "Couldn't load problems",
-      "pendingOnly": "Needs action only"
+      "pendingOnly": "Needs action only",
+      "scopeLabel": "Scope",
+      "topicCount": "{n} topics",
+      "clearTopics": "Clear selection",
+      "noTopics": "No topics",
+      "sort": "Sort"
     },
     "templateForm": {
       "editTitle": "Edit problem template",

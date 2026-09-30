@@ -16,134 +16,20 @@
         ></v-select>
       </div>
 
-      <div class="filter-toolbar mb-4">
-        <!-- 全部 / 我参与的 / 我发布的：写在地址的 filter 里，和分类一起可分享 -->
-        <div class="scope-chips d-flex flex-wrap align-center gap-2 mb-3" role="group">
-          <v-chip
-            v-for="option in scopeOptions"
-            :key="option.value"
-            :color="scope === option.value ? 'primary' : undefined"
-            :variant="scope === option.value ? 'flat' : 'outlined'"
-            :aria-pressed="scope === option.value"
-            class="filter-chip"
-            label
-            @click="selectScope(option.value)"
-          >
-            {{ option.title }}
-          </v-chip>
-          <!-- 「我发布的」下再收窄一步：有报名待审核或提交待评审的题 -->
-          <template v-if="scope === 'publishing'">
-            <v-divider vertical class="mx-1" />
-            <v-chip
-              :color="pendingOnly ? 'primary' : undefined"
-              :variant="pendingOnly ? 'flat' : 'outlined'"
-              :aria-pressed="pendingOnly"
-              prepend-icon="mdi-clipboard-clock-outline"
-              class="filter-chip"
-              label
-              @click="togglePendingOnly"
-            >
-              {{ t('spaces.detail.tasks.pendingOnly') }}
-            </v-chip>
-          </template>
-        </div>
-
-        <!-- Row 1: Search + Sort + Publish -->
-        <div class="d-flex align-center flex-wrap gap-4 mb-3">
-          <!-- Search -->
-          <v-form class="search-container flex-grow-1" @submit.prevent="submitSearch">
-            <v-text-field
-              v-model="searchQueryInput"
-              autocomplete="off"
-              density="compact"
-              hide-details
-              :placeholder="t('spaces.detail.tasks.searchPlaceholder')"
-              prepend-inner-icon="mdi-magnify"
-              variant="outlined"
-              bg-color="surface"
-              class="search-input"
-              rounded="lg"
-            ></v-text-field>
-          </v-form>
-
-          <!-- 「我发布的」由专门的接口给，不按这里的排序与话题筛 -->
-          <v-select
-            v-if="scope !== 'publishing'"
-            v-model="selectedSortOption"
-            autocomplete="off"
-            :items="sortOptions"
-            item-title="title"
-            item-value="value"
-            density="compact"
-            variant="outlined"
-            hide-details
-            prepend-inner-icon="mdi-sort-variant"
-            class="sort-select"
-            style="max-width: 160px"
-            rounded="lg"
-            return-object
-          ></v-select>
-
-          <!-- Publish Button -->
-          <v-btn
-            color="primary"
-            class="publish-btn d-none d-md-flex"
-            prepend-icon="mdi-plus"
-            rounded="lg"
-            height="40"
-            flat
-            @click="navigateToPublishTask"
-          >
-            {{ t('spaces.detail.tasks.publishTask') }}
-          </v-btn>
-          <v-btn
-            color="primary"
-            class="d-md-none"
-            icon="mdi-plus"
-            variant="flat"
-            @click="navigateToPublishTask"
-          ></v-btn>
-        </div>
-
-        <!-- Row 2: Topic Filter Bar -->
-        <div v-if="scope !== 'publishing'" class="topic-filter-bar d-flex flex-wrap align-center gap-2">
-          <!-- All Topics Chip -->
-          <v-chip
-            :color="selectedTopic === null ? 'primary' : undefined"
-            :variant="selectedTopic === null ? 'flat' : 'outlined'"
-            class="filter-chip"
-            label
-            @click="selectedTopic = null"
-          >
-            {{ t('spaces.detail.tasks.allTopics') }}
-          </v-chip>
-
-          <!-- Hot Topics -->
-          <v-chip
-            v-for="topic in displayedHotTopics"
-            :key="topic.id"
-            :color="selectedTopic === topic.id ? 'primary' : undefined"
-            :variant="selectedTopic === topic.id ? 'flat' : 'outlined'"
-            class="filter-chip"
-            label
-            @click="selectedTopic = topic.id"
-          >
-            {{ topic.name }}
-          </v-chip>
-
-          <!-- More Button -->
-          <v-chip
-            v-if="hotTopics.length > 10"
-            variant="text"
-            class="filter-chip px-2"
-            density="compact"
-            @click="showExpandedTopics = !showExpandedTopics"
-          >
-            {{ showExpandedTopics ? '收起' : '更多' }}
-            <v-icon :icon="showExpandedTopics ? 'mdi-chevron-up' : 'mdi-chevron-down'" end size="small"></v-icon>
-          </v-chip>
-        </div>
-      </div>
+      <TaskListToolbar
+        class="mb-4"
+        :scope="scope"
+        :pending-only="pendingOnly"
+        :topics="hotTopics"
+        :selected-topics="selectedTopics"
+        :sort="sortKey"
+        :search="searchQuery ?? ''"
+        @update:scope="selectScope"
+        @update:pending-only="setPendingOnly"
+        @update:selected-topics="selectedTopics = $event"
+        @update:sort="sortKey = $event"
+        @search="searchQuery = $event"
+      />
     </div>
 
     <v-divider class="mt-0"></v-divider>
@@ -189,6 +75,7 @@
 <script setup lang="ts">
 import type { SpaceMyPublishedTask } from '@/network/api/spaces/types'
 import type { Task, Topic } from '@/types'
+import type { TaskScope, TaskSortKey } from './taskListFilters'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -201,7 +88,9 @@ import { createEmptyResult, usePaging } from '@/utils/paging'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import MyPublishedTaskCard from './member-tasks/components/MyPublishedTaskCard.vue'
+import TaskListToolbar from './TaskListToolbar.vue'
 
+import { useCommands } from '@/commands'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
@@ -213,6 +102,12 @@ const TaskCard = defineAsyncComponent(() => import('@/components/TaskCard.vue'))
 type SortBy = 'createdAt' | 'updatedAt' | 'deadline'
 type SortOrder = 'asc' | 'desc'
 
+const SORTS: Record<TaskSortKey, { by: SortBy; order: SortOrder }> = {
+  latestPublished: { by: 'createdAt', order: 'desc' },
+  latestUpdated: { by: 'updatedAt', order: 'desc' },
+  nearestDeadline: { by: 'deadline', order: 'asc' },
+}
+
 type QueryOptions = {
   space: number
   by: SortBy
@@ -223,14 +118,11 @@ type QueryOptions = {
   joined?: boolean
 }
 
-/** 列表的范围：全部、我参与的、我发布的。地址里 `filter` 缺省即全部。 */
-type TaskScope = 'all' | 'participating' | 'publishing'
-
 const route = useRoute()
 const router = useRouter()
-const searchQueryInput = ref('')
 const searchQuery = ref<string>()
-const selectedTopic = ref<number | null>(null)
+// 选了几个话题就是「带其中任一个」。
+const selectedTopics = ref<number[]>([])
 
 const { t } = useI18n()
 
@@ -239,7 +131,6 @@ const spaceData = useSpaceData()
 const { currentSpace, categories } = storeToRefs(spaceStore)
 
 const hotTopics = ref<Topic[]>([])
-const showExpandedTopics = ref(false)
 
 const fetchHotTopics = async () => {
   const sId = Number(route.params.spaceId)
@@ -251,13 +142,6 @@ const fetchHotTopics = async () => {
     console.error('Fetch top topics failed', e)
   }
 }
-
-const displayedHotTopics = computed(() => {
-  if (showExpandedTopics.value) {
-    return hotTopics.value
-  }
-  return hotTopics.value.slice(0, 10)
-})
 
 // 获取活跃分类列表
 const activeCategories = computed(() => {
@@ -279,12 +163,6 @@ const scope = computed<TaskScope>(() => {
   return value === 'participating' || value === 'publishing' ? value : 'all'
 })
 
-const scopeOptions = computed<{ title: string; value: TaskScope }[]>(() => [
-  { title: t('spaces.detail.tasks.scope.all'), value: 'all' },
-  { title: t('spaces.detail.tasks.scope.participating'), value: 'participating' },
-  { title: t('spaces.detail.tasks.scope.publishing'), value: 'publishing' },
-])
-
 const selectScope = (value: TaskScope) => {
   const query = { ...route.query }
   if (value === 'all') delete query.filter
@@ -296,10 +174,10 @@ const selectScope = (value: TaskScope) => {
 /** 「只看待处理」：只在「我发布的」下生效，写在地址的 `pending=1` 里。 */
 const pendingOnly = computed(() => scope.value === 'publishing' && route.query.pending === '1')
 
-const togglePendingOnly = () => {
+const setPendingOnly = (on: boolean) => {
   const query = { ...route.query }
-  if (pendingOnly.value) delete query.pending
-  else query.pending = '1'
+  if (on) query.pending = '1'
+  else delete query.pending
   router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
 }
 
@@ -323,18 +201,13 @@ const selectedCategoryIdModel = computed({
   },
 })
 
-const sortOptions = ref<{ title: string; value: { by: SortBy; order: SortOrder } }[]>([
-  { title: t('spaces.detail.tasks.sortOptions.latestPublished'), value: { by: 'createdAt', order: 'desc' } },
-  { title: t('spaces.detail.tasks.sortOptions.latestUpdated'), value: { by: 'updatedAt', order: 'desc' } },
-  { title: t('spaces.detail.tasks.sortOptions.nearestDeadline'), value: { by: 'deadline', order: 'asc' } },
-])
-const selectedSortOption = ref(sortOptions.value[0].value)
+const sortKey = ref<TaskSortKey>('latestPublished')
 
 const queryOptions = computed<QueryOptions>(() => ({
   space: Number(route.params.spaceId),
-  ...selectedSortOption.value,
+  ...SORTS[sortKey.value],
   keywords: searchQuery.value ? searchQuery.value : undefined,
-  topics: selectedTopic.value !== null ? [selectedTopic.value] : undefined,
+  topics: selectedTopics.value.length ? [...selectedTopics.value] : undefined,
   categoryId: selectedCategoryId.value || undefined,
   joined: scope.value === 'participating' ? true : undefined,
 }))
@@ -400,10 +273,6 @@ const visiblePublishedTasks = computed(() => {
   })
 })
 
-const submitSearch = () => {
-  searchQuery.value = searchQueryInput.value
-}
-
 const navigateToPublishTask = async () => {
   try {
     if (currentSpace.value) {
@@ -435,6 +304,17 @@ const navigateToPublishTask = async () => {
   }
 }
 
+// 「发布题目」是这一页的主操作：桌面上在页头右边，手机上是顶栏右边那一颗。
+useCommands(() => [
+  {
+    id: 'tasks.publish',
+    title: t('spaces.detail.tasks.publishTask'),
+    icon: 'mdi-plus',
+    header: { primary: true, accent: true },
+    run: navigateToPublishTask,
+  },
+])
+
 watch(
   [queryOptions, scope],
   ([options, value]) => {
@@ -455,50 +335,9 @@ onMounted(async () => {
   border: none;
 }
 
-.filter-section {
-  transition: all 0.3s ease;
-}
-
 .category-nav-mobile {
   .category-select {
     border-radius: 8px;
-  }
-}
-
-.filter-options {
-  .search-container {
-    position: relative;
-  }
-
-  .search-input {
-    .v-field__input {
-      min-height: 38px;
-      padding-top: 0;
-      padding-bottom: 0;
-    }
-  }
-
-  .filter-title {
-    font-weight: 500;
-    font-size: 15px;
-    color: rgba(var(--v-theme-on-surface), 0.9);
-    display: flex;
-    align-items: center;
-
-    .title-icon {
-      opacity: 0.8;
-    }
-  }
-
-  .filter-chip {
-    font-weight: normal;
-    transition: all 0.2s ease;
-    cursor: pointer;
-  }
-
-  .publish-btn {
-    height: 40px;
-    font-weight: 500;
   }
 }
 
@@ -507,12 +346,6 @@ onMounted(async () => {
 
   .tasks-list-item:not(:last-child) {
     margin-bottom: 16px;
-  }
-}
-
-@media (max-width: 600px) {
-  .filter-toolbar {
-    /* Add responsive adjustments here if needed */
   }
 }
 </style>

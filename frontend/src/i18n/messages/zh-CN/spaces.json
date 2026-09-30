@@ -185,14 +185,17 @@
       "category": "所属分类",
       "noCategory": "无分类",
       "allTopics": "全部话题",
-      "moreTopics": "更多话题",
       "scope": {
         "all": "全部",
         "participating": "我参与的",
         "publishing": "我发布的"
       },
       "loadFailed": "无法加载题目",
-      "pendingOnly": "只看待处理"
+      "pendingOnly": "只看待处理",
+      "scopeLabel": "范围",
+      "topicCount": "{n} 个话题",
+      "clearTopics": "清除选择",
+      "noTopics": "暂无话题"
     },
     "templateForm": {
       "editTitle": "编辑题目模板",
