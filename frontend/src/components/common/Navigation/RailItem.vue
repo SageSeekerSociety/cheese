@@ -217,11 +217,11 @@ function warmDestination() {
     // change is the ink on top — it used to be `on-primary`, a value Vuetify
     // derives from `primary`, which differs between the themes (#F57F17 vs the
     // lightened #FFA733) and could flip the glyph to white on this bright
-    // yellow. Pinning it to one dark ink keeps the logo at
-    // 7.0:1 against the #ff9500 stop and 12.2:1 against #ffe600, in BOTH themes.
+    // amber. Pinning it to one dark ink keeps the logo at 7.7:1 against the
+    // brand colour, in BOTH themes.
     &:hover,
     &[aria-current] {
-      background: linear-gradient(to bottom, #ff9500, #ffe600);
+      background: #ffa20f;
 
       .cheese-icon {
         fill: #23242a;
