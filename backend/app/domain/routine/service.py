@@ -571,6 +571,10 @@ async def _fire(
                 "topicId": str(routine.topic_id),
                 "eventType": EVENT_ROUTINE_RUN,
                 "severity": SEVERITY_INFO,
+                # 这一轮跑的是主人交代的活，所以它读主人的 private 记忆（组装那一
+                # 轮的时候从这一笔投递上认出来）。写在这里而不是规则表上：读的那
+                # 一侧（agent）不认识周期任务这个域，而这一笔它本来就在读。
+                "routineOwner": routine.owner_handle,
             },
             occurred_at=stamp,
         ),

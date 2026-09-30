@@ -102,6 +102,7 @@ from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
     EVENT_MEMORY_CHANGED,
     EVENT_PROMPT_REPLAYED,
+    EVENT_ROUTINE_RUN,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
@@ -2367,11 +2368,40 @@ class ChatService:
         组装一轮的时候才知道这两件事（`_assemble_turn`），而对账的两个时刻（输入
         之前、这一轮结束之后）手上只有一个 topic id。记的是刚才 `memory_index`
         读过的那几个人，所以「注入里看得见的」和「铺到会话目录里的」是同一批。
+
+        周期任务那一轮的主人也是「读过的那几个人」之一（`_routine_owner`）：他
+        本人没在窗口里说话，可那一轮在替他做事，读了他那一棵树就得也收他那一棵
+        —— 只读不收，他这一轮改过的偏好下一轮还是旧的。
         """
         self._memory_turns.pop(topic_id, None)
         self._memory_turns[topic_id] = (acting, speakers)
         while len(self._memory_turns) > MEMORY_TURNS_KEPT:
             del self._memory_turns[next(iter(self._memory_turns))]
+
+    @staticmethod
+    async def _routine_owner(
+        session: AsyncSession, delivery_id: uuid.UUID | None
+    ) -> str | None:
+        """这一轮如果是周期任务派下来的，规则主人是谁；不是就 None。
+
+        从**投递那一笔**上认，不是在历史里找：那一轮没有主人署名的消息（内容是
+        平台写完塞进投递的），而写它的调度器知道主人是谁 —— 它把 `routineOwner`
+        留在 payload 里。这样一来这个域一个字都不必认识周期任务，只需要知道有这
+        么一个键。
+
+        delivery 行不在（老投递、另一台机器刚清的账）时按「不是周期任务的一轮」
+        处理：少读一个人那一份索引，不影响这一轮能不能跑。
+        """
+        if delivery_id is None:
+            return None
+        from app.domain.delivery.models import Delivery
+
+        row = await session.get(Delivery, delivery_id)
+        payload = (row.payload if row is not None else None) or {}
+        if payload.get("eventType") != EVENT_ROUTINE_RUN:
+            return None
+        owner = payload.get("routineOwner")
+        return owner if isinstance(owner, str) and owner else None
 
     def _memory_scopes(
         self, topic_id: uuid.UUID
@@ -4574,6 +4604,7 @@ class ChatService:
         provision_actor: Actor | None,
         platform_turn: bool = False,
         recipient_instance_id: uuid.UUID | None = None,
+        delivery_id: uuid.UUID | None = None,
     ) -> "_TurnContext | _TurnBail":
         """Everything a turn needs before anything runs it, read in one
         transaction: who is here, what was said, what is remembered, which
@@ -4699,12 +4730,18 @@ class ChatService:
             # 只算**人**：private 是「人 × 项目」的那一份，队友手里的句柄在这
             # 里不是一个作用域，问了也只会问到一棵不存在的树。本轮说话的这几位
             # 同时也是这一轮对账要点名的那几个（`_remember_memory_turn`）。
+            #
+            # 周期任务那一轮的主人也算「说话的」：那一轮跑的是他交代的活，读的
+            # 就该是他的口味。他说的话本来不在窗口里——它是平台派下去的，没有
+            # 一条他自己署名的消息——所以要从那一笔投递上认（`_routine_owner`）。
+            routine_owner = await self._routine_owner(session, delivery_id)
             speakers = tuple(
                 dict.fromkeys(
                     handle
                     for handle in (
                         *(b.author for b in pending),
                         *((private_owner,) if private_owner else ()),
+                        *((routine_owner,) if routine_owner else ()),
                     )
                     if names_a_person(handle)
                 )
@@ -5179,6 +5216,8 @@ class ChatService:
             provision_actor=provision_actor,
             platform_turn=platform_turn,
             recipient_instance_id=recipient_instance_id,
+            # 周期任务那一轮要从这一笔投递上认主人（`_routine_owner`）。
+            delivery_id=delivery_id,
         )
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=assembled "
