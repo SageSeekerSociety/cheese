@@ -16,6 +16,7 @@
 // markup, and the decisions that belong to the page a panel is rendered from.
 import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
+import { askVersion } from '../lib/blockDisplay'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -145,7 +146,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (askBusy.value) return
     askBusy.value = m.id
     try {
-      const updated = await answerOptions(m.id, option, AUTHOR)
+      // 版本号要带：并发时落败的那一个拿 409 而不是把别人那一版盖掉。操作 id 也要
+      // 带：网络抖一下重发，是同一次操作，不是两次作答。
+      const updated = await answerOptions(
+        m.id,
+        { kind: 'option', option, expect_version: askVersion(m), client_op_id: crypto.randomUUID() },
+        AUTHOR,
+      )
       if (timeline.find(m.id)) {
         timeline.replace(updated)
         historyChanges?.set(updated.id, updated)

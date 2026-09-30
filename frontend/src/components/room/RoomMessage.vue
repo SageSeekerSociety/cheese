@@ -269,21 +269,24 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-if="askOptions(block) && !askAnswered(block)" key="options" class="ask-row">
           <button
             v-for="opt in askOptions(block)!"
-            :key="opt"
+            :key="opt.text"
             type="button"
             class="ask-option"
-            :class="{ 'ask-option--picked': picked === opt, 'ask-option--dim': picked !== null && picked !== opt }"
+            :class="{
+              'ask-option--picked': picked === opt.text,
+              'ask-option--dim': picked !== null && picked !== opt.text,
+            }"
             :disabled="askBusy || picked !== null"
-            @click="pick(opt)"
+            @click="pick(opt.text)"
           >
-            {{ opt }}
+            {{ opt.text }}
           </button>
         </div>
         <div v-else-if="askOptions(block)" key="answered" class="ask-row">
           <div class="ask-answered">
             <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
             <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
-            选了「{{ askAnswered(block)!.option }}」
+            选了「{{ askAnswered(block)!.label }}」
           </div>
         </div>
       </Transition>
