@@ -412,3 +412,16 @@ def _ledger_user(client, handle: str):
             return user.id, None, None
 
     return asyncio.run(read())
+
+
+def test_the_retired_task_advice_is_gone(client, gateway):
+    """启星研导 was replaced, not kept beside 芝士: its routes answer nothing."""
+    me = _auth(client, "asker")
+    task_id = _task(client)
+    for path in (
+        f"/tasks/{task_id}/ai-advice",
+        f"/tasks/{task_id}/ai-advice/status",
+        f"/tasks/{task_id}/ai-advice/conversations/grouped",
+        "/ai/quota",
+    ):
+        assert client.get(path, headers=me).status_code == 404, path

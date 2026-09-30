@@ -2,9 +2,7 @@
 
 Covers TaskRepository, TaskMembershipRepository, TaskSubmissionRepository,
 TaskSubmissionEntryRepository, TaskSubmissionReviewRepository,
-TaskAIAdviceRepository, TaskAIAdviceContextRepository,
-AIConversationRepository, AIMessageRepository, TopicRepository,
-TaskSubmissionSchemaRepository.
+TopicRepository, TaskSubmissionSchemaRepository.
 """
 
 from datetime import UTC, datetime
@@ -16,10 +14,6 @@ from sqlalchemy import select
 
 from app.domain.task.models import Task
 from app.domain.task.repositories import (
-    AIConversationRepository,
-    AIMessageRepository,
-    TaskAIAdviceContextRepository,
-    TaskAIAdviceRepository,
     TaskMembershipRepository,
     TaskRepository,
     TaskSubmissionEntryRepository,
@@ -808,189 +802,6 @@ class TestTaskSubmissionReviewRepository:
 
         await repo.soft_delete(r)
         assert r.deleted_at is not None
-
-
-# ---------------------------------------------------------------------------
-# TaskAIAdviceRepository
-# ---------------------------------------------------------------------------
-
-
-class TestTaskAIAdviceRepository:
-    @pytest.mark.anyio
-    async def test_list_by_task(self):
-        session = _mock_session()
-        advice = SimpleNamespace(id=1, task_id=1)
-        session.execute.return_value = _mock_scalars([advice])
-        repo = TaskAIAdviceRepository(session)
-
-        result = await repo.list_by_task(1)
-        assert result == [advice]
-
-    @pytest.mark.anyio
-    async def test_get_latest(self):
-        session = _mock_session()
-        advice = SimpleNamespace(id=1, task_id=1)
-        session.execute.return_value = _mock_scalar(advice)
-        repo = TaskAIAdviceRepository(session)
-
-        result = await repo.get_latest(1)
-        assert result is advice
-
-    @pytest.mark.anyio
-    async def test_find_by_model_hash(self):
-        session = _mock_session()
-        advice = SimpleNamespace(id=1, model_hash="abc123")
-        session.execute.return_value = _mock_scalar(advice)
-        repo = TaskAIAdviceRepository(session)
-
-        result = await repo.find_by_model_hash(1, "abc123")
-        assert result is advice
-
-    @pytest.mark.anyio
-    async def test_create(self):
-        session = _mock_session()
-        repo = TaskAIAdviceRepository(session)
-
-        result = await repo.create(task_id=1, model_hash="abc123", status="pending")
-        assert result.task_id == 1
-        assert result.model_hash == "abc123"
-        session.add.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_save(self):
-        session = _mock_session()
-        advice = SimpleNamespace(id=1)
-        repo = TaskAIAdviceRepository(session)
-
-        result = await repo.save(advice)
-        assert result is advice
-
-
-# ---------------------------------------------------------------------------
-# TaskAIAdviceContextRepository
-# ---------------------------------------------------------------------------
-
-
-class TestTaskAIAdviceContextRepository:
-    @pytest.mark.anyio
-    async def test_get_or_create_existing(self):
-        session = _mock_session()
-        ctx = SimpleNamespace(id=1, task_id=1, section="intro", section_index=0)
-        session.execute.return_value = _mock_scalar(ctx)
-        repo = TaskAIAdviceContextRepository(session)
-
-        result = await repo.get_or_create(task_id=1, section="intro", section_index=0)
-        assert result is ctx
-
-    @pytest.mark.anyio
-    async def test_get_or_create_new(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar(None)
-        repo = TaskAIAdviceContextRepository(session)
-
-        result = await repo.get_or_create(task_id=1, section=None, section_index=None)
-        assert result.task_id == 1
-        session.add.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# AIConversationRepository
-# ---------------------------------------------------------------------------
-
-
-class TestAIConversationRepository:
-    @pytest.mark.anyio
-    async def test_list_for_task(self):
-        session = _mock_session()
-        convo = SimpleNamespace(id=1, context_id=1, owner_id=10)
-        session.execute.return_value = _mock_scalars([convo])
-        repo = AIConversationRepository(session)
-
-        result = await repo.list_for_task(1, owner_id=10)
-        assert result == [convo]
-
-    @pytest.mark.anyio
-    async def test_list_for_task_binds_the_owner_into_the_query(self):
-        """提问人在 WHERE 里，不是取回来之后再筛掉。"""
-        session = _mock_session()
-        session.execute.return_value = _mock_scalars([])
-        repo = AIConversationRepository(session)
-
-        await repo.list_for_task(7, owner_id=42)
-
-        stmt = session.execute.call_args[0][0]
-        assert "owner_id" in str(stmt)
-        assert {7, 42} <= set(stmt.compile().params.values())
-
-    @pytest.mark.anyio
-    async def test_get_by_conversation_id(self):
-        session = _mock_session()
-        convo = SimpleNamespace(conversation_id="abc")
-        session.execute.return_value = _mock_scalar(convo)
-        repo = AIConversationRepository(session)
-
-        result = await repo.get_by_conversation_id("abc")
-        assert result is convo
-
-    @pytest.mark.anyio
-    async def test_create(self):
-        session = _mock_session()
-        repo = AIConversationRepository(session)
-
-        result = await repo.create(
-            conversation_id="abc", task_id=1, owner_id=10, title="Chat"
-        )
-        assert result.conversation_id == "abc"
-        assert result.title == "Chat"
-        session.add.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_soft_delete(self):
-        session = _mock_session()
-        convo = SimpleNamespace(deleted_at=None)
-        repo = AIConversationRepository(session)
-
-        await repo.soft_delete(convo)
-        assert convo.deleted_at is not None
-
-
-# ---------------------------------------------------------------------------
-# AIMessageRepository
-# ---------------------------------------------------------------------------
-
-
-class TestAIMessageRepository:
-    @pytest.mark.anyio
-    async def test_list_for_conversation(self):
-        session = _mock_session()
-        msg = SimpleNamespace(id=1, conversation_id=1)
-        session.execute.return_value = _mock_scalars([msg])
-        repo = AIMessageRepository(session)
-
-        result = await repo.list_for_conversation(1)
-        assert result == [msg]
-
-    @pytest.mark.anyio
-    async def test_create_message(self):
-        session = _mock_session()
-        repo = AIMessageRepository(session)
-
-        result = await repo.create_message(
-            conversation_id=1, role="user", content="Hello"
-        )
-        assert result.role == "user"
-        assert result.content == "Hello"
-        session.add.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_soft_delete(self):
-        session = _mock_session()
-        msg = SimpleNamespace(deleted_at=None, updated_at=None)
-        repo = AIMessageRepository(session)
-
-        await repo.soft_delete(msg)
-        assert msg.deleted_at is not None
-        assert msg.updated_at is not None
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Tests for Round 12 bug fixes.
 
-Covers: deadline scheduler, AIConversation creation, route ordering, material
+Covers: deadline scheduler, route ordering, material
 upload, groups search count, datetime timezone, identity patch, and histogram
 defaults.
 """
@@ -55,34 +55,6 @@ async def test_deadline_scheduler_processes_all_batches():
 
     assert count == 150
     assert mock_session.commit.await_count == 2
-
-
-# ---------------------------------------------------------------------------
-# AIConversation: create must set required timestamp fields
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_ai_conversation_create_sets_timestamps():
-    from app.domain.task.repositories import AIConversationRepository
-
-    mock_session = MagicMock()
-    mock_session.flush = AsyncMock()
-    repo = AIConversationRepository(mock_session)
-
-    await repo.create(
-        conversation_id="test-conv-123",
-        task_id=1,
-        owner_id=42,
-        title="Test",
-    )
-
-    mock_session.add.assert_called_once()
-    entity = mock_session.add.call_args[0][0]
-    assert entity.created_at is not None, "created_at must be set"
-    assert entity.updated_at is not None, "updated_at must be set"
-    assert isinstance(entity.created_at, datetime)
-    assert isinstance(entity.updated_at, datetime)
 
 
 # ---------------------------------------------------------------------------

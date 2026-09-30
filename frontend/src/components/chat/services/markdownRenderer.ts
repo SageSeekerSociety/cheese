@@ -23,7 +23,7 @@ function escapeHtml(text: string): string {
 }
 
 export function renderMarkdownError(text: string): string {
-  return `<p class="text-error">${escapeHtml(t('aiChat.renderError', { text }))}</p>`
+  return `<p class="text-error">${escapeHtml(t('editor.renderError', { text }))}</p>`
 }
 
 /**

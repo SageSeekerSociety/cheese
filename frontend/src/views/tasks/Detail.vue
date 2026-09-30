@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 题目详情：上面一块是题目名和这一页的主操作，下面是页签。页签内容是子路由
-// （说明 / 启星研导 / 我的提交 / 领取者 / 数据），地址各自不变，点了在原地换内容。
+// （说明 / 我的提交 / 领取者 / 数据），地址各自不变，点了在原地换内容。
 // 内容类页签右边带一栏：我的进度（领了才有）和题目信息；领取者与数据是表格和图表，不带。
 //
 // 领取这条路（实名确认、团队选择、退出）走的是 `useTaskParticipation` 与 `TaskDialogs`：
@@ -26,13 +26,7 @@ import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { splitOrigin } from '@/views/spaces/model'
 import { LoadingErrorContainer, TaskDialogs } from '@/views/tasks/components'
-import {
-  useAIChat,
-  useTaskData,
-  useTaskManagement,
-  useTaskParticipation,
-  useTeamParticipation,
-} from '@/views/tasks/composables'
+import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
 import { useAssistant } from '@/views/tasks/composables/useAssistant'
 import { useEvents } from '@/views/tasks/events'
 
@@ -63,8 +57,6 @@ const {
   confirmLeaveSelectedTeam,
   loadJoinedTeams,
 } = useTeamParticipation(taskDataModule)
-// 「启星研导」页签里的对话入口从这里注入（`provide('aiChat')`），对话框在 `TaskDialogs` 里。
-const { selectedContext } = useAIChat()
 const { confirmDeleteTask } = useTaskManagement(taskDataModule)
 
 const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
@@ -203,10 +195,7 @@ const tabs = computed(() => {
     to: { name: string; params: Record<string, string | number> }
     count?: number
     also?: string[]
-  }[] = [
-    { key: 'brief', label: t('tasks.page.tabs.brief'), to: { name: routeNames.detail, params: params.value } },
-    { key: 'advice', label: t('tasks.page.tabs.advice'), to: { name: routeNames.aiAdvice, params: params.value } },
-  ]
+  }[] = [{ key: 'brief', label: t('tasks.page.tabs.brief'), to: { name: routeNames.detail, params: params.value } }]
   if (joined.value) {
     list.push({
       key: 'mine',
@@ -456,14 +445,13 @@ onMounted(() => {
     />
   </v-dialog>
 
-  <!-- 领取/退队/实名/对话那几张对话框：老机器，事件总线上接了它。 -->
+  <!-- 领取/退队/实名那几张对话框：老机器，事件总线上接了它。 -->
   <TaskDialogs
     :task-data="taskData"
     :available-teams="availableTeams"
     :loading-teams="loadingTeams"
     :joined-teams="joinedTeams"
     :selected-leave-team-id="selectedLeaveTeamId"
-    :selected-context="selectedContext"
     :participation-info="participationInfo"
   />
 </template>

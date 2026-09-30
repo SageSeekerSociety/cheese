@@ -213,7 +213,6 @@
     "tabs": {
       "label": "题目页签",
       "brief": "说明",
-      "advice": "启星研导",
       "mine": "我的提交",
       "roster": "领取者",
       "data": "数据"
@@ -352,18 +351,6 @@
     "unknownUser": "未知用户",
     "unknownTeam": "未知团队",
     "memberWithId": "{name}（{id}）"
-  },
-  "advice": {
-    "chat": "与 AI 助手对话",
-    "section": {
-      "knowledge": "知识领域 #{n}",
-      "learningPath": "学习路径 #{n}",
-      "methodology": "方法论步骤 #{n}",
-      "teamRole": "团队角色 #{n}"
-    },
-    "generateFailed": "生成建议失败，请重试",
-    "loadFailed": "获取建议失败",
-    "chatTitle": "启星智询 Converse AI"
   },
   "edit": {
     "saveChanges": "保存更改",
@@ -579,18 +566,6 @@
     "reviewFailed": "评审失败",
     "reviewCanceled": "取消评审成功",
     "reviewCancelFailed": "取消评审失败"
-  },
-  "advicePanel": {
-    "summary": "主题总结",
-    "knowledge": "知识领域",
-    "learningPaths": "学习路径",
-    "methodology": "实践方法论",
-    "teamTips": "团队协作建议",
-    "collaboration": "协作要点：",
-    "disclaimer": "本建议由 AI 生成，仅供参考。请结合实际情况二次验证内容准确性，如有疑问请咨询领域专家。",
-    "analyzing": "AI 正在分析题目，请稍候...",
-    "failed": "获取建议失败：{error}",
-    "estimatedTime": "预计耗时：{time}"
   },
   "reviewStatus": {
     "pending": "等待评审中",

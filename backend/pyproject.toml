@@ -24,15 +24,11 @@ dependencies = [
     # namespace declarations it had no reason to touch.
     "lxml>=5.3.0",
     "curl-cffi>=0.7",
-    # These three reached the image only through openviking's dependency tree
-    # until it was removed, while `app` imported them directly all along:
-    # `openai` and `tiktoken` are the LLM client and its token counter
-    # (domain/llm), and FastAPI parses every file upload through
-    # `python-multipart` — an undeclared dependency there fails at request
-    # time, on the upload path, with nothing at import time to warn anyone.
-    "openai>=2.44.0",
+    # FastAPI parses every file upload through `python-multipart`; it reached
+    # the image only through another package's dependency tree until that was
+    # removed, and an undeclared dependency fails at request time, on the
+    # upload path, with nothing at import time to warn anyone.
     "python-multipart>=0.0.32",
-    "tiktoken>=0.13.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "pyjwt>=2.13.0",

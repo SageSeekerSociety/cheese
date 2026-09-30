@@ -24,8 +24,6 @@ from app.db.session import get_db
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
 from app.domain.feature_stats import pricing
-from app.domain.llm.repositories import AIUserQuotaRepository
-from app.domain.llm.services import AiAdviceService
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -48,11 +46,7 @@ from app.domain.task.models import (
     TaskTagRelation,
 )
 from app.domain.task.repositories import (
-    AIConversationRepository,
-    AIMessageRepository,
     TaskAccessDomainRepository,
-    TaskAIAdviceContextRepository,
-    TaskAIAdviceRepository,
     TaskMembershipRepository,
     TaskRepository,
     TaskSubmissionEntryRepository,
@@ -68,7 +62,6 @@ from app.domain.task.services import (
     TaskSubmissionService,
 )
 from app.domain.task.submission_state import claim_state
-from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
@@ -143,24 +136,6 @@ async def get_task_submission_review_service(
 async def get_team_service(db=Depends(get_db)) -> TeamService:
     repo = TeamRepository(session=db)
     return TeamService(repo)
-
-
-async def get_task_ai_advice_service(db=Depends(get_db)) -> TaskAIAdviceService:
-    advice_repo = TaskAIAdviceRepository(session=db)
-    conversation_repo = AIConversationRepository(session=db)
-    message_repo = AIMessageRepository(session=db)
-    context_repo = TaskAIAdviceContextRepository(session=db)
-    task_repo = TaskRepository(session=db)
-    quota_repo = AIUserQuotaRepository(session=db)
-    quota_service = AiAdviceService(repo=quota_repo)
-    return TaskAIAdviceService(
-        advice_repo=advice_repo,
-        conversation_repo=conversation_repo,
-        message_repo=message_repo,
-        context_repo=context_repo,
-        task_repo=task_repo,
-        quota_service=quota_service,
-    )
 
 
 async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
@@ -3613,24 +3588,3 @@ async def delete_task_submission_review(
     await review_service.delete_review(submission_id=submission_id)
     review_dto = await review_service.get_review_dto(submission_id)
     return {"code": 200, "message": "OK", "data": {"review": review_dto}}
-
-
-async def _ensure_task_visible_for_advice(
-    *, db, task_id: int, auth_user: AuthUserInfo
-) -> None:
-    """A task's AI advice is about that task, so reading it takes the same
-    visibility judgment as reading the task itself (``TaskVisibilityService``).
-
-    看不到的任务，它的 advice 也看不到: the advice records quote the task and the
-    conversations are the AI's reasoning about it, so a caller refused the task
-    must not be handed its advice by id. Not-found rather than forbidden, for
-    the same reason the task reads answer that way — a 403 would confirm the id
-    names something.
-    """
-    task = await TaskRepository(session=db).get_by_id(task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
-    if not await TaskVisibilityService(session=db).can_view_task(
-        task=task, user_id=auth_user.user_id
-    ):
-        raise NotFoundError.for_resource("task", task_id)
