@@ -3,6 +3,7 @@
 //
 //   node scripts/tsc-ratchet.mjs            check (exit 1 on any new error)
 //   node scripts/tsc-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/tsc-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
 // The comparison logic lives in tsc-ratchet-core.mjs and is unit-tested; this
 // file is only the I/O around it.
@@ -12,11 +13,13 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { compare, formatReport, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
+import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 const BASELINE = resolve(ROOT, 'tsc-baseline.json')
 const update = process.argv.includes('--update')
+const ID = 'vue-tsc'
 
 // Resolve the binary explicitly rather than trusting PATH: `pnpm run` puts
 // node_modules/.bin there but `node scripts/tsc-ratchet.mjs` does not, and a
@@ -33,7 +36,7 @@ const run = spawnSync(BIN, ['--noEmit'], {
 if (run.error) {
   console.error(`could not run vue-tsc: ${run.error.message}`)
   console.error('run `pnpm install --frozen-lockfile` first')
-  process.exit(2)
+  cannotJudge({ id: ID }, `could not run vue-tsc: ${run.error.message}`)
 }
 
 const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
@@ -47,7 +50,7 @@ const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
 if (run.status !== 0 && currentTotal === 0) {
   console.error('vue-tsc failed without reporting any diagnostic:')
   console.error(output.trim() || '(no output)')
-  process.exit(2)
+  cannotJudge({ id: ID }, 'vue-tsc failed without reporting any diagnostic')
 }
 
 const baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')).files ?? {} : {}
@@ -73,5 +76,17 @@ if (update) {
 }
 
 const result = compare(baseline, current)
+
+if (asJson) {
+  // Per-file counts of everything still over its frozen count, passing or not:
+  // the board groups the debt by file, and the diagnostics have no line numbers
+  // here that the counts do not already carry.
+  const details = Object.entries(current)
+    .filter(([, count]) => count > 0)
+    .map(([file, count]) => ({ file, count }))
+  emit(verdict({ id: ID, result, details }))
+  process.exit(result.ok ? 0 : 1)
+}
+
 console.log(formatReport(result))
 process.exit(result.ok ? 0 : 1)

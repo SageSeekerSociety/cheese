@@ -4,6 +4,7 @@
 //
 //   node scripts/stylelint-ratchet.mjs            check (exit 1 on any new violation)
 //   node scripts/stylelint-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/stylelint-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
 // The comparison logic lives in stylelint-ratchet-core.mjs and is unit-tested;
 // this file is only the I/O around it. Structure deliberately mirrors
@@ -28,11 +29,13 @@ import {
   tightenedBaseline,
   violationDetails,
 } from './stylelint-ratchet-core.mjs'
+import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 const BASELINE = resolve(ROOT, 'stylelint-baseline.json')
 const update = process.argv.includes('--update')
+const ID = 'stylelint-tokens'
 
 const TARGETS = 'src/**/*.{vue,css,scss}'
 
@@ -57,7 +60,7 @@ const run = spawnSync(BIN, [TARGETS, '--formatter', 'json', '--output-file', REP
 if (run.error) {
   console.error(`could not run stylelint: ${run.error.message}`)
   console.error('run `pnpm install --frozen-lockfile` first')
-  process.exit(2)
+  cannotJudge({ id: ID }, `could not run stylelint: ${run.error.message}`)
 }
 
 let report
@@ -69,7 +72,7 @@ try {
   // "clean" is exactly how a broken gate passes for free.
   console.error('stylelint produced no readable report:')
   console.error((run.stderr || run.stdout || '').trim() || `(no output) — ${error.message}`)
-  process.exit(2)
+  cannotJudge({ id: ID }, `stylelint produced no readable report: ${error.message}`)
 } finally {
   try {
     unlinkSync(REPORT_PATH)
@@ -87,7 +90,7 @@ const broken = syntaxErrors(report, toRelativePath)
 if (broken.length) {
   console.error('stylelint could not parse these files:')
   console.error(broken.join('\n'))
-  process.exit(2)
+  cannotJudge({ id: ID }, `stylelint could not parse ${broken.length} file(s)`)
 }
 
 const current = parseStylelintReport(report, toRelativePath)
@@ -116,6 +119,19 @@ if (update) {
 }
 
 const result = compare(baseline, current)
+
+if (asJson) {
+  // Per-file counts, every file still over its frozen count, passing or not:
+  // the snapshot's details are per file and the board groups the debt that way,
+  // so a green run that still carries debt is data, not an empty list. The
+  // human report below keeps its line-level selection.
+  const details = Object.entries(current)
+    .filter(([, count]) => count > 0)
+    .map(([file, count]) => ({ file, count }))
+  emit(verdict({ id: ID, result, details }))
+  process.exit(result.ok ? 0 : 1)
+}
+
 const details = result.ok
   ? []
   : violationDetails(report, toRelativePath, new Set(result.regressions.map((r) => r.file)))
