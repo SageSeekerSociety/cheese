@@ -225,9 +225,15 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
             api_direct = True
             reasons.append(f"imports the API layer ({rel})")
         elif (
-            resolved in reach
+            # `reach` holds resolved paths; resolve here too, so a caller that
+            # passes an unresolved root cannot silently disable the chain test.
+            resolved.resolve() in reach
             and not rel.startswith("frontend/src/stores/")
-            and resolved.suffix == ".ts"
+            # `.vue` counts as an edge too: a page that renders a child which
+            # fetches needs the network exactly as much as one that fetches
+            # itself, and `api_reach` already closed over `.vue` edges — the
+            # suffix test here was the only place the two disagreed.
+            and resolved.suffix in (".ts", ".vue")
         ):
             api_direct = True  # reaches the network through a chain
             reasons.append(f"reaches the API layer through {rel}")

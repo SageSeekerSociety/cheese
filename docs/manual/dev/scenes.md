@@ -32,14 +32,14 @@ covers:
 
 ## 一共多少 {#totals}
 
-2026-09-30 在 `feat/scene-ratchet`（`main@bdff0822`）上数出来的：**130 个路由页 + 27 个工作面板 SFC**，其中 **20 个（13%）今天就能单独渲染**；目录里现在有 20 项，其中 4 项是工作面板（`panel-tabs` 加上三个拆出来的视图），剩下 16 项是更小的零件（卡片、导航项、图表……），**一个路由页都没有**。
+2026-09-30 在 `feat/scene-ratchet`（`main@bdff0822`）上数出来的：**130 个路由页 + 27 个工作面板 SFC**，其中 **10 个（6%）今天就能单独渲染**；目录里现在有 20 项，其中 4 项是工作面板（`panel-tabs` 加上三个拆出来的视图），剩下 16 项是更小的零件（卡片、导航项、图表……），**一个路由页都没有**。
 
 | 场景 | 一共 | A 今天就能单独跑 | C 卡在取数 | D 卡在路由 / `$parent` / `inject` |
 |---|---|---|---|---|
-| 路由页（`src/views/`，router 表里挂上去的每一页） | 130 | 7 | 35 | 88 |
-| 工作面板（`src/components/panels/` 下的 SFC） | 27 | 13 | 14 | 0 |
+| 路由页（`src/views/`，router 表里挂上去的每一页） | 130 | 2 | 40 | 88 |
+| 工作面板（`src/components/panels/` 下的 SFC） | 27 | 8 | 19 | 0 |
 
-和上一版（2026-09-29 的 19 个）差一个，两件事各占一半：`views/admin/AdminIntegrationsPage.vue` 是之后新挂上的一页，而 `PanelPreviewView` 从 C 回到 A —— 它自己一行取数代码都没有，之前是被 `import type` 的一条假边判低的（[原因](#how)）。
+和上一版（2026-09-30 早先的 20 个）差十个，原因是判据修了一处**过宽**：传递依赖原来只跟 `.ts` 边，父页面 import 一个自己去取数的子组件（`.vue`）不算「到了接口层」，于是「自己干净、子组件在取数」的十个场景被当成能单独跑。`.` 这条边现在也跟（[原因](#how)），数字按修完的结果写在这里。修之前报出去的 20 是错的，不是这一版退步。
 
 一个场景可以同时踩中好几条（100 页直接 import 了取数模块，86 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
 
@@ -50,17 +50,17 @@ covers:
 | `views（顶层）` | 19 | 1 | 6 | 12 |
 | `views/account/` | 17 | 0 | 1 | 16 |
 | `views/admin/` | 9 | 0 | 4 | 5 |
-| `views/feedback/` | 5 | 1 | 1 | 3 |
-| `views/home/` | 4 | 2 | 1 | 1 |
+| `views/feedback/` | 5 | 0 | 2 | 3 |
+| `views/home/` | 4 | 0 | 3 | 1 |
 | `views/legal/` | 1 | 0 | 0 | 1 |
-| `views/question/` | 4 | 1 | 0 | 3 |
-| `views/spaces/` | 43 | 1 | 12 | 30 |
+| `views/question/` | 4 | 0 | 1 | 3 |
+| `views/spaces/` | 43 | 0 | 13 | 30 |
 | `views/tasks/` | 7 | 0 | 3 | 4 |
 | `views/teams/` | 9 | 0 | 3 | 6 |
 | `views/user/` | 5 | 1 | 4 | 0 |
 | `views/workspace/` | 7 | 0 | 0 | 7 |
 
-今天就能单独跑的那 7 页：`views/404.vue`、`views/home/Landing.vue`、`views/home/Solutions.vue`、`views/spaces/detail/analytics/Index.vue`、`views/feedback/AdminFeedbackPage.vue`、`views/user/settings/General.vue`、`views/question/DetailAnswerList.vue`。
+今天就能单独跑的那 2 页：`views/404.vue`、`views/user/settings/General.vue`。
 
 ## 从今天起它是一条闸门 {#ratchet}
 
@@ -70,7 +70,7 @@ covers:
 
 | 名单 | 是什么 | 只能 |
 |---|---|---|
-| `ready` | 今天就能单独跑的场景（20 个） | 增（掉档就红） |
+| `ready` | 今天就能单独跑的场景（10 个） | 增（掉档就红） |
 | `debt` | 仓库里本来就跑不起来的场景（137 个） | 减（变 A 会提示你收紧） |
 
 不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。五种结果：
@@ -113,7 +113,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 ### 目录那条提醒 {#catalog-warning}
 
-能单独跑、但没挂进 `/demo/catalog` 的场景，检查会打一行 warning（今天 16 个：7 个页面 + 9 个面板），**不算失败**：目录里放什么由人定，页面和面板本来也不是一回事。挂上去之后，`pnpm exec vitest run src/views/demo/catalog.spec.ts` 才是「它真的能单独挂起来」的那条机械结论——加一个组件到目录的三步写在 `frontend/AGENTS.md`。
+能单独跑、但没挂进 `/demo/catalog` 的场景，检查会打一行 warning（今天 9 个：2 个页面 + 7 个面板），**不算失败**：目录里放什么由人定，页面和面板本来也不是一回事。挂上去之后，`pnpm exec vitest run src/views/demo/catalog.spec.ts` 才是「它真的能单独挂起来」的那条机械结论——加一个组件到目录的三步写在 `frontend/AGENTS.md`。
 
 ## 页面 {#pages}
 
@@ -286,7 +286,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `components/panels/preview/RoomFileHistory.vue` | C | 直接取数（`api.ts`） |
 | `components/panels/preview/RoomOutputs.vue` | C | 直接取数（`api.ts`） |
 
-**三个外壳正在被拆空。** `PanelDoc` / `PanelChanges` / `PanelPreview` 今天都是 C，但它们是「页签的外壳」：取数在 `composables/usePanelDoc.ts`、`usePanelChanges.ts`、`usePanelPreview.ts` 里，外壳把结果整理成 props 交给视图。三个视图（`PanelDocView`、`PanelChangesView`、`PanelPreviewView`）因此都是 A，这一版的目录里已经能单独跑——**拆的方向就是把 C 留在外壳上、把 A 攒出来**。
+**三个外壳正在被拆空。** `PanelDoc` / `PanelChanges` / `PanelPreview` 今天都是 C，但它们是「页签的外壳」：取数在 `composables/usePanelDoc.ts`、`usePanelChanges.ts`、`usePanelPreview.ts` 里，外壳把结果整理成 props 交给视图。三个视图自己也不取数，但它们在模板里渲染的子组件（`AttachmentImage`、`preview/RoomFileEditor`、`doc/DocComments` 等）会取数，所以判据修好之后**它们是 C**，要看下一层拆得干不干净。方向不变：**把 C 留在外壳上，把 A 一层层攒出来**。
 
 ## 卡在哪一步 {#blockers}
 
@@ -312,7 +312,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 两个已知偏差写在这里，免得被当成事实用：
 
-- **`import type` 那条边已经修掉（2026-09-30）。** 规约说 `import type` 不算（构建时就被抹掉，见[架构指标](/dev/arch-metrics#metrics)）；但 `lib/previewSession.ts` 整个文件只有一句 `import type { PreviewSession } from '../api'`，它到 `api.ts` 的那条边一度仍然进了传递闭包，于是 `PanelPreviewView` 被判成 C——它自己一行取数代码都没有。现在这条边不进图了，`PanelPreviewView` 是 A，看板的 A 档也一起从 195 变成了 197。剩下的 C 里可能还有别的假 C，逐页看一眼。
+- **`import type` 那条边已经修掉（2026-09-30）。** 规约说 `import type` 不算（构建时就被抹掉，见[架构指标](/dev/arch-metrics#metrics)）；但 `lib/previewSession.ts` 整个文件只有一句 `import type { PreviewSession } from '../api'`，它到 `api.ts` 的那条边一度仍然进了传递闭包，于是 `PanelPreviewView` 被判成 C——它自己一行取数代码都没有。现在这条边不进图了。但同一次里还查出一处**过宽**：传递依赖只跟 `.ts`，`.vue` 子组件那条链被漏掉，于是「自己干净、子组件取数」的十页被判成 A 并冻进基线。两处都在 2026-09-30 修掉，基线和这一页的数字按修完的结果重算（能单独跑 20 → 10）。
 - **正则不是编译器。** 解析不出来的模块说明符当成外部依赖，不当成一条边，所以真隔着一条解析不出来的链在取数的组件会被判高一档（A 或 B）。
 
 ## 下一步 {#next}

@@ -128,9 +128,12 @@ Two things about it are worth knowing from this file:
 - The grader is one module, `.claude/scripts/frontend_grade.py`, imported by both
   this gate and `arch-metrics.py`. A definition of "standalone" that could drift
   between the board and the gate would be worth less than neither. Its rule that
-  a type-only import is not reach — `import type` is erased at build time — is
-  what makes `PanelPreviewView` an A; before that fix the board counted 195 A
-  components and the scene set 19.
+  a type-only import is not reach (`import type` is erased at build time) is one
+  half of the story; the other half is that a chain must be followed through
+  `.vue` edges too, not only `.ts` ones — a page that renders a child which
+  fetches needs the network as much as one that fetches itself. Only the first
+  half was implemented at first, which graded ten such scenes A and froze them;
+  both halves landed 2026-09-30.
 
 Missing `/demo/catalog` entries are reported as a warning count, never a failure:
 what belongs in the preview site is a product decision, and
