@@ -8,7 +8,7 @@ import { computed, ref, watch } from 'vue'
 
 import { ApiError, listDeviceSessions, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
-import { choiceKey, compactChoices } from '../lib/computeConfig'
+import { choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
 
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -39,7 +39,7 @@ const moved = ref(false)
 
 const choices = computed(() => {
   const cloud: ComputeChoice = {
-    name: t('work.sessionMachine.cloud'),
+    name: null,
     profile: 'cloud',
     device_id: null,
     cores: null,
@@ -63,7 +63,7 @@ const choices = computed(() => {
                 device.online
             )
       return {
-        title: available ? choice.name : t('work.sessionMachine.unavailable', { name: choice.name }),
+        title: available ? choiceName(choice) : t('work.sessionMachine.unavailable', { name: choiceName(choice) }),
         value: choiceKey(choice),
         props: { disabled: !available },
         choice,

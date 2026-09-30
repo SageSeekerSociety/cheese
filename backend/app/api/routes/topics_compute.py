@@ -113,7 +113,7 @@ async def get_topic_compute_profile(
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
-            choice.name = named.name if named else "自有设备"
+            choice.name = named.name if named else None
     # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
     # machine. 一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里的会话看的
     # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced

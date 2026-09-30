@@ -798,8 +798,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, title }
+export function createTopic(projectId: string, title?: string, parentId?: string): Promise<Topic> {
+  const body: Record<string, string> = { project_id: projectId, ...(title ? { title } : {}) }
   if (parentId) body.parent_id = parentId
   return request<Topic>('/topics', {
     method: 'POST',

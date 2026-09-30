@@ -55,6 +55,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -82,11 +83,6 @@ from app.domain.topic.repositories import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-
-# Titles are AI-generated (the agent names a topic via `cheese_title`), never
-# deterministically derived from text — see CLAUDE.md. An upgraded block starts
-# untitled and 芝士 names it on its first turn (same as a + new topic).
-PLACEHOLDER_TITLE = "新话题"
 
 
 @overload
@@ -289,10 +285,11 @@ class TopicService:
         self,
         *,
         project_id: uuid.UUID,
-        title: str,
+        title: str | None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
+        """``title=None`` opens an unnamed room (see `TopicRepository.add`)."""
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -937,9 +934,12 @@ class TopicService:
             source_block=block.content,
         )
         root_id = project.root_topic_id if project else None
+        # Titles are AI-generated (the agent names a topic via `cheese_title`),
+        # never derived from text — see CLAUDE.md. An upgraded block starts
+        # unnamed and 芝士 names it on its first turn, like a + new topic.
         new_room = await self._repo.add(
             project_id=block.project_id,
-            title=PLACEHOLDER_TITLE,
+            title=None,
             parent_id=root_id,
             kind=TopicKind.topic,
             created_by=created_by,

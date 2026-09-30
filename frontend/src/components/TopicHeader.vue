@@ -125,7 +125,8 @@ const renaming = ref(false)
 const draftTitle = ref('')
 
 function startRename() {
-  draftTitle.value = props.topic.title
+  // 还没名字的话题从空白开始改：占位标题不是谁起的名字。
+  draftTitle.value = props.topic.title_source === 'placeholder' ? '' : props.topic.title
   renaming.value = true
 }
 

@@ -1120,7 +1120,7 @@ export interface EnvironmentStatus {
 }
 
 export interface ComputeChoice {
-  name: string
+  name: string | null
   profile: 'cloud' | 'device'
   device_id: string | null
   cores: number | null
@@ -1161,7 +1161,7 @@ export interface DeviceSession {
 
 export interface ComputeDistribution {
   cloud: number
-  devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]
+  devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)

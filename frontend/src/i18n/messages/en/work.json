@@ -42,7 +42,6 @@
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
-    "cloud": "Cloud · Standard configuration",
     "unavailable": "{name} · Unavailable",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
     "abandon": "Change without pushing"
@@ -903,7 +902,8 @@
     "notFound": "This topic doesn't exist",
     "notFoundHint": "It may have been deleted, or it isn't part of this project",
     "resize": "Drag to resize, double-click to reset",
-    "dmFailed": "Couldn't open the conversation"
+    "dmFailed": "Couldn't open the conversation",
+    "untitled": "New topic"
   },
   "access": {
     "signedOutTitle": "Sign in to view this project",

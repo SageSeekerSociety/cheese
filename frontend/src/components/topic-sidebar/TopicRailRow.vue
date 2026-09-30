@@ -25,6 +25,7 @@ import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { stallReasonText } from '@/lib/replyWait'
+import { topicTitle } from '@/lib/topicState'
 import { TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { countLabel } from '@/lib/topicTree'
 
@@ -92,7 +93,8 @@ const draftTitle = ref('')
 watch(
   () => props.renaming,
   (on) => {
-    if (on) draftTitle.value = props.row.topic.title
+    // 还没名字的话题从空白开始改：占位标题不是谁起的名字。
+    if (on) draftTitle.value = props.row.topic.title_source === 'placeholder' ? '' : props.row.topic.title
   },
   { immediate: true }
 )
@@ -187,7 +189,7 @@ watch(
           class="text-truncate"
           :class="{ 'title-unread': row.unreadTotal > 0 }"
           :title="row.topic.title_source === 'auto' ? t('work.sidebar.autoTitle') : undefined"
-          >{{ row.topic.title }}</span
+          >{{ topicTitle(row.topic) }}</span
         >
         <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
         <span
@@ -215,7 +217,7 @@ watch(
         <AdaptiveMenu
           :model-value="menuOpen"
           :actions="actions(row.topic).map(menuActionOf)"
-          :title="row.topic.title"
+          :title="topicTitle(row.topic)"
           @update:model-value="(open: boolean) => emit('update:menu-open', open)"
         >
           <template #activator="{ props: menuProps }">

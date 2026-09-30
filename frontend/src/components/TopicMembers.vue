@@ -19,7 +19,7 @@ import {
   updateTopicMemberRole,
 } from '../api'
 import { t } from '../i18n'
-import { choiceKey } from '../lib/computeConfig'
+import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
@@ -292,7 +292,9 @@ async function onSetRole(handle: string, role: string) {
       </ul>
 
       <div v-if="machines" class="roster__future" data-testid="future-machine">
-        <span class="roster__machine-text">{{ t('work.roomMachine.here', { name: machines.choice.name }) }}</span>
+        <span class="roster__machine-text">{{
+          t('work.roomMachine.here', { name: choiceName(machines.choice) })
+        }}</span>
         <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
         <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}

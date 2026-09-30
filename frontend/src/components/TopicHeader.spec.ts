@@ -46,7 +46,7 @@ const topic = {
 } as Topic
 
 const cloud = {
-  name: '云端 · 标准配置',
+  name: null,
   profile: 'cloud',
   device_id: null,
   cores: null,
