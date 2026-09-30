@@ -94,6 +94,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # `platform_stats.pipeline` 那条注释讲的是同一件事。拆模块没有新增跨包的
         # 边，只是发起方从 chat.py 换成了 room_events.py，所以按同一笔债入账。
         ("app.domain.agent.room_events", "app.domain.block.repositories"),
+        # agent.hook_stream 是从 agent.chat 里拆出来的那一块（屏幕订阅送进来的
+        # 那一条线：读一条事件、落块、重试与整理的提示、关这一轮的书）。它摸的
+        # repository 只有 block 一个，正是原先 chat.py 那一组里跟着它走的：block
+        # 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。
+        # 拆模块没有新增跨包的边，只是发起方从 chat.py 换成了 hook_stream.py，
+        # 所以按同一笔债入账。
+        ("app.domain.agent.hook_stream", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
