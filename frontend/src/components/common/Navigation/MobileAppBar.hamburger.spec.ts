@@ -14,6 +14,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import MobileAppBar from './MobileAppBar.vue'
 
 import i18n from '@/i18n'
+import { setLocale } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 
 vi.mock('@/api', async (original) => ({
@@ -31,6 +32,7 @@ const routes = [
 ]
 
 beforeAll(() => {
+  setLocale('zh-CN')
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}

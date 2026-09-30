@@ -159,8 +159,9 @@
     "name": "项目名称",
     "intent": "你打算做什么（可选）",
     "intentExample": "例如：帮我把这学期的课程材料整理成一份大纲",
-    "team": "所属团队",
-    "personalTeam": "个人",
+    "team": "归属",
+    "ownHint": "你名下，可以另外邀请人",
+    "teamHint": "团队的 {n} 位成员会自动加入",
     "teamsEmpty": "暂无可用团队，请先创建或加入团队",
     "teamsFailed": "团队列表加载失败",
     "forge": "代码仓库",
@@ -180,6 +181,7 @@
     "projects": "项目数量：当前未设置上限",
     "concurrent": "工作电脑按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
     "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
+    "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",
     "retry": "重试",
     "loading": "正在加载资源限制…"
@@ -379,7 +381,7 @@
     "cancel": "取消",
     "confirmRemove": "移出",
     "inviteTitle": "邀请外部成员",
-    "inviteHint": "外部成员是团队以外、只参与这个项目的人。对方接受邀请后才会加入，只能看到这个项目",
+    "inviteHint": "邀请只参与这个项目的人。对方接受邀请后才会加入，只能看到这个项目",
     "inviteLabel": "用户名或邮箱",
     "invitePlaceholder": "输入完整的用户名或邮箱",
     "notFound": "找不到这个用户名或邮箱",
@@ -391,7 +393,7 @@
   },
   "external": {
     "tag": "外部",
-    "tagHint": "团队以外的成员，只参与这个项目"
+    "tagHint": "只参与这个项目的成员"
   },
   "mcp": {
     "title": "MCP 服务器",
@@ -473,5 +475,29 @@
     "previewLoading": "正在读取文件",
     "previewError": "无法预览这份文件",
     "downloadOnly": "此格式暂不支持预览，可下载查看"
+  },
+  "leaveProject": {
+    "title": "退出项目？",
+    "body": "你将无法查看这个项目，已有的消息和记录会保留。再次受邀后可以回到这个项目。",
+    "bodyTeam": "你将无法查看这个项目，已有的消息和记录会保留。退出的是这个项目，不是团队：你在团队里的身份不变，团队里别的项目照常。再次受邀后可以回到这个项目。",
+    "cancel": "取消",
+    "confirm": "退出",
+    "failed": "退出失败"
+  },
+  "transfer": {
+    "title": "转让项目",
+    "submit": "转让",
+    "confirm": "确认转让",
+    "cancel": "取消",
+    "back": "返回",
+    "intro": "项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出",
+    "noCandidates": "暂无可以接手的成员",
+    "lookupTeam": "团队里没人可交？直接找一个人：",
+    "lookupOwn": "输入接手人的用户名或邮箱：",
+    "lookupLabel": "用户名或邮箱（要写完整）",
+    "notFound": "没有找到这个账号",
+    "loadFailed": "加载成员失败",
+    "failed": "转让失败",
+    "movingOut": "转让会把项目整个搬到 {'@'}{handle} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
   }
 }

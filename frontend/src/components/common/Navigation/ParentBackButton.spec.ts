@@ -11,6 +11,7 @@ import { topBarBack } from '../topBarBack'
 
 import ParentBackButton from './ParentBackButton.vue'
 
+import { setLocale } from '@/i18n'
 import { recordEntry } from '@/lib/projectEntry'
 import HomeRoutes from '@/router/home'
 import { legacyProjectRedirects } from '@/router/legacyProjectPaths'
@@ -42,6 +43,7 @@ function widthIs(px: number) {
 let pinia: ReturnType<typeof createPinia>
 
 beforeEach(() => {
+  setLocale('zh-CN')
   sessionStorage.clear()
   widthIs(DESKTOP)
   pinia = createPinia()
@@ -215,6 +217,29 @@ describe('没有来路时，退到项目所属的小队', () => {
 
   // 历史遗留的行没有小队（新建项目一律会落到创建者的个人小队）。这种情况诚实的
   // 答案是没有上一层——不假装用户来过某个地方。
+  // 项目在某人名下时，所属的是只有他自己的那个团队，地址是他的用户名，也只有他本人
+  // 打得开。被邀请进来的人按下去只会看到「找不到」，所以对他们没有这一层。
+  function ownedByPerson(handle: string) {
+    useWorkspaceStore().projects = [
+      { id: 'project-a', name: 'A', created_at: '', team_id: 3, team_handle: handle, owner_handle: handle },
+    ]
+  }
+
+  it('自己名下的项目，← 回你名下的项目', async () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+    ownedByPerson('linxia')
+    const view = await open('/projects/project-a/running')
+    expect(back(view)?.getAttribute('href')).toBe('/teams/linxia')
+    expect(back(view)?.getAttribute('title')).toBe('返回你名下的项目')
+  })
+
+  it('别人名下的项目，← 不指向对方打不开给你的那一页', async () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+    ownedByPerson('alice')
+    const view = await open('/projects/project-a/running')
+    expect(back(view)).toBeNull()
+  })
+
   it('项目不属于任何小队时，← 不出现', async () => {
     ownedBy(null)
     const view = await open('/projects/project-a/running')

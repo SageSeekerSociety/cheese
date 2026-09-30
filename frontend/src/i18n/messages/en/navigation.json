@@ -112,5 +112,11 @@
   },
   "sidebar": {
     "resize": "Drag to resize"
+  },
+  "backTo": {
+    "place": "Back to {place}",
+    "up": "Back",
+    "team": "team",
+    "own": "your projects"
   }
 }

@@ -7,7 +7,9 @@ import { useDisplay } from 'vuetify'
 
 import { topBarBack } from '../topBarBack'
 
+import { t } from '@/i18n'
 import { projectFrameOf, readEntry } from '@/lib/projectEntry'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const route = useRoute()
@@ -52,8 +54,15 @@ const entry = computed(() => {
 const owningTeam = computed(() => {
   const projectId = projectFrameOf(route)
   if (!projectId || !atProjectRoot.value || entry.value) return null
-  const handle = workspace.projects.find((p) => p.id === projectId)?.team_handle
-  return handle ? { name: 'TeamsDetail', params: { handle }, label: '团队' } : null
+  const project = workspace.projects.find((p) => p.id === projectId)
+  const handle = project?.team_handle
+  if (!handle) return null
+  // 项目在某人名下时，「所属团队」就是只有他自己的那一个，地址是他的用户名，也只有他
+  // 本人打得开：对他是「你名下的项目」，对被邀请进来的人没有这一层。
+  if (handle === project.owner_handle) {
+    return handle === myHandle() ? { name: 'TeamsDetail', params: { handle }, label: t('navigation.backTo.own') } : null
+  }
+  return { name: 'TeamsDetail', params: { handle }, label: t('navigation.backTo.team') }
 })
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）——那些本来就是对的。 */
@@ -69,10 +78,10 @@ const declaredParent = computed(() => {
 const target = computed(() => (atProjectRoot.value ? entry.value ?? owningTeam.value : declaredParent.value))
 
 const to = computed<RouteLocationRaw | null>(() => {
-  const t = target.value
-  if (!t) return null
+  const dest = target.value
+  if (!dest) return null
   try {
-    return router.resolve({ name: t.name, params: t.params }, route).path
+    return router.resolve({ name: dest.name, params: dest.params }, route).path
   } catch {
     return null
   }
@@ -80,7 +89,9 @@ const to = computed<RouteLocationRaw | null>(() => {
 
 // 说得出去处就说：读屏和长按看到的是「返回小队」而不是一句放之四海皆准的
 // 「返回上一级」。名字是**离开那一页时**存下来的——现在再去取，那一页早卸载了。
-const label = computed(() => (target.value?.label ? `返回${target.value.label}` : '返回上一级'))
+const label = computed(() =>
+  target.value?.label ? t('navigation.backTo.place', { place: target.value.label }) : t('navigation.backTo.up')
+)
 
 // 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
 const override = computed(() => (mdAndUp.value ? null : topBarBack.value))

@@ -2,7 +2,7 @@
   <v-container class="teams-container" fluid>
     <v-row>
       <v-col cols="12">
-        <v-card flat class="my-teams-card" title="我的团队">
+        <v-card flat class="my-teams-card" :title="t('home.team.mine.title')">
           <template #text>
             <!-- 加载状态 -->
             <div v-if="isLoadingMyTeams" class="d-flex flex-column align-center py-5">
@@ -13,7 +13,7 @@
                 :width="3"
                 class="mb-3"
               ></v-progress-circular>
-              <p class="text-body-2 text-medium-emphasis text-center">加载中...</p>
+              <p class="text-body-2 text-medium-emphasis text-center">{{ t('home.team.mine.loading') }}</p>
             </div>
 
             <!-- 错误状态 -->
@@ -21,10 +21,10 @@
               <v-avatar size="50" class="mb-3 bg-error-lighten-5">
                 <v-icon icon="mdi-alert-circle" size="large" color="error"></v-icon>
               </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">加载失败</p>
-              <p class="text-body-2 text-center text-medium-emphasis mb-3">无法获取团队信息</p>
+              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('home.team.mine.failed') }}</p>
+              <p class="text-body-2 text-center text-medium-emphasis mb-3">{{ t('home.team.mine.failedHint') }}</p>
               <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" @click="fetchMyTeams">
-                重新加载
+                {{ t('home.team.mine.retry') }}
               </v-btn>
             </div>
 
@@ -33,29 +33,23 @@
               <v-avatar size="50" class="mb-3 bg-surface-light">
                 <v-icon icon="mdi-account-group" size="large" color="on-surface-variant"></v-icon>
               </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">还没有加入团队</p>
-              <p class="text-body-2 text-center text-medium-emphasis">创建一个新的团队，或者加入一个现有的团队</p>
+              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('home.team.mine.empty') }}</p>
+              <p class="text-body-2 text-center text-medium-emphasis">{{ t('home.team.mine.emptyHint') }}</p>
             </div>
 
             <!-- 小队列表 -->
             <v-list v-else class="my-teams-list pa-0">
-              <!-- The personal team (个人 = 单人真团队) arrives first from the
-                   backend and behaves exactly like any other team — click in to
-                   manage its projects and work computers. Only the badge marks it apart. -->
               <v-list-item
                 v-for="team in myTeams"
                 :key="team.id"
                 :title="team.name"
-                :subtitle="team.personal ? '只有你自己的团队 · 个人项目与设备都在这里' : team.intro"
+                :subtitle="team.intro"
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"
                 class="my-team-item mb-2"
               >
                 <template #append>
-                  <v-chip v-if="team.personal" size="x-small" variant="tonal" color="primary" class="mr-2">
-                    个人
-                  </v-chip>
                   <v-icon icon="mdi-chevron-right" color="on-surface-variant"></v-icon>
                 </template>
               </v-list-item>
@@ -74,6 +68,7 @@ import { onMounted, ref } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
 
 const myTeams = ref<Team[]>([])
@@ -88,9 +83,10 @@ const fetchMyTeams = async () => {
     const {
       data: { teams },
     } = await TeamsApi.getMyTeams()
-    myTeams.value = teams
+    // 自己名下的项目不是一个团队，在侧栏「团队」之上单独一行，不列在这里。
+    myTeams.value = teams.filter((team) => !team.personal)
   } catch (error) {
-    console.error('获取我的小队失败:', error)
+    console.error('Failed to load my teams:', error)
     loadMyTeamsError.value = true
   } finally {
     isLoadingMyTeams.value = false

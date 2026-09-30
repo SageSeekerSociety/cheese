@@ -159,8 +159,9 @@
     "name": "Project name",
     "intent": "What do you plan to do (optional)",
     "intentExample": "For example: turn this term's course materials into an outline",
-    "team": "Team",
-    "personalTeam": "Personal",
+    "team": "Belongs to",
+    "ownHint": "Under your name; you can invite people to it",
+    "teamHint": "All {n} team members join automatically",
     "teamsEmpty": "No teams available. Create or join a team first.",
     "teamsFailed": "Could not load teams",
     "forge": "Code repository",
@@ -180,6 +181,7 @@
     "projects": "Projects: no limit is set",
     "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
     "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
+    "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
@@ -379,7 +381,7 @@
     "cancel": "Cancel",
     "confirmRemove": "Remove",
     "inviteTitle": "Invite an external member",
-    "inviteHint": "An external member is someone outside the team who takes part in this project only. They join once they accept, and see only this project",
+    "inviteHint": "Invite someone to this project only. They join once they accept, and see only this project",
     "inviteLabel": "Username or email",
     "invitePlaceholder": "Enter the full username or email",
     "notFound": "No one has this username or email",
@@ -391,7 +393,7 @@
   },
   "external": {
     "tag": "External",
-    "tagHint": "Not on the team; takes part in this project only"
+    "tagHint": "Takes part in this project only"
   },
   "mcp": {
     "title": "MCP servers",
@@ -473,5 +475,29 @@
     "previewLoading": "Loading the file",
     "previewError": "Could not preview this file",
     "downloadOnly": "This format cannot be previewed yet; download it to view"
+  },
+  "leaveProject": {
+    "title": "Leave this project?",
+    "body": "You will no longer see this project. Existing messages and records are kept. You can come back if you are invited again.",
+    "bodyTeam": "You will no longer see this project. Existing messages and records are kept. You leave the project, not the team: your place in the team and its other projects stay the same. You can come back if you are invited again.",
+    "cancel": "Cancel",
+    "confirm": "Leave",
+    "failed": "Failed to leave"
+  },
+  "transfer": {
+    "title": "Transfer project",
+    "submit": "Transfer",
+    "confirm": "Confirm transfer",
+    "cancel": "Cancel",
+    "back": "Back",
+    "intro": "The project owner cannot leave directly. Transfer the project to someone else, then you can leave",
+    "noCandidates": "No one here can take it over",
+    "lookupTeam": "No one on the team? Find a person directly:",
+    "lookupOwn": "Enter the new owner's username or email:",
+    "lookupLabel": "Username or email (in full)",
+    "notFound": "No account found",
+    "loadFailed": "Failed to load members",
+    "failed": "Failed to transfer",
+    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and cannot see any of its topics."
   }
 }

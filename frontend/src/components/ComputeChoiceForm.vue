@@ -81,10 +81,10 @@ function submit() {
           hide-details
         />
       </div>
-      <p class="text-body-2 text-medium-emphasis my-3">首次运行时分配，计入团队云额度；超出供应范围时会提示调整</p>
+      <p class="text-body-2 text-medium-emphasis my-3">首次运行时分配，计入云端额度；超出供应范围时会提示调整</p>
     </template>
     <p v-else-if="target" class="text-body-2 text-medium-emphasis my-3">
-      设备已加入团队，无需再次授权；离线时需要等待设备上线
+      这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线
     </p>
     <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit"
       >使用此配置</v-btn

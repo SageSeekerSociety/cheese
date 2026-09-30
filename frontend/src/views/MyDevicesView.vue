@@ -48,6 +48,8 @@ const myTeams = ref<MyTeam[]>([])
 function teamName(id: number): string {
   return myTeams.value.find((t) => t.id === id)?.name ?? t('account.devices.teamFallback', { id })
 }
+// 自己名下（只有自己的那个团队）以自己的昵称出现，图标也是一个人而不是一群人。
+const isOwn = (id: number) => myTeams.value.some((team) => team.id === id && team.personal)
 // The team page lives at its handle; a team you are not in has no page for you.
 function teamRoute(id: number) {
   const handle = myTeams.value.find((t) => t.id === id)?.handle
@@ -321,13 +323,13 @@ useCommands(() =>
             {{ t('account.devices.deviceId') }} · <code>{{ d.device_id }}</code>
           </div>
 
-          <!-- 只读的归属：这台机器在给哪些团队用（含个人团队）。加机器、移出在各团队的
+          <!-- 只读的归属：这台机器在给哪些团队、以及自己名下的项目用。加机器、移出在各自的
                「工作电脑」页里做，每一枚都直接链过去。 -->
           <div class="device__block">
             <div class="device__label">{{ t('account.devices.teams') }}</div>
             <div class="device__chips">
               <v-chip v-for="tid in d.team_ids" :key="tid" size="small" variant="outlined" :to="teamRoute(tid)">
-                <v-icon start size="14">mdi-account-group</v-icon>
+                <v-icon start size="14">{{ isOwn(tid) ? 'mdi-account-outline' : 'mdi-account-group' }}</v-icon>
                 {{ teamName(tid) }}
               </v-chip>
               <span v-if="!d.team_ids.length" class="device__meta">{{ t('account.devices.noTeams') }}</span>

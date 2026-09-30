@@ -94,7 +94,7 @@ export const KNOWLEDGE_ENTRIES: CatalogEntry[] = [
         name: '一条都没有',
         note: '没筛过时说「先去聊天里放点东西进来」：这一档没有可点的东西，所以不给按钮。',
         props: { hasFilters: false },
-        expect: '在频道聊天中添加有价值的内容到知识库',
+        expect: '在对话中把有价值的内容加入知识库',
       },
       {
         name: '筛空了',

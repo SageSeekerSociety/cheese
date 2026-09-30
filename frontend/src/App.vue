@@ -95,7 +95,10 @@
         <p v-if="sourceTask" class="t-body c-muted mb-3">
           {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
         </p>
-        <ResourceLimitsNotice v-if="newProjectDialog" />
+        <ResourceLimitsNotice
+          v-if="newProjectDialog"
+          :own="newProjectTeams.find((team) => team.id === newProjectTeamId)?.personal"
+        />
         <v-text-field
           v-model="newProjectName"
           autocomplete="off"
@@ -126,8 +129,9 @@
           v-model="newProjectTeamId"
           autocomplete="off"
           :items="newProjectTeams"
-          :item-title="teamLabel"
+          item-title="name"
           item-value="id"
+          :item-props="teamItemProps"
           :label="t('work.newProject.team')"
           variant="outlined"
           color="primary"
@@ -564,17 +568,22 @@ const newProjectIntent = ref('')
 const newProjectId = ref('')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
-// 所属小队: which team the project belongs to decides who can see it. Without
+// 归属: which team the project belongs to decides who can see it. Without
 // this the rail ＋ always chose the personal team, so a project someone made
 // for their team was invisible to the rest of it.
 const newProjectTeams = ref<Team[]>([])
 const newProjectTeamId = ref<number | null>(null)
 const loadingTeams = ref(false)
 const teamLoadError = ref<string | null>(null)
-const teamLabel = (team: Team) => (team.personal ? t('work.newProject.personalTeam') : team.name)
+// 自己名下以自己的昵称出现（后端给的 name 就是昵称），和团队的区别写在下面那行小字里。
+const teamItemProps = (team: Team) => ({
+  subtitle: team.personal
+    ? t('work.newProject.ownHint')
+    : t('work.newProject.teamHint', { n: 1 + (team.admins?.total ?? 0) + (team.members?.total ?? 0) }),
+})
 
 function createNewProject() {
-  // From a team page, that team; elsewhere the dialog falls back to 个人.
+  // From a team page, that team; elsewhere the dialog falls back to the caller's own name.
   showNewProjectDialog(teamHandleInPath(currentRoute.path))
 }
 

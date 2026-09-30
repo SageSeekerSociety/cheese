@@ -36,6 +36,11 @@ const awaiting = awaitingCount()
 
 const teams = ref<Team[]>([])
 const spaces = ref<{ id: number; name: string }[]>([])
+// 自己名下（只有自己的那个团队，以自己的昵称出现）一组，真团队一组，后一组才有「团队」小标题。
+const groups = computed(() => [
+  { key: 'own', heading: false, teams: teams.value.filter((team) => team.personal) },
+  { key: 'teams', heading: true, teams: teams.value.filter((team) => !team.personal) },
+])
 
 async function loadTeams() {
   try {
@@ -104,7 +109,7 @@ const TEAM_PAGES = [
   { name: 'TeamsDetailKnowledge', label: 'home.nav.teamKnowledge', exact: false },
   { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
 ] as const
-// 个人团队谁也加不进来（后端拒），「成员」一页就不列。
+// 自己名下谁也加不进来（后端拒），「成员」一页就不列。
 const pagesOf = (team: Team) =>
   team.personal ? TEAM_PAGES.filter((page) => page.name !== 'TeamsDetailMembers') : TEAM_PAGES
 
@@ -115,16 +120,12 @@ const editing = ref<Team | null>(null)
 /** 管理员在一个团队那一行的 ⋯ 里能做的事。 */
 function teamActions(team: Team): MenuAction[] {
   return [
-    ...(team.personal
-      ? []
-      : [
-          {
-            key: 'invite',
-            label: t('home.nav.inviteMembers'),
-            icon: 'mdi-account-plus-outline',
-            to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
-          },
-        ]),
+    {
+      key: 'invite',
+      label: t('home.nav.inviteMembers'),
+      icon: 'mdi-account-plus-outline',
+      to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
+    },
     {
       key: 'edit',
       label: t('work.teamProfile.edit'),
@@ -160,55 +161,58 @@ const joinOpen = ref(false)
       </template>
     </v-list-item>
 
-    <v-list-subheader>{{ t('navigation.teams') }}</v-list-subheader>
-    <template v-for="team in teams" :key="team.id">
-      <v-list-item
-        rounded="lg"
-        class="home-nav__team"
-        :aria-expanded="isOpen(team)"
-        :aria-label="t(isOpen(team) ? 'home.nav.collapse' : 'home.nav.expand', { name: team.name })"
-        @click="toggle(team.handle)"
-      >
-        <template #prepend>
-          <v-icon size="16" class="home-nav__caret">{{
-            isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
-          }}</v-icon>
-          <v-avatar size="22" rounded="md" class="home-nav__mark">
-            <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
-                 后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
-            <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
-              <template #error>{{ team.name.slice(0, 1) }}</template>
-            </v-img>
-            <template v-else>{{ team.name.slice(0, 1) }}</template>
-          </v-avatar>
-        </template>
-        <v-list-item-title class="home-nav__name">{{ team.name }}</v-list-item-title>
-        <template #append>
-          <AdaptiveMenu v-if="isAdmin(team)" :actions="teamActions(team)" :title="team.name">
-            <template #activator="{ props }">
-              <v-btn
-                v-bind="props"
-                icon="mdi-dots-horizontal"
-                size="x-small"
-                variant="text"
-                class="home-nav__more"
-                :aria-label="t('home.nav.teamActions')"
-                @click.stop
-              />
-            </template>
-          </AdaptiveMenu>
-        </template>
-      </v-list-item>
-      <template v-if="isOpen(team)">
+    <!-- 自己名下的项目在「团队」之上单独一行：底下是只有自己的那个团队，界面上不当团队说。 -->
+    <template v-for="group in groups" :key="group.key">
+      <v-list-subheader v-if="group.heading">{{ t('navigation.teams') }}</v-list-subheader>
+      <template v-for="team in group.teams" :key="team.id">
         <v-list-item
-          v-for="page in pagesOf(team)"
-          :key="page.name"
           rounded="lg"
-          class="home-nav__leaf"
-          :exact="page.exact"
-          :to="{ name: page.name, params: { handle: team.handle } }"
-          :title="t(page.label)"
-        />
+          class="home-nav__team"
+          :aria-expanded="isOpen(team)"
+          :aria-label="t(isOpen(team) ? 'home.nav.collapse' : 'home.nav.expand', { name: team.name })"
+          @click="toggle(team.handle)"
+        >
+          <template #prepend>
+            <v-icon size="16" class="home-nav__caret">{{
+              isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
+            }}</v-icon>
+            <v-avatar size="22" rounded="md" class="home-nav__mark">
+              <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
+                 后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
+              <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
+                <template #error>{{ team.name.slice(0, 1) }}</template>
+              </v-img>
+              <template v-else>{{ team.name.slice(0, 1) }}</template>
+            </v-avatar>
+          </template>
+          <v-list-item-title class="home-nav__name">{{ team.name }}</v-list-item-title>
+          <template #append>
+            <AdaptiveMenu v-if="!team.personal && isAdmin(team)" :actions="teamActions(team)" :title="team.name">
+              <template #activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  icon="mdi-dots-horizontal"
+                  size="x-small"
+                  variant="text"
+                  class="home-nav__more"
+                  :aria-label="t('home.nav.teamActions')"
+                  @click.stop
+                />
+              </template>
+            </AdaptiveMenu>
+          </template>
+        </v-list-item>
+        <template v-if="isOpen(team)">
+          <v-list-item
+            v-for="page in pagesOf(team)"
+            :key="page.name"
+            rounded="lg"
+            class="home-nav__leaf"
+            :exact="page.exact"
+            :to="{ name: page.name, params: { handle: team.handle } }"
+            :title="t(page.label)"
+          />
+        </template>
       </template>
     </template>
     <v-list-item
