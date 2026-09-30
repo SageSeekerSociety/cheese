@@ -20,11 +20,17 @@ const { chromium } = require('@playwright/test')
 const BASE = process.env.PREVIEW_BASE || 'http://127.0.0.1:5210/feedback-proto.html'
 const isApi = (u) => {
   try {
-    return /\/(admin|api)(\/|$)/.test(new URL(u, 'http://127.0.0.1:5210').pathname)
+    return /\/(admin|api|feedback)(\/|$)/.test(new URL(u, 'http://127.0.0.1:5210').pathname)
   } catch {
     return false
   }
 }
+
+// 认构建时间：预览是静态包，改了源码不重建就还是旧包。包的 `Last-Modified` 就是构建
+// 落盘的时刻，记进输出里，读者才分得清这份 JSON 是哪个包上抓的。
+const bundleLastModified = await fetch(new URL('./proto.js', BASE), { method: 'HEAD' })
+  .then((r) => r.headers.get('last-modified'))
+  .catch(() => null)
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM || '/usr/bin/chromium',
@@ -43,12 +49,12 @@ await page.addInitScript(() => {
   const of = window.fetch.bind(window)
   window.fetch = function (input, init) {
     const u = typeof input === 'string' ? input : (input && input.url) || String(input)
-    if (/\/(admin|api)(\/|$)/.test(new URL(u, location.origin).pathname)) log('fetch', u)
+    if (/\/(admin|api|feedback)(\/|$)/.test(new URL(u, location.origin).pathname)) log('fetch', u)
     return of(input, init)
   }
   const open = XMLHttpRequest.prototype.open
   XMLHttpRequest.prototype.open = function (m, u, ...rest) {
-    if (/\/(admin|api)(\/|$)/.test(new URL(String(u), location.origin).pathname)) log('xhr', String(u))
+    if (/\/(admin|api|feedback)(\/|$)/.test(new URL(String(u), location.origin).pathname)) log('xhr', String(u))
     return open.call(this, m, u, ...rest)
   }
 })
@@ -89,5 +95,19 @@ const dom = await page.evaluate(() => {
 })
 const doors = await page.evaluate(() => window.__doors || [])
 
-console.log(JSON.stringify({ route: process.argv[2] || '#/admin/spaces', doors, net, dom }, null, 2))
+console.log(
+  JSON.stringify(
+    {
+      capturedAt: new Date().toISOString(),
+      previewBase: BASE,
+      bundleLastModified,
+      route: process.argv[2] || '#/admin/spaces',
+      doors,
+      net,
+      dom,
+    },
+    null,
+    2
+  )
+)
 await browser.close()
