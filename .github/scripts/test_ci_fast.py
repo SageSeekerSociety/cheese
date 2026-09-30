@@ -159,11 +159,64 @@ class CiFastTest(unittest.TestCase):
         rep = self.report()
         self.assertEqual(rep["status"], "unknown")
         self.assertTrue(rep["fallback"])
-        # everything ran except the check that itself needs the merge base
-        self.assertTrue(BACKEND_HOOKS | FRONTEND_HOOKS <= self.ran_hooks())
+        # everything ran except the checks that themselves need the merge base
+        self.assertTrue((BACKEND_HOOKS - {"migration-fork"}) | FRONTEND_HOOKS <= self.ran_hooks())
         self.assertNotIn("file-size", self.ran_hooks())
+        self.assertNotIn("migration-fork", self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
         self.assertIn("file-size", skipped)
+        self.assertIn("migration-fork", skipped)
+
+    # --- a custom --base cannot be honored by the base-judging hooks (they
+    # --- always judge origin/main), so the run must NOT pass — exit 2
+    def test_custom_base_cannot_verify_base_hooks(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        git(self.repo, "update-ref", "refs/heads/release", "HEAD~1")
+        proc = self.run_ci_fast("--base", "release")
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("无法验证", proc.stdout)
+        self.assertNotIn("file-size", self.ran_hooks())
+        self.assertNotIn("migration-fork", self.ran_hooks())
+        self.assertIn("ruff", self.ran_hooks())  # base-independent hooks still ran
+        rep = self.report()
+        self.assertEqual(rep["status"], "unknown")
+        skipped = {n["id"] for n in rep["not_run"]}
+        self.assertIn("file-size", skipped)
+        self.assertIn("migration-fork", skipped)
+
+    # --- SKIP must not green a run: pre-commit returns 0 for a skipped hook
+    # --- WITHOUT running it; that is recorded as skipped, never as pass
+    def test_skip_env_is_not_a_pass(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast(env_extra={"SKIP": "ruff"})
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("跳过", proc.stdout)
+        results = {r["id"]: r["result"] for r in self.report()["ran"]}
+        self.assertEqual(results.get("ruff"), "skipped")
+        self.assertNotIn("ruff", self.ran_hooks())  # the stub never executed
+        self.assertEqual(self.report()["status"], "unknown")
+
+    # --- no matching files is legitimately not_applicable: reported as such,
+    # --- never counted as an execution; the other hooks really ran, so the
+    # --- run still passes without pretending this one did
+    def test_no_files_is_not_applicable(self):
+        self.write_hooks(extra_entries="""      - id: scene-ratchet
+        name: scene-ratchet filtered stub
+        entry: bash -c 'echo scene-ratchet >> .ci-fast-ran'
+        language: system
+        files: '\\.xyz$'
+""", omit={"scene-ratchet"})
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertNotIn("scene-ratchet", self.ran_hooks())
+        results = {r["id"]: r["result"] for r in self.report()["ran"]}
+        self.assertNotIn("scene-ratchet", results)
+        not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
+        self.assertIn("scene-ratchet", not_run)
+        self.assertIn("无相关文件", not_run["scene-ratchet"])
 
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):

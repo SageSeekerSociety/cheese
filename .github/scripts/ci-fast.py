@@ -26,9 +26,19 @@ never just HEAD, and never just path names.
 
 --base DIVERGENCE: --base changes selection only. The file-size and
 migration-fork hooks take a --base flag, but the pre-commit command table
-invokes them without one, so they always judge against origin/main. With a
-custom --base the selector and those hooks can disagree; ci:fast says so
-loudly instead of hiding it.
+invokes them without one, so they always judge origin/main. Judging the
+wrong base can invert a verdict (a file that shrank on main but grew
+against the PR's real base reads as a shrink), so with a custom --base
+these hooks are NOT run and the run exits 2 (cannot verify) — a warning
+alone would not verify the base the user asked for.
+
+SKIP IS NOT A PASS: pre-commit returns 0 for a hook skipped via the SKIP
+environment variable — without running it. Each hook runs as its own
+process here, so its status line is unambiguous: a "Skipped" result is
+recorded as skipped (never pass) and makes the run exit 2; "(no files to
+check)" is recorded as not_applicable in not_run — legitimate, but never
+counted as an execution. If every selected hook ends up skipped, the run
+exits 2: zero executed checks is not a pass.
 
 CONSERVATIVE FALLBACK: with no merge base (shallow clone, missing
 origin/main), the selector falls back to selecting everything — but checks
@@ -40,8 +50,10 @@ EXIT CODES (machine-readable, mirrored in the JSON report's status):
   0 pass    — every selected static check ran and passed. NOT a full-CI pass.
   1 fail    — a selected check ran and failed.
   2 unknown — cannot verify: no merge base after fallback, a hook timed out,
-              the run was interrupted, or a mapped hook ID is missing from
-              .pre-commit-config.yaml.
+              the run was interrupted, a mapped hook ID is missing from
+              .pre-commit-config.yaml, a selected hook was SKIPPED (SKIP
+              env), a custom --base cannot be honored by the base-judging
+              hooks, or zero selected hooks actually executed.
   3 blocked — the environment cannot run the checks: pre-commit/uv missing,
               backend/.venv or frontend/node_modules absent. This script
               never installs anything; the message names the setup command.
@@ -106,8 +118,12 @@ FAST_HOOKS = {
 }
 TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 
-# Checks that need the merge base to judge at all.
-MERGE_BASE_HOOKS = {"file-size"}
+# Checks that need the merge base to judge at all. Both scripts accept a
+# --base flag, but the pre-commit command table never passes one, so they
+# always judge origin/main: with no merge base they cannot judge, and with
+# a custom --base they would judge the WRONG base — either way the run
+# cannot verify (exit 2), it must not pass on their say-so.
+MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
 
 # What the static layer never runs, with the honest next step. Always listed
 # in the summary: v1 does not run these no matter what was selected.
@@ -269,12 +285,17 @@ def run(args, report, finish):
         head=head,
         dirty={"count": len(dirty), "fingerprint": fp, "files": dirty},
     )
-    if args.base != "origin/main":
-        # The hooks file-size and migration-fork accept --base but the
-        # pre-commit command table invokes them without one: they always
-        # judge against origin/main while the selector used args.base.
+    custom_base = args.base != "origin/main"
+    if custom_base:
+        # file-size and migration-fork accept --base but the pre-commit
+        # command table invokes them without one: they always judge
+        # origin/main while the selector used args.base. Judging the wrong
+        # base can invert the verdict (a file that shrank on main but grew
+        # against the PR's real base would look like a shrink), so these
+        # hooks are skipped below and the run cannot verify (exit 2).
         divergence = (f"--base={args.base} 只影响选测；file-size/migration-fork "
-                      "仍按 origin/main 判定（pre-commit 命令表不传参），两者可能不一致")
+                      "恒按 origin/main 判定（pre-commit 命令表不传参），本次跳过这两项，"
+                      "整体无法验证")
         print(f"ci:fast: 注意 — {divergence}")
         report["reasons"].append(divergence)
     if not merge_base_ok:
@@ -325,12 +346,17 @@ def run(args, report, finish):
 
     runnable, skipped_unknown = [], []
     for hook_id in hook_ids:
-        if hook_id in MERGE_BASE_HOOKS and not merge_base_ok:
-            skipped_unknown.append((hook_id, f"no merge base — git fetch origin {args.base}"))
+        if hook_id in MERGE_BASE_HOOKS:
+            if not merge_base_ok:
+                skipped_unknown.append((hook_id, f"no merge base — git fetch origin {args.base}"))
+            elif custom_base:
+                skipped_unknown.append((hook_id, f"hook 恒按 origin/main 判定，无法验证 --base={args.base}"))
+            else:
+                runnable.append(hook_id)
         else:
             runnable.append(hook_id)
 
-    failures, timed_out = [], []
+    failures, timed_out, skipped, not_applicable = [], [], [], []
     print(f"ci:fast: base={base_sha or 'NONE'} head={head[:12]} "
           f"dirty={len(dirty)}(fp {fp}) scope={[s for s, v in scope.items() if v]}")
     if unknown_paths:
@@ -352,6 +378,24 @@ def run(args, report, finish):
             print(f"  ✗ {hook_id}: 超时（>{args.timeout}s）")
             continue
         seconds = round(time.time() - t0, 1)
+        out = proc.stdout + proc.stderr
+        # pre-commit returns 0 for a hook it did NOT run: "Skipped" via the
+        # SKIP env, or "(no files to check)Skipped" when the file filter
+        # matched nothing. One hook runs per process here, so the status
+        # line (dotted leader ending in Skipped) unambiguously names it.
+        if proc.returncode == 0 and re.search(r"\.{4}[^\n]*Skipped[ \t]*$", out, re.M):
+            if "no files to check" in out:
+                # legitimate — but it is not an execution and must not be
+                # counted as one
+                report["not_run"].append({"id": hook_id, "reason": "无相关文件（pre-commit: no files to check）"})
+                not_applicable.append(hook_id)
+                print(f"  - {hook_id}: 无相关文件，未执行")
+            else:
+                why = "SKIP 环境变量" if hook_id in os.environ.get("SKIP", "").split(",") else "pre-commit 跳过"
+                report["ran"].append({"id": hook_id, "result": "skipped", "seconds": seconds})
+                skipped.append(hook_id)
+                print(f"  ? {hook_id}: 被跳过（{why}）— 不算执行")
+            continue
         ok = proc.returncode == 0
         report["ran"].append({"id": hook_id, "result": "pass" if ok else "fail", "seconds": seconds})
         print(f"  {'✓' if ok else '✗'} {hook_id} ({seconds}s)")
@@ -376,17 +420,26 @@ def run(args, report, finish):
         print(TIMEOUT_NOTE)
         report["reasons"].append(f"failed hooks: {failures}")
         return finish("fail", FAIL)
-    if timed_out or skipped_unknown:
+    if timed_out or skipped or skipped_unknown:
         why = []
         if timed_out:
             why.append(f"超时: {', '.join(timed_out)}")
+        if skipped:
+            why.append(f"被跳过（不算执行）: {', '.join(skipped)}")
         if skipped_unknown:
-            why.append("无 merge base，部分检查无法判断")
+            why.append("部分检查无法判断（无 merge base 或自定义 --base）")
         print(f"\nci:fast: 已执行静态检查 无法验证 — {'；'.join(why)}")
         print(f"未执行: {not_run_text}" if not_run_text else "")
         report["reasons"].extend(why)
         return finish("unknown", UNKNOWN)
-    print(f"\nci:fast: 已执行静态检查 通过（{len(runnable)} 项）")
+    executed = [r["id"] for r in report["ran"] if r["result"] == "pass"]
+    if not executed:
+        # Zero executed checks is not a pass, whatever pre-commit returned.
+        print("\nci:fast: 无法验证 — 选中的 hook 均未实际执行（全部被跳过或无相关文件）")
+        print(f"未执行: {not_run_text}" if not_run_text else "")
+        report["reasons"].append("no selected hook actually executed")
+        return finish("unknown", UNKNOWN)
+    print(f"\nci:fast: 已执行静态检查 通过（{len(executed)} 项）")
     print(f"未执行: {not_run_text}" if not_run_text else "")
     print(TIMEOUT_NOTE)
     return finish("pass", PASS)
