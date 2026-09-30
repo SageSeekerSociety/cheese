@@ -44,6 +44,7 @@ import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
 
 import i18n from '@/i18n'
+import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
 // Plugins
 import { registerPlugins } from '@/plugins'
@@ -52,6 +53,9 @@ import AccountService from '@/services/account'
 import { clearStaleBuildGuard, watchForStaleBuild } from '@/services/staleBuild'
 
 AccountService.init()
+
+// In the desktop app the frame is not selectable text and has no browser menu.
+behaveAsDesktopApp()
 
 const app = createApp(App)
 
