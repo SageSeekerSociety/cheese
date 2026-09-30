@@ -50,6 +50,10 @@
 
   --canvas: #f7f8fa; /* app bg */
   --surface: #ffffff; /* cards / panels */
+  /* Floating layers (menus, dropdowns, dialogs, sheets). The same white as
+     --surface here, where the shadow is what lifts them; one step lighter in
+     the dark block, where shadows do not show. */
+  --raised: #ffffff;
 
   /* ---- Accent (amber, sparingly) ---- */
   --accent: #f57f17;
@@ -302,6 +306,10 @@
 
   --canvas: #141517;
   --surface: #1b1d20;
+  /* Floating layers sit a step above what they cover (design-system §1.4):
+     the --fill step. Inside them --fill moves up one step as well (see the
+     floating-layer rules below), so hover and inset blocks still show. */
+  --raised: #212429;
 
   /* ---- Accent ---- */
   --accent: #ffa733;
@@ -572,14 +580,40 @@
    选择器里重复的类名是为了特异度：Vuetify 各组件的样式表按需注入，排在这份文件
    之后，同特异度时它赢。 */
 
+/* 浮层（菜单、下拉、对话框、底部面板）比它盖住的东西亮一档：底色是 --raised。
+   浅色下它就是 --surface，靠投影浮起来；深色下投影看不见，靠亮一档浮起来。浮层里
+   手写的 var(--surface)（输入框底、头像描边）跟着浮层走，所以在这一层把 --surface
+   换成 --raised（@ 提及菜单是手写的浮层，同样处理）。深色下 --raised 就是 --fill 那一档，浮层里的 --fill（悬停、内嵌块）
+   再上移一档，不然会和浮层底一样亮、看不见；浅色下两者本来就分得开，不动。 */
+.v-menu > .v-overlay__content,
+.v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
+.mention-menu {
+  --surface: var(--raised);
+}
+
+:root[data-theme='dark'] .v-menu > .v-overlay__content,
+:root[data-theme='dark'] .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content,
+:root[data-theme='dark'] .mention-menu {
+  --fill: var(--fill-2);
+}
+
+/* Vuetify 的卡片、面板、工具条、列表、表格默认画主题里的 surface，那一层不跟着上面
+   换过的 --surface 走：每个组件都带自己的 v-theme--* 类，把主题变量重设了一遍。所以
+   深色对话框里的折叠面板会比对话框暗一块。浮层里把它们的默认底也换成浮层底；显式写了
+   color / bg-color 的组件走 Vuetify 带 !important 的工具类，不受影响。 */
+:is(.v-menu, .v-dialog:not(.v-dialog--fullscreen))
+  > .v-overlay__content
+  :is(.v-card, .v-sheet, .v-list, .v-toolbar, .v-expansion-panel, .v-table) {
+  background-color: var(--surface);
+}
+
 /* 菜单与下拉（v-select / v-autocomplete / v-combobox 的下拉也是一个 v-menu）：
-   一块 surface，--line-2 描边，12px 圆角，--shadow-2。深色下投影几乎看不见，靠描边
-   和底分开。外壳画在 .v-overlay__content 上，里面的 v-list / v-card / v-sheet 不再
-   各画一层底和投影。 */
+   --raised 底，--line-2 描边，12px 圆角，--shadow-2。外壳画在 .v-overlay__content
+   上，里面的 v-list / v-card / v-sheet 不再各画一层底和投影。 */
 .v-menu.v-menu > .v-overlay__content {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--raised);
   box-shadow: var(--shadow-2);
   overflow: hidden;
 }
@@ -633,7 +667,7 @@
   opacity: 1;
 }
 
-/* 悬停与选中都是中性色（同侧栏的 .side-nav）：琥珀只留给左栏那一格「当前在哪」，
+/* 悬停与选中都是中性色：琥珀只留给左栏那一格「当前在哪」，
    选中行不用琥珀底（§1.6）。Vuetify 自己那层半透明的 overlay 关掉，不然和底色叠成
    第三种灰。 */
 .v-menu .v-list-item:hover {
@@ -729,7 +763,22 @@
   box-shadow: var(--shadow-2) !important;
 }
 
-/* 对话框：遮罩用 --overlay，卡片用 --shadow-2 而不是 Material 的 24 级投影。
+/* 状态落在图标上：记号色（§1.5），一眼分得出成功和失败。量过，压在 --inverse-surface
+   上两套主题都过图形的 3:1：浅色 --ok 4.4、--warn 6.2、--danger 3.2；深色 --ok 4.7、
+   --warn 5.4、--danger 3.4。 */
+.v-card.card-snackbar.bg-success .v-icon {
+  color: var(--ok);
+}
+
+.v-card.card-snackbar.bg-warning .v-icon {
+  color: var(--warn);
+}
+
+.v-card.card-snackbar.bg-error .v-icon {
+  color: var(--danger);
+}
+
+/* 对话框：遮罩用 --overlay，卡片是 --raised 底、--shadow-2（不是 Material 的 24 级投影）。
    整页的对话框（手机上的 AdaptiveDialog）和底部面板不是浮在页面上的一块，没有投影。 */
 .v-dialog.v-dialog > .v-overlay__scrim {
   background: var(--overlay);
@@ -738,6 +787,7 @@
 
 .v-dialog.v-dialog:not(.v-dialog--fullscreen, .v-bottom-sheet) > .v-overlay__content > .v-card,
 .v-dialog.v-dialog:not(.v-dialog--fullscreen, .v-bottom-sheet) > .v-overlay__content > form > .v-card {
+  background: var(--raised);
   box-shadow: var(--shadow-2);
 }
 
