@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>后台管理 · 棘轮（预览）</title>
+<style>
+:root{--ink:#191A1C;--text:#36383C;--muted:#5A5E66;--faint:#747A82;--line:#ECEDEF;--line-2:#E2E3E6;--fill:#F4F5F7;--fill-2:#EEEFF1;--canvas:#F7F8FA;--surface:#FFFFFF;--accent:#F57F17;--accent-ink:#9A5413;--accent-wash:#FDF1E2;--ok:#1F9D55;--ok-ink:#12703A;--ok-wash:#E8F6EE;--warn:#E8901C;--warn-ink:#8F5406;--warn-wash:#FAF0DC;--danger:#DC2626;--danger-ink:#B91C1C;--danger-wash:#FDECEC;--info-ink:#2F5AA8;--info-wash:#EAF0FB;--radius-lg:10px}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;color:var(--text);background:var(--canvas)}
+.shell{display:flex;min-height:100vh}
+.nav{width:208px;flex:none;background:var(--surface);border-right:1px solid var(--line);padding:16px 10px}
+.nav h1{font-size:13px;color:var(--faint);font-weight:600;margin:4px 10px 12px}
+.nav a{display:block;padding:7px 10px;border-radius:8px;color:var(--text);text-decoration:none;font-size:13.5px}
+.nav a.on{background:var(--accent-wash);color:var(--accent-ink);font-weight:600}
+.nav .new{font-size:11px;color:var(--faint);margin-left:4px}
+.page{flex:1;padding:0 24px 24px;overflow-y:auto;height:100vh}
+.page-container--admin{max-width:1180px;margin:0 auto}
+.banner{margin:14px 0 0;padding:8px 12px;border:1px dashed var(--accent);background:var(--accent-wash);color:var(--accent-ink);border-radius:8px;font-size:12.5px}
+.ph{display:flex;align-items:flex-end;gap:16px;padding:20px 0 12px;border-bottom:1px solid var(--line)}
+.ph h2{margin:0;font-size:20px;color:var(--ink)}
+.ph .sub{color:var(--muted);font-size:13px;margin-top:2px}
+.ph .tools{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{border:1px solid var(--line-2);background:var(--surface);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--text)}
+.prov{display:flex;flex-wrap:wrap;gap:6px 18px;margin:12px 0 0;font-size:12.5px;color:var(--muted)}
+.prov b{color:var(--ink);font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:18px;padding:0 7px;border-radius:9px;white-space:nowrap;border:1px solid transparent}
+.t-real{background:var(--ok-wash);color:var(--ok-ink)}
+.t-sample{background:var(--fill-2);color:var(--muted);border-style:dashed;border-color:var(--line-2)}
+.t-missing{background:var(--surface);color:var(--muted);border-color:var(--line-2)}
+.t-recal{background:var(--warn-wash);color:var(--warn-ink)}
+.t-rule{background:var(--info-wash);color:var(--info-ink)}
+.t-del{background:var(--fill-2);color:var(--text)}
+.t-up{background:var(--danger-wash);color:var(--danger-ink)}
+.t-pass{background:var(--ok-wash);color:var(--ok-ink)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);margin-top:16px}
+.card h3{margin:0;font-size:15px;color:var(--ink)}
+.card-h{display:flex;align-items:center;gap:10px;padding:14px 16px 10px}
+.card-h .why{color:var(--muted);font-size:12.5px}
+.card-h .st{margin-left:auto}
+.overview{width:100%;border-collapse:collapse}
+.overview th,.overview td{padding:9px 16px;border-top:1px solid var(--line);text-align:left;font-size:13px;vertical-align:top}
+.overview th{font-size:12px;color:var(--faint);font-weight:500;background:var(--fill)}
+.num{font-variant-numeric:tabular-nums;text-align:right!important;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin:0 16px 12px;border:1px solid var(--line);border-radius:var(--radius-lg);overflow:hidden}
+.kpi{padding:12px 16px;min-height:92px;border-right:1px solid var(--line)}
+.kpi:last-child{border-right:0}
+.kpi .l{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.kpi .v{font-size:24px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi .v small{font-size:12px;font-weight:400;color:var(--muted);margin-left:4px}
+.kpi .f{font-size:12px;color:var(--muted);margin-top:2px}
+.kpi .v.dim{color:var(--faint);font-size:18px}
+.grid{width:100%;border-collapse:collapse}
+.grid th,.grid td{padding:8px 12px;border-top:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}
+.grid th{font-size:12px;color:var(--faint);font-weight:500;background:var(--fill);white-space:nowrap}
+.grid tr.row{cursor:pointer}
+.grid tr.row:hover td{background:var(--fill)}
+.grid .name{color:var(--ink);font-weight:500}
+.grid .src{color:var(--faint);font-size:11.5px}
+.delta-down{color:var(--ok-ink)}
+.delta-up{color:var(--danger-ink)}
+.delta-flat{color:var(--muted)}
+.dim{color:var(--faint)}
+.spark{display:block}
+.detail{background:var(--fill);}
+.detail td{padding:12px 16px 14px!important}
+.dl{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12.5px}
+.dl dt{color:var(--faint)}
+.dl dd{margin:0;color:var(--text)}
+.events{margin:8px 0 0;padding:0;list-style:none;font-size:12.5px}
+.events li{display:flex;gap:8px;align-items:baseline;padding:3px 0}
+.foot{font-size:12px;color:var(--faint);padding:10px 16px 14px}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;font-size:12px;padding:6px 8px;border-radius:6px;max-width:320px;display:none;z-index:9}
+a.pr{color:var(--info-ink);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="nav" aria-label="后台导航（示意，归布局话题）">
+    <h1>后台管理</h1>
+    <a>反馈队列</a><a>数据看板</a><a>功能数据</a><a>模型</a><a>空间</a><a>成员</a><a>飞书应用</a>
+    <a class="on">棘轮<span class="new">新</span></a>
+  </aside>
+  <main class="page">
+  <div class="page-container--admin">
+    <div class="banner">预览页，未上线。数字是芝士在工作机上对 main 实跑的结果和 CI 的 53 份历史记录；带「人工标注」的变化分类和「刷新」按钮是示意。</div>
+
+    <div class="ph">
+      <div>
+        <h2>棘轮</h2>
+        <div class="sub">架构还债进度：每道检查现在是多少、冻结了多少、比起点好了还是差了</div>
+      </div>
+      <div class="tools"><button class="btn" title="示意：上线版读最近一次 CI 采集">刷新</button></div>
+    </div>
+
+    <div class="prov">
+      <span>检查结果：<b class="mono">main@ccc8a18e</b>（#2182 合入）</span>
+      <span>采集：<b>2026-09-30 06:00:56–06:06:52 UTC</b>，芝士工作机实跑</span>
+      <span>历史：CI「Architecture metrics」<b>53 次</b> main 运行，2026-09-29 15:24 至本次采集的提交</span>
+    </div>
+    <div class="legend">
+      <span class="tag t-real">真实值</span>
+      <span class="tag t-sample">样例 / 示意</span>
+      <span class="tag t-missing">未采集</span>
+      <span class="tag t-recal">口径修正中</span>
+      <span class="tag t-rule">规则变更 / 新口径起点</span>
+      <span class="tag t-del">删除功能</span>
+      <span class="tag t-up">新增豁免</span>
+    </div>
+
+    <!-- 总表 -->
+    <section class="card">
+      <div class="card-h"><h3>四个方面一览</h3><span class="why">变化都按同一口径比；口径变过的地方从变更后那次算起</span></div>
+      <table class="overview">
+        <thead><tr><th>方面</th><th>检查</th><th>结果</th><th>还冻结着的债</th><th>同口径起点 → 现在</th><th>判断</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#s1">能独立运行的前端场景</a></td><td>2 道</td><td><span class="tag t-pass">通过</span></td><td>128 个场景评分未达标</td><td><span class="tag t-rule">新口径起点</span> 评分达标 10 / 138，其中 1 个有挂载证据</td><td>第一次采集，还没有可比的点</td></tr>
+          <tr><td><a href="#s2">前后端依赖边界</a></td><td>7 道</td><td><span class="tag t-pass">7 通过</span></td><td>前端 116 处 · 后端契约 253 条（冻结 255）</td><td>前端 127 → 116 · C3 178 → 173</td><td><span class="delta-down">在降</span>；C1、C2 无变化</td></tr>
+          <tr><td><a href="#s3">文件规模</a></td><td>1 道</td><td><span class="tag t-pass">通过</span></td><td>29 个文件超标，共超 27,887 行</td><td>34 → 29 个 · 34,753 → 27,887 行</td><td><span class="delta-down">在降</span>；其中 3 个文件靠删除功能下线</td></tr>
+          <tr><td><a href="#s4">类型与样式</a></td><td>3 道</td><td><span class="tag t-pass">3 通过</span></td><td>样式令牌 37 处 · 固定色 7 处（冻结）</td><td><span class="tag t-missing">历史未采集</span></td><td>无历史，不判断方向</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 1 -->
+    <section class="card" id="s1">
+      <div class="card-h"><h3>① 能独立运行的前端场景</h3><span class="why">页面或面板只靠 props 和事件就能渲染</span><span class="st tag t-pass">2 道通过</span></div>
+      <div class="kpis">
+        <div class="kpi"><div class="l">评分达标 <span class="tag t-real">真实值</span></div><div class="v">10<small>/ 138 个</small></div><div class="f">页面 2 · 面板 8。按规则评分，不代表已单独挂载运行过</div></div>
+        <div class="kpi"><div class="l">已挂载验证 <span class="tag t-real">真实值</span></div><div class="v">1<small>个</small></div><div class="f">PanelTabs：预览站 3 格在 catalog.spec 里挂载通过</div></div>
+        <div class="kpi"><div class="l">达标但未验证 <span class="tag t-real">真实值</span></div><div class="v">9<small>个</small></div><div class="f">没登记预览站，没有挂载证据。补登记本身不算还债</div></div>
+        <div class="kpi"><div class="l">评分未达标 <span class="tag t-real">真实值</span></div><div class="v">128<small>个</small></div><div class="f">C 57（自己取数）· D 71（读路由等）；冻结 128</div></div>
+      </div>
+      <table class="grid">
+        <thead><tr><th>检查</th><th class="num">当前</th><th class="num">基线</th><th>结果</th><th>数据来源</th></tr></thead>
+        <tbody>
+          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · <span class="mono">pnpm run lint:scenes</span></div></td><td class="num">10 / 128</td><td class="num">10 / 128</td><td><span class="tag t-pass">通过</span></td><td class="src">ready / debt；基线 <span class="mono">frontend/scene-baseline.json</span></td></tr>
+          <tr class="detail" id="d-scene" hidden><td colspan="5"><dl class="dl">
+            <dt>规则</dt><dd>已经能独立运行的场景不许退化；新加的页面或面板从第一天起就要能独立运行</dd>
+            <dt>判定来源</dt><dd><span class="mono">.claude/scripts/frontend_grade.py</span>，指标板和闸门共用这一份，本页只读它的输出</dd>
+            <dt>口径</dt><dd>#2182 合入时修正了漏判：子组件自己取数，父页面不再被评为 A。本次是修正后的第一次采集，作为新口径起点；之前的「20 个」属于旧口径，不与之比较</dd>
+            <dt>重构负责人的拆分</dt><dd>旧口径到新口径的差异里，有规则修正、24 个场景随功能删除、5 个是 main 上既有的新增，三者分开记。<span class="dim">（来自重构话题，本页未独立复核这份拆分）</span></dd>
+            <dt>挂载证据</dt><dd>只认 /demo/catalog 登记、并被 <span class="mono">views/demo/catalog.spec.ts</span> 逐格挂载通过的场景。本次在 ccc8a18e 上单独跑了这份测试（06:20 UTC）：PanelTabs 的 3 格全部挂载通过</dd>
+            <dt>未验证的 9 个</dt><dd class="mono">ChangesFileTree · TodoChecklist · DocOverlays · DocSlashMenu · DocSurface · PreviewPages · PreviewSheet · views/404 · user/settings/General</dd>
+            <dt>相关</dt><dd><a class="pr">#2182</a> · <a class="pr">#2143</a></dd>
+          </dl></td></tr>
+          <tr class="row" data-d="d-grade"><td><div class="name">组件 A/B/C/D 分级</div><div class="src">arch-metrics.py · 看板，不拦 PR</div></td><td class="num">A 147 / 392</td><td class="num dim">无冻结</td><td><span class="tag t-rule">新口径起点</span></td><td class="src">B 1 · C 144 · D 100；CI 每次 push main 的 JSON</td></tr>
+          <tr class="detail" id="d-grade" hidden><td colspan="5"><dl class="dl">
+            <dt>口径</dt><dd>从 ccc8a18e 起是新判定。旧判定的 52 次记录（最后一次 A 180 / 392）单独保留，不和新口径连成一条线</dd>
+            <dt>旧口径里的一步</dt><dd>#2154 删除课程与讨论后组件数 442 → 392，这是删除功能，不是还债</dd>
+          </dl></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 2 -->
+    <section class="card" id="s2">
+      <div class="card-h"><h3>② 前后端依赖边界</h3><span class="why">组件不自己取数、后端分层不倒挂、同级领域不成环</span><span class="st tag t-pass">7 道全部通过</span></div>
+      <div class="kpis">
+        <div class="kpi"><div class="l">前端：组件越界导入 <span class="tag t-real">真实值</span></div><div class="v">116<small>处 · 75 个文件</small></div><div class="f"><span class="delta-down">−11</span> 比同口径起点 127（#2163 之后）</div></div>
+        <div class="kpi"><div class="l">后端：三条契约的实际违规 <span class="tag t-real">真实值</span></div><div class="v">253<small>条</small></div><div class="f">冻结 255 条，其中 2 条豁免已失效</div></div>
+        <div class="kpi"><div class="l">领域直连别域 repository <span class="tag t-real">真实值</span></div><div class="v">154<small>条</small></div><div class="f">与登记一致；历史未采集</div></div>
+      </div>
+      <table class="grid" id="t2">
+        <thead><tr><th>检查</th><th class="num">实际</th><th class="num">冻结</th><th class="num">失效豁免</th><th class="num">同口径起点</th><th class="num">变化</th><th>结果</th><th>走势（每点一次 main 运行）</th></tr></thead>
+        <tbody>
+          <tr class="row" data-d="d-feb"><td><div class="name">组件不取数、不读路由</div><div class="src">ESLint · <span class="mono">pnpm run lint:boundary</span></div></td><td class="num">116</td><td class="num">116</td><td class="num">0</td><td class="num">127</td><td class="num delta-down">−11</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="fe_boundary" data-mark="14565ff91" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-feb" hidden><td colspan="8"><dl class="dl">
+            <dt>规则</dt><dd><span class="mono">src/components/**</span> 不许导入 API 层、services、network 或 vue-router；按解析后的路径判</dd>
+            <dt>基线文件</dt><dd><span class="mono">frontend/import-boundary-baseline.json</span>（75 个文件）</dd>
+            <dt>变化记录</dt><dd><ul class="events">
+              <li><span class="tag t-real">还债</span><span>91 → 84</span><span class="mono">2d33703fc</span><a class="pr">#2137</a> 路由缝，12 个组件不再需要路由</li>
+              <li><span class="tag t-del">删除功能</span><span>84 → 83</span><span class="mono">4dcb876b4</span><a class="pr">#2132</a></li>
+              <li><span class="tag t-rule">规则变更</span><span>83 → 127</span><span class="mono">14565ff91</span><a class="pr">#2163</a> 开始数相对路径导入；此后为新口径，之前的点不与之比较</li>
+              <li><span class="tag t-real">还债</span><span>127 → 124</span><span class="mono">e047ab95f</span><a class="pr">#2172</a> 拆 TopicSidebar</li>
+              <li><span class="tag t-real">减少</span><span>124 → 120</span><span class="mono">f78e52c54</span><a class="pr">#2152</a></li>
+              <li><span class="tag t-del">删除功能</span><span>120 → 116</span><span class="mono">90f83ddb2</span><a class="pr">#2154</a> 删除课程与讨论</li>
+            </ul><div class="dim" style="font-size:11.5px;margin-top:4px">分类为预览中人工按 PR 标注 <span class="tag t-sample">样例</span></div></dd>
+          </dl></td></tr>
+          <tr class="row" data-d="d-c1"><td><div class="name">C1 分层：api → domain → core 不倒挂</div><div class="src">import-linter · <span class="mono">check_boundaries.py</span></div></td><td class="num">26</td><td class="num">26</td><td class="num">0</td><td class="num">26</td><td class="num delta-flat">0</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c1" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-c1" hidden><td colspan="8"><dl class="dl"><dt>判断</dt><dd>自 09-29 15:24 起 53 次运行都是 26，没有一条被还掉</dd><dt>基线文件</dt><dd><span class="mono">backend/.importlinter</span> 的 ignore_imports</dd></dl></td></tr>
+          <tr class="row" data-d="d-c2"><td><div class="name">C2 路由不碰别的领域的 models</div><div class="src">import-linter</div></td><td class="num">54</td><td class="num">56</td><td class="num" style="color:var(--warn-ink)">2</td><td class="num">56<span class="dim">（冻结）</span></td><td class="num dim">实际历史未采集</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c2" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-c2" hidden><td colspan="8"><dl class="dl">
+            <dt>失效豁免</dt><dd><span class="mono">app.api.routes.spaces -&gt; app.domain.teaching.models</span><br><span class="mono">app.api.routes.spaces -&gt; app.domain.task.models</span><br>#2153 删掉了空间讨论接口，这两条已无对应导入</dd>
+            <dt>怎么清</dt><dd><span class="mono">uv run python scripts/boundary_baseline.py --update</span>（只会删，不会加）</dd>
+            <dt>为什么分两列</dt><dd>冻结数只在有人跑 --update 时才降；实际数每次检查都会重算。走势线画的是冻结数，因为 CI 历史里只存了它</dd>
+          </dl></td></tr>
+          <tr class="row" data-d="d-c3"><td><div class="name">C3 同级领域不成环</div><div class="src">import-linter</div></td><td class="num">173</td><td class="num">173</td><td class="num">0</td><td class="num">178</td><td class="num delta-down">−5</td><td><span class="tag t-pass">通过</span></td><td><svg class="spark" data-key="c3" width="180" height="30"></svg></td></tr>
+          <tr class="detail" id="d-c3" hidden><td colspan="8"><dl class="dl"><dt>变化记录</dt><dd><ul class="events">
+            <li><span class="tag t-del">删除功能</span><span>178 → 172</span><span class="mono">4dcb876b4</span><a class="pr">#2132</a> 删除后端 ChatGPT 订阅导入</li>
+            <li><span class="tag t-up">新增豁免</span><span>172 → 173</span><span class="mono">49d769b2d</span><a class="pr">#2180</a> 拆 review/services.py 时新冻结 1 条</li>
+          </ul></dd></dl></td></tr>
+          <tr class="row"><td><div class="name">领域不直连别域 repository</div><div class="src">pytest · test_domain_import_guard.py</div></td><td class="num">154</td><td class="num">154</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+          <tr class="row"><td><div class="name">Claude Code 适配器跨界账本</div><div class="src">pytest · test_harness_boundary.py</div></td><td class="num">6<span class="dim"> 个模块</span></td><td class="num">6</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+          <tr class="row"><td><div class="name">is_private 读点登记</div><div class="src">pytest · test_is_private_read_points.py</div></td><td class="num">20<span class="dim"> 处</span></td><td class="num">20</td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">历史未采集</span></td></tr>
+        </tbody>
+      </table>
+      <div class="foot">后三道是 pytest 账本：多一条、少一条都会红，所以通过即「实际 = 登记」。参考指标（不是棘轮）：后端函数内导入 726 条。</div>
+    </section>
+
+    <!-- 3 -->
+    <section class="card" id="s3">
+      <div class="card-h"><h3>③ 文件规模</h3><span class="why">前端单文件 ≤ 1000 行，后端 ≤ 1500 行；超标的只许变小</span><span class="st tag t-pass">通过</span></div>
+      <div class="kpis">
+        <div class="kpi"><div class="l">超标文件 <span class="tag t-real">真实值</span></div><div class="v">29<small>个</small></div><div class="f"><span class="delta-down">−5</span> 比起点 34 · 前端 13 · 后端 16</div></div>
+        <div class="kpi"><div class="l">超出上限的行数合计 <span class="tag t-real">真实值</span></div><div class="v">27,887<small>行</small></div><div class="f"><span class="delta-down">−6,866</span> 比起点 34,753</div></div>
+        <div class="kpi"><div class="l"><span class="mono">agent/chat.py</span> <span class="tag t-real">真实值</span></div><div class="v">5,487<small>行</small></div><div class="f"><span class="delta-down">−1,150</span> 比起点 6,637 · 上限 1,500</div></div>
+      </div>
+      <table class="grid">
+        <thead><tr><th>超出最多的 10 个文件</th><th class="num">行数</th><th class="num">上限</th><th class="num">超出</th><th class="num">起点行数</th><th class="num">变化</th></tr></thead>
+        <tbody id="worst"></tbody>
+      </table>
+      <div class="foot">闸门只在 PR 上判（与合并基点比，不维护冻结清单）；这里的数来自 CI 看板。起点 = 2026-09-29 15:24 UTC 第一次记录；起点行数「—」表示那个文件当时不在前 10，CI 只存了前 10。超标文件 32 → 29 那一步来自 #2154 删除功能。</div>
+    </section>
+
+    <!-- 4 -->
+    <section class="card" id="s4">
+      <div class="card-h"><h3>④ 类型与样式</h3><span class="why">类型错误、写死的设计值和固定色</span><span class="st tag t-pass">3 道全部通过</span></div>
+      <table class="grid">
+        <thead><tr><th>检查</th><th class="num">实际</th><th class="num">冻结</th><th>结果</th><th>历史</th></tr></thead>
+        <tbody>
+          <tr><td><div class="name">vue-tsc 类型错误</div><div class="src"><span class="mono">pnpm run typecheck</span> · tsc-baseline.json</div></td><td class="num">0</td><td class="num">0</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">未采集</span></td></tr>
+          <tr><td><div class="name">设计令牌（写死颜色、间距）</div><div class="src"><span class="mono">pnpm run lint:style</span> · stylelint-baseline.json</div></td><td class="num">37</td><td class="num">37</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">未采集</span></td></tr>
+          <tr><td><div class="name">Vuetify 固定色（grey-*、bg-white）</div><div class="src">check-repo-rules.sh · palette-baseline.json</div></td><td class="num dim">未采集</td><td class="num">7</td><td><span class="tag t-pass">通过</span></td><td><span class="tag t-missing">未采集</span></td></tr>
+        </tbody>
+      </table>
+      <div class="foot">固定色脚本只报通过或失败，不输出实际数，要显示实际值得先让它输出计数。这三道都不在 CI 看板里，所以没有历史。</div>
+    </section>
+  </div>
+  </main>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+const DATA = {"series": [{"date": "2026-09-29T15:24:04Z", "sha": "e6f005812", "subject": "chore(arch): report architecture metrics on main and weekly (#2133)", "A": 174, "comp": 416, "fe_boundary": 91, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34753, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 729}, {"date": "2026-09-29T15:37:59Z", "sha": "802d7652f", "subject": "chore(dev-db): install pg_search on macOS arm64 from ParadeDB's package (#2136)", "A": 174, "comp": 416, "fe_boundary": 91, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34753, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 729}, {"date": "2026-09-29T15:42:28Z", "sha": "61ce978df", "subject": "fix(sync): a closed task does not hold a room on a machine that keeps its files (#2135)", "A": 174, "comp": 416, "fe_boundary": 91, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34753, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T15:48:44Z", "sha": "2d33703fc", "subject": "feat(frontend): a router seam for components and a component preview site (#2137)", "A": 186, "comp": 418, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34753, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T15:58:25Z", "sha": "00341e6f0", "subject": "feat(artifacts): open a deliverable on its current version (#2121)", "A": 188, "comp": 421, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34743, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T16:02:01Z", "sha": "17d658792", "subject": "feat(download): a download page of its own, and settings that hold devices and connections (#2142)", "A": 188, "comp": 421, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34743, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T16:09:16Z", "sha": "7cf5ef50f", "subject": "fix(sessions): rows on another teammate's runner stop pointing at it (#2140)", "A": 188, "comp": 421, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34743, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T16:44:56Z", "sha": "f8c1cbb57", "subject": "feat(desktop): sign in with a provider and connect accounts through the browser, back via cheese:// links (#2125)", "A": 188, "comp": 424, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34743, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T16:56:40Z", "sha": "461cf7509", "subject": "feat(admin): add a feature data page, starting with the docs assistant (#2138)", "A": 191, "comp": 430, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34743, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T17:25:12Z", "sha": "4bd37e008", "subject": "fix(agent): isolate Claude hook settings per seat (#2139)", "A": 191, "comp": 430, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34739, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T18:57:19Z", "sha": "71bae7235", "subject": "docs(infra): okcheese runs on two relay tunnels with a watchdog (#2145)", "A": 191, "comp": 430, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34739, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T19:00:34Z", "sha": "eab43b09d", "subject": "fix(connector): resume a cheesehost download cut mid-transfer (#2144)", "A": 191, "comp": 430, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34739, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T19:26:03Z", "sha": "99fe740ae", "subject": "fix(taskfile): infra starts the containers when none are running (#2146)", "A": 192, "comp": 431, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34652, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T19:53:28Z", "sha": "5e079052f", "subject": "fix(sync): a closed task's failed backup leaves the room notice to the platform (#2149)", "A": 192, "comp": 431, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34652, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T20:02:58Z", "sha": "dd664f2e3", "subject": "fix(sync): recover a closed task on another machine after its base branch is deleted (#2150)", "A": 192, "comp": 431, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34652, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T20:03:55Z", "sha": "a6eef3128", "subject": "fix(machine): the sweep lets go of a machine gone at the provider (#2151)", "A": 192, "comp": 431, "fe_boundary": 84, "c1": 26, "c2": 56, "c3": 178, "over": 34, "excess": 34652, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 731}, {"date": "2026-09-29T21:02:42Z", "sha": "4dcb876b4", "subject": "chore: delete the backend ChatGPT subscription import (#2132)", "A": 192, "comp": 430, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34448, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 724}, {"date": "2026-09-29T21:09:21Z", "sha": "bc1e6b2b3", "subject": "fix(machine): a session machine's startup record ends when it connects or does not (#2155)", "A": 192, "comp": 430, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34448, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 727}, {"date": "2026-09-29T21:19:07Z", "sha": "2a3ccc074", "subject": "fix(mcp): log a revocation the authorization server refuses (#2156)", "A": 192, "comp": 430, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34448, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 727}, {"date": "2026-09-29T21:21:02Z", "sha": "264963020", "subject": "fix(project): a slow forge fails a creation honestly and leaves nothing behind (#2157)", "A": 192, "comp": 430, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34438, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 727}, {"date": "2026-09-29T21:26:13Z", "sha": "ae89d8174", "subject": "refactor(api): move the sign-in session routes out of users.py (#2159)", "A": 192, "comp": 430, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34355, "fe_over": 18, "be_over": 16, "chat": 6637, "deferred": 727}, {"date": "2026-09-29T21:26:49Z", "sha": "636c11fb8", "subject": "refactor(agent): move mention parsing and notices out of chat.py (#2160)", "A": 192, "comp": 430, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34103, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T21:28:46Z", "sha": "a5cf6e563", "subject": "fix(dev-db): replace an outdated server of ours instead of refusing (#2161)", "A": 192, "comp": 431, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34103, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T21:39:20Z", "sha": "dd684d462", "subject": "chore(gateway): drop extra_headers from the admin model API (#2148)", "A": 192, "comp": 431, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34103, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T21:41:00Z", "sha": "4656dc6d2", "subject": "fix(api): answer a body a custom validator refuses with the 400 envelope, not 500 (#2147)", "A": 192, "comp": 431, "fe_boundary": 83, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34099, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T22:29:45Z", "sha": "14565ff91", "subject": "fix(frontend): count relative imports of the API layer in the boundary check (#2163)", "A": 192, "comp": 431, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34099, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T22:50:37Z", "sha": "ca60174e3", "subject": "refactor(frontend): the last six components route through NavLink (#2164)", "A": 192, "comp": 431, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34099, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T23:13:20Z", "sha": "247acc365", "subject": "fix(feedback): only a trailer at the start of a line marks feedback deployed (#2166)", "A": 192, "comp": 431, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 34099, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T23:13:40Z", "sha": "c2f822268", "subject": "refactor(api): move the password routes out of users.py (#2165)", "A": 192, "comp": 431, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 33897, "fe_over": 18, "be_over": 16, "chat": 6385, "deferred": 727}, {"date": "2026-09-29T23:18:25Z", "sha": "974a414a1", "subject": "refactor(agent): move stateless ChatService helpers out of chat.py (#2162)", "A": 192, "comp": 431, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 33731, "fe_over": 18, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-29T23:23:32Z", "sha": "c407d1a1f", "subject": "fix(execution): tell the agent when a command waits for its machine (#2167)", "A": 192, "comp": 431, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 34, "excess": 33731, "fe_over": 18, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-29T23:41:33Z", "sha": "e4e0538d1", "subject": "refactor(frontend): move PanelDoc data loading into a composable (#2168)", "A": 195, "comp": 434, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 32292, "fe_over": 17, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-29T23:52:35Z", "sha": "3623003a2", "subject": "fix(execution): every tool waiting for its machine says so once (#2170)", "A": 195, "comp": 434, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 32281, "fe_over": 17, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-30T00:04:56Z", "sha": "8e1b1ca39", "subject": "feat(integration): admins set up Feishu once, members connect in a click (#2141)", "A": 195, "comp": 435, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 32276, "fe_over": 17, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-30T00:17:13Z", "sha": "5a38f8460", "subject": "refactor(api): move the attachment routes out of topics.py (#2171)", "A": 195, "comp": 435, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 32066, "fe_over": 17, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-30T00:37:53Z", "sha": "226ac2a9e", "subject": "feat(demo): run the three split panels standalone in the catalog (#2174)", "A": 195, "comp": 435, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 32066, "fe_over": 17, "be_over": 16, "chat": 6219, "deferred": 727}, {"date": "2026-09-30T00:41:02Z", "sha": "40c27a4a3", "subject": "refactor(agent): move the room's event writes out of chat.py (#2173)", "A": 195, "comp": 435, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 31839, "fe_over": 17, "be_over": 16, "chat": 5992, "deferred": 727}, {"date": "2026-09-30T00:56:17Z", "sha": "f2ed9439e", "subject": "refactor(api): move the document and preview routes out of topics.py (#2175)", "A": 195, "comp": 435, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 31507, "fe_over": 17, "be_over": 16, "chat": 5992, "deferred": 727}, {"date": "2026-09-30T01:12:27Z", "sha": "bdff0822b", "subject": "fix(background): run a periodic job when it is due, across restarts (#2169)", "A": 195, "comp": 435, "fe_boundary": 127, "c1": 26, "c2": 56, "c3": 172, "over": 33, "excess": 31507, "fe_over": 17, "be_over": 16, "chat": 5992, "deferred": 728}, {"date": "2026-09-30T01:37:23Z", "sha": "e047ab95f", "subject": "refactor(frontend): split TopicSidebar under the size cap (#2172)", "A": 201, "comp": 441, "fe_boundary": 124, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30620, "fe_over": 16, "be_over": 16, "chat": 5992, "deferred": 728}, {"date": "2026-09-30T02:05:21Z", "sha": "1edfd52c5", "subject": "refactor(agent): move the hook stream out of chat.py (#2177)", "A": 201, "comp": 441, "fe_boundary": 124, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30115, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T03:39:21Z", "sha": "ed2366a63", "subject": "fix(board): stop calling a quiet worker lost (#2176)", "A": 201, "comp": 441, "fe_boundary": 124, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30115, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T03:39:38Z", "sha": "f8a76022e", "subject": "feat(frontend): grow a card's timeline from its own channel (#2181)", "A": 201, "comp": 441, "fe_boundary": 124, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30115, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T03:44:38Z", "sha": "a9dcb2d57", "subject": "fix(sync): do not re-upload a task backup the platform already holds (#2183)", "A": 201, "comp": 441, "fe_boundary": 124, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30115, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T03:56:07Z", "sha": "f78e52c54", "subject": "feat(home): make the home tile the inbox, with teams and spaces beside it (#2152)", "A": 200, "comp": 442, "fe_boundary": 120, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30111, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T04:21:14Z", "sha": "11b4a3323", "subject": "fix(tasks): a backup the files return to becomes the latest again (#2184)", "A": 200, "comp": 442, "fe_boundary": 120, "c1": 26, "c2": 56, "c3": 172, "over": 32, "excess": 30111, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T04:32:43Z", "sha": "49d769b2d", "subject": "refactor(review): move the nudge builders out of services.py (#2180)", "A": 200, "comp": 442, "fe_boundary": 120, "c1": 26, "c2": 56, "c3": 173, "over": 32, "excess": 29959, "fe_over": 16, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T04:33:37Z", "sha": "90f83ddb2", "subject": "refactor(spaces): one space UI in the sidebar frame; drop courses and discussions (#2154)", "A": 180, "comp": 392, "fe_boundary": 116, "c1": 26, "c2": 56, "c3": 173, "over": 29, "excess": 29453, "fe_over": 13, "be_over": 16, "chat": 5487, "deferred": 728}, {"date": "2026-09-30T04:43:55Z", "sha": "95e6aebfd", "subject": "fix(ci): judge file sizes against the merge base, not the tip of main (#2178)", "A": 180, "comp": 392, "fe_boundary": 116, "c1": 26, "c2": 56, "c3": 173, "over": 29, "excess": 28397, "fe_over": 13, "be_over": 16, "chat": 5487, "deferred": 726}, {"date": "2026-09-30T05:01:58Z", "sha": "dc069a422", "subject": "refactor(api): move the ai advice routes out of tasks.py (#2189)", "A": 180, "comp": 392, "fe_boundary": 116, "c1": 26, "c2": 56, "c3": 173, "over": 29, "excess": 28034, "fe_over": 13, "be_over": 16, "chat": 5487, "deferred": 726}, {"date": "2026-09-30T05:26:10Z", "sha": "85ab1ab04", "subject": "refactor(api): move the project-unread and block-upgrade routes out of topics.py (#2190)", "A": 180, "comp": 392, "fe_boundary": 116, "c1": 26, "c2": 56, "c3": 173, "over": 29, "excess": 27887, "fe_over": 13, "be_over": 16, "chat": 5487, "deferred": 726}, {"date": "2026-09-30T05:28:32Z", "sha": "6d1743756", "subject": "refactor(frontend): move space store fetching into a composable (#2188)", "A": 180, "comp": 392, "fe_boundary": 116, "c1": 26, "c2": 56, "c3": 173, "over": 29, "excess": 27887, "fe_over": 13, "be_over": 16, "chat": 5487, "deferred": 726}, {"date": "2026-09-30T05:38:50Z", "sha": "ccc8a18e4", "subject": "feat(frontend): ratchet the scenes that run standalone (#2182)", "A": 147, "comp": 392, "fe_boundary": 116, "c1": 26, "c2": 56, "c3": 173, "over": 29, "excess": 27887, "fe_over": 13, "be_over": 16, "chat": 5487, "deferred": 726}], "worst_now": [{"file": "backend/app/domain/agent/chat.py", "lines": 5487, "cap": 1500, "over": 3987}, {"file": "backend/app/api/routes/users.py", "lines": 4444, "cap": 1500, "over": 2944}, {"file": "frontend/src/api.ts", "lines": 3606, "cap": 1000, "over": 2606}, {"file": "backend/app/domain/review/services.py", "lines": 3913, "cap": 1500, "over": 2413}, {"file": "backend/app/api/routes/tasks.py", "lines": 3653, "cap": 1500, "over": 2153}, {"file": "frontend/src/views/admin/AdminDashboardPage.vue", "lines": 2880, "cap": 1000, "over": 1880}, {"file": "backend/app/api/routes/topics.py", "lines": 3333, "cap": 1500, "over": 1833}, {"file": "frontend/src/proto-feedback-fixtures.ts", "lines": 2648, "cap": 1000, "over": 1648}, {"file": "backend/app/domain/agent/runtime.py", "lines": 2879, "cap": 1500, "over": 1379}, {"file": "frontend/src/components/ChatPanel.vue", "lines": 1987, "cap": 1000, "over": 987}], "worst_first": {"backend/app/domain/agent/chat.py": 6637, "backend/app/api/routes/users.py": 4729, "frontend/src/api.ts": 3747, "backend/app/domain/review/services.py": 4065, "backend/app/api/routes/topics.py": 4023, "backend/app/api/routes/tasks.py": 4016, "frontend/src/views/admin/AdminDashboardPage.vue": 2880, "backend/app/api/routes/spaces.py": 3313, "frontend/src/proto-feedback-fixtures.ts": 2648, "frontend/src/components/panels/PanelDoc.vue": 2439}};
+const S = DATA.series;
+const tip = document.getElementById('tip');
+document.querySelectorAll('tr.row[data-d]').forEach(tr=>tr.addEventListener('click',()=>{const d=document.getElementById(tr.dataset.d); d.hidden=!d.hidden;}));
+function fmt(n){return n==null?'—':n.toLocaleString('en-US')}
+document.querySelectorAll('svg.spark').forEach(svg=>{
+  const key=svg.dataset.key, mark=svg.dataset.mark, W=+svg.getAttribute('width'), H=+svg.getAttribute('height');
+  const vals=S.map(r=>r[key]); const lo=Math.min(...vals), hi=Math.max(...vals); const pad=4;
+  const x=i=>pad+i*(W-2*pad)/(S.length-1), y=v=>hi===lo?H/2:H-pad-(v-lo)*(H-2*pad)/(hi-lo);
+  const ns='http://www.w3.org/2000/svg'; let d='';
+  vals.forEach((v,i)=>{d+=(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)});
+  if(mark){const i=S.findIndex(r=>r.sha===mark); if(i>=0){const l=document.createElementNS(ns,'line');l.setAttribute('x1',x(i));l.setAttribute('x2',x(i));l.setAttribute('y1',1);l.setAttribute('y2',H-1);l.setAttribute('stroke','#2F5AA8');l.setAttribute('stroke-dasharray','2 2');svg.appendChild(l);}}
+  const p=document.createElementNS(ns,'path');p.setAttribute('d',d);p.setAttribute('fill','none');p.setAttribute('stroke','#5A5E66');p.setAttribute('stroke-width','1.6');svg.appendChild(p);
+  const dot=document.createElementNS(ns,'circle');dot.setAttribute('r',3);dot.setAttribute('fill','#191A1C');dot.style.display='none';svg.appendChild(dot);
+  svg.addEventListener('mousemove',e=>{const b=svg.getBoundingClientRect();const i=Math.max(0,Math.min(S.length-1,Math.round((e.clientX-b.left-pad)/((W-2*pad)/(S.length-1)))));const r=S[i];dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(r[key]));dot.style.display='';tip.style.display='block';tip.innerHTML=`<b>${fmt(r[key])}</b> · ${r.date.replace('T',' ').slice(0,16)} UTC<br><span style="font-family:monospace">${r.sha}</span> ${r.subject.replace(/</g,'&lt;')}`;const tw=tip.offsetWidth;tip.style.left=(e.clientX+12+tw>innerWidth?e.clientX-12-tw:e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px';});
+  svg.addEventListener('mouseleave',()=>{dot.style.display='none';tip.style.display='none'});
+});
+const tb=document.getElementById('worst');
+DATA.worst_now.forEach(w=>{const f=DATA.worst_first[w.file];const dl=f==null?null:w.lines-f;
+  tb.insertAdjacentHTML('beforeend',`<tr><td class="mono">${w.file}</td><td class="num">${fmt(w.lines)}</td><td class="num">${fmt(w.cap)}</td><td class="num">${fmt(w.over)}</td><td class="num ${f==null?'dim':''}">${fmt(f)}</td><td class="num ${dl==null?'dim':dl<0?'delta-down':dl>0?'delta-up':'delta-flat'}">${dl==null?'—':(dl>0?'+':'')+fmt(dl)}</td></tr>`)});
+</script>
+</body>
+</html>
