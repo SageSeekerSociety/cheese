@@ -3,15 +3,18 @@ import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { type SupplyBound, useCloudSupply } from '../composables/useCloudSupply'
+import type { CloudSupply, SupplyBound } from '../composables/useCloudSupply'
 
 const props = defineProps<{
   devices: TopicComputeDevice[]
   cloudAvailable: boolean
-  projectId: string
+  // 云端此刻能开的范围：由挂它的地方去问（`useCloudSupply`），这里只照着画。
+  // null 是还没问；问不到的那一种带着原因，不拿平台自己的上下限冒充。
+  supply: CloudSupply | null
+  supplyLoading?: boolean
   busy?: boolean
 }>()
-const emit = defineEmits<{ select: [choice: ComputeChoice] }>()
+const emit = defineEmits<{ select: [choice: ComputeChoice]; needSupply: [] }>()
 const target = ref(props.cloudAvailable ? 'cloud' : props.devices[0]?.device_id ?? '')
 const custom = ref(false)
 const cores = ref(4)
@@ -22,17 +25,16 @@ const options = computed(() => [
   ...props.devices.map((d) => ({ title: `${d.name} · ${d.online ? '在线' : '离线'}`, value: d.device_id })),
 ])
 
-// 可选范围只在要自定义的时候去问：它来自云端此刻的供应，问不到就照实说问不到，
-// 不拿平台自己的上下限冒充。
-const { supply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
+// 可选范围只在要自定义的时候才要。
 watch(
   () => target.value === 'cloud' && custom.value,
   (wanted) => {
-    if (wanted) void loadSupply()
+    if (wanted && !props.supply) emit('needSupply')
   },
   { immediate: true }
 )
-const ranges = computed(() => (supply.value?.available ? supply.value.selectable : null))
+const supplyLoading = computed(() => Boolean(props.supplyLoading))
+const ranges = computed(() => (props.supply?.available ? props.supply.selectable : null))
 
 function gb(mb: number): string {
   return `${Number((mb / 1024).toFixed(3))}`
@@ -108,8 +110,12 @@ function submit() {
           正在查询云端当前可选范围…
         </p>
         <p v-else-if="ranges" class="text-body-2 my-2" data-testid="supply-range">可选范围：{{ rangeText }}</p>
-        <p v-else-if="supply && !supply.available" class="text-body-2 text-warning my-2" data-testid="supply-unknown">
-          暂时查不到云端可选范围（{{ supply.reason }}）。可以先保存，开机时由云端校验。
+        <p
+          v-else-if="props.supply && !props.supply.available"
+          class="text-body-2 text-warning my-2"
+          data-testid="supply-unknown"
+        >
+          暂时查不到云端可选范围（{{ props.supply.reason }}）。可以先保存，开机时由云端校验。
         </p>
         <div class="d-flex ga-2 my-2">
           <v-text-field

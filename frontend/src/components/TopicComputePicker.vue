@@ -7,6 +7,7 @@ import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 import { computed, ref } from 'vue'
 
 import { ApiError, setTopicComputeChoice } from '../api'
+import { useCloudSupply } from '../composables/useCloudSupply'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
@@ -14,6 +15,7 @@ import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
 const props = defineProps<{ topicId: string; projectId: string; profile: TopicComputeProfile }>()
 const emit = defineEmits<{ changed: [] }>()
+const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const saving = ref(false)
 const error = ref('')
 // 选择变成了一条提议：这次点击没有改掉任何东西，等人点头。不是错误，所以不走
@@ -96,9 +98,11 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
         v-if="more"
         :devices="profile.devices"
         :cloud-available="cloudAvailable"
-        :project-id="projectId"
+        :supply="cloudSupply"
+        :supply-loading="supplyLoading"
         :busy="saving"
         @select="pick"
+        @need-supply="loadSupply"
       />
       <p v-if="proposal" role="status" class="cp-proposal">{{ proposal }}</p>
       <p v-if="error" role="alert" class="cp-error">{{ error }}</p>
