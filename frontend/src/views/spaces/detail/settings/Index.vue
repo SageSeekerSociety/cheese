@@ -1,9 +1,6 @@
 <template>
-  <PageHeader :title="t('spaces.settings.title')" show-on-mobile>
-    <template #tabs>
-      <SettingsTabs />
-    </template>
-  </PageHeader>
+  <PageHeader :title="t('spaces.settings.title')" />
+  <SettingsTabs />
 
   <div class="space-settings">
     <router-view />
@@ -26,7 +23,7 @@ const { t } = useI18n()
 .space-settings {
   display: flex;
   flex-direction: column;
-  gap: 32px;
-  padding: 16px;
+  max-width: 760px;
+  padding: 24px 16px 48px;
 }
 </style>

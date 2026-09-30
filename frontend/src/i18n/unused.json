@@ -69,7 +69,6 @@
   "spaces.domainGroups.createFailed",
   "spaces.domainGroups.createSuccess",
   "spaces.domainGroups.deleteFailed",
-  "spaces.domainGroups.deleteGroup",
   "spaces.domainGroups.deleteSuccess",
   "spaces.domainGroups.updateFailed",
   "spaces.domainGroups.updateSuccess",

@@ -1,75 +1,76 @@
 <template>
-  <v-card flat rounded="lg" class="analytics-filter-bar">
-    <div class="analytics-filter-bar__quick mb-3">
-      <v-btn
+  <!-- 六格共用的一行筛选：时间段、日期、分类、审核状态。改了要点「应用」才生效 ——
+       每一格都要重新拉数，边改边拉会把半截条件发出去。 -->
+  <div class="afb">
+    <div class="afb__presets" role="group" :aria-label="t('spaces.analytics.filter.presetLabel')">
+      <button
         v-for="preset in presets"
         :key="preset.key"
-        size="small"
-        rounded="lg"
-        variant="outlined"
+        type="button"
+        class="afb__preset"
         @click="$emit('apply-preset', preset.key)"
       >
-        {{ preset.label }}
+        {{ t(`spaces.analytics.filter.preset.${preset.key}`) }}
+      </button>
+    </div>
+
+    <v-text-field
+      v-model="model.from"
+      class="afb__date"
+      type="date"
+      :aria-label="t('spaces.analytics.filter.from')"
+      :prefix="t('spaces.analytics.filter.from')"
+      density="compact"
+      hide-details
+      variant="outlined"
+    />
+    <v-text-field
+      v-model="model.to"
+      class="afb__date"
+      type="date"
+      :aria-label="t('spaces.analytics.filter.to')"
+      :prefix="t('spaces.analytics.filter.to')"
+      density="compact"
+      hide-details
+      variant="outlined"
+    />
+    <v-select
+      v-model="model.categoryId"
+      class="afb__select"
+      autocomplete="off"
+      :items="categoryItems"
+      :aria-label="t('spaces.analytics.filter.category')"
+      :prefix="t('spaces.analytics.filter.category')"
+      density="compact"
+      hide-details
+      variant="outlined"
+    />
+    <v-select
+      v-model="model.taskApproved"
+      class="afb__select"
+      autocomplete="off"
+      :items="approvalItems"
+      :aria-label="t('spaces.analytics.filter.approval')"
+      :prefix="t('spaces.analytics.filter.approval')"
+      density="compact"
+      hide-details
+      variant="outlined"
+    />
+
+    <div class="afb__actions">
+      <v-btn variant="text" @click="$emit('reset')">{{ t('spaces.analytics.filter.reset') }}</v-btn>
+      <v-btn variant="outlined" color="on-surface" @click="$emit('apply')">
+        {{ t('spaces.analytics.filter.apply') }}
       </v-btn>
     </div>
-
-    <v-row class="ma-0" dense>
-      <v-col cols="12" md="3">
-        <v-text-field
-          v-model="model.from"
-          type="date"
-          label="开始日期"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-      </v-col>
-      <v-col cols="12" md="3">
-        <v-text-field
-          v-model="model.to"
-          type="date"
-          label="结束日期"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-      </v-col>
-      <v-col cols="12" md="3">
-        <v-select
-          v-model="model.categoryId"
-          autocomplete="off"
-          :items="categoryItems"
-          label="分类"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-      </v-col>
-      <v-col cols="12" md="3">
-        <v-select
-          v-model="model.taskApproved"
-          autocomplete="off"
-          :items="approvalItems"
-          label="题目审批状态"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-      </v-col>
-    </v-row>
-
-    <div class="analytics-filter-bar__actions">
-      <div class="text-caption text-medium-emphasis">筛选会在各分区间保持一致</div>
-      <div class="d-flex align-center gap-2">
-        <v-btn variant="text" rounded="lg" @click="$emit('reset')">重置</v-btn>
-        <v-btn color="primary" rounded="lg" variant="flat" @click="$emit('apply')">应用筛选</v-btn>
-      </div>
-    </div>
-  </v-card>
+  </div>
 </template>
 
 <script setup lang="ts">
 import type { SpaceAnalyticsQueryState } from '../utils'
+
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const model = defineModel<SpaceAnalyticsQueryState>({ required: true })
 
@@ -83,49 +84,78 @@ defineEmits<{
   (e: 'apply-preset', preset: '30d' | '180d' | 'all'): void
 }>()
 
-const approvalItems = [
-  { title: '全部', value: 'ALL' },
-  { title: '待审核', value: 'NONE' },
-  { title: '仅已通过', value: 'APPROVED' },
-  { title: '仅未通过', value: 'DISAPPROVED' },
-]
+const { t } = useI18n()
 
-const presets = [
-  { key: '30d' as const, label: '最近 30 天' },
-  { key: '180d' as const, label: '最近半年' },
-  { key: 'all' as const, label: '全部数据' },
-]
+const approvalItems = computed(() =>
+  (['ALL', 'NONE', 'APPROVED', 'DISAPPROVED'] as const).map((value) => ({
+    title: t(`spaces.analytics.filter.approvalOption.${value}`),
+    value,
+  }))
+)
+
+const presets = [{ key: '30d' as const }, { key: '180d' as const }, { key: 'all' as const }]
 </script>
 
-<style scoped lang="scss">
-.analytics-filter-bar {
-  padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  background-color: rgba(var(--v-theme-surface), 1);
-}
-
-.analytics-filter-bar__quick {
+<style scoped>
+.afb {
   display: flex;
-  gap: 8px;
   flex-wrap: wrap;
-}
-
-.analytics-filter-bar__actions {
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
+  gap: 8px;
   align-items: center;
-  margin-top: 16px;
 }
 
-@media (max-width: 960px) {
-  .analytics-filter-bar {
-    padding: 16px;
-  }
+.afb__presets {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--fill-2);
+}
 
-  .analytics-filter-bar__actions {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+.afb__preset {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+
+.afb__preset:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.afb__preset:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.afb__date {
+  flex: 0 1 168px;
+  min-width: 150px;
+}
+
+.afb__select {
+  flex: 0 1 172px;
+  min-width: 140px;
+}
+
+.afb__actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.afb :deep(.v-field) {
+  font-size: 13px;
+}
+
+.afb :deep(.v-text-field__prefix) {
+  color: var(--muted);
 }
 </style>

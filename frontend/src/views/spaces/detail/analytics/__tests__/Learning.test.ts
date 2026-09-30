@@ -56,6 +56,8 @@ const routerSeam = {
 
 import Learning from '../Learning.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const question = (over: Partial<SpaceLearningQuestion> = {}): SpaceLearningQuestion => ({
   blockId: 'block-1',
   topicId: 'topic-1',
@@ -133,7 +135,8 @@ beforeEach(() => {
 })
 
 function mount() {
-  return render(Learning, { global: { plugins: [vuetify, routerSeam] } })
+  setLocale('zh-CN')
+  return render(Learning, { global: { plugins: [vuetify, routerSeam, i18n] } })
 }
 
 describe('没有数据源的那一格如实报缺', () => {
