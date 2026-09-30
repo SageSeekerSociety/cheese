@@ -37,9 +37,10 @@ from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
 from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
+    FeishuAppService,
     IntegrationService,
     draft_view,
-    feishu_settings,
+    feishu_settings_for,
     keep_feishu_tokens,
     public,
 )
@@ -63,15 +64,6 @@ class MailIn(BaseModel):
     username: str
     password: str = Field(min_length=1)
     security: str = "ssl"
-    grants: list[str] = Field(default_factory=list)
-
-
-class FeishuIn(BaseModel):
-    label: str = "飞书"
-    app_id: str
-    app_secret: str = Field(min_length=1)
-    domain: str = "feishu"
-    folders: list[str] = Field(default_factory=list)
     grants: list[str] = Field(default_factory=list)
 
 
@@ -194,22 +186,35 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
     return ok(public(row))
 
 
+@router.get("/me/integrations/feishu")
+async def feishu_availability(db: DbSession, resolver: ActorResolverDep) -> dict:
+    """平台配过飞书应用没有 —— 「连接飞书」那颗按钮亮不亮就是这个问题的答案。
+
+    平台应用只有一个，读它不需要是谁的连接；但这是成员自己的页面，所以还是要本人。
+    """
+    await _person(resolver)
+    app = await FeishuAppService(db).current()
+    return ok(
+        {
+            "configured": app is not None,
+            "app_id": app.app_id if app else "",
+            "domain": app.domain if app else "",
+        }
+    )
+
+
 @router.post("/me/integrations/feishu")
-async def connect_feishu(
-    body: FeishuIn, db: DbSession, resolver: ActorResolverDep
-) -> dict:
+async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
+    """「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
+
+    行在这里就落库，因为回调用 `state` 里的 id 找到它、把 token 写进去（见
+    `feishu_callback`）。应用凭据是平台的，这一行不带；授予哪些项目之后在这个连接
+    那一行上勾选。
+    """
     actor = await _person(resolver)
     assert actor.user_id is not None
-    if body.domain not in ("feishu", "lark"):
-        raise ValidationError("domain 只能是 feishu 或 lark")
-    row = await IntegrationService(db).connect(
-        owner_user_id=actor.user_id,
-        owner_handle=actor.handle,
-        provider="feishu",
-        label=body.label,
-        config={"app_id": body.app_id, "domain": body.domain, "folders": body.folders},
-        secret={"app_secret": body.app_secret},
-        grants=body.grants,
+    row = await IntegrationService(db).connect_under_platform_app(
+        owner_user_id=actor.user_id, owner_handle=actor.handle
     )
     await db.commit()
     return ok(public(row))
@@ -290,7 +295,8 @@ async def feishu_authorize(
     actor = await _person(resolver)
     assert actor.user_id is not None
     row = await IntegrationService(db).get_owned(integration_id, actor.user_id)
-    url = FeishuClient(feishu_settings(row)).authorize_url(
+    settings = await feishu_settings_for(db, row)
+    url = FeishuClient(settings).authorize_url(
         _redirect_uri(), _state(row.id, in_app=started_in_app(request))
     )
     return ok({"url": url, "redirect_uri": _redirect_uri()})
@@ -326,8 +332,8 @@ async def _finish_feishu(
     row = await db.get(Integration, integration_id)
     if row is None:
         return RedirectResponse(f"{back}?{urlencode({'feishu': '连接已删除'})}", 302)
-    config = feishu_settings(row)
     try:
+        config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # noqa: BLE001 — the person reads why, on the page
         return RedirectResponse(f"{back}?{urlencode({'feishu': str(exc)[:200]})}", 302)
