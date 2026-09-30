@@ -21,6 +21,17 @@
   p { margin: 0 0 2.6mm; }
   ul, ol { margin: 0 0 2.6mm; padding-left: 6mm; }
   li { margin-bottom: 1.2mm; }
+  /* 收尾那一段（6.4 到最后）只在自己身上收紧行距，把最后两行拉回同一页。
+     这一段整块落在第 20 页上，所以前面各页一点不动 —— 免得把已经逐页
+     看过的版式又推一遍。 */
+  .tail h3 { margin: 3.4mm 0 1.6mm; }
+  .tail .quote { margin: 1.2mm 0 1.6mm; padding: 1.8mm 2.6mm; }
+  .tail p { margin: 0 0 1.6mm; }
+  .tail .warn { margin: 1.6mm 0; padding: 2mm 2.6mm; }
+  h2.tight { margin: 5mm 0 2.2mm; }
+  ol.tight { margin: 0 0 1mm; }
+  ol.tight li { margin-bottom: .6mm; }
+  p.close { margin: 0; }
   code, .mono {
     font-family: "Noto Sans Mono CJK SC", "DejaVu Sans Mono", monospace;
     font-size: 8.6pt; background: #f2f0ec; padding: .2mm 1.1mm; border-radius: 2px;
@@ -472,10 +483,11 @@ PASS  恢复的草稿不出回执
     <td class="n">5</td>
     <td><b>提交成功<br>失败 / 重试</b></td>
     <td>
-      成功时把答案写在问题记录上，并<b>叫醒出题的那个席位</b>；失败就是报错。
+      成功时把答案写在问题记录上，并<b>叫醒出题的那个席位</b>；失败时<b>把服务返回的
+      错误消息弹出来</b>，按钮松开、可以再点。
       <b>现有的这条路已经通</b>：房间里的选项按钮点一下就调
       <code>answerOptions</code>（后端 <code>POST /topics/blocks/{id}/answer</code>），
-      成功就把回执换上去，失败弹「选择失败」并把按钮松开。
+      成功就把回执换上去，失败弹的就是服务返回的那句错误消息。
       <span class="ev ev-src">线上只读</span>
     </td>
     <td>
@@ -694,6 +706,7 @@ PASS  恢复的草稿不出回执
   <code>list_keymap</code>（同一提交里另一处）。
 </p>
 
+<div class="tail">
 <h3>6.4 草稿到底存不存 —— 这一项的结论</h3>
 <div class="quote">:128  struct AnswerState {
 :132      draft: ComposerDraft,
@@ -718,16 +731,17 @@ PASS  恢复的草稿不出回执
   否则它就是我们自己要做的东西，不许写成「照 Codex 抄」。
 </div>
 
-<h2>七、接下来要什么</h2>
-<ol>
+<h2 class="tight">七、接下来要什么</h2>
+<ol class="tight">
   <li><b>图和表这样够不够</b> —— 界面八件事是否都要，还是有哪几件先不做。</li>
   <li><b>第五节的更正设计</b>要不要按这个做。</li>
   <li>确认之后，才是把预览接进产品、动后端的活。</li>
 </ol>
-<p>
+<p class="close">
   在那之前<b>不改产品</b>，只出预览和这份东西。已按要求：<b>不在活跃话题里发测试问题逼人回答</b>，
   所有复现都在隔离的预览和测试里做。
 </p>
+</div>
 
 </body>
 </html>

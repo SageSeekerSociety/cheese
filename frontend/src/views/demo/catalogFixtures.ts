@@ -115,12 +115,18 @@ export const ACCEPT_CHECKS = frame(4).checks
  * 画它的是 `RoomMessage.vue` 本身，所以这两格就是「现在长什么样」的对照图：
  * `meta.options` 躺在那儿，房间画出一排一键按钮；有人选过之后 `meta.answered` /
  * `meta.answered_by` 落在同一条上，房间画成「谁选了什么」的回执。
+ *
+ * 字段形状照后端写：`meta.asked` 是**在等谁答**那个 handle 或 null
+ * （`topics.py` 建问题那处写 `{"options": …, "asked": …}`），不是布尔。
+ * 答完也**不清它** —— `answer_options` 只补 `answered` / `answered_by`。
  */
 const ASK_TEXT = '这次的作业按哪种方式收？'
 const ASK_OPTIONS = ['课程平台收文件', '发到课程邮箱', '课上交纸质']
+/** 这道题在等谁答：发起那一轮的人，谁答谁就是他。 */
+const ASK_WAITING_FOR = 'wang'
 
 function askRow(answered: { option: string; by: string } | null): RoomRow {
-  const meta: Block['meta'] = { asked: true, options: ASK_OPTIONS }
+  const meta: Block['meta'] = { asked: ASK_WAITING_FOR, options: ASK_OPTIONS }
   if (answered) {
     meta.answered = answered.option
     meta.answered_by = answered.by
