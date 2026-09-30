@@ -15,10 +15,10 @@ export type NavItem = {
   permanent?: boolean
   // Discord-style ⌘N quick-switch number shown in the hover tooltip.
   shortcut?: number
-  // 有地址但不占 ⌘N 编号的格子（「待办」）。
-  unnumbered?: boolean
   // 角标数字；0 或不给就不画。
   badge?: number
+  // 没有件数、但有没读的动态时画的一颗小点。有件数时不画。
+  dot?: boolean
   // 项目格子才有。rail 上的项目可以拖着换顺序，这个 id 就是被拖的那一个——首页、
   // 分隔线和「＋新建项目」没有，所以它们既拖不动，也接不住别人拖过来。
   projectId?: string

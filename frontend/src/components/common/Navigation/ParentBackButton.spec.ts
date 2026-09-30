@@ -102,7 +102,7 @@ describe('返回上一级', () => {
     ['/spaces/42/templates/create', '/spaces/42/templates'],
     ['/spaces/42/templates/2/edit', '/spaces/42/templates'],
     ['/spaces/42/tasks', '/spaces'],
-    ['/teams/12/members', '/teams/mine'],
+    ['/teams/12/members', '/home'],
   ])('direct entry to %s returns to %s without browser history', async (path, parent) => {
     const { router, getByRole } = await open(path)
     const link = getByRole('link', { name: '返回上一级' })
@@ -269,7 +269,7 @@ describe('只在手机上是一层的页面', () => {
       name: 'my-devices',
       path: '/my/devices',
       component: { template: '<div />' },
-      meta: { title: '我的设备', hideTabs: true, backTo: 'HomeWork', backOnPhoneOnly: true },
+      meta: { title: '我的设备', hideTabs: true, backTo: 'HomeHub', backOnPhoneOnly: true },
     })
     return router
   }
@@ -279,7 +279,7 @@ describe('只在手机上是一层的页面', () => {
     const router = withPersonalPage()
     await router.push('/my/devices')
     const view = await mount(router)
-    expect(back(view)?.getAttribute('href')).toBe('/work')
+    expect(back(view)?.getAttribute('href')).toBe('/home')
   })
 
   it('桌面上不画 ←', async () => {

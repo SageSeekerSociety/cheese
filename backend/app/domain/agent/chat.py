@@ -1696,8 +1696,8 @@ class ChatService:
         command looks like — and only the thing running it can tell the two
         apart. The timestamps stay for the None case, where nobody has spoken.
 
-        The session that made a claim must still be the room's session for the
-        claim to hold: this process outlives screens.
+        Only the memory half — `agent.liveness` adds the task's own open turn.
+        A claim holds only while this process still holds that room's session.
         """
         if not agent_id:
             return None

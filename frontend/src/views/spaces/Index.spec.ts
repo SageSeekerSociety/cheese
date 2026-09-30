@@ -287,7 +287,7 @@ describe('题目板名录页的第一次落点', () => {
 })
 
 // 顶上那格「我的申请」里也有一颗「进入」。它和下面的空间卡片走**同一个**落点函数
-// （`lib/courseNav.ts` 的 `spaceEntryRoute`），从前它自己拼 `/spaces/{id}` —— 每个人都
+// （`lib/spaceEntry.ts` 的 `spaceEntryRoute`），从前它自己拼 `/spaces/{id}` —— 每个人都
 // 得记得那条地址该去哪儿，就会有一个人忘了。
 describe('从申请列表进入一块板', () => {
   it('进的是题目板，和列表卡片同一处', async () => {

@@ -4,7 +4,11 @@ import RouterPassThrough from '@/layouts/RouterPassThrough.vue'
 
 export default {
   path: '/teams',
-  component: RouterPassThrough,
+  // 团队的几页开在首页侧栏旁边：侧栏里这个团队展开着，点它的哪一样，右边就换哪一样。
+  components: {
+    default: RouterPassThrough,
+    sidebar: () => import('@/views/home/HomeSidebar.vue'),
+  },
   meta: {
     title: '团队',
   },
@@ -15,8 +19,8 @@ export default {
       path: ':handle',
       name: 'TeamsDetail',
       component: () => import('@/views/teams/Detail.vue'),
-      // Detail.vue 自己挂着 DetailSidebar，手机上它是抽屉，所以顶栏给汉堡。
-      meta: { drawer: true, backTo: 'HomeTeamsMine' },
+      // 手机上团队的几页从底栏「首页」那一格的目录进来，← 回到那里。
+      meta: { title: '团队', titleKey: 'navigation.teams', isFullPage: true, backTo: 'HomeHub' },
       children: [
         {
           // 项目 is the team's default tab (项目归团队, v4). Channels/discussions

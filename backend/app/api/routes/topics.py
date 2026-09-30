@@ -34,6 +34,7 @@ from app.domain.agent.announce import announce, notify_question
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt
+from app.domain.agent.liveness import task_liveness
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
@@ -258,7 +259,7 @@ async def _rooms_with_running_work(
     task_ids = [t.id for t in tasks]
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
     asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
-    live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
+    live = await task_liveness(chat, db, tasks)
     return {
         t.room_id
         for t in tasks
@@ -267,8 +268,8 @@ async def _rooms_with_running_work(
                 t,
                 None,
                 beats.get(t.id),
-                room_screen_live=live_rooms[t.room_id],
-                worker_live=chat.worker_live(t.room_id, t.subagent_id),
+                room_screen_live=live[t.id].screen,
+                worker_live=live[t.id].worker,
                 awaiting_answer=t.id in asked,
             ),
             now=now,
@@ -806,7 +807,7 @@ async def list_room_tasks(
     choices = binding.catalog(project.settings if project else None)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
-    screen_live = chat.has_live_screen(topic_id)
+    live = await task_liveness(chat, db, [t for t, _ in threads])
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -824,9 +825,9 @@ async def list_room_tasks(
                         task,
                         card,
                         beats.get(task.id),
-                        room_screen_live=screen_live,
-                        # 同一个房间一次问一个分身，逐条问：每条活的分身是它自己的。
-                        worker_live=chat.worker_live(task.room_id, task.subagent_id),
+                        room_screen_live=live[task.id].screen,
+                        # 每条活的分身是它自己的，所以逐条答；上面一次问完。
+                        worker_live=live[task.id].worker,
                         awaiting_answer=task.id in asked,
                     ),
                     now=now,
@@ -880,6 +881,7 @@ async def get_room_task(
         raise NotFoundError("这条消息不在这个任务里")
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
+    live = await task_liveness(chat, db, [task])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     # 看板那一格，和它在列表里显示的是同一句话——同一个函数算的，所以深链接进来
     # 和从看板点进来不可能给出两种说法。
@@ -888,11 +890,9 @@ async def get_room_task(
             task,
             cards.get(task.id),
             beats.get(task.id),
-            # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
-            # 一声。这一位是内存里的当下事实，不是库里的一列。
-            room_screen_live=chat.has_live_screen(place.room_id),
-            # 屏幕还在，再问那个正在跑轮次的进程：这条活的分身它看得见。
-            worker_live=chat.worker_live(task.room_id, task.subagent_id),
+            # 两位当下事实见 `agent.liveness`：屏幕先看，屏幕没了分身也没了。
+            room_screen_live=live[task.id].screen,
+            worker_live=live[task.id].worker,
             awaiting_answer=bool(
                 await BlockRepository(db).tasks_awaiting_an_answer([task.id])
             ),

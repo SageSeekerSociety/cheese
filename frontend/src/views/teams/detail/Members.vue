@@ -340,6 +340,9 @@ const updateActiveTabFromRoute = () => {
       activeTab.value = 'requests'
     }
   }
+
+  // 首页侧栏团队那一行的「邀请成员」带着 ?invite=1 过来：直接打开邀请框。
+  if (route.query.invite === '1' && isSelfAdmin.value) isInviteDialogActive.value = true
 }
 
 onMounted(() => {
@@ -348,6 +351,7 @@ onMounted(() => {
 
   updateActiveTabFromRoute()
 })
+watch(() => route.query.invite, updateActiveTabFromRoute)
 
 watch(
   [teamData, activeTab],

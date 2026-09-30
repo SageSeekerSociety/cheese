@@ -564,13 +564,13 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
     await apiLogin(page);
 
     // 冷编译这份钱在循环外付清，每个 tab 一次。等的东西和下面循环里完全一样
-    // （`.content-body` 真的出现、里面真的画出了字），一字没有放水 —— 只是预算按冷的
+    // （`.app-page__body` 真的出现、里面真的画出了字），一字没有放水 —— 只是预算按冷的
     // 给。这样下面量到的才是布局本身，不是 Vite 的编译速度。
     for (const path of TAB_PATHS) {
       await page.goto(`/teams/team-1${path ? '/' + path : ''}`);
-      await expect(page.locator('.content-body')).toBeVisible({ timeout: ROUTE_READY_MS });
+      await expect(page.locator('.app-page__body')).toBeVisible({ timeout: ROUTE_READY_MS });
       await expect
-        .poll(async () => page.locator('.content-body').evaluate((el) => (el.textContent || '').trim().length), {
+        .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
           message: `/teams/team-1${path ? '/' + path : ''}：工作区一直是空的，这一条等于没做`,
           timeout: ROUTE_READY_MS,
         })
@@ -585,16 +585,16 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
         // 量不到这一层就是范围选错了（比如 alice 不是成员，看到的是对外主页），
         // 空范围永远返回「没有缺陷」，是一条只会绿的断言，所以这里炸掉而不是放过。
         await expect(
-          page.locator('.content-body'),
+          page.locator('.app-page__body'),
           `${size.width}×${size.height} · /teams/team-1/${path}：没落在小队工作区里，这条断言等于没做`,
         ).toBeVisible({ timeout: WARM_STEP_MS });
 
-        // `.content-body` 一出现就量还不够 —— 它的内容（成员/资料/算力）是另一次请求
+        // `.app-page__body` 一出现就量还不够 —— 它的内容（成员/资料/算力）是另一次请求
         // 填进去的，量早了会量到一个半空的工作区，而**空范围永远返回「没有缺陷」**。
         // 等这一层里真的画出了字（页头在它外面，所以量到的就是当前 tab 自己的内容），
         // 四个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
         await expect
-          .poll(async () => page.locator('.content-body').evaluate((el) => (el.textContent || '').trim().length), {
+          .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
             message: `${size.width}×${size.height} · /teams/team-1/${path}：工作区一直是空的，这一条等于没做`,
             timeout: WARM_STEP_MS,
           })
@@ -626,7 +626,7 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
   const topicHref = new URL(page.url()).pathname;
 
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/work', '/inbox', projectPath!, `${projectPath}/members`, `${projectPath}/routines`, topicHref]) {
+  for (const path of ['/home', '/inbox', projectPath!, `${projectPath}/members`, `${projectPath}/routines`, topicHref]) {
     await page.goto(path);
     await expect(page.locator('.v-app-bar')).toBeVisible();
     await page.waitForLoadState('networkidle');

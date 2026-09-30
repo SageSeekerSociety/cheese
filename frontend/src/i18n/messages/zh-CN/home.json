@@ -1,0 +1,27 @@
+{
+  "inbox": {
+    "waiting": "等你处理",
+    "waitingEmpty": "暂无等你处理的事项",
+    "loadFailed": "无法读取待处理事项",
+    "retry": "重试",
+    "feed": "动态",
+    "reason": {
+      "reviewer": "待你审阅",
+      "reporter": "你提的需求已有交付",
+      "asked": "待你回答"
+    }
+  },
+  "nav": {
+    "teamProjects": "项目",
+    "teamMembers": "成员",
+    "teamKnowledge": "知识库",
+    "teamCompute": "工作电脑",
+    "newTeam": "新建或加入团队",
+    "teamActions": "团队操作",
+    "inviteMembers": "邀请成员",
+    "expand": "展开 {name}",
+    "collapse": "收起 {name}",
+    "personalIntro": "你的个人团队",
+    "unreadActivity": "有新动态"
+  }
+}

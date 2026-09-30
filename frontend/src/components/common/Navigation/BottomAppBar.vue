@@ -9,7 +9,13 @@
       :key="item.key"
       :to="item.to"
       :active="item.match ? item.match(here) : undefined"
-      :aria-label="item.badge ? `${item.title}（${item.badge}）` : undefined"
+      :aria-label="
+        item.badge
+          ? `${item.title}（${item.badge}）`
+          : item.dot
+            ? `${item.title}（${t('home.nav.unreadActivity')}）`
+            : undefined
+      "
       @click="!item.to && item.action?.()"
     >
       <span class="bottom-tabs__icon">
@@ -22,6 +28,7 @@
         <span v-if="item.badge" class="bottom-tabs__badge" aria-hidden="true">{{
           item.badge > 99 ? '99+' : item.badge
         }}</span>
+        <span v-else-if="item.dot" class="bottom-tabs__dot" aria-hidden="true" />
       </span>
       <span class="bottom-tabs__label">{{ item.title }}</span>
     </v-btn>
@@ -34,6 +41,8 @@ import { computed, toRefs } from 'vue'
 import { useNavigation } from '@/composables/useNavigation'
 
 import { NavItem } from './types'
+
+import { t } from '@/i18n'
 
 const navBarProps = withDefaults(defineProps<{ items: NavItem[] }>(), {
   items: () => [],
@@ -72,6 +81,16 @@ const here = computed(() => nav?.route?.path ?? '')
 
 /* 件数角标，和桌面 rail 那一颗同一套取色，理由见 RailItem.vue：暖色底上的字要一块
    不跟着主题翻白的深墨，外圈一道底栏底色让它压在图标角上时边缘清楚。 */
+.bottom-tabs__dot {
+  position: absolute;
+  top: -2px;
+  left: calc(100% - 4px);
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--canvas);
+}
 .bottom-tabs__badge {
   position: absolute;
   top: -4px;

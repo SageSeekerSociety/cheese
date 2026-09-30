@@ -6,45 +6,30 @@
   <v-container v-else-if="notFound" class="fill-height justify-center pa-4" fluid>
     <p class="t-body c-muted">{{ t('work.teamProfile.notFound') }}</p>
   </v-container>
-  <template v-else-if="teamData">
-    <DetailSidebar
-      :team-data="teamData"
-      :team-members-count="teamMembersCount"
-      @updated="(team: Team) => (teamData = team)"
-    />
-    <v-container fluid class="pa-0 layout-container">
-      <v-row no-gutters class="fill-height">
-        <!-- 右侧内容区 -->
-        <v-col>
-          <v-sheet class="h-100 d-flex flex-column" rounded="lg">
-            <!-- 成员/知识库沿用公共头；项目、工作电脑 tab 自带标题行。 -->
-            <div v-if="headerTitle" class="content-header px-6 py-3 d-flex align-center">
-              <v-icon :icon="headerIcon" class="mr-2"></v-icon>
-              <h2 class="text-h6 font-weight-medium">{{ headerTitle }}</h2>
-            </div>
-            <v-divider v-if="headerTitle"></v-divider>
-
-            <div class="content-body overflow-auto">
-              <router-view />
-            </div>
-          </v-sheet>
-        </v-col>
-      </v-row>
-    </v-container>
-  </template>
+  <AppPage
+    v-else-if="teamData"
+    :title="pageTitle"
+    :parent="{ label: teamData.name, to: { name: 'TeamsDetailDefault', params: { handle: teamData.handle } } }"
+    width="full"
+  >
+    <template v-if="teamIntro" #meta>
+      <span class="team-intro">{{ teamIntro }}</span>
+    </template>
+    <router-view />
+  </AppPage>
 </template>
 
 <script setup lang="ts">
-// 小队详情外框：侧栏（项目/成员/知识库/工作电脑）+ 当前 tab。原来的聊天频道已随
-// "都归项目" 的决定退役 —— 会话面是项目里的话题，这里只剩小队的资产。
-import type { Team, User } from '@/types'
+// 团队详情外框：页头（团队名 / 这一页）+ 当前这一页。团队的四样东西（项目、成员、
+// 知识库、工作电脑）列在首页侧栏里这个团队的下面，这里不再自己画一条侧栏。
+import type { Team } from '@/types'
 
 import { computed, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import DetailSidebar from './DetailSidebar.vue'
 import TeamProfile from './TeamProfile.vue'
 
+import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
@@ -54,17 +39,19 @@ const route = useRoute()
 const teamData = ref<Team>()
 provide(teamDataInjectionKey, teamData)
 
-const teamMembers = ref<User[]>([])
-const teamMembersCount = ref(0)
 const notFound = ref(false)
 const isMember = computed(() => teamData.value?.joinStatus === 'member')
 
-const headerTitle = computed(() =>
-  route.name === 'TeamsDetailMembers' ? '成员管理' : route.name === 'TeamsDetailKnowledge' ? '知识库' : null
-)
-const headerIcon = computed(() =>
-  route.name === 'TeamsDetailMembers' ? 'mdi-account-group' : 'mdi-book-open-page-variant'
-)
+const PAGE_TITLES: Record<string, string> = {
+  TeamsDetailDefault: 'home.nav.teamProjects',
+  TeamsDetailMembers: 'home.nav.teamMembers',
+  TeamsDetailKnowledge: 'home.nav.teamKnowledge',
+  TeamsDetailCompute: 'home.nav.teamCompute',
+}
+const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects'))
+
+// 个人团队没写介绍时回落成一句说明，和团队列表里的说法一致。
+const teamIntro = computed(() => teamData.value?.intro || (teamData.value?.personal ? t('home.nav.personalIntro') : ''))
 
 const fetchTeamData = async (handle: string) => {
   notFound.value = false
@@ -77,16 +64,6 @@ const fetchTeamData = async (handle: string) => {
     // 隐身小队对非成员就是 404：和不存在的小队说同一句话。
     if (error instanceof BusinessError && error.code === 404) notFound.value = true
     else throw error
-  }
-}
-
-const fetchTeamMembers = async (teamId: number) => {
-  try {
-    const response = await TeamsApi.getMembers(teamId)
-    teamMembers.value = response.data.members.map((member) => member.user)
-    teamMembersCount.value = response.data.members.length
-  } catch (error) {
-    console.error('获取小队成员失败', error)
   }
 }
 
@@ -107,49 +84,14 @@ watch(
   },
   { immediate: true }
 )
-
-// 成员名单只有成员读得到：成了成员（包括刚刚直接加入）才去拉。
-watch(isMember, (member) => {
-  if (member && teamData.value) void fetchTeamMembers(teamData.value.id)
-})
 </script>
 
-<style scoped lang="scss">
-.layout-container {
-  height: calc(100dvh - var(--v-layout-top) - 1px);
+<style scoped>
+.team-intro {
   overflow: hidden;
-}
-
-.content-header {
-  min-height: 60px;
-}
-
-/* 这一列必须自己拿满高。`v-row` 是 `display:flex; flex-wrap:wrap`，列作为 flex 项
-   默认 `min-height:auto`，会被内容撑到内容高、绕过 `fill-height` 给行的高；于是
-   里面的 `h-100` 板子也是内容高，最内层 `.content-body` 永远拿不到有界高度，
-   滚不起来 —— 而外层 `.layout-container` 是 `overflow:hidden`，多出来的部分直接
-   没了（成员一多就露馅）。`height:100%` 是确定值，压得住内容。 */
-.layout-container .v-col {
-  height: 100%;
-  min-height: 0;
-}
-
-.content-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-@media (max-width: 960px) {
-  .layout-container {
-    height: auto;
-    overflow: visible;
-  }
-}
-
-@media (max-width: 600px) {
-  .layout-container {
-    height: calc(100dvh - 56px);
-  }
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

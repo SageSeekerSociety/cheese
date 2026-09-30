@@ -176,14 +176,14 @@ def test_default_is_todays_interface_verbatim() -> None:
     )
     assert default.hidden == ("calendar", "project-routines", "project-skills")
     assert default.terms == {}
-    assert default.nav.rail == ("home", "inbox", "projects", "add")
-    assert default.nav.tabs == ("spaces", "workspace", "inbox")
+    assert default.nav.rail == ("home", "projects", "add")
+    assert default.nav.tabs == ("home", "workspace", "inbox")
 
 
 def test_every_shell_names_only_known_keys() -> None:
     """A typo in a declaration hides a destination with no error anywhere."""
-    known_rail = {"home", "inbox", "projects", "add"}
-    known_tabs = {"spaces", "workspace", "inbox"}
+    known_rail = {"home", "projects", "add"}
+    known_tabs = {"home", "workspace", "inbox"}
     # The project pages a 壳 may name — the route names of `workspaceRoutes.ts`.
     known_project = {
         "workspace-running",
