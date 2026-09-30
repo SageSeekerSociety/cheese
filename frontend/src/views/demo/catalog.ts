@@ -13,6 +13,7 @@
  */
 import type { Component } from 'vue'
 
+import { ACCEPT_ENTRIES } from './catalogAccept'
 import { CHAT_ENTRIES } from './catalogChat'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import {
@@ -614,6 +615,9 @@ export const CATALOG: CatalogEntry[] = [
   // 模型管理那六件（从 1428 行的 AdminModelsPage 拆出来的三段 + 页头 + 那条横条 +
   // 确认框）在自己的文件里：`catalogModels.ts`（数据在 `catalogModelsFixtures.ts`）。
   ...MODELS_ENTRIES,
+  // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
+  // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
+  ...ACCEPT_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',

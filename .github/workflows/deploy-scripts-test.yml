@@ -78,6 +78,12 @@ jobs:
           python3 backend/scripts/test_gateway_supply_probe.py
           bash .github/scripts/test-plan-image-builds.sh
 
+      # The ratchet collection step is read out of arch-metrics.yml and run
+      # under `bash -e`, the shell GitHub gives a `run:` body — the reading that
+      # `code=$?` on the line after the collector is not.
+      - name: Ratchet collection evidence
+        run: python3 deploy/tests/test_arch_metrics_workflow.py
+
       - name: Cloud control connection lifecycle
         run: python3 deploy/tests/test_cloud_control.py
 

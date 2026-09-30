@@ -268,18 +268,22 @@ watch(
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 /* 一行是一项：名字一行，说明和第几版在它下面，操作按钮在右边。版本不和名字抢同
-   一行：宽屏上这一列只有两百来像素，并排的话版本那一截是定宽的，名字会被挤成零。 */
+   一行：宽屏上这一列只有两百来像素，并排的话版本那一截是定宽的，名字会被挤成零。
+   行不画成卡片：旁边三列里的卡是「一条活」，这里是活交出来的东西，长得一样的话
+   读的人会把这一列也当成一种状态。 */
 .made-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 4px 8px 10px;
-  border: 1px solid var(--line);
+  padding: 6px 4px 6px 10px;
   border-radius: var(--radius-md);
-  background: var(--surface);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.made-row:hover {
+  background: var(--fill);
 }
 .made-row__what {
   flex: 1 1 auto;

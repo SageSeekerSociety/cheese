@@ -26,22 +26,12 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute_configs import (
-    ProjectComputeConfigs,
-    project_configs,
-    validate_choice,
-)
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
 from app.domain.agent.liveness import task_liveness
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    COMPUTE_TIERS,
-    compute_selectable,
-)
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -59,9 +49,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
 from app.domain.machine.limits import get_machine_limit
-from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
-from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -78,7 +66,6 @@ from app.domain.project.repositories import (
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
-    ProjectDefaultModelUpdate,
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
@@ -763,252 +750,6 @@ async def save_forge_attribution(
     project.settings = values
     await db.flush()
     return await get_forge_attribution(project_id, db, resolver)
-
-
-# --- Project main and native subagent model defaults ---
-
-
-def _default_model_state(project_settings: dict | None) -> dict:
-    from app.domain.agent_instance.configuration import model_choices, project_pool
-
-    choices = model_choices(project_settings)
-    chosen = (project_settings or {}).get("default_model")
-    # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
-    # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
-    known_ids = {c["id"] for c in choices}
-    effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
-    deployment_settings = dict(project_settings or {})
-    deployment_settings.pop("default_model", None)
-    deployment_choices = model_choices(deployment_settings)
-    return {
-        "model": effective,
-        "subagent_model": (project_settings or {}).get("default_subagent_model"),
-        "deployment_default": next(
-            (c["id"] for c in deployment_choices if c["default"]), None
-        ),
-        "choices": choices,
-        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
-        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
-        "pool": project_pool(project_settings),
-        "can_manage": False,  # 由路由层按权限填
-    }
-
-
-@router.get("/{project_id}/default-model")
-async def get_default_model(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    state = _default_model_state(project.settings)
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-        state["can_manage"] = True
-    except ForbiddenError:
-        state["can_manage"] = False
-    return ok(state)
-
-
-@router.put("/{project_id}/default-model")
-async def save_default_model(
-    project_id: uuid.UUID,
-    body: ProjectDefaultModelUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
-    from app.domain.agent_instance.configuration import model_choices
-
-    valid = {c["id"] for c in model_choices(values)}
-    for field, key in (
-        ("model", "default_model"),
-        ("subagent_model", "default_subagent_model"),
-    ):
-        if field not in body.model_fields_set:
-            continue
-        chosen = getattr(body, field)
-        if chosen is None:
-            values.pop(key, None)
-        elif chosen not in valid:
-            raise ValidationError(f"当前项目无法使用模型 {chosen!r}，请选择可用模型")
-        else:
-            values[key] = chosen
-    project.settings = values
-    await db.flush()
-    state = _default_model_state(project.settings)
-    state["can_manage"] = True
-    return ok(state)
-
-
-# --- Compute pool (design §3): which machine runs this project's sandbox ---
-
-
-@router.get("/{project_id}/compute-configs")
-async def get_compute_configs(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    from app.domain.agent.device_hub import device_hub
-    from app.domain.device.wiring import sql_device_service
-
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    can_manage = True
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-    except ForbiddenError:
-        can_manage = False
-    devices = await sql_device_service(db).list_devices_for_project(project_id)
-    from app.domain.machine.session_work import project_distribution
-
-    return ok(
-        {
-            **project_configs(project.settings).model_dump(),
-            "can_manage": can_manage,
-            # Where the project's agents are working now; the default only
-            # decides for agents that have not started.
-            "distribution": await project_distribution(db, project_id),
-            "devices": [
-                {
-                    "device_id": d.device_id,
-                    "name": d.name,
-                    "online": device_hub.is_online(d.device_id),
-                }
-                for d in devices
-            ],
-            "cloud_available": any(
-                p.id == COMPUTE_CLOUD for p in compute_selectable(settings)
-            ),
-        }
-    )
-
-
-@router.get("/{project_id}/devices/{device_id}/sessions")
-async def list_device_sessions(
-    project_id: uuid.UUID,
-    device_id: str,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The project's agent sessions on one self-hosted device, for a project
-    manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
-
-    Each switch then goes through the room's own route, with its checks. A
-    session in a room the caller cannot open is counted in ``hidden`` and not
-    listed, so its room's title stays in that room.
-    """
-    from app.domain.machine.session_work import device_sessions
-
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    listed, hidden = [], 0
-    for topic, session in await device_sessions(db, project_id, device_id):
-        try:
-            await resolver.authorize_topic(
-                actor, project_id=project_id, topic_id=topic.id
-            )
-        except ForbiddenError:
-            hidden += 1
-            continue
-        listed.append(session)
-    return ok({"sessions": listed, "hidden": hidden})
-
-
-@router.put("/{project_id}/compute-configs")
-async def save_compute_configs(
-    project_id: uuid.UUID,
-    body: ProjectComputeConfigs,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    await MemberService(db).require_manager(project_id, actor)
-    await validate_choice(db, project_id, body.default)
-    await MachineService(db).admit_choice(project_id, actor, body.default)
-    values = dict(project.settings or {})
-    values.pop("compute_profile", None)
-    values["compute_configs"] = body.model_dump()
-    project.settings = values
-    await db.flush()
-    return ok(body.model_dump())
-
-
-# --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
-
-
-@router.get("/{project_id}/tier-policy")
-async def get_tier_policy(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """这个项目允许哪几档资源自己发生，以及超档怎么办。
-
-    `tiers` 一并给出目录里现在存在的档位，所以调用方不必自己维护一份档位表——
-    那正是闸门拒绝按型号列白名单的同一个理由（`domain/policy/gate.py`）。
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    policy = gate.policy_of(project.settings)
-    return ok(
-        {
-            gate.ALLOWED_TIERS_KEY: (
-                None if policy.allowed_tiers is None else sorted(policy.allowed_tiers)
-            ),
-            gate.OVER_TIER_KEY: policy.over_tier,
-            "tiers": sorted(
-                {choice["tier"] for choice in model_choices(project.settings)}
-                | set(COMPUTE_TIERS.values())
-            ),
-        }
-    )
-
-
-@router.put("/{project_id}/tier-policy")
-async def set_tier_policy(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """改档位策略。只有项目管理者能改——它决定谁的点头才能放行一次调用。
-
-    `allowed_tiers` 传 `null` 是不限档（默认），传一个列表是只有这几档可以自己
-    发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
-    档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
-    if gate.ALLOWED_TIERS_KEY in body:
-        tiers = body.get(gate.ALLOWED_TIERS_KEY)
-        if tiers is None:
-            values.pop(gate.ALLOWED_TIERS_KEY, None)
-        elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
-            values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
-        else:
-            raise ValidationError("allowed_tiers 必须是字符串数组或 null")
-    if gate.OVER_TIER_KEY in body:
-        disposition = body.get(gate.OVER_TIER_KEY)
-        if disposition not in gate.DISPOSITIONS:
-            raise ValidationError(f"over_tier 只能是 {sorted(gate.DISPOSITIONS)} 之一")
-        values[gate.OVER_TIER_KEY] = disposition
-    project.settings = values
-    await db.flush()
-    return await get_tier_policy(project_id, db, resolver)
 
 
 @router.get("/{project_id}/topic-naming")
