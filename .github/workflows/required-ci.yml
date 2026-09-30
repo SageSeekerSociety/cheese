@@ -34,7 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Test scope and result handling
-        run: python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
+          # ci-fast's black-box tests drive real pre-commit (system-language
+          # stub hooks), so the runner needs the binary, not just the script.
+          pip install -q pre-commit
+          python3 -m unittest discover -s .github/scripts -p 'test_ci_fast.py'
       - name: Select suites for the complete merge diff
         id: scope
         env:
