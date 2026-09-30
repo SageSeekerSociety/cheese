@@ -77,7 +77,6 @@ class CreateSpaceRequest(BaseModel):
     description: str = ""
     avatar_id: int | None = Field(default=None, alias="avatarId")
     enable_rank: bool = Field(default=False, alias="enableRank")
-    announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(
         default=None, alias="classificationTopics"
@@ -102,7 +101,6 @@ class PatchSpaceRequest(BaseModel):
     description: str | None = None
     avatar_id: int | None = Field(default=None, alias="avatarId")
     enable_rank: bool | None = Field(default=None, alias="enableRank")
-    announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(
         default=None, alias="classificationTopics"
@@ -414,7 +412,6 @@ def _space_to_api_model(space: Space) -> dict:
         "enableRank": space.enable_rank,
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
-        "announcements": json.dumps(space.announcements or []),
         "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
@@ -810,7 +807,6 @@ async def create_space(
     if await service.exists_by_name(payload.name):
         raise ConflictError(f"Space with name '{payload.name}' already exists")
 
-    announcements = _expect_list(payload.announcements, "announcements")
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []
 
@@ -821,7 +817,6 @@ async def create_space(
         avatar_id=payload.avatar_id,
         enable_rank=payload.enable_rank,
         owner_id=auth_user.user_id,
-        announcements=announcements,
         task_templates=task_templates,
         visible_task_limit=payload.visible_task_limit,
     )
@@ -875,10 +870,7 @@ async def patch_space(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    announcements = payload.announcements
     task_templates = payload.task_templates
-    if announcements is not None:
-        announcements = _expect_list(announcements, "announcements")
     if task_templates is not None:
         task_templates = _expect_list(task_templates, "taskTemplates")
 
@@ -892,7 +884,6 @@ async def patch_space(
         description=payload.description,
         avatar_id=payload.avatar_id,
         enable_rank=payload.enable_rank,
-        announcements=announcements,
         task_templates=task_templates,
         default_category_id=payload.default_category_id,
         visible_task_limit=payload.visible_task_limit,

@@ -27,7 +27,6 @@ def _space(api_client: TestClient, headers: dict[str, str]) -> tuple[int, int]:
             "intro": "A space for search",
             "description": "Test description",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=headers,
