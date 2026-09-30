@@ -102,10 +102,10 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatPercent, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
-import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
+import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 
-const analyticsNames = useAnalyticsRouteNames()
+const analyticsNames = ANALYTICS_ROUTE_NAMES
 const { filters, pushToSection, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)

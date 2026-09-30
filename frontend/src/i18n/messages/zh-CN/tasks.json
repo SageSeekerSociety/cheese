@@ -135,5 +135,19 @@
     "ended": "已截止",
     "rejected": "审核未通过",
     "joined": "已报名"
+  },
+  "eligibility": {
+    "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能领取",
+    "REGISTRATION_NOT_STARTED": "还没到报名时间",
+    "REGISTRATION_CLOSED": "报名已截止",
+    "PARTICIPANT_LIMIT_REACHED": "这道题的名额已满",
+    "ALREADY_PARTICIPATING": "你已经领取了这道题",
+    "MISSING_REAL_NAME": "这道题需要实名信息才能参与",
+    "USER_RANK_NOT_HIGH_ENOUGH": "你的等级还不够参与这道题",
+    "TEAM_TOO_SMALL": "团队人数少于这道题的要求",
+    "TEAM_TOO_LARGE": "团队人数超过这道题的上限",
+    "TEAM_MEMBER_MISSING_REAL_NAME": "团队中有成员尚未填写实名信息",
+    "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH": "团队中有成员等级不够",
+    "unknown": "暂时无法参与这道题"
   }
 }

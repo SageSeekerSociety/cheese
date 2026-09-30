@@ -14,6 +14,7 @@ import { defineStore } from 'pinia'
 
 import { SpacesApi } from '@/network/api/spaces'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
+import AccountService from '@/services/account'
 
 export const useSpaceStore = defineStore('space', () => {
   const currentSpace = ref<Space | null>(null)
@@ -23,7 +24,6 @@ export const useSpaceStore = defineStore('space', () => {
   const domainGroups = ref<DomainGroup[]>([])
 
   const isEditingProfile = ref<boolean>(false)
-  const isManagingAdmins = ref<boolean>(false)
 
   const openEditProfile = () => {
     isEditingProfile.value = true
@@ -33,13 +33,16 @@ export const useSpaceStore = defineStore('space', () => {
     isEditingProfile.value = false
   }
 
-  const openManageAdmins = () => {
-    isManagingAdmins.value = true
-  }
-
-  const closeManageAdmins = () => {
-    isManagingAdmins.value = false
-  }
+  /** 我在这个空间里的角色：管理员名单（含所有者）里有我就是那个角色，否则是成员。 */
+  const myRole = computed<SpaceAdminRoleType | 'MEMBER'>(() => {
+    const me = AccountService._user.value?.id
+    const mine = currentSpace.value?.admins?.find((admin) => admin.user.id === me)
+    return mine ? mine.role : 'MEMBER'
+  })
+  /** 能审题、看数据、管分类与邀请码：所有者和管理员。 */
+  const isManager = computed(() => myRole.value !== 'MEMBER')
+  /** 只有所有者能改别人的角色、转让所有者、删除空间。 */
+  const isOwner = computed(() => myRole.value === 'OWNER')
 
   const templates = computed<SpaceTaskTemplate[]>(() => {
     if (!currentSpace.value) return []
@@ -337,7 +340,9 @@ export const useSpaceStore = defineStore('space', () => {
     domainGroups,
     fetchDomainGroups,
     isEditingProfile,
-    isManagingAdmins,
+    myRole,
+    isManager,
+    isOwner,
     fetchSpace,
     updateSpace,
     updateTemplates,
@@ -362,7 +367,5 @@ export const useSpaceStore = defineStore('space', () => {
     removeAdmin,
     openEditProfile,
     closeEditProfile,
-    openManageAdmins,
-    closeManageAdmins,
   }
 })

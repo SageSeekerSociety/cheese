@@ -6,14 +6,14 @@ import { useRoute } from 'vue-router'
 import { truncateString } from '@/utils/form'
 import { getTaskStatusText, getTaskStatusType } from '@/utils/tasks'
 
-import { useTaskRouteNames } from '@/lib/shellRouteNames'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
 
 export function useTaskData() {
   const route = useRoute()
-  const routeNames = useTaskRouteNames()
+  const routeNames = TASK_ROUTE_NAMES
   const taskId = computed(() => Number(route.params.taskId))
 
   const taskData = ref<Task | null>(null)

@@ -12,7 +12,7 @@ import { computed } from 'vue'
 
 import { useNavigation } from '@/composables/useNavigation'
 
-import { useAnalyticsRouteNames } from '@/lib/shellRouteNames'
+import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 
 const nav = useNavigation()
 
@@ -20,9 +20,7 @@ const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
 /** 换一格不丢当前那一串筛选条件（query 原样带过去）。 */
 const query = computed(() => nav?.route?.query ?? {})
 
-/** 六格跳哪儿由挂着它的那棵树说了算（老的九页 / 新题目板外壳各一套名字），
- *  见 `shellRouteNames.ts` 顶部。 */
-const names = useAnalyticsRouteNames()
+const names = ANALYTICS_ROUTE_NAMES
 
 const tabs = [
   { name: names.overview, label: '总览', icon: 'mdi-view-dashboard-outline' },

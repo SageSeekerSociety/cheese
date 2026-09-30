@@ -213,7 +213,6 @@ class TestTheAccessLog:
         assert entry["accessor"]["id"] == exported["admin"].id
         assert entry["accessType"] == "EXPORT"
         assert entry["accessEntityName"] == exported["space"]["name"]
-        assert entry["accessEntityIsCourse"] == exported["space"]["isCourse"]
 
     def test_it_outlives_the_record(
         self, owner: _Owner, api_client: TestClient, exported: dict

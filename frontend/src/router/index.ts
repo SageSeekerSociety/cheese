@@ -3,7 +3,6 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
-import CourseJoinRoutes from './courseJoin'
 import { requireEmail } from './emailRequired'
 import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
@@ -22,7 +21,6 @@ import { recordEntry } from '@/lib/projectEntry'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
-import { SpaceBoardRoutes } from '@/views/spaces/board/routes'
 
 // 个人的几页（设备、连接、批准设备、打开预览/网站）不是底栏上的一级目的地，是从头像
 // 菜单或一条链接推进来的一层：手机上收起底栏、顶栏给 ← 回首页。桌面上左边有 rail，
@@ -41,10 +39,7 @@ const routes: RouteRecordRaw[] = [
   HomeRoutes,
   UserRoutes,
   QuestionRoutes,
-  CourseJoinRoutes,
   SpacesRoutes,
-  // 空间新界面（并存的一棵，挂在 /spaces/:id/board 下）。见该文件顶部说明。
-  SpaceBoardRoutes,
   TeamsRoutes,
   // --- CheeseX (agent workspace) routes ---------------------------------
   // Our grafted views navigate internally by these route names; they must be

@@ -17,6 +17,16 @@ The caps are smell tests, not laws: 1000 lines for `frontend/src` code, 1500 for
 stopped having one reason to change, and the honest answer at that point is a
 split (see `.claude/rules/architecture.md`), not a bigger cap.
 
+THE MERGE BASE IS NOT OPTIONAL. A file is judged at the size it had where this
+branch left the base branch, and only the files this branch actually changed are
+judged at all. Neither question survives being rephrased as "compare the two
+tips": the base branch moves on after a branch forks, so a file only the base
+branch changed is in that diff, and its shrink reads as this branch's growth.
+That is not hypothetical — PR #2173 was failed for `frontend/src/api.ts`
+"growing" 3610 → 3615 when main had *shrunk* it 3615 → 3610 after the branch
+forked. A checkout that cannot compute a merge base is therefore a 2 (cannot
+judge), never a guess against whichever tree it happens to be holding.
+
 EXEMPTIONS. A registry, a manifest or a generated table legitimately grows line
 by line, and a cap on it only teaches people to route around the cap. An
 exemption is one exact repo-relative path and one reason, declared in EXEMPT
@@ -138,37 +148,51 @@ def changed_files(root: Path, merge_base: str) -> list[str]:
     return sorted({line for line in (diff + untracked).splitlines() if line.strip()})
 
 
-def resolve_base(root: Path, base: str) -> tuple[str, str]:
-    """The commit to compare against, and a phrase describing how it was found.
+class NoMergeBase(Exception):
+    """`base` and HEAD share no history in this checkout, so nothing honest to
+    judge against: a shallow checkout has no common ancestor to compute."""
 
-    The merge base is the honest answer — a file is judged against the size it
-    had where this branch left main. CI's checkouts are shallow (`git fetch
-    --depth=1`), where there is no common history to compute one from, so the
-    fallback is main's tip: tree-only, like check-migration-fork.py, and it
-    answers the question that actually matters, which is whether the merge
-    result would be over the cap.
+
+def resolve_base(root: Path, base: str) -> str:
+    """The commit where this branch left `base` — its merge base, or nothing.
+
+    The merge base is the only honest answer, and `LookupError` (no such ref)
+    and `NoMergeBase` (no common history) are kept apart because they need
+    different fixes. There is deliberately no fallback to `base`'s tip: a branch
+    is judged at the size a file had where it left the base branch, so comparing
+    against a tip that has moved on since judges the base branch's own changes
+    as this branch's. See the module docstring for the PR that proved it.
     """
     try:
-        return git("merge-base", base, "HEAD", cwd=root).strip(), "merge base"
-    except subprocess.CalledProcessError:
-        pass
-    try:
-        sha = git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=root).strip()
+        git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=root)
     except subprocess.CalledProcessError:
         raise LookupError(base) from None
-    return sha, f"tip of {base} (no merge base: shallow checkout?)"
+    try:
+        return git("merge-base", base, "HEAD", cwd=root).strip()
+    except subprocess.CalledProcessError:
+        raise NoMergeBase(base) from None
 
 
 def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
     """(exit code, lines to print) for the tree at `root`."""
     try:
-        against, how = resolve_base(root, base)
+        against = resolve_base(root, base)
     except FileNotFoundError:
         return 2, ["cannot judge: git is not on PATH"]
     except LookupError:
         return 2, [
             f"cannot judge: {base} is not a ref this checkout has.",
             "run `git fetch origin main` (or pass --base <ref>), then try again.",
+        ]
+    except NoMergeBase:
+        return 2, [
+            f"cannot judge: {base} and HEAD have no merge base in this checkout,",
+            "so there is no honest tree to compare this branch against — a shallow",
+            "checkout (`git fetch --depth=1`) keeps no history the two share.",
+            "Comparing against the tip of the base branch instead would fail files",
+            "this branch never touched, so this is a 2 rather than a guess.",
+            "Fetch the history, then try again:",
+            "    git fetch --unshallow origin    # or a bounded `git fetch --deepen=<n> origin`",
         ]
 
     paths = changed_files(root, against)
@@ -211,11 +235,11 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
         lines.append("")
         for finding in sorted(findings, key=lambda f: -f.current):
             was = (
-                f"it was {finding.base} lines at the {how}, and a file already over "
-                "its cap may only shrink"
+                f"it was {finding.base} lines at the merge base with {base}, and a "
+                "file already over its cap may only shrink"
                 if finding.base is not None and finding.base > finding.cap
                 else (
-                    f"it was {finding.base} lines at the {how}"
+                    f"it was {finding.base} lines at the merge base with {base}"
                     if finding.base is not None
                     else "it is a new file"
                 )
@@ -227,12 +251,12 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str]]:
         lines.append("Split the file (see .claude/rules/architecture.md), or — if it is a")
         lines.append("registry that legitimately grows — add it to EXEMPT in this script with")
         lines.append("a reason, in a commit somebody reviews.")
-        lines.append("If origin/main is behind, `git fetch origin main` first.")
+        lines.append(f"If {base} is behind, `git fetch origin` first.")
         lines.append("::error::file size cap exceeded")
         return 1, lines
 
     lines.append(
-        f"PASS: {judged} changed file(s) judged against the {how} for {base}, "
+        f"PASS: {judged} changed file(s) judged against the merge base with {base}, "
         f"caps {CAPS[1].limit} (backend/app) / {CAPS[0].limit} (frontend/src)"
     )
     for entry in exempted:
@@ -250,6 +274,36 @@ _LOREM = "x = 1\n"
 def _write(path: Path, lines: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_LOREM * lines)
+
+
+def _repo_git(root: Path):
+    """A `git` runner for a throwaway repository, under a fixed test identity."""
+
+    def git(*args: str):
+        return subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    return git
+
+
+def _script_runner(root: Path):
+    """A runner for THIS script against `root`, the way CI runs it: a real
+    process with a real exit code, so a 2 cannot be mistaken for a pass."""
+
+    def run(base: str = "HEAD") -> tuple[int, str]:
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--root", str(root), "--base", base],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode, result.stdout + result.stderr
+
+    return run
 
 
 def self_test() -> int:
@@ -285,13 +339,8 @@ def self_test() -> int:
     # command, and require it to come back red for the stated reason.
     with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
         root = Path(raw)
-        git = lambda *args: subprocess.run(
-            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        git = _repo_git(root)
+        run = _script_runner(root)
         try:
             git("init", "-q")
             _write(root / "backend/app/legacy.py", 3000)
@@ -301,14 +350,6 @@ def self_test() -> int:
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             print(f"SELF-TEST FAIL: could not build the fixture repository: {exc}")
             return 1
-
-        def run(base: str = "HEAD") -> tuple[int, str]:
-            result = subprocess.run(
-                [sys.executable, str(Path(__file__).resolve()), "--root", str(root), "--base", base],
-                capture_output=True,
-                text=True,
-            )
-            return result.returncode, result.stdout + result.stderr
 
         # 1. grown, already-oversized, backend
         _write(root / "backend/app/legacy.py", 3001)
@@ -348,31 +389,71 @@ def self_test() -> int:
         check("growing past the cap is blocked", code, 1)
         check("... and names the cap it passed", "cap 1500" in out, True)
 
-        # 6. no merge base (the shape of a shallow CI checkout): the tip of the
-        #    named ref is used instead, so the check still judges and still
-        #    fires — it does not quietly pass just because history is missing.
+        # 6. an unjudgeable base is a 2, never a pass
         (root / "backend/app/small.py").unlink()
-        tip = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        code, out = run("no-such-ref")
+        check("a missing base exits 2", code, 2)
+        check("... and says so", "cannot judge" in out, True)
+
+    # 7. A fork, with real history on both sides — the shape of the bug. The
+    #    branch forks from the base branch, the base branch moves on and SHRINKS
+    #    a file the branch never touched, and the branch is then judged. That is
+    #    PR #2173: "frontend/src/api.ts now 3615 lines ... it was 3610 lines at
+    #    the tip of origin/main", for a file the branch never opened. A file only
+    #    the base branch changed must not be in the branch's diff at all.
+    with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
+        root = Path(raw)
+        git = _repo_git(root)
+        run = _script_runner(root)
+        try:
+            git("init", "-q")
+            _write(root / "backend/app/legacy.py", 3000)
+            _write(root / "backend/app/theirs.py", 10)
+            git("add", "-A")
+            git("commit", "-qm", "fork point")
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+            print(f"SELF-TEST FAIL: could not build the fixture repository: {exc}")
+            return 1
+        base_branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+        git("checkout", "-q", "-b", "topic")
+        _write(root / "backend/app/theirs.py", 11)  # this branch's own change
+        git("add", "-A")
+        git("commit", "-qm", "the branch's work")
+        git("checkout", "-q", base_branch)
+        _write(root / "backend/app/legacy.py", 2900)  # the base branch shrinks it
+        git("add", "-A")
+        git("commit", "-qm", "the base branch shrinks legacy.py")
+        git("checkout", "-q", "topic")
+
+        # 7a. the branch passes: the file only the base branch changed is not in
+        #     its diff, so it is not judged — and the run says which tree it did
+        #     judge it against, rather than leaving that to be guessed.
+        code, out = run(base_branch)
+        check("a file only the base branch changed is not judged", code, 0)
+        check("... it is not even named", "legacy.py" not in out, True)
+        check("... and the run names the merge base", f"merge base with {base_branch}" in out, True)
+
+        # 7b. the same file grown by THIS branch is blocked, at the size it had
+        #     at the merge base — not at the base branch's tip.
+        _write(root / "backend/app/legacy.py", 3001)
+        code, out = run(base_branch)
+        check("the branch growing an oversized file is blocked", code, 1)
+        check("... judged at the merge base", "it was 3000 lines at the merge base" in out, True)
+        check("... and says it may only shrink", "may only shrink" in out, True)
+
+        # 7c. no merge base at all — the shape of a shallow CI checkout, and how
+        #     this bug reached CI. There is no honest tree to judge against, so
+        #     it is a 2 (which never passes) and never the tip of the base branch.
         git("checkout", "-q", "--orphan", "elsewhere")  # unrelated history, so
-        _write(root / "backend/app/legacy.py", 3100)  # `merge-base <tip> HEAD` fails
+        _write(root / "backend/app/legacy.py", 3100)  # `merge-base <base> HEAD` fails
         git("add", "-A")
         git("commit", "-qm", "unrelated root")
-        code, out = run(tip)
-        check("no merge base falls back to the ref's tip", code, 1)
-        check("... saying which it used", "no merge base" in out, True)
-        check("... naming the ref", f"at the tip of {tip}" in out, True)
-        _write(root / "backend/app/legacy.py", 2900)
-        code, out = run(tip)
-        check("... and judges against that tip's count", code, 0)
-
-        # 7. an unjudgeable base is a 2, never a pass
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), "--root", str(root), "--base", "no-such-ref"],
-            capture_output=True,
-            text=True,
-        )
-        check("a missing base exits 2", result.returncode, 2)
-        check("... and says so", "cannot judge" in result.stdout + result.stderr, True)
+        code, out = run(base_branch)
+        check("no merge base exits 2, never a pass", code, 2)
+        check("... and says it cannot judge", "cannot judge" in out, True)
+        check("... and names the fix", "git fetch --unshallow" in out, True)
+        check("... and judges nothing at all", "it was" not in out, True)
 
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
@@ -380,7 +461,8 @@ def self_test() -> int:
         return 1
     print(
         "PASS: check-file-sizes self-test (caps per tree, new vs oversized files, "
-        "shrinking allowed, a shallow checkout still judges, a missing base is a 2)"
+        "shrinking allowed, judged at the merge base, no merge base is a 2, "
+        "a missing base is a 2)"
     )
     return 0
 

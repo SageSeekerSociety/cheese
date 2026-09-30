@@ -42,7 +42,7 @@ async function mount(path: string) {
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
       { path: '/spaces', name: 'HomeSpaces', component: blank },
-      { path: '/spaces/:spaceId/board', name: 'SpaceBoardHome', component: blank },
+      { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
       {
         path: '/teams/:handle',
@@ -120,6 +120,6 @@ describe('首页目录', () => {
   it('空间点了就进那个空间', async () => {
     await mount('/inbox')
     await screen.findByText('数据分析课')
-    expect(hrefs()).toContain('/spaces/3/board')
+    expect(hrefs()).toContain('/spaces/3/tasks')
   })
 })

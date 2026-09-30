@@ -13,24 +13,6 @@ export type Space = {
   visibleTaskLimit?: number | null
   /** 过审状态：没过审的板子，子资源（分类/题目/成员）一律读不到。 */
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
-  /**
-   * 这块题目板是不是一门课 —— 服务端按它默认分组声明的壳算（`catalog.py` 的
-   * `is_course_shell`）。**新建的板都是课**（#1448），所以这不是「新板 / 老板」之别。
-   *
-   * 它管两件事：老侧栏画课程那几格还是题目那几格（`SpaceSidebar.vue`），以及题目板
-   * 外壳里露不露那格「课程」（`board/SpaceBoardShell.vue`）。**「进去落在哪」不看
-   * 它** —— 每块板都落在题目板上，理由见 `lib/courseNav.ts` 的 `spaceEntryRoute`。
-   */
-  isCourse?: boolean
-  /**
-   * 这门课开着哪几个模块。**缺省是开着**：没写的键 = 该模块显示，所以 `{}` 就是
-   * 一间全都露出来的课，老题目板也自然落在这一档；存下来的只有**偏离缺省**的那
-   * 几格（键表在 `lib/courseNav.ts` 的 `COURSE_MODULES`）。
-   *
-   * 它只决定界面露出哪几格，**不决定能力** —— 关掉一个模块是把它从侧栏与课程
-   * 首页收起来，地址仍然打得开、接口照样答话。
-   */
-  courseModules?: Record<string, boolean>
 }
 
 /**
@@ -168,37 +150,4 @@ export type DomainGroup = {
   domains: string[]
   createdAt: number
   updatedAt: number
-}
-
-/** 课程里的人：成员、他的项目、他的组（`SpacesApi.getCourseRoster`，管理员可见）。 */
-export type CourseRosterPerson = {
-  id: number
-  username: string
-  nickname?: string
-  avatarId?: number | null
-  intro?: string
-}
-
-export type CourseRosterStudent = {
-  user: CourseRosterPerson
-  projects: { id: string; name: string; teamId: number | null }[]
-  /** 他挂在哪几个组上。一组一项目，正常只有一个；没有组就是空数组。 */
-  teamIds: number[]
-}
-
-export type CourseRosterTeam = {
-  id: number
-  name: string
-  members: CourseRosterPerson[]
-}
-
-export type CourseRoster = {
-  students: CourseRosterStudent[]
-  teams: CourseRosterTeam[]
-}
-
-/** 成员自己那一行（`SpacesApi.getMyCourseGroup`）：我在哪个组、组里还有谁。 */
-export type MyCourseGroup = {
-  projectId: string | null
-  team: { id: number; name: string; members: CourseRosterPerson[] } | null
 }

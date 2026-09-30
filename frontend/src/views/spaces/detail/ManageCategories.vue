@@ -1,13 +1,12 @@
 <template>
+  <PageHeader :title="t('spaces.detail.manageCategories.title')" show-on-mobile>
+    <template #actions>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+        {{ t('spaces.detail.manageCategories.addCategory') }}
+      </v-btn>
+    </template>
+  </PageHeader>
   <v-sheet flat rounded="lg">
-    <v-toolbar :title="t('spaces.detail.manageCategories.title')" color="transparent" density="compact">
-      <template #append>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-          {{ t('spaces.detail.manageCategories.addCategory') }}
-        </v-btn>
-      </template>
-    </v-toolbar>
-
     <div v-if="loadingCategories" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
     </div>
@@ -48,6 +47,13 @@
               <v-btn icon="mdi-dots-vertical" variant="text" v-bind="props"></v-btn>
             </template>
             <v-list density="compact">
+              <v-list-item v-if="!category.archivedAt" @click="teachingCategory = category">
+                <template #prepend>
+                  <v-icon>mdi-school-outline</v-icon>
+                </template>
+                <v-list-item-title>{{ t('spaces.detail.manageCategories.teaching.menu') }}</v-list-item-title>
+              </v-list-item>
+
               <v-list-item v-if="category.archivedAt" @click="unarchiveCategory(category.id)">
                 <template #prepend>
                   <v-icon color="success">mdi-archive-arrow-up</v-icon>
@@ -77,6 +83,8 @@
     <v-sheet v-else class="pa-4 text-center">
       <p class="text-medium-emphasis">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
     </v-sheet>
+
+    <CategoryTeachingDialog :category="teachingCategory" @close="teachingCategory = null" />
 
     <!-- 创建/编辑分类对话框 -->
     <v-dialog v-model="dialogOpen" max-width="500">
@@ -139,6 +147,9 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
+
+import PageHeader from '@/components/common/PageHeader.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 import { SpaceCategory } from '@/types'
@@ -151,6 +162,8 @@ const { confirm } = useDialog()
 // 表单相关
 const dialogOpen = ref(false)
 const editingCategory = ref<SpaceCategory | null>(null)
+/** 正在编辑「给芝士的指导」的那个分类。 */
+const teachingCategory = ref<SpaceCategory | null>(null)
 
 // 表单校验
 const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({

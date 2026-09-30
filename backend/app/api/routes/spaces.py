@@ -3,13 +3,12 @@ import logging
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import ActorResolverDep
-from app.api.routes.tasks import get_task_membership_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -23,11 +22,8 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
-from app.domain.shell.catalog import is_course_shell
-from app.domain.space import course_modules
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
-from app.domain.space.course_roster_service import CourseRosterService
 from app.domain.space.learning_service import SpaceLearningService
 from app.domain.space.member_participating_service import (
     SpaceMemberParticipatingService,
@@ -56,25 +52,10 @@ from app.domain.space.repositories import (
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.space.tags_service import SpaceTagsService
-from app.domain.task.models import Task
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.task.services import (
-    TaskMembershipService,
-    TaskService,
     TaskSubmissionService,
 )
-from app.domain.teaching.models import TeachingUnit
-from app.domain.teaching.quiz_models import Quiz, QuizAnswer, QuizAttempt, QuizQuestion
-from app.domain.teaching.quiz_repositories import (
-    QuizAnswerRepository,
-    QuizAttemptRepository,
-    QuizQuestionRepository,
-    QuizRepository,
-)
-from app.domain.teaching.quiz_services import QuizService
-from app.domain.teaching.repositories import TeachingUnitRepository
-from app.domain.teaching.services import TeachingUnitService
-from app.domain.team.services import team_service
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -128,16 +109,6 @@ class PatchSpaceRequest(BaseModel):
     )
     default_category_id: int | None = Field(default=None, alias="defaultCategoryId")
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
-    #: 这门课开着哪几个模块。Sending it replaces the whole map (it is a map, not
-    #: a deep merge — a half-updated switchboard is harder to reason about than
-    #: either version alone); omitting it leaves it exactly as it is, so a PATCH
-    #: that renames a 题目版 does not clear the switches. Look at
-    #: `app.domain.space.course_modules`: an absent key means ON, so the frontend
-    #: may send either the whole map or only the exceptions. The route checks
-    #: its keys and values (`_validate_course_modules`).
-    course_modules: dict[str, object] | None = Field(
-        default=None, alias="courseModules"
-    )
 
     @field_validator("visible_task_limit", mode="before")
     @classmethod
@@ -222,18 +193,6 @@ class JoinSpaceRequest(BaseModel):
     code: str = Field(..., min_length=1)
 
 
-class EnrollInCourseRequest(BaseModel):
-    """The course link's payload: the code it carries, and nothing else.
-
-    The link decides only WHERE the student lands, never what they may see —
-    so there is no 「which parts of the course」 field here to grow.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    code: str | None = None
-
-
 class AddSpaceMemberRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -307,29 +266,6 @@ async def require_reviewed_space(
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
 )
-
-
-def _validate_course_modules(value: dict[str, object]) -> dict[str, bool]:
-    """这门课开着哪几个模块，逐键看过再收。
-
-    The read path (`course_modules.normalize`) is lenient, because one bad byte
-    in a 题目版's JSON must not take down every page that renders it. This is the
-    write path and a person is looking at the form, so a typo in a module name is
-    answered instead of silently dropped.
-    """
-    unknown = sorted(set(value) - set(course_modules.MODULE_KEYS))
-    if unknown:
-        raise BadRequestError(
-            "unknown course module(s): "
-            + ", ".join(unknown)
-            + "; expected any of "
-            + ", ".join(course_modules.MODULE_KEYS)
-        )
-    for key, flag in value.items():
-        if not isinstance(flag, bool):
-            raise BadRequestError(f"courseModules[{key}] must be a boolean")
-    # `bool(...)` only satisfies the type — every entry was checked above.
-    return {key: bool(value[key]) for key in course_modules.MODULE_KEYS if key in value}
 
 
 def _expect_list(value: list | str | None, field: str) -> list:
@@ -480,12 +416,6 @@ def _space_to_api_model(space: Space) -> dict:
         "defaultCategoryId": space.default_category_id,
         "announcements": json.dumps(space.announcements or []),
         "taskTemplates": json.dumps(space.task_templates or []),
-        # 这门课开着哪几个模块. Normalized on the way out as well as on the way
-        # in: this dict is what the sidebar filters on, so an unknown key that
-        # got in some other way must not become a phantom switch.
-        "courseModules": course_modules.normalize(
-            getattr(space, "course_modules", None)
-        ),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -725,69 +655,6 @@ async def _hydrate_members(
     ]
 
 
-async def _build_course_roster_payload(
-    *,
-    space_id: int,
-    service: SpaceService,
-    db,
-) -> dict:
-    """这门课的人与组：结构来自 `CourseRosterService`，人味在这里补。
-
-    拼「成员 → 他的项目 → 他的组」要人的 handle（项目记的是 `owner_handle`），
-    而 handle 在 user 领域 —— 所以那一跳留在这边用现成的 `_hydrate_people` 走完，
-    领域里那份服务只给平表。
-
-    管理员不算成员：管理员名单（`space.admins`）与成员表是两件事，一位管理员也可以
-    是成员，但他出现在「成员与分组」里只会让人数说谎。
-    """
-    roster = await CourseRosterService(db).roster(space_id)
-    admin_ids = {rel.user_id for rel in await service.list_admins(space_id)}
-    student_ids = [uid for uid in roster["memberUserIds"] if uid not in admin_ids]
-    team_member_ids = [uid for team in roster["teams"] for uid in team["memberUserIds"]]
-    people = await _hydrate_people(
-        list(dict.fromkeys([*student_ids, *team_member_ids])),
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-
-    projects_by_handle: dict[str, list[dict]] = {}
-    for project in roster["projects"]:
-        handle = project["ownerHandle"]
-        if handle:
-            projects_by_handle.setdefault(handle, []).append(project)
-
-    students = []
-    for user_id in student_ids:
-        person = people[user_id]
-        projects = projects_by_handle.get(person.get("username", ""), [])
-        students.append(
-            {
-                "user": person,
-                "projects": [
-                    {"id": p["id"], "name": p["name"], "teamId": p["teamId"]}
-                    for p in projects
-                ],
-                "teamIds": sorted(
-                    {p["teamId"] for p in projects if p["teamId"] is not None}
-                ),
-            }
-        )
-
-    return {
-        "students": students,
-        "teams": [
-            {
-                "id": team["id"],
-                "name": team["name"],
-                "members": [
-                    people[uid] for uid in team["memberUserIds"] if uid in people
-                ],
-            }
-            for team in roster["teams"]
-        ],
-    }
-
-
 async def _build_full_space_payload(
     space: Space,
     *,
@@ -796,13 +663,9 @@ async def _build_full_space_payload(
 ) -> dict:
     """Build a Space response dict that matches the frontend Space type.
 
-    Always includes `admins` (hydrated), `classificationTopics` and `isCourse` so
-    that any GET/POST/PATCH response is interchangeable from the frontend's
-    perspective (its store overwrites local state with the response payload).
-    `isCourse` belongs here for a reason the other two do not have: the frontend
-    picks the *landing* from it (course home vs. problem list) the moment a board
-    is created or joined, so a response that omitted it would send a brand-new
-    course to the problem list.
+    Always includes `admins` (hydrated) and `classificationTopics` so that any
+    GET/POST/PATCH response is interchangeable from the frontend's perspective
+    (its store overwrites local state with the response payload).
     """
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -812,8 +675,6 @@ async def _build_full_space_payload(
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
-    # 这块板是不是一门课：由它默认分组声明的壳算（`app.domain.shell.catalog`）。
-    space_data["isCourse"] = await service.is_course(space_id=space.id)
     return space_data
 
 
@@ -847,7 +708,7 @@ async def get_space(
     if queryMyRank:
         my_rank = await service.get_user_rank(space_id, viewer_id)
 
-    # admins / classificationTopics / isCourse 都由这一个构建器给齐：前端拿到任何
+    # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
     space_data = await _build_full_space_payload(space, service=service, db=db)
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
@@ -888,9 +749,6 @@ async def get_spaces(
 
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
-    # 这一页里哪些板是课程：一问拿全页，别一行一次往返（见
-    # `SpaceRepository.default_category_shells`）。
-    course_shells = await service.default_category_shells(space_ids=space_ids)
 
     items: list[dict] = []
     for s in spaces:
@@ -921,7 +779,6 @@ async def get_spaces(
         dto["classificationTopics"] = [
             {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
         ]
-        dto["isCourse"] = is_course_shell(course_shells.get(s.id))
 
         items.append(dto)
 
@@ -1027,10 +884,6 @@ async def patch_space(
 
     classification_topic_ids: list[int] | None = payload.classification_topics
 
-    course_modules_payload: dict[str, bool] | None = None
-    if payload.course_modules is not None:
-        course_modules_payload = _validate_course_modules(payload.course_modules)
-
     space = await service.update_space(
         space_id=space_id,
         actor_user_id=auth_user.user_id,
@@ -1044,7 +897,6 @@ async def patch_space(
         default_category_id=payload.default_category_id,
         visible_task_limit=payload.visible_task_limit,
         set_visible_task_limit="visible_task_limit" in payload.model_fields_set,
-        course_modules=course_modules_payload,
     )
     if classification_topic_ids is not None:
         await service.replace_classification_topics(
@@ -1093,202 +945,6 @@ async def join_space(
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
 
-async def _course_anchor_task(db, *, space_id: int) -> Task | None:
-    """Which 题 holds a course's students' projects.
-
-    The course keeps 一学期一个项目 by hanging every student's project on **one**
-    课程题, so the anchor must be chosen by a rule that does not move just
-    because the teacher published something new: the OLDEST approved, un-ended
-    题 of the board's default 分组, falling back to the oldest in the board.
-    Newest-first would hand every student a second project the moment a new
-    assignment went up.
-    """
-    space = await SpaceRepository(db).get_by_id(space_id)
-    default_category_id = space.default_category_id if space is not None else None
-    repo = TaskRepository(session=db)
-    for category_id in (default_category_id, None):
-        if category_id is None and default_category_id is None:
-            continue
-        rows = await repo.list_tasks(
-            space_id=space_id,
-            category_id=category_id,
-            approved=0,
-            limit=10,
-            sort_by="createdAt",
-            sort_order="asc",
-        )
-        for task in rows:
-            if task.ended_at is None:
-                return task
-    return None
-
-
-async def _course_project_for(
-    db, *, space_id: int, auth_user: AuthUserInfo, membership_service
-):
-    """The caller's project in this course, created once and reused after.
-
-    Reuse is asked of the SPACE, not of the anchor 题 — see
-    ``ProjectService.projects_in_space_for_owner``. Then the existing
-    participation path does the creating, so a course project is an ordinary
-    project: same protocol inheritance, same brief document, same 一学期一个项目
-    key. Returns ``None`` when the course has nothing to anchor a project on
-    yet, which is an honest answer rather than a stray hidden 题.
-    """
-    from app.domain.project.services import ProjectService
-
-    owner = await UserRepository(session=db).get_by_id(auth_user.user_id)
-    if owner is None:
-        raise NotFoundError("Participant user not found")
-
-    projects = ProjectService(db)
-    existing = await projects.projects_in_space_for_owner(
-        space_id=space_id, owner_handle=owner.username
-    )
-    if existing:
-        return existing[0]
-
-    anchor = await _course_anchor_task(db, space_id=space_id)
-    if anchor is None:
-        return None
-
-    membership = await membership_service.get_membership_by_task_and_member(
-        task_id=anchor.id, member_id=auth_user.user_id
-    )
-    if membership is None or membership.deleted_at is not None:
-        membership = await membership_service.create_membership(
-            task=anchor,
-            member_id=auth_user.user_id,
-            is_team=False,
-            approved=2,  # ApproveType.NONE — the course link is not a review queue
-            deadline=None,
-            email=None,
-            phone=None,
-            apply_reason=None,
-            personal_advantage=None,
-            remark=None,
-        )
-    return await projects.for_participation(
-        task=anchor, membership=membership, owner_handle=owner.username
-    )
-
-
-@router.post(
-    "/{spaceId}/enroll",
-    summary="Join a course from its link",
-)
-async def enroll_in_course(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: EnrollInCourseRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    db=Depends(get_db),
-) -> dict:
-    """What the course link does, in one round trip.
-
-    Redeems the code the link carries (the only way in for someone who is not
-    a member yet), then makes sure the student has his project in this course.
-    Opening the same link twice is not an error and does not mint a second
-    project: membership and project are both asked for, not created blindly.
-    """
-    if auth_user.user_id <= 0:
-        raise ForbiddenError("Only signed-in users can join a course")
-    code = (payload.code or "").strip()
-    if code:
-        invite = await SpaceInviteCodeRepository(session=db).get_by_code(code)
-        if invite is None:
-            raise NotFoundError("Invite code not found", data={"type": "inviteCode"})
-        if invite.space_id != space_id:
-            # Answer before redeeming: a link for another board must not join
-            # this person to a board the link never named.
-            raise BadRequestError(
-                "This invite code is for a different space",
-                data={"type": "inviteCode", "id": invite.id},
-            )
-        await service.join_space(code=code, user_id=auth_user.user_id)
-
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    project = await _course_project_for(
-        db,
-        space_id=space_id,
-        auth_user=auth_user,
-        membership_service=membership_service,
-    )
-    space = await service.get_space(space_id)
-    if space is None:
-        raise NotFoundError.for_resource("space", space_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "space": {"id": space.id, "name": space.name},
-            "project": (
-                {
-                    "id": str(project.id),
-                    "name": project.name,
-                    "root_topic_id": (
-                        str(project.root_topic_id) if project.root_topic_id else None
-                    ),
-                }
-                if project is not None
-                else None
-            ),
-        },
-    }
-
-
-@router.get(
-    "/{spaceId}/course-link",
-    summary="The link a teacher hands out for this course",
-)
-async def get_course_link(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    """Teacher-side: one link to copy into the group chat.
-
-    It carries an invite code, and the code is the ordinary, un-named way in —
-    same as the code shown on the 邀请码 page, handed out by the same people
-    (OWNER and ADMIN, see ``_ensure_space_admin``).
-    """
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    codes = await service.list_invite_codes(
-        space_id=space_id, actor_user_id=auth_user.user_id
-    )
-    now = datetime.now(UTC)
-    usable = next(
-        (
-            c
-            for c in codes
-            if (c.expires_at is None or c.expires_at > now) and c.use_count < c.max_uses
-        ),
-        None,
-    )
-    if usable is None:
-        usable = await service.create_invite_code(
-            space_id=space_id, actor_user_id=auth_user.user_id
-        )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "path": f"/spaces/join/{usable.code}",
-            "code": usable.code,
-            "maxUses": usable.max_uses,
-            "useCount": usable.use_count,
-            "expiresAt": (
-                int(usable.expires_at.timestamp() * 1000) if usable.expires_at else None
-            ),
-        },
-    }
-
-
-# ── 课程链接 (course link) ─────────────────────────────────────────────────────
-
-
 @router.get(
     "/{spaceId}/members",
     summary="List Space Members",
@@ -1308,75 +964,6 @@ async def list_space_members(
         invite_code_repo=SpaceInviteCodeRepository(session=db),
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
-
-
-@router.get(
-    "/{spaceId}/course/roster",
-    summary="Course Roster (teachers)",
-)
-async def get_course_roster(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    """这门课的人与组 —— 管理员版面的「成员与分组」那一屏。
-
-    只对本版管理员开门：它把全班的人、各自的项目与分组列在一张表上，那不是成员
-    之间该互相看到的东西。判据是 ``_ensure_space_admin``（与打分、发题、读项目
-    对话同一个答案），门外人先按可见性答 404，不做存在性确认。
-    """
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    data = await _build_course_roster_payload(space_id=space_id, service=service, db=db)
-    return {"code": 200, "message": "OK", "data": data}
-
-
-@router.get(
-    "/{spaceId}/course/my-group",
-    summary="My Course Group (student)",
-)
-async def get_my_course_group(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
-) -> dict:
-    """成员自己那一行：我在这个课里的项目，以及我挂在哪个组上。
-
-    与花名册（``/course/roster``）分开是因为门不同：那张表把全班列在一起，只有
-    管理员能看；这一条问的全是关于我自己的事，所以任何能看到这块板的人都答得出。
-    """
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    viewer = await UserRepository(session=db).get_by_id(auth_user.user_id)
-    data = await CourseRosterService(db).my_group(
-        space_id, viewer.username if viewer else None
-    )
-
-    team = None
-    team_id = data["teamId"]
-    if team_id is not None:
-        teams = team_service(db)
-        row = await teams.get_team(team_id)
-        relations = await teams.get_team_members(team_id)
-        people = await _hydrate_people(
-            [relation.user_id for relation in relations],
-            user_repo=UserRepository(session=db),
-            profile_repo=UserProfileRepository(session=db),
-        )
-        team = {
-            "id": team_id,
-            "name": row.name if row else "",
-            "members": [
-                people[relation.user_id]
-                for relation in relations
-                if relation.user_id in people
-            ],
-        }
-
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"projectId": data["projectId"], "team": team},
-    }
 
 
 @router.post(
@@ -1909,7 +1496,7 @@ class LearningOutlineRequest(BaseModel):
 async def get_space_submission_service(
     db=Depends(get_db),
 ) -> TaskSubmissionService:
-    """课程的「作业与验收」要的提交服务: 走 `routes.tasks` 那个现成的装配点。"""
+    """空间提交队列要的提交服务: 走 `routes.tasks` 那个现成的装配点。"""
     from app.api.routes.tasks import get_task_submission_service
 
     return await get_task_submission_service(db=db)
@@ -2664,646 +2251,3 @@ async def patch_space_manager(
         return {"code": 200, "message": "OK", "data": None}
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
-
-
-# ── 教学单元（一门课的时间线） ─────────────────────────────────────────────────
-#
-# 读的一次给所有人，写的一次给管理员：成员只看得到发布过的，而「发布过」这个判断在
-# ``TeachingUnitService`` 的查询里，不在这里的分支里 —— 前端过滤过不了这一关，
-# 将来 agent 注入也复用同一条查询。
-
-
-class CreateTeachingUnitRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    week: int
-    title: str = Field(..., min_length=1, max_length=255)
-    summary: str = ""
-    knowledge_point_ids: list[int] = Field(
-        default_factory=list, alias="knowledgePointIds"
-    )
-    material_ids: list[int] = Field(default_factory=list, alias="materialIds")
-    assignment_task_id: int | None = Field(default=None, alias="assignmentTaskId")
-    due_at: datetime | None = Field(default=None, alias="dueAt")
-    published: bool = False
-
-
-class PatchTeachingUnitRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    week: int | None = None
-    title: str | None = None
-    summary: str | None = None
-    knowledge_point_ids: list[int] | None = Field(
-        default=None, alias="knowledgePointIds"
-    )
-    material_ids: list[int] | None = Field(default=None, alias="materialIds")
-    assignment_task_id: int | None = Field(default=None, alias="assignmentTaskId")
-    clear_assignment: bool = Field(default=False, alias="clearAssignment")
-    due_at: datetime | None = Field(default=None, alias="dueAt")
-    clear_due_at: bool = Field(default=False, alias="clearDueAt")
-    published: bool | None = None
-
-
-class CreateQuizRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    title: str = Field(..., min_length=1, max_length=255)
-    due_at: datetime | None = Field(default=None, alias="dueAt")
-
-
-class PatchQuizRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    title: str | None = None
-    due_at: datetime | None = Field(default=None, alias="dueAt")
-    clear_due_at: bool = Field(default=False, alias="clearDueAt")
-
-
-class CreateQuizQuestionRequest(BaseModel):
-    """一道题。
-
-    ``answer`` 的形状由 ``kind`` 决定（下标 / 下标表 / 字符串 / 参考文本），**这里
-    不收窄**：形状检查一处做完才看得出来错（见 ``quiz_services._check_question``）。
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    kind: str
-    prompt: str = Field(..., min_length=1)
-    options: list[str] = Field(default_factory=list)
-    answer: Any = None
-    points: int = 0
-
-
-class PatchQuizQuestionRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    kind: str | None = None
-    prompt: str | None = None
-    options: list[str] | None = None
-    answer: Any = None
-    points: int | None = None
-
-
-class QuizAnswerIn(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    question_id: int = Field(..., alias="questionId")
-    response: Any = None
-
-
-class SubmitQuizAttemptRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    answers: list[QuizAnswerIn] = Field(default_factory=list)
-
-
-class GradeQuizAnswerRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    points: int
-    comment: str = ""
-
-
-async def get_teaching_unit_service(
-    db=Depends(get_db),
-) -> TeachingUnitService:
-    return TeachingUnitService(
-        repo=TeachingUnitRepository(db), task_service=TaskService(TaskRepository(db))
-    )
-
-
-async def get_quiz_service(
-    db=Depends(get_db),
-) -> QuizService:
-    return QuizService(
-        quizzes=QuizRepository(db),
-        questions=QuizQuestionRepository(db),
-        attempts=QuizAttemptRepository(db),
-        answers=QuizAnswerRepository(db),
-        units=TeachingUnitRepository(db),
-    )
-
-
-def _quiz_to_api_model(quiz: Quiz) -> dict:
-    return {
-        "id": quiz.id,
-        "spaceId": quiz.space_id,
-        "unitId": quiz.unit_id,
-        "title": quiz.title,
-        "dueAt": _ts(quiz.due_at),
-    }
-
-
-def _quiz_question_to_api_model(
-    question: QuizQuestion, *, include_answer: bool
-) -> dict:
-    """``include_answer`` 只对管理员为真 —— **答案键从不发给成员**（见模块说明）。"""
-    out = {
-        "id": question.id,
-        "position": question.position,
-        "kind": question.kind,
-        "prompt": question.prompt,
-        "options": list(question.options or []),
-        "points": question.points,
-    }
-    if include_answer:
-        out["answer"] = question.answer
-    return out
-
-
-def _quiz_attempt_to_api_model(attempt: QuizAttempt) -> dict:
-    return {
-        "id": attempt.id,
-        "userId": attempt.user_id,
-        "submittedAt": _ts(attempt.submitted_at),
-        "gradedAt": _ts(attempt.graded_at),
-    }
-
-
-def _quiz_answer_to_api_model(answer: QuizAnswer) -> dict:
-    return {
-        "questionId": answer.question_id,
-        "response": answer.response,
-        "awardedPoints": answer.awarded_points,
-        "comment": answer.comment,
-        "needsReview": answer.awarded_points is None,
-    }
-
-
-def _quiz_payload_to_api_model(payload: dict) -> dict:
-    """一条小测页要的全部东西，按看的人分两种形状。
-
-    成员那份**没有答案键**，只有自己那一次作答与每题得分；管理员那份有答案键，并多
-    一个「判完了没有」。分叉放在这里一次做完，别让每条路由各判一次。
-    """
-    quiz = payload.get("quiz")
-    if quiz is None:
-        return {"quiz": None, "unitId": payload["unitId"]}
-    can_teach = bool(payload.get("canTeach"))
-    questions = [
-        _quiz_question_to_api_model(question, include_answer=can_teach)
-        for question in payload["questions"]
-    ]
-    my_answers = payload.get("myAnswers", [])
-    score = sum(answer["awardedPoints"] or 0 for answer in my_answers)
-    attempt = payload.get("myAttempt")
-    my_attempt = _quiz_attempt_to_api_model(attempt) if attempt is not None else None
-    if my_attempt is not None and attempt is not None:
-        my_attempt["pendingReview"] = attempt.graded_at is None
-        my_attempt["score"] = score
-    out = {
-        "quiz": _quiz_to_api_model(quiz),
-        "canTeach": can_teach,
-        "questions": questions,
-        "maxScore": payload["maxScore"],
-        "myAttempt": my_attempt,
-        "myAnswers": my_answers,
-    }
-    if can_teach:
-        out["submissions"] = payload.get("submissions", [])
-        out["reviewQueue"] = payload.get("reviewQueue", [])
-    return out
-
-
-def _ts(value: datetime | None) -> int | None:
-    """毫秒时间戳，或者 None —— 前端拿到的一律是这个（别在每处各写一遍）。"""
-    return int(value.timestamp() * 1000) if value else None
-
-
-def _teaching_unit_to_api_model(
-    unit: TeachingUnit, *, quiz_id: int | None = None
-) -> dict:
-    return {
-        "id": unit.id,
-        "spaceId": unit.space_id,
-        "week": unit.week,
-        "title": unit.title,
-        "summary": unit.summary,
-        "knowledgePointIds": list(unit.knowledge_point_ids or []),
-        "materialIds": list(unit.material_ids or []),
-        "assignmentTaskId": unit.assignment_task_id,
-        "publishedAt": _ts(unit.published_at),
-        "dueAt": _ts(unit.due_at),
-        # 这一周有没有小测（NULL = 没有）。成员首页靠它决定要不要给「本周有小测」
-        # 那个入口，所以它跟着单元列表一起下来，而不是让前端逐周去问一次。
-        "quizId": quiz_id,
-    }
-
-
-@router.get(
-    "/{spaceId}/units",
-    summary="List Teaching Units",
-)
-async def list_space_units(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: TeachingUnitService = Depends(get_teaching_unit_service),
-    quiz_service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    can_teach = await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
-    )
-    units = await service.list_units(space_id=space_id, published_only=not can_teach)
-    quiz_ids = await quiz_service.quiz_ids_by_unit(unit_ids=[unit.id for unit in units])
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "units": [
-                _teaching_unit_to_api_model(unit, quiz_id=quiz_ids.get(unit.id))
-                for unit in units
-            ],
-            "canTeach": can_teach,
-        },
-    }
-
-
-@router.post(
-    "/{spaceId}/units",
-    summary="Create Teaching Unit",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_space_unit(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: CreateTeachingUnitRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: TeachingUnitService = Depends(get_teaching_unit_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    unit = await service.create_unit(
-        space_id=space_id,
-        actor_id=auth_user.user_id,
-        week=payload.week,
-        title=payload.title,
-        summary=payload.summary,
-        knowledge_point_ids=payload.knowledge_point_ids,
-        material_ids=payload.material_ids,
-        assignment_task_id=payload.assignment_task_id,
-        published=payload.published,
-        due_at=payload.due_at,
-    )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"unit": _teaching_unit_to_api_model(unit)},
-    }
-
-
-@router.patch(
-    "/{spaceId}/units/{unitId}",
-    summary="Update Teaching Unit",
-)
-async def patch_space_unit(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
-    payload: PatchTeachingUnitRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: TeachingUnitService = Depends(get_teaching_unit_service),
-    quiz_service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    unit = await service.update_unit(
-        space_id=space_id,
-        unit_id=unit_id,
-        week=payload.week,
-        title=payload.title,
-        summary=payload.summary,
-        knowledge_point_ids=payload.knowledge_point_ids,
-        material_ids=payload.material_ids,
-        assignment_task_id=payload.assignment_task_id,
-        clear_assignment=payload.clear_assignment,
-        published=payload.published,
-        due_at=payload.due_at,
-        clear_due_at=payload.clear_due_at,
-    )
-    quiz_ids = await quiz_service.quiz_ids_by_unit(unit_ids=[unit.id])
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "unit": _teaching_unit_to_api_model(unit, quiz_id=quiz_ids.get(unit.id))
-        },
-    }
-
-
-@router.delete(
-    "/{spaceId}/units/{unitId}",
-    summary="Delete Teaching Unit",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_space_unit(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: TeachingUnitService = Depends(get_teaching_unit_service),
-    db=Depends(get_db),
-) -> Response:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    await service.delete_unit(space_id=space_id, unit_id=unit_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ---------------------------------------------------------------------------
-# 小测（一门课里的一周）
-#
-# 可见性只有一条：**单元发布了，这一周的小测才存在**（服务里那一处
-# ``_require_published``），所以这里没有第二个发布开关。写的一次只走
-# ``_ensure_space_admin``（本版管理员名单就是 ``space.admins``），读的一次先过可见性。
-# ---------------------------------------------------------------------------
-
-
-async def _attach_people_to(rows: list[dict], *, db) -> None:
-    """给「谁交的」那一列补上显示名 —— 一次问两个查询，别按人循环。"""
-    user_ids = sorted({row["userId"] for row in rows})
-    if not user_ids:
-        return
-    people = await _hydrate_people(
-        user_ids,
-        user_repo=UserRepository(db),
-        profile_repo=UserProfileRepository(db),
-    )
-    for row in rows:
-        row["user"] = people.get(row["userId"])
-
-
-@router.get(
-    "/{spaceId}/units/{unitId}/quiz",
-    summary="Get the quiz of a week",
-)
-async def get_unit_quiz(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    can_teach = await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
-    )
-    payload = await service.quiz_for_unit(
-        space_id=space_id,
-        unit_id=unit_id,
-        viewer_id=auth_user.user_id,
-        can_teach=can_teach,
-    )
-    if can_teach:
-        await _attach_people_to(
-            payload.get("submissions", []) + payload.get("reviewQueue", []), db=db
-        )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": _quiz_payload_to_api_model(payload),
-    }
-
-
-@router.get(
-    "/{spaceId}/quizzes/{quizId}",
-    summary="Get A Quiz",
-)
-async def get_space_quiz(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    can_teach = await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
-    )
-    payload = await service.quiz_by_id(
-        space_id=space_id,
-        quiz_id=quiz_id,
-        viewer_id=auth_user.user_id,
-        can_teach=can_teach,
-    )
-    if can_teach:
-        await _attach_people_to(
-            payload.get("submissions", []) + payload.get("reviewQueue", []), db=db
-        )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": _quiz_payload_to_api_model(payload),
-    }
-
-
-@router.post(
-    "/{spaceId}/units/{unitId}/quiz",
-    summary="Create The Week's Quiz",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_unit_quiz(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
-    payload: CreateQuizRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    quiz = await service.create_quiz(
-        space_id=space_id,
-        unit_id=unit_id,
-        actor_id=auth_user.user_id,
-        title=payload.title,
-        due_at=payload.due_at,
-    )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"quiz": _quiz_to_api_model(quiz)},
-    }
-
-
-@router.patch(
-    "/{spaceId}/quizzes/{quizId}",
-    summary="Update A Quiz",
-)
-async def patch_space_quiz(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    payload: PatchQuizRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    quiz = await service.update_quiz(
-        space_id=space_id,
-        quiz_id=quiz_id,
-        title=payload.title,
-        due_at=payload.due_at,
-        clear_due_at=payload.clear_due_at,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"quiz": _quiz_to_api_model(quiz)},
-    }
-
-
-@router.delete(
-    "/{spaceId}/quizzes/{quizId}",
-    summary="Delete A Quiz",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_space_quiz(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> Response:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    await service.delete_quiz(space_id=space_id, quiz_id=quiz_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/{spaceId}/quizzes/{quizId}/questions",
-    summary="Add A Quiz Question",
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_quiz_question(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    payload: CreateQuizQuestionRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    question = await service.add_question(
-        space_id=space_id,
-        quiz_id=quiz_id,
-        kind=payload.kind,
-        prompt=payload.prompt,
-        options=payload.options,
-        answer=payload.answer,
-        points=payload.points,
-    )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
-            "question": _quiz_question_to_api_model(question, include_answer=True)
-        },
-    }
-
-
-@router.patch(
-    "/{spaceId}/quizzes/{quizId}/questions/{questionId}",
-    summary="Update A Quiz Question",
-)
-async def patch_quiz_question(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    question_id: Annotated[int, Path(ge=1, alias="questionId")],
-    payload: PatchQuizQuestionRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    question = await service.update_question(
-        space_id=space_id,
-        quiz_id=quiz_id,
-        question_id=question_id,
-        kind=payload.kind,
-        prompt=payload.prompt,
-        options=payload.options,
-        answer=payload.answer,
-        points=payload.points,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "question": _quiz_question_to_api_model(question, include_answer=True)
-        },
-    }
-
-
-@router.delete(
-    "/{spaceId}/quizzes/{quizId}/questions/{questionId}",
-    summary="Delete A Quiz Question",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_quiz_question(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    question_id: Annotated[int, Path(ge=1, alias="questionId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> Response:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    await service.delete_question(
-        space_id=space_id, quiz_id=quiz_id, question_id=question_id
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.put(
-    "/{spaceId}/quizzes/{quizId}/my-attempt",
-    summary="Answer A Quiz",
-)
-async def submit_quiz_attempt(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    payload: SubmitQuizAttemptRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    answers = {item.question_id: item.response for item in payload.answers}
-    result = await service.submit(
-        space_id=space_id,
-        quiz_id=quiz_id,
-        user_id=auth_user.user_id,
-        answers=answers,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": _quiz_payload_to_api_model(result),
-    }
-
-
-@router.patch(
-    "/{spaceId}/quizzes/{quizId}/answers/{answerId}",
-    summary="Grade A Quiz Answer",
-)
-async def grade_quiz_answer(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    quiz_id: Annotated[int, Path(ge=1, alias="quizId")],
-    answer_id: Annotated[int, Path(ge=1, alias="answerId")],
-    payload: GradeQuizAnswerRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: QuizService = Depends(get_quiz_service),
-    db=Depends(get_db),
-) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
-    answer = await service.grade_answer(
-        space_id=space_id,
-        quiz_id=quiz_id,
-        answer_id=answer_id,
-        actor_id=auth_user.user_id,
-        points=payload.points,
-        comment=payload.comment,
-    )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"answer": _quiz_answer_to_api_model(answer)},
-    }

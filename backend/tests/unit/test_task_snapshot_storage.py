@@ -60,6 +60,50 @@ async def test_snapshot_survives_new_session_and_detects_corruption(
             await snapshots.download(latest, storage=storage)
 
 
+async def test_returning_to_earlier_files_makes_them_the_latest_backup(
+    db_factory, tmp_path
+):
+    storage = LocalStorageBackend(str(tmp_path), "unused-private-url")
+
+    def bundle(body: bytes) -> tuple[bytes, str]:
+        content = b"# v2 git bundle\n" + body
+        return content, hashlib.sha256(content).hexdigest()
+
+    first, first_digest = bundle(b"files as they were")
+    changed, changed_digest = bundle(b"files after an edit")
+    async with db_factory() as session:
+        project = Project(team_id=await a_team(session), name="Snapshot test")
+        session.add(project)
+        await session.flush()
+        room = Topic(project_id=project.id, title="Room")
+        session.add(room)
+        await session.flush()
+        task = Task(project_id=project.id, room_id=room.id, title="Report")
+        session.add(task)
+        await session.flush()
+        for content, digest, snapshot_sha in (
+            (first, first_digest, "b" * 40),
+            (changed, changed_digest, "c" * 40),
+            # The edit is undone: the checkout is byte for byte what it was.
+            (first, first_digest, "b" * 40),
+        ):
+            await snapshots.save(
+                session,
+                task,
+                file=io.BytesIO(content),
+                head_sha="a" * 40,
+                snapshot_sha=snapshot_sha,
+                digest=digest,
+                storage=storage,
+            )
+            await session.commit()
+        task_id = task.id
+    async with db_factory() as session:
+        latest = await snapshots.latest(session, task_id)
+        assert latest.snapshot_sha == "b" * 40
+        assert await snapshots.download(latest, storage=storage) == first
+
+
 async def test_invalid_upload_is_rejected_before_storage(db_factory, tmp_path):
     storage = LocalStorageBackend(str(tmp_path), "unused-private-url")
     async with db_factory() as session:
