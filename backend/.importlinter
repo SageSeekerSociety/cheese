@@ -376,7 +376,6 @@ ignore_imports =
     app.domain.room_task.place -> app.domain.topic.models
     app.domain.room_task.presentation -> app.domain.review.models
     app.domain.room_task.presentation -> app.domain.review.notes
-    app.domain.room_task.presentation -> app.domain.review.queries
     app.domain.room_task.presentation -> app.domain.topic.models
     app.domain.room_task.services -> app.domain.project.forge
     app.domain.room_task.services -> app.domain.topic.models

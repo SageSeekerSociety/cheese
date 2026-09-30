@@ -10,6 +10,11 @@ session。这里交出去的 `RailCard` 是一份冻结的值：没有 session�
 「顺手再读一列」。`presentation.facts_for_card` 对 `AcceptCard` 和 `RailCard`
 产出同一份 `CardFacts`，所以窄读换汤不换药 —— 用户看到的话一模一样，测试钉住了
 这件事（`tests/unit/test_presentation.py`）。
+
+两边是**照着同一份契约长**的，不是互相认领类型：`room_task` 那边把要读的五个信号
+写成一份结构契约（`presentation.CardSignals`），这里只负责让 `RailCard` 的字段长成
+那个样子。所以这条窄读出口不欠任何人一条 import —— `review` 不必被 `room_task`
+标注，`room_task` 也不必标注 `review`，`.importlinter` 里那条 C3 环上不多一条边。
 """
 
 import uuid
