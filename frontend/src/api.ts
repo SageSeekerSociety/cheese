@@ -995,10 +995,6 @@ export function listDeviceSessions(
   return request(`/projects/${encodeURIComponent(projectId)}/devices/${encodeURIComponent(deviceId)}/sessions`)
 }
 
-export function getCloudSupply(projectId: string): Promise<import('./cx_types').CloudSupply> {
-  return request(`/projects/${encodeURIComponent(projectId)}/cloud-supply`)
-}
-
 export function getProjectComputeConfigs(projectId: string): Promise<import('./cx_types').ProjectComputeConfigs> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-configs`)
 }

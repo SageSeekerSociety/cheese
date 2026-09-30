@@ -25,7 +25,8 @@ const ApiError = vi.hoisted(
 vi.mock('../api', () => ({
   ApiError,
   setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
-  getCloudSupply: (...args: unknown[]) => getCloudSupply(...args),
+  // the cloud-supply read goes through the shared request helper
+  request: (...args: unknown[]) => getCloudSupply(...args),
 }))
 
 import { setLocale } from '../i18n'
@@ -252,7 +253,7 @@ describe('custom cloud spec against the current supply', () => {
   it('shows the range before saving and will not send a spec outside it', async () => {
     getCloudSupply.mockResolvedValue(supply)
     await openCustom()
-    expect(getCloudSupply).toHaveBeenCalledWith('p1')
+    expect(getCloudSupply).toHaveBeenCalledWith('/projects/p1/cloud-supply')
     expect((await screen.findByTestId('supply-range')).textContent).toContain('128')
     await setField('磁盘 GB', '256')
     const save = screen.getByRole('button', { name: '使用此配置' })

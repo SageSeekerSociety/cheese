@@ -6,7 +6,7 @@ import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 
 import { computed, ref } from 'vue'
 
-import { ApiError, getCloudSupply, setTopicComputeChoice } from '../api'
+import { ApiError, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
 
@@ -96,7 +96,7 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
         v-if="more"
         :devices="profile.devices"
         :cloud-available="cloudAvailable"
-        :load-supply="() => getCloudSupply(projectId)"
+        :project-id="projectId"
         :busy="saving"
         @select="pick"
       />

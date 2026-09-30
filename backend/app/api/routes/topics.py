@@ -36,7 +36,6 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.market import (
-    COMPUTE_CLOUD,
     COMPUTE_DEVICE,
     MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
@@ -79,7 +78,6 @@ from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
-from app.domain.machine.supply import check_choice
 from app.domain.mentions import canonicalize_refs
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
@@ -1942,7 +1940,6 @@ async def set_topic_compute_profile(
         raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
-        await check_choice(choice)
 
     device_service = sql_device_service(db)
     if device_id is not None:
@@ -2004,8 +2001,7 @@ async def set_topic_compute_profile(
     # "cloud")` 一句 401 撞死在这里，连那条「等项目主人点头」的提议都长不出来——
     # 而那条提议正是 Cloud 这一档该有的产物（结论 23）。变成提议的那一次没有花任
     # 何人的钱，该点头的人就是项目主人本人。
-    if name == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(topic.project_id, actor)
+    await MachineService(db).admit_choice(topic.project_id, actor, choice)
 
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——

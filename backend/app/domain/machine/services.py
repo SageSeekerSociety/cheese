@@ -46,7 +46,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.machine.supply import SupplyRange, pick_offering
+from app.domain.machine.supply import SupplyRange, check_choice, pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus
@@ -120,6 +120,20 @@ class MachineService:
             raise NotFoundError("Project not found")
         if not await teams.is_team_at_least_admin(project.team_id, actor.user_id):
             raise ForbiddenError(f"只有团队所有者或管理员可以{action}云端机器")
+
+    async def admit_choice(
+        self, project_id: uuid.UUID, actor: Actor, choice: ComputeChoice
+    ) -> None:
+        """Let a saved choice stand only if it can be honoured and paid for.
+
+        A self-hosted choice spends nobody's cloud quota and has no supply range.
+        A cloud one must fit what the provider offers now (when that can be
+        read) and be chosen by someone the project lets spend its quota.
+        """
+        if choice.profile != "cloud":
+            return
+        await check_choice(choice)
+        await self.require_use_authority(project_id, actor)
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Being on the project authorizes room execution within the team's quota.

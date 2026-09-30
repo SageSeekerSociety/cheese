@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import type { CloudSupply, ComputeChoice, SupplyBound, TopicComputeDevice } from '../cx_types'
+import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
+
+import { type SupplyBound, useCloudSupply } from '../composables/useCloudSupply'
 
 const props = defineProps<{
   devices: TopicComputeDevice[]
   cloudAvailable: boolean
-  // 云端此刻能开的范围，由挂它的地方去问（组件不直接碰接口）。
-  loadSupply: () => Promise<CloudSupply>
+  projectId: string
   busy?: boolean
 }>()
 const emit = defineEmits<{ select: [choice: ComputeChoice] }>()
@@ -23,20 +24,11 @@ const options = computed(() => [
 
 // 可选范围只在要自定义的时候去问：它来自云端此刻的供应，问不到就照实说问不到，
 // 不拿平台自己的上下限冒充。
-const supply = ref<CloudSupply | null>(null)
-const supplyLoading = ref(false)
+const { supply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 watch(
   () => target.value === 'cloud' && custom.value,
-  async (wanted) => {
-    if (!wanted || supply.value || supplyLoading.value) return
-    supplyLoading.value = true
-    try {
-      supply.value = await props.loadSupply()
-    } catch (e) {
-      supply.value = { available: false, reason: e instanceof Error ? e.message : '请求失败' }
-    } finally {
-      supplyLoading.value = false
-    }
+  (wanted) => {
+    if (wanted) void loadSupply()
   },
   { immediate: true }
 )

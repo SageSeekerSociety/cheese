@@ -7,7 +7,7 @@ import { onMounted, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
 
-import { getCloudSupply, getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
+import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { t } from '../i18n'
 import { choiceDetail } from '../lib/computeConfig'
 
@@ -73,7 +73,7 @@ watch(() => props.projectId, load)
         v-if="editing && state.can_manage"
         :devices="state.devices"
         :cloud-available="state.cloud_available"
-        :load-supply="() => getCloudSupply(projectId)"
+        :project-id="projectId"
         :busy="busy"
         @select="save"
       />
@@ -95,7 +95,7 @@ watch(() => props.projectId, load)
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
             <DeviceSessionsSwitch
               v-if="state.can_manage && device.device_id"
-              :load-supply="() => getCloudSupply(projectId)"
+              :project-id="projectId"
               :device="{ device_id: device.device_id, name: device.name }"
               :devices="state.devices"
               :cloud-available="state.cloud_available"
