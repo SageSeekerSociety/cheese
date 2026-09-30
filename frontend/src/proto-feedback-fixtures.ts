@@ -1947,7 +1947,7 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   // 布局预览用：`?fail=1` 让后台各页的读接口一律失败，用来并排看「出错态」长什么样。
   // 权限（meta）和未读数（counts）不跟着失败，不然外壳直接落到「不是管理员」那一档。
   if (PREVIEW_FAIL && method === 'GET' && path !== '/feedback/counts') return { failed: '服务暂时不可用（样例错误）' }
-  const admin = adminRoutes(path, method, url)
+  const admin = adminRoutes(path, method, url, payload)
   if (admin) return admin
   if (path === '/admin/integrations/feishu' && method === 'GET') return { data: FEISHU_APP }
   if (path === '/admin/integrations/feishu' && method === 'PUT') {
@@ -2645,19 +2645,28 @@ function create(body: FeedbackCreateBody): FeedbackDetail {
   return created
 }
 
-/** 把 `/api/*` 上反馈的那几条路由接到假数据上。**只拦 `/api/`**：图标、字体那些
- *  请求照旧走真正的网络栈。 */
+/** 把 `/api/*` 上的那几条路由接到假数据上。**只拦 `/api/`**：图标、字体那些请求照旧
+ *  走真正的网络栈。
+ *
+ *  出口有两条，都要汇到同一份假数据上：
+ *    * `src/api.ts` 那一层用 `fetch`，直接落在下面这个补丁上；
+ *    * `network/api` 那一层用 axios（空间申请、成员管理走它），而 axios 在浏览器里
+ *      默认用 XHR 适配器，**根本不经过 `window.fetch`** —— 只补 fetch 的话，那几页
+ *      会照样去打真网络，在预览域上就是一页 404，画成「加载失败」。 */
 export function installPreviewFetch(): void {
   const real = window.fetch.bind(window)
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     const url = new URL(raw, window.location.origin)
     if (!url.pathname.startsWith('/api/')) return real(input as RequestInfo, init)
-    const method = (init?.method ?? 'GET').toUpperCase()
+    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     let body: unknown = null
-    if (typeof init?.body === 'string' && init.body) {
+    // 请求体要么在 `init.body` 里（`src/api.ts` 那条出口），要么整个请求是一个
+    // `Request` 对象（axios 的 fetch 适配器是这么发的），后者得先把体读出来。
+    const rawBody = typeof init?.body === 'string' && init.body ? init.body : await requestBody(input)
+    if (rawBody) {
       try {
-        body = JSON.parse(init.body)
+        body = JSON.parse(rawBody)
       } catch {
         body = null
       }
@@ -2684,6 +2693,39 @@ export function installPreviewFetch(): void {
     if ('conflict' in hit) return envelope(null, 409, hit.conflict)
     if ('failed' in hit) return envelope(null, 500, hit.failed)
     return envelope(hit.data)
+  }
+  forceAxiosThroughFetch()
+}
+
+/** 读一个 `Request` 的请求体；不是 `Request`（或者读不出来）就当没有体。 */
+async function requestBody(input: RequestInfo | URL): Promise<string | null> {
+  if (!(input instanceof Request)) return null
+  try {
+    return await input.clone().text()
+  } catch {
+    return null
+  }
+}
+
+/** 让 axios 也从 `window.fetch` 出去（也就是上面那个补丁），不再用它默认的 XHR 适配器。
+ *
+ *  为什么不写 `axios.defaults.adapter = 'fetch'`：`network/api/index.ts` 在模块加载时
+ *  就 `axios.create()` 了，那一步会把当时的 defaults（`['xhr', 'http', 'fetch']`）
+ *  **抄进实例配置**，之后再改 defaults 已经赶不上。`Axios.prototype.request` 是每次
+ *  请求都要过的一道门，把适配器写进当次 config，实例是先建的还是后建的都一样。 */
+function forceAxiosThroughFetch(): void {
+  const proto = axios.Axios.prototype as unknown as {
+    request: (this: unknown, ...args: unknown[]) => Promise<unknown>
+  }
+  const original = proto.request
+  proto.request = function (this: unknown, ...args: unknown[]) {
+    const withFetch = (cfg: unknown) =>
+      cfg && typeof cfg === 'object' ? { ...(cfg as Record<string, unknown>), adapter: 'fetch' } : cfg
+    // 两种调用形状：`request(config)` 与 `request(url, config)`。
+    const out = [...args]
+    if (typeof out[0] === 'string' || out[0] instanceof URL) out[1] = withFetch(out[1])
+    else out[0] = withFetch(out[0])
+    return original.apply(this, out)
   }
 }
 

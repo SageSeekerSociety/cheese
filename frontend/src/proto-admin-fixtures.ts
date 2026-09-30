@@ -165,8 +165,14 @@ const APPLICATIONS: SpaceApplication[] = [
   application(36, '随便建建', 'n1ctheboy', '测试一下。', 'REJECTED', 96),
 ]
 
-/** 返回 `undefined` 表示「不是这两页的接口」，交回给反馈那份假数据。 */
-export function adminRoutes(path: string, method: string, url: URL): { data: unknown } | undefined {
+/** 返回 `undefined` 表示「不是这几页的接口」，交回给反馈那份假数据。`payload` 是
+ *  已经解析过的请求体（只有写接口用得到）。 */
+export function adminRoutes(
+  path: string,
+  method: string,
+  url: URL,
+  payload: Record<string, unknown> = {}
+): { data: unknown } | undefined {
   if (path === '/admin/gateway/models' && method === 'GET') {
     const days = Number(url.searchParams.get('days') ?? 7)
     const totals = MODELS.reduce(
@@ -199,6 +205,24 @@ export function adminRoutes(path: string, method: string, url: URL): { data: unk
   if (path === '/admin/spaces' && method === 'GET') {
     const status = (url.searchParams.get('status') ?? 'PENDING').toUpperCase()
     return { data: { items: APPLICATIONS.filter((a) => a.reviewStatus === status) } }
+  }
+  if (/^\/admin\/spaces\/\d+\/review$/.test(path) && method === 'POST') {
+    // 通过 / 驳回：预览里把这一条改在样例上，好让「点了以后那一行去哪了」也是真的
+    // （待审 → 已通过）。审查意见跟着一起落，驳回时那一栏才有话可看。
+    const id = Number(path.split('/')[3])
+    const row = APPLICATIONS.find((a) => a.id === id)
+    if (!row) return undefined
+    row.reviewStatus = payload.approved ? 'APPROVED' : 'REJECTED'
+    row.reviewReason = typeof payload.reason === 'string' && payload.reason ? payload.reason : null
+    row.reviewedBy = 'andy'
+    row.reviewedAt = new Date().toISOString()
+    return { data: { item: row } }
+  }
+  // 功能数据的目录。**只有 id + 标题 + 一句话**，一个数字都没有 —— 那是它的设计
+  // （数字在各自的功能页上），不是还没做。值照抄服务端注册表
+  // （`backend/app/domain/feature_stats/features/docs_assistant.py`）。
+  if (path === '/admin/feature-stats' && method === 'GET') {
+    return { data: { features: [{ id: 'docs-assistant', title: '问芝士', summary: '文档站的问答助手' }] } }
   }
   return undefined
 }
