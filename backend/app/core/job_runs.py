@@ -27,11 +27,23 @@ class JobRuns:
     def __init__(self, sessions: SessionFactory) -> None:
         self._sessions = sessions
 
-    async def last_run(self, name: str) -> datetime | None:
+    async def load(self, names: list[str], now: datetime) -> dict[str, datetime]:
+        """Every named job's last run, in one transaction. A job never recorded
+        is recorded at ``now``, so its first interval counts from this start."""
+        if not names:
+            return {}
         async with self._sessions() as session:
-            return await session.scalar(
-                select(JobRun.last_run_at).where(JobRun.name == name)
+            await session.execute(
+                insert(JobRun)
+                .values([{"name": name, "last_run_at": now} for name in names])
+                .on_conflict_do_nothing(index_elements=[JobRun.name])
             )
+            rows = await session.execute(
+                select(JobRun.name, JobRun.last_run_at).where(JobRun.name.in_(names))
+            )
+            last = {name: at for name, at in rows.tuples()}
+            await session.commit()
+        return last
 
     async def record(self, name: str, at: datetime) -> None:
         async with self._sessions() as session:

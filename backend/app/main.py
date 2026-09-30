@@ -19,6 +19,7 @@ import time
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
@@ -246,8 +247,16 @@ async def lifespan(_: FastAPI):
             sessions=async_session_factory,
         )
         runs = JobRuns(async_session_factory)
+        try:
+            last_runs = await runs.load(
+                [job.name for job in jobs if job.interval_seconds > 0],
+                datetime.now(UTC),
+            )
+        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
+            get_logger("cheesex.runtime").exception("periodic job runs unreadable")
+            last_runs = {}
         for job in jobs:
-            job.start(runs)
+            job.start(runs, last_runs.get(job.name))
         background.spawn(
             sweep_retired_storage(async_session_factory),
             name="cleanup startup recovery",

@@ -14,8 +14,10 @@ pytestmark = pytest.mark.anyio
 
 async def _process(db_factory, job, seconds: float) -> None:
     """One backend process holding the jobs for a while, then going away."""
+    runs = JobRuns(db_factory)
+    last = await runs.load(["hourly cleanup"], datetime.now(UTC))
     runner = PeriodicRunner("hourly cleanup", 3600, job)
-    runner.start(JobRuns(db_factory))
+    runner.start(runs, last["hourly cleanup"])
     await asyncio.sleep(seconds)
     await runner.stop()
 

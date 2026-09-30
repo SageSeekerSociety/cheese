@@ -21,26 +21,25 @@ pytestmark = pytest.mark.anyio
 
 
 class _Runs:
-    """The record a restarted process reads its jobs' last runs from."""
+    """Where the runner writes each run."""
 
-    def __init__(self, **last_run: datetime) -> None:
-        self.last = dict(last_run)
-
-    async def last_run(self, name: str) -> datetime | None:
-        return self.last.get(name)
+    def __init__(self) -> None:
+        self.last: dict[str, datetime] = {}
 
     async def record(self, name: str, at: datetime) -> None:
         self.last[name] = at
 
 
-async def _runs_within(seconds: float, runs: _Runs, interval: float) -> bool:
+async def _runs_within(
+    seconds: float, interval: float, last_run: datetime | None, runs: _Runs
+) -> bool:
     ran = asyncio.Event()
 
     async def job():
         ran.set()
 
     runner = PeriodicRunner("hourly", interval, job)
-    runner.start(runs)
+    runner.start(runs, last_run)
     try:
         await asyncio.wait_for(ran.wait(), timeout=seconds)
         return True
@@ -51,21 +50,19 @@ async def _runs_within(seconds: float, runs: _Runs, interval: float) -> bool:
 
 
 async def test_a_job_overdue_when_the_process_restarts_runs_at_once():
-    runs = _Runs(hourly=datetime.now(UTC) - timedelta(hours=2))
-    assert await _runs_within(1, runs, 3600)
+    runs = _Runs()
+    two_hours_ago = datetime.now(UTC) - timedelta(hours=2)
+    assert await _runs_within(1, 3600, two_hours_ago, runs)
     assert datetime.now(UTC) - runs.last["hourly"] < timedelta(seconds=5)
 
 
 async def test_a_restart_does_not_run_a_job_before_it_is_due():
-    runs = _Runs(hourly=datetime.now(UTC) - timedelta(minutes=10))
-    assert not await _runs_within(0.2, runs, 3600)
+    ten_minutes_ago = datetime.now(UTC) - timedelta(minutes=10)
+    assert not await _runs_within(0.2, 3600, ten_minutes_ago, _Runs())
 
 
-async def test_a_job_never_run_is_first_due_one_interval_after_start():
-    runs = _Runs()
-    assert not await _runs_within(0.2, runs, 3600)
-    # The start is kept, so a restart counts from it rather than from itself.
-    assert "hourly" in runs.last
+async def test_a_job_without_a_recorded_run_waits_one_interval():
+    assert not await _runs_within(0.2, 3600, None, _Runs())
 
 
 async def test_a_job_keeps_running_on_its_interval():
