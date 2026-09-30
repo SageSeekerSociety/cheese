@@ -25,6 +25,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 )
 from app.domain.agent.harness.claude_code.subscription import Subscription
 from app.domain.agent.harness.driven.runtime import DrivenRuntime
+from app.domain.delivery.input_identity import InputReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +82,10 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
     def subscribe(
         self, handle: Handle, call: Callable[[str, dict], Awaitable[dict]]
     ) -> Subscription:
-        async def receipt(topic: uuid.UUID, text: str) -> None:
-            if self.receipts is not None:
-                await self.receipts(topic, text)
+        async def receipt(evidence: InputReceipt) -> None:
+            if self.receipts is None:
+                raise RuntimeError("Receipt consumer is not bound")
+            await self.receipts(evidence)
 
         async def announce() -> None:
             await self.announce(handle.session.topic_id)
@@ -95,6 +97,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             self._consume,
             self._activity,
             session_id=handle.session_id,
+            recipient_handle=handle.agent_handle,
             announce=announce,
             receipts=receipt,
             pulse=self.pulse,

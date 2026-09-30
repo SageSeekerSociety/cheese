@@ -48,6 +48,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import AgentEvent
+from app.domain.delivery.input_identity import InputRegistrar, ReceiptConsumer
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
@@ -89,10 +90,6 @@ class ActivityConsumer(Protocol):
         agent_handle: str | None = None,
     ) -> Awaitable[None]: ...
 
-
-# (topic, prompt text) — a session CONSUMED an input we injected. Late by
-# design: the write is delivery, this is the receipt.
-ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
 # (topic) — lay this room's memory tree down in its session, and take back what
 # the agent wrote into it. Asked at two moments, and both ask the same question:
@@ -333,6 +330,7 @@ class AgentRuntime(Protocol):
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
+        register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool | None:
@@ -370,6 +368,7 @@ class AgentRuntime(Protocol):
         text: str,
         images: list[dict] | None = None,
         *,
+        register_input: InputRegistrar,
         expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,

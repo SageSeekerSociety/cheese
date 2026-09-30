@@ -54,6 +54,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
 )
+from app.domain.delivery.input_identity import InputReceipt
 
 #: What a record says about a working session, for the liveness rules
 #: (``DrivenRuntime.verdict``): it said something, work moved. A tool starting
@@ -196,10 +197,8 @@ class Subscription[B: Backlog]:
         """A record from before the first input, which no turn owns."""
         raise NotImplementedError
 
-    def receipt(self, record: dict) -> str | None:
-        """The text of an input this record says the session read, if it is
-        such a record. A harness that takes an input the moment it is written
-        has nothing to report here: ``DrivenRuntime`` reports those on send."""
+    def receipt(self, record: dict) -> InputReceipt | None:
+        """Native evidence for a specific input, distinct from RPC acceptance."""
         return None
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
@@ -230,7 +229,7 @@ class Subscription[B: Backlog]:
                             # record skipping. Failure leaves this cursor replayable.
                             if self.receipts is None:
                                 raise RuntimeError("Receipt consumer is not bound")
-                            await self.receipts(self.session.topic_id, receipt)
+                            await self.receipts(receipt)
                         if entry.age_s >= STALE_S:
                             stale += 1
                         else:

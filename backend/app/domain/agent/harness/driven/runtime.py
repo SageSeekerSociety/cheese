@@ -55,6 +55,11 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
+from app.domain.delivery.input_identity import (
+    InputIdentity,
+    InputReceipt,
+    InputRegistrar,
+)
 
 # Every read of a room's journal is a call to its device, and an idle room
 # answers it with nothing. Read at the floor while there is anything to read;
@@ -663,6 +668,7 @@ class DrivenRuntime[H: Handle]:
         *,
         work_id: uuid.UUID,
         on_mark: Callable[[uuid.UUID], None],
+        register_input: InputRegistrar,
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool:
@@ -687,6 +693,16 @@ class DrivenRuntime[H: Handle]:
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
         await self.reconcile_memory(session.topic_id)
+        identity = InputIdentity(
+            session.project_id,
+            session.topic_id,
+            handle.agent_handle,
+            self.harness,
+            self.conversation(handle),
+            work_id,
+            work_id,
+        )
+        await register_input(identity)
         try:
             await self.channel.call(
                 handle,
@@ -699,8 +715,8 @@ class DrivenRuntime[H: Handle]:
                     **({"owes_reply": True} if owes_reply else {}),
                 },
             )
-            if self.receipts and self.receipt_on_accept:
-                await self.receipts(session.topic_id, message)
+            if self.receipts:
+                await self.receipts(InputReceipt(identity, "accepted"))
         finally:
             # A lost acknowledgement does not mean the session stopped working.
             self._listen(self._seat_of(session))
@@ -712,6 +728,7 @@ class DrivenRuntime[H: Handle]:
         text,
         images=None,
         *,
+        register_input: InputRegistrar,
         expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
@@ -735,19 +752,30 @@ class DrivenRuntime[H: Handle]:
             return False
         if self.live.get(seat) is not handle or self.work.get(seat) != work:
             return False
+        identity = InputIdentity(
+            handle.session.project_id,
+            topic_id,
+            handle.agent_handle,
+            self.harness,
+            self.conversation(handle),
+            uuid.uuid4(),
+            work,
+        )
+        images_payload = await self.channel.images(handle, images or [])
+        await register_input(identity)
         await self.channel.call(
             handle,
             self.steer,
             {
-                "input_id": str(uuid.uuid4()),
+                "input_id": str(identity.input_id),
                 "work_id": str(work),
                 "text": text,
-                "images": await self.channel.images(handle, images or []),
+                "images": images_payload,
                 **({"owes_reply": True} if owes_reply else {}),
             },
         )
-        if self.receipts and self.receipt_on_accept:
-            await self.receipts(topic_id, text)
+        if self.receipts:
+            await self.receipts(InputReceipt(identity, "accepted"))
         return True
 
     def _deliver_seat(self, topic_id, expected_work_id, agent_handle) -> Seat | None:

@@ -7,6 +7,7 @@ back (``--replay-user-messages``), which for words said mid-turn is the next
 tool boundary: that echo, not the write, is the receipt.
 """
 
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from app.domain.agent.harness import (
 from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog, receive
 from app.domain.agent.harness.driven import subscription
 from app.domain.agent.service import AgentEvent
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
 def said(record: dict) -> str:
@@ -43,6 +45,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         activity: subscription.SeatActivity,
         *,
         session_id: str | None,
+        recipient_handle: str,
         announce: Callable[[], Awaitable[None]],
         receipts: ReceiptConsumer | None = None,
         pulse: subscription.Pulse | None = None,
@@ -59,6 +62,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             memory=memory,
         )
         self.session_id = session_id
+        self.recipient_handle = recipient_handle
         self.announce = announce
 
     async def receive(self) -> None:
@@ -80,10 +84,24 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         # has to hear. Their facts were already taken when they were mirrored.
         reader.assemble(entry)
 
-    def receipt(self, record: dict) -> str | None:
-        if (record.get("cheese") or {}).get("receipt"):
-            return said(record)
-        return None
+    def receipt(self, record: dict) -> InputReceipt | None:
+        stamp = record.get("cheese") or {}
+        if not stamp.get("receipt"):
+            return None
+        if not self.session_id:
+            raise ValueError("Native receipt has no session identity")
+        return InputReceipt(
+            InputIdentity(
+                self.session.project_id,
+                self.session.topic_id,
+                self.recipient_handle,
+                self.session.harness,
+                self.session_id,
+                uuid.UUID(record["uuid"]),
+                uuid.UUID(stamp["work_id"]),
+            ),
+            "native_echo",
+        )
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         marks = subscription.marks_of(events)
