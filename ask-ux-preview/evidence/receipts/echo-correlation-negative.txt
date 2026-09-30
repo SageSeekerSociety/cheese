@@ -1,0 +1,136 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_replacement_preserves_input_work_even_when_active_work_changed[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-31/test_replacement_preserves_inp0')
+write_failed = False
+
+    @pytest.mark.parametrize("write_failed", [False, True])
+    def test_replacement_preserves_input_work_even_when_active_work_changed(
+        tmp_path, write_failed
+    ):
+        native_session, input_id, input_work, active_work = [
+            str(uuid.uuid4()) for _ in range(4)
+        ]
+        writes = []
+    
+        async def prepare():
+            runner = Runner(tmp_path)
+            runner.session_id = native_session
+    
+            async def write(record):
+                writes.append(record)
+                if write_failed:
+                    raise BrokenPipeError("stdin drain failed after write")
+    
+            runner._write = write
+            try:
+                if write_failed:
+                    with pytest.raises(BrokenPipeError):
+                        await runner.send(
+                            input_id, "the answer", work_id=input_work, steering=True
+                        )
+                else:
+                    await runner.send(
+                        input_id, "the answer", work_id=input_work, steering=True
+                    )
+            finally:
+                runner.journal.close()
+    
+        asyncio.run(prepare())
+        echo = {**writes[0], "isReplay": True}
+        observed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _OBSERVE,
+                str(tmp_path),
+                native_session,
+                active_work,
+                json.dumps(echo),
+            ],
+            env={**os.environ, "PYTHONPATH": "."},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        (row,) = json.loads(observed.stdout)
+        stamp = row["record"]["cheese"]
+        assert stamp["work_id"] == active_work
+>       assert stamp["receipt_work_id"] == input_work
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'receipt_work_id'
+
+tests/unit/test_native_echo_recovery.py:84: KeyError
+__ test_replacement_preserves_input_work_even_when_active_work_changed[True] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-31/test_replacement_preserves_inp1')
+write_failed = True
+
+    @pytest.mark.parametrize("write_failed", [False, True])
+    def test_replacement_preserves_input_work_even_when_active_work_changed(
+        tmp_path, write_failed
+    ):
+        native_session, input_id, input_work, active_work = [
+            str(uuid.uuid4()) for _ in range(4)
+        ]
+        writes = []
+    
+        async def prepare():
+            runner = Runner(tmp_path)
+            runner.session_id = native_session
+    
+            async def write(record):
+                writes.append(record)
+                if write_failed:
+                    raise BrokenPipeError("stdin drain failed after write")
+    
+            runner._write = write
+            try:
+                if write_failed:
+                    with pytest.raises(BrokenPipeError):
+                        await runner.send(
+                            input_id, "the answer", work_id=input_work, steering=True
+                        )
+                else:
+                    await runner.send(
+                        input_id, "the answer", work_id=input_work, steering=True
+                    )
+            finally:
+                runner.journal.close()
+    
+        asyncio.run(prepare())
+        echo = {**writes[0], "isReplay": True}
+        observed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _OBSERVE,
+                str(tmp_path),
+                native_session,
+                active_work,
+                json.dumps(echo),
+            ],
+            env={**os.environ, "PYTHONPATH": "."},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        (row,) = json.loads(observed.stdout)
+        stamp = row["record"]["cheese"]
+        assert stamp["work_id"] == active_work
+>       assert stamp["receipt_work_id"] == input_work
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'receipt_work_id'
+
+tests/unit/test_native_echo_recovery.py:84: KeyError
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/test_native_echo_recovery.py::test_replacement_preserves_input_work_even_when_active_work_changed[False]
+FAILED tests/unit/test_native_echo_recovery.py::test_replacement_preserves_input_work_even_when_active_work_changed[True]
+2 failed, 4 deselected, 1 warning in 3.02s

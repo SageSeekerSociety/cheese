@@ -1,0 +1,16 @@
+{
+  "source": "3fd1a3674e289b76be79f2b6966e9d1da1b1c5cf",
+  "argv": [
+    ".venv/bin/python",
+    "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/ask-ux-preview/evidence/receipts/missing_echo_identity_control.py"
+  ],
+  "cwd": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend",
+  "environment": {
+    "PYTHONPATH": "."
+  },
+  "started_at": "2026-09-30T23:12:13.211154+00:00",
+  "ended_at": "2026-09-30T23:12:24.969089+00:00",
+  "exit_code": 1,
+  "sha256": "e1a2011baf6c34bf9324337cf8f8ef6d1f79f69e87f1441b9e31ccf73eaa76ce",
+  "control_sha256": "7b310f3232bf5935943f7aa0eee72cd52c67e079338b83ca962824ffbddbf21f"
+}

@@ -59,6 +59,8 @@ One new integration case uses the real registrar, runner stamping, mirror/subscr
 
 Nine existing drain/retention cases were migrated to the structured callback and explicit receiver/session/work fields because the protocol changed. They are not nine new cases or a repeat request for the previously approved narrow review.
 
+`echo-correlation-negative.txt` records 2 failed, 4 deselected, exit 1 at `3fd1a367`. `missing_echo_identity_control.py` suppresses only the durable receipt association, without editing product source or assertions. Both child-interpreter recovery cases reach the echo observation and fail on the absent original `receipt_work_id`, including failed-drain admission. This is a correlation negative control, not a native/database-chain control. The manifest preserves output/control hashes.
+
 `echo-recovery-first.txt` records six passed and one failed at `90e62d0b`: the integration fault predicate checked ORM dirty membership after effects had already autoflushed. The commit abort did not fire, and the test rejected that outcome. The corrected fixed-source run above supersedes it; the first run is not a product negative control.
 
 ## Pinned Claude echo through the settlement chain
