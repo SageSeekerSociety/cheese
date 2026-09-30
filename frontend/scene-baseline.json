@@ -12,6 +12,10 @@
     "src/views/404.vue",
     "src/views/spaces/detail/settings/BasicInfoView.vue",
     "src/views/spaces/detail/settings/Index.vue",
+    "src/views/tasks/detail/Brief.vue",
+    "src/views/tasks/detail/BriefView.vue",
+    "src/views/tasks/detail/InsightsView.vue",
+    "src/views/tasks/detail/RosterView.vue",
     "src/views/user/settings/General.vue"
   ],
   "debt": [
@@ -116,9 +120,7 @@
     "src/views/spaces/detail/analytics/Tasks.vue",
     "src/views/tasks/Detail.vue",
     "src/views/tasks/Edit.vue",
-    "src/views/tasks/Insights.vue",
     "src/views/tasks/detail/AIAdvice.vue",
-    "src/views/tasks/detail/Participants.vue",
     "src/views/tasks/detail/Submissions.vue",
     "src/views/tasks/detail/Submit.vue",
     "src/views/teams/Detail.vue",

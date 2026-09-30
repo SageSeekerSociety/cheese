@@ -231,7 +231,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/tasks/Edit.vue` | D | 读路由；直接取数（`network/api/tasks`）；读 store（space） |
 | `views/tasks/detail/AIAdvice.vue` | C | 直接取数（`network/api/tasks`） |
 | `views/tasks/detail/Overview.vue` | D | 读路由；直接取数（`api.ts`）；直接取数（`network/api/tasks/types.ts`）；直接取数（`services/account.ts`） |
-| `views/tasks/detail/Participants.vue` | C | 直接取数（`network/api/tasks`） |
 | `views/tasks/detail/Submissions.vue` | C | 直接取数（`network/api/tasks`）；直接取数（`services/account.ts`） |
 | `views/tasks/detail/Submit.vue` | D | 读路由；直接取数（`network/api/attachments`）；直接取数（`network/api/tasks`） |
 | `views/teams/Detail.vue` | D | 读路由；直接取数（`network/api/teams`）；`provide()` / `inject()` |

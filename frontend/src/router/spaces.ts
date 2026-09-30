@@ -53,63 +53,51 @@ export default {
           },
         },
         {
-          // 题目详情：页面本身画题目、领取与出题人的领取者名单，下面四格是子页。
+          // 题目详情：页面本身画题目名、主操作与页签，页签内容是下面这几条子路由，
+          // 地址各自不变。浏览器标题里的题目名挂在 `dynamicTitleKey` 上（这一层没有名字）。
           path: ':taskId',
-          name: 'TasksDetail',
           component: () => import('@/views/tasks/Detail.vue'),
           meta: {
-            title: '题目',
+            dynamicTitleKey: 'TaskShell',
             backTo: 'SpacesDetailTasksList',
           },
           children: [
             {
-              path: 'submissions',
-              name: 'TasksSubmissions',
-              component: () => import('@/views/tasks/detail/Submissions.vue'),
-              meta: {
-                title: '提交记录',
-                disableBreadcrumbLink: true,
-              },
-            },
-            {
-              path: 'participants',
-              name: 'TasksParticipants',
-              component: () => import('@/views/tasks/detail/Participants.vue'),
-              meta: {
-                title: '参与者管理',
-                disableBreadcrumbLink: true,
-              },
-            },
-            {
-              path: 'submit',
-              name: 'TasksSubmit',
-              component: () => import('@/views/tasks/detail/Submit.vue'),
-              meta: {
-                title: '提交',
-                backTo: 'TasksDetail',
-                disableBreadcrumbLink: true,
-              },
+              path: '',
+              name: 'TasksDetail',
+              component: () => import('@/views/tasks/detail/Brief.vue'),
             },
             {
               path: 'ai-advice',
               name: 'TasksAIAdvice',
               component: () => import('@/views/tasks/detail/AIAdvice.vue'),
-              meta: {
-                title: '启星研导',
-                disableBreadcrumbLink: true,
-              },
+              meta: { title: '启星研导' },
+            },
+            {
+              path: 'submissions',
+              name: 'TasksSubmissions',
+              component: () => import('@/views/tasks/detail/Submissions.vue'),
+              meta: { title: '我的提交' },
+            },
+            {
+              path: 'submit',
+              name: 'TasksSubmit',
+              component: () => import('@/views/tasks/detail/Submit.vue'),
+              meta: { title: '提交', backTo: 'TasksDetail' },
+            },
+            {
+              path: 'participants',
+              name: 'TasksParticipants',
+              component: () => import('@/views/tasks/detail/Roster.vue'),
+              meta: { title: '领取者' },
+            },
+            {
+              path: 'insights',
+              name: 'TasksInsights',
+              component: () => import('@/views/tasks/detail/Insights.vue'),
+              meta: { title: '数据' },
             },
           ],
-        },
-        {
-          // 单题分析：出题人和管理员看这道题的领取、提交与走势。
-          path: ':taskId/insights',
-          name: 'TasksInsights',
-          component: () => import('@/views/tasks/Insights.vue'),
-          meta: {
-            title: '单题分析',
-            backTo: 'TasksDetail',
-          },
         },
         {
           path: ':taskId/edit',

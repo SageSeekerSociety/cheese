@@ -66,7 +66,7 @@
     "src/components/TaskCard.vue": 1,
     "src/components/tasks/AIAdviceChatDialog.vue": 1,
     "src/components/tasks/AIAdvicePanel.vue": 1,
-    "src/components/tasks/TaskAttachmentList.vue": 3,
+    "src/components/tasks/TaskAttachmentList.vue": 1,
     "src/components/tasks/TaskAttachmentPicker.vue": 1,
     "src/components/tasks/TaskSubmissionHistory.vue": 1,
     "src/components/TopicComputePicker.vue": 1,
