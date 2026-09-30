@@ -37,7 +37,7 @@ async function mount(intro = '') {
       { path: '/users/:handle', name: 'UserPage', component: stub },
       { path: '/download', name: 'Download', component: stub },
       { path: '/archived-projects', name: 'my-archived-projects', component: stub },
-      { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
+      { path: '/users/settings', name: 'UserSettings', component: stub },
     ],
   })
   await router.push('/')
@@ -56,7 +56,7 @@ describe('「我」的菜单', () => {
     // 主页按 handle 找人，和 @提及、成员名册同一种地址。
     expect(view.getByText('个人主页').closest('a')?.getAttribute('href')).toBe('#/users/alice')
     // 上传头像的地方：以前菜单里没有这一项，得先进个人主页再点资料卡上的编辑。
-    expect(view.getByText('设置').closest('a')?.getAttribute('href')).toBe('#/users/settings/profile')
+    expect(view.getByText('设置').closest('a')?.getAttribute('href')).toBe('#/users/settings')
     expect(view.getByText('下载客户端').closest('a')?.getAttribute('href')).toBe('#/download')
     // 归档了的项目不在任何列表里，这里是所有者找回它们的地方。
     expect(view.getByText('已归档的项目').closest('a')?.getAttribute('href')).toBe('#/archived-projects')

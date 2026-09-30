@@ -136,7 +136,6 @@
     "src/views/user/settings/Profile.vue",
     "src/views/user/settings/RealName.vue",
     "src/views/user/settings/Security.vue",
-    "src/views/user/settings/SettingsSidebar.vue",
     "src/views/workspace/DmView.vue",
     "src/views/workspace/ProjectMembersView.vue",
     "src/views/workspace/ProjectShell.vue",

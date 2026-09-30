@@ -379,7 +379,15 @@
     "realName": "实名信息",
     "general": "通用",
     "devices": "设备",
-    "connections": "连接"
+    "connections": "连接",
+    "title": "个人设置",
+    "close": "关闭设置",
+    "back": "返回设置",
+    "groups": {
+      "account": "账号",
+      "devices": "设备与连接",
+      "app": "桌面端"
+    }
   },
   "emailCode": {
     "title": "邮箱验证码登录",

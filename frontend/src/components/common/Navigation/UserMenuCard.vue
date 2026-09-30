@@ -34,7 +34,7 @@
       <v-list-item :to="{ name: 'UserPage', params: { handle: menu.currentUser.value?.username } }">
         <v-list-item-title>{{ t('navigation.userMenu.profile') }}</v-list-item-title>
       </v-list-item>
-      <v-list-item :to="{ name: 'UserSettingsProfile' }">
+      <v-list-item :to="{ name: 'UserSettings' }">
         <v-list-item-title>{{ t('navigation.userMenu.settings') }}</v-list-item-title>
       </v-list-item>
       <v-list-item :to="{ name: 'my-archived-projects' }">

@@ -379,7 +379,15 @@
     "realName": "Real-name information",
     "general": "General",
     "devices": "Devices",
-    "connections": "Connections"
+    "connections": "Connections",
+    "title": "Settings",
+    "close": "Close settings",
+    "back": "Back to settings",
+    "groups": {
+      "account": "Account",
+      "devices": "Devices and connections",
+      "app": "Desktop app"
+    }
   },
   "emailCode": {
     "title": "Sign in with an email code",
