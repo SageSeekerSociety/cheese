@@ -733,6 +733,24 @@ class RemoteClient:
             return {"value": value}
         return receipt
 
+    def permission(self, payload, args, preparing=None):
+        """Only the project's `permissions.deny`, read on the room's machine,
+        for a call the build is about to run itself and whose hooks it fires
+        itself, never having loaded the project's settings: a Claude Code
+        room's Bash (`proxy.js`). Returns what `call("invoke", …)` does."""
+        answer = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PreToolUse",
+                "tool": payload["tool"],
+                "args": args,
+                "request_id": payload["id"],
+                "fire": False,
+            },
+            preparing=preparing,
+        )
+        return {"error": answer["denied"]} if "denied" in answer else {"value": {}}
+
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 

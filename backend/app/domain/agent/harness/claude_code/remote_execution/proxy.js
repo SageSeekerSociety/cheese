@@ -143,6 +143,25 @@ async function sendUserFile($, tool_use_id, args) {
   return told(JSON.parse(response.content[0].text));
 }
 
+// The build runs a Bash call itself, and its shell prefix sends the command
+// to the machine, so no executor call carries it past the project's
+// `permissions.deny` as it carries the file tools (`runtime.py` `execute`);
+// and the build never loads the project's settings to check them itself. So
+// the machine that holds the project checks it first, by the same rules pi's
+// and Codex's calls meet (`project_hooks.run` with `fire` false).
+async function refused($, tool_use_id, tool, args) {
+  try {
+    const response = await $.mcp.call("native", "permission", {
+      id: tool_use_id, session_id: await $.session.id(), tool, args,
+    });
+    if (response.isError) return { deny: JSON.stringify(response.content) };
+    const outcome = JSON.parse(response.content[0].text);
+    return outcome.deny ? told(outcome) : null;
+  } catch (error) {
+    return { deny: "Remote execution failed: " + String(error) };
+  }
+}
+
 // A person's message the session has not answered yet (`driven/runner.py`,
 // which decides what owes an answer, what answers it and what the refusal
 // says). The runner names the file in CHEESE_REPLY_OWED (spelled out at the
@@ -290,6 +309,10 @@ export function register(on) {
           return { deny: "Remote MCP failed: " + String(error) };
         }
       }
+    }
+    if (tool === "Bash") {
+      const denied = await refused($, tool_use_id, tool, args);
+      if (denied) return denied;
     }
     return next(e);
   });

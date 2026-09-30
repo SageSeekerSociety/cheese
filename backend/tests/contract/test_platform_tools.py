@@ -139,8 +139,14 @@ NEEDS_THE_MACHINE = {
     ),
 }
 
-#: 这条传输自己的四个口子，不是产品动作。
-TRANSPORT = {"invoke", "platform_request", "send_user_file", "project_tools"}
+#: 这条传输自己的五个口子，不是产品动作。
+TRANSPORT = {
+    "invoke",
+    "permission",
+    "platform_request",
+    "send_user_file",
+    "project_tools",
+}
 
 
 def _serve(executor):

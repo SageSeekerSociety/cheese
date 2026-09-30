@@ -96,7 +96,13 @@ class Backend:
                     self.rfile.read(int(self.headers.get("Content-Length", "0")))
                     or b"{}"
                 )
-                if self.path == "/execution":
+                if self.path == "/execution" and executor_state is None:
+                    # Claude Code's own Bash runs here, with no machine behind
+                    # it; the one thing its session asks the machine first is
+                    # whether the project's deny rules refuse the call, and
+                    # this project has none.
+                    result = {"args": body["params"]["args"]}
+                elif self.path == "/execution":
                     result = runtime.request(
                         executor_state, body["method"], body.get("params")
                     )

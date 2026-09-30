@@ -15,7 +15,10 @@ a hook can block cannot differ between two harnesses:
   ahead; on success a `deny` decision or `decision: block` blocks, and a
   `PreToolUse` hook's `updatedInput` replaces the call's arguments;
 - then the same files' `permissions.deny` rules block a call they match, as
-  Claude Code's own permission check would after its hooks (`denying_rule`).
+  Claude Code's own permission check would after its hooks (`denying_rule`);
+  alone, with `fire` false, for a call whose hooks the harness fires itself
+  but whose project settings it never loads: Claude Code's Bash in a room
+  (`remote_execution/proxy.js`).
 
 Standard library only, and Python 3.9: shipped as a loose file beside the
 executor's runtime (`remote-execution/project_hooks.py`), and in pi's runner
@@ -48,6 +51,7 @@ def run(
     result=None,
     extra=(),
     program=lambda argv: argv,
+    fire=True,
 ):
     """Run the project's `event` hooks for one call to `tool`, as the hooks name
     it; return the arguments the call proceeds with. Raises `Denied` when a hook
@@ -56,7 +60,7 @@ def run(
     paths = [root / ".claude/settings.json", root / ".claude/settings.local.json"]
     settings = [json.loads(path.read_text()) for path in paths if path.exists()]
     settings.extend(extra)
-    for source in settings:
+    for source in settings if fire else ():
         for group in source.get("hooks", {}).get(event, []):
             matcher = group.get("matcher", "*")
             if matcher not in ("", "*") and not re.fullmatch(matcher, tool):
