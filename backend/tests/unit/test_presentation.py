@@ -4,6 +4,7 @@
 的先后反了」和「某一格没人想到」。一张表让缺的那一格是可数的。
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -627,3 +628,61 @@ def test_it_reads_nothing_but_the_facts_it_was_given():
         task_presentation(facts, now=LONG_AGO + timedelta(minutes=1)).display_status
         == Building.running
     )
+
+
+def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():
+    """窄读入口交出来的 `RailCard` 和 ORM 那一行，读成同一份事实。
+
+    路由不再把 ORM 行带出去，但它要的答案必须一模一样 —— 否则同一条活在侧栏和
+    别处会说出两种话。每一位都要覆盖到：`note_code` 挑格子、`merge_state` 里的
+    state/who 说这一步在谁手上、`decided_by`/`auto_merge_armed_by` 说这一步已经
+    交出去了。`CardFacts` 是纯值，所以两边相等就是这一层的契约。
+    """
+    from app.domain.review.models import AcceptCard
+    from app.domain.review.queries import RailCard
+    from app.domain.room_task.presentation import facts_for_card
+
+    def both(**spec) -> tuple[CardFacts | None, CardFacts | None]:
+        shared = {
+            "status": spec.get("status", AcceptStatus.pending),
+            "pr_number": spec.get("pr_number"),
+            "pr_url": spec.get("pr_url"),
+            "note_code": spec.get("note_code"),
+            "merge_state": spec.get("merge_state"),
+            "decided_by": spec.get("decided_by"),
+            "auto_merge_armed_by": spec.get("auto_merge_armed_by"),
+        }
+        card_id = uuid.uuid4()
+        row = AcceptCard(
+            id=card_id, topic_id=uuid.uuid4(), reviewer_handle="alice", **shared
+        )
+        return facts_for_card(row), facts_for_card(RailCard(id=card_id, **shared))
+
+    specs = [
+        {},
+        {"note_code": NoteCode.waiting_merge_queue},
+        {"merge_state": {"state": "behind", "who": "platform"}},
+        {
+            "merge_state": {"state": "unknown", "who": "platform"},
+            "decided_by": "alice",
+        },
+        {
+            "merge_state": {"state": "unknown", "who": "platform"},
+            "auto_merge_armed_by": "alice",
+        },
+        {"status": AcceptStatus.accepted, "pr_number": 7, "pr_url": "u"},
+    ]
+    for spec in specs:
+        from_orm, from_rail = both(**spec)
+        assert from_rail is not None
+        assert from_rail == from_orm
+
+    # 不是「两边都算成 None」就等于：拿一位具体的事实对下来。
+    _, rail_facts = both(
+        merge_state={"state": "behind", "who": "platform"}, decided_by="alice"
+    )
+    assert rail_facts is not None
+    assert rail_facts.status == "pending"
+    assert rail_facts.merge_state_word == "behind"
+    assert rail_facts.merge_who == "platform"
+    assert rail_facts.decided is True

@@ -200,7 +200,6 @@ ignore_imports =
     app.api.routes.project_environment -> app.domain.topic.models
     app.api.routes.project_skills -> app.domain.block.models
     app.api.routes.project_skills -> app.domain.project_skill.models
-    app.api.routes.projects -> app.domain.block.models
     app.api.routes.projects -> app.domain.project.models
     app.api.routes.projects_agents -> app.domain.agent_instance.models
     app.api.routes.recruitment -> app.domain.team.models
@@ -377,6 +376,7 @@ ignore_imports =
     app.domain.room_task.place -> app.domain.topic.models
     app.domain.room_task.presentation -> app.domain.review.models
     app.domain.room_task.presentation -> app.domain.review.notes
+    app.domain.room_task.presentation -> app.domain.review.queries
     app.domain.room_task.presentation -> app.domain.topic.models
     app.domain.room_task.services -> app.domain.project.forge
     app.domain.room_task.services -> app.domain.topic.models

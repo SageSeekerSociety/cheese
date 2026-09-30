@@ -31,9 +31,11 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.block.models import BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.queries import (
+    decisions_for_project,
+    tasks_awaiting_an_answer,
+    weeklies_for_project,
+)
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import ANONYMOUS_HANDLE
 from app.domain.machine.limits import get_machine_limit
@@ -57,10 +59,10 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import presentation
-from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
@@ -376,10 +378,8 @@ async def list_decisions(
     blocks were reachable; the project's record was not."""
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
-    blocks = await BlockRepository(db).list_by_kind_for_project(
-        project_id, BlockKind.decision
-    )
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    blocks = await decisions_for_project(db, project_id)
+    items = [b.model_dump(mode="json") for b in blocks]
     return ok(page(items, len(items)))
 
 
@@ -402,10 +402,8 @@ async def list_weeklies(
     a weekly (``POST /topics/{id}/weekly``) can read the set back."""
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
-    blocks = await BlockRepository(db).list_by_kind_for_project(
-        project_id, BlockKind.weekly
-    )
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    blocks = await weeklies_for_project(db, project_id)
+    items = [b.model_dump(mode="json") for b in blocks]
     return ok(page(items, len(items)))
 
 
@@ -436,15 +434,20 @@ async def list_project_tasks(
     """
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
-    tasks = await TaskRepository(db).list_for_project(project_id)
+    # 四次批查询，各问一个领域。这条路由是拼装的人，所以它把三次窄读和一次服务
+    # 调用按固定顺序摆在一起；每一次都走对方领域自己的公开读出口，不去碰别人的
+    # repository —— `block` 那边问的是「这个项目的决策/周报」和「哪几条停在提问
+    # 上」，`review` 那边问的是「这些活的卡」，`room_task` 那边问的是「这些活」和
+    # 「它们各自最后一次说话」。
+    tasks = await TaskService(db).list_in_project(project_id)
     task_ids = [t.id for t in tasks]
-    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
+    cards = await latest_cards_by_task(db, task_ids)
     # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
     # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
-    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    beats = await TaskService(db).last_block_at_for_tasks(task_ids)
     # 哪几条停在一个未回答的提问上 —— 第四次批查询，同一条 (task_id, created_at)
     # 索引。这是唯一会中断「运行中」的一格，所以不能留给调用方各自去问。
-    asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
+    asked = await tasks_awaiting_an_answer(db, task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)

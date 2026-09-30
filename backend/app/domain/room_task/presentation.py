@@ -42,11 +42,22 @@ from typing import TYPE_CHECKING
 from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
+
+# `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
+# 只给 block / review 开了窄读出口，room_task 这边的活行仍按原样交到路由手上，由
+# `facts_for_task` 就地折成纯值。这一层只读它的属性、不顺着它查库，所以它没有把
+# session 带出去；等 room_task 也有了 `queries.py`，这里换成那份纯值即可。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:
+    # 一张卡能被折成 `CardFacts` 的两种形状：数据库那一行（`AcceptCard`，本领域
+    # 内的消费者手上就有），和窄读出口交出来的纯值（`RailCard`，路由拿它当索引，
+    # 不让 ORM 行走出 `review`）。这一层只读属性、不查库，所以两种形状读起来一样
+    # —— 见 `facts_for_card`。两个都在 TYPE_CHECKING 里：这一层是纯的，导入它们
+    # 只为签名，运行时一行都不碰。
     from app.domain.review.models import AcceptCard
+    from app.domain.review.queries import RailCard
 
 #: 一行说自己 `running`、却已经这么久没有任何动静 —— 那就不能说它在跑。
 #:
@@ -253,7 +264,16 @@ class RoomFacts:
     awaiting_answer: bool = False
 
 
-def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
+def facts_for_card(card: "AcceptCard | RailCard | None") -> CardFacts | None:
+    """这张卡要读的几位，折成纯值。`None` 是「这条活上没有卡」，不是一张空卡。
+
+    收两种形状是因为卡有两处来源：领域内的人手上是 `AcceptCard` 那一行，HTTP 路由
+    手上是 `RailCard`（`review/queries.py`）—— 一份冻结的值，没有 session 可以顺着
+    多查一行。这一层只读 `status` / `note_code` / `merge_state` / `decided_by` /
+    `auto_merge_armed_by` 五个属性，两种形状都长得出来，所以折出来的 `CardFacts`
+    一模一样（`tests/unit/test_presentation.py` 钉住了这件事）。`merge_state` 的
+    形状也不假设：不是 dict（`None`、或者镜像还没写过）就当空镜像读。
+    """
     if card is None:
         return None
     mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
@@ -270,7 +290,7 @@ def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
 
 def facts_for_task(
     task: Task,
-    card: "AcceptCard | None" = None,
+    card: "AcceptCard | RailCard | None" = None,
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,
