@@ -966,6 +966,14 @@ def self_test() -> int:
             hooks = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
             check("and a commit runs it too", "scene-ratchet" in hooks, True)
 
+        # -- 9. a wrong root is a 2, never a pass ---------------------------
+        #    The trap this gate exists for: `frontend/` instead of the repo
+        #    root has no `frontend/src` underneath, and an empty import graph
+        #    would grade every component standalone — the silent-A failure.
+        wrong = run_cli(root / "frontend", baseline_path)
+        check("a root without frontend/src exits 2", wrong.returncode, 2)
+        check("and says why", "frontend/src" in wrong.stderr, True)
+
     if failures:
         print("SELF-TEST FAIL:")
         for line in failures:
@@ -975,7 +983,7 @@ def self_test() -> int:
         "PASS: scene-ratchet self-test (a regressed scene, a new scene that is not "
         "ready, a container page and three ways of not being one, debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "
-        "to judge)"
+        "to judge, and a wrong root being a 2)"
     )
     return 0
 
@@ -997,7 +1005,14 @@ def main() -> int:
 
     root = Path(args.root).resolve()
     baseline_path = Path(args.baseline) if args.baseline else root / DEFAULT_BASELINE
-    return run(root, baseline_path, update=args.update, listing=args.list)
+    try:
+        return run(root, baseline_path, update=args.update, listing=args.list)
+    except LookupError as exc:
+        # The grader refuses to judge a root without `frontend/src` (an empty
+        # import graph would grade everything standalone). Not a violation —
+        # a 2, so a wrong root never looks like a pass.
+        print(f"cannot judge: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
