@@ -122,10 +122,8 @@ async def read_supply(client: MicroCloudClient | None = None) -> dict[str, Any]:
         return {"available": False, "reason": "云端尚未接入，暂不可用"}
     try:
         return SupplyRange.of(await pick_offering(client)).as_json()
-    except MicroCloudError as exc:
-        return {"available": False, "reason": f"暂时查不到云端供应范围：{exc}"}
-    except ValidationError as exc:
-        return {"available": False, "reason": f"暂时查不到云端供应范围：{exc}"}
+    except (MicroCloudError, ValidationError) as exc:
+        return {"available": False, "reason": str(exc)}
 
 
 async def check_choice(values: dict[str, int | None]) -> None:

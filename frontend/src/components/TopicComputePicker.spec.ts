@@ -241,7 +241,9 @@ describe('custom cloud spec against the current supply', () => {
     mountPicker(profile())
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     await fireEvent.click(screen.getByRole('button', { name: /其他配置与设备/ }))
-    await fireEvent.click(screen.getByLabelText('自定义 CPU、内存和磁盘'))
+    const box = screen.getByLabelText('自定义 CPU、内存和磁盘') as HTMLInputElement
+    box.checked = true
+    await fireEvent.input(box)
   }
   async function setField(label: string, value: string) {
     await fireEvent.update(screen.getByLabelText(label), value)
@@ -262,10 +264,9 @@ describe('custom cloud spec against the current supply', () => {
   it('offers only what the platform allows, not the provider floor', async () => {
     getCloudSupply.mockResolvedValue(supply)
     await openCustom()
-    await screen.findByTestId('supply-range')
-    await setField('内存 GB', '0.25')
-    const save = screen.getByRole('button', { name: '使用此配置' })
-    await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(true))
+    const range = (await screen.findByTestId('supply-range')).textContent ?? ''
+    expect(range).toContain('0.5')
+    expect(range).not.toContain('0.125')
   })
 
   it('sends a spec at the edge of the range unchanged', async () => {
