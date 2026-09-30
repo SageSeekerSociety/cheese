@@ -1,0 +1,98 @@
+[
+  {
+    "file": "shots/flow-01.png",
+    "width": 1040,
+    "height": 1304,
+    "bytes": 149189,
+    "evidence": "真组件渲染",
+    "shows": "三件事摆在一起：总进度 + 切换条"
+  },
+  {
+    "file": "shots/flow-02.png",
+    "width": 1040,
+    "height": 1258,
+    "bytes": 145171,
+    "evidence": "真组件渲染",
+    "shows": "选项解释 + 选好了还没交（草稿没交）"
+  },
+  {
+    "file": "shots/flow-03.png",
+    "width": 1040,
+    "height": 1258,
+    "bytes": 142736,
+    "evidence": "真组件渲染",
+    "shows": "写了话还没交 + 「以上都不是」"
+  },
+  {
+    "file": "shots/flow-04.png",
+    "width": 1040,
+    "height": 1428,
+    "bytes": 164853,
+    "evidence": "假服务预览",
+    "shows": "提交失败与重试（fakeAnswerService 第一次拒）"
+  },
+  {
+    "file": "shots/flow-05.png",
+    "width": 1040,
+    "height": 1444,
+    "bytes": 156159,
+    "evidence": "真组件渲染",
+    "shows": "带着没答的题提交（照样交吗）"
+  },
+  {
+    "file": "shots/flow-06.png",
+    "width": 1040,
+    "height": 856,
+    "bytes": 102720,
+    "evidence": "真组件渲染",
+    "shows": "已答回执与改答案"
+  },
+  {
+    "file": "shots/flow-07.png",
+    "width": 1040,
+    "height": 770,
+    "bytes": 86247,
+    "evidence": "真组件渲染",
+    "shows": "稍后处理找得回来"
+  },
+  {
+    "file": "shots/flow-08.png",
+    "width": 1040,
+    "height": 1258,
+    "bytes": 143616,
+    "evidence": "本次新增目标",
+    "shows": "刷新回来草稿还在（persistKey）"
+  },
+  {
+    "file": "shots/flow-desktop-dark.png",
+    "width": 2240,
+    "height": 3000,
+    "bytes": 455651,
+    "evidence": "真组件渲染",
+    "shows": "宽屏 1120px · 深色 · 整页"
+  },
+  {
+    "file": "shots/flow-desktop-light.png",
+    "width": 2240,
+    "height": 3000,
+    "bytes": 451023,
+    "evidence": "真组件渲染",
+    "shows": "宽屏 1120px · 浅色 · 整页"
+  },
+  {
+    "file": "shots/flow-mobile-dark.png",
+    "width": 780,
+    "height": 3800,
+    "bytes": 424344,
+    "evidence": "真组件渲染",
+    "shows": "窄屏 390px · 深色 · 整页"
+  },
+  {
+    "file": "shots/flow-mobile-light.png",
+    "width": 780,
+    "height": 3800,
+    "bytes": 418533,
+    "evidence": "真组件渲染",
+    "shows": "窄屏 390px · 浅色 · 整页"
+  }
+]
