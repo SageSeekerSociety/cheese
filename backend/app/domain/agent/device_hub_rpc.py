@@ -10,7 +10,12 @@ from typing import Any
 
 import httpx
 
-from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, HubScreen
+from app.domain.agent.device_hub import (
+    EXEC_REPLY_SLACK_S,
+    DeviceCallError,
+    DeviceOffline,
+    HubScreen,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +46,16 @@ OWNER_CONNECT_RETRY_MAX_DELAY_S = 5
 # a caller holding a database session (a room's setup) held its pooled
 # connection with it until the process restarted.
 #
-# The slack mirrors the in-process hub, which waits `timeout + 5` on a device
-# call for the same reason: the far end's own timer has to be the one that fires,
-# so its answer ("the device did not respond") reaches the caller instead of
-# being replaced by a blank local timeout.
-OWNER_CALL_TIMEOUT_SLACK_S = 5
+# The far end's own timer has to be the one that fires, so its answer ("the
+# device did not respond", a 504 that reaches the caller as `TimeoutError`)
+# arrives instead of a blank local `httpx.ReadTimeout`, which none of the
+# callers that handle a silent device catch. The owner's hub itself waits
+# `timeout + EXEC_REPLY_SLACK_S` before it answers, and that answer still has to
+# cross the network, so this side waits longer than the hub by a margin of its
+# own. Waiting the same amount, the caller gave up first: on dev from
+# 2026-09-23 to 09-30, 12 agents' requests for their machine became 500s that
+# way while the owner's 504 was on its way.
+OWNER_CALL_TIMEOUT_SLACK_S = EXEC_REPLY_SLACK_S + 5
 OWNER_CALL_DEFAULT_TIMEOUT_S = 30
 # Reaching the owner is a connect on the box's own network; a SYN that goes
 # unanswered this long is a host that is not there, not a slow one.
