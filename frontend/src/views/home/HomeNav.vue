@@ -146,9 +146,12 @@ const joinOpen = ref(false)
             isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
           }}</v-icon>
           <v-avatar size="22" rounded="md" class="home-nav__mark">
-            <v-img :src="getAvatarUrl(team.avatarId)">
+            <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
+                 后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
+            <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
               <template #error>{{ team.name.slice(0, 1) }}</template>
             </v-img>
+            <template v-else>{{ team.name.slice(0, 1) }}</template>
           </v-avatar>
         </template>
         <v-list-item-title class="home-nav__name">{{ team.name }}</v-list-item-title>
