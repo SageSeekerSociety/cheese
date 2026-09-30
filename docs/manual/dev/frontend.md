@@ -8,7 +8,6 @@ covers:
   - frontend/src/App.vue
   - frontend/src/router/
   - frontend/src/views/workspace/
-  - frontend/src/views/spaces/board/
   - frontend/src/components/ChatPanel.vue
   - frontend/src/components/WorkPanel.vue
   - frontend/src/components/panels/
@@ -59,7 +58,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 - **`meta.publicLanding`** —— 不套应用外壳，`App.vue` 直接 `<router-view />`。首页的落地页各分支（`router/home.ts`）和用户协议、隐私政策（`router/legal.ts`）用它。
 - **`meta.isFullPage`** —— 一页占满，没有常规布局（加入团队、预览、站点、设备、连接设备、待办、市场等）。
 
-路由表在 `router/index.ts` 里拼装：每个域一个文件（`account`、`home`、`user`、`question`、`spaces`、`teams`、`feedback`、`legal`、`courseJoin`），加 `./legacyProjectPaths` 的旧地址重定向、`workspaceRoutes`（房间那一棵）和 `views/spaces/board/routes.ts`（空间新界面那一棵）。通配 `NotFound` **必须挂在最后** —— 被它吃掉的后果是那几页打不开，而「打不开」看起来像后端 404。
+路由表在 `router/index.ts` 里拼装：每个域一个文件（`account`、`home`、`user`、`question`、`spaces`、`teams`、`feedback`、`legal`），加 `./legacyProjectPaths` 的旧地址重定向和 `workspaceRoutes`（房间那一棵）。通配 `NotFound` **必须挂在最后** —— 被它吃掉的后果是那几页打不开，而「打不开」看起来像后端 404。
 
 四条全局守卫各管一件事：
 
@@ -121,13 +120,11 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 页签的内容在 `components/panels/` 下：`PanelDoc`（总览）、`PanelSite`（现场，`SiteStepOutput`、`SiteStatusBar`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelProgress`（任务进度）、`PanelCard`（共用外壳）。
 
-## 看板是并存的一棵 {#board}
+## 空间页 {#space}
 
-`views/spaces/board/` 是空间的新界面，挂在 `/spaces/:id/board` 下，**是并存的一棵而不是替换**：老的空间页仍在 `/spaces/:id/{tasks,analytics,…}` 上原样服务。整板看板那一格已经是这块板自己的（`pages/Analytics.vue`，数字来自老树那九页背后同一组接口），老树那九页一页没删。
+空间的每一页都挂在 `/spaces/:spaceId/…` 下（`router/spaces.ts`），左边是 `SpaceSidebar.vue`：顶上一行「‹ 空间名」回到首页，下面是题目、公告，以及只对所有者和管理员露出的「管理」一段。每一页自己画一行和侧栏顶等高的 `PageHeader`。
 
-它有自己的外壳（`SpaceBoardShell.vue`），顶层路由，不被老 `/spaces/:spaceId` 那条嵌套路由接住，所以不会套上老侧栏。所有地址都用**命名路由**，路径前缀只出现在 `routes.ts` 一个文件里 —— 等新界面把老页面接手过去，收的时候改一行。
-
-管理员的门槛写在 `beforeEnter`（`managerOnly`）而不是页面里，因为**直接输地址也要挡住**；守卫必须先 `await loadBoard(spaceId)`，角色是从 `space.admins` 算出来的，没装好之前谁都是 MEMBER。
+角色只有一处来源：`stores/space.ts` 的 `myRole` / `isManager` / `isOwner`，拿登录的人跟 `space.admins` 对出来。界面按它决定露不露管理入口，真正把关的是接口。
 
 看板列是怎么推出来的见[看板与里程碑](/dev/boards#board)，待处理清单见[任务与工作目录](/dev/tasks#awaiting)。
 

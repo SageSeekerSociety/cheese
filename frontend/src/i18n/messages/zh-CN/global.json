@@ -5,32 +5,20 @@
   "copyright": "© {year} 知是",
   "confirm": "确认",
   "confirmDelete": "确定要删除吗？此操作无法撤销。",
-  "confirmDeleteReply": "确定要删除这条回复吗？",
   "createFailed": "创建失败",
   "createSuccess": "创建成功",
   "delete": "删除",
-  "deleteFailed": "删除失败",
-  "deleteSuccess": "删除成功",
   "edit": "编辑",
-  "editor": {
-    "placeholder": "说点什么..."
-  },
   "error": "发生错误",
   "formValidation": {
     "email": "请输入有效的电子邮件地址",
-    "maxLength": "内容不能超过 {max} 个字符",
     "minLength": "内容至少需要 {min} 个字符",
-    "numeric": "此字段必须是数字",
-    "required": "此字段为必填项"
+    "numeric": "此字段必须是数字"
   },
   "loading": "加载中...",
   "no": "否",
-  "publish": "发布",
   "publishFailed": "发布失败",
   "publishSuccess": "发布成功",
-  "reply": "回复",
-  "replyFailed": "回复失败",
-  "replySuccess": "回复成功",
   "save": "保存",
   "submit": "提交",
   "success": "操作成功",
@@ -39,10 +27,6 @@
   "updateFailed": "更新失败",
   "updateSuccess": "更新成功",
   "yes": "是",
-  "errorMessages": {
-    "contentRequired": "回复内容不能为空",
-    "reactionFailed": "回应失败"
-  },
   "desktop": {
     "macAppleSilicon": "Mac（Apple 芯片）",
     "macIntel": "Mac（Intel 芯片）",

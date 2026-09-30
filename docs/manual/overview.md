@@ -15,7 +15,7 @@ summary: 知是是什么、给谁用，空间、团队、项目、话题、芝�
 团队、空间、项目、话题、任务、成果、额度之间的从属关系：
 
 ```text
-团队 ─┐                          空间（课程） ─ 题目 ─ 领取
+团队 ─┐                          空间 ─ 题目 ─ 领取
       │                                                │
       └──► 项目 ◄──────────────────────────────────────┘
             │   成员 · AI 队友 · 资料库 · 看板 · 设置
@@ -49,7 +49,7 @@ summary: 知是是什么、给谁用，空间、团队、项目、话题、芝�
 | 文件与成果 | 你交给芝士的材料，和它做出来的东西 | [文件与成果](/files#files) |
 | 工作电脑 | AI 队友干活的那台机器：云端，或你的电脑、服务器 | [设备与工作电脑](/devices#devices) |
 | 额度 | 芝士调用模型消耗的 tokens，1 额度 = 1 万 tokens | [额度](/quota#quota) |
-| 空间与课程 | 老师或组织发布题目的地方；新建的空间默认就是课程 | [空间与题目](/challenges#spaces)、[课程与作业](/courses#courses) |
+| 空间 | 老师或组织发布题目的地方 | [空间与题目](/challenges#spaces) |
 
 ## 一件事是怎么做完的 {#flow}
 
@@ -67,8 +67,8 @@ summary: 知是是什么、给谁用，空间、团队、项目、话题、芝�
 
 | 你是 | 先读 | 再读 |
 |---|---|---|
-| 学生 | [学生：在空间里完成第一道题目](/student-tutorial#tut-student) | [提交](/submissions#submit)、[课程与作业](/courses#student) |
-| 老师 / 助教 | [老师 / 助教：开一门课，收作业、打分](/teacher-tutorial#tut-teacher) | [课程与作业](/courses#courses)、[空间与题目](/challenges#spaces) |
+| 学生 | [学生：在空间里完成第一道题目](/student-tutorial#tut-student) | [提交](/submissions#submit) |
+| 老师 / 助教 | [空间与题目 · 发布题目](/challenges#publish) | [提交 · 评审](/submissions#submit)、[空间与题目](/challenges#spaces) |
 | 办公 | [办公：完成第一个协作项目](/office-tutorial#tut-office) | [团队](/teams#teams)、[文件与成果](/files#files) |
 | 团队项目、写代码 | [快速开始](/quickstart#quickstart) | [验收与采纳](/accept#accept)、[设备与工作电脑](/devices#devices)、[发布网站](/sites#sites) |
 

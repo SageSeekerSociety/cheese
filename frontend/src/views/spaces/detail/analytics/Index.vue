@@ -1,5 +1,5 @@
 <template>
-  <PageHeader icon="mdi-chart-line" title="数据分析">
+  <PageHeader title="数据分析">
     <template #tabs>
       <AnalyticsNavigationTabs />
     </template>

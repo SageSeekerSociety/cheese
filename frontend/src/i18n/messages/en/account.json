@@ -426,7 +426,6 @@
       "viewed": "{name} viewed the full information",
       "youViewed": "You viewed the full information",
       "where": "{name} · {kind}",
-      "course": "Course",
       "space": "Space",
       "more": "Load more",
       "loadFailed": "Could not load the access history"

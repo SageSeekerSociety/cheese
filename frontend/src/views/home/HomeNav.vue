@@ -18,7 +18,7 @@ import { awaitingCount } from '@/composables/useAwaitingCount'
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import { t } from '@/i18n'
-import { spaceEntryRoute } from '@/lib/courseNav'
+import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
@@ -32,7 +32,7 @@ const route = useRoute()
 const awaiting = awaitingCount()
 
 const teams = ref<Team[]>([])
-const spaces = ref<{ id: number; name: string; isCourse?: boolean }[]>([])
+const spaces = ref<{ id: number; name: string }[]>([])
 
 async function loadTeams() {
   try {
@@ -45,7 +45,7 @@ async function loadTeams() {
 async function loadSpaces() {
   try {
     const { data } = await SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' })
-    spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name, isCourse: space.isCourse }))
+    spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name }))
   } catch {
     // 同上。
   }

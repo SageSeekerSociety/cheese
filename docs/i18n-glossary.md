@@ -19,7 +19,6 @@
 | 中文 | 英文 | 依据 / 不采用什么 |
 |---|---|---|
 | 话题 | **topic** | 后端 `/topics/{topic_id}`、`views/spaces/detail/ManageTopics.vue`、`addTopic`。**不用 thread**：界面里没有「楼」的概念，用 thread 会让人以为能把一条讨论拆成多段。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
-| 讨论 | **discussion** | `views/spaces/detail/Discussions.vue`、`views/spaces/detail/CreateDiscussion.vue`、`network/api/discussions/`。**不用 topic**：平台里 topic 已是另一个概念，两者并存（`spaces.detail.manageTopics` 与讨论是同层的两个东西）。**不用 post**：一条 discussion 是讨论串，不是单条发言 |
 | 空间 | **space** | `views/spaces/`、`components/spaces/SpaceSidebar.vue`、`navigation.spaces = "Spaces"`。**不用 area / zone / room**：room 在本平台另有含义（房间），会与话题混 |
 | 项目 | **project** | `views/projects/`、后端 `/projects/{project_id}`。**不用 program**：那是「项目集」 |
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
@@ -75,7 +74,7 @@
 | 搜索 | **search** | 不用 find |
 | 图片 | **image** | `editor.image.tooltip = 插入图片` → **Insert image** |
 | 保存 | **save** | 不用 store / persist |
-| 返回 | **back** | 按钮上是 **Back**；`返回讨论列表 = Back to discussions` |
+| 返回 | **back** | 按钮上是 **Back**；`返回列表 = Back to list` |
 | 加载 | **load** | `加载更多 = Load more`、`加载失败 = Couldn't load` |
 | 提示 | **hint** / **tip** | 表单下方的说明用 hint，悬浮提示用 tip |
 | 成功 | **success** | 名词是 success，形容词/副词看组合：`发布成功 = Published` 而不是 `Publish success`，见 §3 |
@@ -121,14 +120,14 @@
   `悬赏成功，等待回答 = Bounty added — awaiting answers`（破折号接后续状态）。
   **例外是已经有宾语的名词短语**：`保存成功` 这类没有具体对象的，用 `Saved` 就够，别写 `Save successful`。
 - **「X 失败」统一用 `Couldn't <动词>`，带原因时用冒号。** `删除失败 = Couldn't delete`、
-  `发布失败 = Couldn't publish`、`加载讨论失败 = Couldn't load discussions`、
+  `发布失败 = Couldn't publish`、`加载公告失败 = Couldn't load announcements`、
   `邀请失败：{reason} = Couldn't invite: {reason}`。
   不用 `Failed to X`（更长、更像日志），也不用 `X failed`（像错误码）。带主语的句子级错误才用完整句。
 - **删除确认是一句短问句，不是 `Are you sure you want to...`。**
   `确定要删除这条回复吗？ = Delete this reply?`、`确定要删除这个模板吗？ = Delete this template?`、
   `确定要删除域名组 {name} 吗？ = Delete the domain group {name}?`
-  中文那句补充后果的后半句另起一句：`确定要删除这条讨论吗？其下的所有回复也会被删除。 =
-Delete this discussion? All of its replies will be deleted too.`
+  中文那句补充后果的后半句另起一句：`确定要删除这个问题吗？其下的所有回答也会被删除。 =
+Delete this question? All of its answers will be deleted too.`
 
 ## 4. 品牌词
 
@@ -145,9 +144,8 @@ Delete this discussion? All of its replies will be deleted too.`
 1. **「芝士」作为悬赏单位。** `questions.detail.bountyTip` 里「可获得 {bounty} 芝士」的「芝士」是**积分单位**，
    不是平台名。直接译成 `{bounty} Cheese` 会读成「获得 50 个 Cheese」，语义不通。
    需要一个单位名（`credits`? `Cheese credits`? 保留 `Cheese` 但加量词?）。**在定下来之前，涉及悬赏的键不要翻译。**
-2. **「话题」在空间内的层级。** `spaces.detail.manageTopics` 显示空间里也有「话题」，而讨论也在空间里，
-   两者关系（话题是讨论的分类标签？还是并列的另一种内容？）只能从界面看出这么多。
-   英文都定为 topic 没有歧义风险，但如果两者其实是同一层概念，键的组织方式可能需要调整。
+2. **「话题」在空间内的层级。** `spaces.detail.manageTopics` 显示空间里也有「话题」，它是给题目贴的分类标签，
+   和项目里的话题同名不同物。英文都定为 topic 没有歧义风险，但键的组织方式可能需要调整。
 
 3. **中文把「赛题」和「任务」当成同一个东西在叫——已经查清，按 challenge 统一。**
 

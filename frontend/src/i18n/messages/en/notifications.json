@@ -25,10 +25,7 @@
   "REPLY": {
     "title": "{replier} replied to your comment",
     "title_anonymous": "Someone replied to your comment",
-    "body": "In \"{discussionTitle}\"",
-    "action": {
-      "reply": "Reply"
-    }
+    "body": "In \"{discussionTitle}\""
   },
   "REACTION": {
     "title": "{reactor} reacted to your content",

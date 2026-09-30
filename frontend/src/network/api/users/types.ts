@@ -97,8 +97,6 @@ export interface UserIdentityAccessLog {
   accessEntityId?: number | null
   /** The board's name, for a read on a board. */
   accessEntityName?: string | null
-  /** Whether that board is a course. */
-  accessEntityIsCourse?: boolean | null
   accessTime: number
   accessType: UserIdentityAccessType
 }

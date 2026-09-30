@@ -84,11 +84,28 @@ const sourceText = new Map(
     .map((p) => [relative(SRC, p), stripComments(readFileSync(p, 'utf8'))])
 )
 
+// A key built at run time — t(`spaces.members.role.${role}`) — names a family of
+// leaves, not one. Each `${…}` stands for one path segment; the leaves it can
+// reach count as referenced, and the family must not be empty (deleting the
+// subtree because no literal call names its leaves shows the user raw keys).
+const dynamicSite = new RegExp(`(?:\\$?t|te|tm)\\(\\s*\`((?:${NS})\\.[^\`]*\\$\\{[^\`]*)\``, 'g')
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+function dynamicPattern(template: string): RegExp {
+  const parts = template.split(/\$\{[^}]*\}/)
+  return new RegExp(`^${parts.map(escapeRegExp).join('[^.]+')}$`)
+}
+
 const referenced = new Set<string>()
 const calledLiterally = new Set<string>()
+const dynamicTemplates = new Set<string>()
 for (const text of sourceText.values()) {
   for (const m of text.matchAll(reference)) referenced.add(`${m[1]}.${m[2]}`)
   for (const m of text.matchAll(callSite)) calledLiterally.add(`${m[1]}.${m[2]}`)
+  for (const m of text.matchAll(dynamicSite)) dynamicTemplates.add(m[1])
+}
+for (const template of dynamicTemplates) {
+  const pattern = dynamicPattern(template)
+  for (const id of zhIds) if (pattern.test(id)) referenced.add(id)
 }
 
 describe('locale catalogs', () => {
@@ -191,6 +208,11 @@ describe('source and catalog agree', () => {
   it('resolves every key the source calls by name', () => {
     const unknown = [...calledLiterally].filter((id) => !zhById.has(id)).sort()
     expect(unknown, '源码里调用了 catalog 中不存在的键（或调用了子树而非叶子）').toEqual([])
+  })
+
+  it('resolves every key family the source builds at run time', () => {
+    const empty = [...dynamicTemplates].filter((template) => !zhIds.some((id) => dynamicPattern(template).test(id)))
+    expect(empty.sort(), '源码在运行时拼出的键，catalog 里一个对得上的都没有').toEqual([])
   })
 
   it('does not carry keys no source file uses, unless listed in unused.json', () => {

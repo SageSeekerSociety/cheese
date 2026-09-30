@@ -96,20 +96,10 @@ export function useNotificationRenderer() {
 
   // 获取路由链接
   const getRouterLink = (notification: Notification) => {
-    const { type, entities, contextMetadata } = notification
+    const { type, entities } = notification
 
     // 根据通知类型和元数据构造路由链接
     switch (type) {
-      case 'MENTION':
-      case 'REPLY':
-        if (contextMetadata.discussionId) {
-          return {
-            name: 'DiscussionDetail',
-            params: { id: contextMetadata.discussionId },
-            query: contextMetadata.commentId ? { comment: contextMetadata.commentId } : undefined,
-          }
-        }
-        break
       case 'TEAM_INVITATION':
       case 'TEAM_REQUEST_APPROVED':
       case 'TEAM_REQUEST_REJECTED':

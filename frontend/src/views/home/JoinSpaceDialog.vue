@@ -5,7 +5,7 @@ import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { t } from '@/i18n'
-import { spaceEntryRoute } from '@/lib/courseNav'
+import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
 
 const open = defineModel<boolean>({ required: true })

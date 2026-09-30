@@ -5,11 +5,11 @@
 // [key, tab label, icon, groups: [group label, [slug, ...]]]
 export const SECTIONS = [
   ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese']]]],
-  ['tutorials', '教程', 'bulb', [['按身份', ['student-tutorial', 'teacher-tutorial', 'office-tutorial']]]],
+  ['tutorials', '教程', 'bulb', [['按身份', ['student-tutorial', 'office-tutorial']]]],
   ['features', '功能说明', 'layers', [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
-    ['教学', ['challenges', 'courses']],
+    ['教学', ['challenges']],
     ['资源', ['devices', 'quota', 'feedback']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
@@ -36,7 +36,7 @@ export const REDIRECTS = { compute: 'devices', members: 'teams' }
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.
 export const HIGHLIGHTS = {
   unreleased: {
-    feat: [['可以选择 Claude Opus 5.5 作为 AI 队友的模型', 1710], ['实名信息集中到一个页面，能查看、修改和删除', 1711], ['个人主页合为一页，取消「关注」', 1716], ['话题里可以回复某条消息，输入框会带上被回复的内容', 1743], ['重新设计的空间看板上线', 1728]],
+    feat: [['可以选择 Claude Opus 5.5 作为 AI 队友的模型', 1710], ['实名信息集中到一个页面，能查看、修改和删除', 1711], ['个人主页合为一页，取消「关注」', 1716], ['话题里可以回复某条消息，输入框会带上被回复的内容', 1743]],
     imp: [['聊天栏的消息分组、行距和动效重做', 1738], ['首屏更轻，改用系统字体，打开更快', 1742], ['一轮运行失败时说明发生了什么，房间里可以一键重试', 1727], ['后端发版时，正在运行的芝士会交接给新版本，不再中断', 1733]],
     fix: [['团队工作区滚动不再丢失位置', 1726], ['条款与隐私页可以正常滚动', 1722], ['预览失败时说明是哪一页出错，而不是留白', 1628]],
   },
@@ -52,7 +52,7 @@ export const HIGHLIGHTS = {
 
 export const WHO = {
   学生: [['交一道题目', '在空间里找到老师的题目，和芝士一起做完再提交', 'student-tutorial'], ['让芝士讲清一个概念', '在话题里提问，追问到懂为止', 'working-with-cheese'], ['和同学组队做项目', '建团队、拉同学进项目，一起跟芝士干活', 'teams'], ['额度快用完了', '看自己和团队还剩多少额度', 'quota']],
-  '老师 / 助教': [['开一门课', '建课程、按周排单元', 'teacher-tutorial'], ['布置作业和测验', '挂到单元上，设好提交要求', 'courses'], ['收作业、打分', '在「作业与验收」里看提交、打分，看学生卡在哪', 'courses'], ['发布一道题目', '在空间里发题目、管参与者', 'challenges']],
+  '老师 / 助教': [['发布一道题目', '在空间里发题目、设好提交要求', 'challenges'], ['审核报名', '在「参与者管理」里通过或驳回', 'challenges'], ['收作业、打分', '在提交记录里看提交、写评审', 'submissions'], ['让 AI 队友跟上进度', '在分类里写好给 AI 队友的指导', 'challenges']],
   办公: [['让芝士整理一份周报', '把材料丢进话题，说清要什么格式', 'working-with-cheese'], ['把一件事交给芝士', '描述目标，中途补要求，最后验收', 'office-tutorial'], ['和同事一起推进项目', '团队、项目、话题，谁在做什么一目了然', 'projects'], ['把做好的网页发布出去', '项目里的网页一键发布成网站', 'sites']],
   团队项目: [['把一个功能交给芝士开发', '连上仓库，芝士开 PR，你验收后合并', 'accept'], ['给项目分派任务', '拆成几条任务并行推进，看板上看进度', 'tasks'], ['让芝士用我的电脑干活', '接入自己的电脑或服务器，按目录授权', 'devices'], ['把做好的网页发布出去', '项目里的网页一键发布成网站', 'sites']],
 }
