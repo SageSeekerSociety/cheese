@@ -29,6 +29,7 @@ import { t } from '@/i18n'
 import { isAgentHandle } from '@/lib/authorship'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
+import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -115,7 +116,7 @@ watch(
  *  截图里 AO 的每张卡显示的是分支名，我们这里显示不了：一条活**没有自己的分支**，
  *  多条活共用一棵树、一棵树开一个 PR。照抄那一行只会写出一个假的事实。 */
 const roomTitle = computed(() => {
-  const byId = new Map((store.topics as Topic[]).map((t) => [t.id, t.title]))
+  const byId = new Map((store.topics as Topic[]).map((t) => [t.id, topicTitle(t)]))
   return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 

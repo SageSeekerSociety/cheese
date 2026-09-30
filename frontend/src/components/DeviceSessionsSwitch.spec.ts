@@ -28,7 +28,7 @@ import i18n, { setLocale } from '../i18n'
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 const cloud: ComputeChoice = {
-  name: '云端 · 标准配置',
+  name: null,
   profile: 'cloud',
   device_id: null,
   cores: null,

@@ -18,6 +18,7 @@ from app.core.sandbox_auth import bind_resource_token
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
+    choice_label,
     room_choice,
 )
 from app.domain.agent.device_hub import DeviceCallError, device_hub
@@ -164,7 +165,14 @@ async def project_distribution(db, project_id) -> dict:
             cloud += 1
             continue
         entry = on_devices.setdefault(
-            device_id, {"device_id": device_id, "name": choice["name"], "agents": 0}
+            device_id,
+            # Only a device's own name is shown; a label stored on "any online
+            # device" is one language's words and is not handed out.
+            {
+                "device_id": device_id,
+                "name": choice.get("name") if device_id else None,
+                "agents": 0,
+            },
         )
         entry["agents"] += 1
     devices = sql_device_service(db)
@@ -176,7 +184,7 @@ async def project_distribution(db, project_id) -> dict:
                 entry["name"] = device.name
         visibility = await _visibility_of(devices, entry["device_id"])
         listed.append({**entry, "machine_access": visibility is Visibility.host})
-    listed.sort(key=lambda entry: (-entry["agents"], entry["name"]))
+    listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
     return {"cloud": cloud, "devices": listed}
 
 
@@ -1040,7 +1048,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     call = gate.Call(
         resource=gate.Resource.machine,
         subject=selected.device_id if selected is not None else choice.profile,
-        label=selected.name if selected is not None else choice.name,
+        label=selected.name if selected is not None else choice_label(choice),
         tier=COMPUTE_TIERS[choice.profile],
         approver=approver,
     )
