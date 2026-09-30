@@ -13,6 +13,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.subscription import Subscription
 from app.domain.agent.harness.driven import backlog
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
 @pytest.mark.anyio
@@ -33,7 +34,12 @@ async def test_unsettled_receipt_survives_reconstructed_reader(
                 "uuid": input_id,
                 "isReplay": True,
                 "message": {"role": "user", "content": "answer received"},
-                "cheese": {"work_id": work, "receipt": True},
+                "cheese": {
+                    "work_id": work,
+                    "receipt": True,
+                    "receipt_work_id": work,
+                    "receipt_session_id": "native-session",
+                },
             },
         }
     ]
@@ -53,8 +59,8 @@ async def test_unsettled_receipt_survives_reconstructed_reader(
     async def announce():
         pass
 
-    async def settle(topic, prompt):
-        calls.append((topic, prompt))
+    async def settle(receipt):
+        calls.append(receipt)
         if not available:
             raise OSError("settlement unavailable")
 
@@ -66,6 +72,7 @@ async def test_unsettled_receipt_survives_reconstructed_reader(
             consume,
             activity,
             session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
             receipts=settle,
         )
@@ -95,7 +102,24 @@ async def test_unsettled_receipt_survives_reconstructed_reader(
             journal.close()
     available = True
     await drain()
-    assert calls == [(session.topic_id, "answer received")] * 6
+    assert (
+        calls
+        == [
+            InputReceipt(
+                InputIdentity(
+                    session.project_id,
+                    session.topic_id,
+                    "cheese-a",
+                    session.harness,
+                    "native-session",
+                    uuid.UUID(input_id),
+                    uuid.UUID(work),
+                ),
+                "native_echo",
+            )
+        ]
+        * 6
+    )
     await drain()
     assert len(calls) == 6
     journal = Journal(path)

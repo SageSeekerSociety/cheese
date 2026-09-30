@@ -175,13 +175,11 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(client, tmp
         injected = []
 
         def fail_commit(session):
-            if any(
-                isinstance(row, NativeInput) and row.settled_at is not None
-                for row in session.dirty
-            ):
-                session.flush()
-                injected.append("echo settlement")
-                session.execute(text("SELECT 1 / 0"))
+            # Installed only around this drain. Reaction reads may have flushed
+            # the effects already, so dirty membership cannot gate the fault.
+            session.flush()
+            injected.append("echo settlement")
+            session.execute(text("SELECT 1 / 0"))
 
         event.listen(Session, "before_commit", fail_commit)
         try:

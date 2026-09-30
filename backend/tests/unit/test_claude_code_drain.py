@@ -19,7 +19,7 @@ from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.service import AgentMessage, AgentResult
 
 
-async def _settle_receipt(topic, prompt):
+async def _settle_receipt(receipt):
     """These tests exercise output delivery; receipt persistence is available."""
 
 
@@ -28,10 +28,16 @@ def _journal(work: str) -> list[dict]:
     records = [
         {
             "type": "user",
-            "uuid": "echo",
+            "uuid": str(uuid.uuid4()),
             "isReplay": True,
             "message": {"role": "user", "content": "clean up the build"},
-            "cheese": {**stamp, "turn_start": True, "receipt": True},
+            "cheese": {
+                **stamp,
+                "turn_start": True,
+                "receipt": True,
+                "receipt_work_id": work,
+                "receipt_session_id": "native-session",
+            },
         },
         {
             "type": "assistant",
@@ -129,7 +135,8 @@ async def test_a_refused_command_does_not_stop_the_room_reading_the_turn(tmp_pat
         call,
         consume,
         activity,
-        session_id=None,
+        session_id="native-session",
+        recipient_handle="cheese-a",
         announce=announce,
         receipts=_settle_receipt,
         pulse=lambda seat, marks: pulses.append(marks),
@@ -157,10 +164,16 @@ def _long_turn(work: str, said: int) -> list[dict]:
     records = [
         {
             "type": "user",
-            "uuid": "echo",
+            "uuid": str(uuid.uuid4()),
             "isReplay": True,
             "message": {"role": "user", "content": "go"},
-            "cheese": {**stamp, "turn_start": True, "receipt": True},
+            "cheese": {
+                **stamp,
+                "turn_start": True,
+                "receipt": True,
+                "receipt_work_id": work,
+                "receipt_session_id": "native-session",
+            },
         },
         *(
             {
@@ -241,7 +254,8 @@ async def test_a_backlog_many_pages_long_reaches_the_room_a_page_at_a_time(tmp_p
             call,
             consume,
             activity,
-            session_id=None,
+            session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
             receipts=_settle_receipt,
         )
@@ -330,7 +344,8 @@ async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
             call,
             consume,
             activity,
-            session_id=None,
+            session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
             receipts=_settle_receipt,
         )
@@ -407,7 +422,8 @@ async def test_a_record_the_room_goes_on_refusing_is_stepped_over(
             call,
             consume,
             activity,
-            session_id=None,
+            session_id="native-session",
+            recipient_handle="cheese-a",
             announce=announce,
             receipts=_settle_receipt,
         )
@@ -482,7 +498,8 @@ async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_pat
         call,
         consume,
         activity,
-        session_id=None,
+        session_id="native-session",
+        recipient_handle="cheese-a",
         announce=announce,
         receipts=_settle_receipt,
     )
