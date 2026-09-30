@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 
 import { useAdminDashboard } from '@/composables/useAdminDashboard'
 
+import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminDashboardFeedback from '@/components/admin/dashboard/AdminDashboardFeedback.vue'
 import AdminDashboardHeader from '@/components/admin/dashboard/AdminDashboardHeader.vue'
 import AdminDashboardIntegrations from '@/components/admin/dashboard/AdminDashboardIntegrations.vue'
@@ -94,8 +95,8 @@ function onSelectDay(date: string | null) {
 </script>
 
 <template>
-  <div class="ad">
-    <div class="ad__inner page-container--admin">
+  <div class="ad admin-page">
+    <div class="ad__inner admin-page__col page-container--admin">
       <AdminDashboardHeader
         :kinds="kinds"
         :tabs="tabs"
@@ -110,15 +111,17 @@ function onSelectDay(date: string | null) {
       />
 
       <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
-           正文是**服务端原话**（不改写），重试是唯一主操作（琥珀份额归它），而且
-           真重拉 —— 不是把错误状态清掉装没事。 -->
-      <div v-if="failed" class="ad__none">
-        <span class="ad__none-title">{{ t('feedback.dashboard.error.title') }}</span>
-        <span class="ad__none-desc">{{ error }}</span>
-        <v-btn color="primary" size="small" class="ad__retry" @click="retry">
-          {{ t('feedback.dashboard.retry') }}
-        </v-btn>
-      </div>
+           正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
+           错误状态清掉装没事。块换成了共用的 `AdminEmptyState`（和队列、模型页的
+           出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
+      <AdminEmptyState
+        v-if="failed"
+        tone="error"
+        :title="t('feedback.dashboard.error.title')"
+        :desc="error"
+        :action="t('feedback.dashboard.retry')"
+        @action="retry"
+      />
 
       <!-- 一屏一类。取数在上面那一半，画法在各屏自己那里。 -->
       <AdminDashboardPipeline v-else-if="kind === 'pipeline'" :data="pipeline" :loading="loading" />
@@ -141,62 +144,20 @@ function onSelectDay(date: string | null) {
 </template>
 
 <style scoped>
-/* 滚动归这一页自己领：外壳（`AdminLayout` 的 `.admin-shell__main`）只让高度和宽度，
-   不给滚动（和 `AdminMembersPage` 同一套约定）。少了 `overflow-y: auto`，内容比一屏高
-   时下半截会被外面那层 `overflow-hidden` 裁掉，而且没人能滚。 */
+/* 骨架三层（画布 + 1440 那一列 + 正文）由 `.admin-page` / `__col` / `__body` 给。
+   以前这一页是「根上 `padding: 0 24px` + 页头负 margin 抵掉」，于是页头那道发丝线比
+   列宽多出 24px、比队列和模型两页的页头长一截；现在页头住进 1440 那一列，三者的
+   两端是同一条竖线。
 
+   `container-type: inline-size` 由 `__col` 给：这一页和它的各屏下面所有断点都是
+   **容器查询**（先例：`RunningWorkView`，理由相同 —— 侧栏能手折，折出来的 144px
+   视口媒体查询看不见，断点要看的是「这一格有多宽」）。 */
 .ad {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  padding: 0 24px 24px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
-
-/* 页头（`AdminPageHeader`）自带 24px 内边距和底下那条发丝线，而这一页的滚动区外面
-   还有一圈 24px 的左右内边距（正文要用）。页头那一圈用负 margin 抵掉：它的左右
-   边界要和队列、模型两页的页头对齐（都是同一个内容列的两端），不能再往里缩 24px。 */
-
-.ad :deep(.aph) {
-  margin: 0 -24px;
-}
-
-/* 1440 那一列的水平居中（宽度走 `page-container--admin`，这里只管位置）。
-   `container-type: inline-size`：下面所有断点都是**容器查询**（先例：
-   `RunningWorkView`，理由相同 —— 侧栏能手折，折出来的 144px 视口媒体查询看不见，
-   断点要看的是「这一格有多宽」）。 */
 
 .ad__inner {
-  display: flex;
-  flex-direction: column;
-  margin: 0 auto;
-  container-type: inline-size;
-}
-
-.ad__none {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 48px 0 0;
-}
-
-.ad__none-title {
-  font-size: 15px;
-  line-height: var(--lh-15);
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.ad__none-desc {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-/* 错误块里「重试」是唯一主操作 —— 琥珀份额归它（design-system §1.6）。 */
-
-.ad__retry {
-  align-self: flex-start;
-  margin-top: 8px;
+  flex: 1 0 auto;
 }
 </style>
