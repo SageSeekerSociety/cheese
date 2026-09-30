@@ -77,7 +77,8 @@ Rendering the site writes nothing to the source tree.
 
 - Files under `src/` over **1000 lines** may not grow; 19 are already there and
   are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
-  only files that differ from `origin/main`.
+  only the files this branch changed, each against the size it had at the merge
+  base with `origin/main`.
 - `pnpm run lint` is the read-only ESLint (the writer is `lint:fix`); never gate
   on the writing form. Design tokens and the two themes have their own ratchet —
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).

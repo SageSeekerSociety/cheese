@@ -179,13 +179,15 @@ repos:
         files: ^docs/manual/
 
       # A file-size ratchet, not a cliff: 35 files are already past their cap
-      # (frontend/src 1000 lines, backend/app 1500) and each is frozen at its
-      # size on the merge base. Only files that changed against origin/main are
-      # read, so an oversized file may shrink but not grow, and a new file must
-      # land under the cap. It needs a remote-tracking origin/main — CI fetches
-      # one; locally `git fetch origin main` is the fix if it is missing, which
-      # is why the failure for that case is a "cannot judge" (exit 2) naming
-      # the fetch rather than a pass.
+      # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
+      # size it had where this branch left main — the merge base, which is why
+      # main moving on cannot fail a branch for a file it never touched. Only
+      # the files the branch actually changed are read, so an oversized file may
+      # shrink but not grow, and a new file must land under the cap. It needs a
+      # remote-tracking origin/main AND the history to find the merge base with
+      # it: CI fetches both (see .github/workflows/repo-guards.yml); locally
+      # `git fetch origin` is the fix, which is why each missing piece is a
+      # "cannot judge" (exit 2) naming the fetch rather than a pass.
       - id: file-size
         name: files have not grown past their size cap
         entry: python3 .claude/scripts/check-file-sizes.py

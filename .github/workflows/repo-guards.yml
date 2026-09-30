@@ -93,17 +93,24 @@ jobs:
 
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
-      # does not create it. Shallow is enough — only the tree at main's tip is
-      # read, never its history.
+      # does not create it. So does the HISTORY behind it, and that is the part
+      # this step used to skip: a file-size finding is measured at the merge
+      # base with main, and a depth-1 checkout has no common ancestor to compute
+      # one from. The old fallback compared against main's tip, which failed
+      # PR #2173 for frontend/src/api.ts "growing" 3615 → 3610 — main had shrunk
+      # the file after that branch forked, and the branch never touched it.
+      # check-file-sizes.py now exits 2 (cannot judge) rather than guess, so
+      # this fetch is what makes the guard judgeable at all. Note the command:
+      # a `--depth=1` here would RE-shallow origin/main and undo the merge base.
       - name: Fetch main for comparison
-        run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+        run: git fetch --no-tags --unshallow origin
 
       - name: Alembic chain would not fork on merge
         run: uvx pre-commit run --all-files migration-fork
 
-      # Runs here rather than in the backend lane because it needs the ref
-      # above: the comparison is against main, and a file is frozen at the size
-      # it had there. No database, no uv venv, no network — it reads the changed
-      # files and counts lines.
+      # Runs here rather than in the backend lane because it needs the ref above
+      # and the history behind it: the comparison is against the merge base with
+      # main, and a file is frozen at the size it had there. No database, no uv
+      # venv, no network — it reads the changed files and counts lines.
       - name: No file grew past its size cap
         run: uvx pre-commit run --all-files file-size
