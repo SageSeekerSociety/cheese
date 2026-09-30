@@ -27,7 +27,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.harness.prompt import platform_prompt, strip_platform_notice
+from app.domain.agent.harness.prompt import (
+    is_inline_image,
+    platform_prompt,
+    strip_platform_notice,
+)
 from app.domain.agent.platform_notices import (
     EVENT_CONTEXT_COMPACT,
     SEVERITY_INFO,
@@ -298,9 +302,9 @@ def offered_attachments(
         if not library.attachment_exists(project_id, room_id, b.content)
     }
     images = [
-        {"path": b.content, "media_type": b.mime_type or "image/png"}
+        {"path": b.content, "media_type": b.mime_type}
         for b in attachments
-        if b.id not in gone
+        if b.id not in gone and is_inline_image(b.mime_type)
     ]
     return images, gone
 

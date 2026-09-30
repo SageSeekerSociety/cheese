@@ -71,6 +71,7 @@ from app.domain.agent.harness.prompt import (
     attachment_prompt_line,
     build_system_prompt,
     fit_doc_to_budget,
+    is_inline_image,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -1076,19 +1077,17 @@ class ChatService:
         lines = []
         if content:
             lines.append(f"[{author}]: {strip_platform_notice(content)}")
-        images = [
-            {
-                "path": str(attachment.get("path") or ""),
-                "media_type": str(attachment.get("mime") or "image/png"),
-            }
-            for attachment in attachments or []
-            if attachment.get("path")
+        files = [
+            {"path": str(a["path"]), "media_type": str(a.get("mime") or "")}
+            for a in attachments or []
+            if a.get("path")
         ]
+        images = [f for f in files if is_inline_image(f["media_type"])]
         lines.extend(
             attachment_prompt_line(
-                author, image["path"], embeds_images=True, mime=image["media_type"]
+                author, file["path"], embeds_images=True, mime=file["media_type"]
             )
-            for image in images
+            for file in files
         )
         if (replied := await self._reply_parent(user_block_ids)) is not None:
             lines.append(
