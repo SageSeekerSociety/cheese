@@ -114,7 +114,7 @@ test.describe('Topic naming', () => {
     await openFirstProject(page);
     const projectId = projectIdOf(page);
     try {
-      await page.goto(`/projects/${projectId}/settings`);
+      await page.goto(`/projects/${projectId}/settings/topic-naming`);
       const manual = page.getByRole('radio', { name: /手动命名/ });
       await manual.click();
       await expect(manual).toHaveAttribute('aria-checked', 'true');

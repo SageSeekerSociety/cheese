@@ -12,40 +12,45 @@ const SRC = dirname(fileURLToPath(import.meta.url))
 // 还是「哪条规则在什么位置、跟着哪个状态灰掉」。
 const view = readFileSync(join(SRC, 'components/settings/BranchProtectionSection.vue'), 'utf8')
 
-/** The markup between a `<span class="page-section-title">TITLE</span>` and the
- *  end of its `<section>` — i.e. one settings section's body. */
-function section(title: string): string {
-  const head = `<span class="page-section-title">${title}</span>`
+/** 这一块里的文字都从词条库取：按键名找，`label('checks')` 就是
+ *  `work.projectSettings.merge.checks` 那一句（「合并前必须通过的检查」）。 */
+const label = (key: string) => `work.projectSettings.merge.${key}`
+
+/** The markup between the section title and the end of its `<section>` — i.e.
+ *  one settings section's body. */
+function section(key: string): string {
+  const head = `<span class="page-section-title">{{ t('${label(key)}') }}</span>`
   const start = view.indexOf(head)
-  expect(start, `section 「${title}」 not found`).toBeGreaterThan(-1)
+  expect(start, `section 「${key}」 not found`).toBeGreaterThan(-1)
   const end = view.indexOf('</section>', start)
   return view.slice(start, end === -1 ? undefined : end)
 }
 
 describe('the 分支保护 section', () => {
   it('照 GitHub 分支保护那一页的顺序列出规则', () => {
-    const s = section('分支保护')
+    const s = section('title')
+    // 必须通过的检查、跟上 main、作废采纳、自动合并、放行名单、批准人数、合并方式、默认审阅
     const order = [
-      '合并前必须通过的检查',
-      '合并前分支必须跟上 main',
-      '新提交作废已有的采纳',
-      '允许自动合并',
-      '人工放行的人',
-      '需要几个人批准',
-      '合并方式',
-      '任务默认 reviewer',
+      'checks',
+      'strict',
+      'dismissStale',
+      'autoMerge',
+      'override',
+      'approvals',
+      'mergeMethod',
+      'defaultReviewer',
     ]
     let last = -1
-    for (const label of order) {
-      const at = s.indexOf(label)
-      expect(at, `「${label}」 out of order or missing`).toBeGreaterThan(last)
+    for (const key of order) {
+      const at = s.indexOf(`'${label(key)}'`)
+      expect(at, `「${key}」 out of order or missing`).toBeGreaterThan(last)
       last = at
     }
   })
 
   it('GitHub 已开保护时给顶行提示，同名规则灰掉而不是藏起来', () => {
-    const s = section('分支保护')
-    expect(s).toContain('GitHub 已在执行以下规则')
+    const s = section('title')
+    expect(s).toContain(label('githubEnforced'))
     expect(s).toContain('bp.github_protection.enforced')
     // 同名规则 = GitHub 那一页也有的五处：必须通过的检查（输入 + 删除）、跟上
     // main、作废采纳、放行名单、批准人数 —— 每一处的 disabled 都绑着 ghEnforced。
@@ -56,25 +61,25 @@ describe('the 分支保护 section', () => {
   })
 
   it('查不到 GitHub 状态时不灰，只加一行淡色说明', () => {
-    const s = section('分支保护')
+    const s = section('title')
     expect(s).toMatch(/status === 'unknown'/)
-    expect(s).toContain('暂时查不到 GitHub 侧的保护状态')
+    expect(s).toContain(label('githubUnknown'))
   })
 
   it('合并方式只显示，永远不出现在写回的 patch 里', () => {
-    const s = section('分支保护')
+    const s = section('title')
     expect(s).toContain('bp.merge_method')
     expect(s).not.toMatch(/merge_method\s*:/)
   })
 
-  it('平台独有的两项（自动合并、任务默认 reviewer）不随 GitHub 灰掉', () => {
-    const s = section('分支保护')
-    const row = (label: string) => {
-      const at = s.indexOf(label)
-      expect(at, `「${label}」 not found`).toBeGreaterThan(-1)
+  it('平台独有的两项（自动合并、默认审阅）不随 GitHub 灰掉', () => {
+    const s = section('title')
+    const row = (key: string) => {
+      const at = s.indexOf(`'${label(key)}'`)
+      expect(at, `「${key}」 not found`).toBeGreaterThan(-1)
       return s.slice(at, s.indexOf('</div>\n\n', at))
     }
-    expect(row('允许自动合并')).not.toContain('ghEnforced')
-    expect(row('任务默认 reviewer')).not.toContain('ghEnforced')
+    expect(row('autoMerge')).not.toContain('ghEnforced')
+    expect(row('defaultReviewer')).not.toContain('ghEnforced')
   })
 })

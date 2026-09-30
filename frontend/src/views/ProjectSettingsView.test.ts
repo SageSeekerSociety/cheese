@@ -230,4 +230,46 @@ describe('project settings', () => {
       wrapper.unmount()
     }
   })
+
+  // 每一栏只放一类事：人一次只为一件事来（换队友 / 调机器 / 定合并规则 / 接仓库）。
+  it('lists the sections in order, with archiving last and only for the owner', async () => {
+    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }]
+    const wrapper = await openSettings()
+    try {
+      const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
+      const entries = Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
+      expect(entries).toEqual([
+        'AI 队友',
+        '话题命名',
+        '工作电脑',
+        '运行环境',
+        '合并规则',
+        '仓库与署名',
+        'MCP 服务器',
+        '归档项目',
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each([
+    ['agents', ['AI 队友', '默认模型']],
+    // 额度跟着工作电脑走：它答的是「还能跑多久」。
+    ['computer', ['默认工作电脑', '额度']],
+    // 分支保护是合并规则，不是仓库连接。
+    ['merge', ['分支保护']],
+    ['repository', ['GitHub 仓库地址', '连接 GitHub 仓库', '提交署名', '连接 GitHub 账号']],
+  ])('puts the right blocks in the %s section', async (section, blocks) => {
+    const wrapper = await openSettings(section)
+    try {
+      await vi.waitFor(() =>
+        expect(
+          Array.from(wrapper.element.querySelectorAll('.page-section-title'), (el) => el.textContent?.trim())
+        ).toEqual(blocks)
+      )
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })
