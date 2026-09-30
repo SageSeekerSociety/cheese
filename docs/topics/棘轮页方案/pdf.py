@@ -21,8 +21,8 @@ CHECKS = {c["id"]: c for c in SNAP["checks"]}
 
 #: A real run at the same commit as the snapshot:
 #:   cd frontend && pnpm exec vitest run src/views/demo/catalog.spec.ts
-#:   118 passed / 0 failed, 2026-09-30 08:22 UTC
-MOUNT = {"components": 34, "cases": 115, "tests": 118}
+#:   128 passed / 0 failed, 2026-09-30 09:03 UTC
+MOUNT = {"components": 37, "cases": 125, "tests": 128}
 
 
 def _num(v):

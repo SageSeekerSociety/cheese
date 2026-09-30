@@ -87,7 +87,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
   </aside>
   <main class="page">
   <div class="page-container--admin">
-    <div class="banner">第二版预览，未上线。数字来自采集脚本的一次真实运行（<span id="chk-count">0</span> 道检查 + 看板），页面按检查名取数、不手抄；走势来自 CI 存下的 <span id="hist-count">0</span> 次看板记录。本页不是 CI 跑出来的那一份，采集提交见下。<br>两份数据的提交不同：快照是分支 <span class="mono" id="banner-sha">—</span>（含 main 的 #2199 拆 AdminDashboardPage），CI 历史最后一点是 05:51 的 <span class="mono">27a2619b1</span>，早于 <span class="mono">#2199</span>——所以 ③ 里 29 → 28 的差有一部分出在这条历史还没记上。</div>
+    <div class="banner">第三版预览，未上线。数字来自采集脚本的一次真实运行（<span id="chk-count">0</span> 道检查 + 看板），页面按检查名取数、不手抄；走势来自 CI 存下的 <span id="hist-count">0</span> 次看板记录。本页不是 CI 跑出来的那一份，采集提交见下。<br>两份数据的提交不同：快照是分支 <span class="mono" id="banner-sha">—</span>（含 main 的 #2199、#2188 等 11 个提交），CI 历史最后一点是 05:51 的 <span class="mono">27a2619b1</span>，早于这些提交——所以 ③ 里 29 → 现在的差有一部分出在这条历史还没记上。</div>
 
     <div class="ph">
       <div>
@@ -159,7 +159,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
         <span class="st tag t-recal">口径修正中</span>
       </div>
       <div class="kpis">
-        <div class="kpi"><div class="l">评分达标 <span class="tag t-recal">口径修正中</span></div><div class="v dim">不显示</div><div class="f">现行判定把「自己取数的容器」和「展示层」当成同一个对象：一个合法的新写法（route-shell 取数、子树是纯 props 的 View）仍被判 C。修好前显示这个数会误导</div></div>
+        <div class="kpi"><div class="l">评分达标 <span class="tag t-recal">口径修正中</span></div><div class="v dim">不显示</div><div class="f">判定规则刚换过（#2209）：页面把渲染交给同目录 <span class="mono">&lt;Page&gt;View.vue</span> 时算容器，不再计入未达标。这一区按新指纹重新起算，第一段还不满一个比较区间，所以不给方向</div></div>
         <div class="kpi"><div class="l">已挂载验证 <span class="tag t-real">真实值</span></div><div class="v" id="mount-count">—</div><div class="f" id="mount-detail">—</div></div>
         <div class="kpi"><div class="l">规则评分未达标 <span class="tag t-real">真实值</span></div><div class="v"><span data-c="scene-ratchet.actual">—</span><small>个</small></div><div class="f">冻结 <span data-c="scene-ratchet.frozen">—</span>；<b>这是现行规则的数，不代表这些场景都该改</b></div></div>
         <div class="kpi"><div class="l">挂载证据来源</div><div class="v dim">另一列</div><div class="f">只认预览站登记、并被 <span class="mono">catalog.spec.ts</span> 逐格挂载通过的场景；不并进检查器数出来的那个数</div></div>
@@ -245,7 +245,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
         <thead><tr><th>超出最多的 10 个文件</th><th class="num">行数</th><th class="num">上限</th><th class="num">超出</th><th class="num">起点行数</th><th class="num">变化</th></tr></thead>
         <tbody id="worst"></tbody>
       </table>
-      <div class="foot"><b>这一道闸门只判改动文件</b>（与合并基点比，不维护冻结清单），所以它在快照里的 actual 是「本次改动里超标的文件数」，在 main 上通常是 0——不是「超标文件 0 个」。上面的文件数和行数来自看板，是树的全量统计。<br><b>走势最后一点比快照旧</b>：CI 历史停在 <span class="mono">27a2619b1</span>（05:51 UTC），快照是 <span class="mono" id="foot-sha">—</span>（08:17 UTC，含 #2199 拆 AdminDashboardPage），两者之间的差值不全是同一棵树上的变化。</div>
+      <div class="foot"><b>这一道闸门只判改动文件</b>（与合并基点比，不维护冻结清单），所以它在快照里的 actual 是「本次改动里超标的文件数」，在 main 上通常是 0——不是「超标文件 0 个」。上面的文件数和行数来自看板，是树的全量统计。<br><b>走势最后一点比快照旧</b>：CI 历史停在 <span class="mono">27a2619b1</span>（05:51 UTC），快照是 <span class="mono" id="foot-sha">—</span>（09:15 UTC，含 main 的 #2199、#2188 等 11 个提交），两者之间的差值不全是同一棵树上的变化。</div>
     </section>
 
     <!-- 4 -->
@@ -355,10 +355,10 @@ else { document.getElementById('s2-pass-tag').outerHTML = `<span class="tag t-up
 // ① The rule number is real; the mounting evidence is kept in its own column.
 // Mounting evidence, from a real run at the same commit the snapshot is from:
 //   cd frontend && pnpm exec vitest run src/views/demo/catalog.spec.ts
-//   118 passed / 0 failed, 2026-09-30 08:22 UTC, 17.4s. This is not part of the
+//   128 passed / 0 failed, 2026-09-30 09:03 UTC. This is not part of the
 // snapshot — the collector collects checkers' records, and this is deliberately
 // a separate column, not folded into the rule's number.
-const MOUNT = {components: 34, cases: 115, tests: 118, when: '2026-09-30 08:22'};
+const MOUNT = {components: 37, cases: 125, tests: 128, when: '2026-09-30 09:03'};
 set('grade-a', fmt(FIRST.A));
 set('mount-count', `${MOUNT.components} 个`);
 set('mount-detail', `${MOUNT.cases} 格在预览站挂载通过`);
