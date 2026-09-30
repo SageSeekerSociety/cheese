@@ -146,25 +146,61 @@ jobs:
           fi
 
       # What each gate check said about this commit, with the fingerprint of the
-      # rules that decided it. Run through `uv run` so the checks that need
-      # pytest and import-linter get the environment that was just installed —
-      # the collector runs its checkers with its own interpreter on purpose.
+      # rules that decided it.
+      #
+      # NOT through `uv run`, which is how this step used to start it: a failed
+      # setup-uv or a failed `uv sync` made that command fail before the
+      # collector was ever reached, so the run ended with no snapshot, nothing
+      # for the upload below to upload, and a green job. The collector itself
+      # needs git and the stdlib; the backend venv is only where the checks that
+      # need pytest and import-linter find them, so it is used when it is there
+      # and skipped when it is not. A check whose environment is missing is that
+      # check's own `not_collected` — a snapshot with holes in it, not a
+      # snapshot that disappears.
       - name: Collect the ratchet snapshot
         continue-on-error: true
-        working-directory: backend
         env:
           OUT: ${{ runner.temp }}
         run: |
-          uv run python ../.claude/scripts/ratchet-snapshot.py \
+          set -uo pipefail
+          interpreter=python3
+          if [ -x backend/.venv/bin/python ]; then
+            interpreter=backend/.venv/bin/python
+          fi
+          echo "the collector runs under $interpreter"
+          "$interpreter" .claude/scripts/ratchet-snapshot.py \
             --out "$OUT/ratchet-snapshot.json" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          code=$?
+          echo "the collector exited $code"
+          # The collector writes its own failure record whenever it runs at all.
+          # This is the last resort for the case where it could not start: the
+          # artifact is then a file saying so, never an absence.
+          if [ ! -s "$OUT/ratchet-snapshot.json" ]; then
+            {
+              echo "the ratchet snapshot was not collected"
+              echo "interpreter: $interpreter"
+              echo "exit code: $code"
+            } > "$OUT/ratchet-snapshot.failed.txt"
+          fi
 
       - name: Job summary
         continue-on-error: true
         if: always()
         env:
           OUT: ${{ runner.temp }}
-        run: cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -uo pipefail
+          cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ ! -s "$OUT/ratchet-snapshot.json" ]; then
+            {
+              echo ""
+              echo "## The ratchet snapshot was NOT collected"
+              echo ""
+              echo "This commit has no fingerprint series entry. The artifact"
+              echo "says what went wrong instead of a snapshot."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
@@ -178,13 +214,19 @@ jobs:
           retention-days: 90
 
       # Kept at least as long as the board: a snapshot is only useful as a
-      # series, and the page reads this one. No `if-no-files-found: error` — a
-      # run where the collector could not write one has a red step already, and
-      # a second failure would only obscure it.
+      # series, and the page reads this one. `if-no-files-found: error` on
+      # purpose — a run that uploads nothing is a run whose collection failed,
+      # and treating that as success is what let a hole in the series go
+      # unnoticed. The failure record is uploaded beside the snapshot, so the
+      # artifact says which of the two happened rather than leaving the reader
+      # to guess from an absence.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         if: always()
         with:
           name: ratchet-snapshot
-          path: ${{ runner.temp }}/ratchet-snapshot.json
+          path: |
+            ${{ runner.temp }}/ratchet-snapshot.json
+            ${{ runner.temp }}/ratchet-snapshot.failed.txt
+          if-no-files-found: error
           retention-days: 90
