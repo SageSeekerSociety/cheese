@@ -57,7 +57,7 @@ async def _sessions_for_cloud(client, topic_id):
         return result
 
 
-def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
+def test_sessions_in_one_room_share_the_rooms_cloud_machine(warm_case):
     client, topics, actor, cloud = warm_case
     choice = ComputeChoice(name="Cloud", profile="cloud")
 
@@ -75,15 +75,15 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
         a, duplicate, b = await asyncio.gather(
             ensure(first), ensure(first), ensure(second)
         )
-        assert a == duplicate
-        assert a[0] != b[0] and a[1] != b[1] and a[2] != b[2]
-        assert len(cloud.created) == 1 and len(cloud.claims) == 1
-        assert cloud.claims[0][1]["claimKey"] in {str(a[0]), str(b[0])}
+        # 一个话题一个容器: one machine rented for the room, whoever asks first.
+        assert a == duplicate == b
+        assert len(cloud.created) + len(cloud.claims) == 1
         async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             assert await service.topic_machine(uuid.UUID(topics[0])) is None
             rows = await service.list_active_for_topic(uuid.UUID(topics[0]))
-            assert {row.session_id for row in rows} == {first, second}
+            assert [row.id for row in rows] == [a[0]]
+            assert rows[0].session_id in {first, second}
             assert await service.ready_topic_devices() == []
             for row in rows:
                 row.status = MachineStatus.error
@@ -563,7 +563,19 @@ def test_timeout_keeps_quota_reserved_and_retry_finishes_same_claim(
     cloud.fail_claim = True
 
     async def run():
-        sessions = await _sessions_for_cloud(client, topics[0]) if session_owned else []
+        sessions = []
+        if session_owned:
+            # One session in each room: rooms, not sessions, rent machines.
+            [first, _] = await _sessions_for_cloud(client, topics[0])
+            async with client.test_request_factory() as db:
+                other = AgentSession(
+                    topic_id=uuid.UUID(topics[1]),
+                    agent_handle="cloud-a",
+                    harness="claude-code",
+                )
+                db.add(other)
+                await db.commit()
+                sessions = [first, other.id]
 
         async def ensure(db, index):
             service = MachineService(db, cloud)

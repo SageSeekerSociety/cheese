@@ -144,6 +144,23 @@ class ProjectMachineRepository:
             )
         ).one_or_none()
 
+    async def get_room_session_machine(
+        self, topic_id: uuid.UUID, *, device_id: str | None = None
+    ) -> ProjectMachine | None:
+        """The Cloud machine this room's sessions work on: the oldest one a
+        session of the room rented and still holds."""
+        query = select(ProjectMachine).where(
+            ProjectMachine.topic_id == topic_id,
+            ProjectMachine.session_id.is_not(None),
+            ProjectMachine.released_at.is_(None),
+            ProjectMachine.superseded_at.is_(None),
+        )
+        if device_id is not None:
+            query = query.where(ProjectMachine.device_id == device_id)
+        return await self._session.scalar(
+            query.order_by(ProjectMachine.created_at, ProjectMachine.id).limit(1)
+        )
+
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         """All unreleased resources, including superseded VMs awaiting cleanup."""
         return list(

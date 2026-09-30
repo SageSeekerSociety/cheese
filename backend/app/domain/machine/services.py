@@ -463,7 +463,12 @@ class MachineService:
     async def ensure_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor, choice: ComputeChoice
     ) -> ProjectMachine:
-        """Reserve compute for one session after the caller authorized its choice."""
+        """The room's Cloud machine for this session, rented if the room has none.
+
+        一个话题一个容器（2026-09-28 决定，推翻结论 60）: a later agent in the
+        room works on the machine the first one rented, in its own directory,
+        never on a VM of its own. A session that already rented one keeps it.
+        """
         from app.domain.agent_instance.models import AgentInstance
         from app.domain.agent_session.models import AgentSession
         from app.domain.topic.services import TopicService
@@ -483,13 +488,17 @@ class MachineService:
         if choice.profile != "cloud":
             raise ValidationError("session has not selected cloud compute")
 
-        existing = await self._repo.get_active_for_session(session_id)
+        existing = await self._repo.get_active_for_session(
+            session_id
+        ) or await self._repo.get_room_session_machine(topic_id)
         if existing is not None:
             if existing.warm_claim_pending:
                 await self._warm_pool.finish_claim(existing)
             elif existing.machine_id is None:
                 await self._session.commit()
-                async with _create_locks.setdefault(session_id, asyncio.Lock()):
+                async with _create_locks.setdefault(
+                    existing.session_id or session_id, asyncio.Lock()
+                ):
                     pass
             topic = await TopicService(self._session).lock_for_execution(topic_id)
             await self._repo.lock_topic(topic_id)
@@ -532,8 +541,13 @@ class MachineService:
     async def supersede_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor
     ) -> ProjectMachine | None:
-        """Detach the session from its VM, which keeps its files and its quota
-        until ``release_left_machine`` or the room's cleanup deletes it.
+        """Detach the room's VM once the last session on it leaves; it keeps its
+        files and its quota until ``release_left_machine`` or the room's cleanup
+        deletes it.
+
+        The VM is the room's, so a session leaving it while another session
+        still holds a lease there leaves it standing (``None``): that session's
+        work is only there until it has pushed too.
 
         Pending allocation stays attached until its provider outcome is known.
         """
@@ -547,9 +561,26 @@ class MachineService:
             agent_session.topic_id
         )
         await self._repo.lock_topic(topic.id)
+        lease = agent_session.work_lease or {}
         machine = await self._repo.get_active_for_session(session_id)
+        if machine is None and lease.get("device_id"):
+            machine = await self._repo.get_room_session_machine(
+                topic.id, device_id=lease["device_id"]
+            )
         if machine is None:
             return None
+        if machine.device_id is not None:
+            others = await self._session.scalars(
+                select(AgentSession.work_lease).where(
+                    AgentSession.topic_id == topic.id,
+                    AgentSession.id != session_id,
+                    AgentSession.work_lease.is_not(None),
+                )
+            )
+            if any(
+                (other or {}).get("device_id") == machine.device_id for other in others
+            ):
+                return None
         await self.require_use_authority(topic.project_id, actor)
         if machine.warm_claim_pending or machine.machine_id is None:
             raise ConflictError("cloud allocation is still pending")
