@@ -111,6 +111,19 @@ class ActorResolver:
         this claim."""
         return token_agent_handle(self._cheese_token) if self._cheese_token else None
 
+    def on_the_dev_credential(self, actor: Actor) -> bool:
+        """Was the bare global sandbox token the ONLY thing that admitted this
+        request — nobody resolved, no roster to ask?
+
+        That token is the trusted-single-host override: ``authorize_topic`` and
+        ``authorize_project`` let it through without resolving anybody, so a
+        route just admitted on it has no participant whose seat could be
+        checked. The ``actor`` half matters: callers send it on EVERY request in
+        dev (a test client, the CLI), so its presence alone says nothing — what
+        is asked here is whether it is also all there was.
+        """
+        return not actor.authenticated and is_global_sandbox_token(self._cheese_token)
+
     async def resolve(
         self,
         *,
