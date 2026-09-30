@@ -38,7 +38,10 @@ process here, so its status line is unambiguous: a "Skipped" result is
 recorded as skipped (never pass) and makes the run exit 2; "(no files to
 check)" is recorded as not_applicable in not_run — legitimate, but never
 counted as an execution. If every selected hook ends up skipped, the run
-exits 2: zero executed checks is not a pass.
+exits 2: zero executed checks is not a pass. The invocation pins
+--color never (the CLI flag beats PRE_COMMIT_COLOR=always) and ANSI
+escapes are stripped before matching, so a color-forced SKIP — where
+"Skipped" carries a trailing reset code — cannot blind the detection.
 
 CONSERVATIVE FALLBACK: with no merge base (shallow clone, missing
 origin/main), the selector falls back to selecting everything — but checks
@@ -108,6 +111,8 @@ if not os.path.isabs(GIT_DIR):
     GIT_DIR = str(Path(REPO_ROOT, GIT_DIR))
 
 PASS, FAIL, UNKNOWN, BLOCKED = 0, 1, 2, 3
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # suite -> pre-commit hook IDs, static layer only. The commands behind these
 # IDs live in .pre-commit-config.yaml; this map is selection, not definition.
@@ -369,7 +374,11 @@ def run(args, report, finish):
                 # --hook-stage manual so manual-stage hooks (pyright,
                 # frontend-typecheck under --types) actually run; hooks with
                 # no `stages:` restriction run at every stage including this.
-                [*precommit, "run", hook_id, "--all-files", "--hook-stage", "manual"],
+                # --color never beats PRE_COMMIT_COLOR=always: a colored
+                # "Skipped" carries a trailing ANSI reset that must never
+                # blind the skip detection below.
+                [*precommit, "run", hook_id, "--all-files", "--hook-stage", "manual",
+                 "--color", "never"],
                 capture_output=True, text=True, cwd=REPO_ROOT, timeout=args.timeout,
             )
         except subprocess.TimeoutExpired:
@@ -378,7 +387,9 @@ def run(args, report, finish):
             print(f"  ✗ {hook_id}: 超时（>{args.timeout}s）")
             continue
         seconds = round(time.time() - t0, 1)
-        out = proc.stdout + proc.stderr
+        # Strip ANSI in depth (--color never is already pinned): a leftover
+        # reset code after "Skipped" must not turn a skip into a pass.
+        out = ANSI_RE.sub("", proc.stdout + proc.stderr)
         # pre-commit returns 0 for a hook it did NOT run: "Skipped" via the
         # SKIP env, or "(no files to check)Skipped" when the file filter
         # matched nothing. One hook runs per process here, so the status

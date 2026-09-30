@@ -218,6 +218,34 @@ class CiFastTest(unittest.TestCase):
         self.assertIn("scene-ratchet", not_run)
         self.assertIn("无相关文件", not_run["scene-ratchet"])
 
+    # --- a color-forced SKIP must still be caught: the invocation pins
+    # --- --color never (beats PRE_COMMIT_COLOR=always) and ANSI is stripped
+    def test_colored_skip_is_not_a_pass(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast(env_extra={"PRE_COMMIT_COLOR": "always", "SKIP": "ruff"})
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        results = {r["id"]: r["result"] for r in self.report()["ran"]}
+        self.assertEqual(results.get("ruff"), "skipped")
+        self.assertNotIn("ruff", self.ran_hooks())  # the stub never executed
+        self.assertEqual(self.report()["status"], "unknown")
+
+    # --- same for the no-files case under forced color: still not_applicable
+    def test_colored_no_files_is_not_applicable(self):
+        self.write_hooks(extra_entries="""      - id: scene-ratchet
+        name: scene-ratchet filtered stub
+        entry: bash -c 'echo scene-ratchet >> .ci-fast-ran'
+        language: system
+        files: '\\.xyz$'
+""", omit={"scene-ratchet"})
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast(env_extra={"PRE_COMMIT_COLOR": "always"})
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        results = {r["id"]: r["result"] for r in self.report()["ran"]}
+        self.assertNotIn("scene-ratchet", results)
+        not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
+        self.assertIn("无相关文件", not_run["scene-ratchet"])
+
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):
         self.write_hooks()
