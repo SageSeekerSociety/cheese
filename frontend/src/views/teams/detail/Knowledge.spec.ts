@@ -75,7 +75,11 @@ vi.mock('@/services/account', async () => {
 })
 
 import KnowledgePage from './Knowledge.vue'
+// 原文，用来钉住「样式写在哪一件里」（`?raw` 由 vite 直接给字符串）。
+import pageSource from './Knowledge.vue?raw'
 
+import dialogSource from '@/components/teams/knowledge/KnowledgeDetailDialog.vue?raw'
+import gridSource from '@/components/teams/knowledge/KnowledgeGrid.vue?raw'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -397,5 +401,80 @@ describe('写入', () => {
     await fireEvent.click(card.querySelector('.mdi-open-in-new')!.closest('button')!)
 
     expect(open).toHaveBeenCalledWith('https://example.com', '_blank')
+  })
+})
+
+/**
+ * 拆这一页时最容易踩坏的一处：详情对话框是 `v-dialog`，内容被传送到 `body`，
+ * 于是**页那一层写不出能命中它的规则**。
+ *
+ * 拆之前这块样式长在页里，用的是普通作用域规则（`.code-block` 自己带
+ * `data-v-页`），所以能命中；拆之后如果照抄成 `:deep(.code-block)`，编译出来是
+ * `[data-v-页] .code-block`，而传送之后 body 里没有任何祖先带页的作用域属性 ——
+ * 一条都命中不了，底色、字色、等宽字体、`overflow-x` 一起没了（深色那支
+ * `:root[data-theme='dark'] :deep(.code-block)` 更绝，作用域会落到 `:root` 上，
+ * 永远不匹配）。同一件事实测过：
+ *
+ *   - 页根作用域 `data-v-bc7d3b32`，`.code-block` 自己带的是 `data-v-f72599cc`
+ *     （对话框那一件的）；
+ *   - `.code-block` 的祖先链是 .v-overlay → .v-overlay-container → body → html，
+ *     一个页作用域都没有，`document.querySelectorAll('[data-v-bc7d3b32] .code-block')`
+ *     是 0；
+ *   - 把那条祖先条件加上去之后，浅色下算出来的是 happy-dom 的默认底色、
+ *     `Times New Roman`、没有 `overflow-x`（也就是「样式全丢」）。
+ *
+ * 所以这一格钉两件事：**传送到 body 的节点不再有页作用域的祖先**（这是「样式
+ * 不能挂在页上」的根据），以及**这两块样式确实长在拥有节点的那一件里**。
+ * `.resource-preview` 不在传送链上（网格还在页的子树里），这里一并钉住写法：
+ * 两块都不要再由页跨一层去写。
+ */
+describe('样式归属', () => {
+  /** 页根节点身上的作用域属性（`data-v-...`）。 */
+  function pageScopes(view: ReturnType<typeof mount>): string[] {
+    return (view.container.firstElementChild as Element).getAttributeNames().filter((n) => n.startsWith('data-v-'))
+  }
+
+  it('代码块被传送到 body，祖先链上没有页作用域', async () => {
+    const item = knowledge({
+      id: 9,
+      name: '分页查询',
+      type: 'CODE',
+      content: JSON.stringify({ code: 'const page = await list()', language: 'typescript' }),
+    })
+    listMock.mockResolvedValue(page([item]))
+    const view = mount()
+    await waitFor(() => expect(gridCards(view).length).toBe(1))
+
+    await fireEvent.click(gridCards(view)[0]!)
+    const block = await waitFor(() => {
+      const el = document.body.querySelector('.code-block')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+
+    // 它确实被传送到了页的子树外面
+    expect(view.container.contains(block)).toBe(false)
+
+    // 它自己带着来源组件的作用域（说明样式该由那一件来写）
+    expect(block.getAttributeNames().filter((n) => n.startsWith('data-v-'))).not.toHaveLength(0)
+
+    // 而页的作用域一个都不在它的祖先链上：页写 `[data-v-页] .code-block` 命中不了
+    const scopes = pageScopes(view)
+    expect(scopes.length).toBeGreaterThan(0)
+    const ancestors: Element[] = []
+    for (let el = block.parentElement; el; el = el.parentElement) ancestors.push(el)
+    scopes.forEach((scope) => {
+      expect(ancestors.some((el) => el.hasAttribute(scope))).toBe(false)
+      expect(document.body.querySelectorAll(`[${scope}] .code-block`).length).toBe(0)
+    })
+  })
+
+  it('这两块样式长在拥有节点的那一件里，页上不再有 :deep 版本', () => {
+    // 页只是布局；跨一层写给子组件里节点的规则一条都不许回来。
+    expect(pageSource).not.toContain(':deep(.code-block)')
+    expect(pageSource).not.toContain(':deep(.resource-preview)')
+    // 反过来，节点在哪一件，规则就在哪一件。
+    expect(dialogSource).toMatch(/\.code-block\s*\{/)
+    expect(gridSource).toMatch(/\.resource-preview\s*\{/)
   })
 })

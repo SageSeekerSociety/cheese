@@ -18,6 +18,13 @@
  * 六件都是 `frontend_grade.py` 的 A 级（只吃 props、只往上发事件）：取数、写入、
  * 「这一条归谁」全在 `composables/useTeamKnowledge.ts` 和 `lib/knowledgeFormat.ts`
  * 里，所以这个目录里没有一条要装假后端。
+ *
+ * 观感也各归各家，不靠页那一层的样式：详情对话框是 `v-dialog`，内容被传送到
+ * `body`，页写得再对也够不着它（`views/teams/detail/Knowledge.spec.ts` 的
+ * 「样式归属」钉着这件事），所以 `.code-block` 的规则长在 `KnowledgeDetailDialog.vue`
+ * 里，`.resource-preview` 的四支分类色长在 `KnowledgeGrid.vue` 里，颜色字面量在
+ * `src/style.css` 的 `--category-*` / `--code-bg` / `--code-ink`。也就是说这几格
+ * 在预览站里跟产品是同一套规则，不是「长得像」。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
@@ -107,7 +114,7 @@ export const KNOWLEDGE_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '四种类型各一条',
-        note: '类型名、图标、几月几号都由 `lib/knowledgeFormat.ts` 算 —— 同一张表网格、表格、详情三处共用，所以同一个类型名不会在三种视图里各写一遍。',
+        note: '类型名、图标、几月几号都由 `lib/knowledgeFormat.ts` 算 —— 同一张表网格、表格、详情三处共用，所以同一个类型名不会在三种视图里各写一遍。卡顶那块预览的底色是四支分类色（规则在这一件里，值见 `src/style.css` 的 `--category-*`），所以这一格的底色就是产品里的底色。',
         props: { items: KNOWLEDGE_ROWS },
         expect: '设计规范 v3',
       },
@@ -183,7 +190,7 @@ export const KNOWLEDGE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '代码片段',
-        note: '代码块的**底色不在这里**：那是刻意反色的两块颜色，钉在 `views/teams/detail/Knowledge.vue` 的样式块里（理由写在那边）。',
+        note: '底色和字色是刻意反色的那一对，规则就在这一件里，值在 `src/style.css` 的 `--code-bg` / `--code-ink`（浅色深底浅字；深色换成比 surface 亮一档的 `--fill-2` + `--text`，不然会糊进卡片）。',
         props: knowledgeDetailProps({ resource: DETAIL_CODE, content: CODE_CONTENT }),
         expect: '代码片段',
       },

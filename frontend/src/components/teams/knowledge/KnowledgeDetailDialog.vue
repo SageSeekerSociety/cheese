@@ -4,8 +4,9 @@
 // 三块都不判断「这一条归谁」：能不能删由页算好 `ownerId` 递进来，删除本身报上去
 // （`delete`），由页去问那一句再打接口 —— 组件这一层不弹确认框、不发请求。
 //
-// **`.code-block` 的底色不在这里**：那是刻意反色的两块颜色，钉在
-// `views/teams/detail/Knowledge.vue` 的样式块里，理由写在那边。
+// `.code-block` 的样式就在这一件里 —— 弹窗传送出去以后，页那一层的 `:deep`
+// 够不着它（理由和那条规则写在一起，见文件末尾的样式块）。色值是
+// `src/style.css` 的 `--code-bg` / `--code-ink`。
 import type { Knowledge, KnowledgeContentData } from '@/types'
 import type { AudioMeta, FileMeta, ImageMeta, VideoMeta } from '@/types/materials'
 
@@ -151,8 +152,9 @@ const richText = computed({
                 {{ content.language }}
               </v-chip>
             </div>
-            <!-- 底色不写在这里：代码块是【故意反色】的元素，两个主题要两套值，
-                 见 <style> 里的 .code-block -->
+            <!-- 底色不写在这里：代码块是【故意反色】的元素，两个主题两套值，
+                 是 src/style.css 的 --code-bg / --code-ink，见 <style> 里的
+                 .code-block -->
             <v-sheet class="pa-4 rounded-lg code-block">
               <pre class="language-{{ content.language || 'javascript' }}"><code>{{ content.code }}</code></pre>
             </v-sheet>
@@ -293,6 +295,27 @@ const richText = computed({
   .ProseMirror {
     padding: 0;
     min-height: auto !important;
+  }
+}
+
+/* 代码块：故意反色的元素，两块颜色是 `src/style.css` 里的 `--code-bg` /
+   `--code-ink`（浅色主题深底浅字，深色主题换成比 surface 亮一档的
+   --fill-2 + --text，见那两个 token 的注释）。
+
+   这条规则**必须**长在这一件里，不能写回页上当 `:deep(.code-block)`：弹窗
+   是 `v-dialog`，内容被传送到 `body`，页那一层的 `:deep` 编译出来是
+   `[data-v-页] .code-block` —— 传送之后 body 里没有任何祖先带页的作用域
+   属性，规则一条也命中不了（`Knowledge.spec.ts` 里有一格把这件事钉住了）。 */
+.code-block {
+  overflow-x: auto;
+  color: var(--code-ink);
+  background-color: var(--code-bg);
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+
+  pre {
+    margin: 0;
   }
 }
 

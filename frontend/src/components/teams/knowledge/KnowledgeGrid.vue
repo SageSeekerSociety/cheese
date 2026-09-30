@@ -5,8 +5,9 @@
 // 什么、叫什么、几号放的、谁放的，全在 `lib/knowledgeFormat.ts`；那一层不 import
 // api / 路由，所以这里也用得。
 //
-// **`.resource-preview` 的底色不在这里**：那是四支分类色，钉在
-// `views/teams/detail/Knowledge.vue` 的样式块里，理由写在那边。
+// 预览格的固定高度和四支分类底色都在这一件的样式块里：这一件在预览站里要
+// 单独画出来，它需要什么就带着什么。色值本身是 `src/style.css` 的
+// `--category-*`，不是写在这里的字面量。
 import type { Knowledge } from '@/types'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -138,6 +139,34 @@ const emit = defineEmits<{
   color: var(--muted);
   line-height: 1.4;
   min-height: 2.8em;
+}
+
+/* 资料预览区那一格：固定高度 + 按类型给的分类底色。
+   四支分类色是 `src/style.css` 里的 `--category-*`（色相本身就是信息，
+   两个主题下同一个色相），不是写在这一件里的字面量 —— 这一件在预览站里要
+   单独画出来，它需要什么就该带着什么。 */
+.resource-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 140px;
+  background-color: var(--fill);
+
+  &.resource-type-material {
+    background-color: var(--category-material);
+  }
+
+  &.resource-type-text {
+    background-color: var(--category-text);
+  }
+
+  &.resource-type-link {
+    background-color: var(--category-link);
+  }
+
+  &.resource-type-code {
+    background-color: var(--category-code);
+  }
 }
 
 .resource-type-icon {

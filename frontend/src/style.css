@@ -101,6 +101,34 @@
   --code-function: #8a6d1b;
   --code-deletion: #b3403a;
 
+  /* ---- Resource categories: the knowledge library's four kinds ----
+     Four CATEGORIES, not four levels of emphasis: blue = file/material, green =
+     text, orange = link, cyan = code. The hue is the information, so these do
+     NOT flip in the dark — an 8% wash reads on either ground, and a category
+     that changed hue with the theme would be a different category. Same
+     reasoning as the radius ladder: theme-independent, so declared here and not
+     repeated in the dark block below.
+
+     They live here rather than in KnowledgeGrid because the tinted preview is
+     painted by the grid and has to be reproduced by the component preview site.
+     A literal in the component would be a new hardcoded colour by the
+     stylelint ratchet's book, and it would only be right in one theme. */
+  --category-material: rgba(63, 81, 181, 0.08);
+  --category-text: rgba(76, 175, 80, 0.08);
+  --category-link: rgba(255, 152, 0, 0.08);
+  --category-code: rgba(3, 169, 244, 0.08);
+
+  /* ---- Inverted code block ----
+     A code snippet is deliberately inverted: dark ground, light ink, in BOTH
+     themes. On dark the ground cannot stay #212121 — it measures 1.1:1 against
+     --surface (#1b1d20) and the block dissolves into the card — so the dark
+     block below lifts it to --fill-2 with --text ink (9.6:1). The two light
+     values have no other name in the ramp: the system has no "dark in the light
+     theme" rung, which is exactly why they are tokens here instead of literals
+     in the component that draws the block. */
+  --code-bg: #212121;
+  --code-ink: #e0e0e0; /* 13.8:1 on --code-bg */
+
   /* ---- Plumbing: chrome that is not part of the semantic ramp ----
      These exist so the rules at the bottom of this file stop hardcoding
      rgba(25, 26, 28, …), which is --ink at low alpha and therefore invisible
@@ -305,6 +333,14 @@
   --code-type: #6fcbd9;
   --code-function: #d9bc72;
   --code-deletion: #f0625c;
+
+  /* ---- Inverted code block (see the light block) ----
+     The block stays inverted here too, but not at the light theme's ground:
+     #212121 would sit 1.1:1 against --surface and disappear. Lifting it to
+     --fill-2 keeps it a step above the card it is drawn in (9.6:1 on --text).
+     The category washes above are deliberately absent: they do not flip. */
+  --code-bg: var(--fill-2);
+  --code-ink: var(--text);
 
   /* ---- Plumbing ---- */
   --scrollbar-thumb: rgba(243, 244, 246, 0.16);

@@ -119,74 +119,14 @@ async function onSubmitUpload(draft: Parameters<typeof createKnowledge>[0]) {
   justify-content: center;
 }
 
-/* ---------------------------------------------------------------------------
-   下面这两块是这一页**故意留着**的样式，不跟着各自的组件走。
-
-   `stylelint-baseline.json` 是**按文件**记的（`scripts/stylelint-ratchet.mjs`
-   只拦「新文件从 0 涨起来」，一涨就红），而这两块恰好都在基线里：`.resource-preview`
-   那四支分类色各自算一条硬编码色，`.code-block` 那对深浅色算两条。跟着组件搬进
-   新建的 `.vue` 里，等于让一个新文件从 0 涨到 4 / 2 —— 门会挡下来，而这两处颜色
-   该不该 token 化是设计系统那一层的事（见下面两段注释和
-   docs/design-system.md），不是这次拆分该顺手决定的。
-
-   所以它们留在这里、跨一层写给子组件里的元素：`[data-v-这一页] .resource-preview`
-   照样命中，因为那两个元素都在这一页的子树里。
+/* 这一页只留页面级的布局样式。资料块和代码块的观感跟着各自的元素走，
+   写在拥有那个节点的组件里：
+     - `.resource-preview`（含四支分类色）→ `components/teams/knowledge/KnowledgeGrid.vue`
+     - `.code-block`（含深色分支）→ `components/teams/knowledge/KnowledgeDetailDialog.vue`
+   原因不是洁癖：详情对话框走 Teleport，节点最终挂在 `body` 下，
+   `[data-v-这一页] .xxx` 这种带祖先条件的写法就再也够不着它了
+   （`frontend/src/views/teams/detail/Knowledge.spec.ts` 里有一条回归测试盯着
+   「传给对话框的样式不许再依赖页面作用域」）。颜色字面量收在
+   `src/style.css` 的 `--category-*` / `--code-bg` / `--code-ink` 里。
    --------------------------------------------------------------------------- */
-
-/* 资料类型那四支底色是【分类色】不是状态色：蓝=资料 / 绿=文本 / 橙=链接 / 青=代码，
-   色相本身就是这条信息，所以两个主题下必须是同一个色相，不能换成会翻转的
-   token。它们是 8% 的淡色叠加（不是实心填充），压在深色卡片上仍然成立，只是
-   更淡。设计系统目前没有"分类色"这一档 —— 要不要新增是 token 层的决定，
-   属于父话题，这里先原样保留（已在存量基线里）。 */
-:deep(.resource-preview) {
-  height: 140px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--fill);
-
-  &.resource-type-material {
-    background-color: rgba(63, 81, 181, 0.08);
-  }
-
-  &.resource-type-text {
-    background-color: rgba(76, 175, 80, 0.08);
-  }
-
-  &.resource-type-link {
-    background-color: rgba(255, 152, 0, 0.08);
-  }
-
-  &.resource-type-code {
-    background-color: rgba(3, 169, 244, 0.08);
-  }
-}
-
-/* 代码块是【故意反色】的元素：浅色主题下它是深底浅字，这是设计意图，不是漏掉的
-   token 化。但深色主题下不能照抄 —— #212121 压在 --surface(#1B1D20) 上只有
-   1.1:1，整块会糊进卡片里。所以深色分支往上提一档，用比 surface 更亮的
-   --fill-2(#282C31)，文字用 --text(#D3D6DB)，9.6:1。
-   做法照抄波次 1.5 在 RailItem 悬浮提示上的处理：组件内局部变量 + 一个真正站得住
-   的 [data-theme='dark'] 分支（这个元素要反转两次，不是选错了 token）。
-   浅色的两个值只能写死：设计系统里没有"在浅色主题下也是深色"的 token。 */
-:deep(.code-block) {
-  --code-bg: #212121;
-  --code-ink: #e0e0e0; /* 13.8:1 on #212121 */
-
-  overflow-x: auto;
-  color: var(--code-ink);
-  background-color: var(--code-bg);
-  font-family: 'Fira Code', monospace;
-  font-size: 0.9rem;
-  line-height: 1.5;
-
-  pre {
-    margin: 0;
-  }
-}
-
-:root[data-theme='dark'] :deep(.code-block) {
-  --code-bg: var(--fill-2);
-  --code-ink: var(--text);
-}
 </style>
