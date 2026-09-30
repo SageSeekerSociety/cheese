@@ -5,7 +5,7 @@
     "placeholder": "e.g. Programming exercises",
     "intro": "Introduction (optional)",
     "avatar": "Avatar (optional)",
-    "ownership": "A platform administrator will review your application. Once approved, you can publish and review problems in your space.",
+    "ownership": "A platform administrator will review your application. Once approved, you can publish and review challenges in your space.",
     "visibility": "The space will appear in the explore list after approval.",
     "cancel": "Cancel",
     "submit": "Submit for review",
@@ -25,7 +25,7 @@
     "enter": "Open space",
     "previous": "Previous",
     "next": "Next",
-    "adminHelp": "Approval makes the space public and lets its owner publish problems. Include a reason when rejecting an application.",
+    "adminHelp": "Approval makes the space public and lets its owner publish challenges. Include a reason when rejecting an application.",
     "status": "Review status",
     "refresh": "Refresh",
     "empty": "No applications.",
@@ -37,7 +37,7 @@
   },
   "detail": {
     "announcements": "Announcements",
-    "allContests": "All problems",
+    "allContests": "All challenges",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
     "deleteSpace": "Delete space",
@@ -46,13 +46,13 @@
     "deleteSpaceSuccess": "Space deleted",
     "deleteSpaceFailed": "Couldn't delete the space",
     "auditTasks": {
-      "title": "Problems awaiting review",
-      "noTasks": "No problems awaiting review",
-      "description": "Problem description",
+      "title": "Challenges awaiting review",
+      "noTasks": "No challenges awaiting review",
+      "description": "Challenge description",
       "submissionRequirements": "Submission requirements",
       "noRequirements": "No submission requirements",
-      "teamContest": "Team problem",
-      "individualContest": "Individual problem",
+      "teamContest": "Team challenge",
+      "individualContest": "Individual challenge",
       "resubmittable": "Can be submitted more than once",
       "editableSubmission": "Submissions can be edited",
       "teamLockingPolicyNoLock": "Team can be changed freely",
@@ -103,7 +103,7 @@
       "unarchiveCategory": "Restore",
       "setAsDefault": "Make default",
       "confirmDelete": "Delete this category?",
-      "confirmArchive": "Archive this category? Problems in it keep their link to it.",
+      "confirmArchive": "Archive this category? Challenges in it keep their link to it.",
       "name": "Name",
       "description": "Description",
       "displayOrder": "Display order",
@@ -131,9 +131,9 @@
       "displayOrderHint": "Lower numbers show first"
     },
     "publishTask": {
-      "createSuccess": "Problem created",
-      "createSuccessAndWaitingAudit": "Problem created — awaiting review",
-      "createFailed": "Couldn't create problem",
+      "createSuccess": "Challenge created",
+      "createSuccessAndWaitingAudit": "Challenge created — awaiting review",
+      "createFailed": "Couldn't create challenge",
       "spaceIdNotFound": "Space ID not found",
       "initializationFailed": "Couldn't start",
       "attachmentsUploading": "Attachments are still uploading. Publish once they finish.",
@@ -188,9 +188,9 @@
       }
     },
     "selectTemplate": {
-      "title": "Choose a problem template",
+      "title": "Choose a challenge template",
       "back": "Back",
-      "blankTemplate": "Start from a blank problem"
+      "blankTemplate": "Start from a blank challenge"
     },
     "tasks": {
       "searchPlaceholder": "Search this space",
@@ -199,8 +199,8 @@
         "latestUpdated": "Recently updated",
         "nearestDeadline": "Ending soon"
       },
-      "publishTask": "Publish problem",
-      "noTasks": "No problems yet",
+      "publishTask": "Publish challenge",
+      "noTasks": "No challenges yet",
       "topic": "Topic",
       "category": "Category",
       "allTopics": "All topics",
@@ -209,7 +209,7 @@
         "participating": "Joined",
         "publishing": "Published"
       },
-      "loadFailed": "Couldn't load problems",
+      "loadFailed": "Couldn't load challenges",
       "pendingOnly": "Needs action only",
       "scopeLabel": "Scope",
       "topicCount": "{n} topics",
@@ -246,12 +246,12 @@
       }
     },
     "templateForm": {
-      "editTitle": "Edit problem template",
-      "createTitle": "Create a problem template",
+      "editTitle": "Edit challenge template",
+      "createTitle": "Create a challenge template",
       "templateName": "Template name",
       "templateDescription": "Template description",
-      "contestTitle": "Problem title",
-      "contestDescription": "Problem description",
+      "contestTitle": "Challenge title",
+      "contestDescription": "Challenge description",
       "save": "Save",
       "loadTemplateFailed": "Couldn't load template",
       "updateSuccess": "Template updated",
@@ -452,7 +452,7 @@
     "tabs": {
       "basic": "Basics",
       "categories": "Categories and topics",
-      "templates": "Problem templates",
+      "templates": "Challenge templates",
       "inviteCodes": "Invite codes",
       "domainGroups": "Email domain groups"
     },
@@ -464,7 +464,7 @@
       "name": "Name",
       "intro": "Introduction",
       "save": "Save",
-      "visibleLimit": "Approved, open problems each publisher can show to members",
+      "visibleLimit": "Approved, open challenges each publisher can show to members",
       "visibleLimitUnlimited": "Unlimited",
       "visibleLimitLimited": "Limited",
       "visibleLimitInput": "Limit",
@@ -472,7 +472,7 @@
       "visibleLimitInvalid": "The limit must be a whole number of 0 or more",
       "avatar": "Avatar",
       "changeAvatar": "Change avatar",
-      "visibleLimitLabel": "Visible problem limit"
+      "visibleLimitLabel": "Visible challenge limit"
     },
     "overlay": "Space settings",
     "close": "Close space settings",
@@ -525,7 +525,7 @@
       "overview": "Overview",
       "alerts": "Alerts",
       "publishers": "Publishers",
-      "tasks": "Problems",
+      "tasks": "Challenges",
       "participants": "Participants",
       "learning": "Learning"
     },
@@ -595,19 +595,19 @@
       "empty": "No alerts",
       "loadFailed": "Couldn't load alerts",
       "pendingTasks": {
-        "label": "Problems to review",
-        "hint": "Open the problems awaiting review"
+        "label": "Challenges to review",
+        "hint": "Open the challenges awaiting review"
       },
       "pendingClaims": {
         "label": "Claims to approve",
-        "hint": "Open problems with claims to approve"
+        "hint": "Open challenges with claims to approve"
       },
       "pendingReviews": {
         "label": "Submissions to review",
-        "hint": "Open problems with submissions to review"
+        "hint": "Open challenges with submissions to review"
       },
       "stalledTasks": {
-        "label": "Stalled problems",
+        "label": "Stalled challenges",
         "hint": "Claimed, but nothing submitted in 14 days"
       },
       "overdueReviews": {
@@ -616,14 +616,14 @@
       },
       "inactivePublishers": {
         "label": "Inactive publishers",
-        "hint": "No problem published in 30 days"
+        "hint": "No challenge published in 30 days"
       }
     },
     "tasks": {
       "pendingClaims": "Claims to approve",
       "pendingReviews": "Submissions to review",
-      "export": "Export problems",
-      "loadFailed": "Couldn't load problem data",
+      "export": "Export challenges",
+      "loadFailed": "Couldn't load challenge data",
       "sort": {
         "createdAt": "Created",
         "participantCount": "Claims",
@@ -631,7 +631,7 @@
         "pendingReviewCount": "To review"
       },
       "col": {
-        "taskName": "Problem",
+        "taskName": "Challenge",
         "publisher": "Publisher",
         "category": "Category",
         "approved": "Review",
@@ -649,25 +649,25 @@
       "loadFailed": "Couldn't load publisher data",
       "col": {
         "publisherName": "Publisher",
-        "taskCount": "Problems",
+        "taskCount": "Challenges",
         "participantCount": "Claims",
         "approvedParticipantCount": "Approved claims",
         "submittedParticipantCount": "Submitted",
         "successfulParticipantCount": "Succeeded",
-        "avgParticipantsPerTask": "Claims per problem",
+        "avgParticipantsPerTask": "Claims per challenge",
         "submissionConversionRate": "Submit rate",
         "successRate": "Success rate",
         "lastTaskCreatedAt": "Last published"
       },
       "sort": {
-        "taskCount": "Problems",
+        "taskCount": "Challenges",
         "participantCount": "Claims",
         "successRate": "Success rate",
         "lastTaskCreatedAt": "Last published"
       },
       "rank": {
-        "mostTasks": "Most problems",
-        "tasks": "{n} problems",
+        "mostTasks": "Most challenges",
+        "tasks": "{n} challenges",
         "bestRate": "Best success rate",
         "mostClaims": "Most claims",
         "claims": "{n} claims"
@@ -727,17 +727,17 @@
       },
       "distribution": {
         "category": "Categories",
-        "approval": "Problem review",
+        "approval": "Challenge review",
         "completion": "Completion"
       },
       "metric": {
         "tasks": {
-          "label": "Problems",
-          "hint": "Problems counted"
+          "label": "Challenges",
+          "hint": "Challenges counted"
         },
         "publishers": {
           "label": "Publishers",
-          "hint": "Published at least one counted problem"
+          "hint": "Published at least one counted challenge"
         },
         "claims": {
           "label": "Claims",
