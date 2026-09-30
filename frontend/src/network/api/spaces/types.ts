@@ -1,4 +1,4 @@
-import type { Page, Space, SpaceTeaching, TaskSubmission, TaskSubmitterType } from '@/types'
+import type { Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -18,7 +18,6 @@ export type PostSpaceRequestData = {
   name: string
   intro?: string
   avatarId?: number
-  announcements?: string
   taskTemplates?: string
   visibleTaskLimit?: number | null
 }
@@ -55,11 +54,30 @@ export type PatchSpaceRequestData = {
   name?: string
   intro?: string
   avatarId?: number
-  announcements?: string
   taskTemplates?: string
   classificationTopics?: number[]
   defaultCategoryId?: number
   visibleTaskLimit?: number | null
+}
+
+export type PostSpaceAnnouncementRequestData = {
+  title: string
+  content: string
+  pinned: boolean
+  /** Epoch milliseconds, in the future; null = it does not expire. */
+  expiresAt: number | null
+}
+
+/** Each field present is changed; an explicit `expiresAt: null` clears the expiry. */
+export type PatchSpaceAnnouncementRequestData = Partial<PostSpaceAnnouncementRequestData>
+
+export type SpaceAnnouncementList = {
+  /** Unexpired, pinned first and then newest. */
+  current: SpaceAnnouncement[]
+  /** Past their expiry, most recently expired first. */
+  expired: SpaceAnnouncement[]
+  /** How many people an announcement from the caller would notify; null unless the caller manages the space. */
+  notifyCount: number | null
 }
 
 export type PostSpaceAdminRequestData = {
@@ -353,20 +371,6 @@ export type SpaceLearningOutline = {
   missing: string[]
 }
 
-export type SpaceMyPublishingOverview = {
-  spaceId: number
-  taskCount: number
-  approvedTaskCount: number
-  pendingTaskApprovalCount: number
-  disapprovedTaskCount: number
-  participantCount: number
-  approvedParticipantCount: number
-  pendingParticipantApprovalCount: number
-  submittedParticipantCount: number
-  pendingReviewCount: number
-  successfulParticipantCount: number
-}
-
 export type SpaceMyPublishedTaskCategory = {
   id: number
   name: string
@@ -399,50 +403,6 @@ export type SpaceMyPublishedTask = {
 
 export type SpaceMyPublishedTasks = {
   tasks: SpaceMyPublishedTask[]
-}
-
-export type SpaceMyParticipatingOverview = {
-  spaceId: number
-  participationCount: number
-  approvedParticipationCount: number
-  pendingApprovalCount: number
-  awaitingSubmissionCount: number
-  pendingReviewCount: number
-  resubmittableCount: number
-  successfulCount: number
-  failedCount: number
-}
-
-export type SpaceMyParticipationPublisher = {
-  id: number
-  name: string
-}
-
-export type SpaceMyParticipationCategory = {
-  id: number
-  name: string
-}
-
-export type SpaceMyParticipation = {
-  taskId: number
-  taskName: string
-  publisher: SpaceMyParticipationPublisher
-  category: SpaceMyParticipationCategory
-  participationId: number
-  identityType: TaskSubmitterType
-  teamName?: string | null
-  approved: AnalyticsApproveType
-  completionStatus: AnalyticsCompletionType
-  canSubmit: boolean
-  joinedAt: number
-  deadline?: number | null
-  latestSubmissionAt?: number | null
-  latestReviewAccepted?: boolean | null
-  latestReviewScore?: number | null
-}
-
-export type SpaceMyParticipations = {
-  participations: SpaceMyParticipation[]
 }
 
 export type AnalyticsApproveType = 'NONE' | 'APPROVED' | 'DISAPPROVED'

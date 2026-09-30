@@ -1,6 +1,5 @@
-import type { AnalyticsApproveType, AnalyticsCompletionType } from '@/network/api/spaces/types'
+import type { AnalyticsApproveType } from '@/network/api/spaces/types'
 import type { SpaceTaskVisibilityStatus } from '@/network/api/spaces/types'
-import type { TaskSubmitterType } from '@/types'
 
 import dayjs from 'dayjs'
 
@@ -11,11 +10,6 @@ export const formatPercent = (value?: null | number, digits = 1) => `${((value |
 export const formatDateTime = (value?: null | number) => {
   if (!value) return '暂无'
   return dayjs(value).format('YYYY-MM-DD HH:mm')
-}
-
-export const formatDate = (value?: null | number) => {
-  if (!value) return '暂无'
-  return dayjs(value).format('YYYY-MM-DD')
 }
 
 export const formatDeadline = (value?: null | number) => {
@@ -59,21 +53,3 @@ export const visibilityStatusColor = (value: SpaceTaskVisibilityStatus) => {
   if (value === 'REJECTED') return 'error'
   return 'info'
 }
-
-export const completionText = (value: AnalyticsCompletionType) => {
-  if (value === 'SUCCESS') return '已成功'
-  if (value === 'FAILED') return '未完成'
-  if (value === 'PENDING_REVIEW') return '待评审'
-  if (value === 'REJECTED_RESUBMITTABLE') return '可重提'
-  return '待提交'
-}
-
-export const completionColor = (value: AnalyticsCompletionType) => {
-  if (value === 'SUCCESS') return 'success'
-  if (value === 'FAILED') return 'error'
-  if (value === 'PENDING_REVIEW') return 'info'
-  if (value === 'REJECTED_RESUBMITTABLE') return 'warning'
-  return 'secondary'
-}
-
-export const identityText = (value: TaskSubmitterType) => (value === 'TEAM' ? '团队参与' : '个人参与')

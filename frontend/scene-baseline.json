@@ -10,6 +10,8 @@
     "src/components/panels/preview/PreviewPages.vue",
     "src/components/panels/preview/PreviewSheet.vue",
     "src/views/404.vue",
+    "src/views/spaces/detail/settings/BasicInfoView.vue",
+    "src/views/spaces/detail/settings/Index.vue",
     "src/views/user/settings/General.vue"
   ],
   "debt": [
@@ -112,8 +114,6 @@
     "src/views/spaces/detail/analytics/Participants.vue",
     "src/views/spaces/detail/analytics/Publishers.vue",
     "src/views/spaces/detail/analytics/Tasks.vue",
-    "src/views/spaces/detail/member-tasks/MyParticipating.vue",
-    "src/views/spaces/detail/member-tasks/MyPublishing.vue",
     "src/views/tasks/Detail.vue",
     "src/views/tasks/Edit.vue",
     "src/views/tasks/Insights.vue",

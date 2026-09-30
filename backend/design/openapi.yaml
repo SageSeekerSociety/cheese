@@ -287,6 +287,10 @@ paths:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1participants~1export'
   /spaces/join:
     $ref: './domains/space/paths.yaml#/~1spaces~1join'
+  /spaces/{spaceId}/announcements:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1announcements'
+  /spaces/{spaceId}/announcements/{announcementId}:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1announcements~1{announcementId}'
   /spaces/{spaceId}/members:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1members'
   /spaces/{spaceId}/members/{userId}:

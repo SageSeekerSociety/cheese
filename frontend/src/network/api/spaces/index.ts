@@ -1,4 +1,4 @@
-import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type { DomainGroup, Space, SpaceAnnouncement, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -7,11 +7,13 @@ import type {
   AnalyticsSortOrder,
   GetSpacesResponseData,
   PatchSpaceAdminRequestData,
+  PatchSpaceAnnouncementRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
   PatchSpaceInviteCodeRequestData,
   PatchSpaceRequestData,
   PostSpaceAdminRequestData,
+  PostSpaceAnnouncementRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
   PostSpaceInviteCodeRequestData,
@@ -23,14 +25,12 @@ import type {
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPeople,
   SpaceAnalyticsPublishers,
+  SpaceAnnouncementList,
   SpaceLearningFilters,
   SpaceLearningOutline,
   SpaceLearningQuestions,
   SpaceLearningQueues,
-  SpaceMyParticipatingOverview,
-  SpaceMyParticipations,
   SpaceMyPublishedTasks,
-  SpaceMyPublishingOverview,
   SpaceSubmissionQueue,
   SpaceTaskAnalytics,
 } from './types'
@@ -107,6 +107,36 @@ export namespace SpacesApi {
     NewApiInstance.request({
       url: `/spaces/${spaceId}/leave`,
       method: 'POST',
+    })
+
+  export const listAnnouncements = (spaceId: number) =>
+    NewApiInstance.request<SpaceAnnouncementList>({
+      url: `/spaces/${spaceId}/announcements`,
+      method: 'GET',
+    })
+
+  export const publishAnnouncement = (spaceId: number, data: PostSpaceAnnouncementRequestData) =>
+    NewApiInstance.request<{ announcement: SpaceAnnouncement }>({
+      url: `/spaces/${spaceId}/announcements`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateAnnouncement = (
+    spaceId: number,
+    announcementId: number,
+    data: PatchSpaceAnnouncementRequestData
+  ) =>
+    NewApiInstance.request<{ announcement: SpaceAnnouncement }>({
+      url: `/spaces/${spaceId}/announcements/${announcementId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteAnnouncement = (spaceId: number, announcementId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/announcements/${announcementId}`,
+      method: 'DELETE',
     })
 
   export const listInviteCodes = (spaceId: number) =>
@@ -297,12 +327,6 @@ export namespace SpacesApi {
       data,
     })
 
-  export const getMyPublishingOverview = (spaceId: number) =>
-    NewApiInstance.request<SpaceMyPublishingOverview>({
-      url: `/spaces/${spaceId}/me/publishing`,
-      method: 'GET',
-    })
-
   export const getMyPublishedTasks = (
     spaceId: number,
     params?: Partial<{
@@ -318,28 +342,6 @@ export namespace SpacesApi {
   ) =>
     NewApiInstance.request<SpaceMyPublishedTasks>({
       url: `/spaces/${spaceId}/me/publishing/tasks`,
-      method: 'GET',
-      params,
-    })
-
-  export const getMyParticipatingOverview = (spaceId: number) =>
-    NewApiInstance.request<SpaceMyParticipatingOverview>({
-      url: `/spaces/${spaceId}/me/participating`,
-      method: 'GET',
-    })
-
-  export const getMyParticipations = (
-    spaceId: number,
-    params?: Partial<{
-      approved: AnalyticsApproveType
-      completionStatus: AnalyticsCompletionType
-      identityType: 'USER' | 'TEAM'
-      sortBy: 'joinedAt' | 'deadline' | 'latestSubmissionAt' | 'completionStatus'
-      sortOrder: AnalyticsSortOrder
-    }>
-  ) =>
-    NewApiInstance.request<SpaceMyParticipations>({
-      url: `/spaces/${spaceId}/me/participations`,
       method: 'GET',
       params,
     })

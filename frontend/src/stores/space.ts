@@ -1,12 +1,4 @@
-import type {
-  DomainGroup,
-  Space,
-  SpaceAdminRoleType,
-  SpaceAnnouncement,
-  SpaceCategory,
-  SpaceTaskTemplate,
-  Topic,
-} from '@/types'
+import type { DomainGroup, Space, SpaceAdminRoleType, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
 
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
@@ -31,15 +23,8 @@ export const useSpaceStore = defineStore('space', () => {
   const loadingCategories = ref(false)
   const domainGroups = ref<DomainGroup[]>([])
 
-  const isEditingProfile = ref<boolean>(false)
-
-  const openEditProfile = () => {
-    isEditingProfile.value = true
-  }
-
-  const closeEditProfile = () => {
-    isEditingProfile.value = false
-  }
+  /** 待审核的题目数：侧栏「待审核」旁边那个数。只有管理员那一侧会去读。 */
+  const pendingAuditCount = ref(0)
 
   /** 我在这个空间里的角色：管理员名单（含所有者）里有我就是那个角色，否则是成员。 */
   const myRole = computed<SpaceAdminRoleType | 'MEMBER'>(() => {
@@ -58,16 +43,6 @@ export const useSpaceStore = defineStore('space', () => {
       return JSON.parse(currentSpace.value.taskTemplates || '[]')
     } catch (error) {
       console.error('解析模板失败:', error)
-      return []
-    }
-  })
-
-  const announcements = computed<SpaceAnnouncement[]>(() => {
-    if (!currentSpace.value) return []
-    try {
-      return JSON.parse(currentSpace.value.announcements || '[]')
-    } catch (error) {
-      console.error('解析公告失败:', error)
       return []
     }
   })
@@ -99,16 +74,19 @@ export const useSpaceStore = defineStore('space', () => {
     domainGroups.value = next
   }
 
+  const setPendingAuditCount = (count: number) => {
+    pendingAuditCount.value = count
+  }
+
   return {
     currentSpace,
     currentSpaceId,
     templates,
-    announcements,
     classificationTopics,
     categories,
     loadingCategories,
     domainGroups,
-    isEditingProfile,
+    pendingAuditCount,
     myRole,
     isManager,
     isOwner,
@@ -117,7 +95,6 @@ export const useSpaceStore = defineStore('space', () => {
     setCategories,
     setLoadingCategories,
     setDomainGroups,
-    openEditProfile,
-    closeEditProfile,
+    setPendingAuditCount,
   }
 })

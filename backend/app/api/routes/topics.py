@@ -1,7 +1,5 @@
 """Topic routes."""
 
-import base64
-import binascii
 import shutil
 import uuid
 from collections.abc import Mapping
@@ -37,7 +35,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import (
     AgentWorkRunner,
@@ -60,7 +57,6 @@ from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.mentions import canonicalize_refs
-from app.domain.project import room_files
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -2272,78 +2268,6 @@ async def record_weekly(
     return ok(out)
 
 
-@router.post("/{topic_id}/title")
-async def set_title(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """给这个地方起/改标题 — used by both `cheese_title` (a person asked 芝士
-    for this name) and the frontend sidebar rename UI (dual-use, like doc/split).
-    Either way a person chose it, so the platform's naming leaves it alone from
-    now on (`topic/naming.py`).
-
-    Names the THREAD when the id is a thread's. Resolving only rooms did not
-    fail here, which is what made it dangerous: a 分身 naming the piece of work
-    it had just been handed would have renamed the whole room around it.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=body.get("by"),
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    title = (body.get("title") or "").strip()
-    if not title:
-        raise ValidationError("title 不能为空")
-    await naming.rename_by_person(
-        db,
-        place.room,
-        title[:80],
-        by=actor.handle,
-        reason="rename",
-    )
-    await db.flush()
-    out = TopicOut.model_validate(place.room).model_dump(mode="json")
-    await db.commit()
-    await announce_stale(place.room_id, "topics")
-    return ok(out)
-
-
-async def _title_actor(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> tuple[Topic, str]:
-    """The room and the signed-in person acting on its title."""
-    room = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=room.id, project_id=room.project_id
-    )
-    await resolver.authorize_topic(actor, project_id=room.project_id, topic_id=room.id)
-    if not actor.authenticated:
-        raise ForbiddenError("改标题需要登录")
-    return room, actor.handle
-
-
-@router.post("/{topic_id}/title/undo")
-async def undo_title(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """撤销一次自动改名 (the button on the line that announced it). The old
-    title comes back and, being a person's choice now, stays."""
-    room, handle = await _title_actor(topic_id, db, resolver)
-    try:
-        event_id = uuid.UUID(str(body.get("event_id")))
-    except ValueError as exc:
-        raise ValidationError("event_id 不是有效的 id") from exc
-    await naming.undo(db, room, event_id, by=handle)
-    await db.flush()
-    out = TopicOut.model_validate(room).model_dump(mode="json")
-    await db.commit()
-    await announce_stale(room.id, "topics")
-    return ok(out)
-
-
 @router.post("/{topic_id}/read")
 async def mark_topic_read(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -2755,12 +2679,6 @@ def artifact_kind_for(path: str) -> str:
     return _ARTIFACT_KIND_BY_SUFFIX.get(suffix[dot:].lower() if dot > 0 else "", "html")
 
 
-# How long ``cheese serve`` may wait for the helper it just started to finish its
-# upgrade. It declares the preview in the same breath as starting the tunnel, so
-# without this the platform would refuse a preview that is one round trip away.
-_PREVIEW_ATTACH_WAIT_S = 8.0
-
-
 def _clean_artifact_path(raw: str) -> str:
     """A workspace-relative pointer — reject absolute paths, traversal, and .git.
     The file itself is read later via the guarded workspace reader."""
@@ -2809,29 +2727,6 @@ async def _source_bytes(
     return library.read_attachment(project_id, room_id, path)
 
 
-async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
-    """Refuse an app artifact the platform provably cannot render (``cheese serve``).
-
-    Setting it used to always succeed, so 芝士 announced 「预览已就绪」 while the
-    panel showed 「应用暂时不在线」. Two separate things can be missing and they
-    read differently to whoever has to fix them: the tunnel (nothing on that
-    machine is carrying a preview out) and the app behind it (the tunnel is up and
-    the declared port answers nothing).
-    """
-    if not await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S):
-        raise ValidationError(
-            "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
-            "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
-            "或报告、表格这类文档。"
-        )
-    if not await preview_hub.probe(topic_id, seat):
-        raise ValidationError(
-            "登记的端口上没有服务在应答，预览会是一个白框。"
-            "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"
-        )
-
-
 async def record_shown(
     db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
 ) -> dict:
@@ -2856,132 +2751,3 @@ async def record_shown(
         str(place.room_id), {"type": "assistant_block", "block": payload}
     )
     return payload
-
-
-@router.post("/{topic_id}/shown")
-async def show_in_room(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
-
-    摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
-    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    # The teammate that showed it, when a teammate did. A room may seat several,
-    # and for an app the author is also WHICH app: each teammate serves from its
-    # own checkout through its own tunnel, and the preview follows the author.
-    # Taken from the credential, because the helper's tunnel is keyed by the
-    # same claim of the same credential.
-    seat = resolver.credential_agent() if actor.via == "cheese" else None
-    author = seat or await TopicMemberService(db).resolve_agent_handle(
-        topic_id, room_id=place.room_id
-    )
-    declared = (body.get("as") or "").strip().lower()
-    if declared == "app":
-        # An app artifact points at the running server, not a file — the stored
-        # content is a human note ("Vue dev server"), not a path.
-        path = (body.get("path") or "app").strip()[:120]
-        await _reject_unreachable_app(topic_id, author)
-    else:
-        path = _clean_artifact_path(body.get("path") or "")
-    as_ = declared or artifact_kind_for(path)
-    mime = _ARTIFACT_MIME.get(as_)
-    if mime is None:
-        allowed = "、".join(_ARTIFACT_MIME)
-        raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
-    if as_ != "app" and ("content" in body or "content_b64" in body):
-        # A remote machine's file is not in the backend worktree until published.
-        # Office files and PDFs are not text, so they travel base64-encoded; a
-        # caller that sends them as `content` would either fail to read them or
-        # corrupt them on the way, which is why the two fields are separate
-        # rather than one field that guesses.
-        if "content_b64" in body:
-            encoded = body["content_b64"]
-            if not isinstance(encoded, str):
-                raise ValidationError("content_b64 必须是文本")
-            try:
-                raw = base64.b64decode(encoded, validate=True)
-            except (ValueError, binascii.Error) as exc:
-                raise ValidationError("content_b64 不是合法的 base64") from exc
-        else:
-            content = body["content"]
-            if not isinstance(content, str):
-                raise ValidationError("content 必须是文本")
-            raw = content.encode()
-        if len(raw) > MAX_ARTIFACT_BYTES:
-            raise ValidationError(
-                f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
-            )
-    if as_ != "app" and ("content" in body or "content_b64" in body):
-        # Through the draft history: the state this replaces stays restorable,
-        # and `base_version` (the version `cheese pull` read) turns an overwrite
-        # of somebody's newer save into a 409.
-        base = body.get("base_version")
-        note = body.get("note")
-        await room_files.save_room_file(
-            db,
-            project_id=place.project_id,
-            room_id=place.room_id,
-            path=path,
-            data=raw,
-            author=author if actor.via == "cheese" else actor.handle,
-            author_kind="agent" if actor.via == "cheese" else "human",
-            source="ai" if actor.via == "cheese" else "upload",
-            note=note if isinstance(note, str) else None,
-            base_version=base if isinstance(base, str) and base else None,
-        )
-    return ok(await record_shown(db, place, path, author=author, mime=mime))
-
-
-@router.get("/{topic_id}/shown")
-async def list_shown(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """这个房间里摆出来过的东西 (#1085 结论四)。
-
-    一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
-    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    shown = await BlockRepository(db).shown_in_room(place.room_id)
-    items = [
-        {
-            "path": block.content,
-            "mime": block.mime_type,
-            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
-            "shown_at": block.created_at.isoformat(),
-        }
-        for block in shown
-    ]
-    return ok(page(items, len(items)))
-
-
-@router.post("/{topic_id}/shown/save")
-async def save_shown_to_library(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
-
-    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
-    它：这份东西以后还用不用得上，是人的判断。"""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.require_verified_caller(project_id=place.project_id)
-    await resolver.authorize_project(actor, project_id=place.project_id)
-    name = await room_files.save_to_library(
-        db,
-        project_id=place.project_id,
-        room_id=place.room_id,
-        path=_clean_artifact_path(str(body.get("path") or "")),
-        by=actor.handle,
-    )
-    await db.commit()
-    return ok({"name": name})

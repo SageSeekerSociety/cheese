@@ -38,46 +38,6 @@ class SpaceMemberPublishingService:
         self._space_repo = SpaceRepository(session=session)
         self._category_repo = SpaceCategoryRepository(session=session)
 
-    async def get_my_publishing_overview(self, *, space_id: int, user_id: int) -> dict:
-        space = await self._ensure_space_exists(space_id)
-
-        tasks = await self._list_my_publishing_tasks(space_id=space_id, user_id=user_id)
-        task_items = await self._build_my_published_task_items(
-            tasks=tasks,
-            space_id=space_id,
-            visible_task_limit=getattr(space, "visible_task_limit", None),
-        )
-
-        return {
-            "spaceId": space_id,
-            "taskCount": len(task_items),
-            "approvedTaskCount": sum(
-                1 for task in tasks if task.approved == APPROVED_MAP["APPROVED"]
-            ),
-            "pendingTaskApprovalCount": sum(
-                1 for task in tasks if task.approved == APPROVED_MAP["NONE"]
-            ),
-            "disapprovedTaskCount": sum(
-                1 for task in tasks if task.approved == APPROVED_MAP["DISAPPROVED"]
-            ),
-            "participantCount": sum(item["participantCount"] for item in task_items),
-            "approvedParticipantCount": sum(
-                item["approvedParticipantCount"] for item in task_items
-            ),
-            "pendingParticipantApprovalCount": sum(
-                item["pendingParticipantApprovalCount"] for item in task_items
-            ),
-            "submittedParticipantCount": sum(
-                item["submittedParticipantCount"] for item in task_items
-            ),
-            "pendingReviewCount": sum(
-                item["pendingReviewCount"] for item in task_items
-            ),
-            "successfulParticipantCount": sum(
-                item["successfulParticipantCount"] for item in task_items
-            ),
-        }
-
     async def get_my_published_tasks(
         self,
         *,

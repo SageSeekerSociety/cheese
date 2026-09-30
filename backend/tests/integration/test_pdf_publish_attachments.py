@@ -141,7 +141,6 @@ def _new_board(user_client: UserCreator, api_client: TestClient) -> dict:
             "intro": "一块题板",
             "description": "从 PDF 发题的地方",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(creator_token),

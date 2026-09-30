@@ -19,7 +19,7 @@ const blank = { render: () => null }
 
 /** 老树那一套看板名字，各给一条不会被走到的路径（落点是通配页）。 */
 const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
-  path: `/spaces/:spaceId/analytics/${key}`,
+  path: `/spaces/:spaceId/manage/analytics/${key}`,
   name,
   component: blank,
 }))

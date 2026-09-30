@@ -13,9 +13,17 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domain.delivery.models import ChannelDelivery
+from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE, push_text
 
 LEASE_SECONDS = 120
+
+#: 只进站内收件箱的类别码：不发邮件（推送另有 `PUSHABLE` 那一道，它们也不在里
+#: 面）。一条公告同时发给整个空间，一个百来人的班发一条就是百来封信，而它要的只
+#: 是人回到平台上时看得见。
+MAILBOX_ONLY: frozenset[NotificationType] = frozenset(
+    {NotificationType.SPACE_ANNOUNCEMENT}
+)
 
 
 class ChannelIntentHandler:
@@ -35,7 +43,7 @@ class ChannelIntentHandler:
                 "payload": delivery.payload,
                 "deliveryKey": delivery.delivery_key,
             }
-            channels = [("email", common)]
+            channels = [] if delivery.type in MAILBOX_ONLY else [("email", common)]
             if self.push_enabled and delivery.type in PUSHABLE:
                 title, body = push_text(delivery.type, delivery.payload)
                 channels.append(

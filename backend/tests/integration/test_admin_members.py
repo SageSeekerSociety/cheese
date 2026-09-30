@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 from app.domain.admin.repositories import AdminRepository
@@ -199,24 +198,31 @@ def _seed_bare_account(client, handle: str) -> None:
 
 
 @contextmanager
-def _counting_sql() -> Iterator[list[str]]:
-    """这个块里发出的每一条 SQL，按顺序。
+def _counting_sql(client) -> Iterator[list[str]]:
+    """这个块里请求发出的每一条 SQL，按顺序。
 
-    Listens on the ``Engine`` class rather than one instance: the app's session
-    and this fixture's own both end up on sync engines underneath, and pinning
-    the count means catching whatever the request actually issued. Copied from
-    `test_hot_path_queries.py` — same problem, same handle.
+    Listens on the engine the request is served from (``client.test_app_engine``)
+    rather than on the ``Engine`` class. A class-wide listener also counts the
+    platform's own background work — the startup sweeps (taking over running
+    turns, sweeping storage) and every job in ``periodic_jobs`` — which runs on
+    ``app.core.db``'s engine, bound to ``settings.database_url``. Those
+    statements are charged to whichever window is open when they complete, and
+    each one moves the count: the guard fails in the direction opposite to the
+    N+1 it exists to catch. Copied, listener included, from
+    `test_hot_path_queries.py`, which fixed the same thing the same way (#2186);
+    this copy was the one still counting every engine.
     """
     seen: list[str] = []
 
     def _record(conn, cursor, statement, parameters, context, executemany):
         seen.append(" ".join(statement.split()))
 
-    event.listen(Engine, "after_cursor_execute", _record)
+    engine = client.test_app_engine.sync_engine
+    event.listen(engine, "after_cursor_execute", _record)
     try:
         yield seen
     finally:
-        event.remove(Engine, "after_cursor_execute", _record)
+        event.remove(engine, "after_cursor_execute", _record)
 
 
 # --- 每行的昵称与脸 ---------------------------------------------------------
@@ -545,7 +551,7 @@ def test_the_roster_costs_the_same_number_of_queries_however_many_rows(
         _add(client, as_admin, f"am-roster-{i}")
 
     def count() -> int:
-        with _counting_sql() as seen:
+        with _counting_sql(client) as seen:
             r = client.get("/admin/admins", headers=session_auth_headers(as_admin))
         assert r.status_code == 200, r.text
         return len(seen)

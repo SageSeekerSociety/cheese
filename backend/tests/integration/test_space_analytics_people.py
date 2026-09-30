@@ -49,7 +49,6 @@ def _new_board(user_client: UserCreator, api_client: TestClient) -> dict:
             "intro": "一门课",
             "description": "一块题目板",
             "avatarId": 1,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(creator_token),

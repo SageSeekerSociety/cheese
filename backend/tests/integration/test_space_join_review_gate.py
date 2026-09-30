@@ -4,7 +4,7 @@
 ``require_reviewed_space`` never sees it, and ``SpaceService.join_space`` did
 not look at ``review_status`` at all — an invite code was a second, quieter way
 into a board nobody had cleared review for, one that answered 200 and handed
-back the whole board (name, intro, announcements, templates). These tests drive
+back the whole board (name, intro, templates). These tests drive
 the endpoint the way a browser does, over real requests.
 
 The code is the thing to test with, not a direct service call: the bug lived in
@@ -58,7 +58,6 @@ def _create_pending_space(api_client: TestClient, token: str) -> dict:
             "description": "A lengthy text. " * 100,
             "avatarId": 1,
             "enableRank": False,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(token),
@@ -80,7 +79,6 @@ def _create_approved(api_client: TestClient, token: str) -> dict:
             "description": "A lengthy text. " * 100,
             "avatarId": 1,
             "enableRank": False,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(token),

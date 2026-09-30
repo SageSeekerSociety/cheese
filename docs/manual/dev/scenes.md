@@ -36,12 +36,12 @@ covers:
 
 | 场景 | 一共 | A 今天就能单独跑 | C 卡在取数 | D 卡在路由 / `$parent` / `inject` |
 |---|---|---|---|---|
-| 路由页（`src/views/`，router 表里挂上去的每一页） | 111 | 2 | 38 | 71 |
+| 路由页（`src/views/`，router 表里挂上去的每一页） | 111 | 2 | 37 | 72 |
 | 工作面板（`src/components/panels/` 下的 SFC） | 27 | 8 | 19 | 0 |
 
 和上一版（2026-09-30 早先的 20 个）差十个，原因是判据修了一处**过宽**：传递依赖原来只跟 `.ts` 边，父页面 import 一个自己去取数的子组件（`.vue`）不算「到了接口层」，于是「自己干净、子组件在取数」的十个场景被当成能单独跑。`.` 这条边现在也跟（[原因](#how)），数字按修完的结果写在这里。修之前报出去的 20 是错的，不是这一版退步。
 
-一个场景可以同时踩中好几条（100 页直接 import 了取数模块，86 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
+一个场景可以同时踩中好几条（100 页直接 import 了取数模块，87 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
 
 按目录看那 130 个页面：
 
@@ -54,7 +54,7 @@ covers:
 | `views/home/` | 5 | 0 | 4 | 1 |
 | `views/legal/` | 1 | 0 | 0 | 1 |
 | `views/question/` | 4 | 0 | 1 | 3 |
-| `views/spaces/` | 23 | 0 | 10 | 13 |
+| `views/spaces/` | 23 | 0 | 9 | 14 |
 | `views/tasks/` | 7 | 0 | 3 | 4 |
 | `views/teams/` | 9 | 0 | 3 | 6 |
 | `views/user/` | 5 | 1 | 4 | 0 |
@@ -73,17 +73,20 @@ covers:
 | `ready` | 今天就能单独跑的场景（10 个） | 增（掉档就红） |
 | `debt` | 仓库里本来就跑不起来的场景（128 个） | 减（变 A 会提示你收紧） |
 
-不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。五种结果：
+不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。六种结果：
 
 | 情况 | 结果 |
 |---|---|
 | `ready` 里的场景掉档（A 变成 B/C/D） | 红（退出 1），它拦的就是这个 |
 | 新场景（新挂的路由页、新加的面板）不是 A | 红（退出 1） |
+| 页面不是 A，但它渲染同目录的 `<页面名>View.vue`，而那个视图是 A | 过：页面算这个视图的容器，冻结的是视图（见下） |
 | 老场景本来就不是 A | 过（它在 `debt` 里） |
 | `debt` 里的场景变 A 了 | 过，并提示你 `--update` 收紧基线 |
 | 判断不了（没有 `frontend/src/`、基线读不出来、场景文件读不了） | 退出 2，永远不算过 |
 
-场景从哪来：**页面**是 router 的 import 图能走到的每个 `views/*.vue`（新挂一页就自动进集合，不用改这里），**面板**是 `components/panels/` 目录下的每个 SFC。所以「新场景」不需要谁记得去登记。
+场景从哪来：**页面**是 router 的 import 图能走到的每个 `views/*.vue`（新挂一页就自动进集合，不用改这里），**面板**是 `components/panels/` 目录下的每个 SFC，**视图**是页面 import 的那个同目录 `<页面名>View.vue`。所以「新场景」不需要谁记得去登记。
+
+**新页面可以是容器。** 路由落到页面，读地址、取数、保存本来就是页面的活；一刀切地不许页面做这些，新页面的数据就没有地方放了。所以页面可以留着这些活，前提是把画面交给一个视图：同目录的 `<页面名>View.vue`，由页面用值 import 进来（`import type` 不算）。视图单独算一个场景，和别的场景一样评级、冻结，新的必须第一天就是 A；页面按容器处理，不进两份名单，每次检查都重新看它的视图。`--list` 里容器那一行会写「container of …」。
 
 ### 怎么把一个场景改成能单独跑 {#make-standalone}
 
@@ -92,8 +95,9 @@ covers:
 | 卡在哪 | 怎么改 |
 |---|---|
 | 直接取数（`@/api`、`@/network/*`、`@/services/*`） | 把取数挪到 composable 或页面里，场景只收 props。样板是房间面板那条路：`PanelDoc`（外壳，C）→ `composables/usePanelDoc.ts`（取数）→ `PanelDocView`（视图，A） |
-| 读路由（`useRoute` / `$route`） | 把地址里的东西改成 props 传进来。`views/spaces/board/` 是现成的答案：命名路由 + 守卫里 `loadBoard(spaceId)` |
+| 读路由（`useRoute` / `$route`） | 页面读地址，把要用的值作为 props 交给它的 `<页面名>View.vue` |
 | 读业务 store（`space`、`workspace`、`feedback`……） | 同上：读 store 的那一层留在页面或 composable 里，视图收结果 |
+| 新页面要读写数据 | 页面当容器：取数、保存、读地址都留在页面，画面放进同目录的 `<页面名>View.vue`，数据按 props 进，操作按事件出 |
 | `provide()` / `inject()` | 先改成 props / 事件——它是「从哪来」的问题，排在数据前面 |
 | `$parent` / `$root`、事件总线 | 改成 props / 事件 |
 
@@ -200,7 +204,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/spaces/course/Quiz.vue` | D | 读路由；直接取数（`network/api/spaces`） |
 | `views/spaces/course/Team.vue` | D | 读路由；直接取数（`network/api/spaces`）；直接取数（`network/api/teams`） |
 | `views/spaces/course/Units.vue` | D | 读路由；直接取数（`network/api/spaces`） |
-| `views/spaces/detail/Announcements.vue` | C | 直接取数（`services/account.ts`）；读 store（space） |
+| `views/spaces/detail/Announcements.vue` | D | 读路由；直接取数（`network/api/spaces`）；读 store（space） |
 | `views/spaces/detail/AuditTask.vue` | C | 直接取数（`network/api/tasks`）；读 store（space） |
 | `views/spaces/detail/CreateDiscussion.vue` | D | 读路由；直接取数（`network/api/discussions`） |
 | `views/spaces/detail/DiscussionItem.vue` | D | 读路由；直接取数（`network/api/discussions`） |

@@ -98,7 +98,6 @@ async def seeded_space(authed_client: AsyncClient) -> int:
             name="Contract Space",
             intro="",
             description="",
-            announcements=[],
             task_templates=[],
             created_at=now,
             updated_at=now,

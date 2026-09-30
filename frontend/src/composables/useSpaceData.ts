@@ -9,12 +9,13 @@
 // 判据留在这一层：换板要不要先清空、哪几个动作失败往外抛（调用方要接着决定弹窗关
 // 不关）、哪几个自己弹一句话就算了（调用方本来就会自己弹一句更具体的）。状态全部
 // 写进 store，这一层自己不持有任何东西。
-import type { SpaceAdminRoleType, SpaceAnnouncement, SpaceTaskTemplate } from '@/types'
+import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 
 import { toast } from 'vuetify-sonner'
 
 import { SpacesApi } from '@/network/api/spaces'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
+import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
 export function useSpaceData() {
@@ -25,6 +26,7 @@ export function useSpaceData() {
     if (spaceId !== space.currentSpaceId) {
       space.setSpace(null)
       space.setCategories([])
+      space.setPendingAuditCount(0)
     }
     space.setCurrentSpaceId(spaceId)
 
@@ -34,6 +36,24 @@ export function useSpaceData() {
     } catch (error) {
       console.error('获取题目板信息失败:', error)
       toast.error('获取空间信息失败')
+    }
+  }
+
+  /** 读一遍待审核的题目数：用审核队列同一个列表接口，只要总数。 */
+  const fetchPendingAuditCount = async () => {
+    const spaceId = space.currentSpaceId
+    if (!spaceId) return
+    try {
+      const { data } = await TasksApi.list({
+        space: spaceId,
+        approved: 'NONE',
+        pageSize: 1,
+        sort_by: 'createdAt',
+        sort_order: 'asc',
+      })
+      if (spaceId === space.currentSpaceId) space.setPendingAuditCount(data.page.total ?? 0)
+    } catch (error) {
+      console.error('fetch pending audit count failed', error)
     }
   }
 
@@ -69,34 +89,6 @@ export function useSpaceData() {
     const newTemplates = [...space.templates]
     newTemplates.splice(index, 1)
     await updateTemplates(newTemplates)
-  }
-
-  const updateAnnouncements = async (newAnnouncements: SpaceAnnouncement[]) => {
-    if (!space.currentSpace) return
-
-    try {
-      await updateSpace(space.currentSpace.id, { announcements: JSON.stringify(newAnnouncements) }, false)
-    } catch (error) {
-      console.error('更新公告失败:', error)
-      toast.error('更新公告失败')
-      throw error
-    }
-  }
-
-  const addAnnouncement = async (announcement: SpaceAnnouncement) => {
-    const updatedAnnouncements = [...space.announcements, announcement]
-    await updateAnnouncements(updatedAnnouncements)
-  }
-
-  const updateAnnouncement = async (index: number, announcement: SpaceAnnouncement) => {
-    const updatedAnnouncements = [...space.announcements]
-    updatedAnnouncements[index] = announcement
-    await updateAnnouncements(updatedAnnouncements)
-  }
-
-  const deleteAnnouncement = async (index: number) => {
-    const updatedAnnouncements = space.announcements.filter((_, i) => i !== index)
-    await updateAnnouncements(updatedAnnouncements)
   }
 
   const updateClassificationTopics = async (topicIds: number[]) => {
@@ -281,14 +273,11 @@ export function useSpaceData() {
   }
 
   return {
+    fetchPendingAuditCount,
     fetchSpace,
     updateSpace,
     updateTemplates,
     deleteTemplate,
-    updateAnnouncements,
-    addAnnouncement,
-    updateAnnouncement,
-    deleteAnnouncement,
     updateClassificationTopics,
     addClassificationTopic,
     addClassificationTopics,

@@ -390,31 +390,6 @@ class TestVisibilityStatus:
 # ---------------------------------------------------------------------------
 
 
-class TestGetMyPublishingOverview:
-    @pytest.mark.anyio
-    async def test_space_not_found(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalar(None)
-        svc = SpaceMemberPublishingService(session)
-
-        with pytest.raises(NotFoundError):
-            await svc.get_my_publishing_overview(space_id=999, user_id=100)
-
-    @pytest.mark.anyio
-    async def test_empty_tasks(self):
-        session = _mock_session()
-        space = SimpleNamespace(id=1, deleted_at=None)
-        session.execute.side_effect = [
-            _mock_scalar(space),  # _ensure_space_exists
-            _mock_scalars([]),  # _list_my_publishing_tasks
-        ]
-        svc = SpaceMemberPublishingService(session)
-
-        result = await svc.get_my_publishing_overview(space_id=1, user_id=100)
-        assert result["spaceId"] == 1
-        assert result["taskCount"] == 0
-
-
 class TestGetMyPublishedTasks:
     @pytest.mark.anyio
     async def test_space_not_found(self):

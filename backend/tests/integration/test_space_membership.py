@@ -59,7 +59,6 @@ def _create_space(api_client: TestClient, token: str) -> dict:
             "description": "A lengthy text. " * 100,
             "avatarId": 1,
             "enableRank": False,
-            "announcements": [],
             "taskTemplates": [],
         },
         headers=_auth(token),
@@ -762,8 +761,7 @@ class TestSideDoors:
         "/analytics/participants",
         "/analytics/people",
         "/analytics/tasks",
-        "/me/publishing",
-        "/me/participating",
+        "/me/publishing/tasks",
     )
 
     def _assert_every_door_is_shut(

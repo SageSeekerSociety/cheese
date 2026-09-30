@@ -46,11 +46,12 @@ class Delivery(UuidPk, Base):
             "recorded_at",
             postgresql_where=text("sent_at IS NULL"),
         ),
+        # 撤回一条事件（`ledger.retract`）按它找回这件事发出去的每一笔。
+        Index("idx_deliveries_event", "event_id"),
     )
 
     #: 引发这条投递的那条事件。去重键跟着它走，所以同一条事件重算多少遍都指回这
-    #: 里。**没有索引**：没有一处按它查，留着这一列是为了事后取证 —— 「这条 block
-    #: 当时通知了谁」在生产上是手查，不是热路径。
+    #: 里；撤回一件事（公告被删）也从这里找回它发给了谁。
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     #: 收件人的 handle —— 寻址给出的就是它。
     recipient_handle: Mapped[str] = mapped_column(String(64))

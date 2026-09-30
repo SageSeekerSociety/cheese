@@ -58,11 +58,6 @@ class Space(Base):
     default_category_id: Mapped[int | None] = mapped_column(
         "default_category_id", Integer, nullable=True
     )
-    announcements: Mapped[list] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=list,
-    )
     task_templates: Mapped[list] = mapped_column(
         JSONB,
         nullable=False,
@@ -369,4 +364,45 @@ class SpaceInviteCode(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceAnnouncement(Base):
+    """One 公告 on a 题目版, a row of its own.
+
+    One row each, so two managers editing two announcements at once touch two
+    rows, and publishing one can notify the space about exactly that one
+    (``announcement_service``). Deleting is a real delete: an announcement that
+    was taken down is not kept anywhere a reader could come across it.
+
+    ``author_id`` is who published it. Nullable only because the announcements
+    written before this table named their publisher by nickname, and the one
+    that matched none of that space's managers kept no author.
+    """
+
+    __tablename__ = "space_announcement"
+    __table_args__ = (Index("ix_space_announcement_space", "space_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    author_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Rich text, the editor's HTML.
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: From this moment on it is 已到期: it leaves the task list and folds away
+    #: on the announcements page. NULL = it does not expire.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    #: Moves when what it says changes (title, body, expiry) and not when it is
+    #: pinned: 已编辑 is a claim about the text.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )

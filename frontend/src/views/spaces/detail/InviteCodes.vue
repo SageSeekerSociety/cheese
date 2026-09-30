@@ -22,8 +22,8 @@ import dayjs from 'dayjs'
 
 import { currentInviteCode, inviteCodeStatus } from '../model'
 
-import PageHeader from '@/components/common/PageHeader.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const route = useRoute()
@@ -192,18 +192,16 @@ async function submitCreate() {
 </script>
 
 <template>
-  <PageHeader title="邀请码" show-on-mobile>
-    <template #actions>
-      <v-btn
-        color="primary"
-        variant="flat"
-        prepend-icon="mdi-plus"
-        @click="(newOpen = true), (editingId = null), (confirmingId = null)"
-      >
-        新建
-      </v-btn>
-    </template>
-  </PageHeader>
+  <SettingsToolbar>
+    <v-btn
+      color="primary"
+      variant="flat"
+      prepend-icon="mdi-plus"
+      @click="(newOpen = true), (editingId = null), (confirmingId = null)"
+    >
+      新建
+    </v-btn>
+  </SettingsToolbar>
   <div class="invite-codes">
     <div>
       <!-- 「当前使用中的码」单列在这里，不和列表第一格混为一谈：用尽或过期的码就躺在
@@ -375,7 +373,6 @@ async function submitCreate() {
 <style scoped lang="scss">
 .invite-codes {
   max-width: 760px;
-  padding: 16px;
 }
 
 .codes {

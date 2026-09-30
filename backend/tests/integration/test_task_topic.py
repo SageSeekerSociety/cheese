@@ -56,7 +56,6 @@ class TestTaskTopicIntegration:
                 "intro": "Test space for task topics",
                 "description": "A lengthy text. " * 100,
                 "avatarId": 1,
-                "announcements": [],
                 "taskTemplates": [],
             },
             headers={"Authorization": f"Bearer {creator.token}"},
