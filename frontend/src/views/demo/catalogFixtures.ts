@@ -110,6 +110,45 @@ export const ACCEPT_CARD = frame(4).card
 export const ACCEPT_CHECKS = frame(4).checks
 
 /**
+ * `cheese_ask` 的一条真问题 —— 产品**现状**那一版，不是这次要做的新版。
+ *
+ * 画它的是 `RoomMessage.vue` 本身，所以这两格就是「现在长什么样」的对照图：
+ * `meta.options` 躺在那儿，房间画出一排一键按钮；有人选过之后 `meta.answered` /
+ * `meta.answered_by` 落在同一条上，房间画成「谁选了什么」的回执。
+ */
+const ASK_TEXT = '这次的作业按哪种方式收？'
+const ASK_OPTIONS = ['课程平台收文件', '发到课程邮箱', '课上交纸质']
+
+function askRow(answered: { option: string; by: string } | null): RoomRow {
+  const meta: Block['meta'] = { asked: true, options: ASK_OPTIONS }
+  if (answered) {
+    meta.answered = answered.option
+    meta.answered_by = answered.by
+  }
+  const block: Block = {
+    id: answered ? 'ask-demo-answered' : 'ask-demo-open',
+    topic_id: 'demo',
+    kind: 'message',
+    author_type: 'participant',
+    author: 'cheese',
+    content: ASK_TEXT,
+    created_at: '2026-09-30T10:24:00Z',
+    meta,
+  }
+  return {
+    line: { kind: 'message', id: block.id, author: block.author, text: ASK_TEXT, time: '10:24', block },
+    block,
+    notice: null,
+    run: [block],
+  }
+}
+
+/** 还没答：一排一键选项，点一下就交上去。 */
+export const ASK_OPEN = askRow(null)
+/** 已经有人答了：整排收成一句回执「某某 选了「什么」」。 */
+export const ASK_ANSWERED = askRow({ option: ASK_OPTIONS[0], by: 'wang' })
+
+/**
  * 预览站里会自己取数的那几件（验收卡读卡和读检查）该读到什么。装到演示后端上
  * （`demoBackend`），和 `DemoRoom.installPanelAnswers` 是同一件事。
  */

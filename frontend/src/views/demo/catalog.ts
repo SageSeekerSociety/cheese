@@ -22,6 +22,8 @@ import {
   ACCEPT_DONE,
   ACTION_ROWS,
   ADMIN_QUEUE,
+  ASK_ANSWERED,
+  ASK_OPEN,
   BAR_ROWS,
   BAR_ROWS_LONG,
   CARD_FILED,
@@ -189,6 +191,19 @@ export const CATALOG: CatalogEntry[] = [
     component: RoomMessage,
     needs: UI,
     states: [
+      {
+        // 现状对照图的两格：产品现在作答就是这两下，不是这次要做的那套。
+        name: '提问：还没答（一键选项）',
+        note: 'cheese_ask 落在消息上，房间画一排一键按钮，点一下就交。',
+        props: roomMessageProps(ASK_OPEN),
+        expect: '课程平台收文件',
+      },
+      {
+        name: '提问：已经有人答了（回执）',
+        note: '同一条消息上落了 answered / answered_by，整排收成「谁选了什么」。',
+        props: roomMessageProps(ASK_ANSWERED),
+        expect: '选了「课程平台收文件」',
+      },
       {
         name: '留言（没有交给芝士）',
         note: '名字、头像、时间都带上的第一条（runStart）。',

@@ -33,13 +33,23 @@
   .meta { font-size: 8.8pt; color: #7a756c; margin: 0 0 6mm; }
   .meta b { color: #4a4741; font-weight: 600; }
 
-  /* 证据标签 —— 每张图都要挂一个 */
-  .fig { margin: 4mm 0 5mm; page-break-inside: avoid; }
+  /* 图 + 图注是一组，不许在页里被切开。
+     `max-height` 是这里的保险丝：一组要是比剩下的地方还高，排版软件只能在它中间
+     切一刀（图注被挤到下一页、还盖在图上）。限住高度，整组就总落得进一页。 */
+  .fig, .fig img, .fig figcaption {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .fig { margin: 4mm 0 5mm; }
   .fig img {
-    display: block; max-width: 100%; height: auto;
+    display: block; max-width: 100%; max-height: 200mm;
+    width: auto; height: auto; object-fit: contain;
     border: .6pt solid #d9d4cb; border-radius: 4px;
   }
-  .fig figcaption { font-size: 8.8pt; color: #4a4741; margin-top: 1.6mm; line-height: 1.6; }
+  .fig figcaption {
+    font-size: 8.8pt; color: #4a4741; margin-top: 1.6mm; line-height: 1.6;
+    page-break-before: avoid; break-before: avoid;
+  }
   .ev {
     display: inline-block; font-size: 8pt; font-weight: 700; letter-spacing: .03em;
     padding: .3mm 1.8mm; border-radius: 2px; margin-right: 1.6mm; vertical-align: 1%;
@@ -97,18 +107,25 @@
 
 <div class="warn">
   <strong>先把边界说清楚，免得看图误以为已经做好了。</strong>
-  这些图是<b>真组件渲染</b>出来的，但它们跑在预览站里、喂的是假数据 ——
-  <strong>产品现在还没有「可作答的提问」这条链路</strong>。看到图不等于产品已经实现。
-  每张图下面都标了它属于哪一类证据。
+  这些图是<b>真组件渲染</b>出来的，但它们跑在预览站里、喂的是假数据。
+  产品那边的现状是两句话，别读成一句：
+  <ul style="margin:1.5mm 0 0">
+    <li><b>已经能用的</b>：单题一键选项作答 + 「谁选了什么」回执。
+      房间里点一下选项就交上去了，忙时按钮禁用、失败会松手，答完整个房间都看得到谁选了什么。</li>
+    <li><b>这次要新做的</b>：多题切换、选项解释、自由输入、草稿、稍后找回、失败重试、答后更正 ——
+      这一套<b>还没接进产品</b>。</li>
+  </ul>
+  所以看到图不等于产品已经实现，也不等于产品什么都做不了。每张图下面都标了它属于哪一类证据。
 </div>
 
-<h2>一、四种证据，先分清</h2>
+<h2>一、五种标签，先分清</h2>
 <p>下面每一张图和每一行结论都挂着标签，别混着读：</p>
 <table>
   <tr><th style="width:26mm">标签</th><th>什么意思</th></tr>
   <tr>
     <td><span class="ev ev-real">真组件渲染</span></td>
-    <td>用真的前端组件画出来的图，喂的是写死的假数据。界面是<b>真</b>的，数据是<b>假</b>的，产品里没有这条链路。</td>
+    <td>用真的前端组件画出来的图，喂的是写死的假数据。界面是<b>真</b>的，数据是<b>假</b>的 ——
+      它说的是「要改成什么样」。挂「真组件渲染 · 现状」的那两张是<b>产品现在真的长这样</b>。</td>
   </tr>
   <tr>
     <td><span class="ev ev-fake">假服务预览</span></td>
@@ -129,6 +146,36 @@
 </table>
 
 <h2>二、界面：提问、作答、已答三态</h2>
+
+<h3>2.0 先看现状：产品现在就是这样</h3>
+<p>
+  下面两张是<b>产品真组件</b>（<code>RoomMessage.vue</code>）画出来的，不是这次做的那套预览。
+  所以它们就是用户现在真的会点到的界面 ——
+  <b>单题的一键选项作答和「谁选了什么」的回执，现在就能用</b>。
+</p>
+<div>
+  <div class="fig">
+    <img src="shots/now-01.png" alt="现状：还没答，一排一键选项">
+    <figcaption>
+      <span class="ev ev-real">真组件渲染 · 现状</span>
+      <b>还没答。</b>一条 <code>cheese_ask</code> 落在消息上，下面画出一排一键选项，
+      点哪颗就交哪颗。整排选项就在问题正下方，不用翻、不用展开。
+    </figcaption>
+  </div>
+  <div class="fig">
+    <img src="shots/now-02.png" alt="现状：已经有人答了，回执">
+    <figcaption>
+      <span class="ev ev-real">真组件渲染 · 现状</span>
+      <b>已经有人答了。</b>那一排收成一句回执：谁选的、选了什么，房间里所有人看到的是同一句。
+    </figcaption>
+  </div>
+</div>
+<div class="note">
+  <strong>所以下面那些图说的是「要改成什么样」，不是「现在什么都没有」。</strong>
+  差在<b>完整流程</b>这一层：多题怎么切、选项为什么要这么选、能不能顺带写一句、
+  写了一半怎么不丢、稍后怎么找回来、交失败了怎么办、答完能不能改 ——
+  这几件<b>还没接进产品</b>。本文档后半就是逐项说这几件。
+</div>
 
 <h3>2.1 提问 —— 你看到的是什么</h3>
 <div class="fig">
@@ -227,14 +274,30 @@
     <figcaption><span class="ev ev-real">真组件渲染</span>宽屏 · 深色</figcaption>
   </div>
 </div>
+
+<p>
+  窄屏不是把一张长图拦腰切开，而是<b>按整块界面各截各的</b>：一格整块「三件事摆在一起」，
+  一格整块「已答回执与改答案」，块与块之间本来就有缝，缝落在图外。
+</p>
+
 <div class="grid2">
   <div class="fig">
-    <img src="shots/flow-mobile-light.png" alt="窄屏浅色">
-    <figcaption><span class="ev ev-real">真组件渲染</span>窄屏 · 浅色</figcaption>
+    <img src="shots/mob-light-01.png" alt="窄屏浅色：三件事摆在一起">
+    <figcaption><span class="ev ev-real">真组件渲染</span>窄屏 · 浅色 · 多题与总进度</figcaption>
   </div>
   <div class="fig">
-    <img src="shots/flow-mobile-dark.png" alt="窄屏深色">
-    <figcaption><span class="ev ev-real">真组件渲染</span>窄屏 · 深色</figcaption>
+    <img src="shots/mob-dark-01.png" alt="窄屏深色：三件事摆在一起">
+    <figcaption><span class="ev ev-real">真组件渲染</span>窄屏 · 深色 · 多题与总进度</figcaption>
+  </div>
+</div>
+<div class="grid2">
+  <div class="fig">
+    <img src="shots/mob-light-06.png" alt="窄屏浅色：已答回执与改答案">
+    <figcaption><span class="ev ev-real">真组件渲染</span>窄屏 · 浅色 · 已答回执与改答案</figcaption>
+  </div>
+  <div class="fig">
+    <img src="shots/mob-dark-06.png" alt="窄屏深色：已答回执与改答案">
+    <figcaption><span class="ev ev-real">真组件渲染</span>窄屏 · 深色 · 已答回执与改答案</figcaption>
   </div>
 </div>
 
@@ -409,8 +472,10 @@ PASS  恢复的草稿不出回执
     <td class="n">5</td>
     <td><b>提交成功<br>失败 / 重试</b></td>
     <td>
-      成功时把答案写在问题记录上，并<b>叫醒出题的那个席位</b>；
-      失败就是报错。<b>产品前端现在没有能作答的提问界面。</b>
+      成功时把答案写在问题记录上，并<b>叫醒出题的那个席位</b>；失败就是报错。
+      <b>现有的这条路已经通</b>：房间里的选项按钮点一下就调
+      <code>answerOptions</code>（后端 <code>POST /topics/blocks/{id}/answer</code>），
+      成功就把回执换上去，失败弹「选择失败」并把按钮松开。
       <span class="ev ev-src">线上只读</span>
     </td>
     <td>
@@ -420,7 +485,9 @@ PASS  恢复的草稿不出回执
     <td>
       <span class="ev ev-fake">假服务预览</span>图 2.2<br>
       用例 3 / 4 —— 假服务<b>真的</b>被调、<b>真的</b>被拒、<b>真的</b>记账。<br>
-      <span class="ev ev-none">真实产品接口未实现、未验</span>
+      <span class="ev ev-none">新版所需契约 / 重试链路未验</span><br>
+      <span class="ev ev-src">线上只读</span>现有 answer 接口已存在并在用；
+      未验的是新版要的 <code>note</code> 字段、失败重试和更正这几段，后端还没有。
     </td>
   </tr>
 
@@ -502,7 +569,8 @@ PASS  恢复的草稿不出回执
 <ul>
   <li>答案记录从「一个答案」变成<b>一串版本</b>：第 1 版、第 2 版都留着，各带各的署名和时间。</li>
   <li>界面回执写「你之前选的是 A，现在改成 B」，<b>不抹掉原回答</b>。</li>
-  <li>只有<b>原来回答的那个人</b>能更正自己的答案。别人的意见记成新的一条，不顶掉别人的署名。</li>
+  <li>只有<b>原来回答的那个人</b>能更正自己的答案：别人不能改它，也不能顶掉别人的署名。
+    别人对同一题怎么表态，是产品规则问题，<b>本次不定</b>（见 5.4）。</li>
 </ul>
 
 <h3>5.2 已执行提示 + 新指令唤醒 —— 开工了就不能偷偷换掉</h3>
