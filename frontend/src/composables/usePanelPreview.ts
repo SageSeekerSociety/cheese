@@ -12,12 +12,14 @@
 // 的事（判据都在递下去的 props 里）。
 import type { FileContent, PreviewInfo } from '../cx_types'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, getPreview, readPreviewFile, requestPreviewSession } from '../api'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
-import { postPreviewSession, roomFileDestination } from '../lib/previewSession'
+import { roomFileDestination } from '../lib/previewSession'
+
+import { usePreviewFrames } from './usePreviewFrames'
 
 import { t } from '@/i18n'
 
@@ -51,6 +53,7 @@ export interface PanelPreviewOptions {
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
+  const host = usePreviewFrames(options.frameName)
   const loading = ref(false)
   const refreshing = ref(false)
   const previewFile = ref<FileContent | null>(null)
@@ -84,14 +87,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   async function loadFile(path: string, opts: { silent?: boolean; reload?: boolean } = {}) {
     const tid = props.topicId
     if (!tid) return
-    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value || host.navigation.value === 'failed')) return
     const current = ++generation
     if (opts.silent) refreshing.value = true
     else loading.value = true
     try {
       const content = await readPreviewFile(tid, path)
       if (current !== generation) return
-      if (!isWebPage(path)) previewUrl.value = null
+      if (!isWebPage(path)) {
+        host.reset()
+        previewUrl.value = null
+      }
       previewAppNote.value = ''
       previewError.value = null
       previewReadError.value = null
@@ -131,7 +137,16 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     // Only a known version proves unchanged bytes; path and topic also belong to
     // the identity. Explicit reload always navigates, even at the same version.
     const identity = content.version ? JSON.stringify([tid, path, content.version]) : null
-    if (opts.silent && !opts.reload && previewUrl.value && identity && identity === webMountedIdentity) return
+    if (
+      opts.silent &&
+      !opts.reload &&
+      previewUrl.value &&
+      identity &&
+      identity === webMountedIdentity &&
+      host.navigation.value !== 'failed'
+    )
+      return
+    host.authorize()
     let session: Awaited<ReturnType<typeof requestPreviewSession>>
     try {
       session = await requestPreviewSession(tid)
@@ -139,23 +154,31 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
       if (current !== generation) return
       previewError.value = e instanceof Error ? e.message : t('work.room.preview.authFailed')
+      host.fail(previewError.value)
       return
     }
     if (current !== generation) return
     previewMime.value = webMimeOf(suffixOf(path))
     previewUrl.value = session.url
-    // Mount the named frame before POSTing: a missing target opens a new tab.
-    loading.value = false
-    await nextTick()
-    if (current !== generation) return
-    postPreviewSession(session, { target: options.frameName, path: roomFileDestination(path) })
-    webMountedIdentity = identity
+    await host.navigate(
+      session,
+      {
+        url: session.url,
+        label: path,
+        mime: previewMime.value,
+        version: content.version ?? null,
+        live: false,
+      },
+      () => current === generation,
+      roomFileDestination(path)
+    )
+    if (current === generation) webMountedIdentity = identity
   }
 
   async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     if (props.path) return loadFile(props.path, opts)
     // Metadata polling must not cancel an explicit refresh's pending grant.
-    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value || host.navigation.value === 'failed')) return
     const tid = props.topicId
     const pid = props.projectId
     if (!tid || !pid) return
@@ -180,6 +203,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewNamedPath.value = art?.path ?? ''
       options.onLoaded?.(art?.artifact_id ?? null)
       if (!art) {
+        host.reset()
         previewUrl.value = null
         previewFile.value = null
         previewAppNote.value = ''
@@ -187,7 +211,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         return
       }
       const identity = `${art.kind ?? 'file'}:${art.artifact_id ?? art.path}:${art.url ?? ''}:${art.version ?? ''}`
-      const unchanged = identity === loadedArtifact && art.url === previewUrl.value
+      const unchanged =
+        identity === loadedArtifact && art.url === previewUrl.value && host.navigation.value !== 'failed'
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
       if (art.kind === 'app') {
@@ -226,6 +251,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         // 网页：一份字节其实是文字的 .pdf 会被按 application/pdf 发进沙箱 iframe，
         // 浏览器画不出也不报错，面板就是一片空白。交给查看器，它会说清楚。
         if (documentType.value) {
+          host.reset()
           previewUrl.value = null
           return
         }
@@ -237,19 +263,27 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         return
       }
       try {
+        host.authorize()
         const session = await requestPreviewSession(tid)
         if (!stillCurrent()) return
         previewUrl.value = art.url
-        // Mount the named frame before POSTing: a missing target opens a new tab.
-        loading.value = false
-        await nextTick()
-        if (!stillCurrent()) return
-        postPreviewSession(session, { target: options.frameName })
-        loadedArtifact = identity
+        await host.navigate(
+          session,
+          {
+            url: art.url,
+            label: art.path,
+            mime: art.mime || 'text/html',
+            version: art.version ?? null,
+            live: art.kind === 'app',
+          },
+          stillCurrent
+        )
+        if (stillCurrent()) loadedArtifact = identity
       } catch (e) {
         if (!stillCurrent()) return
-        previewUrl.value = null
+        if (!host.displayed.value) previewUrl.value = null
         previewError.value = e instanceof Error ? e.message : t('work.room.preview.authFailed')
+        host.fail(previewError.value)
       }
     } finally {
       if (stillCurrent()) {
@@ -263,6 +297,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     () => props.active,
     (active) => {
       if (active) void load({ silent: !!previewUrl.value })
+      else {
+        generation += 1
+        host.pause()
+        loading.value = false
+        refreshing.value = false
+        if (!host.displayed.value) {
+          previewUrl.value = null
+          loadedArtifact = null
+          webMountedIdentity = null
+        }
+      }
     },
     { immediate: true }
   )
@@ -270,6 +315,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     () => [props.topicId, props.path],
     () => {
       generation += 1
+      host.reset()
       previewUrl.value = null
       previewFile.value = null
       previewError.value = null
@@ -354,6 +400,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
 
   return {
     // 这一格现在画的是什么
+    frames: host.frames,
+    displayedFrame: host.displayed,
+    navigation: host.navigation,
+    navigationError: host.error,
+    frameLoaded: host.loaded,
+    frameFailed: host.failed,
     loading,
     refreshing,
     previewFile,

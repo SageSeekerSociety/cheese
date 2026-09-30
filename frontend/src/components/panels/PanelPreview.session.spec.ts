@@ -32,6 +32,10 @@ const artifact = (kind: 'app' | 'file' = 'app', id = 'artifact-a'): PreviewInfo 
   tunnel_up: true,
 })
 let submissions: { action: string; target: string; body: string }[]
+function opaqueNavigation(frame: Element) {
+  Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null })
+  frame.dispatchEvent(new Event('load'))
+}
 const fullscreenDescriptors = [
   [document, 'fullscreenElement'],
   [document, 'fullScreen'],
@@ -65,7 +69,9 @@ beforeEach(() => {
   readPreviewFile.mockResolvedValue({ path: 'report.html', content: '<script>arbitrary()</script>' })
   requestPreviewSession.mockResolvedValue({ url: `${url}_cheese/session`, grant: 'preview-grant' })
   vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
-    expect(document.querySelector(`iframe[name="${this.target}"]`)).toBeTruthy()
+    const target = document.querySelector(`iframe[name="${this.target}"]`)!
+    expect(target).toBeTruthy()
+    queueMicrotask(() => opaqueNavigation(target))
     submissions.push({
       action: this.action,
       target: this.target,
@@ -211,11 +217,11 @@ it('preserves the document for unchanged metadata and authorizes manual refresh 
   expect(container.querySelector('iframe')).toBe(frame)
   await fireEvent.click(getByTitle('刷新'))
   await waitFor(() => expect(submissions).toHaveLength(2))
-  expect(container.querySelector('iframe')).toBe(frame)
+  expect(container.querySelector('iframe')).not.toBe(frame)
   getPreview.mockResolvedValue(artifact('file', 'artifact-b'))
   await rerender({ refreshTick: 2 })
   await waitFor(() => expect(submissions).toHaveLength(3))
-  expect(container.querySelector('iframe')).toBe(frame)
+  expect(container.querySelector('iframe')).not.toBe(frame)
 })
 
 it('opens the platform preview launch route in a new tab', async () => {
@@ -256,7 +262,7 @@ it('uses the same frame while entering fullscreen, refreshing and exiting', asyn
   await waitFor(() => expect(submissions).toHaveLength(2))
   await fireEvent.click(getByTitle('退出全屏'))
   expect(current).toBeNull()
-  expect(container.querySelector('iframe')).toBe(frame)
+  expect(container.querySelector('iframe')).not.toBe(frame)
 })
 
 it('does not let background metadata cancel an explicit refresh grant', async () => {
@@ -275,6 +281,66 @@ it('does not let background metadata cancel an explicit refresh grant', async ()
   finish({ url: `${url}_cheese/session`, grant: 'manual-refresh-grant' })
   await waitFor(() => expect(submissions).toHaveLength(2))
   expect(submissions[1].body).toBe('grant=manual-refresh-grant')
+})
+
+it('keeps the displayed v1 context and announces failed v2 authorization', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>one</p>', version: 'v1' })
+  const { container, rerender, findByRole } = mountFile('site/index.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const oldFrame = container.querySelector('iframe')
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>two</p>', version: 'v2' })
+  requestPreviewSession.mockRejectedValueOnce(new Error('授权被拒绝'))
+  await rerender({ refreshTick: 1 })
+  const alert = await findByRole('alert')
+  expect(alert.textContent).toContain('授权被拒绝')
+  expect(alert.textContent).toContain('仍显示上次加载的旧版页面')
+  expect(container.querySelector('iframe')).toBe(oldFrame)
+  expect(container.textContent).toContain('v1')
+  expect(container.textContent).not.toContain('v2')
+  expect(submissions).toHaveLength(1)
+})
+
+it('performs a true manual navigation for unchanged named HTML', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>same</p>', version: 'v1' })
+  const { container, getByTitle } = mountFile('site/index.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const oldFrame = container.querySelector('iframe')
+  await fireEvent.click(getByTitle('刷新'))
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  expect(container.querySelector('iframe')).not.toBe(oldFrame)
+})
+
+it('waits for navigation load rather than treating a grant as readiness', async () => {
+  vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
+    submissions.push({ action: this.action, target: this.target, body: '' })
+  })
+  const { container, findByRole, queryByRole } = mount()
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  expect((await findByRole('status')).textContent).toContain('尚未确认应用就绪')
+  const frame = container.querySelector('iframe')!
+  await fireEvent.load(frame)
+  expect(queryByRole('status')).toBeTruthy()
+  opaqueNavigation(frame)
+  await waitFor(() => expect(queryByRole('status')).toBeNull())
+})
+
+it('keeps the old frame during replacement, rejects failed navigation and ignores its late load', async () => {
+  const { container, rerender, findByRole } = mount()
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const oldFrame = container.querySelector('iframe')!
+  vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
+    submissions.push({ action: this.action, target: this.target, body: '' })
+  })
+  getPreview.mockResolvedValue(artifact('app', 'artifact-b'))
+  await rerender({ refreshTick: 1 })
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  const nextFrame = container.querySelector(`iframe[name="${submissions[1].target}"]`)!
+  expect(container.querySelectorAll('iframe')).toHaveLength(2)
+  await fireEvent.error(nextFrame)
+  expect((await findByRole('alert')).textContent).toContain('上次加载的实时页面')
+  expect(container.querySelector('iframe')).toBe(oldFrame)
+  await fireEvent.load(nextFrame)
+  expect(container.querySelector('iframe')).toBe(oldFrame)
 })
 
 it('preserves a named HTML browsing context on a known unchanged version', async () => {
@@ -318,6 +384,44 @@ it('does not reuse a known version across different named files', async () => {
   expect(new URLSearchParams(submissions[1].body).get('path')).toBe('/_cheese/room/b.html')
 })
 
+it('does not post an authorization that finishes while the pane is inactive', async () => {
+  let finish: (value: { url: string; grant: string }) => void = () => {}
+  requestPreviewSession.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const { rerender } = mountFile('site/index.html')
+  await waitFor(() => expect(requestPreviewSession).toHaveBeenCalledTimes(1))
+  await rerender({ active: false })
+  finish({ url: `${url}_cheese/session`, grant: 'inactive-grant' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(submissions).toHaveLength(0)
+  await rerender({ active: true })
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  expect(submissions[0].body).not.toContain('inactive-grant')
+})
+
+it('rejects a named file read that finishes after the path changes', async () => {
+  let finish: (value: { path: string; content: string; version: string }) => void = () => {}
+  readPreviewFile.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const { rerender } = mountFile('a.html')
+  await waitFor(() => expect(readPreviewFile).toHaveBeenCalledWith('topic-a', 'a.html'))
+  readPreviewFile.mockResolvedValue({ path: 'b.html', content: '<p>B</p>', version: 'v2' })
+  await rerender({ path: 'b.html' })
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  finish({ path: 'a.html', content: '<p>A</p>', version: 'v1' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(submissions).toHaveLength(1)
+  expect(new URLSearchParams(submissions[0].body).get('path')).toBe('/_cheese/room/b.html')
+})
+
 it('ignores a grant from a prior topic without requiring remount', async () => {
   let finish: (value: { url: string; grant: string }) => void = () => {}
   requestPreviewSession.mockImplementationOnce(
@@ -349,7 +453,7 @@ it.each([false, true])('refreshes changed static content and preserves the same 
   getPreview.mockResolvedValue({ ...artifact('file'), version: 'content-b' })
   await rerender({ refreshTick: 2 })
   await waitFor(() => expect(submissions).toHaveLength(2))
-  expect(container.querySelector('iframe')).toBe(frame)
+  expect(container.querySelector('iframe')).not.toBe(frame)
   await fireEvent.click(getByTitle('刷新'))
   await waitFor(() => expect(submissions).toHaveLength(3))
 })
