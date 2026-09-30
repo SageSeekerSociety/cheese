@@ -7,6 +7,7 @@ The route, authorization, writes and delivery producer are not replaced.
 
 import asyncio
 import uuid
+from contextvars import ContextVar
 
 import httpx
 import pytest
@@ -75,13 +76,15 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
         competitors = {}
         retained = []
         pids = {}
+        requester = ContextVar("requester", default=None)
 
         async def initial_read(repo, identifier):
             block = await original_get(repo, identifier)
-            if identifier != block_id or len(competitors) == 2:
-                return block
+            name = requester.get()
             session = repo._session
-            name = "A" if not competitors else "B"
+            if identifier != block_id or name is None or session in competitors:
+                return block
+            assert name not in competitors.values()
             competitors[session] = name
             retained.append(block)
             pids[name] = (
@@ -136,10 +139,19 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
             base_url="http://testserver",
             headers=headers,
         ) as http:
+            async def answer(name, payload):
+                token = requester.set(name)
+                try:
+                    return await http.post(
+                        f"/topics/blocks/{block_id}/answer", json=payload
+                    )
+                finally:
+                    requester.reset(token)
+
             async with asyncio.timeout(15):
                 results = await asyncio.gather(
-                    http.post(f"/topics/blocks/{block_id}/answer", json=a),
-                    http.post(f"/topics/blocks/{block_id}/answer", json=b),
+                    answer("A", a),
+                    answer("B", b),
                     observe_pg_wait(),
                 )
         assert real_wait_observed.is_set(), "B never waited for A's PostgreSQL lock"

@@ -1316,8 +1316,13 @@ async def answer_options(
     # 2. 行锁。幂等查重、内容校验、版本比对读的是同一份 `answer_log`，不锁住就
     # 会出现「两个并发都没看见对方」的假幂等 —— 重试的那一次会拿到 409 而不是
     # 已经存好的那一版。锁在这里而不是在 CAS 那一行，是为了让查重也在锁内。
+    # repo.get 已将块放进 identity map；拿到锁也不会自动覆盖缓存属性。
+    # 等前一答提交后，必须用锁内读到的版本替换初读的 meta。
     locked = await db.execute(
-        select(Block).where(Block.id == block_id).with_for_update()
+        select(Block)
+        .where(Block.id == block_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     blk = locked.scalar_one()
     meta = dict(blk.meta or {})

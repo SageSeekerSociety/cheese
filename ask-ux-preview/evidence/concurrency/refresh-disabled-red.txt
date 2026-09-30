@@ -1,0 +1,351 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+___________ test_overlapping_answers_keep_one_winner[same_operation] ___________
+tests/integration/test_ask_concurrency.py:191: in test_overlapping_answers_keep_one_winner
+    client.portal.call(race)
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/integration/test_ask_concurrency.py:177: in race
+    assert (
+E   AssertionError: {'statuses': [200, 200], 'log': [{'v': 1, 'kind': 'option', 'option': 'cursor', 'note': None, ...}], 'texts': ['<@chee...93886abe0> cursor', '<@cheese-35c93886abe0> cursor'], 'delivery_events': ['2fec29ff-0898-5393-96bf-1e8c01885c94'], ...}
+E   assert ([200, 200] == [200, 200]
+E     
+E     Use -v to get more diff and 1 == 1 and 'overlap-a' == 'overlap-a'
+E    +  where 1 = len([{'v': 1, 'kind': 'option', 'option': 'cursor', 'note': None, ...}])
+E     
+E       overlap-a and 'cursor' == 'cursor'
+E     
+E       cursor and [1] == [1]
+E      == 1)
+E     Use -v to get more diff and 2
+E    +  and   2 = len([<app.domain.block.models.Block object at 0x79515ce23ac0>, <app.domain.block.models.Block object at 0x79515ce23790>])
+----------------------------- Captured stderr call -----------------------------
+2026-09-30 19:27:27 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=6b5ded1256b8
+2026-09-30 19:27:27 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-09-30 19:27:27 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] routines started (every 30s)   [cheesex.background]
+2026-09-30 19:27:27 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-09-30 19:27:27 [info     ] req                            [http] bytes=653 client=testclient host=testserver method=POST ms=775.9 path=/projects req=6b5ded1256b8 status=200 ua=testclient
+2026-09-30 19:27:27 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:29 [warning  ] event loop stalled             [cheesex.loop] note='one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.' stalled_ms=1315 worst_ms=1315
+2026-09-30 19:27:29 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=7aa8e7ab314d
+2026-09-30 19:27:29 [info     ] req                            [http] bytes=719 client=testclient host=testserver method=POST ms=1442.9 path=/topics req=7aa8e7ab314d status=200 ua=testclient
+2026-09-30 19:27:29 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:29 [info     ] req                            [http] bytes=632 client=testclient host=testserver method=POST ms=86.6 path=/topics/d1f2e318-8d37-49b3-80f7-ea7a56972e4f/ask req=351158a87946 status=200 ua=testclient
+2026-09-30 19:27:29 [info     ] HTTP Request: POST http://testserver/topics/d1f2e318-8d37-49b3-80f7-ea7a56972e4f/ask "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:29 [info     ] req                            [http] bytes=782 client=127.0.0.1 host=testserver method=POST ms=145.2 path=/topics/blocks/4e76da0a-9b01-497a-b6d7-ae9ec9981a03/answer req=29487df18b47 status=200 ua=python-httpx/0.28.1
+2026-09-30 19:27:29 [info     ] req                            [http] bytes=782 client=127.0.0.1 host=testserver method=POST ms=153.0 path=/topics/blocks/4e76da0a-9b01-497a-b6d7-ae9ec9981a03/answer req=3b6828ceb55f status=200 ua=python-httpx/0.28.1
+2026-09-30 19:27:29 [info     ] chat_admission_timing topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c phase=admitted verdict=ok elapsed_ms=15.971 unix_ms=1790796449635.075 [cheesex.runtime] req=29487df18b47
+2026-09-30 19:27:29 [info     ] turn start: author=system summon=True resume=False [cheesex.runtime] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': '6b5ded1256b8', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:27'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 775.9, 'req': '6b5ded1256b8', 'bytes': 653, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:27'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+WARNING  cheesex.loop:loop_lag.py:75 {'stalled_ms': 1315, 'worst_ms': 1315, 'note': 'one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.', 'event': 'event loop stalled', 'level': 'warning', 'logger': 'cheesex.loop', 'timestamp': '2026-09-30 19:27:29'}
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '7aa8e7ab314d', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:29'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 1442.9, 'req': '7aa8e7ab314d', 'bytes': 719, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:29'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/d1f2e318-8d37-49b3-80f7-ea7a56972e4f/ask', 'status': 200, 'ms': 86.6, 'req': '351158a87946', 'bytes': 632, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:29'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/d1f2e318-8d37-49b3-80f7-ea7a56972e4f/ask "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/4e76da0a-9b01-497a-b6d7-ae9ec9981a03/answer', 'status': 200, 'ms': 145.2, 'req': '29487df18b47', 'bytes': 782, 'client': '127.0.0.1', 'host': 'testserver', 'ua': 'python-httpx/0.28.1', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:29'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/4e76da0a-9b01-497a-b6d7-ae9ec9981a03/answer', 'status': 200, 'ms': 153.0, 'req': '3b6828ceb55f', 'bytes': 782, 'client': '127.0.0.1', 'host': 'testserver', 'ua': 'python-httpx/0.28.1', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:29'}
+INFO     cheesex.runtime:runtime.py:2161 chat_admission_timing topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c phase=admitted verdict=ok elapsed_ms=15.971 unix_ms=1790796449635.075
+INFO     cheesex.runtime:runtime.py:2378 turn start: author=system summon=True resume=False
+--------------------------- Captured stderr teardown ---------------------------
+2026-09-30 19:27:29 [info     ] chat_assembly_timing topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c elapsed_ms=181.556 phases_ms={'history': 28.500527143478394, 'identity': 76.1509407311678, 'memory': 87.3145330697298, 'metadata': 170.50069570541382, 'provider': 171.74465581774712, 'committed': 181.3699658960104} [app.domain.agent.chat] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+2026-09-30 19:27:29 [info     ] chat_preparation_timing topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c phase=assembled elapsed_ms=182.344 unix_ms=1790796449839.559 [app.domain.agent.chat] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+2026-09-30 19:27:29 [info     ] chat_preparation_timing topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c phase=prompt_built elapsed_ms=207.368 unix_ms=1790796449864.585 [app.domain.agent.chat] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+2026-09-30 19:27:29 [info     ] chat_preparation_timing topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c phase=model_ready elapsed_ms=216.706 unix_ms=1790796449873.922 [app.domain.agent.chat] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+2026-09-30 19:27:29 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.3s [cheesex.runtime] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+2026-09-30 19:27:29 [info     ] prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=d1f2e318-8d37-49b3-80f7-ea7a56972e4f, turn=d65a5fd4-be1b-4ce4-97d7-cdb1f59b7c3c) [app.domain.agent.chat] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+2026-09-30 19:27:30 [info     ] idempotent skip: action=message scope=d1f2e318-8d37-49b3-80f7-ea7a56972e4f [app.domain.idempotency.store] req=29487df18b47 topic=d1f2e318 turn=d65a5fd4
+________ test_overlapping_answers_keep_one_winner[different_operations] ________
+tests/integration/test_ask_concurrency.py:191: in test_overlapping_answers_keep_one_winner
+    client.portal.call(race)
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/integration/test_ask_concurrency.py:177: in race
+    assert (
+E   AssertionError: {'statuses': [200, 200], 'log': [{'v': 1, 'kind': 'option', 'option': 'pageStart', 'note': None, ...}], 'texts': ['<@c...381292> cursor', '<@cheese-af780f381292> pageStart'], 'delivery_events': ['9b68f18d-799a-5dd5-9bec-7407a9ef2f66'], ...}
+E   assert ([200, 200] == [200, 409]
+E     
+E     At index 1 diff: 200 != 409
+E     Use -v to get more diff)
+----------------------------- Captured stderr call -----------------------------
+2026-09-30 19:27:30 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=33dc21ee23f9
+2026-09-30 19:27:30 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-09-30 19:27:30 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] routines started (every 30s)   [cheesex.background]
+2026-09-30 19:27:30 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-09-30 19:27:30 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-09-30 19:27:31 [info     ] req                            [http] bytes=653 client=testclient host=testserver method=POST ms=183.3 path=/projects req=33dc21ee23f9 status=200 ua=testclient
+2026-09-30 19:27:31 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:31 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=e4e4f7528d93
+2026-09-30 19:27:31 [info     ] req                            [http] bytes=719 client=testclient host=testserver method=POST ms=44.4 path=/topics req=e4e4f7528d93 status=200 ua=testclient
+2026-09-30 19:27:31 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:31 [info     ] req                            [http] bytes=632 client=testclient host=testserver method=POST ms=32.7 path=/topics/77c9baf4-7d33-4568-b910-8870c3eb6911/ask req=cd3f4cc46b36 status=200 ua=testclient
+2026-09-30 19:27:31 [info     ] HTTP Request: POST http://testserver/topics/77c9baf4-7d33-4568-b910-8870c3eb6911/ask "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:31 [info     ] req                            [http] bytes=782 client=127.0.0.1 host=testserver method=POST ms=135.6 path=/topics/blocks/3d5fa6f0-80e4-454a-aa4b-4a316351eceb/answer req=b523e5ea7839 status=200 ua=python-httpx/0.28.1
+2026-09-30 19:27:31 [info     ] req                            [http] bytes=785 client=127.0.0.1 host=testserver method=POST ms=137.6 path=/topics/blocks/3d5fa6f0-80e4-454a-aa4b-4a316351eceb/answer req=54f7e7e2d274 status=200 ua=python-httpx/0.28.1
+2026-09-30 19:27:31 [info     ] chat_admission_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=admitted verdict=ok elapsed_ms=14.137 unix_ms=1790796451270.295 [cheesex.runtime] req=b523e5ea7839
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': '33dc21ee23f9', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:30'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 183.3, 'req': '33dc21ee23f9', 'bytes': 653, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:31'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': 'e4e4f7528d93', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:31'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 44.4, 'req': 'e4e4f7528d93', 'bytes': 719, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:31'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/77c9baf4-7d33-4568-b910-8870c3eb6911/ask', 'status': 200, 'ms': 32.7, 'req': 'cd3f4cc46b36', 'bytes': 632, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:31'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/77c9baf4-7d33-4568-b910-8870c3eb6911/ask "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/3d5fa6f0-80e4-454a-aa4b-4a316351eceb/answer', 'status': 200, 'ms': 135.6, 'req': 'b523e5ea7839', 'bytes': 782, 'client': '127.0.0.1', 'host': 'testserver', 'ua': 'python-httpx/0.28.1', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:31'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/3d5fa6f0-80e4-454a-aa4b-4a316351eceb/answer', 'status': 200, 'ms': 137.6, 'req': '54f7e7e2d274', 'bytes': 785, 'client': '127.0.0.1', 'host': 'testserver', 'ua': 'python-httpx/0.28.1', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:31'}
+INFO     cheesex.runtime:runtime.py:2161 chat_admission_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=admitted verdict=ok elapsed_ms=14.137 unix_ms=1790796451270.295
+--------------------------- Captured stderr teardown ---------------------------
+2026-09-30 19:27:31 [info     ] turn start: author=system summon=True resume=False [cheesex.runtime] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] chat_assembly_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 elapsed_ms=110.262 phases_ms={'history': 22.17470481991768, 'identity': 41.63530096411705, 'memory': 45.755062252283096, 'metadata': 99.66685622930527, 'provider': 100.2262830734253, 'committed': 110.11052690446377} [app.domain.agent.chat] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] chat_preparation_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=assembled elapsed_ms=110.836 unix_ms=1790796451423.667 [app.domain.agent.chat] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] chat_preparation_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=prompt_built elapsed_ms=134.561 unix_ms=1790796451447.395 [app.domain.agent.chat] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] chat_preparation_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=model_ready elapsed_ms=142.077 unix_ms=1790796451454.910 [app.domain.agent.chat] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.2s [cheesex.runtime] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=77c9baf4-7d33-4568-b910-8870c3eb6911, turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9) [app.domain.agent.chat] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+2026-09-30 19:27:31 [info     ] idempotent skip: action=message scope=77c9baf4-7d33-4568-b910-8870c3eb6911 [app.domain.idempotency.store] req=b523e5ea7839 topic=77c9baf4 turn=96ca4cfb
+---------------------------- Captured log teardown -----------------------------
+INFO     app.domain.agent.chat:chat.py:4298 chat_assembly_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 elapsed_ms=110.262 phases_ms={'history': 22.17470481991768, 'identity': 41.63530096411705, 'memory': 45.755062252283096, 'metadata': 99.66685622930527, 'provider': 100.2262830734253, 'committed': 110.11052690446377}
+INFO     app.domain.agent.chat:chat.py:4365 chat_preparation_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=assembled elapsed_ms=110.836 unix_ms=1790796451423.667
+INFO     app.domain.agent.chat:chat.py:4460 chat_preparation_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=prompt_built elapsed_ms=134.561 unix_ms=1790796451447.395
+INFO     app.domain.agent.chat:chat.py:4480 chat_preparation_timing topic=77c9baf4-7d33-4568-b910-8870c3eb6911 turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9 phase=model_ready elapsed_ms=142.077 unix_ms=1790796451454.910
+INFO     cheesex.runtime:runtime.py:2614 turn done: status=done tools=0 first_output=Nones duration=0.2s
+INFO     app.domain.agent.chat:chat.py:1359 prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=77c9baf4-7d33-4568-b910-8870c3eb6911, turn=96ca4cfb-fbf1-4ca1-88d6-a01af70702c9)
+INFO     app.domain.idempotency.store:store.py:43 idempotent skip: action=message scope=77c9baf4-7d33-4568-b910-8870c3eb6911
+____________ test_overlapping_answers_keep_one_winner[corrections] _____________
+tests/integration/test_ask_concurrency.py:191: in test_overlapping_answers_keep_one_winner
+    client.portal.call(race)
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/integration/test_ask_concurrency.py:177: in race
+    assert (
+E   AssertionError: {'statuses': [200, 200], 'log': [{'v': 1, 'kind': 'option', 'option': 'cursor', 'note': None, ...}, {'v': 2, 'kind': '... pageStart'], 'delivery_events': ['f957dc16-3aee-54bb-aba0-b6dcb6bad21a', '985bf03f-0384-5adc-8941-bd16249bd261'], ...}
+E   assert ([200, 200] == [200, 409]
+E     
+E     At index 1 diff: 200 != 409
+E     Use -v to get more diff)
+----------------------------- Captured stderr call -----------------------------
+2026-09-30 19:27:32 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=0dd710b45e61
+2026-09-30 19:27:32 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-09-30 19:27:32 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] routines started (every 30s)   [cheesex.background]
+2026-09-30 19:27:32 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-09-30 19:27:32 [info     ] req                            [http] bytes=653 client=testclient host=testserver method=POST ms=172.4 path=/projects req=0dd710b45e61 status=200 ua=testclient
+2026-09-30 19:27:32 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:32 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=e9e44fc3a70f
+2026-09-30 19:27:32 [info     ] req                            [http] bytes=719 client=testclient host=testserver method=POST ms=67.6 path=/topics req=e9e44fc3a70f status=200 ua=testclient
+2026-09-30 19:27:32 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:32 [info     ] req                            [http] bytes=632 client=testclient host=testserver method=POST ms=33.7 path=/topics/980fe726-4bf9-43bb-9a79-7f590267d5a2/ask req=e502e3f41ee9 status=200 ua=testclient
+2026-09-30 19:27:32 [info     ] HTTP Request: POST http://testserver/topics/980fe726-4bf9-43bb-9a79-7f590267d5a2/ask "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:32 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=73cfa59fa788
+2026-09-30 19:27:32 [info     ] req                            [http] bytes=780 client=testclient host=testserver method=POST ms=52.5 path=/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer req=73cfa59fa788 status=200 ua=testclient
+2026-09-30 19:27:32 [info     ] HTTP Request: POST http://testserver/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 19:27:32 [info     ] chat_admission_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=admitted verdict=ok elapsed_ms=17.619 unix_ms=1790796452373.005 [cheesex.runtime] req=73cfa59fa788
+2026-09-30 19:27:32 [info     ] turn start: author=system summon=True resume=False [cheesex.runtime] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] chat_assembly_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb elapsed_ms=97.259 phases_ms={'history': 15.500500798225403, 'identity': 39.256999269127846, 'memory': 44.367024675011635, 'metadata': 88.99992890655994, 'provider': 89.34800513088703, 'committed': 96.95659764111042} [app.domain.agent.chat] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=assembled elapsed_ms=97.850 unix_ms=1790796452491.643 [app.domain.agent.chat] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=prompt_built elapsed_ms=125.405 unix_ms=1790796452519.199 [app.domain.agent.chat] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=model_ready elapsed_ms=150.823 unix_ms=1790796452544.618 [app.domain.agent.chat] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] req                            [http] bytes=915 client=127.0.0.1 host=testserver method=POST ms=186.8 path=/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer req=b7871825f56a status=200 ua=python-httpx/0.28.1
+2026-09-30 19:27:32 [info     ] chat_admission_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=admitted verdict=ok elapsed_ms=25.365 unix_ms=1790796452576.715 [cheesex.runtime] req=b7871825f56a
+2026-09-30 19:27:32 [info     ] req                            [http] bytes=918 client=127.0.0.1 host=testserver method=POST ms=219.1 path=/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer req=5dd04b2fd937 status=200 ua=python-httpx/0.28.1
+2026-09-30 19:27:32 [info     ] turn start: author=system summon=True resume=False [cheesex.runtime] req=b7871825f56a topic=980fe726 turn=3326c1af
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': '0dd710b45e61', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:32'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 172.4, 'req': '0dd710b45e61', 'bytes': 653, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:32'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': 'e9e44fc3a70f', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:32'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 67.6, 'req': 'e9e44fc3a70f', 'bytes': 719, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:32'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/980fe726-4bf9-43bb-9a79-7f590267d5a2/ask', 'status': 200, 'ms': 33.7, 'req': 'e502e3f41ee9', 'bytes': 632, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:32'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/980fe726-4bf9-43bb-9a79-7f590267d5a2/ask "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '73cfa59fa788', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 19:27:32'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer', 'status': 200, 'ms': 52.5, 'req': '73cfa59fa788', 'bytes': 780, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:32'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer "HTTP/1.1 200 OK"
+INFO     cheesex.runtime:runtime.py:2161 chat_admission_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=admitted verdict=ok elapsed_ms=17.619 unix_ms=1790796452373.005
+INFO     cheesex.runtime:runtime.py:2378 turn start: author=system summon=True resume=False
+INFO     app.domain.agent.chat:chat.py:4298 chat_assembly_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb elapsed_ms=97.259 phases_ms={'history': 15.500500798225403, 'identity': 39.256999269127846, 'memory': 44.367024675011635, 'metadata': 88.99992890655994, 'provider': 89.34800513088703, 'committed': 96.95659764111042}
+INFO     app.domain.agent.chat:chat.py:4365 chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=assembled elapsed_ms=97.850 unix_ms=1790796452491.643
+INFO     app.domain.agent.chat:chat.py:4460 chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=prompt_built elapsed_ms=125.405 unix_ms=1790796452519.199
+INFO     app.domain.agent.chat:chat.py:4480 chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=d54afb89-d47d-4bbe-81d4-d064df98adcb phase=model_ready elapsed_ms=150.823 unix_ms=1790796452544.618
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer', 'status': 200, 'ms': 186.8, 'req': 'b7871825f56a', 'bytes': 915, 'client': '127.0.0.1', 'host': 'testserver', 'ua': 'python-httpx/0.28.1', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:32'}
+INFO     cheesex.runtime:runtime.py:2161 chat_admission_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=admitted verdict=ok elapsed_ms=25.365 unix_ms=1790796452576.715
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/80cfcb3c-0fcb-4266-aaa9-8679a4f29056/answer', 'status': 200, 'ms': 219.1, 'req': '5dd04b2fd937', 'bytes': 918, 'client': '127.0.0.1', 'host': 'testserver', 'ua': 'python-httpx/0.28.1', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 19:27:32'}
+INFO     cheesex.runtime:runtime.py:2378 turn start: author=system summon=True resume=False
+--------------------------- Captured stderr teardown ---------------------------
+2026-09-30 19:27:32 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.3s [cheesex.runtime] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=980fe726-4bf9-43bb-9a79-7f590267d5a2, turn=d54afb89-d47d-4bbe-81d4-d064df98adcb) [app.domain.agent.chat] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] idempotent skip: action=message scope=980fe726-4bf9-43bb-9a79-7f590267d5a2 [app.domain.idempotency.store] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] chat_assembly_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b elapsed_ms=158.785 phases_ms={'history': 16.122398898005486, 'identity': 75.92055760324001, 'memory': 80.89342154562473, 'metadata': 146.41713351011276, 'provider': 147.9425672441721, 'committed': 157.97920525074005} [app.domain.agent.chat] req=b7871825f56a topic=980fe726 turn=3326c1af
+2026-09-30 19:27:32 [info     ] chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=assembled elapsed_ms=159.589 unix_ms=1790796452841.879 [app.domain.agent.chat] req=b7871825f56a topic=980fe726 turn=3326c1af
+2026-09-30 19:27:32 [info     ] chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=prompt_built elapsed_ms=185.496 unix_ms=1790796452867.786 [app.domain.agent.chat] req=b7871825f56a topic=980fe726 turn=3326c1af
+2026-09-30 19:27:32 [info     ] chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=model_ready elapsed_ms=194.608 unix_ms=1790796452876.898 [app.domain.agent.chat] req=b7871825f56a topic=980fe726 turn=3326c1af
+2026-09-30 19:27:32 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.4s [cheesex.runtime] req=b7871825f56a topic=980fe726 turn=3326c1af
+2026-09-30 19:27:32 [info     ] prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=980fe726-4bf9-43bb-9a79-7f590267d5a2, turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b) [app.domain.agent.chat] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+2026-09-30 19:27:32 [info     ] idempotent skip: action=message scope=980fe726-4bf9-43bb-9a79-7f590267d5a2 [app.domain.idempotency.store] req=73cfa59fa788 topic=980fe726 turn=d54afb89
+---------------------------- Captured log teardown -----------------------------
+INFO     cheesex.runtime:runtime.py:2614 turn done: status=done tools=0 first_output=Nones duration=0.3s
+INFO     app.domain.agent.chat:chat.py:1359 prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=980fe726-4bf9-43bb-9a79-7f590267d5a2, turn=d54afb89-d47d-4bbe-81d4-d064df98adcb)
+INFO     app.domain.idempotency.store:store.py:43 idempotent skip: action=message scope=980fe726-4bf9-43bb-9a79-7f590267d5a2
+INFO     app.domain.agent.chat:chat.py:4298 chat_assembly_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b elapsed_ms=158.785 phases_ms={'history': 16.122398898005486, 'identity': 75.92055760324001, 'memory': 80.89342154562473, 'metadata': 146.41713351011276, 'provider': 147.9425672441721, 'committed': 157.97920525074005}
+INFO     app.domain.agent.chat:chat.py:4365 chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=assembled elapsed_ms=159.589 unix_ms=1790796452841.879
+INFO     app.domain.agent.chat:chat.py:4460 chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=prompt_built elapsed_ms=185.496 unix_ms=1790796452867.786
+INFO     app.domain.agent.chat:chat.py:4480 chat_preparation_timing topic=980fe726-4bf9-43bb-9a79-7f590267d5a2 turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b phase=model_ready elapsed_ms=194.608 unix_ms=1790796452876.898
+INFO     cheesex.runtime:runtime.py:2614 turn done: status=done tools=0 first_output=Nones duration=0.4s
+INFO     app.domain.agent.chat:chat.py:1359 prompt receipt matched an injected message — 0 block(s) stamped consumed (topic=980fe726-4bf9-43bb-9a79-7f590267d5a2, turn=3326c1af-f1d8-4636-a30d-2ffb44aa508b)
+INFO     app.domain.idempotency.store:store.py:43 idempotent skip: action=message scope=980fe726-4bf9-43bb-9a79-7f590267d5a2
+=============================== warnings summary ===============================
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[same_operation]
+FAILED tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[different_operations]
+FAILED tests/integration/test_ask_concurrency.py::test_overlapping_answers_keep_one_winner[corrections]
+3 failed, 9 warnings in 7.19s
