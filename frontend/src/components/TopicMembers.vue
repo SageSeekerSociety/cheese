@@ -30,6 +30,7 @@ import TopicComputePicker from './TopicComputePicker.vue'
 
 const props = defineProps<{
   topicId: string
+  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
@@ -294,7 +295,7 @@ async function onSetRole(handle: string, role: string) {
         <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
         </span>
-        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+        <TopicComputePicker :topic-id="topicId" :project-id="projectId" :profile="machines" @changed="loadMachines" />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
         {{ t('work.roomMachine.loadFailed') }}

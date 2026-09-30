@@ -17,6 +17,15 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
 
+# What a platform choice may hold at all, provider aside. The cloud supply
+# range a form offers is the provider's offering met with these
+# (`domain/machine/supply.py`), so both read the same numbers.
+PLATFORM_BOUNDS: dict[str, tuple[int, int]] = {
+    "cores": (1, 256),
+    "memory_mb": (512, 1048576),
+    "disk_gb": (1, 16384),
+}
+
 
 class ComputeChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -24,9 +33,19 @@ class ComputeChoice(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     profile: Literal["cloud", "device"]
     device_id: str | None = None
-    cores: int | None = Field(default=None, ge=1, le=256)
-    memory_mb: int | None = Field(default=None, ge=512, le=1048576)
-    disk_gb: int | None = Field(default=None, ge=1, le=16384)
+    cores: int | None = Field(
+        default=None, ge=PLATFORM_BOUNDS["cores"][0], le=PLATFORM_BOUNDS["cores"][1]
+    )
+    memory_mb: int | None = Field(
+        default=None,
+        ge=PLATFORM_BOUNDS["memory_mb"][0],
+        le=PLATFORM_BOUNDS["memory_mb"][1],
+    )
+    disk_gb: int | None = Field(
+        default=None,
+        ge=PLATFORM_BOUNDS["disk_gb"][0],
+        le=PLATFORM_BOUNDS["disk_gb"][1],
+    )
 
     @model_validator(mode="after")
     def resource_kind(self):
