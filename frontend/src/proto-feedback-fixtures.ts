@@ -18,6 +18,9 @@
  * 已修复的 bug（默认沉底）、走完四级停在「已上线」的（沉底规则必须和「已修复」一致）、
  * 支持数过门槛的（进「热门」）、带安全标记的（管理端第四栏）。
  */
+import axios from 'axios'
+
+import { adminRoutes } from './proto-admin-fixtures'
 import type {
   FeedbackCard,
   FeedbackComment,
@@ -1918,6 +1921,12 @@ type MockReply =
 
 /** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
  *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。 */
+// 空间申请走 axios（XHR），不经过 `fetch`；让 axios 也改走 fetch，同一处假数据才接得住。
+// 放在模块顶层：要赶在任何 `axios.create()` 之前（实例创建时复制一份默认值）。
+axios.defaults.adapter = 'fetch'
+
+// `?slow=1`：读接口一直不回，用来看各页的「加载中」。
+const PREVIEW_SLOW = typeof location !== 'undefined' && new URLSearchParams(location.search).get('slow') === '1'
 const PREVIEW_FAIL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('fail') === '1'
 
 /** 飞书应用（样例）。App ID 是编的，不对应任何真实应用。 */
@@ -1937,6 +1946,8 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   // 布局预览用：`?fail=1` 让后台各页的读接口一律失败，用来并排看「出错态」长什么样。
   // 权限（meta）和未读数（counts）不跟着失败，不然外壳直接落到「不是管理员」那一档。
   if (PREVIEW_FAIL && method === 'GET' && path !== '/feedback/counts') return { failed: '服务暂时不可用（样例错误）' }
+  const admin = adminRoutes(path, method, url)
+  if (admin) return admin
   if (path === '/admin/integrations/feishu' && method === 'GET') return { data: FEISHU_APP }
   if (path === '/admin/integrations/feishu' && method === 'PUT') {
     Object.assign(FEISHU_APP, { configured: true, app_id: payload.app_id, domain: payload.domain, updated_by: 'andy', updated_at: new Date().toISOString() })
@@ -2643,6 +2654,9 @@ export function installPreviewFetch(): void {
       } catch {
         body = null
       }
+    }
+    if (PREVIEW_SLOW && method === 'GET' && !url.pathname.endsWith('/feedback/meta') && !url.pathname.endsWith('/feedback/counts')) {
+      await new Promise(() => {})
     }
     const hit = routes(url, method, body)
     if (hit === undefined) {
