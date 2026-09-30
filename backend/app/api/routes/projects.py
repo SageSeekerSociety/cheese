@@ -93,7 +93,6 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
-from app.domain.routine.service import RoutineService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
@@ -1359,11 +1358,6 @@ async def archive_project(
     Nothing is deleted; ``/unarchive`` puts it back."""
     owner = await _project_owner(project_id, db, resolver)
     project = await ProjectService(db).archive(project_id, by=owner.handle)
-    # 归档带走的执行要说出来：每个房间各写一行，并通知每条规则的主人（房间自己
-    # 的归档走 topics.py 那条路，历史归档过的房间不会被再说一遍）。
-    await RoutineService(db).stop_with_archived_project(
-        project_id=project_id, by=owner.handle
-    )
     await db.commit()
     return ok(await _project_payload(db, project))
 
