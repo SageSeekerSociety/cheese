@@ -1,10 +1,10 @@
 {
  "version": 1,
  "collection": "ok",
- "commit": "aaed8e4f70bc9a955c1f0a95e11593f101859e9d",
- "commit_date": "2026-09-30T09:58:34Z",
- "collected_at": "2026-09-30T10:03:27+00:00",
- "run_url": "local (work machine), pre-CI: aaed8e4f",
+ "commit": "ccd6379520cb2d3a22d747ec582b2128c53a74d3",
+ "commit_date": "2026-09-30T11:08:08Z",
+ "collected_at": "2026-09-30T11:13:28+00:00",
+ "run_url": "https://github.com/SageSeekerSociety/cheese/actions/runs/36706995490",
  "checks": [
   {
    "better": "down",
@@ -19,6 +19,7 @@
      "reasons": [
       "imports the API layer (frontend/src/api.ts)",
       "reaches the API layer through frontend/src/components/room/composables/useRoomSocket.ts",
+      "reaches the API layer through frontend/src/components/room/RoomNotice.vue",
       "reaches the API layer through frontend/src/components/TopicAcceptCard.vue",
       "reaches the API layer through frontend/src/components/common/UserRefLink.vue"
      ]
@@ -542,9 +543,9 @@
      "file": "src/views/admin/AdminModelsPage.vue",
      "grade": "C",
      "reasons": [
-      "imports the API layer (frontend/src/api.ts)",
+      "reaches the API layer through frontend/src/composables/useAdminModels.ts",
       "reaches the API layer through frontend/src/components/admin/AdminModelDetailDrawer.vue",
-      "reaches the API layer through frontend/src/components/common/UserRefLink.vue"
+      "reaches the API layer through frontend/src/components/admin/models/AdminModelsAudit.vue"
      ]
     },
     {
@@ -1163,8 +1164,8 @@
   {
    "better": "down",
    "status": "pass",
-   "actual": 116,
-   "frozen": 116,
+   "actual": 115,
+   "frozen": 115,
    "stale": [],
    "details": [
     {
@@ -1185,10 +1186,6 @@
     },
     {
      "file": "src/components/AttachmentImage.vue",
-     "count": 1
-    },
-    {
-     "file": "src/components/ChatPanel.vue",
      "count": 1
     },
     {
@@ -1521,7 +1518,7 @@
    "reason": "",
    "id": "be-contracts",
    "area": "边界",
-   "rule_fingerprint": "7563e14e163674df6a56f79679d82d5deebae8cfbd3a5c96fe61878db50f70ce"
+   "rule_fingerprint": "b9e02b4d484f7351597f5dbb35116d850aef7619988066bd3c3994b718879dd0"
   },
   {
    "area": "边界",
@@ -1695,37 +1692,37 @@
  ],
  "board": {
   "meta": {
-   "root": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/1ccb4270-4f49-40e2-9f7a-467a0c96c7be/.cheese/tasks/4db75afb-a9aa-4a0f-95a9-e38779a1abf2",
-   "commit": "aaed8e4f70bc",
-   "date": "2026-09-30T09:58:34Z",
-   "subject": "fix(ratchet): fingerprint every file a check reads, and never collect nothing"
+   "root": "/home/runner/work/cheese/cheese",
+   "commit": "ccd6379520cb",
+   "date": "2026-09-30T11:08:08Z",
+   "subject": "docs: document task ci:fast usage in the dev workflow (#2219)"
   },
   "frontend": {
    "grade_counts": {
-    "components": 407,
-    "lines": 102396,
+    "components": 418,
+    "lines": 101518,
     "grades": {
-     "A": 161,
+     "A": 168,
      "B": 1,
-     "C": 145,
+     "C": 149,
      "D": 100
     },
     "grade_pct": {
-     "A": 39.6,
+     "A": 40.2,
      "B": 0.2,
      "C": 35.6,
-     "D": 24.6
+     "D": 23.9
     },
     "grade_lines": {
-     "A": 28956,
+     "A": 29430,
      "B": 192,
-     "C": 42945,
+     "C": 41593,
      "D": 30303
     }
    },
    "boundary": {
-    "files": 75,
-    "violations": 116
+    "files": 74,
+    "violations": 115
    }
   },
   "backend": {
@@ -1739,29 +1736,29 @@
    },
    "deferred_imports": 722,
    "files": {
-    "python_files": 692,
+    "python_files": 696,
     "files_over_1000": 26,
-    "files_over_1500": 15,
+    "files_over_1500": 14,
     "chat_py_lines": 5175
    }
   },
   "size": {
    "per_cap": {
     "frontend/src/": {
-     "judged": 1115,
-     "over_cap": 11,
-     "excess_lines": 7854,
+     "judged": 1143,
+     "over_cap": 9,
+     "excess_lines": 6439,
      "cap": 1000
     },
     "backend/app/": {
-     "judged": 692,
-     "over_cap": 15,
-     "excess_lines": 15823,
+     "judged": 696,
+     "over_cap": 14,
+     "excess_lines": 15216,
      "cap": 1500
     }
    },
-   "offenders": 26,
-   "excess_lines": 23677,
+   "offenders": 23,
+   "excess_lines": 21655,
    "worst": [
     {
      "file": "backend/app/domain/agent/chat.py",
@@ -1807,29 +1804,29 @@
     },
     {
      "file": "backend/app/api/routes/topics.py",
-     "lines": 2753,
+     "lines": 2297,
      "cap": 1500,
-     "over": 1253
-    },
-    {
-     "file": "frontend/src/components/ChatPanel.vue",
-     "lines": 1987,
-     "cap": 1000,
-     "over": 987
+     "over": 797
     },
     {
      "file": "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
      "lines": 2222,
      "cap": 1500,
      "over": 722
+    },
+    {
+     "file": "frontend/src/stores/feedback.ts",
+     "lines": 1712,
+     "cap": 1000,
+     "over": 712
     }
    ]
   },
   "hotspots": {
    "30d": {
-    "commits": 1334,
-    "files_touched": 1487,
-    "fix_commits": 580,
+    "commits": 1329,
+    "files_touched": 1515,
+    "fix_commits": 577,
     "top": [
      {
       "file": "backend/app/domain/agent/chat.py",
@@ -1849,11 +1846,11 @@
      },
      {
       "file": "backend/app/api/routes/topics.py",
-      "changes": 99,
-      "lines": 2753,
-      "churn": 272547,
+      "changes": 101,
+      "lines": 2297,
+      "churn": 231997,
       "fix_commits": 28,
-      "fix_share": 0.283
+      "fix_share": 0.277
      },
      {
       "file": "backend/app/api/routes/users.py",
@@ -1862,14 +1859,6 @@
       "churn": 158434,
       "fix_commits": 20,
       "fix_share": 0.541
-     },
-     {
-      "file": "frontend/src/components/ChatPanel.vue",
-      "changes": 78,
-      "lines": 1987,
-      "churn": 154986,
-      "fix_commits": 30,
-      "fix_share": 0.385
      },
      {
       "file": "backend/app/domain/review/services.py",
@@ -1910,37 +1899,37 @@
       "churn": 118039,
       "fix_commits": 17,
       "fix_share": 0.415
+     },
+     {
+      "file": "backend/app/api/routes/tasks.py",
+      "changes": 32,
+      "lines": 3653,
+      "churn": 116896,
+      "fix_commits": 15,
+      "fix_share": 0.469
      }
     ]
    },
    "90d": {
-    "commits": 2183,
-    "files_touched": 1699,
-    "fix_commits": 849,
+    "commits": 2171,
+    "files_touched": 1727,
+    "fix_commits": 844,
     "top": [
      {
       "file": "backend/app/domain/agent/chat.py",
-      "changes": 247,
+      "changes": 243,
       "lines": 5175,
-      "churn": 1278225,
-      "fix_commits": 80,
-      "fix_share": 0.324
+      "churn": 1257525,
+      "fix_commits": 79,
+      "fix_share": 0.325
      },
      {
       "file": "frontend/src/api.ts",
-      "changes": 183,
+      "changes": 182,
       "lines": 3606,
-      "churn": 659898,
+      "churn": 656292,
       "fix_commits": 30,
-      "fix_share": 0.164
-     },
-     {
-      "file": "backend/app/api/routes/topics.py",
-      "changes": 162,
-      "lines": 2753,
-      "churn": 445986,
-      "fix_commits": 40,
-      "fix_share": 0.247
+      "fix_share": 0.165
      },
      {
       "file": "backend/app/domain/review/services.py",
@@ -1951,12 +1940,12 @@
       "fix_share": 0.278
      },
      {
-      "file": "frontend/src/components/ChatPanel.vue",
-      "changes": 137,
-      "lines": 1987,
-      "churn": 272219,
-      "fix_commits": 52,
-      "fix_share": 0.38
+      "file": "backend/app/api/routes/topics.py",
+      "changes": 161,
+      "lines": 2297,
+      "churn": 369817,
+      "fix_commits": 39,
+      "fix_share": 0.242
      },
      {
       "file": "backend/app/domain/agent/device_provider.py",
@@ -1968,11 +1957,11 @@
      },
      {
       "file": "backend/app/domain/agent/runtime.py",
-      "changes": 87,
+      "changes": 86,
       "lines": 2879,
-      "churn": 250473,
+      "churn": 247594,
       "fix_commits": 34,
-      "fix_share": 0.391
+      "fix_share": 0.395
      },
      {
       "file": "backend/app/api/routes/users.py",
@@ -1997,13 +1986,21 @@
       "churn": 178205,
       "fix_commits": 31,
       "fix_share": 0.214
+     },
+     {
+      "file": "backend/app/api/routes/tasks.py",
+      "changes": 36,
+      "lines": 3653,
+      "churn": 131508,
+      "fix_commits": 17,
+      "fix_share": 0.472
      }
     ]
    }
   },
   "shared_days": {
-   "file_days": 6604,
-   "shared_days": 1754,
+   "file_days": 6628,
+   "shared_days": 1753,
    "worst": [
     {
      "file": "backend/app/domain/agent/chat.py",
@@ -2011,7 +2008,7 @@
     },
     {
      "file": "frontend/src/api.ts",
-     "days": 34
+     "days": 33
     },
     {
      "file": "backend/app/core/config.py",
@@ -2039,7 +2036,7 @@
     },
     {
      "file": "backend/app/domain/topic/services.py",
-     "days": 21
+     "days": 20
     },
     {
      "file": "backend/app/domain/review/services.py",
