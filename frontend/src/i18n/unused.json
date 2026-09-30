@@ -82,6 +82,5 @@
   "tasks.form.allowEditSubmissions",
   "tasks.form.allowMultipleSubmissions",
   "tasks.publish.back",
-  "tasks.publish.createFailed",
-  "tasks.status.joined"
+  "tasks.publish.createFailed"
 ]

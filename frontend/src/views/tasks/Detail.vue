@@ -12,6 +12,8 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 
+import { taskState as taskStateOf } from '@/utils/tasks'
+
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
@@ -111,14 +113,9 @@ const full = computed(() => limit.value !== null && claimCount.value >= limit.va
 
 /** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
 const taskState = computed(() => {
-  const task = taskData.value
-  if (!task) return null
-  if (task.approved === 'NONE') return { label: t('tasks.page.state.pending'), tone: 'muted' }
-  if (task.approved === 'DISAPPROVED') return { label: t('tasks.page.state.rejected'), tone: 'danger' }
-  if (deadlinePassed.value) return { label: t('tasks.page.state.closed'), tone: 'muted' }
-  if (notStarted.value) return { label: t('tasks.page.state.notStarted'), tone: 'muted' }
-  if (full.value) return { label: t('tasks.page.state.full'), tone: 'muted' }
-  return { label: t('tasks.page.state.open'), tone: 'ok' }
+  if (!taskData.value) return null
+  const state = taskStateOf(taskData.value)
+  return { label: t(`tasks.page.state.${state.key}`), tone: state.tone }
 })
 
 /** 领取那颗按钮。领不了的时候按钮还在，灰着，字写清为什么。 */

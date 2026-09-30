@@ -44,18 +44,6 @@ vi.mock('@/network/api/spaces', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// 卡片本身不是这里要测的：只画题目名。
-vi.mock('@/components/TaskCard.vue', async () => {
-  const { defineComponent, h } = await import('vue')
-  return {
-    __esModule: true,
-    default: defineComponent({
-      props: { task: { type: Object, required: true } },
-      setup: (props) => () => h('div', (props.task as { name: string }).name),
-    }),
-  }
-})
-
 import Tasks from './Tasks.vue'
 
 import i18n, { setLocale } from '@/i18n'
@@ -65,7 +53,19 @@ const SPACE_ID = 11
 const Blank = defineComponent({ render: () => h('div') })
 
 function task(id: number, name: string) {
-  return { id, name, topics: [], joined: false }
+  return {
+    id,
+    name,
+    intro: '',
+    topics: [],
+    joined: false,
+    approved: 'APPROVED',
+    deadline: null,
+    participantLimit: 0,
+    participants: { total: 0, examples: [] },
+    creator: { id: 1, username: 'alice', nickname: 'Alice' },
+    createdAt: 1,
+  }
 }
 
 function publishedTask(taskId: number, taskName: string, overrides: Record<string, unknown> = {}) {
@@ -183,6 +183,18 @@ describe('题目列表的范围', () => {
     await waitFor(() => expect(router.currentRoute.value.query).toMatchObject({ filter: 'publishing', pending: '1' }))
     await waitFor(() => expect(screen.queryByText('没有待处理的题')).toBeNull())
     expect(screen.getByText('有提交待评审的题')).toBeTruthy()
+  })
+
+  it('待评审的提交带出题人去「领取者」页签处理', async () => {
+    myPublished.mockImplementation(async () => ({
+      data: { tasks: [publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 2 })] },
+    }))
+    const router = await mount({ filter: 'publishing' })
+
+    await fireEvent.click(await screen.findByText(/2 个待评审/))
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('TasksParticipants'))
+    expect(router.currentRoute.value.params).toMatchObject({ taskId: '6' })
   })
 })
 

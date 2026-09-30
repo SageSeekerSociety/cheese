@@ -195,7 +195,35 @@
       "scopeLabel": "范围",
       "topicCount": "{n} 个话题",
       "clearTopics": "清除选择",
-      "noTopics": "暂无话题"
+      "noTopics": "暂无话题",
+      "row": {
+        "mine": "已领取",
+        "by": "{name} 发布",
+        "claimed": "{n} 人领取",
+        "claimedOf": "{n} / {limit} 人",
+        "deadline": "{date}截止",
+        "noDeadline": "不限截止"
+      },
+      "published": {
+        "state": {
+          "PENDING_APPROVAL": "待审核",
+          "REJECTED": "未通过审核",
+          "APPROVED_HIDDEN": "已通过，未上板",
+          "APPROVED_VISIBLE": "已上板",
+          "ENDED": "已结项"
+        },
+        "publishedOn": "{date}发布",
+        "createdOn": "{date}创建",
+        "claimed": "领取 {n}",
+        "approved": "已批准 {n}",
+        "submitted": "已提交 {n}",
+        "passed": "通过 {n}",
+        "failed": "未通过 {n}",
+        "submitRate": "提交率 {rate}",
+        "passRate": "通过率 {rate}",
+        "pendingClaims": "{n} 个待批准领取",
+        "pendingReviews": "{n} 个待评审"
+      }
     },
     "templateForm": {
       "editTitle": "编辑题目模板",

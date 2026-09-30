@@ -38,7 +38,7 @@
          所以这一格走「我发布的题目」接口，卡片上带审核状态。 -->
     <div v-if="scope === 'publishing'" class="tasks-list">
       <template v-if="publishedLoading && !publishedTasks.length">
-        <v-skeleton-loader v-for="index in 3" :key="index" type="article" rounded="lg" class="tasks-list-item" />
+        <v-skeleton-loader v-for="index in 3" :key="index" type="list-item-three-line" />
       </template>
       <v-empty-state
         v-else-if="!visiblePublishedTasks.length"
@@ -46,12 +46,11 @@
         :title="t('spaces.detail.tasks.noTasks')"
       />
       <template v-else>
-        <MyPublishedTaskCard
+        <PublishedTaskRow
           v-for="task in visiblePublishedTasks"
           :key="task.taskId"
           :task="task"
           :space-id="Number(route.params.spaceId)"
-          class="tasks-list-item"
         />
       </template>
     </div>
@@ -66,7 +65,7 @@
         <template #empty>
           <v-empty-state icon="mdi-trophy" :title="t('spaces.detail.tasks.noTasks')"></v-empty-state>
         </template>
-        <TaskCard v-for="task in tasks" :key="task.id" :task="task" class="tasks-list-item" />
+        <TaskRow v-for="task in tasks" :key="task.id" :task="task" :query="route.query" />
       </infinite-scroll>
     </div>
   </v-sheet>
@@ -77,7 +76,7 @@ import type { SpaceMyPublishedTask } from '@/network/api/spaces/types'
 import type { Task, Topic } from '@/types'
 import type { TaskScope, TaskSortKey } from './taskListFilters'
 
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
@@ -87,8 +86,9 @@ import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import MyPublishedTaskCard from './member-tasks/components/MyPublishedTaskCard.vue'
+import PublishedTaskRow from './PublishedTaskRow.vue'
 import TaskListToolbar from './TaskListToolbar.vue'
+import TaskRow from './TaskRow.vue'
 
 import { useCommands } from '@/commands'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
@@ -96,8 +96,6 @@ import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 import PinnedAnnouncements from '@/views/spaces/detail/PinnedAnnouncements.vue'
-
-const TaskCard = defineAsyncComponent(() => import('@/components/TaskCard.vue'))
 
 type SortBy = 'createdAt' | 'updatedAt' | 'deadline'
 type SortOrder = 'asc' | 'desc'
@@ -342,10 +340,6 @@ onMounted(async () => {
 }
 
 .tasks-list {
-  padding: 16px;
-
-  .tasks-list-item:not(:last-child) {
-    margin-bottom: 16px;
-  }
+  padding: 0 16px 16px;
 }
 </style>
