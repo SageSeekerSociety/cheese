@@ -98,7 +98,27 @@ function buttonIn(scope: Element, label: string): HTMLElement | undefined {
 
 const row = (c: Element, id: string) => c.querySelector(`[data-skill="${id}"]`)!
 
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
+
 describe('工作方法', () => {
+  it('reads in English under the en locale', async () => {
+    setLocale('en')
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('Waiting for you to confirm'))
+    expect(buttonIn(row(container, 'new-1'), 'Confirm and save')).toBeTruthy()
+    expect(row(container, 'new-1').textContent).toContain('written up by')
+    expect(row(container, 'edit-1').textContent).toContain('version 2 is in use')
+    expect(row(container, 'live-1').textContent).toContain('version 1')
+  })
+
+  it('一行说清是谁整理、谁确认的', async () => {
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('站会纪要'))
+    expect(row(container, 'new-1').textContent).toMatch(/summary · 由\s*\S*cheese-x\S*\s*整理/)
+    expect(row(container, 'live-1').textContent).toMatch(/standup · 第 1 版 · /)
+  })
+
   it('从房间的「去确认」点进来，那一条被指出来', async () => {
     routeQuery.skill = 'new-1'
     const { container } = mount()

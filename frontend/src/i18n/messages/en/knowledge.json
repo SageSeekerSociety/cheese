@@ -1,0 +1,27 @@
+{
+  "type": {
+    "text": "Text",
+    "file": "File",
+    "link": "Link",
+    "code": "Code snippet",
+    "document": "Document",
+    "image": "Image",
+    "video": "Video",
+    "audio": "Audio",
+    "unknown": "Unknown type"
+  },
+  "language": {
+    "other": "Other"
+  },
+  "time": {
+    "yesterday": "Yesterday {time}"
+  },
+  "deleteConfirm": "Delete the resource \"{name}\"? This can't be undone.",
+  "deleteTitle": "Delete resource",
+  "deleteFailed": "Couldn't delete the resource. Try again later.",
+  "fileRequired": "Choose a file to upload",
+  "linkRequired": "Enter a valid link",
+  "codeRequired": "Enter the code",
+  "uploaded": "Uploaded",
+  "uploadFailed": "Couldn't upload. Try again later"
+}

@@ -246,9 +246,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="admin-shell" :class="{ 'admin-shell--collapsed': collapsed }">
     <aside class="admin-shell__nav">
-      <div class="admin-shell__brand t-eyebrow">芝士 · 管理</div>
+      <div class="admin-shell__brand t-eyebrow">{{ t('admin.layout.brand') }}</div>
 
-      <nav v-if="canEnter" class="admin-shell__items" aria-label="管理后台分区">
+      <nav v-if="canEnter" class="admin-shell__items" :aria-label="t('admin.layout.sections')">
         <!-- 选中态是**中性**的（`--fill` 底 + `--ink` 字）加上左边那道 2px 的 `--accent`
              竖条 —— 琥珀在这一套规范里只当填充色（§7.3：对比度 2.65:1，当不了线色），
              而导航这一处是它在全站唯一的例外（§7.4 的「既有的导航豁免」，一屏一条）。 -->
@@ -277,9 +277,9 @@ onBeforeUnmount(() => {
 
       <!-- 回用户侧的路。它原来在「反馈」页的页头右上角，孤零零地飘着 —— 位置本身就是
            错的：这是一个「离开操作台」的动作，属于壳，而且成员页也需要它。 -->
-      <RouterLink to="/feedback" class="admin-shell__leave" title="返回工作区">
+      <RouterLink to="/feedback" class="admin-shell__leave" :title="t('admin.layout.leave')">
         <v-icon icon="mdi-arrow-left" size="16" aria-hidden="true" />
-        <span class="admin-shell__label">返回工作区</span>
+        <span class="admin-shell__label">{{ t('admin.layout.leave') }}</span>
       </RouterLink>
 
       <!-- 折叠。放在最下面：它是「这一栏怎么显示」的开关，不是目的地之一，和上面那三个
@@ -288,33 +288,35 @@ onBeforeUnmount(() => {
         type="button"
         class="admin-shell__collapse"
         :aria-expanded="!collapsed"
-        aria-label="折叠导航"
+        :aria-label="t('admin.layout.collapseNav')"
         @click="collapsed = !collapsed"
       >
         <v-icon :icon="collapsed ? 'mdi-chevron-right' : 'mdi-chevron-left'" size="16" aria-hidden="true" />
-        <span class="admin-shell__label">收起</span>
+        <span class="admin-shell__label">{{ t('admin.layout.collapse') }}</span>
       </button>
     </aside>
 
     <div v-if="!store.metaChecked" class="admin-shell__gate">
       <div class="admin-shell__gate-inner">
         <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-        <div class="t-body mb-1">正在确认权限…</div>
+        <div class="t-body mb-1">{{ t('admin.layout.checking') }}</div>
       </div>
     </div>
 
     <div v-else-if="!canEnter" class="admin-shell__gate">
       <div class="admin-shell__gate-inner">
         <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-        <div class="t-body mb-1">这一页是管理员后台</div>
+        <div class="t-body mb-1">{{ t('admin.layout.deniedTitle') }}</div>
         <!-- 这句话以前还拖着一截「—— 私密反馈和安全问题对非管理员不存在」的规则说明。
              删掉它不是因为写错，是因为它不是读这句话的人要的东西：他刚被挡在门外，
              要知道的是「我为什么进不去」和「那我去哪」，不是这条规则的适用范围。
              还有一处更硬的：那一截挤在 `t-meta`（12.5px 等宽）那一档上，而它是一句
              正常的句子 —— 一句话不该坐在元信息的刻度上。现在整句是 `t-body`。 -->
-        <div class="t-body mb-3">你的账号不在管理员名单里，无法访问管理后台。</div>
+        <div class="t-body mb-3">{{ t('admin.layout.deniedBody') }}</div>
         <!-- 这一屏只有这一个动作，所以它是 `primary`。 -->
-        <v-btn variant="text" color="primary" size="small" to="/feedback">回到反馈中心</v-btn>
+        <v-btn variant="text" color="primary" size="small" to="/feedback">{{
+          t('admin.layout.toFeedbackCenter')
+        }}</v-btn>
       </div>
     </div>
 

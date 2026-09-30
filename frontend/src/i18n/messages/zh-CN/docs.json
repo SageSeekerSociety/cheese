@@ -1,0 +1,37 @@
+{
+  "slash": {
+    "text": "正文",
+    "h1": "标题 1",
+    "h2": "标题 2",
+    "h3": "标题 3",
+    "bullet": "无序列表",
+    "ordered": "有序列表",
+    "task": "任务列表",
+    "code": "代码块",
+    "quote": "引用",
+    "table": "表格",
+    "hr": "分割线"
+  },
+  "liveRef": {
+    "status": {
+      "open": "进行中",
+      "draft": "草稿",
+      "completed": "已完成"
+    },
+    "title": "「{title}」· {status} — 点击打开",
+    "untitledTask": "这件任务",
+    "untitledSubtopic": "子话题"
+  },
+  "loadFailed": "加载文档失败",
+  "saveFailed": "保存失败",
+  "savedElsewhere": "文档已在别处更新，本次未保存",
+  "paused": {
+    "unsupported": "这篇文档包含编辑器无法显示的格式，自动保存已暂停。在源码模式下编辑可以保存",
+    "readOnly": "只读模式下不会自动保存，回到编辑后可以保存这些改动"
+  },
+  "editor": {
+    "saveConflict": "文档在别处被改过了，这次保存没写进去。按 ⌘S 用你现在这份覆盖",
+    "insertBelow": "在下方插入块",
+    "dragToReorder": "拖动以排序"
+  }
+}

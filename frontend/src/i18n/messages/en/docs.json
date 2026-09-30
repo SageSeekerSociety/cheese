@@ -1,0 +1,37 @@
+{
+  "slash": {
+    "text": "Text",
+    "h1": "Heading 1",
+    "h2": "Heading 2",
+    "h3": "Heading 3",
+    "bullet": "Bulleted list",
+    "ordered": "Numbered list",
+    "task": "To-do list",
+    "code": "Code block",
+    "quote": "Quote",
+    "table": "Table",
+    "hr": "Divider"
+  },
+  "liveRef": {
+    "status": {
+      "open": "In progress",
+      "draft": "Draft",
+      "completed": "Done"
+    },
+    "title": "“{title}” · {status}. Click to open",
+    "untitledTask": "This task",
+    "untitledSubtopic": "Subtopic"
+  },
+  "loadFailed": "Couldn't load the document",
+  "saveFailed": "Couldn't save",
+  "savedElsewhere": "The document was updated elsewhere, so this change was not saved",
+  "paused": {
+    "unsupported": "This document has formatting the editor can't display, so autosave is paused. Edit in source mode to save",
+    "readOnly": "Read-only mode doesn't autosave. Switch back to editing to save these changes"
+  },
+  "editor": {
+    "saveConflict": "The document changed elsewhere, so this save didn't go through. Press ⌘S to overwrite it with your version",
+    "insertBelow": "Insert a block below",
+    "dragToReorder": "Drag to reorder"
+  }
+}

@@ -37,7 +37,7 @@ const { t } = useI18n()
 // 获取实体和元数据
 const inviter = computed(() => getEntity(props.notification, 'inviter'))
 const team = computed(() => getEntity(props.notification, 'team'))
-const role = computed(() => getStringMetadata(props.notification, 'role', '成员'))
+const role = computed(() => getStringMetadata(props.notification, 'role', t('notifications.common.member')))
 const message = computed(() => getStringMetadata(props.notification, 'message', ''))
 const applicationId = computed(() => getStringMetadata(props.notification, 'applicationId', ''))
 
@@ -87,14 +87,14 @@ const actions = computed(() => {
         handler: async () => {
           try {
             await TeamsApi.acceptInvitation(Number(applicationId.value))
-            toast.success('已接受邀请')
+            toast.success(t('notifications.TEAM_INVITATION.toast.accepted'))
             // 通知父组件更新通知状态
             if (props.notification && props.notification.id) {
               emit('update-notification', props.notification.id)
             }
           } catch (error) {
             console.error('接受邀请失败:', error)
-            toast.error('接受邀请失败，请稍后再试')
+            toast.error(t('notifications.TEAM_INVITATION.toast.acceptFailed'))
           }
         },
       },
@@ -104,14 +104,14 @@ const actions = computed(() => {
         handler: async () => {
           try {
             await TeamsApi.declineInvitation(Number(applicationId.value))
-            toast.success('已拒绝邀请')
+            toast.success(t('notifications.TEAM_INVITATION.toast.declined'))
             // 通知父组件更新通知状态
             if (props.notification && props.notification.id) {
               emit('update-notification', props.notification.id)
             }
           } catch (error) {
             console.error('拒绝邀请失败:', error)
-            toast.error('拒绝邀请失败，请稍后再试')
+            toast.error(t('notifications.TEAM_INVITATION.toast.declineFailed'))
           }
         },
       },

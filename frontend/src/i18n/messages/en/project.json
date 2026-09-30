@@ -1,0 +1,147 @@
+{
+  "archive": {
+    "title": "Archive project",
+    "confirm": "Archive",
+    "body": "The project leaves every member’s project list and can no longer be changed. Running tasks stop. Everything is kept, and you can unarchive it from “Archived projects”",
+    "typeName": "Type the project name “{name}” to confirm",
+    "failed": "Couldn't archive"
+  },
+  "leave": {
+    "title": "Leave project?",
+    "body": "You will no longer see this project; existing messages and records are kept. You leave this project, not the team: your place in the team stays the same, and the team's other projects are unaffected. You can come back if invited again.",
+    "confirm": "Leave",
+    "failed": "Couldn't leave"
+  },
+  "transfer": {
+    "title": "Transfer project",
+    "submit": "Transfer",
+    "confirm": "Confirm transfer",
+    "back": "Back",
+    "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
+    "noCandidates": "No members who can take over",
+    "lookupHint": "No one in the team to hand it to? Find a person directly:",
+    "lookupLabel": "Username or email (in full)",
+    "notFound": "No account found",
+    "loadFailed": "Couldn't load members",
+    "failed": "Couldn't transfer",
+    "movingOut": "{'@'}{handle} is not in this project's team: transferring moves the whole project to them. Afterwards you are no longer a project member and can't see any of its topics. (A project in a shared team can only go to someone in that team.)"
+  },
+  "site": {
+    "stale": "The project’s accepted version changed. Check it, then publish again",
+    "failed": "Couldn't publish",
+    "none": "No published site",
+    "update": "Publish update",
+    "publish": "Publish",
+    "publishSite": "Publish site",
+    "noCandidates": "The project’s accepted version has no site to publish",
+    "publishVersion": "Publish the project’s accepted version",
+    "entry": "Site entry",
+    "entryFile": "Site entry: ",
+    "isCurrent": "The live site is already this accepted version",
+    "stays": "Once published, the site stays online; later changes need another publish"
+  },
+  "artifacts": {
+    "rename": "Rename",
+    "mergeInto": "Merge into…",
+    "delete": "Delete",
+    "notDelivered": "Not delivered yet",
+    "version": "Version {version}",
+    "renameFailed": "Couldn't rename",
+    "mergeFailed": "Couldn't merge",
+    "deleteFailed": "Couldn't delete",
+    "empty": "No artifacts yet",
+    "actionsOf": "Actions for {name}",
+    "collapse": "Show less",
+    "expand": "Show {count} more",
+    "nameLabel": "Name",
+    "mergeTitle": "Merge “{name}”",
+    "mergeLabel": "Merge into",
+    "mergeHint": "The version history of “{name}” moves into the selected item, and it is no longer listed on its own",
+    "merge": "Merge",
+    "deleteTitle": "Delete “{name}”",
+    "deleteBody": "It will no longer be listed here; past deliveries are kept"
+  },
+  "calendar": {
+    "loadFailed": "Couldn't load the calendar",
+    "tbd": "TBD",
+    "noDate": "No date",
+    "overdue": "Overdue | Overdue by 1 day | Overdue by {count} days",
+    "dueToday": "Due today",
+    "daysLeft": "Due soon | 1 day left | {count} days left",
+    "upcoming": "Upcoming",
+    "noUpcoming": "No upcoming milestones",
+    "due": "Due {date}",
+    "done": "Done"
+  },
+  "connect": {
+    "missingCode": "The device code is missing. Open the link from the command line",
+    "failed": "Couldn't approve",
+    "eyebrow": "Device connection",
+    "title": "Approve this device",
+    "intro": "This machine is asking to join Cheese as a device you own. Once approved, Cheese can run tasks on it.",
+    "noCode": "The link has no device code. Open the address that {command} gives you",
+    "signInFirst": "Sign in, then approve this device as yours",
+    "signIn": "Sign in",
+    "code": "Device code",
+    "nameLabel": "Device name",
+    "namePlaceholder": "e.g. andy-macbook",
+    "approve": "Approve and link to me",
+    "done": "Device connected",
+    "bound": "The device “{name}” is now linked to you",
+    "finishing": "{command} on the command line finishes the setup; the device then stays online and takes tasks",
+    "viewDevices": "View devices"
+  },
+  "archived": {
+    "loadFailed": "Couldn't load",
+    "unarchiveFailed": "Couldn't unarchive",
+    "refresh": "Refresh",
+    "empty": "No archived projects",
+    "on": "Archived {date}",
+    "unarchive": "Unarchive"
+  },
+  "open": {
+    "signIn": "Sign in",
+    "retry": "Retry",
+    "preview": {
+      "failed": "Couldn't open the preview",
+      "title": "Open preview",
+      "membersOnly": "Only project members can open this preview. Sign in first",
+      "opening": "Opening the preview"
+    },
+    "site": {
+      "failed": "Couldn't open the site",
+      "title": "Open site",
+      "membersOnly": "Only project members can open this site. Sign in first",
+      "opening": "Opening the site"
+    }
+  },
+  "docs": {
+    "kind": {
+      "charter": "Charter",
+      "decisions": "Decisions",
+      "weeklies": "Weekly reports",
+      "memory": "Memory"
+    },
+    "loadFailed": "Couldn't load",
+    "history": "History",
+    "askInRoom": "Ask for one in the project room",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "unsaved": "Not saved",
+    "charterHint": "Editing this is giving Cheese instructions",
+    "memoryEmpty": "No memories",
+    "memoryHint": "Say “remember…” in a conversation, or it writes here when it judges something important",
+    "memoryUser": "Personal memory",
+    "memoryProject": "Project memory",
+    "memoryDelete": "Delete this memory",
+    "charterPlaceholder": "Cheese hasn't written the charter yet. It will keep this document up to date once you set the project's direction. You can also write here directly; it saves automatically.",
+    "noCharter": "This project has no editable charter yet",
+    "decisionsEmpty": "No decisions",
+    "decisionsHint": "Cheese records key decisions here as they are made",
+    "fromTopic": "From topic",
+    "weekliesEmpty": "No weekly reports",
+    "weekliesHint": "Mention {'@'}Cheese in the project room and ask for “this week's project report”. It is recorded here once written",
+    "goToRoom": "Go to project room",
+    "recordedOn": "Recorded {date}"
+  }
+}

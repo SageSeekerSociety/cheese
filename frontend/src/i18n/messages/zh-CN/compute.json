@@ -1,0 +1,56 @@
+{
+  "choice": {
+    "device": "自有设备",
+    "deviceOnFirstRun": "首次运行时选择在线设备",
+    "standard": "平台标准配置 · 首次运行时自动准备",
+    "cores": "{n} 核 CPU",
+    "memory": "{n} GB 内存",
+    "disk": "{n} GB 磁盘"
+  },
+  "startup": {
+    "ready": "工作电脑已就绪",
+    "preparing": "正在准备工作电脑",
+    "elapsed": "共用时",
+    "waited": "已等待",
+    "seconds": "{s}秒",
+    "minutes": "{m}分{s}秒",
+    "quiet": "已 {duration} 没有新的启动进度，最近一条进度记录：{time}。",
+    "log": "启动日志"
+  },
+  "platformError": {
+    "title": "工作电脑暂时不可用",
+    "cleaning": "正在自动清理",
+    "restoring": "正在恢复",
+    "retryable": "可以重试",
+    "needsAdmin": "需要管理员处理"
+  },
+  "usage": {
+    "unknown": "未知",
+    "partlySubscription": "另有 {tokens} token 走订阅计费，按月付费，不逐 token 计价",
+    "allSubscription": "{tokens} token 走订阅计费，按月付费，不逐 token 计价，因此这里不显示金额"
+  },
+  "desktop": {
+    "approveFailed": "批准失败：{reason}",
+    "preparing": "正在准备",
+    "connecting": "正在把这台电脑接入 Cheese",
+    "connected": "这台电脑已接入，可以在「设置 → 设备」里看到它",
+    "connectFailed": "这台电脑没能接入：{reason}"
+  },
+  "form": {
+    "cloud": "云端",
+    "online": "在线",
+    "offline": "离线",
+    "deviceOption": "{name} · {state}",
+    "cloudCustom": "云端 · 自定义配置",
+    "cloudStandard": "云端 · 标准配置",
+    "computer": "工作电脑",
+    "empty": "暂无可用的工作电脑",
+    "custom": "自定义 CPU、内存和磁盘",
+    "cores": "CPU 核",
+    "memory": "内存 GB",
+    "disk": "磁盘 GB",
+    "cloudHint": "首次运行时分配，计入团队云额度；超出供应范围时会提示调整",
+    "deviceHint": "设备已加入团队，无需再次授权；离线时需要等待设备上线",
+    "submit": "使用此配置"
+  }
+}

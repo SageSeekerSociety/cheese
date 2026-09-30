@@ -80,14 +80,14 @@ const actions = computed(() => {
           try {
             if (!team.value) return
             await TeamsApi.approveJoinRequest(Number(team.value.id), Number(applicationId.value))
-            toast.success('已批准申请')
+            toast.success(t('notifications.TEAM_JOIN_REQUEST.toast.approved'))
             // 通知父组件更新通知状态
             if (props.notification && props.notification.id) {
               emit('update-notification', props.notification.id)
             }
           } catch (error) {
             console.error('批准申请失败:', error)
-            toast.error('批准申请失败，请稍后再试')
+            toast.error(t('notifications.TEAM_JOIN_REQUEST.toast.approveFailed'))
           }
         },
       },
@@ -98,14 +98,14 @@ const actions = computed(() => {
           try {
             if (!team.value) return
             await TeamsApi.rejectJoinRequest(Number(team.value.id), Number(applicationId.value))
-            toast.success('已拒绝申请')
+            toast.success(t('notifications.TEAM_JOIN_REQUEST.toast.rejected'))
             // 通知父组件更新通知状态
             if (props.notification && props.notification.id) {
               emit('update-notification', props.notification.id)
             }
           } catch (error) {
             console.error('拒绝申请失败:', error)
-            toast.error('拒绝申请失败，请稍后再试')
+            toast.error(t('notifications.TEAM_JOIN_REQUEST.toast.rejectFailed'))
           }
         },
       },

@@ -5,6 +5,8 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const listArchivedProjects = vi.fn()
 const unarchiveProject = vi.fn()
 vi.mock('../api', async () => ({
@@ -41,6 +43,9 @@ beforeEach(() => {
   refreshProjects.mockReset().mockResolvedValue(undefined)
 })
 
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
+
 describe('已归档的项目', () => {
   it('列出我归档的项目', async () => {
     mount()
@@ -52,6 +57,13 @@ describe('已归档的项目', () => {
     listArchivedProjects.mockResolvedValue({ data: [] })
     mount()
     expect(await screen.findByText('暂无已归档的项目')).toBeTruthy()
+  })
+
+  it('reads in English under the en locale', async () => {
+    setLocale('en')
+    listArchivedProjects.mockResolvedValue({ data: [] })
+    mount()
+    expect(await screen.findByText('No archived projects')).toBeTruthy()
   })
 
   it('取消归档之后它离开这里，项目清单跟着刷新', async () => {

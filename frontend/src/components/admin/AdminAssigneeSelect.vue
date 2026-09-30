@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { searchAdminCandidates } from '@/api'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import { t } from '@/i18n'
 
 /**
  * AdminAssigneeSelect.vue — 分诊面板里的「指派给谁」。
@@ -31,7 +32,7 @@ const props = withDefaults(
     /** 分诊面板里那一条窄，用 `compact`；对话框里用默认的 `comfortable`。 */
     dense?: boolean
   }>(),
-  { label: '指派给', dense: false }
+  { label: undefined, dense: false }
 )
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: string | null): void }>()
@@ -42,8 +43,8 @@ const searching = ref(false)
 
 /** 输入框里什么都没有 / 正在搜 / 搜完了没人，是三句不同的话，下拉里只能出现一句。 */
 const hint = computed(() => {
-  if (searching.value) return '搜索中…'
-  return search.value.trim() ? '没找到这个人' : '输入 handle 或昵称'
+  if (searching.value) return t('admin.assignee.searching')
+  return search.value.trim() ? t('admin.assignee.noMatch') : t('admin.assignee.placeholder')
 })
 
 // 250ms 防抖：每敲一个字打一次接口，一次指派会打出十几个请求，而只有最后一个的
@@ -85,8 +86,8 @@ onBeforeUnmount(() => {
     v-model:search="search"
     :model-value="props.modelValue"
     autocomplete="off"
-    :label="props.label"
-    placeholder="输入 handle 或昵称"
+    :label="props.label ?? t('admin.assignee.label')"
+    :placeholder="t('admin.assignee.placeholder')"
     variant="outlined"
     :density="props.dense ? 'compact' : 'comfortable'"
     :items="candidates"

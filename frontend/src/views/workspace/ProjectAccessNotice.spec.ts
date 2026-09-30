@@ -22,7 +22,11 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 
 import ProjectAccessNotice from './ProjectAccessNotice.vue'
 
+import { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+
+// 这组用例读的是中文界面上的字。
+setLocale('zh-CN')
 
 afterEach(cleanup)
 beforeEach(() => setActivePinia(createPinia()))

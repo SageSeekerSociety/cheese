@@ -9,6 +9,8 @@
 
 import type { UsageStats } from '../cx_types'
 
+import { t } from '@/i18n'
+
 /** Group a token/turn count: 2532615017 → "2,532,615,017". */
 export function fmtNum(n: number): string {
   return Number(n || 0).toLocaleString('en-US')
@@ -39,7 +41,7 @@ export function fmtCost(n: number): string {
  */
 export function costLabel(u: UsageStats): string {
   if (!u.unpriced_tokens) return fmtCost(u.cost_usd)
-  return u.cost_usd > 0 ? `${fmtCost(u.cost_usd)}+` : '未知'
+  return u.cost_usd > 0 ? `${fmtCost(u.cost_usd)}+` : t('compute.usage.unknown')
 }
 
 /** The sentence that explains an incomplete or unknown 费用 (empty when the
@@ -48,8 +50,8 @@ export function costNote(u: UsageStats): string {
   if (!u.unpriced_tokens) return ''
   const tokens = fmtNum(u.unpriced_tokens)
   return u.cost_usd > 0
-    ? `另有 ${tokens} token 走订阅计费，按月付费，不逐 token 计价`
-    : `${tokens} token 走订阅计费，按月付费，不逐 token 计价，因此这里不显示金额`
+    ? t('compute.usage.partlySubscription', { tokens })
+    : t('compute.usage.allSubscription', { tokens })
 }
 
 /**

@@ -15,6 +15,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import ArtifactManifest from './ArtifactManifest.vue'
 
+import { setLocale } from '@/i18n'
+
 vi.mock('../api', () => ({
   listProjectArtifacts: vi.fn(),
   renameProjectArtifact: vi.fn(),
@@ -110,6 +112,9 @@ async function openMenu(container: Element, name: string) {
   await fireEvent.click(activator!)
 }
 
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
+
 describe('做出了什么', () => {
   it('一项一行，交付过的显示第几版，还没落地的说尚未交付', async () => {
     const { container } = mount()
@@ -119,6 +124,13 @@ describe('做出了什么', () => {
     expect(text).toContain('第 3 版')
     expect(text).toContain('项目官网')
     expect(text).toContain('尚未交付')
+  })
+
+  it('reads in English under the en locale', async () => {
+    setLocale('en')
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('Version 3'))
+    expect(container.textContent).toContain('Not delivered yet')
   })
 
   it('一行点进去是这一项自己那一页', async () => {

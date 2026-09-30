@@ -18,6 +18,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const setProjectOwner = vi.fn()
 const listProjectMembers = vi.fn()
 const lookupUser = vi.fn()
@@ -106,6 +108,9 @@ async function mount() {
   await fireEvent.click(utils.getByTestId('open'))
   return utils
 }
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 describe('TransferProjectDialog', () => {
   it('只列团队里的别人，不列自己、所有者、外部成员和 AI 队友', async () => {

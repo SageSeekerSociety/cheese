@@ -1,0 +1,103 @@
+{
+  "back": {
+    "to": "Back to {label}",
+    "up": "Back"
+  },
+  "countdown": {
+    "days": "d",
+    "hours": "h",
+    "minutes": "m",
+    "seconds": "s",
+    "closed": "Closed"
+  },
+  "empty": "Nothing here yet",
+  "fileSelect": {
+    "upload": "Upload files",
+    "tooMany": "You can upload up to {max} files"
+  },
+  "list": {
+    "loading": "Loading…",
+    "empty": "No data",
+    "loadMore": "Load more",
+    "end": "No more"
+  },
+  "loading": "Loading",
+  "offline": "Offline · New messages can’t be sent or received. Reconnects when the network is back",
+  "update": {
+    "ready": "A new version is available. The page reloads after updating",
+    "now": "Update now",
+    "later": "Later"
+  },
+  "version": {
+    "title": "Deployed build {sha} (click to copy)"
+  },
+  "avatar": {
+    "change": "Change avatar",
+    "upload": "Upload avatar"
+  },
+  "dialog": {
+    "ok": "OK"
+  },
+  "topicSelector": {
+    "label": "Add topics",
+    "placeholder": "Search topics or create one"
+  },
+  "notFound": {
+    "text": "This page doesn’t exist",
+    "home": "Back to home"
+  },
+  "dm": {
+    "openFailed": "Couldn’t open the direct message"
+  },
+  "access": {
+    "signInTitle": "Sign in to view this project",
+    "signInBody": "If you’re a member of this project, you’ll see its content after signing in",
+    "archivedTitle": "This project is archived",
+    "archivedOwnerBody": "Everything is still here. Unarchive it to restore the project and the topics archived with it",
+    "archivedBody": "Everything is still here. It can be used again once the owner unarchives it",
+    "toMyProjects": "Back to my projects",
+    "notMemberTitle": "You’re not a member of this project",
+    "notMemberBody": "Only members can see this project. To get access, ask someone in the project to add you",
+    "unarchive": "Unarchive"
+  },
+  "topicMissing": {
+    "title": "This topic doesn’t exist",
+    "body": "It may have been deleted, or it belongs to another project"
+  },
+  "paneResize": "Drag to resize, double-click to reset",
+  "retry": "Retry",
+  "board": {
+    "loadFailed": "Couldn’t load",
+    "unknownRoom": "Unknown room",
+    "noneForYou": "No tasks assigned to you",
+    "emptyColumn": "No tasks in {column}",
+    "done": "Done",
+    "noTasks": "No tasks",
+    "mineOnly": "Only mine",
+    "openChat": "Open the chat",
+    "noOwner": "No owner",
+    "queued": "Queued",
+    "running": "Running",
+    "made": "What was made"
+  },
+  "errors": {
+    "actionFailed": "Something went wrong",
+    "teamLockedBy": "This team is locked: it’s taking part in {tasks}",
+    "teamLocked": "This team is locked, so its members can’t be changed",
+    "noPermission": "You don’t have permission to do this",
+    "sessionExpired": "Your session expired. Sign in again",
+    "network": "Network request failed",
+    "server": "Server error"
+  },
+  "agentDefaultName": "Cheese",
+  "workspaceErrors": {
+    "loadProject": "Couldn’t load the project",
+    "loadTopics": "Couldn’t load topics",
+    "rename": "Couldn’t rename",
+    "undo": "Couldn’t undo",
+    "archive": "Couldn’t archive",
+    "unarchive": "Couldn’t unarchive",
+    "createTopic": "Couldn’t create the topic",
+    "convertToTopic": "Couldn’t turn it into a topic"
+  }
+}

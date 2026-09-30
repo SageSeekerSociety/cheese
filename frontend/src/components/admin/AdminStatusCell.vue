@@ -24,6 +24,7 @@ import type { FeedbackStatus } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -47,7 +48,7 @@ const filled = computed(() => {
 /** 悬停时的那句话。状态名 + 它在梯子上的位置，**不编造逐级时间**（服务端没给）。 */
 const hint = computed(() => {
   const { label } = meta.value
-  if (filled.value > 1) return `${label} · 已走到第 ${filled.value}/${rungs.value} 步`
+  if (filled.value > 1) return t('admin.statusCell.step', { label, step: filled.value, total: rungs.value })
   return label
 })
 </script>

@@ -11,9 +11,11 @@ import { topBarBack } from '../topBarBack'
 
 import ParentBackButton from './ParentBackButton.vue'
 
+import { setLocale } from '@/i18n'
 import { recordEntry } from '@/lib/projectEntry'
 import HomeRoutes from '@/router/home'
 import { legacyProjectRedirects } from '@/router/legacyProjectPaths'
+import { routeTitle } from '@/router/routeTitle'
 import SpacesRoutes from '@/router/spaces'
 import TeamsRoutes from '@/router/teams'
 import UserRoutes from '@/router/user'
@@ -42,6 +44,7 @@ function widthIs(px: number) {
 let pinia: ReturnType<typeof createPinia>
 
 beforeEach(() => {
+  setLocale('zh-CN')
   sessionStorage.clear()
   widthIs(DESKTOP)
   pinia = createPinia()
@@ -76,10 +79,7 @@ async function open(path: string) {
 async function walk(...path: string[]) {
   const router = makeRouter()
   router.afterEach((to, from) => {
-    recordEntry(to, from, (r) => {
-      for (const record of [...r.matched].reverse()) if (record.meta?.title) return String(record.meta.title)
-      return ''
-    })
+    recordEntry(to, from, routeTitle)
   })
   for (const step of path) await router.push(step)
   const view = await mount(router)

@@ -52,7 +52,9 @@ const zhById = new Map(zhEntries.map((e) => [e.id, e.value]))
 // catalogs at all — they are constants in `languages.ts`. That leaves no key for
 // which a CJK value is correct in the English catalog, and this scan has no
 // exemption to hide behind.
-const CJK = /[㐀-䶿一-鿿豈-﫿]/
+// Escapes, not literals: NFC turns a literal U+F900 into U+8C48, which widens
+// the last range to Hangul and to the surrogate halves of every emoji.
+const CJK = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/
 const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort()
 
 function sourceFiles(dir: string): string[] {

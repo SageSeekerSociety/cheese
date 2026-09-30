@@ -8,14 +8,15 @@
 // 队友的房间里，头像和它旁边的名字对不上。
 import { computed } from 'vue'
 
+import { t } from '../i18n'
 import { avatarInitial, squareRadius } from '../utils/avatar'
 
 const props = withDefaults(defineProps<{ size?: number | string; name?: string }>(), {
   size: 28,
-  name: '芝士',
+  name: undefined,
 })
 
-const glyph = computed(() => avatarInitial(props.name))
+const glyph = computed(() => avatarInitial(props.name || t('work.agentAvatar.defaultName')))
 // 字号和圆角都跟着头像走，不跟着外面的字号走：同一个 20px 的头像放进 13px 的
 // 事件行和放进 14px 的正文里，字不该一大一小；圆角按边长的比例取，缩小之后才不会
 // 看着更圆，和旁边 28px 的那一个像同一个东西。
