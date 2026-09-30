@@ -75,13 +75,13 @@ import type { SpaceCategory } from '@/types'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { useSpaceStore } from '@/stores/space'
+import { useSpaceData } from '@/composables/useSpaceData'
 
 const props = defineProps<{ category: SpaceCategory | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
-const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 
 const systemPrompt = ref('')
 const week = ref('')
@@ -125,7 +125,7 @@ async function save() {
   try {
     const w = week.value.trim()
     // 整份替换：省略 teaching 才是「不动它」。
-    await spaceStore.updateCategory(props.category.id, {
+    await spaceData.updateCategory(props.category.id, {
       teaching: {
         systemPrompt: systemPrompt.value.trim() || null,
         currentWeek: w === '' ? null : Number(w),
@@ -137,7 +137,7 @@ async function save() {
     })
     emit('close')
   } catch {
-    // 失败的提示由 store 给；弹窗留着，填的内容不丢。
+    // 失败的提示由取数那一层给；弹窗留着，填的内容不丢。
   } finally {
     saving.value = false
   }
