@@ -14,15 +14,32 @@
  * 看哪几格，在 `catalog.ts`。
  */
 import type { RouteLocationRaw } from 'vue-router'
+import type { MenuCommand } from '@/commands'
 import type { OpenFileTab } from '@/composables/useTopicMemory'
-import type { Block, FeedbackStatus } from '@/cx_types'
+import type {
+  Block,
+  FeedbackCard,
+  FeedbackStatus,
+  FileContent,
+  FileSource,
+  GitCommit,
+  RoomTask,
+  Topic,
+  WorkspaceFile,
+} from '@/cx_types'
+import type { FileDiff } from '@/lib/diff'
+import type { DocSaveStatus } from '@/lib/docEditState'
+import type { VisibleRow } from '@/lib/topicTree'
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
-import type { ChatLine, Frame } from './demoScene'
+import type { ChangesScene, ChatLine, Frame } from './demoScene'
 
 import { answer } from './demoBackend'
+import { DEMO_PROJECT, DEMO_TOPIC, diffOf, filesOf, roomTask } from './demoPanels'
 import { frameAt } from './demoScene'
 import { SCENES } from './scenes'
 
+import { parseDiffLines, splitDiffByFile } from '@/lib/diff'
+import { DOCUMENT_TYPES } from '@/lib/fileKind'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const SCENE = SCENES.quickstart
@@ -269,6 +286,63 @@ export const OPEN_FILES: OpenFileTab[] = [
   { path: '.cheese/notes/plan.md', pinned: true },
 ]
 
+// ---- 反馈列表里的一行 ------------------------------------------------------
+// 一行吃到的就是后端 `schemas.FeedbackCard` 本身（页面不再转第二种形状），所以这里
+// 照那个形状造，只有 `created_at` 是「昨天」，好让底行那句相对时间读起来正常。
+
+/** 一行反馈。默认这一条是公开、刚收录、还没人支持的那一种；其余几格只改差的那几项。 */
+function feedbackRow(over: Partial<FeedbackCard> = {}): FeedbackCard {
+  return {
+    id: 'fb-1024',
+    display_id: 'FB-1024',
+    kind: 'bug',
+    title: '导出一个月的数据要等四十秒',
+    summary: '每次导出都要重跑一遍全量聚合，数据一多就卡在那儿转。',
+    status: 'received',
+    priority: 'normal',
+    visibility: 'public',
+    security: false,
+    author_handle: 'alice',
+    author_is_agent: false,
+    author_avatar_id: null,
+    submitted_by_handle: null,
+    assignee_handle: null,
+    tags: [],
+    supports: 0,
+    comments: 0,
+    supported: false,
+    last_activity_at: null,
+    created_at: '2026-09-28T09:12:00Z',
+    ...over,
+  }
+}
+
+export const FEEDBACK_ROWS: Record<string, FeedbackCard> = {
+  plain: feedbackRow(),
+  /** 支持过了：图标实心、数字变色、底色起来（三个信号一起变，不只换颜色）。 */
+  supported: feedbackRow({ supported: true, supports: 12, comments: 4, tags: ['导出', '性能'] }),
+  /** 摘要和标题是同一句话：这一行不画摘要（组件文件头那段）。 */
+  sameLine: feedbackRow({ summary: '  导出一个月的数据要等四十秒  ' }),
+  /** 长标题 + 长摘要：标题一行就截，摘要两行封顶。 */
+  long: feedbackRow({
+    title: '导出一个月的数据要等四十秒，而且导出到一半切到别的页面就全没了',
+    summary:
+      '每次导出都要重跑一遍全量聚合，数据一多就卡在那儿转；退出去再回来得从头开始，中间那一半文件也没有落下来。试过换浏览器，一样。',
+  }),
+  /** 不能公开的条目：没有支持按钮 —— 它不该让人知道它存在（行政标的也一样）。 */
+  private: feedbackRow({ visibility: 'private', title: '后台有个接口会把手机号回显出来' }),
+  /** 芝士提的：来源那一颗写「AI 队友」，提交人是别人。 */
+  agent: feedbackRow({
+    kind: 'suggestion',
+    author_handle: 'cheese',
+    author_is_agent: true,
+    submitted_by_handle: 'alice',
+    title: '反馈列表里那一行可以再挤进一条标签',
+  }),
+  /** 办完了（已上线）：支持按钮变灰不可点，提示语换成「这条已经处理完了」。 */
+  closed: feedbackRow({ status: 'deployed', supported: true, supports: 12, comments: 4 }),
+}
+
 export const EXCERPTS: SpaceLearningExcerpt[] = [
   {
     blockId: 'b-1',
@@ -294,3 +368,323 @@ export const EXCERPTS: SpaceLearningExcerpt[] = [
     knowledgePoint: null,
   },
 ]
+
+// ---- 项目侧栏：一行话题、顶上的置顶入口、项目头、组头、已归档 ----------------
+//
+// 侧栏拆成几个只管画的组件之后，这几件都能单独立着。它们吃的数据不少（一行的
+// `VisibleRow` 有十几个字段），所以这里造的是**产品里真会出现的那几格**：在跑的、
+// 等你拍板的、收起来的、出了故障的、在等合并的——而不是「随便来一条」。
+
+/** 一行话题的完整形状（`lib/topicTree.ts` 的 `VisibleRow`）：话题 + 缩进 + 折叠
+ *  开关要的那几个数（收起来了几个、里面有几条未读、里面有没有动静）。 */
+function railRow(
+  topic: Partial<Topic> & { id: string; title: string },
+  visible: Partial<VisibleRow<Topic>> = {}
+): VisibleRow<Topic> {
+  return {
+    topic: {
+      project_id: 'p1',
+      parent_id: null,
+      kind: 'topic',
+      status: 'active',
+      created_at: '2026-09-24T09:00:00Z',
+      ...topic,
+    },
+    depth: 0,
+    hasChildren: false,
+    collapsed: false,
+    hiddenCount: 0,
+    hiddenUnread: 0,
+    unreadTotal: 0,
+    hiddenRunning: false,
+    hiddenAwaits: false,
+    hiddenStalled: false,
+    hiddenMerging: false,
+    ...visible,
+  }
+}
+
+export const RAIL_ROWS = {
+  /** 芝士正在这个话题里跑：绿呼吸点。 */
+  running: railRow({ id: 't-1', title: '写第 4 章的教案', running: true }),
+  /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
+  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, i_participate: true }),
+  /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
+  collapsed: railRow(
+    { id: 't-3', title: '期末复习' },
+    { hasChildren: true, collapsed: true, hiddenCount: 12, hiddenUnread: 4, unreadTotal: 4, hiddenAwaits: true }
+  ),
+  /** 子话题：缩进一级，左边一条竖向引导线。 */
+  sub: railRow({ id: 't-4', title: '第 3 题：为什么天空是蓝的', parent_id: 't-3' }, { depth: 1, unreadTotal: 2 }),
+  /** 红灯：最近一轮报错了。这一条不靠数据变——钟走到哪儿它都亮着。 */
+  stalled: railRow({ id: 't-5', title: '把成绩单导出成 CSV', turn_failed_at: '2026-09-29T08:41:00Z' }),
+  /** 在等合并：常亮的空心绿圈（和呼吸点靠「动不动」「实心还是空心」分开）。 */
+  merging: railRow({ id: 't-6', title: '重排第一章的目录', merging: true }),
+  /** 归档行：标题压暗一档，行尾是「取消归档」（`TopicRailArchivedGroup` 那一组）。 */
+  archived: { id: 't-7', title: '第 1 题：写一段自我介绍', kind: 'topic' } as Topic,
+}
+
+/** 一行的 ⋯ 里那几项（`commands/topicActions.ts` 在真环境里给的就是这个形状）。 */
+export const RAIL_ACTIONS: MenuCommand[] = [
+  { id: 'topic.rename', title: '重命名', icon: 'mdi-pencil', run: () => {} },
+  { id: 'topic.copyLink', title: '复制链接', icon: 'mdi-link-variant', run: () => {} },
+  { id: 'topic.archive', title: '归档', icon: 'mdi-archive-outline', run: () => {} },
+]
+
+/** 项目本体（全局房间）：置顶那一行，也是项目名的落点。 */
+export const RAIL_ROOT_TOPIC: Topic = {
+  id: 't-root',
+  project_id: 'p1',
+  parent_id: null,
+  title: '课程项目 · 项目总览',
+  kind: 'root',
+  status: 'active',
+  created_at: '2026-09-20T08:00:00Z',
+}
+
+/** 这个项目的壳摆出来的那几页（顺序就是壳说的顺序，见 `lib/shell.ts`）。 */
+export const RAIL_PAGES = [
+  { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+  { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+  { key: 'calendar', label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
+]
+
+/** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */
+export const RAIL_TERMS = { project: '项目', topic: '话题' }
+// ---- 工作面板那三格（#2143 拆出来的 View） ----------------------------------
+// 这三件是「props 进、事件出」的纯渲染组件（取数在 `composables/usePanel*` 里），
+// 所以下面造的全是数据 —— 挂起来不需要后端，也不需要登录。改动那一格的原料从剧本
+// 里那几份真东西出发（`demoPanels` 的 `diffOf` / `filesOf` / `roomTask`），只有剧本
+// 没演到的那几处（保存冲突、空、读不到）才补一小截。
+
+/** 改动那一格看的这一支活：一份新文件、一份改过的、一份删掉的。 */
+const CHANGES_SCENE: ChangesScene = {
+  files: [
+    {
+      path: 'README.md',
+      status: 'added',
+      diff: ['+# 课程资料', '+', '+这个项目放本课程的课件和作业。', '+', '+有不清楚的地方，在话题里问。'],
+    },
+    {
+      path: 'docs/week-1.md',
+      status: 'modified',
+      diff: [
+        ' 第一周的课件放在这里。',
+        '-习题答案：第 3、5、7 题',
+        '+习题答案：第 3、5、7、9 题',
+        '+',
+        '+最后一题的提示写在下面。',
+      ],
+    },
+    {
+      path: 'docs/old-plan.md',
+      status: 'removed',
+      diff: ['-# 旧的大纲', '-', '-这一版已经不用了。'],
+    },
+  ],
+}
+
+const CHANGES_FILE_DIFFS = splitDiffByFile(diffOf(CHANGES_SCENE))
+/** 打开的那一份（新文件，字都在正文里）。 */
+const CHANGES_OPEN = CHANGES_FILE_DIFFS[0]
+const CHANGES_BY_PATH = new Map(CHANGES_FILE_DIFFS.map((d) => [d.path, d]))
+const CHANGES_TREE: WorkspaceFile[] = filesOf(CHANGES_SCENE)
+
+/** 改动那一支活自己（面板顶上那条「来源」读的就是它）。 */
+const CHANGES_TASK: RoomTask = roomTask(
+  { id: 'demo-task-1', title: '整理第一周的课件', column: 'needs_you', status: '等你验收' },
+  0
+)
+
+/** 没打开文件时那一半画的是提交记录。 */
+const CHANGES_COMMITS: GitCommit[] = [
+  { hash: '1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c', author: '芝士', message: '整理第一周的课件' },
+  { hash: '4c3b2a1908f7e6d5c4b3a2918070605040302010', author: '芝士', message: '删掉旧的大纲' },
+]
+
+const CHANGES_BASE = {
+  topicId: DEMO_TOPIC,
+  readOnly: false,
+  overview: false,
+  taskOptions: [CHANGES_TASK],
+  taskLoadError: null,
+  tasksLoaded: true,
+  selectedTask: CHANGES_TASK.id,
+  currentTask: CHANGES_TASK,
+  sourceTitle: '整理第一周的课件',
+  sourceStatus: '等你验收',
+  sourceUnavailable: false,
+  requestedPath: null,
+  overviewDiffs: {},
+  overviewErrors: {},
+  expandedTasks: new Set<string>(),
+  showAll: false,
+  fileSource: 'committed' as FileSource,
+  fileToolReady: true,
+  loading: false,
+  refreshing: false,
+  errorMsg: null,
+  noRepo: false,
+  missing: null,
+  gitCommits: CHANGES_COMMITS,
+  fileDiffs: CHANGES_FILE_DIFFS,
+  diffByPath: CHANGES_BY_PATH,
+  treeFiles: CHANGES_TREE,
+  openPath: CHANGES_OPEN.path,
+  fileDraft: '# 课程资料\n\n这个项目放本课程的课件和作业。',
+  fileSaving: false,
+  fileDirty: false,
+  fileVersion: 'cd1f2a3',
+  fileBinary: false,
+  fileTooLarge: false,
+  fileBytes: 168,
+  fileReadOnly: false,
+  fileConflict: false,
+  openDiff: CHANGES_OPEN,
+  openDiffLines: parseDiffLines(CHANGES_OPEN.body),
+  effectiveView: 'diff' as const,
+  fileView: 'diff' as const,
+  openIsImage: false,
+  openIsDocument: false,
+  openDocumentType: null,
+  revisionPath: null,
+  openRawUrl: '/api/projects/demo/file/raw?path=README.md',
+  expandedDirs: new Set<string>(['docs']),
+  revealTick: 0,
+  draftCount: 0,
+  docBytes: null,
+  docLoading: false,
+  docError: '',
+  docRendererMissing: false,
+}
+
+/** 改动那一格的整串 props（六十来样 —— 这就是它的全部环境）。 */
+export function changesPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...CHANGES_BASE, ...over }
+}
+
+/** 空的那一格：这一支活什么都没改，提交记录也没有。 */
+export const CHANGES_EMPTY = changesPanelProps({
+  fileDiffs: [],
+  diffByPath: new Map<string, FileDiff>(),
+  treeFiles: [],
+  gitCommits: [],
+  openPath: null,
+  openDiff: null,
+  openDiffLines: [],
+  fileToolReady: false,
+})
+
+/** 预览那一格看的这一份：一篇 markdown，正文直接画出来。 */
+const PREVIEW_FILE: FileContent = {
+  path: 'docs/week-1.md',
+  content: '# 第一周\n\n课件和作业都在这里。\n\n- 课件：前三讲已经排好\n- 作业：第 3、5、7、9 题\n',
+  version: '9f8e7d6',
+  bytes: 132,
+  binary: false,
+  too_large: false,
+  source: 'live',
+}
+
+const PREVIEW_BASE = {
+  topicId: DEMO_TOPIC,
+  projectId: DEMO_PROJECT,
+  frameName: 'cheese-preview-demo',
+  loading: false,
+  refreshing: false,
+  previewFile: PREVIEW_FILE,
+  previewMime: 'text/markdown',
+  previewNamed: true,
+  previewUrl: null,
+  previewAppNote: '',
+  previewTunnelUp: true,
+  previewNamedPath: PREVIEW_FILE.path,
+  previewError: null,
+  previewReadError: null,
+  documentSuffix: 'md',
+  documentType: DOCUMENT_TYPES.md,
+  documentName: PREVIEW_FILE.path,
+  isImageArtifact: false,
+  downloadError: '',
+  docBytes: null,
+  docLoading: false,
+  docError: '',
+  docRendererMissing: false,
+}
+
+/** 预览那一格的整串 props。 */
+export function previewPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...PREVIEW_BASE, ...over }
+}
+
+/** 没有东西可看的那一格（房间里还没摆出过任何东西）。 */
+export const PREVIEW_EMPTY = previewPanelProps({
+  previewFile: null,
+  documentType: null,
+  documentName: '',
+  previewMime: '',
+  previewNamed: false,
+  previewNamedPath: '',
+})
+
+/** 文档那一格看的这一篇。 */
+export const DOC_TOPIC: Topic = {
+  id: DEMO_TOPIC,
+  project_id: DEMO_PROJECT,
+  parent_id: null,
+  title: '课程资料',
+  kind: 'topic',
+  status: 'open',
+  created_at: '2026-09-29T09:00:00Z',
+}
+
+/** 这一格接住的动作：真产品里它们落回 `usePanelDoc` 的 ref，预览站里什么都不做。 */
+const noop = () => {}
+const noopAsync = async () => {}
+
+const DOC_BASE = {
+  topic: DOC_TOPIC,
+  activityTick: 0,
+  agentName: AGENT_NAME,
+  topicList: [DOC_TOPIC],
+  mdAndUp: true,
+  editable: true,
+  editingBlocked: false,
+  loading: false,
+  saveStatus: 'saved' as DocSaveStatus,
+  paused: false,
+  pausedHint: '',
+  errorMsg: null,
+  lossy: false,
+  lossyConfirmOpen: false,
+  sourceMode: false,
+  sourceDraft: '',
+  pendingEdits: [],
+  hasPendingEdits: false,
+  externalDoc: null,
+  comments: [],
+  anchorNodes: [],
+  liveRefIndex: new Map<number, string>(),
+  commentMarkIndex: new Map<number, { id: string; quote: string }[]>(),
+  fetchDocNodes: async () => [],
+  imageSrc: (src: string) => src,
+  save: noopAsync,
+  confirmLossySave: noop,
+  handleBlur: noop,
+  handleDocKeydown: noop,
+  handleSourceInput: noop,
+  refreshComments: noopAsync,
+  toggleEditable: noop,
+  toggleSourceMode: noop,
+  enterSourceMode: noop,
+  applyPendingEdits: noop,
+  discardPendingEdits: noop,
+  viewExternalDoc: noop,
+  overwriteWithMine: noop,
+  setError: noop,
+}
+
+/** 文档那一格的整串 props（正文本身由容器在取到之后装进去，不由 props 进）。 */
+export function docPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...DOC_BASE, ...over }
+}

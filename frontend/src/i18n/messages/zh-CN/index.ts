@@ -5,6 +5,7 @@ import featureStats from './featureStats.json'
 import feedback from './feedback.json'
 import global from './global.json'
 import home from './home.json'
+import integrations from './integrations.json'
 import members from './members.json'
 import models from './models.json'
 import navigation from './navigation.json'
@@ -20,6 +21,7 @@ import work from './work.json'
 export default {
   global,
   home,
+  integrations,
   members,
   models,
   navigation,

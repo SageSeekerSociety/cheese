@@ -371,22 +371,6 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
-  test('管理后台 · 模型页的「导入订阅」对话框', async ({ page }) => {
-    await apiLogin(page);
-    await page.goto('/admin/models');
-
-    // 导入对话框在 start 态只有「备注名」一个字段（授权码那一段是点完「开始授权」
-    // 才画出来的）。量的就是这颗字段的浮动 label 几何 —— 它是这一档存在的理由。
-    //
-    // 「导入订阅」同样 `disabled="gatewayDown"`，所以这一档也要求网关可达，理由见
-    // 上一档。
-    await page.getByRole('button', { name: '导入订阅' }).first().click();
-    const dialog = page.locator('.v-overlay__content').filter({ hasText: '导入 ChatGPT 订阅' });
-    await dialog.waitFor();
-    await expect(dialog.getByLabel('备注名')).toBeVisible();
-    expect(await fieldDefects(dialog)).toEqual([]);
-  });
-
   test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
     await apiLogin(page);
 

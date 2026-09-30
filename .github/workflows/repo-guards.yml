@@ -67,6 +67,11 @@ jobs:
           python3 .claude/scripts/check-migration-fork.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
 
+      # The docker-free test services: how start treats a port already held by
+      # a server of ours from older pins, or by someone else (stand-in binaries).
+      - name: dev-db.sh tests
+        run: bash .claude/scripts/test-dev-db.sh
+
       - name: CI helper tests
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 

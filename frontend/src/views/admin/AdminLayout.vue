@@ -100,6 +100,15 @@ const SECTIONS: { to: string; name: string; icon: string; label: () => string; b
     label: () => t('navigation.admin.members'),
     badge: false,
   },
+  // 「飞书应用」排在最后：它是后台里唯一一处**不常动**的设置（管理员填一次），
+  // 而上面四块是每天要看的队列、看板、模型和申请。
+  {
+    to: '/admin/integrations',
+    name: 'AdminIntegrations',
+    icon: 'mdi-connection',
+    label: () => t('navigation.admin.integrations'),
+    badge: false,
+  },
 ]
 
 /** 折叠成 56px（§10.2）。**不落盘**：壳在同一个会话里不重新挂载，切分区不会把它弹回来，

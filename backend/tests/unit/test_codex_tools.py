@@ -17,7 +17,7 @@ async def test_native_read_image_remains_an_image(monkeypatch):
     monkeypatch.setattr(
         tools.client,
         "call",
-        lambda *_: {
+        lambda *_, **__: {
             "value": {
                 "type": "image",
                 "file": {"base64": "aW1hZ2U=", "type": "image/png"},
@@ -45,7 +45,7 @@ async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatc
     schema = {"type": "object", "properties": {"path": {"type": "string"}}}
     calls = []
 
-    def call(method, params):
+    def call(method, params, **_):
         calls.append((method, params))
         if method == "mcp":
             if params["server"] == "native":
@@ -108,7 +108,7 @@ async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch
     goes to the backend: the executor is never asked for it or about it."""
     executor_calls = []
 
-    def call(method, params):
+    def call(method, params, **_):
         executor_calls.append(method)
         return {"tools": []}
 

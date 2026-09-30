@@ -31,7 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.feedback.models import Feedback, FeedbackStatus
 from app.domain.feedback.services import FeedbackService
 
-_LINE = re.compile(r"^\s*fixes-feedback:(.*)$", re.IGNORECASE | re.MULTILINE)
+# At the very start of the line, as git writes a trailer. An indented line is a
+# quotation: a commit message that shows the syntax as an example (this
+# module's own commit did) must not move the reports its example names.
+_LINE = re.compile(r"^fixes-feedback:(.*)$", re.IGNORECASE | re.MULTILINE)
 _ITEM = re.compile(r"\bFB-(\d+)\b", re.IGNORECASE)
 _PR = re.compile(r"\(#(\d+)\)\s*$")
 

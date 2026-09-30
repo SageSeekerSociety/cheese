@@ -201,3 +201,33 @@ it('does not let one project inherit the previous answer', async () => {
     harness.dispose()
   }
 })
+
+it('retries a failed creation as the same project, and starts a new one next time', async () => {
+  const harness = await mountApp()
+  try {
+    vi.mocked(api.createProject).mockRejectedValueOnce(new Error('代码仓库服务响应超时，请稍后重试'))
+    await openDialog()
+    type(inDialog('input') as HTMLInputElement, '慢的时候建的项目')
+    await settle()
+    await submitDialog()
+    expect(document.querySelector('.v-dialog')?.textContent).toContain('代码仓库服务响应超时，请稍后重试')
+
+    button('创建项目').click()
+    await settle()
+
+    const calls = vi.mocked(api.createProject).mock.calls
+    expect(calls).toHaveLength(2)
+    // createProject(name, ownerHandle, teamId, externalTaskId, forgeKind, intent, agentName, id)
+    expect(calls[0][7]).toBeTruthy()
+    expect(calls[1][7]).toBe(calls[0][7])
+
+    await openDialog()
+    type(inDialog('input') as HTMLInputElement, '下一个项目')
+    await settle()
+    await submitDialog()
+    expect(calls[2][7]).toBeTruthy()
+    expect(calls[2][7]).not.toBe(calls[0][7])
+  } finally {
+    harness.dispose()
+  }
+})

@@ -28,6 +28,35 @@ export interface TopicRelevanceLike extends TopicNodeLike {
   awaits_me?: boolean | null
 }
 
+/** 判定一棵树里的行是哪一种话题时要看的那一个字段。 */
+export interface TopicKindLike extends TopicNodeLike {
+  kind?: string | null
+}
+
+/**
+ * 这个话题是「本体」（root）还是普通话题（topic）。
+ *
+ * 后端大多数时候已经给了 `kind`；没给就从形状推——**有父话题的一定是话题**，
+ * 没有父话题的那个就是本体。老载荷（`kind` 还没上线时存下来的）走的是后一半，
+ * 所以这一层不是死代码。
+ */
+export function inferTopicKind(topic: TopicKindLike): string {
+  const explicit = topic.kind
+  if (typeof explicit === 'string' && explicit) return explicit
+  return topic.parent_id ? 'topic' : 'root'
+}
+
+/** 边栏画的是房间。房间里派出去的活是**卡**，不是地点，所以这里只有两种。 */
+const KIND_LABELS: Record<string, string> = {
+  root: '全局',
+  topic: '话题',
+}
+
+/** 行尾那个种类词（已归档那一段平列表用）。 */
+export function kindLabel(topic: TopicKindLike): string {
+  return KIND_LABELS[inferTopicKind(topic)] ?? '话题'
+}
+
 /** 拍平树的一行：话题 + 缩进深度（TopicSidebar 里的 `TreeRow`）。 */
 export interface FlatRow<T extends TopicNodeLike = TopicNodeLike> {
   topic: T
@@ -54,6 +83,15 @@ export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends Fla
   hiddenStalled: boolean
   /** 隐藏后代里有没有已采纳、在等合并的。 */
   hiddenMerging: boolean
+}
+
+/**
+ * 未读角标上的那个数字：最多写到 99+。一个失控的计数不该把行撑开，而这条规则
+ * 只跟「角标画得下几个字」有关，所以它和 `unreadTotal` 住在一起 —— 画角标的那
+ * 几个组件（`components/topic-sidebar/*`）都从这儿取，不各写一份。
+ */
+export function countLabel(n: number): string {
+  return n > 99 ? '99+' : String(n)
 }
 
 interface Node<T extends TopicNodeLike> {
