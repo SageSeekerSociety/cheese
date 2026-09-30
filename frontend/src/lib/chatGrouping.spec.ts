@@ -1,6 +1,6 @@
 import type { Block } from '@/cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   DAY_MS,
@@ -158,9 +158,21 @@ describe('outboxEdgeAfter', () => {
   })
 
   it('regroups when the last message is old, and starts on another day', () => {
-    const old = new Date(Date.now() - REGROUP_GAP_MS).toISOString()
-    expect(outboxEdgeAfter(block('a', { created_at: old }), { mine: true, brokenAbove: false })).toBe('regroup')
-    expect(outboxEdgeAfter(block('a', { created_at: atDaysAgo(1) }), { mine: true, brokenAbove: false })).toBe('start')
+    // 「一个间隔以前」要和现在同一天：钉在中午，否则零点后一小时内它落到昨天，
+    // 测的就成了「换了一天」。
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const noon = new Date()
+      noon.setHours(12, 0, 0, 0)
+      vi.setSystemTime(noon)
+      const old = new Date(Date.now() - REGROUP_GAP_MS).toISOString()
+      expect(outboxEdgeAfter(block('a', { created_at: old }), { mine: true, brokenAbove: false })).toBe('regroup')
+      expect(outboxEdgeAfter(block('a', { created_at: atDaysAgo(1) }), { mine: true, brokenAbove: false })).toBe(
+        'start'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
