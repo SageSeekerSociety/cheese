@@ -17,13 +17,13 @@
 // against the exit code the process really returned.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { after, describe, it } from 'node:test'
 
-import { BETTER, fingerprint, verdict } from './ratchet-report.mjs'
+import { BETTER, verdict } from './ratchet-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -73,44 +73,6 @@ describe('verdict', () => {
   it('caps details — one committed snapshot must not be the size of the tree', () => {
     const many = Array.from({ length: 500 }, (_, i) => ({ file: `f${i}.vue`, count: 1 }))
     assert.equal(verdict({ id: 'x', result: COMPARED, details: many }).details.length, 200)
-  })
-})
-
-describe('fingerprint', () => {
-  const root = join(sandbox, 'rules')
-  mkdirSync(root, { recursive: true })
-  const write = (name, text) => writeFileSync(join(root, name), text)
-
-  it('is stable for the same bytes, and moves when one of them changes', () => {
-    write('a.mjs', 'export const a = 1\n')
-    write('b.mjs', 'export const b = 2\n')
-    const first = fingerprint({ root, files: ['a.mjs', 'b.mjs'] })
-
-    assert.match(first, /^sha256:[0-9a-f]{64}$/)
-    assert.equal(first, fingerprint({ root, files: ['a.mjs', 'b.mjs'] }))
-
-    write('b.mjs', 'export const b = 3\n')
-    assert.notEqual(first, fingerprint({ root, files: ['a.mjs', 'b.mjs'] }))
-  })
-
-  // The path is part of the hash, so a rule that MOVED counts as a change of
-  // rules even though its text did not: whoever reads the board should look
-  // once, rather than have the move pass as no change at all.
-  it('moves when a rule file is renamed, unchanged', () => {
-    write('c.mjs', 'export const c = 4\n')
-    const before = fingerprint({ root, files: ['c.mjs'] })
-
-    write('d.mjs', 'export const c = 4\n')
-    rmSync(join(root, 'c.mjs'))
-    assert.notEqual(before, fingerprint({ root, files: ['d.mjs'] }))
-  })
-
-  it('counts a rule file that is missing, rather than skipping it', () => {
-    write('e.mjs', 'export const e = 5\n')
-    const withMissing = fingerprint({ root, files: ['e.mjs', 'gone.mjs'] })
-
-    assert.notEqual(withMissing, fingerprint({ root, files: ['e.mjs'] }))
-    assert.equal(withMissing, fingerprint({ root, files: ['e.mjs', 'gone.mjs'] }))
   })
 })
 

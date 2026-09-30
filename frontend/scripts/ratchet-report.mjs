@@ -13,9 +13,6 @@
 // exit code cannot. A collector that trusted the JSON alone would read a
 // checker that crashed before printing anything as "no data", which is the one
 // answer this whole arrangement exists to avoid.
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-
 /** Fewer violations is better, for every ratchet that reports through here. */
 export const BETTER = 'down'
 
@@ -77,32 +74,3 @@ export function verdict({ id, better = BETTER, result, details = [] }) {
   }
 }
 
-/**
- * SHA-256 over the bytes of the files that decide a check, in the order given.
- * The path is mixed in with the content so that renaming a rule file changes
- * the fingerprint too — a rule that moved is a rule whose provenance changed,
- * even when its text did not.
- *
- * The BASELINE is deliberately not part of this: it moves every time somebody
- * pays debt down, and a fingerprint that moved with it would mark every
- * improvement as a change of rules. See docs/topics/棘轮页方案 for the split.
- *
- * @param {{root: string, files: string[]}} input
- * @returns {string} `sha256:<hex>` over an unreadable file's path only
- */
-export function fingerprint({ root, files }) {
-  const hash = createHash('sha256')
-  for (const file of files) {
-    hash.update(file)
-    hash.update('\0')
-    try {
-      hash.update(readFileSync(`${root}/${file}`))
-    } catch {
-      // A rule file that is not there is part of the fingerprint: it makes the
-      // hash of a tree that never had it differ from one whose file was read.
-      hash.update('\0missing')
-    }
-    hash.update('\0')
-  }
-  return `sha256:${hash.digest('hex')}`
-}
