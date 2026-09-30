@@ -1,0 +1,24 @@
+/* 设置页那几块共用的两条字。
+ *
+ * 每一件都 `<style scoped src>` 引这一份（和 `components/accept/accept-card.css`、
+ * `components/chat/room-row.css` 是同一个办法）：一份规矩，谁画都不走样。写在某一个
+ * 组件里、靠宿主的 scoped 属性落到别人身上，那是一条看不见的边 —— 哪天那一块挪个
+ * 地方，样式静悄悄地没了。
+ *
+ * 拆自 `views/ProjectSettingsView.vue`（#2143）：这两条原来长在那一页的 scoped 样式
+ * 里，靠页面给子组件**根元素**盖的那个作用域戳才到得了它里面。区块的正文各自搬进
+ * 自己的组件之后，那些元素不再带页面的戳（页面盖的是每一块的根），规矩就得跟着走。
+ */
+
+/* 一行规则下面那句小字说明。比正文小一档，在字号阶梯上（13）。 */
+.settings-hint {
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+/* 「已连接 owner/很长的仓库名」这种一行：字可以断开换行，按钮放不下就换到下一行，
+   而不是把字挤成一列。 */
+.settings-row-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
