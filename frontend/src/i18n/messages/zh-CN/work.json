@@ -473,5 +473,29 @@
     "previewLoading": "正在读取文件",
     "previewError": "无法预览这份文件",
     "downloadOnly": "此格式暂不支持预览，可下载查看"
+  },
+  "projectSettings": {
+    "title": "项目设置",
+    "close": "关闭项目设置",
+    "closeHint": "关闭项目设置（Esc）",
+    "back": "返回项目设置",
+    "market": "市场",
+    "defaultModel": "默认模型",
+    "defaultComputer": "默认工作电脑",
+    "groups": {
+      "ai": "AI",
+      "run": "运行",
+      "code": "代码"
+    },
+    "sections": {
+      "agents": "AI 队友",
+      "topic-naming": "话题命名",
+      "computer": "工作电脑",
+      "environment": "运行环境",
+      "merge": "合并规则",
+      "repository": "仓库与署名",
+      "mcp": "MCP 服务器",
+      "archive": "归档项目"
+    }
   }
 }

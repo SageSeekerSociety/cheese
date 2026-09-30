@@ -30,12 +30,18 @@ import * as api from '../api'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
+import { setLocale } from '@/i18n'
+
 const me = vi.hoisted(() => ({ id: null as string | null }))
 const route = vi.hoisted(() => ({ query: {} as Record<string, string | undefined> }))
 const router = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
-  currentRoute: { value: { fullPath: '/projects/project/settings' } },
+  currentRoute: {
+    get value() {
+      return { fullPath: '/projects/project/settings', query: route.query }
+    },
+  },
 }))
 const goAuthorize = vi.hoisted(() => vi.fn(() => true))
 
@@ -69,6 +75,7 @@ function rules(overrides: Partial<BranchProtection> = {}): BranchProtection {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   me.id = '7'
   route.query = {}
@@ -95,14 +102,16 @@ beforeEach(() => {
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
 })
 
-async function openSettings() {
-  const rendered = render(ProjectSettingsView, {
-    props: { projectId: 'project' },
+// 设置画在盖住整个窗口的一层里（挂在 body 上），一次画一栏：打开哪一栏由 `section` 定，
+// 不给就是地址上没写栏的那种打开法。
+async function openSettings(section?: string) {
+  render(ProjectSettingsView, {
+    props: { projectId: 'project', section },
     global: { plugins: [createVuetify({ components, directives }), createPinia()] },
   })
-  // 设置读完之后才画出各组；「工作电脑」那一组标题出现，就是这一页可以操作了。
-  await waitFor(() => expect(rendered.container.textContent).toContain('工作电脑'))
-  return rendered
+  // 设置读完之后才画出这一栏。
+  await waitFor(() => expect(document.body.querySelector('.reveal-gate')).not.toBeNull())
+  return { container: document.body }
 }
 
 /** 分支保护是各自取数的，等它那一块画出来。 */
@@ -149,7 +158,7 @@ describe('上游仓库地址', () => {
 
   it('保存把地址去掉首尾空白之后交给 setUpstream', async () => {
     vi.mocked(api.setUpstream).mockResolvedValue({ url: 'https://github.com/acme/code' })
-    const { container } = await openSettings()
+    const { container } = await openSettings('repository')
     await waitFor(() => expect(upstreamField(container)).toBeTruthy())
 
     await fireEvent.update(upstreamField(container)!, '  https://github.com/acme/code  ')
@@ -160,7 +169,7 @@ describe('上游仓库地址', () => {
 
   it('清空再保存走的是解绑：交给后端的是一段空串', async () => {
     vi.mocked(api.getUpstream).mockResolvedValue({ url: 'https://github.com/acme/code' })
-    const { container } = await openSettings()
+    const { container } = await openSettings('repository')
     await waitFor(() => expect(upstreamField(container)?.value).toBe('https://github.com/acme/code'))
 
     await fireEvent.update(upstreamField(container)!, '   ')
@@ -171,7 +180,7 @@ describe('上游仓库地址', () => {
 
   it('保存失败落在仓库那一块的提示里，整页还在', async () => {
     vi.mocked(api.setUpstream).mockRejectedValue(new Error('保存上游仓库失败：网络'))
-    const { container } = await openSettings()
+    const { container } = await openSettings('repository')
     await waitFor(() => expect(upstreamField(container)).toBeTruthy())
 
     await fireEvent.click(button(container, '保存'))
@@ -186,7 +195,7 @@ describe('上游仓库地址', () => {
 
 describe('分支保护', () => {
   it('加一条必须通过的检查：PUT 带上解析出来的路径，成功后两个输入框清空', async () => {
-    const { container } = await openSettings()
+    const { container } = await openSettings('merge')
     await waitForBranchProtection(container)
 
     const [name, paths] = bpInputs(container, '合并前必须通过的检查')
@@ -205,7 +214,7 @@ describe('分支保护', () => {
 
   it('保存失败时输入框里的字留着，错误挂在规则那一块', async () => {
     vi.mocked(api.setBranchProtection).mockRejectedValueOnce(new Error('保存分支保护规则失败：网络'))
-    const { container } = await openSettings()
+    const { container } = await openSettings('merge')
     await waitForBranchProtection(container)
 
     await fireEvent.update(bpInputs(container, '合并前必须通过的检查')[0]!, 'pytest')
@@ -219,7 +228,7 @@ describe('分支保护', () => {
     vi.mocked(api.getBranchProtection).mockResolvedValue(
       rules({ required_checks: [{ name: 'lint' }, { name: 'test' }] })
     )
-    const { container } = await openSettings()
+    const { container } = await openSettings('merge')
     await waitFor(() => expect(container.querySelectorAll('.bp-check')).toHaveLength(2))
 
     await fireEvent.click(container.querySelectorAll<HTMLElement>('.bp-check')[0]!.querySelector('button')!)
@@ -231,7 +240,7 @@ describe('分支保护', () => {
 
   it('批准人数填了非法值：一个请求都不发，报一句，草稿弹回原值', async () => {
     vi.mocked(api.getBranchProtection).mockResolvedValue(rules({ approvals_required: 2 }))
-    const { container } = await openSettings()
+    const { container } = await openSettings('merge')
     await waitForBranchProtection(container)
 
     const input = bpInputs(container, '需要几个人批准')[0]!
@@ -245,7 +254,7 @@ describe('分支保护', () => {
   })
 
   it('批准人数填了合法值：PUT 的就是那一项', async () => {
-    const { container } = await openSettings()
+    const { container } = await openSettings('merge')
     await waitForBranchProtection(container)
 
     const input = bpInputs(container, '需要几个人批准')[0]!
@@ -256,7 +265,7 @@ describe('分支保护', () => {
   })
 
   it('两个开关各自 PUT 自己那一项', async () => {
-    const { container } = await openSettings()
+    const { container } = await openSettings('merge')
     await waitForBranchProtection(container)
 
     await flip(bpInputs(container, '合并前分支必须跟上 main')[0]!, true)
@@ -294,7 +303,7 @@ describe('两个「连接」入口', () => {
     vi.mocked(api.getForgeConnection)
       .mockResolvedValueOnce({ kind: 'github_app', connected: false, repo: null, url: null })
       .mockResolvedValue({ kind: 'github_app', connected: true, repo: 'acme/code', url: null })
-    const { container } = await openSettings()
+    const { container } = await openSettings('repository')
     await waitFor(() => expect(button(container, '连接 GitHub 仓库')).toBeTruthy())
 
     await fireEvent.click(button(container, '连接 GitHub 仓库'))
@@ -308,7 +317,7 @@ describe('两个「连接」入口', () => {
     vi.mocked(api.getGithubAccountAuthorizeUrl).mockResolvedValue({
       url: 'https://github.com/login/oauth/authorize?client_id=x',
     })
-    const { container } = await openSettings()
+    const { container } = await openSettings('repository')
     await waitFor(() => expect(button(container, '连接 GitHub 账号')).toBeTruthy())
 
     await fireEvent.click(button(container, '连接 GitHub 账号'))

@@ -473,5 +473,29 @@
     "previewLoading": "Loading the file",
     "previewError": "Could not preview this file",
     "downloadOnly": "This format cannot be previewed yet; download it to view"
+  },
+  "projectSettings": {
+    "title": "Project settings",
+    "close": "Close project settings",
+    "closeHint": "Close project settings (Esc)",
+    "back": "Back to project settings",
+    "market": "Market",
+    "defaultModel": "Default model",
+    "defaultComputer": "Default work computer",
+    "groups": {
+      "ai": "AI",
+      "run": "Running",
+      "code": "Code"
+    },
+    "sections": {
+      "agents": "AI teammates",
+      "topic-naming": "Topic names",
+      "computer": "Work computer",
+      "environment": "Environment",
+      "merge": "Merge rules",
+      "repository": "Repository and credit",
+      "mcp": "MCP servers",
+      "archive": "Archive project"
+    }
   }
 }

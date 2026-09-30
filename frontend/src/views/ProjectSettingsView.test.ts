@@ -8,13 +8,14 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
+import { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
 const router = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
-  currentRoute: { value: { fullPath: '/projects/project/settings' } },
+  currentRoute: { value: { fullPath: '/projects/project/settings', query: {} } },
 }))
 
 vi.mock('../api')
@@ -27,12 +28,14 @@ vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
 }))
 vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => me.id }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: {} }),
+  useRoute: () => router.currentRoute.value,
   useRouter: () => router,
 }))
 
 beforeEach(() => {
   vi.resetAllMocks()
+  setLocale('zh-CN')
+  router.currentRoute.value.query = {}
   setActivePinia(createPinia())
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
@@ -47,15 +50,22 @@ beforeEach(() => {
   })
 })
 
-async function openSettings() {
-  const element = document.createElement('div')
-  const app = createApp(ProjectSettingsView, { projectId: 'project' })
+// 设置画在盖住整个窗口的一层里（挂在 body 上），一次画一栏：打开哪一栏由 `section` 定。
+async function openSettings(section?: string) {
+  const host = document.body.appendChild(document.createElement('div'))
+  const app = createApp(ProjectSettingsView, { projectId: 'project', section })
   app.use(createVuetify())
   app.use(getActivePinia()!)
-  app.mount(element)
-  // 设置读完之后才画出各组；「工作电脑」那一组标题出现，就是这一页可以操作了。
-  await vi.waitFor(() => expect(element.textContent).toContain('工作电脑'))
-  return { element, unmount: () => app.unmount() }
+  app.mount(host)
+  // 设置读完之后才画出这一栏。
+  await vi.waitFor(() => expect(document.body.querySelector('.reveal-gate')).not.toBeNull())
+  return {
+    element: document.body,
+    unmount: () => {
+      app.unmount()
+      host.remove()
+    },
+  }
 }
 
 describe('project settings', () => {
@@ -79,7 +89,7 @@ describe('project settings', () => {
       repo: 'project/code',
       url: 'https://forge.example/project/code',
     })
-    const wrapper = await openSettings()
+    const wrapper = await openSettings('repository')
     try {
       expect(wrapper.element.querySelector('[data-testid="forge-repository"]')?.textContent).toContain('由芝士托管')
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
@@ -106,7 +116,7 @@ describe('project settings', () => {
       github_protection: { enforced, status: enforced ? 'enforced' : 'none' },
     })
     vi.mocked(api.listProjectMembers).mockResolvedValue({ data: [], total: 0 })
-    const wrapper = await openSettings()
+    const wrapper = await openSettings('merge')
     try {
       await vi.waitFor(() => expect(wrapper.element.textContent).toContain('暂无必须通过的检查'))
       expect(wrapper.element.textContent?.includes('GitHub 已在执行以下规则')).toBe(enforced)
@@ -168,7 +178,7 @@ describe('project settings', () => {
     it('confirms identity for the unlink, then disconnects with the ticket', async () => {
       vi.mocked(withSudo).mockImplementation(async (_purpose, operation) => operation('ticket-1'))
       vi.mocked(api.deleteOAuthConnection).mockResolvedValue()
-      const wrapper = await openSettings()
+      const wrapper = await openSettings('repository')
       try {
         await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
         disconnect(wrapper.element)
@@ -183,7 +193,7 @@ describe('project settings', () => {
 
     it('keeps the connection and says nothing when the confirmation is cancelled', async () => {
       vi.mocked(withSudo).mockRejectedValue(new SudoCancelledError())
-      const wrapper = await openSettings()
+      const wrapper = await openSettings('repository')
       try {
         await vi.waitFor(() => expect(wrapper.element.textContent).toContain('octocat'))
         const alerts = () => Array.from(wrapper.element.querySelectorAll('[role="alert"]'), (a) => a.textContent)
@@ -208,5 +218,16 @@ describe('project settings', () => {
     expect(wrapper.element.textContent).not.toContain('AI 模型池')
     expect(wrapper.element.textContent).not.toContain('专家角色')
     wrapper.unmount()
+  })
+
+  it('lands on the repository section when GitHub sends the user back, and says what happened', async () => {
+    router.currentRoute.value.query = { github_install: 'success', repo: 'octo/demo' }
+    const wrapper = await openSettings()
+    try {
+      await vi.waitFor(() => expect(wrapper.element.textContent).toContain('已连接仓库 octo/demo'))
+      expect(wrapper.element.querySelector('[aria-current="page"]')?.textContent).toContain('仓库与署名')
+    } finally {
+      wrapper.unmount()
+    }
   })
 })
