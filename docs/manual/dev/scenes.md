@@ -32,10 +32,10 @@ covers:
 
 | 场景 | 一共 | A 今天就能单独跑 | C 卡在取数 | D 卡在路由 / `$parent` / `inject` |
 |---|---|---|---|---|
-| 路由页（`src/views/`，router 表里挂上去的每一页） | 129 | 7 | 34 | 88 |
+| 路由页（`src/views/`，router 表里挂上去的每一页） | 129 | 7 | 33 | 89 |
 | 工作面板（`src/components/panels/` 下的 SFC） | 27 | 12 | 15 | 0 |
 
-一个场景可以同时踩中好几条（100 页直接 import 了取数模块，86 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
+一个场景可以同时踩中好几条（100 页直接 import 了取数模块，87 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。
 
 按目录看那 129 个页面：
 
@@ -48,7 +48,7 @@ covers:
 | `views/home/` | 4 | 2 | 1 | 1 |
 | `views/legal/` | 1 | 0 | 0 | 1 |
 | `views/question/` | 4 | 1 | 0 | 3 |
-| `views/spaces/` | 43 | 1 | 12 | 30 |
+| `views/spaces/` | 43 | 1 | 11 | 31 |
 | `views/tasks/` | 7 | 0 | 3 | 4 |
 | `views/teams/` | 9 | 0 | 3 | 6 |
 | `views/user/` | 5 | 1 | 4 | 0 |
@@ -140,7 +140,7 @@ covers:
 | `views/spaces/course/Quiz.vue` | D | 读路由；直接取数（`api.ts` / `network`） |
 | `views/spaces/course/Team.vue` | D | 读路由；直接取数（`api.ts` / `network`） |
 | `views/spaces/course/Units.vue` | D | 读路由；直接取数（`api.ts` / `network`） |
-| `views/spaces/detail/Announcements.vue` | C | 直接取数（`api.ts` / `network`）；读 store（space） |
+| `views/spaces/detail/Announcements.vue` | D | 读路由；直接取数（`api.ts` / `network`）；读 store（space） |
 | `views/spaces/detail/AuditTask.vue` | C | 直接取数（`api.ts` / `network`）；读 store（space） |
 | `views/spaces/detail/CreateDiscussion.vue` | D | 读路由；直接取数（`api.ts` / `network`） |
 | `views/spaces/detail/DiscussionItem.vue` | D | 读路由；直接取数（`api.ts` / `network`） |
