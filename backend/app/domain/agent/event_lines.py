@@ -10,8 +10,9 @@
 - 一轮的改动汇总（`_diff_file_stats` / `_format_change_summary` /
   `_change_summary_meta`）。
 
-调它们的是 chat.py 落库那几步（`_persist_tool_event`、`_persist_subagent_result`、
-`_persist_change_summary`、`_turn_changeset`）。搬出来时按原样搬——这些函数的
+调它们的是落库那几步（`_persist_tool_event`、`_persist_subagent_result`、
+`_persist_change_summary`、`_turn_changeset`），它们现在住在 `room_events.py`。
+搬出来时按原样搬——这些函数的
 入参出参就是它们与调用方之间全部的约定，所以行为一格没动。
 """
 
