@@ -1,0 +1,13 @@
+{
+  "route": "#/admin/spaces",
+  "doors": [],
+  "net": [],
+  "dom": {
+    "hasLongSampleTitle": true,
+    "hasLongSampleIntro": true,
+    "hasErrorText": false,
+    "hasRetryButton": false,
+    "applicantCount": 3,
+    "bodyChars": 389
+  }
+}

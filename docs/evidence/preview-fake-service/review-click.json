@@ -1,0 +1,15 @@
+{
+  "before": {
+    "longTitle": true,
+    "applicants": 3,
+    "approvedMarks": 1
+  },
+  "clicked": 4,
+  "after": {
+    "longTitle": false,
+    "applicants": 1,
+    "approvedMarks": 2
+  },
+  "doors": [],
+  "net": []
+}
