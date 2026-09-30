@@ -374,34 +374,22 @@ def _submission_schema_to_api(
     ]
 
 
+def _ms(moment: datetime | None) -> int | None:
+    """A moment as epoch milliseconds, the unit the task API speaks; None stays None."""
+    return int(moment.timestamp() * 1000) if moment is not None else None
+
+
 def _task_to_api_model(task: Task) -> dict:
-    created_at_ms = (
-        int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
-    )
-    updated_at_ms = (
-        int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
-    )
-    deadline_ms = (
-        int(task.deadline.timestamp() * 1000) if task.deadline is not None else None
-    )
-    published_at = getattr(task, "published_at", None)
-    ended_at = getattr(task, "ended_at", None)
+    created_at_ms = _ms(task.created_at) or 0
+    updated_at_ms = _ms(task.updated_at) or 0
+    deadline_ms = _ms(task.deadline)
     # 审核痕迹是后加的两列：老题（以及还没审过的题）没有它，一律回 null ——
     # 界面上「没有审核人」与「不知道审核人」是同一件事，不做区分。
     reviewed_by = getattr(task, "reviewed_by", None)
-    reviewed_at = getattr(task, "reviewed_at", None)
-    published_at_ms = (
-        int(published_at.timestamp() * 1000) if published_at is not None else None
-    )
-    ended_at_ms = int(ended_at.timestamp() * 1000) if ended_at is not None else None
-    reviewed_at_ms = (
-        int(reviewed_at.timestamp() * 1000) if reviewed_at is not None else None
-    )
-    registration_start_ms = (
-        int(task.registration_start_at.timestamp() * 1000)
-        if task.registration_start_at is not None
-        else None
-    )
+    published_at_ms = _ms(getattr(task, "published_at", None))
+    ended_at_ms = _ms(getattr(task, "ended_at", None))
+    reviewed_at_ms = _ms(getattr(task, "reviewed_at", None))
+    registration_start_ms = _ms(task.registration_start_at)
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     submitter_type_map = {0: "USER", 1: "TEAM"}
     return {
@@ -903,16 +891,8 @@ def _membership_to_api_model(
     ``team`` 是这条报名背后的队（只由批量查过队名的调用者传）。传了才多出
     ``team`` 字段；没传（单条、PATCH 那几条路由）返回体与以前一模一样。
     """
-    created_at_ms = (
-        int(membership.created_at.timestamp() * 1000)
-        if membership.created_at is not None
-        else 0
-    )
-    updated_at_ms = (
-        int(membership.updated_at.timestamp() * 1000)
-        if membership.updated_at is not None
-        else 0
-    )
+    created_at_ms = _ms(membership.created_at) or 0
+    updated_at_ms = _ms(membership.updated_at) or 0
 
     participant = participant_info or {"id": membership.member_id}
     member = participant
@@ -933,6 +913,9 @@ def _membership_to_api_model(
         "approved": approved_str,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
+        # 出题人给这个人单设的提交截止时间（批准时按「提交期限」定，之后可单独改）。
+        "deadline": _ms(membership.deadline),
+        "applyReason": membership.pitch or None,
     }
     if membership.is_team and team is not None:
         # 队名：看板按它给「小队构成」分桶、在名册里写下是哪支队伍。个人领取没有

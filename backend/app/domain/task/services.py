@@ -300,6 +300,7 @@ class TaskMembershipService:
                     raise TaskParticipantsReachedLimitError(
                         task.id, task.participant_limit
                     )  # type: ignore[arg-type]
+            pitch=(apply_reason or "").strip(),
 
             # TEAM 任务时，检查队伍规模是否在 min/maxTeamSize 范围内。
             if membership.is_team:
