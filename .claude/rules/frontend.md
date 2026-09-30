@@ -41,8 +41,11 @@ the parts no gate can see.
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
     its `#fff` text is correct and "fixing" it to a token breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
-  > `--faint` (meta), on `--surface` (cards) over `--canvas` (app bg), separated
-  by `--line`. Pick by how important the information is, not by how it looks.
+  > `--faint` (meta). Pick by how important the information is, not by how it
+  looks.
+- The frame (rail, sidebars, top bar) is `--canvas`; the content pane is one
+  `--surface`, so content groups by spacing and `--line`, not by white cards on
+  grey (docs/design-system.md §1.4).
 - **Status colours come in threes and are not interchangeable**: `--danger` is
   the MARK (dot, border, icon), `--danger-ink` is the TEXT, `--danger-wash` is
   the BACKGROUND. Using the mark colour for text is the single most common

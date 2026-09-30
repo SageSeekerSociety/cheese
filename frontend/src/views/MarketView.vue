@@ -43,7 +43,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="market-page fill-height overflow-y-auto">
+  <div class="fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 1080px">
       <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
       <div v-if="$vuetify.display.mdAndUp" class="mb-4">
@@ -151,9 +151,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.market-page {
-  background: var(--canvas);
-}
 .market-group {
   margin-bottom: 34px;
 }

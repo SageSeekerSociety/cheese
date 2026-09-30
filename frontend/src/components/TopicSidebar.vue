@@ -544,11 +544,11 @@ const onDocs = computed(() => !!props.activeDocs)
 </template>
 
 <style scoped>
-/* 整页形态：占满内容区，不画抽屉那条右边线。 */
+/* 整页形态（手机上的话题列表）：占满内容区，不画抽屉那条右边线。这时它是内容，
+   不是侧栏，底色跟着内容区走（design-system §1.4）。 */
 .topic-rail--page {
   width: 100%;
   height: 100%;
-  background: var(--canvas);
 }
 .side-subhead {
   padding: 14px 16px 4px;
