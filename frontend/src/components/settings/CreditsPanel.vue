@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectCredits } from '@/api'
+import { t } from '@/i18n'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -61,19 +62,21 @@ watch(
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-gauge</v-icon>
-      <span class="page-section-title">额度</span>
+      <span class="page-section-title">{{ t('work.projectSettings.credits.title') }}</span>
       <v-spacer />
       <span v-if="credits && !credits.unlimited" class="ln-num c-muted">
-        1 额度 = {{ credits.tokens_per_credit.toLocaleString() }} tokens
+        {{ t('work.projectSettings.credits.rate', { n: credits.tokens_per_credit.toLocaleString() }) }}
       </span>
     </div>
     <div class="page-section-body">
-      <div v-if="!credits" class="t-body c-muted py-2">暂无额度信息</div>
-      <div v-else-if="credits.unlimited" class="t-body c-muted py-2">当前未设置额度上限</div>
+      <div v-if="!credits" class="t-body c-muted py-2">{{ t('work.projectSettings.credits.none') }}</div>
+      <div v-else-if="credits.unlimited" class="t-body c-muted py-2">
+        {{ t('work.projectSettings.credits.unlimited') }}
+      </div>
       <template v-else>
         <div class="credit-remaining" :class="{ 'credit-remaining--empty': exhausted }">
           {{ fmt(credits.credits_remaining) }}
-          <span class="credit-remaining__unit">额度剩余</span>
+          <span class="credit-remaining__unit">{{ t('work.projectSettings.credits.remaining') }}</span>
         </div>
         <div class="credit-bar mb-2">
           <div
@@ -83,12 +86,12 @@ watch(
           />
         </div>
         <div class="ln-row">
-          <span class="ln-row-title">已使用 / 共发放</span>
+          <span class="ln-row-title">{{ t('work.projectSettings.credits.usedOfTotal') }}</span>
           <v-spacer />
           <span class="ln-num"> {{ fmt(credits.credits_used) }} / {{ fmt(credits.credits_total) }} </span>
         </div>
-        <div v-if="exhausted" class="credit-exhausted mt-1">额度已用完，请联系团队管理员或额度发放方补充</div>
-        <div v-else class="t-meta c-muted mt-2">包含团队共享额度与本项目定向额度；优先使用定向额度</div>
+        <div v-if="exhausted" class="credit-exhausted mt-1">{{ t('work.projectSettings.credits.exhausted') }}</div>
+        <div v-else class="t-meta c-muted mt-2">{{ t('work.projectSettings.credits.source') }}</div>
       </template>
     </div>
   </section>

@@ -14,6 +14,8 @@ vi.mock('../api', () => api)
 
 import ProjectEnvironmentSettings from './ProjectEnvironmentSettings.vue'
 
+import { setLocale } from '@/i18n'
+
 const config = {
   setup_script: 'echo setup',
   startup_script: 'echo startup',
@@ -21,6 +23,7 @@ const config = {
   revision: 'revision-first',
 }
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.resetAllMocks()
   api.getProjectEnvironment.mockResolvedValue({
     config,
@@ -57,7 +60,7 @@ it('saves multiline values without applying a revision to an existing room', asy
     })
   )
   expect(api.applyRoomEnvironment).not.toHaveBeenCalled()
-  expect(await view.findByText('已保存。新房间使用这份配置；已有房间保持当前版本。')).toBeTruthy()
+  expect(await view.findByText('已保存。新房间使用这份配置，已有房间保持原配置')).toBeTruthy()
 })
 
 it('renders logs as text and applies only after the explicit action', async () => {

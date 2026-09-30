@@ -131,7 +131,7 @@ describe('project settings', () => {
       }
       for (const label of [
         '合并前必须通过的检查',
-        '合并前分支必须跟上 main',
+        '合并前分支须与 main 同步',
         '新提交作废已有的采纳',
         '人工放行的人',
         '需要几个人批准',
@@ -141,7 +141,7 @@ describe('project settings', () => {
           label
         ).toBe(enforced)
       }
-      for (const label of ['允许自动合并', '任务默认 reviewer']) {
+      for (const label of ['允许自动合并', '默认审阅']) {
         expect(
           fields(label).every((input) => !input.disabled),
           label

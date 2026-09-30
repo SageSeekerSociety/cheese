@@ -248,7 +248,7 @@ describe('分支保护', () => {
     // 这一格是 @change 才保存的（收起输入框再校验，不打字打一半就发请求）。
     await fireEvent.change(input)
 
-    await waitFor(() => expect(container.textContent).toContain('批准人数要是不小于 1 的整数'))
+    await waitFor(() => expect(container.textContent).toContain('批准人数须为不小于 1 的整数'))
     expect(api.setBranchProtection).not.toHaveBeenCalled()
     await waitFor(() => expect(input.value).toBe('2'))
   })
@@ -268,7 +268,7 @@ describe('分支保护', () => {
     const { container } = await openSettings('merge')
     await waitForBranchProtection(container)
 
-    await flip(bpInputs(container, '合并前分支必须跟上 main')[0]!, true)
+    await flip(bpInputs(container, '合并前分支须与 main 同步')[0]!, true)
     await waitFor(() => expect(api.setBranchProtection).toHaveBeenCalledWith('project', { strict: true }))
 
     await flip(bpInputs(container, '新提交作废已有的采纳')[0]!, false)

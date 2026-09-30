@@ -87,13 +87,13 @@ describe('project work computer settings', () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs())
     const row = await mount()
 
-    expect(row.textContent).toContain('新 agent 默认用')
+    expect(row.textContent).toContain('新 AI 队友默认使用')
     expect(row.textContent).toContain('云端 · 标准配置')
-    expect(screen.getByText('只影响还没开工的 agent；已经开工的 agent 继续用自己那台')).toBeTruthy()
+    expect(screen.getByText('只影响尚未开始运行的 AI 队友，已在运行的继续用原来的工作电脑')).toBeTruthy()
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('现在的分布')).toBeTruthy()
-    expect(distribution.getByText(/云端 · 3 个 agent/)).toBeTruthy()
-    expect(distribution.getByText(/实验室工作站 · 2 个 agent · 能访问整台机器/)).toBeTruthy()
+    expect(distribution.getByText('当前分布')).toBeTruthy()
+    expect(distribution.getByText(/云端 · 3 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友 · 能访问整台机器/)).toBeTruthy()
     expect(screen.queryByText(/常用/)).toBeNull()
   })
 
@@ -122,7 +122,7 @@ describe('project work computer settings', () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 0, devices: [] } }))
     await mount()
 
-    expect(screen.getByText('暂无开工的 agent')).toBeTruthy()
+    expect(screen.getByText('暂无运行中的 AI 队友')).toBeTruthy()
   })
 
   it('lets a manager change the default and tells open rooms', async () => {
@@ -150,7 +150,7 @@ describe('project work computer settings', () => {
     await mount()
 
     expect(screen.queryByRole('button', { name: '更换' })).toBeNull()
-    expect(screen.getByText('项目负责人可以更换默认')).toBeTruthy()
+    expect(screen.getByText('仅项目负责人可更换默认工作电脑')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '查看并更换…' })).toBeNull()
   })
 

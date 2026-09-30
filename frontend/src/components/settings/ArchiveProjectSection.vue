@@ -4,6 +4,7 @@
 import { ref } from 'vue'
 
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
+import { t } from '@/i18n'
 
 defineProps<{ projectId: string; projectName: string }>()
 
@@ -14,12 +15,14 @@ const open = ref(false)
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-archive-outline</v-icon>
-      <span class="page-section-title">归档项目</span>
+      <span class="page-section-title">{{ t('work.projectSettings.archive.title') }}</span>
     </div>
     <div class="page-section-body">
       <div class="archive-row">
-        <span class="t-body c-muted">从所有成员的列表中移除并停止运行，内容全部保留</span>
-        <v-btn variant="outlined" color="error" size="small" @click="open = true">归档项目</v-btn>
+        <span class="t-body c-muted">{{ t('work.projectSettings.archive.hint') }}</span>
+        <v-btn variant="outlined" color="error" size="small" @click="open = true">{{
+          t('work.projectSettings.archive.action')
+        }}</v-btn>
       </div>
     </div>
     <ArchiveProjectDialog v-model="open" :project-id="projectId" :project-name="projectName" />
