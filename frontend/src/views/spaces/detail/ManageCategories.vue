@@ -147,11 +147,12 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
 
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useDialog } from '@/plugins/dialog'
-import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 import { SpaceCategory } from '@/types'
 

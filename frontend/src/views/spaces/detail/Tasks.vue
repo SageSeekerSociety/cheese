@@ -143,10 +143,11 @@ import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
-import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 
 const TaskCard = defineAsyncComponent(() => import('@/components/TaskCard.vue'))

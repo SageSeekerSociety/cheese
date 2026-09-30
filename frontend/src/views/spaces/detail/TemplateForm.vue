@@ -208,6 +208,7 @@ import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
+
 import { useSpaceStore } from '@/stores/space'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))

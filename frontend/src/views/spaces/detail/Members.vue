@@ -14,6 +14,8 @@ import { storeToRefs } from 'pinia'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import PageHeader from '@/components/common/PageHeader.vue'
 import { myHandle } from '@/me'
 import { SpacesApi } from '@/network/api/spaces'
@@ -36,6 +38,7 @@ const { t } = useI18n()
 const route = useRoute()
 const dialog = useDialog()
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpace, isOwner } = storeToRefs(spaceStore)
 
 const spaceId = Number(route.params.spaceId)
@@ -103,7 +106,7 @@ async function run(action: () => Promise<void>) {
   try {
     await action()
   } catch {
-    // 提示由 store 给
+    // 提示由取数那一层给
   } finally {
     busy.value = false
     await refresh()
@@ -111,7 +114,7 @@ async function run(action: () => Promise<void>) {
 }
 
 function makeAdmin(row: Row) {
-  return run(() => spaceStore.addAdmin(row.userId, 'ADMIN'))
+  return run(() => spaceData.addAdmin(row.userId, 'ADMIN'))
 }
 
 /** 先问一句；取消（包括关掉对话框）就什么都不做。 */
@@ -125,13 +128,13 @@ async function confirmed(message: string, title: string): Promise<boolean> {
 
 async function revokeAdmin(row: Row) {
   if (!(await confirmed(t('spaces.members.confirmRevoke', { name: row.name }), t('spaces.members.revoke')))) return
-  await run(() => spaceStore.removeAdmin(row.userId))
+  await run(() => spaceData.removeAdmin(row.userId))
 }
 
 /** 转让所有者：对方成为所有者，我变成管理员。只有管理员能接手，所以成员要先设为管理员。 */
 async function transferOwner(row: Row) {
   if (!(await confirmed(t('spaces.members.confirmTransfer', { name: row.name }), t('spaces.members.transfer')))) return
-  await run(() => spaceStore.updateAdmin(row.userId, 'OWNER'))
+  await run(() => spaceData.updateAdmin(row.userId, 'OWNER'))
 }
 </script>
 

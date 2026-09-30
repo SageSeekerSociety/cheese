@@ -18,9 +18,10 @@ import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import { compareAnnouncements } from '../model'
 
-import { useSpaceData } from '@/composables/useSpaceData'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { relTime } from '@/lib/relTime'
 import { useDialog } from '@/plugins/dialog'

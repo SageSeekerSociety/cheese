@@ -17,10 +17,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import PdfGenerate from './PdfGenerate.vue'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 
-import { useSpaceData } from '@/composables/useSpaceData'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import { PUBLISH_DONE_ROUTE } from '@/lib/spaceRouteNames'

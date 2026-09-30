@@ -49,19 +49,23 @@ function enterSpace() {
   useSpaceStore().currentSpaceId = SPACE_ID
 }
 
+/** 页眉（`PageHeader`）要 router，这一页本身不要 —— 钉的是取数，不是页眉，桩掉它。 */
+const mountOptions = {
+  global: {
+    plugins: [createVuetify({ components, directives })],
+    stubs: { PageHeader: true },
+  },
+}
+
 async function mountPage() {
-  const utils = render(ManageCategories, {
-    global: { plugins: [createVuetify({ components, directives })] },
-  })
+  const utils = render(ManageCategories, mountOptions)
   await waitFor(() => expect(listCategories).toHaveBeenCalled())
   return utils
 }
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  listCategories
-    .mockReset()
-    .mockImplementation(async () => ({ data: { categories: CATEGORIES } }))
+  listCategories.mockReset().mockImplementation(async () => ({ data: { categories: CATEGORIES } }))
   spaceUpdate.mockReset().mockImplementation(async () => ({ data: { space: {} } }))
 })
 
@@ -92,9 +96,7 @@ describe('分类管理', () => {
   it('还没有板号的时候一个请求都不发（页面被挂早了也不炸）', async () => {
     setActivePinia(createPinia())
 
-    render(ManageCategories, {
-      global: { plugins: [createVuetify({ components, directives })] },
-    })
+    render(ManageCategories, mountOptions)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(listCategories).not.toHaveBeenCalled()

@@ -121,9 +121,7 @@ export function useSpaceData() {
   }
 
   const deleteClassificationTopic = async (topicId: number) => {
-    const updatedTopicIds = space.classificationTopics
-      .map((topic) => topic.id)
-      .filter((id) => id !== topicId)
+    const updatedTopicIds = space.classificationTopics.map((topic) => topic.id).filter((id) => id !== topicId)
     await updateClassificationTopics(updatedTopicIds)
   }
 

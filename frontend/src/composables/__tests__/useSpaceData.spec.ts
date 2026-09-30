@@ -44,6 +44,7 @@ vi.mock('vuetify-sonner', () => ({
 import { toast } from 'vuetify-sonner'
 
 import { useSpaceData } from '@/composables/useSpaceData'
+
 import { useSpaceStore } from '@/stores/space'
 
 const SPACE_ID = 647
@@ -82,9 +83,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   spaceDetail.mockReset().mockImplementation(async (id: number) => ({ data: { space: space(id) } }))
   spaceUpdate.mockReset().mockImplementation(async (id: number) => ({ data: { space: space(id) } }))
-  listCategories
-    .mockReset()
-    .mockImplementation(async () => ({ data: { categories: [category(1), category(2)] } }))
+  listCategories.mockReset().mockImplementation(async () => ({ data: { categories: [category(1), category(2)] } }))
   listDomainGroups.mockReset().mockImplementation(async () => ({ data: { groups: [] } }))
   createCategory.mockReset().mockResolvedValue({ data: {} })
   updateCategory.mockReset().mockResolvedValue({ data: {} })
@@ -119,9 +118,7 @@ describe('fetchSpace', () => {
     const before = state().currentSpace
 
     let release: (value: unknown) => void = () => {}
-    spaceDetail.mockImplementation(
-      () => new Promise((resolve) => (release = resolve)) as Promise<never>
-    )
+    spaceDetail.mockImplementation(() => new Promise<unknown>((resolve) => (release = resolve)) as Promise<never>)
     const pending = data().fetchSpace(SPACE_ID + 1)
 
     expect(state().currentSpace).toBeNull()
@@ -137,7 +134,7 @@ describe('fetchSpace', () => {
   it('同一块板再取一次不清空：刷新不该让正文闪一下', async () => {
     await data().fetchSpace(SPACE_ID)
     let release: (value: unknown) => void = () => {}
-    spaceDetail.mockImplementation(() => new Promise((resolve) => (release = resolve)) as Promise<never>)
+    spaceDetail.mockImplementation(() => new Promise<unknown>((resolve) => (release = resolve)) as Promise<never>)
 
     const pending = data().fetchSpace(SPACE_ID)
     expect(state().currentSpace?.id).toBe(SPACE_ID)
@@ -174,9 +171,7 @@ describe('fetchCategories', () => {
   it('请求在飞的这段时间 loading 是开的，回来之后关掉', async () => {
     await data().fetchSpace(SPACE_ID)
     let release: (value: unknown) => void = () => {}
-    listCategories.mockImplementation(
-      () => new Promise((resolve) => (release = resolve)) as Promise<never>
-    )
+    listCategories.mockImplementation(() => new Promise<unknown>((resolve) => (release = resolve)) as Promise<never>)
 
     const pending = data().fetchCategories()
     expect(state().loadingCategories).toBe(true)

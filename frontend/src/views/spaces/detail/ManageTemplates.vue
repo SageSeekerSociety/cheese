@@ -79,9 +79,10 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useDialog } from '@/plugins/dialog'
-import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 
 const router = useRouter()

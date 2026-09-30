@@ -51,12 +51,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { TasksApi } from '@/network/api/tasks'
-import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 
 // Router

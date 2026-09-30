@@ -46,9 +46,10 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import PageHeader from '@/components/common/PageHeader.vue'
 import TopicSelector from '@/components/common/TopicSelector.vue'
-import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceStore } from '@/stores/space'
 import { Topic } from '@/types'
 

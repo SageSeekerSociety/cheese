@@ -3,8 +3,8 @@
  * Edit.vue onMounted logic:
  *   await loadTaskData()
  *   if (taskData.value?.space?.id) {
- *     spaceStore.currentSpaceId = taskData.value.space.id
- *     await spaceStore.fetchDomainGroups()
+ *     spaceStore.setCurrentSpaceId(taskData.value.space.id)
+ *     await spaceData.fetchDomainGroups()
  *   }
  *
  * Covers:
