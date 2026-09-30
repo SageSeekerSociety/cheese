@@ -272,6 +272,7 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
+/** 这个文件里的每个端点都过它。飞书那一块在 `api/feishu.ts`，也用这一个（见那儿的说明）。 */
 export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
@@ -1466,6 +1467,8 @@ export interface Integration {
   last_error: string
   last_checked_at: string | null
   user_authorized: boolean
+  /** 用的是平台管理员配的那一个应用，而不是这条连接自己带的凭据。 */
+  shared_app: boolean
 }
 
 export interface MailDraft {
@@ -1493,10 +1496,6 @@ export function connectMail(body: Record<string, unknown>): Promise<Integration>
   return request<Integration>('/me/integrations/mail', { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function connectFeishu(body: Record<string, unknown>): Promise<Integration> {
-  return request<Integration>('/me/integrations/feishu', { method: 'POST', body: JSON.stringify(body) })
-}
-
 export function updateIntegration(id: string, body: Record<string, unknown>): Promise<Integration> {
   return request<Integration>(`/me/integrations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -1510,10 +1509,6 @@ export function checkIntegration(id: string): Promise<Integration> {
 
 export function deleteIntegration(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/me/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-}
-
-export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_uri: string }> {
-  return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
 }
 
 export function listMyMailDrafts(status: string): Promise<ListPayload<MailDraft>> {

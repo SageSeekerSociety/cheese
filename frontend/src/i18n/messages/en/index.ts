@@ -4,6 +4,7 @@ import editor from './editor.json'
 import featureStats from './featureStats.json'
 import feedback from './feedback.json'
 import global from './global.json'
+import integrations from './integrations.json'
 import members from './members.json'
 import models from './models.json'
 import navigation from './navigation.json'
@@ -22,6 +23,7 @@ import work from './work.json'
 // that check; write the translation and delete the keys from that list instead.
 export default {
   global,
+  integrations,
   members,
   models,
   navigation,
