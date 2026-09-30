@@ -12,9 +12,13 @@ import ProjectRoutinesView from './ProjectRoutinesView.vue'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
 
+// 规则那一半的取数在新模块里（`api.ts` 只能变短），页面自己还要用它查房间。
 vi.mock('../api', () => ({
-  listProjectRoutines: vi.fn(),
   listTopics: vi.fn(),
+}))
+
+vi.mock('../api/routines', () => ({
+  listProjectRoutines: vi.fn(),
   getRoutine: vi.fn(),
   createRoutine: vi.fn(),
   updateRoutine: vi.fn(),
@@ -22,7 +26,8 @@ vi.mock('../api', () => ({
   deleteRoutine: vi.fn(),
 }))
 
-const { deleteRoutine, getRoutine, listProjectRoutines, listTopics, routineAction } = await import('../api')
+const { listTopics } = await import('../api')
+const { deleteRoutine, getRoutine, listProjectRoutines, routineAction } = await import('../api/routines')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -45,6 +50,8 @@ beforeAll(() => {
 })
 
 const base = {
+  can_manage: true,
+  room_archived: false,
   project_id: 'p1',
   topic_id: 'room-1',
   instructions: '整理本周进展',

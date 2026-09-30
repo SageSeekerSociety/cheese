@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 工作面板: the right-hand half of a topic — 平级 tabs, 总览 / 现场 / 改动 / 预览. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
+// 工作面板: the right-hand half of a topic — 平级 tabs, 总览 / 现场 / 改动 / 预览 /
+// 定时与触发. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
 // the drawers' float/pinned duality, their own width slider and the scrim are
 // gone, and 资源 is no longer a panel at all — its numbers live in the topic
 // header's usage popover.
@@ -17,13 +18,14 @@
 // chat, via `openFile`) opens that file where it lives — its own tab in the
 // free zone when it is a room file the preview can draw, the 改动 tab otherwise.
 //
-// 页签分两段。固定区（总览 / 现场 / 改动 / 预览）不能关，位置记忆来自这里。自由区是
+// 页签分两段。固定区（总览 / 现场 / 改动 / 预览 / 定时与触发）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
 import type { TopicPhase } from '../lib/topicState'
+import type { TabDef, TabKey } from './panels/panelTabList'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -34,9 +36,11 @@ import { previewCanShowInRoom } from '../lib/fileKind'
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
+import PanelRoutines from './panels/PanelRoutines.vue'
 import PanelSite from './panels/PanelSite.vue'
-// 别名：这个文件里 `panelTabs` 已经是「页签条要的那份数据」了。
-import { ALL_TABS, panelTabs as fixedTabs, type TabDef, type TabKey } from './panels/panelTabList'
+// 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
+// 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
+import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 
 import { useCommands } from '@/commands'
@@ -135,7 +139,7 @@ function tabFromUrl(): string | null {
   const asked = props.tab
   if (!asked) return null
   if (asked.startsWith(FILE_TAB) && asked.length > FILE_TAB.length) return asked
-  if (ALL_TABS.some((t) => t.key === asked)) return asked as TabKey
+  if (tabs.value.some((t) => t.key === asked)) return asked as TabKey
   return TAB_ALIASES[asked] ?? null
 }
 /** 地址点名了自由区的一份文件，而它还没开着：照着地址开出来（临时位）。 */
@@ -342,6 +346,10 @@ async function pollThreads() {
 
 function hasContent(key: TabKey): boolean {
   if (key === 'chat' || key === 'overview') return true
+  // 「定时与触发」也是永远有得看的一格：没有规则时它写的是「还没有规则，点新建」——
+  // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
+  // 关着的时候不该为此多打一个请求。
+  if (key === 'routines') return true
   // 改动属于**树**：一棵树 = 一个分支 = 一个 PR = 一批活，所以这份 diff 是这个
   // 房间当前这一批一起写出来的。
   if (key === 'changes') return summary.value.changedFiles.length > 0
@@ -351,7 +359,7 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-const tabs = computed(() => fixedTabs(props.withChat))
+const tabs = computed(() => workPanelTabs(props.withChat))
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
   tabs.value.map((tab) => ({
@@ -393,7 +401,7 @@ function signalFor(key: TabKey): PanelTab['signal'] {
   return undefined
 }
 
-/** 交给 `PanelTabs` 的那四格（或五格）：文案、图标、有没有东西、信号。 */
+/** 交给 `PanelTabs` 的那几格：文案、图标、有没有东西、信号。 */
 const panelTabs = computed<PanelTab[]>(() =>
   tabs.value.map((tab) => ({
     key: tab.key,
@@ -642,6 +650,16 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           @loaded="markPreviewSeen"
           @locate="emit('locate', $event)"
           @open-file="openFileTab"
+        />
+        <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
+        <PanelRoutines
+          v-if="mounted.has('routines')"
+          v-show="active === 'routines'"
+          :class="enterClass('routines')"
+          :topic-id="topicId"
+          :project-id="projectId"
+          :refresh-tick="refreshTick"
         />
         <template v-for="f in openFiles" :key="fileKey(f.path)">
           <PanelPreview
