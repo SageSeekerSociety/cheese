@@ -24,7 +24,8 @@ checks: [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
 
 - `app/**/*.py` over **1500 lines** may not grow — 16 files are already there and
   are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
-  only files that differ from `origin/main`.
+  only the files this branch changed, each against the size it had at the merge
+  base with `origin/main`.
 - `uv run ruff check .`, `uv run pyright` and `uv run pytest tests/ -n 4 -q` are
   the rest of `task check`; `task be:check` runs all four locally.
 - Migrations: [`../.claude/rules/migrations.md`](../.claude/rules/migrations.md)

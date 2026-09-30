@@ -110,11 +110,13 @@ rebuilt the baseline from zero — see the commit that fixed it.)
 
 `frontend/src` 1000 lines (`.vue`/`.ts`/`.js`), `backend/app` 1500 (`.py`).
 A file does not become unreadable in one commit, so this is differential: only
-files that changed against `origin/main` are read, a new file must land under
-the cap, and a file already over it is frozen at its size there — 35 files are,
-so the check fails a file that *grew*, not the ones that are big today. Shrinking
-is always allowed. The failure message names the file, its line count, the cap
-and why the cap exists.
+the files this branch changed are read, each against the size it had where the
+branch left `origin/main` (the merge base), a new file must land under the cap,
+and a file already over it is frozen at its size there — 35 files are, so the
+check fails a file that *grew*, not the ones that are big today. Shrinking is
+always allowed. A checkout that cannot compute that merge base is a "cannot
+judge" (exit 2), never a comparison against main's moving tip. The failure
+message names the file, its line count, the cap and why the cap exists.
 
 An exemption is one exact path and one reason, in `EXEMPT` in
 `.claude/scripts/check-file-sizes.py` — a registry or a generated table
