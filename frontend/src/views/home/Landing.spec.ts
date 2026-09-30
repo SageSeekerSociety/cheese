@@ -143,6 +143,15 @@ describe('公开首页', () => {
       '/downloads/desktop/Cheese-x64.dmg',
       '/downloads/desktop/Cheese-Setup-x64.exe',
     ])
+    // The phone has no file to download: its row goes to the QR code on this page.
+    expect((await view.findByRole('link', { name: /手机/ })).getAttribute('href')).toBe('#phone')
+  })
+
+  it('links the docs site from the top bar, in either language', async () => {
+    const view = await mount('/solutions')
+    expect(view.getByRole('link', { name: '文档' }).getAttribute('href')).toBe('/docs/')
+    await fireEvent.click(view.getByRole('button', { name: 'Switch to English' }))
+    expect(view.getByRole('link', { name: 'Docs' }).getAttribute('href')).toBe('/docs/')
   })
 
   it('says how to get past the system’s first-launch block only once a download has started', async () => {
