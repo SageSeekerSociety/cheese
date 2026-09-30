@@ -109,7 +109,12 @@ export default [
         'error',
         {
           groups: [
-            [`node:`, `^(${builtinModules.join('|')})(/|$)`],
+            // Bare builtin names only. Node 23.5+ also lists prefix-only modules
+            // (`node:test`, `node:sqlite`, ...) in builtinModules; left in, they
+            // match this longer pattern instead of `node:` and sort after every
+            // other `node:` import, so the same file passes on one Node and fails
+            // on another.
+            [`node:`, `^(${builtinModules.filter((m) => !m.startsWith('node:')).join('|')})(/|$)`],
             // style less,scss,css
             ['^.+\\.less$', '^.+\\.s?css$'],
             // Side effect imports.
