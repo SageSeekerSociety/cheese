@@ -801,15 +801,18 @@ async def _move_session(
             raise ConflictError("工作电脑刚被更换过，刷新后重试")
         if _still_preparing(old):
             raise ConflictError("机器分配仍在进行，请稍后再换机")
+    on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     left = None
-    if (request.get("choice") or {}).get("profile") == "cloud":
+    if on_cloud:
+        # The room's machine: detached only when no other session is on it.
         left = await MachineService(db).supersede_session_machine(
             session_id, actor=actor
         )
     # Whatever was on a Cloud machine is on its branches now (or it never held
-    # a lease), so the machine goes. Anything else stays for the room's cleanup.
+    # a lease), so the machine goes once the room's last session has left it.
+    # Anything else stays for the room's cleanup.
     release = left if left is not None and (pushed or not old) else None
-    kept = [] if old is None or release is not None else [old]
+    kept = [] if old is None or (on_cloud and pushed) else [old]
     row.execution_request = {
         "generation": str(uuid.uuid4()),
         "choice": choice.model_dump(),
@@ -818,9 +821,29 @@ async def _move_session(
     }
     row.work_lease = None
     await db.commit()
-    if release is not None:
+    if release is not None and not await _left_unpushed_on(
+        db, topic_id, release.device_id
+    ):
         await MachineService(db).release_left_machine(release.id)
     return warnings
+
+
+async def _left_unpushed_on(db, topic_id, device_id) -> bool:
+    """Another session of the room left this machine without pushing: its work
+    is only there, so the machine waits for the room's cleanup."""
+    if device_id is None:
+        return False
+    requests = await db.scalars(
+        select(AgentSession.execution_request).where(
+            AgentSession.topic_id == topic_id,
+            AgentSession.execution_request.is_not(None),
+        )
+    )
+    return any(
+        lease.get("device_id") == device_id
+        for request in requests
+        for lease in request.get("retained_leases", [])
+    )
 
 
 # The room names a machine whose owner has since unbound it. It cannot come back
