@@ -4,6 +4,8 @@
 // 三档（跟随系统默认 / 开启 / 关闭）是页面算好的两项，这一件只画；保存时把选中的
 // 那一档报上去，落库的映射（default → null、on → true、off → false）在
 // `composables/useProjectSettings.ts`。
+import { t } from '@/i18n'
+
 defineOptions({ name: 'AttributionSettings' })
 
 defineProps<{
@@ -28,7 +30,7 @@ const emit = defineEmits<{
   <section class="page-section" data-testid="forge-attribution">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-account-edit-outline</v-icon>
-      <span class="page-section-title">提交署名</span>
+      <span class="page-section-title">{{ t('work.projectSettings.attribution.title') }}</span>
     </div>
     <div class="page-section-body">
       <v-alert v-if="error" type="error" density="compact" class="mb-3">{{ error }}</v-alert>
@@ -36,15 +38,17 @@ const emit = defineEmits<{
         autocomplete="off"
         :model-value="choice"
         :items="items"
-        label="将任务请求者列为共同作者"
+        :label="t('work.projectSettings.attribution.label')"
         :loading="saving"
         :disabled="saving"
         hide-details
         @update:model-value="emit('save', $event)"
       />
-      <p class="t-body c-muted mt-2">{{ effective ? '当前已开启' : '当前已关闭' }}</p>
+      <p class="t-body c-muted mt-2">
+        {{ effective ? t('work.projectSettings.attribution.on') : t('work.projectSettings.attribution.off') }}
+      </p>
       <p class="t-body c-faint mt-2 settings-hint">
-        开启后，新提交会附上任务请求者的共同作者署名，提交作者仍为 AI 队友。这项设置不会修改已有提交。
+        {{ t('work.projectSettings.attribution.hint') }}
       </p>
     </div>
   </section>

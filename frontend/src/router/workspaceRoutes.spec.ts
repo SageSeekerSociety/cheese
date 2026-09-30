@@ -61,12 +61,12 @@ describe('the project frame', () => {
   const NAV = 20_000
 
   it(
-    'sends the old /agents page to the project settings',
+    'sends the old /agents page to the AI teammates section of project settings',
     async () => {
       const r = router()
       await r.push(`/projects/${PROJECT}/agents`)
       expect(r.currentRoute.value.name).toBe('project-settings')
-      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/settings`)
+      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/settings/agents`)
     },
     NAV
   )

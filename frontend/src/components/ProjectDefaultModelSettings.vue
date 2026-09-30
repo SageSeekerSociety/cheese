@@ -47,7 +47,7 @@ async function load() {
     subagentDraft.value = state.value.subagent_model ?? null
     draft.value = undefined
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载默认模型失败'
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.loadFailed')
   }
 }
 
@@ -60,7 +60,7 @@ async function save() {
     state.value = await setProjectDefaultModel(props.projectId, target, subagentDraft.value)
     draft.value = undefined
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存默认模型失败'
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.saveFailed')
   } finally {
     busy.value = false
   }
@@ -117,7 +117,7 @@ watch(() => props.projectId, load)
             :disabled="busy || !dirty"
             @click="save"
           >
-            保存
+            {{ t('work.projectSettings.defaultModelBlock.save') }}
           </v-btn>
           <v-btn
             v-if="state.can_manage && state.model !== null"
@@ -126,7 +126,7 @@ watch(() => props.projectId, load)
             :disabled="busy"
             @click="resetToDeploymentDefault"
           >
-            恢复部署默认
+            {{ t('work.projectSettings.defaultModelBlock.reset') }}
           </v-btn>
         </div>
       </div>

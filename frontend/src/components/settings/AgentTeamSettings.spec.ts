@@ -36,6 +36,7 @@ vi.mock('@/api', async (importOriginal) => {
 import AgentTeamSettings from './AgentTeamSettings.vue'
 
 import { ApiError } from '@/api'
+import { setLocale } from '@/i18n'
 import { clearPageCache } from '@/lib/pageCache'
 
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
@@ -89,6 +90,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  setLocale('zh-CN')
   // 页面缓存是模块级的、跨用例活着的：不清的话上一条用例的名册会被下一条用例的
   // 第一帧画出来（那正是「第二次进不转圈」的设计），断言就打在旧数据上。
   clearPageCache()
@@ -188,12 +190,11 @@ describe('队友名册', () => {
 })
 
 describe('还没有队友的时候', () => {
-  it('空状态说清楚队友是什么、能拿它干嘛', async () => {
+  it('空状态说没有队友，并给出新建的入口', async () => {
     listProjectAgents.mockResolvedValue({ data: [], total: 0 })
     mountPage()
 
     expect(await screen.findByText('暂无 AI 队友')).toBeTruthy()
-    expect(screen.getByText(/在这个项目里学到的内容会一直保留/)).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /新建队友/ }).length).toBeGreaterThan(0)
   })
 })
@@ -203,7 +204,7 @@ describe('后端还没上线', () => {
     listProjectAgents.mockRejectedValue(new ApiError(404, 'Not Found'))
     mountPage()
 
-    expect(await screen.findByText(/这个环境还没上线 AI 队友的管理功能/)).toBeTruthy()
+    expect(await screen.findByText('暂不支持管理 AI 队友')).toBeTruthy()
     // 不是空状态：说「暂无队友」等于宣布这个项目没有 AI 在干活，那是假话。
     expect(screen.queryByText('暂无 AI 队友')).toBeNull()
     expect(screen.queryByText('Not Found')).toBeNull()
@@ -214,7 +215,7 @@ describe('后端还没上线', () => {
     mountPage()
 
     expect(await screen.findByText('服务出错了')).toBeTruthy()
-    expect(screen.queryByText(/还没上线/)).toBeNull()
+    expect(screen.queryByText(/暂不支持/)).toBeNull()
   })
 })
 
@@ -228,8 +229,8 @@ describe('停用', () => {
     mountPage()
 
     await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
-    expect(await screen.findByText('停用队友')).toBeTruthy()
-    expect(screen.getByText(/已经在用它的话题照常工作，它的记忆也都保留/)).toBeTruthy()
+    expect(await screen.findByText('停用「评审」')).toBeTruthy()
+    expect(screen.getByText(/已在用它的话题照常工作，记忆全部保留/)).toBeTruthy()
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
   })
 

@@ -1,6 +1,6 @@
 import type { OAuthConnectionInfo } from '../cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 import {
   explainAccountLinkFailure,
@@ -8,6 +8,10 @@ import {
   findGithubAccountConnection,
   isGithubAccountTokenExpired,
 } from './githubAccount'
+
+import { setLocale } from '@/i18n'
+
+beforeAll(() => setLocale('zh-CN'))
 
 function conn(overrides: Partial<OAuthConnectionInfo> = {}): OAuthConnectionInfo {
   return {
@@ -75,17 +79,17 @@ describe('explainAccountLinkFailure', () => {
 
   it('does not blame the person when our server could not reach GitHub', () => {
     const text = explainAccountLinkFailure('github_unreachable')
-    expect(text).toContain('网络')
+    expect(text).toContain('与你的操作无关')
     expect(text).not.toContain('没点完')
   })
 
   it('still names an unrecognised code rather than hiding it', () => {
-    // 「未知原因」 alone loses the one clue anyone could act on.
+    // 「原因未知」 alone loses the one clue anyone could act on.
     expect(explainAccountLinkFailure('brand_new_code')).toContain('brand_new_code')
   })
 
   it('handles a missing reason', () => {
-    expect(explainAccountLinkFailure(undefined)).toContain('未知原因')
+    expect(explainAccountLinkFailure(undefined)).toContain('原因未知')
   })
 })
 
@@ -119,7 +123,7 @@ describe('explainRepoInstallFailure', () => {
   it('does not invent a holder it was not told about', () => {
     const text = explainRepoInstallFailure('repository_taken', { repo: 'acme/widgets' })
     expect(text).toContain('acme/widgets')
-    expect(text).toContain('看不到')
+    expect(text).toContain('无权查看')
   })
 
   it('is about the repo, not the account — the two flows have separate copy', () => {

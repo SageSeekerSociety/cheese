@@ -2,6 +2,8 @@
 import type { CallbackNotice } from '@/composables/useProjectSettings'
 import type { ForgeConnection } from '@/cx_types'
 
+import { t } from '@/i18n'
+
 // 连接 GitHub 仓库 (#192)：cheesex-app 装到具体仓库上，之后这个项目的 git 操作走这个
 // installation 的短时 token。拆自 `views/ProjectSettingsView.vue`（#2143）。
 //
@@ -32,7 +34,7 @@ const emit = defineEmits<{
   <section class="page-section" data-testid="github-repository">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-github</v-icon>
-      <span class="page-section-title">连接 GitHub 仓库</span>
+      <span class="page-section-title">{{ t('work.projectSettings.githubRepo.title') }}</span>
     </div>
     <div class="page-section-body">
       <v-alert
@@ -48,21 +50,22 @@ const emit = defineEmits<{
       <div v-if="forge.connected" class="d-flex align-center flex-wrap" style="gap: 8px">
         <v-icon size="18" color="success">mdi-check-circle</v-icon>
         <span class="t-body settings-row-label">
-          已连接 <strong>{{ forge.repo }}</strong>
+          {{ t('work.projectSettings.githubRepo.connected', { repo: forge.repo }) }}
         </span>
         <v-spacer />
-        <v-btn size="small" variant="tonal" :loading="connecting" @click="emit('connect')"> 重新连接 </v-btn>
+        <v-btn size="small" variant="tonal" :loading="connecting" @click="emit('connect')">
+          {{ t('work.projectSettings.githubRepo.reconnect') }}
+        </v-btn>
       </div>
       <div v-else class="d-flex align-center flex-wrap" style="gap: 8px">
-        <span class="t-body c-muted">暂无关联仓库</span>
+        <span class="t-body c-muted">{{ t('work.projectSettings.githubRepo.none') }}</span>
         <v-spacer />
         <v-btn size="small" color="primary" variant="flat" :loading="connecting" @click="emit('connect')">
-          连接 GitHub 仓库
+          {{ t('work.projectSettings.githubRepo.connect') }}
         </v-btn>
       </div>
       <p class="t-body c-faint mt-2 settings-hint">
-        通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
-        会按这个连接自动签发，不用再手工配置。
+        {{ t('work.projectSettings.githubRepo.hint') }}
       </p>
     </div>
   </section>
