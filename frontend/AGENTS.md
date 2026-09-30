@@ -73,6 +73,38 @@ To add a component:
 
 Rendering the site writes nothing to the source tree.
 
+## A new scene runs standalone from day one
+
+A **scene** is a router page under `src/views` or an SFC under
+`src/components/panels`. The ones that render with props alone today are frozen
+in `scene-baseline.json`; the ratchet only has one direction:
+
+```bash
+pnpm run lint:scenes           # what CI runs
+pnpm run lint:scenes:update    # after a scene becomes standalone-ready
+```
+
+- A frozen scene that stops being standalone-ready **fails** the check.
+- A **new** page (a route added to `src/router/`) or a **new** panel that is not
+  standalone-ready **fails** the check — from day one, with no baseline edit that
+  can excuse it.
+- Pages and panels that were already not standalone-ready are listed as debt and
+  are allowed to stay there.
+- `--update` only moves a scene from debt to ready; it refuses to write anything
+  if a frozen scene fell off or a new one is not ready.
+
+Standalone-ready means A on the metrics board: props and events only, no
+fetching, no `useRoute`/`$route`, no business store (the app-chrome stores
+`usePageTitleStore`/`useNavigationStore` are B and do not count). How to get
+there: lift the fetching into a composable or the shell and pass the result down
+— the worked example is `PanelDoc` (shell, fetches) → `composables/usePanelDoc.ts`
+→ `PanelDocView.vue` (props only). Full reasoning, the current counts and the
+per-page table: [`../docs/manual/dev/scenes.md`](../docs/manual/dev/scenes.md).
+
+A standalone-ready scene that is not in `views/demo/catalog.ts` is reported as a
+warning, not a failure — read the warning count as a to-do list, and the three
+steps above as the fix.
+
 ## Caps and conventions
 
 - Files under `src/` over **1000 lines** may not grow; 19 are already there and
@@ -81,7 +113,7 @@ Rendering the site writes nothing to the source tree.
 - `pnpm run lint` is the read-only ESLint (the writer is `lint:fix`); never gate
   on the writing form. Design tokens and the two themes have their own ratchet —
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
-- `task fe:check` runs lint, boundaries, style, typecheck, unit tests and build.
+- `task fe:check` runs lint, boundaries, scenes, style, typecheck, unit tests and build.
 - A dev server may already be running on 3001/3002 in this worktree; do not
   restart one you did not start.
 - A new page under `src/views/admin/features/`: the chart components take props
