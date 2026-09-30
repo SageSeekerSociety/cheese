@@ -179,10 +179,9 @@ def launch_holes(
     the execution target and the config the client derives from it, and the
     system prompt, which differs per teammate. Two seats of one room writing
     one path is what put a room's second teammate's turn on the first one's
-    credential. The harness's own config dir (``$CLAUDE_CONFIG_DIR``) stays
-    the room's: its transcripts, settings and skills are read by programs that
-    resolve a ROOM's paths (a resume, a conversation transfer between machines,
-    a release's busy scan) and could not name a seat.
+    credential. Each seat has its own Claude config and skills. Only the
+    transcript directory is shared with the room, so resume, transfer and the
+    release's busy scan can still find each conversation.
 
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
     script itself — written to the seat's ``cheese-system-prompt.md`` on the
@@ -254,27 +253,28 @@ CHEESE_SKILLS"""
         """The configure and prepare holes, written for this prompt and these
         helpers: once for the launch, and once for what the launch is compared
         by (below)."""
-        execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
+        execution_setup = 'mkdir -p "$SEAT/remote-execution"\n'
         for name, source in helper_sources.items():
             execution_setup += (
-                f'cat > "$HOME/.cheese/remote-execution/{name}" '
+                f'cat > "$SEAT/remote-execution/{name}" '
                 "<<'CHEESE_EXECUTION_SOURCE'\n"
                 + source
                 + ("" if source.endswith("\n") else "\n")
                 + "CHEESE_EXECUTION_SOURCE\n"
             )
-        execution_setup += (
-            f"printf %s {release.digest(helper_sources)} "
-            '> "$HOME/.cheese/remote-execution/release-ready"\n'
-        )
         execution_setup += """mkdir -p "$SEAT"
 printf '%s' "$CHEESE_EXECUTION_TARGET" \\
   > "$SEAT/remote-target.json"
-EXECUTOR_CLIENT="$HOME/.cheese/remote-execution/client.py"
+EXECUTOR_CLIENT="$SEAT/remote-execution/client.py"
 EXECUTOR_TARGET="$SEAT/remote-target.json"
 export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
 CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
+        execution_setup += (
+            'mkdir -p "$SEAT/remote-session"\n'
+            f"printf %s {release.digest(helper_sources)} "
+            '> "$SEAT/remote-session/release-ready"\n'
+        )
         configure = f"""\
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under
@@ -286,8 +286,14 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 # the owner's settings.json to be routed at all, hijacking every claude the
 # owner starts by hand. With it, claude never reads or writes the owner's
 # files.
-export CLAUDE_CONFIG_DIR="$HOME/.claude"
-mkdir -p "$CLAUDE_CONFIG_DIR"
+ROOM_CONFIG_DIR="$HOME/.claude"
+SEAT="{seat_home}"
+export CLAUDE_CONFIG_DIR="$SEAT/.claude"
+mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
+# Conversation transcripts belong to the room for resume and transfer, while
+# settings, skills and generated instructions belong to this seat.
+[ -e "$CLAUDE_CONFIG_DIR/projects" ] || \\
+  ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects"
 export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
 {webfetch_transport}CHEESE_WEBFETCH
@@ -299,15 +305,15 @@ export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIO
 rm -f "$CLAUDE_CONFIG_DIR/skills/cheese-chat/SKILL.md"
 {skill_setup}
 {ca_block}
-cat > "$CLAUDE_CONFIG_DIR/settings.json" <<'JSON'
-{settings_json}
-JSON
 # This seat's own directory, and everything below that belongs to one session
 # rather than to the room: the prompt (one per teammate), the execution target
 # the client prepares against, and — through it — the client's own per-turn
-# files. The harness's config dir above stays the room's.
-SEAT="{seat_home}"
+# files. Only the transcript directory above stays the room's.
 mkdir -p "$SEAT"
+mkdir -p "$SEAT/remote-session"
+cat > "$SEAT/remote-session/base-settings.json" <<'JSON'
+{settings_json}
+JSON
 cat > "$SEAT/cheese-system-prompt.md" <<'SYSPROMPT'
 {system_prompt}SYSPROMPT
 """
@@ -371,7 +377,7 @@ if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{pinned_version}" "$CLAUDE_V"
   exit 1
 fi
 CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
-# The platform system prompt (written next to settings.json above). The path is
+# The platform system prompt (written beside the seat's base settings). The path is
 # embedded QUOTED so a home dir with spaces survives the runner's `sh -c`.
 CHEESE_SP="$SEAT/cheese-system-prompt.md"
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
@@ -472,7 +478,8 @@ cheese_launch_phase credentials_selected
     # release puts into a running session are left out too, since changing
     # one is a release and not a relaunch. Everything
     # else here is read once by a process that keeps it for its life — the
-    # binary, the argv, the settings, the skills, the runner, the environment,
+    # binary, the argv, the seat's base settings, the skills, the runner,
+    # the environment,
     # and everything `client.prepare` writes — so any change to it has to
     # reach a live session as a new one.
     configured, prepared = holes("", release.launch_only(helper_sources))

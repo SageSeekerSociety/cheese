@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import binascii
-import re
 import shutil
 import uuid
 from collections.abc import Mapping
@@ -98,6 +97,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
+from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
@@ -2039,7 +2039,7 @@ async def set_topic_compute_profile(
     # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
     from app.domain.machine import session_work as work_lease
 
-    await work_lease.request_choice(
+    moved = await work_lease.request_choice(
         db,
         topic_id=topic_id,
         actor=actor,
@@ -2053,10 +2053,9 @@ async def set_topic_compute_profile(
     # The room's pin is the choice itself, before the first turn and after it:
     # 一个话题一个容器（2026-09-28，推翻结论 60），换机器是整个房间搬过去，钉子跟
     # 着搬——在每条会话都搬成之后才动，一条推不上去整个房间连钉子一起留在原地。
-    # Release then bind preserves bind_topic_device's write-once contract:
-    # the bind itself never overwrites, while an explicit change removes the
-    # obsolete pin first. Selecting Cloud or 「系统挑一台」 leaves no pin; the
-    # latter is frozen by resolve_pinned_device on the next turn.
+    # Release then bind keeps bind_topic_device write-once: the bind never
+    # overwrites, an explicit change removes the old pin first. Cloud or
+    # 「系统挑一台」 leaves no pin; resolve_pinned_device freezes it next turn.
     binding = await device_service.topic_binding(topic_id)
     if binding is not None and (
         name != COMPUTE_DEVICE or binding.device_id != device_id
@@ -2078,6 +2077,7 @@ async def set_topic_compute_profile(
             "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "proposal": None,
+            "warnings": moved["warnings"],
         }
     )
 
@@ -3760,17 +3760,16 @@ async def upload_attachment(
             raise ValidationError("空文件")
         if len(data) > MAX_ATTACHMENT_BYTES:
             raise ValidationError("文件太大（上限 10MB）")
-        name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
-        name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
-        name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        name = library.clean_upload_name(file.filename)
         if ext and not name.lower().endswith(ext):
             name += ext
         if origin == "clipboard":
             path = f"uploads/{uuid.uuid4().hex}/{name}"
             library.write_room_file(topic.project_id, topic_id, path, data)
             return ok({"path": path, "mime": mime, "bytes": len(data)})
-        # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
-        name = library.write_library_file(topic.project_id, name, data)
+        name = await library_records.add(
+            db, topic.project_id, name, data, actor.handle, topic_id
+        )
     return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
 
 

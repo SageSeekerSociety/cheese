@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '@/lib/navTarget'
 
 import { computed } from 'vue'
 
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
 import AdminSparkline from '@/components/admin/AdminSparkline.vue'
+import NavLink from '@/components/common/NavLink.vue'
 
 // 看板 KPI 行里的一张卡（92px，有第三行时 108px）。
 //
@@ -38,7 +39,7 @@ const props = withDefaults(
     /** 可选后缀，如「条」。 */
     unit?: string
     /** 有去向才是链接。见文件开头。 */
-    to?: RouteLocationRaw
+    to?: NavTarget
     /** 首次加载。骨架的形状和真卡完全一样，到货那一刻不重排。 */
     loading?: boolean
     /** 已格式化的环比（「+12.3%」「-4%」）；空串/undefined = 不画。 */
@@ -72,7 +73,7 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
     <v-skeleton-loader v-if="hasThirdRow" type="text" class="akpi__skel akpi__skel--foot" />
   </div>
 
-  <router-link v-else-if="to" :to="to" class="akpi akpi__link" :class="{ 'akpi--rich': hasThirdRow }">
+  <NavLink v-else-if="to" :to="to" class="akpi akpi__link" :class="{ 'akpi--rich': hasThirdRow }">
     <span class="akpi__head">
       <span class="akpi__label t-eyebrow-read">{{ label }}</span>
     </span>
@@ -84,7 +85,7 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
       <span v-if="delta" class="akpi__delta t-meta-read t-num num-leaf" :title="deltaTitle">{{ delta }}</span>
       <AdminSparkline v-if="spark?.length" class="akpi__spark" :values="spark" />
     </span>
-  </router-link>
+  </NavLink>
 
   <div v-else class="akpi" :class="{ 'akpi--rich': hasThirdRow }">
     <span class="akpi__head">

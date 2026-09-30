@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import type { RouteLocationRaw } from 'vue-router'
 import type { FeedbackStatus } from '@/cx_types'
+import type { NavTarget } from '@/lib/navTarget'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
@@ -31,7 +32,7 @@ const props = withDefaults(
     title: string
     rows: { id: string; no: number; title: string; status: FeedbackStatus; updatedAt: string }[]
     /** 第 11 行「查看全部 →」。不传就不画那一行。 */
-    moreTo?: RouteLocationRaw
+    moreTo?: NavTarget
     loading?: boolean
   }>(),
   { moreTo: undefined, loading: false }
@@ -50,7 +51,7 @@ const shown = computed(() =>
     label: statusMeta(row.status).label,
     ink: statusMeta(row.status).ink,
     time: relTime(row.updatedAt),
-    to: { name: 'FeedbackDetail', params: { id: row.id } } as RouteLocationRaw,
+    to: { name: 'FeedbackDetail', params: { id: row.id } } as NavTarget,
   }))
 )
 </script>
@@ -78,19 +79,19 @@ const shown = computed(() =>
     />
 
     <template v-else>
-      <router-link v-for="row in shown" :key="row.id" class="anl__row" :to="row.to">
+      <NavLink v-for="row in shown" :key="row.id" class="anl__row" :to="row.to">
         <span class="anl__no t-num">#{{ row.no }}</span>
         <span class="anl__title">{{ row.title }}</span>
         <span class="anl__status" :style="{ color: row.ink }">{{ row.label }}</span>
         <span class="anl__time t-num">{{ row.time }}</span>
-      </router-link>
+      </NavLink>
 
-      <router-link v-if="moreTo" class="anl__row anl__more" :to="moreTo">
+      <NavLink v-if="moreTo" class="anl__row anl__more" :to="moreTo">
         <span class="anl__more-text">
           {{ t('feedback.numberList.viewAll') }}
           <span class="anl__arrow" aria-hidden="true">→</span>
         </span>
-      </router-link>
+      </NavLink>
     </template>
   </div>
 </template>

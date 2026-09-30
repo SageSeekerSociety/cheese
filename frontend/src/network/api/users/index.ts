@@ -459,6 +459,21 @@ export namespace UserApi {
       },
     })
 
+  // 在浏览器里登录后交给桌面 app（views/account/BackToApp.vue、AppSignInFinish.vue）
+  export const startAppSignIn = (challenge: string) =>
+    ApiInstance.request<{ code: string }>({
+      url: '/users/auth/app-sign-in',
+      method: 'POST',
+      data: { challenge },
+    })
+
+  export const finishAppSignIn = (code: string, verifier: string) =>
+    ApiInstance.request<null>({
+      url: '/users/auth/app-sign-in/finish',
+      method: 'POST',
+      data: { code, verifier },
+    })
+
   // OAuth 相关 API
   export const getOAuthProviders = () =>
     ApiInstance.request<GetOAuthProvidersResponse>({

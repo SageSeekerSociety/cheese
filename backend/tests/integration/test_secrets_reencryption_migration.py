@@ -28,7 +28,6 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.forgejo_tokens import forge_password, open_forge_token
 from app.domain.oauth.services import open_oauth_token, seal_oauth_token
-from app.domain.subscription.services import open_subscription_token
 from app.domain.user.realname_services import realname_dict
 from tests.conftest import (
     _PG_BASE,
@@ -42,7 +41,6 @@ _FIXTURES = _BACKEND / "tests" / "fixtures" / "fernet"
 _DATA_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode()
 _PROJECT = uuid.UUID("00000000-0000-4000-8000-000000009301")
 _API = "https://forge.invalid/api/v1"
-_SUBSCRIPTION = uuid.UUID("00000000-0000-4000-8000-000000009401")
 
 
 def _alembic(db_name: str, fixture: dict, *args: str) -> subprocess.CompletedProcess:
@@ -161,17 +159,6 @@ async def _seed(db_name: str, tokens: dict[str, str], already_new: str) -> None:
             _API,
             tokens["forge-oauth-token"],
         )
-        await conn.execute(
-            """
-            INSERT INTO llm_subscriptions
-                (id, provider, label, status, access_token_enc, refresh_token_enc,
-                 created_by_handle, created_at, updated_at)
-            VALUES ($1, 'openai_codex', '', 'active', $2, $3, 'ops', now(), now())
-            """,
-            _SUBSCRIPTION,
-            tokens["gho_access_token"],
-            tokens["ghr_refresh_token"],
-        )
     finally:
         await conn.close()
 
@@ -191,9 +178,6 @@ async def _rows(db_name: str) -> dict[str, list]:
             ),
             "tokens": await conn.fetch(
                 "SELECT * FROM forge_tokens WHERE project_id = $1", _PROJECT
-            ),
-            "subscriptions": await conn.fetch(
-                "SELECT * FROM llm_subscriptions WHERE id = $1", _SUBSCRIPTION
             ),
             "version": await conn.fetchval("SELECT version_num FROM alembic_version"),
         }
@@ -246,15 +230,6 @@ def test_old_fernet_values_read_back_after_the_migration(
     assert forge_password(SimpleNamespace(**dict(forge))) == "forge-account-password"
     (lease,) = rows["tokens"]
     assert open_forge_token(SimpleNamespace(**dict(lease))) == "forge-oauth-token"
-    (subscription,) = rows["subscriptions"]
-    subscription = SimpleNamespace(**dict(subscription))
-    assert open_subscription_token(subscription, "access_token_enc") == (
-        "gho_access_token"
-    )
-    assert open_subscription_token(subscription, "refresh_token_enc") == (
-        "ghr_refresh_token"
-    )
-    assert subscription.id_token_enc is None
 
 
 def test_an_undecryptable_value_stops_the_migration_unchanged(

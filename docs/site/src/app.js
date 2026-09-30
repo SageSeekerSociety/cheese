@@ -5,6 +5,7 @@ import { ic } from './content.js'
 import { freshToken, signInUrl } from './session.js'
 import { mountDemos } from './demo-dom.mjs'
 import { stepOf, walkHtml } from './walk.mjs'
+import { recordVisit } from './visit.js'
 
 const $ = (s, r = document) => r.querySelector(s)
 const $$ = (s, r = document) => [...r.querySelectorAll(s)]
@@ -562,6 +563,10 @@ addEventListener('resize', () => { moveTabs(); moveFilter(); moveSidePill() })
 splitChars()
 setupReveal(); setupSpot(); setupMagnetic(); setupToc()
 mountDemos()
+// One beacon per page load, and nothing else: 「有人来过」 is the only thing the
+// docs can report that the server cannot see for itself. See src/visit.js for
+// what is sent (two fields) and what is deliberately not.
+recordVisit(PAGE)
 moveTabs(); moveSidePill(); moveFilter(); onScroll()
 document.fonts?.ready.then(() => { moveTabs(); moveSidePill() })
 loadDiagrams()

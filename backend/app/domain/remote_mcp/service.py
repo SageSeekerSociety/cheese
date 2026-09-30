@@ -242,7 +242,12 @@ async def _declared_server(
 
 
 async def begin_connect(
-    db: AsyncSession, project_id: uuid.UUID, name: str, handle: str
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    name: str,
+    handle: str,
+    *,
+    in_app: bool = False,
 ) -> str:
     """Start the authorization; returns the URL the browser goes to."""
     server = await _declared_server(db, project_id, name, fresh=True)
@@ -270,6 +275,7 @@ async def begin_connect(
                 "url": url,
                 "resource": resource,
                 "handle": handle,
+                "app": in_app,
                 "verifier": verifier,
                 "issuer": found.issuer,
                 "token_endpoint": found.token_endpoint,
@@ -378,7 +384,7 @@ async def _revoke(row: ProjectMcpConnection) -> None:
         ):
             token = _open(row, column)
             if token:
-                await oauth.revoke(
+                status = await oauth.revoke(
                     revocation_endpoint=row.revocation_endpoint,
                     token=token,
                     hint=hint,
@@ -386,8 +392,20 @@ async def _revoke(row: ProjectMcpConnection) -> None:
                     client_secret=secret,
                     auth_method=row.token_endpoint_auth_method,
                 )
-    except Exception:  # noqa: BLE001 — the local disconnect still happens
-        logger.warning("remote_mcp: revoke failed server=%s", row.server_name)
+                if status != 200:
+                    # The grant may still be valid upstream though we forget it.
+                    logger.warning(
+                        "remote_mcp: revocation refused server=%s kind=%s status=%s",
+                        row.server_name,
+                        hint,
+                        status,
+                    )
+    except Exception as exc:  # noqa: BLE001 — the local disconnect still happens
+        logger.warning(
+            "remote_mcp: revoke failed server=%s error=%s",
+            row.server_name,
+            type(exc).__name__,
+        )
 
 
 async def disconnect(db: AsyncSession, project_id: uuid.UUID, name: str) -> None:

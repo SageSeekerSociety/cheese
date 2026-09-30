@@ -4,8 +4,9 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import Download from './Download.vue'
 import Landing from './Landing.vue'
 import Solutions from './Solutions.vue'
 
@@ -14,6 +15,8 @@ import HomeRoutes from '@/router/home'
 import AccountService from '@/services/account'
 
 vi.mock('@/services/account', () => ({ default: reactive({ loggedIn: false }) }))
+// The download page reads the published version and changelog; this site has none.
+vi.mock('@/lib/desktopChangelog', () => ({ fetchDesktopRelease: async () => ({ version: null, days: [] }) }))
 // happy-dom has no IntersectionObserver; the scroll-driven room simply stays on its first step.
 vi.stubGlobal(
   'IntersectionObserver',
@@ -22,6 +25,26 @@ vi.stubGlobal(
     disconnect() {}
   }
 )
+// The download page's other builds are in a menu, a VOverlay, which happy-dom
+// cannot place without these.
+beforeAll(() => {
+  if (!('ResizeObserver' in globalThis)) {
+    ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
+  if (!('devicePixelRatio' in globalThis)) {
+    Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, value: 1 })
+  }
+  if (!globalThis.visualViewport) {
+    Object.defineProperty(globalThis, 'visualViewport', {
+      configurable: true,
+      value: { width: 1024, height: 768, offsetLeft: 0, offsetTop: 0, addEventListener() {}, removeEventListener() {} },
+    })
+  }
+})
 beforeEach(() => setLocale('zh-CN'))
 
 afterEach(() => {
@@ -40,9 +63,11 @@ async function mount(path = '/') {
       component:
         route.name === 'Solutions'
           ? Solutions
-          : route.meta?.publicLanding
-            ? Landing
-            : { template: '<div>Workspace</div>' },
+          : route.name === 'Download'
+            ? Download
+            : route.meta?.publicLanding
+              ? Landing
+              : { template: '<div>Workspace</div>' },
     })),
   })
   await router.push(path)
@@ -101,14 +126,40 @@ describe('公开首页', () => {
     expect(solutions.getByRole('link', { name: '方案' }).getAttribute('aria-current')).toBe('page')
   })
 
-  it('offers the desktop app from this site, not from GitHub', async () => {
-    const view = await mount()
-    expect(view.getByRole('link', { name: '下载' }).getAttribute('href')).toBe('#download')
-    const mac = view.getByRole('link', { name: /Mac（Apple 芯片）/ })
-    expect(mac.getAttribute('href')).toBe('/downloads/desktop/Cheese-arm64.dmg')
-    expect(view.getByRole('link', { name: /Windows/ }).getAttribute('href')).toBe(
-      '/downloads/desktop/Cheese-Setup-x64.exe'
+  it('leads to the download page, which offers every build from this site, not from GitHub', async () => {
+    const home = await mount()
+    expect(home.getByRole('link', { name: '下载' }).getAttribute('href')).toBe('/download')
+    cleanup()
+
+    const view = await mount('/download')
+    await fireEvent.click(view.getByRole('button', { name: '其他版本' }))
+    const builds = await Promise.all(
+      [/Mac（Apple 芯片）/, /Mac（Intel 芯片）/, /Windows/].map((name) => view.findByRole('link', { name }))
     )
+    expect(builds.map((b) => b.getAttribute('href'))).toEqual([
+      '/downloads/desktop/Cheese-arm64.dmg',
+      '/downloads/desktop/Cheese-x64.dmg',
+      '/downloads/desktop/Cheese-Setup-x64.exe',
+    ])
+  })
+
+  it('says how to get past the system’s first-launch block only once a download has started', async () => {
+    const view = await mount('/download')
+    const download = await view.findByRole('link', { name: /下载 Mac 版/ })
+    expect(view.queryByText(/仍要打开/)).toBeNull()
+    await fireEvent.click(download)
+    expect(await view.findByText(/仍要打开/)).toBeTruthy()
+  })
+
+  it('offers no installer inside the desktop app, which is installed already', async () => {
+    ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+    try {
+      const view = await mount('/download')
+      await waitFor(() => expect(view.getByRole('heading', { name: '下载知是' })).toBeTruthy())
+      expect(view.queryByRole('link', { name: /下载 Mac 版|下载 Windows 版/ })).toBeNull()
+    } finally {
+      delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
+    }
   })
 
   it('keeps the introduction open to signed-in users and links back to work', async () => {

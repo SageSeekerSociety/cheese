@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1311,7 +1312,9 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     assert Path(target["token_file"]).read_text() == "execution-only"
     assert Path(target["central_config"]) == config
     assert (config / "CLAUDE.md").read_text() == f"@{work}/CLAUDE.md\n"
-    hooks = json.loads((config / "settings.json").read_text())["hooks"]
+    hooks = json.loads(
+        (Path(started["execution"]).parent / "settings.json").read_text()
+    )["hooks"]
     assert {"command": ": project-hook", "type": "command"} in [
         hook for group in hooks["PreToolUse"] for hook in group["hooks"]
     ]
@@ -1450,6 +1453,239 @@ def test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled(
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+PREPARING = "云端工作电脑正在准备；对话和平台工具仍可用。"
+
+
+class PreparingPlatform:
+    """A platform whose session machine is being prepared until `ready` is
+    set. A waiting lease request is held a moment before it answers "still
+    preparing", as the platform's bounded wait is; one that will not wait is
+    answered at once."""
+
+    def __init__(self, state, work):
+        self.leases = 0
+        self.ready = threading.Event()
+        platform = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/lease":
+                    platform.leases += 1
+                    if not platform.ready.is_set() and body["timeout"] > 0.01:
+                        platform.ready.wait(0.3)
+                    result = {
+                        "data": {
+                            "target": {
+                                "kind": "device",
+                                "workspace": str(work),
+                                "url": platform.base + "/execute",
+                                "generation": "prepared",
+                            },
+                            "token": "execution-only",
+                        }
+                        if platform.ready.is_set()
+                        else {"unavailable": PREPARING, "preparing": True}
+                    }
+                else:
+                    result = runtime.request(state, body["method"], body["params"])
+                encoded = json.dumps(result).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+NOTICE = "工作电脑正在准备，这次操作会在它就绪后执行（最多等 11 分钟）。"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("Bash", {"command": "echo real-output"}),
+        ("Read", {"file_path": "/unavailable-project/notes.txt"}),
+    ],
+)
+async def test_a_codex_call_waiting_for_its_machine_says_so_once(
+    executor, monkeypatch, tool, arguments
+):
+    """Codex hears a tool call only once it has run. One issued before the
+    session's machine exists comes back with the platform's one line about
+    the wait, then the call's own result."""
+    _, work, state = executor
+    (work / "notes.txt").write_text("real-output\n")
+    platform = PreparingPlatform(state, work)
+    monkeypatch.setenv("CHEESE_API", platform.base)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    tools = RemoteTools(
+        {
+            "kind": "deferred",
+            "workspace": "/unavailable-project",
+            "lease_path": "/lease",
+        }
+    )
+    tools.routes = {tool: ("native", tool)}
+
+    def request(call_id):
+        return {"tool": tool, "callId": call_id, "arguments": arguments}
+
+    try:
+        call = asyncio.ensure_future(tools("item/tool/call", request("first")))
+        while platform.leases < 4:
+            await asyncio.sleep(0.05)
+        assert not call.done(), "The call waits for its machine"
+        platform.ready.set()
+        answer = await asyncio.wait_for(call, 30)
+        assert answer["success"] is True, answer
+        notice, output = answer["contentItems"]
+        assert notice == {"type": "inputText", "text": NOTICE}
+        assert "real-output" in output["text"]
+
+        # With the machine there, a call has nothing to wait for.
+        again = await tools("item/tool/call", request("second"))
+        (output,) = again["contentItems"]
+        assert "real-output" in output["text"]
+    finally:
+        platform.close()
+
+
+def _proxy_hook(outcome_text: str) -> dict:
+    """What the session's plugin (`proxy.js`) answers the build for a Read the
+    bridge answered with ``outcome_text``."""
+    from app.domain.agent.harness.claude_code.remote_execution import release
+
+    source = release.hook_module(
+        Path(central.__file__).with_name("proxy.js").read_text(),
+        {
+            "central_config": "/config",
+            "central_workspace": "/view",
+            "workspace": "/work",
+            "session_workspace": "/work",
+        },
+        release.platform_tool_names(central.cheese_source().read_text()),
+    )
+    program = """
+        const {register} = await import(
+          'data:text/javascript;base64,' + process.argv[1]);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const $ = {
+          env: {get: async () => undefined},
+          fs: {read: async () => { throw new Error('no file'); }},
+          session: {id: async () => 'session'},
+          mcp: {call: async () => ({content: [{type: 'text', text: process.argv[2]}]})},
+        };
+        const answer = await handlers['tool.call']($, {
+          tool: 'Read', tool_use_id: 'read', file_path: '/work/notes.txt',
+        }, () => { throw new Error('read on the session host'); });
+        process.stdout.write(JSON.stringify(answer));
+    """
+    done = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            program,
+            base64.b64encode(source.encode()).decode(),
+            outcome_text,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(done.stdout)
+
+
+def test_a_claude_code_file_tool_waiting_for_its_machine_says_so_once(
+    executor, tmp_path
+):
+    """Claude Code's file tools run through the session's bridge, whose answer
+    the plugin hands the build. A Read issued before the session's machine
+    exists is answered with the file once the machine is there, and the model
+    reads the platform's one line about the wait after it (`context`)."""
+    _, work, state = executor
+    (work / "notes.txt").write_text("real-output\n")
+    platform = PreparingPlatform(state, work)
+    config = tmp_path / "deferred.json"
+    config.write_text(
+        json.dumps(
+            {
+                "kind": "deferred",
+                "workspace": "/unavailable-project",
+                "lease_path": "/lease",
+                "central_hooks": {},
+            }
+        )
+    )
+    log = (tmp_path / "bridge.log").open("w")
+    bridge = runtime.MCPProcess(
+        [sys.executable, central.__file__, "transport", str(config)],
+        str(tmp_path),
+        {
+            **os.environ,
+            "NO_PROXY": "127.0.0.1",
+            "CHEESE_TOKEN": "session-token",
+            "CHEESE_API": platform.base,
+        },
+        log,
+    )
+
+    def read(call_id):
+        return bridge.begin(
+            "tools/call",
+            {
+                "name": "invoke",
+                "arguments": {
+                    "id": call_id,
+                    "tool": "Read",
+                    "args": {"file_path": "/unavailable-project/notes.txt"},
+                    "session_id": "session",
+                },
+            },
+        )
+
+    try:
+        key, answers = read("first")
+        _wait(lambda: platform.leases >= 4)
+        assert answers.empty(), "The call waits for its machine"
+        platform.ready.set()
+        text = bridge.finish(key, answers, timeout=30)["content"][0]["text"]
+        answer = _proxy_hook(text)
+        assert answer["context"] == [NOTICE]
+        assert "real-output" in answer["result"]["file"]["content"]
+
+        # With the machine there, a call has nothing to wait for.
+        again = _proxy_hook(bridge.finish(*read("second"))["content"][0]["text"])
+        assert "context" not in again
+        assert "real-output" in again["result"]["file"]["content"]
+    finally:
+        bridge.close()
+        log.close()
+        platform.close()
+
+
+def _wait(check, timeout=30):
+    deadline = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
 
 
 @pytest.mark.parametrize("executor", ["project-mcp"], indirect=True)

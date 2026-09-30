@@ -26,7 +26,7 @@
 <script setup lang="ts">
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
 
-import { useRouter } from 'vue-router'
+import { useNavigation } from '@/composables/useNavigation'
 
 import { buildSourceLink, formatLearningTime } from '../helpers'
 
@@ -40,10 +40,10 @@ const props = withDefaults(
 
 const checked = defineModel<boolean>('checked', { default: false })
 
-const router = useRouter()
+const nav = useNavigation()
 
 const openSource = () => {
-  void router.push(buildSourceLink(props.excerpt))
+  nav?.navigate(buildSourceLink(props.excerpt))
 }
 </script>
 

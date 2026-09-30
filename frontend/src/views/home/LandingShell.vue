@@ -7,10 +7,10 @@ import i18n, { t } from '@/i18n'
 import AccountService from '@/services/account'
 
 // The bar and footer shared by the public pages: the homepage for the people who
-// build projects, and the solutions page for the schools, companies and research
-// teams that bring them in.
+// build projects, the solutions page for the schools, companies and research
+// teams that bring them in, and the download page.
 
-defineProps<{ page: 'home' | 'solutions' }>()
+defineProps<{ page: 'home' | 'solutions' | 'download' }>()
 
 const loggedIn = computed(() => AccountService.loggedIn)
 // `/` sends a signed-in visitor to their work, so the way back to the
@@ -38,7 +38,9 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
         <a href="/solutions" :aria-current="page === 'solutions' ? 'page' : undefined">
           {{ t('publicSite.navSolutions') }}
         </a>
-        <a :href="page === 'home' ? '#download' : `${homeHref}#download`">{{ t('publicSite.navDownload') }}</a>
+        <a href="/download" :aria-current="page === 'download' ? 'page' : undefined">
+          {{ t('publicSite.navDownload') }}
+        </a>
       </nav>
       <div class="site-actions">
         <LanguageToggle />

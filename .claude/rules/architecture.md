@@ -75,9 +75,13 @@ lifetime; new ones are an admission, not a habit.
 
 ## Frontend: a component does not fetch
 
-Enforced by ESLint under `frontend/src/components/**`: no `@/api`, no
-`@/services/*`, no `@/network/*`, no `vue-router`. `frontend/src/views/**` is
-unrestricted — a view is the thing allowed to know that a server exists.
+Enforced by ESLint under `frontend/src/components/**`: no `src/api.ts`, no
+`src/services/**`, no `src/network/**`, no `vue-router`. The rule judges **where
+the import resolves, not how it is spelled** — `@/api`, `../api` and
+`../../api` are the same dependency and the same violation, while
+`src/components/chat/services/*` reached as `./services/x` is not the API layer
+and stays legal. `frontend/src/views/**` is unrestricted — a view is the thing
+allowed to know that a server exists.
 
 Four principles, in the order they matter:
 
@@ -92,12 +96,15 @@ Four principles, in the order they matter:
    alone, it is a view or a container, not a component. **建议** — no check can
    decide which side of that line a file is on.
 
-The rule is ratcheted because the tree starts at 91 violations in 57 components
+The rule is ratcheted because the tree starts at 127 violations in 82 components
 (`frontend/import-boundary-baseline.json`); a gate that reddened the whole tree
 on day one would be switched off within a week. It is a separate ESLint config
 (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs` for the
 same reason. Only *new* violations fail; `pnpm run lint:boundary:update` writes
-the baseline after you fix some.
+the baseline after you fix some. (The 83 → 127 jump is the resolved-path rule
+seeing the 44 relative-path imports the glob-based one could not, not new debt.
+`lint:boundary:update` only ever lowers a frozen count, so this rule change
+rebuilt the baseline from zero — see the commit that fixed it.)
 
 ## Files have a size cap, and cap it where it stands
 

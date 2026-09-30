@@ -892,18 +892,17 @@ class DeviceChannel(Channel):
         Two roots, because the two writes belong to different things. The token
         is the SEAT's (`place.seat_dir`): its session is the one that reads it,
         and a roommate writing it here used to swap a running turn's credential
-        for its own. The release marker is the ROOM's: the helpers it names are
-        installed once per room on the machine."""
+        for its own. Release readiness is seat-local for plugins and settings."""
         hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
+        session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
         transfer = f'mkdir -p "{hook_dir}"'
         if release_state is not None:
             transfer += (
-                f' && if [ -f "{hook_dir}/remote-execution/release-ready" ]; then '
-                f'cat "{hook_dir}/remote-execution/release-ready"; fi'
+                f' && if [ -f "{session_dir}/release-ready" ]; then '
+                f'cat "{session_dir}/release-ready"; fi'
             )
         exec_env = None
         if execution_token is not None:
-            session_dir = f"{seat_dir(home_dir, agent_handle)}/remote-session"
             token_path = f"{session_dir}/execution.token"
             transfer += (
                 f' && mkdir -p "{session_dir}"'
@@ -988,18 +987,14 @@ class DeviceChannel(Channel):
             return {"alive": True, "unknown": True}
 
     async def _refresh_resident(
-        self, screen: HubScreen, home_dir: str, state: str, release: dict
+        self,
+        screen: HubScreen,
+        home_dir: str,
+        state: str,
+        release: dict,
+        session_id: str = "",
     ) -> bool:
-        """Put a new release of the remote-execution helpers into a live session.
-
-        The helpers are replaced on disk and the running session is told to
-        reload: `/reload-plugins` for the plugin that routes its tools to the
-        executor, and a reconnect of the MCP server that carries them. The
-        session keeps its conversation throughout.
-
-        The session's directory is the SEAT's, and it is the screen's own seat
-        that names it: what is being released is that session's target and that
-        session's plugin, and a room's other teammate keeps its own."""
+        """Release this seat's helpers, then reload its plugin and MCP."""
         seat = seat_dir(home_dir, screen.agent_handle)
         sources = resident_release.sources()
         version = resident_release.digest(sources)
@@ -1019,7 +1014,7 @@ class DeviceChannel(Channel):
                 )
             return json.loads(result["stdout"])
 
-        staged = await execute("stage", home_dir, sources, seat)
+        staged = await execute("stage", home_dir, sources, seat, session_id)
         if staged.get("busy"):
             # Helpers are not replaced under a conversation that is still
             # running. This turn runs on the release it has; the marker stays
@@ -1034,7 +1029,7 @@ class DeviceChannel(Channel):
         await self._command(screen.device_id, state, "/reload-plugins")
         await self._control(screen.device_id, state, "mcp_reconnect")
         await self._await_native_connected(screen.device_id, state)
-        await execute("acknowledge", home_dir, version)
+        await execute("acknowledge", home_dir, version, seat)
         logger.info(
             "resident release applied topic=%s version=%s", screen.topic_id, version
         )
@@ -1399,6 +1394,7 @@ class DeviceChannel(Channel):
         release_state = (
             {}
             if existing is not None
+            and existing.agent_configuration == configuration
             and execution_target
             and isinstance(launch, ExecutorPlan)
             else None
@@ -1415,8 +1411,6 @@ class DeviceChannel(Channel):
                 agent_handle=agent_handle,
             )
         else:
-            # These device requests are independent. Finish all three before
-            # adopting or replacing the screen, without adding their round trips.
             execution_token = (
                 screen_env["CHEESE_TOKEN"] if execution_target is not None else None
             )
@@ -1446,10 +1440,16 @@ class DeviceChannel(Channel):
                 # it again on every turn after.
                 if "unknown" in status:
                     retire_reason = "resident_release_unreachable"
+                elif status.get("working") or status.get("tasks"):
+                    pass
                 else:
                     try:
                         await self._refresh_resident(
-                            existing, home_dir, place.state, release_state
+                            existing,
+                            home_dir,
+                            place.state,
+                            release_state,
+                            status.get("session_id", ""),
                         )
                     except ScreenSetupError:
                         logger.warning(

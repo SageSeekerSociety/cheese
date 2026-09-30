@@ -174,6 +174,68 @@ describe('the boundary rule', () => {
     assert.equal(hit.length, 1)
   })
 
+  // The alias (`@/api`) is one spelling of the same dependency as a relative
+  // path (`../api`). A rule that matched the string would count the first and
+  // miss the second — which is what it did until #2122's follow-up: 34+
+  // components reached the API layer by relative path and were never counted.
+  it('fires on a relative import of the API layer, at any depth', async () => {
+    const cases = [
+      ['src/components/BoundaryProbe.vue', '../api'],
+      ['src/components/panels/BoundaryProbe.vue', '../../api'],
+      ['src/components/panels/doc/BoundaryProbe.vue', '../../../api'],
+      ['src/components/BoundaryProbe.vue', '../services/account'],
+      ['src/components/BoundaryProbe.vue', '../network/api/users'],
+      ['src/components/panels/BoundaryProbe.vue', '../../services/account'],
+    ]
+    for (const [filePath, specifier] of cases) {
+      const hit = await violations(
+        eslint,
+        `<script setup lang="ts">\nimport { thing } from '${specifier}'\nconst x = thing\n</script>\n`,
+        filePath
+      )
+      assert.equal(hit.length, 1, `expected a violation for ${specifier} from ${filePath}`)
+      assert.match(hit[0].message, /must not call the API layer/)
+    }
+  })
+
+  // `import()` is the same dependency as `import … from`, and the rule resolves
+  // it the same way. (No shipped component does this today — the only dynamic
+  // imports of the API layer are in `__tests__/*.test.ts`, which are ignored —
+  // so this costs the baseline nothing and closes the hole before someone
+  // routes around the rule with it.)
+  it('fires on a dynamic import of the API layer', async () => {
+    const hit = await violations(
+      eslint,
+      `<script setup lang="ts">\nconst load = () => import('../api')\nvoid load\n</script>\n`,
+      COMPONENT
+    )
+    assert.equal(hit.length, 1)
+    assert.match(hit[0].message, /must not call the API layer/)
+  })
+
+  it('fires on a relative path that lands on vue-router', async () => {
+    const hit = await violations(
+      eslint,
+      `<script setup lang="ts">\nimport { useRouter } from '../../node_modules/vue-router'\nconst r = useRouter()\n</script>\n`,
+      COMPONENT
+    )
+    assert.equal(hit.length, 1)
+    assert.match(hit[0].message, /must not navigate/)
+  })
+
+  // The other half of judging by target rather than by string: a path that
+  // merely *looks* like the API layer — a component-local `./services/`
+  // directory (src/components/chat/services/*) — is not one, and must stay
+  // legal. A glob over the specifier would red these.
+  it('leaves a component-local ./services/ directory alone', async () => {
+    const hit = await violations(
+      eslint,
+      `<script setup lang="ts">\nimport { MarkdownRenderer } from './services/markdownRenderer'\nconst x = MarkdownRenderer\n</script>\n`,
+      'src/components/chat/BoundaryProbe.vue'
+    )
+    assert.deepEqual(hit, [])
+  })
+
   it('leaves a component that renders from props alone', async () => {
     const hit = await violations(
       eslint,
@@ -243,6 +305,25 @@ describe('the ratchet on a planted violation', () => {
 
       const after = runRatchet('--files', 'src/components/__boundaryProbe.vue', '--baseline', scratchBaseline)
       assert.equal(after.status, 0, `${after.stdout}${after.stderr}`)
+    } finally {
+      rmSync(PROBE, { force: true })
+    }
+  })
+
+  // The same plant, spelled as a relative path. This is the end-to-end proof
+  // that the gate — not just the rule — counts the relative form: before the
+  // fix the run below exited 0 over a file that imports src/api.ts.
+  it('blocks a planted RELATIVE import of the API layer too', () => {
+    const relativeBaseline = join(sandbox, 'baseline-relative.json')
+    try {
+      writeFileSync(
+        PROBE,
+        `<script setup lang="ts">\nimport { api } from '../api'\nconst x = api\n</script>\n<template><div /></template>\n`
+      )
+
+      const blocked = runRatchet('--files', 'src/components/__boundaryProbe.vue', '--baseline', relativeBaseline)
+      assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
+      assert.match(blocked.stdout, /__boundaryProbe\.vue: 0 -> 1/)
     } finally {
       rmSync(PROBE, { force: true })
     }

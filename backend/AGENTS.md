@@ -33,3 +33,6 @@ checks: [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
   [`../.claude/rules/backend-tests.md`](../.claude/rules/backend-tests.md).
 - This worktree may already have a uvicorn on port 8081; `task dev` starts
   another. Do not restart a server you did not start.
+- A new page under `app/domain/feature_stats/`: register it once, read only
+  tables the feature already writes, and keep the questioner away from the raw
+  question — [`../docs/manual/dev/feature-stats.md`](../docs/manual/dev/feature-stats.md).

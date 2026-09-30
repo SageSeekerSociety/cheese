@@ -181,6 +181,8 @@ class TimelineOut(BaseModel):
     status: FeedbackStatus
     by_handle: str | None
     at: datetime
+    #: 这一步的说明（例如修复它的 PR），没有就是 None。见 `FeedbackTimeline.note`。
+    note: str | None
 
 
 class CommentOut(BaseModel):

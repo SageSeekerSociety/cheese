@@ -8,7 +8,7 @@
       v-for="item in items"
       :key="item.key"
       :to="item.to"
-      :active="item.match ? item.match(route.path) : undefined"
+      :active="item.match ? item.match(here) : undefined"
       :aria-label="item.badge ? `${item.title}（${item.badge}）` : undefined"
       @click="!item.to && item.action?.()"
     >
@@ -29,8 +29,9 @@
 </template>
 
 <script setup lang="ts">
-import { toRefs } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, toRefs } from 'vue'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { NavItem } from './types'
 
@@ -39,7 +40,8 @@ const navBarProps = withDefaults(defineProps<{ items: NavItem[] }>(), {
 })
 
 const { items } = toRefs(navBarProps)
-const route = useRoute()
+const nav = useNavigation()
+const here = computed(() => nav?.route?.path ?? '')
 </script>
 
 <style scoped>

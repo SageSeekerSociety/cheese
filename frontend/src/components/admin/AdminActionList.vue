@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '@/lib/navTarget'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import NavLink from '@/components/common/NavLink.vue'
 
 // 「等你处理 / 卡住了」那一列。有 `to` 的行整行是一个目的地 —— 这一块的全部用处
 // 就是让人点进去。
@@ -31,9 +32,9 @@ const props = withDefaults(
       tone?: 'ink' | 'ok' | 'warn' | 'danger'
       age?: string
       /** 有去向整行才是链接；没有就渲染成静态行（见文件头）。 */
-      to?: RouteLocationRaw
+      to?: NavTarget
     }[]
-    moreTo?: RouteLocationRaw
+    moreTo?: NavTarget
     loading?: boolean
     /** 空屏的那句邀请。**必填** —— 不写就只能画一个没有字的框。 */
     empty: string
@@ -67,7 +68,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
 
     <ol v-else class="aal__rows">
       <li v-for="row in shown" :key="row.id" class="aal__row">
-        <router-link v-if="row.to" :to="row.to" class="aal__link">
+        <NavLink v-if="row.to" :to="row.to" class="aal__link">
           <span class="aal__bar" :class="`aal__bar--${row.tone ?? 'ink'}`" aria-hidden="true" />
           <span class="aal__body">
             <span class="aal__rowtitle t-body">{{ row.title }}</span>
@@ -75,7 +76,7 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
           </span>
           <span v-if="row.statusLabel" class="aal__status t-dense">{{ row.statusLabel }}</span>
           <span v-if="row.age" class="aal__age t-meta-read t-num">{{ row.age }}</span>
-        </router-link>
+        </NavLink>
         <!-- 没有 `to` 的行：同一张面孔，静态的壳 —— 不装成一个能点的东西。 -->
         <div v-else class="aal__link aal__link--static">
           <span class="aal__bar" :class="`aal__bar--${row.tone ?? 'ink'}`" aria-hidden="true" />
@@ -89,9 +90,9 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
       </li>
     </ol>
 
-    <router-link v-if="moreTo && (rows.length || rest)" :to="moreTo" class="aal__more t-meta-read">
+    <NavLink v-if="moreTo && (rows.length || rest)" :to="moreTo" class="aal__more t-meta-read">
       {{ t('feedback.dashboard.list.all', { n: rows.length }) }}
-    </router-link>
+    </NavLink>
   </div>
 </template>
 

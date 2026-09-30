@@ -11,6 +11,9 @@ from app.domain.shell.schemas import ShellOut
 
 
 class ProjectCreate(BaseModel):
+    # Chosen by the client once per creation and sent again on each retry, so a
+    # retry after a failure finishes the same project instead of starting another.
+    id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=200)
     owner_handle: str | None = None
     ai_mode: AiMode = AiMode.collaborative

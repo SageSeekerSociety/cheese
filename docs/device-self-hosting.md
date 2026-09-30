@@ -76,7 +76,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 完整链路（装 → 登录 → 批准 → 上线 → 绑定 → 选用）：
 
-1. **装连接器（目标机器上）**。在「我的设备 → 添加设备」复制这条，或在目标机器直接跑：
+1. **装连接器（目标机器上）**。在「设置 → 设备 → 添加设备」复制这条，或在目标机器直接跑：
    ```bash
    curl -fsSL <origin>/connector/install.sh | sh
    ```
@@ -94,7 +94,7 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
 
 4. **同一条命令接着上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheesehost link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 
-5. **绑定项目/团队**。在「我的设备」页或各团队的「工作电脑」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
+5. **绑定项目/团队**。在「设置 → 设备」或各团队的「工作电脑」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
 
 6. **话题选 device 算力**。两种姿势：
    - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
@@ -173,7 +173,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 ### 5.1 屏幕面板显示什么
 
-- **「我的设备」页**（`/my/devices`）：每台设备一个绿/灰圆点（在线/离线，来自 `device_hub.is_online`）、算力节点 id、在为哪些小队提供算力、运行中的 agent 现场 chip（每个 screen 带自己的 agent handle——设备本身不是 agent）。空白 = 还没连接的设备。
+- **「设置 → 设备」**（`/users/settings/devices`）：每台设备一个绿/灰圆点（在线/离线，来自 `device_hub.is_online`）、算力节点 id、在为哪些小队提供算力、运行中的 agent 现场 chip（每个 screen 带自己的 agent handle——设备本身不是 agent）。空白 = 还没连接的设备。
 - **「现场」面板**：浏览器里**只读**的真终端，字节级 relay 设备上那块 screen 的输出。screen 里跑的是 runner，`claude` 在它下面 headless 运行，所以这里看不到 `claude` 的界面；只能发 `resize` 控制帧，**不能敲键**。空白/连不上 = screen 没开，或你无权看（无权与未知 screen 以同样的 1008 关闭，不可枚举）。
 
 ### 5.2 会话记录走哪条路径
@@ -195,7 +195,7 @@ claude -p 的 stdout（stream-json）               读循环按游标向 runner
 
 ### 5.3 设备离线时的表现
 
-- **设备掉线**：`device_hub.is_online` 转 false，「我的设备」该设备变灰「离线」。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，所有在等这台机器回话的调用立刻失败（`DeviceOffline`），不会等到各自超时。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
+- **设备掉线**：`device_hub.is_online` 转 false，「设置 → 设备」里该设备变灰「离线」。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，所有在等这台机器回话的调用立刻失败（`DeviceOffline`），不会等到各自超时。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
 - **已 pin 该设备的话题发 turn**：`resolve_pinned_device` 发现 pinned 设备离线 → 抛 `ScreenSetupError`「话题绑定的算力设备已离线，请重新连接该设备再继续本轮（不会漂到别的设备，以免工作树/会话错乱）」→ 该轮排队/失败重试，**绝不漂到别的在线设备**。
 - **话题还没 pin、且没有任何绑定设备在线**：报「没有在线的绑定设备可运行本轮（self-hosted 设备未连接）」。
 - **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、`DeviceChannel.available` 转 false、市场 listing 里 `device` 变为不可选。
@@ -211,6 +211,6 @@ cheesehost link connect https://<你的站点>/connector    # 先登录：打印
 # 人浏览器打开 approve_url → 登录 → 批准（可命名/绑项目）
 # 同一条命令拿到 token 后装用户级 service 上线——全程不需要 sudo
 
-# 平台侧：在团队「工作电脑」页把设备绑给团队（或「我的设备」绑项目）
+# 平台侧：在团队「工作电脑」页把设备绑给团队（或在「设置 → 设备」绑项目）
 # 话题选 device 算力（不配 Cloud 时就是默认，也可以在房间的工作电脑选择里显式选）
 ```

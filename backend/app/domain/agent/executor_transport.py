@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import math
 import os
 import select
 import shlex
@@ -66,6 +67,14 @@ def _device_is_offline(response) -> bool:
     a retryable one-call failure while chat and platform tools kept working.
     """
     return response.status == 409 and response.getheader("X-Device-Id") is not None
+
+
+# What a tool call waiting for its machine tells the agent, once, when the wait
+# starts: the platform says nothing else until the machine is ready or the wait
+# gives up, and a call silent that long reads as a dead shell or a lost machine.
+MACHINE_PREPARING = (
+    "工作电脑正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
+)
 
 
 class MachineOutOfReach(RuntimeError):
@@ -550,7 +559,7 @@ class RemoteClient:
             ]
         return command
 
-    def acquire(self, *, deadline, abandoned=None):
+    def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the
         machine the lease names becomes where its calls go, and the credential
         for it is kept (`token_file`) beside the target (`target_file`).
@@ -558,22 +567,38 @@ class RemoteClient:
         The platform waits a bounded while for a machine being prepared, and
         this asks again until ``deadline``; the machine still being prepared
         then, or not to be had at all, raises with the platform's reason.
-        Returns whether the hands are another lease than the ones this client
-        held."""
+        `MACHINE_PREPARING` is written to the text stream ``preparing`` once,
+        as soon as the platform says the machine is being prepared. Returns
+        whether the hands are another lease than the ones this client held."""
+        # Whoever wants to be told asks first without waiting: a waiting
+        # request answers "preparing" only after the platform's bounded wait,
+        # and the wait is exactly when the caller would otherwise hear nothing.
+        told = preparing is None
         while True:
+            remaining = deadline - time.monotonic()
             response = self.platform_request(
                 {
                     "method": "POST",
                     "path": self.config["lease_path"],
                     "body": {
                         "env": self.config.get("setup_env", {}),
-                        "timeout": max(0.001, deadline - time.monotonic()),
+                        "timeout": max(0.001, remaining) if told else 0.001,
                     },
                 }
             )
             result = json.loads(response["value"]["stdout"])["data"]
             if abandoned is not None and abandoned():
                 raise RuntimeError("Tool call was cancelled")
+            if not told:
+                told = True
+                if result.get("preparing"):
+                    minutes = max(1, math.ceil(remaining / 60))
+                    print(
+                        MACHINE_PREPARING.format(minutes=minutes),
+                        file=preparing,
+                        flush=True,
+                    )
+                    continue
             # The platform waited as long as one request may while the
             # machine is prepared. Ask again until the deadline, which is what
             # bounds the wait.
@@ -628,7 +653,7 @@ class RemoteClient:
             raise RuntimeError(answer["error"])
         return answer["result"]
 
-    def remote_call_with_hooks(self, call_id, server, tool, args):
+    def remote_call_with_hooks(self, call_id, server, tool, args, preparing=None):
         """A remote server's tool call with the project's PreToolUse and
         PostToolUse hooks around it, for a harness that does not fire them
         itself (Codex; pi). Claude Code fires them itself, so its bridge calls
@@ -643,7 +668,8 @@ class RemoteClient:
                 "tool": name,
                 "args": args,
                 "request_id": call_id,
-            }
+            },
+            preparing=preparing,
         )
         if "denied" in before:
             return {"error": before["denied"]}
@@ -675,10 +701,11 @@ class RemoteClient:
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
-    def call(self, method, params=None, *, abandoned=None):
+    def call(self, method, params=None, *, abandoned=None, preparing=None):
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
-        operation given up during that wait is never started."""
+        operation given up during that wait is never started. ``preparing`` is
+        the text stream told when that wait starts (`acquire`)."""
         asked = params or {}
         if asked.get("server") in self.remote_servers():
             if method in {"invoke", "mcp"}:
@@ -717,7 +744,7 @@ class RemoteClient:
                 "virtual_workspace", self.config["workspace"]
             )
             changed_lease = self.acquire(
-                deadline=operation_deadline, abandoned=abandoned
+                deadline=operation_deadline, abandoned=abandoned, preparing=preparing
             )
             workspace = self.config["workspace"]
             if params and method == "invoke":
@@ -884,5 +911,5 @@ class RemoteClient:
             )
         return json.loads(result.stdout)
 
-    def control(self, request):
-        return self.call("control", dict(request))
+    def control(self, request, preparing=None):
+        return self.call("control", dict(request), preparing=preparing)

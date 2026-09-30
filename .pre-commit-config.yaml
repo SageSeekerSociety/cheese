@@ -113,7 +113,7 @@ repos:
 
       # Components must not reach the network layer: `@/api`, `@/services/*`,
       # `@/network/*` and vue-router are off limits under src/components/**.
-      # 91 violations in 57 components are frozen in
+      # 127 violations in 82 components are frozen in
       # frontend/import-boundary-baseline.json, which is why this is a separate
       # ESLint config (eslint.boundary.config.mjs) rather than a rule in the
       # one `pnpm run lint` reads: as a plain rule it would have turned the

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '@/lib/navTarget'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import NavLink from '@/components/common/NavLink.vue'
 import { fmtNum } from '@/lib/usageFormat'
 
 // 看板上的「最花 token 的项目」。
@@ -36,7 +37,7 @@ const props = withDefaults(
       label: string
       value: number
       /** 有去向整行才是链接（见文件头）。 */
-      to?: RouteLocationRaw
+      to?: NavTarget
     }[]
     loading?: boolean
   }>(),
@@ -77,13 +78,13 @@ function widthOf(value: number): string {
       <li v-for="(row, i) in rows" :key="row.id ?? i" class="abr__item">
         <!-- 名字可能很长（项目名是用户起的）。省略号 + `title`：屏幕上先保住「这是哪几个
              项目」的可扫读性，完整名字鼠标停一下就有，读屏念的是全文。 -->
-        <router-link v-if="row.to" :to="row.to" class="abr__row abr__row--link">
+        <NavLink v-if="row.to" :to="row.to" class="abr__row abr__row--link">
           <span class="abr__label" :title="row.label">{{ row.label }}</span>
           <span class="abr__track" aria-hidden="true">
             <span class="abr__bar" :style="{ width: widthOf(row.value) }" />
           </span>
           <span class="abr__value t-num">{{ fmtNum(row.value) }}</span>
-        </router-link>
+        </NavLink>
         <div v-else class="abr__row">
           <span class="abr__label" :title="row.label">{{ row.label }}</span>
           <span class="abr__track" aria-hidden="true">

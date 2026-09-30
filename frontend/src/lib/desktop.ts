@@ -17,10 +17,25 @@ export const DOWNLOADS = [
   { os: 'windows', labelKey: 'global.desktop.windows', href: `${RELEASE}/Cheese-Setup-x64.exe` },
 ] as const
 
+export type Download = (typeof DOWNLOADS)[number]
+
 // The visitor's own system goes first; a browser does not say which Mac chip it runs on.
 export function downloadsForThisComputer() {
   const own = /Windows/.test(navigator.userAgent) ? 'windows' : 'mac'
   return [...DOWNLOADS.filter((d) => d.os === own), ...DOWNLOADS.filter((d) => d.os !== own)]
+}
+
+interface UserAgentData {
+  getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>
+}
+
+/** The build for the computer this page runs on. Chromium says which chip a Mac
+ *  has; Safari does not, and most Macs sold now have Apple's. */
+export async function downloadForThisComputer(): Promise<Download> {
+  if (/Windows/.test(navigator.userAgent)) return DOWNLOADS[2]
+  const agent = (navigator as unknown as { userAgentData?: UserAgentData }).userAgentData
+  const hints = await agent?.getHighEntropyValues?.(['architecture']).catch(() => null)
+  return hints?.architecture === 'x86' ? DOWNLOADS[1] : DOWNLOADS[0]
 }
 
 type Progress = { kind: 'step'; text: string } | { kind: 'code'; text: string }
@@ -78,7 +93,7 @@ export function desktopBridge(): DesktopBridge | null {
 }
 
 // One connection at a time, whoever started it: the sign-in that connects this
-// computer on its own, or the button on 「我的设备」. Both show this state.
+// computer on its own, or the button on 设置 → 设备. Both show this state.
 export const thisComputer = reactive({
   connecting: false,
   step: '',
@@ -150,7 +165,7 @@ export async function autoConnectThisComputer(userId: number) {
   if (devices === null) return
   if (stored && devices.some((d) => d.device_id === stored && d.online)) return
   toast('正在把这台电脑接入 Cheese')
-  if (await connectThisComputer()) toast.success('这台电脑已接入，可以在「我的设备」里看到它')
+  if (await connectThisComputer()) toast.success('这台电脑已接入，可以在「设置 → 设备」里看到它')
   else toast.error(`这台电脑没能接入：${thisComputer.error}`)
 }
 

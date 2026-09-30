@@ -18,11 +18,11 @@
 </template>
 
 <script lang="ts" setup>
-import { useRouter } from 'vue-router'
+import { useNavigation } from '@/composables/useNavigation'
 
-const router = useRouter()
+const nav = useNavigation()
 
 const goHome = () => {
-  router.push('/')
+  nav?.navigate('/')
 }
 </script>

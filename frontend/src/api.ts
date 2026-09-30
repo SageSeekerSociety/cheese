@@ -67,6 +67,7 @@ import type {
   WorkspaceFile,
 } from './cx_types'
 
+import { desktopAppHeaders } from './lib/desktopApp'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -95,7 +96,7 @@ export function authToken(): string {
 
 function authHeaders(): Record<string, string> {
   const token = authToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return { ...desktopAppHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
 }
 
 // Retried on GET: the edge's own statuses. nginx answers 502–504 for an app it
@@ -271,7 +272,7 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
   return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
 }
@@ -559,11 +560,13 @@ export function createProject(
   externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
   intent?: string,
-  agentName?: string
+  agentName?: string,
+  id?: string
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
     body: JSON.stringify({
+      id,
       name,
       owner_handle: ownerHandle,
       team_id: teamId,
@@ -1259,9 +1262,8 @@ export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: 
   return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
 }
 
-// Personal OAuth/App connections (1.0 router, single `/api` prefix — see
-// legacyRequest). Includes every provider the user has linked, not just
-// github_app; callers filter by providerId.
+// Personal OAuth/App connections (1.0 router, see legacyRequest): every
+// provider the user has linked, not just github_app; callers filter by providerId.
 export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {
   return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections`)
 }
@@ -1271,12 +1273,6 @@ export function deleteOAuthConnection(userId: string, connectionId: number, sudo
     method: 'DELETE',
     body: JSON.stringify({ sudoTicket }),
   })
-}
-
-// The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
-// project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
-export function getProjectForTeam(teamId: number): Promise<Project | null> {
-  return request<Project | null>(`/projects/by-team/${teamId}`)
 }
 
 export function getInbox(projectId: string, targetHandle: string): Promise<ListPayload<InboxItem>> {
@@ -1361,12 +1357,8 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 
 // 用户给这个项目的文件，按原名。项目一级，所以一个房间引用得到另一个房间上传的
 // 那一份——「上周那份预算表」这句话正是在这种地方说的。
-export interface LibraryFile {
-  path: string
-  bytes: number
-  /** Unix seconds; the list comes back newest first. */
-  modified: number
-}
+import type { LibraryFile } from './lib/libraryApi'
+export type { LibraryFile }
 
 export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
   return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
@@ -1645,6 +1637,8 @@ export interface ArtifactVersion {
   kind: DeliverableKind | null
   filename: string | null
   url: string | null
+  bytes: number | null
+  room: { id: string; title: string } | null
 }
 
 export interface ProjectArtifactDetail extends ProjectArtifact {
@@ -1659,8 +1653,6 @@ export interface ArtifactComparison {
     path: string
     diff: string | null
     note: string | null
-    before_mode?: string | null
-    after_mode?: string | null
     status?: string
   }[]
 }
@@ -3303,21 +3295,6 @@ export interface GatewayModelInfo {
   config_yaml?: string
   /** 行内 sparkline 的逐日 token（与详情折线同源同账）；窗口内没用过是逐日 0。 */
   series?: number[]
-  /** 这条模型由一条导入的订阅喂养时的 overlay（终态订阅不给）：列表「订阅」徽章
-   *  与详情抽屉订阅块的数据。 */
-  subscription?: GatewaySubscriptionOverlay | null
-}
-
-/** 列表/详情里模型项上的订阅 overlay。 */
-export interface GatewaySubscriptionOverlay {
-  id: string
-  status: string
-  account_email: string | null
-  /** 这条订阅显式选的上游模型；null = 跟随部署默认。 */
-  upstream_model?: string | null
-  token_expires_at?: string | null
-  last_refresh_error?: string | null
-  quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
 }
 
 export interface GatewayModelsPayload {
@@ -3473,115 +3450,6 @@ export function setGatewayProjectBudget(projectId: string, maxBudgetUsd: number 
 
 export function getGatewayAudit(limit: number): Promise<GatewayAuditPayload> {
   return request<GatewayAuditPayload>(`/admin/gateway/audit${gatewayQuery({ limit })}`)
-}
-
-/* ---- 管理端（LLM 订阅导入）----
- *
- * 「网关池里的订阅型上游」的平台侧一半：device flow 四步（开、轮询、取消）加凭据
- * 生命周期（列表、手动刷新、按需额度、移除）。凭据永不出现 —— 服务端 DTO 已经
- * 脱敏，这里也没有一个 token 字段。 */
-
-/** 一个速率窗口的额度读数（wham/usage 的解析结果）。`utilization` 是 0–100。 */
-export interface SubscriptionQuotaTier {
-  name: string
-  utilization: number
-  resets_at: string | null
-}
-
-/** 一条平台级 LLM 订阅（契约 §3.3 的 DTO）。token 与密文字段一个字母都不在。 */
-export interface LlmSubscription {
-  id: string
-  provider: string
-  label: string
-  status: string
-  account_email: string | null
-  chatgpt_account_id: string | null
-  token_expires_at: string | null
-  last_refresh_at: string | null
-  last_refresh_error: string | null
-  linked_model_name: string | null
-  /** 显式选的上游模型；null = 跟随部署默认（settings.subscription_upstream_model）。 */
-  upstream_model: string | null
-  quota: { tiers: SubscriptionQuotaTier[]; fetched_at: string | null } | null
-  created_by_handle: string
-  created_at: string
-}
-
-export interface DeviceFlowStartResponse {
-  flow_id: string
-  user_code: string
-  verification_uri: string
-  expires_in: number
-  interval: number
-}
-
-/** 轮询一次的三态：`pending` 继续等；`complete` 带订阅 DTO；`expired` 要重开一个。 */
-export type DeviceFlowPollResponse =
-  | { state: 'pending' }
-  | { state: 'complete'; subscription: LlmSubscription }
-  | { state: 'expired' }
-
-/** 开一次导入（或定向重授权：`targetSubscriptionId` 非空时服务端校验同一身份）。 */
-export function startSubscriptionDeviceFlow(body: {
-  provider?: 'openai_codex'
-  label?: string | null
-  target_subscription_id?: string | null
-  /** 显式指定上游模型（如 openai/gpt-5.6-luna）；空 = 跟随部署默认。 */
-  upstream_model?: string | null
-}): Promise<DeviceFlowStartResponse> {
-  return request<DeviceFlowStartResponse>('/admin/subscriptions/device-flows', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function pollSubscriptionDeviceFlow(flowId: string): Promise<DeviceFlowPollResponse> {
-  return request<DeviceFlowPollResponse>(`/admin/subscriptions/device-flows/${encodeURIComponent(flowId)}/poll`, {
-    method: 'POST',
-  })
-}
-
-export function cancelSubscriptionDeviceFlow(flowId: string): Promise<{ cancelled: boolean }> {
-  return request<{ cancelled: boolean }>(`/admin/subscriptions/device-flows/${encodeURIComponent(flowId)}/cancel`, {
-    method: 'POST',
-  })
-}
-
-export function listSubscriptions(): Promise<{ items: LlmSubscription[] }> {
-  return request<{ items: LlmSubscription[] }>('/admin/subscriptions')
-}
-
-/** 手动刷新一次并推进网关。凭据被判死时回 `reauth_required` 状态（不是报错）。 */
-export function refreshSubscription(id: string): Promise<{
-  status: string
-  token_expires_at: string | null
-  last_refresh_error: string | null
-}> {
-  return request(`/admin/subscriptions/${encodeURIComponent(id)}/refresh`, { method: 'POST' })
-}
-
-/** 按需查一次额度。传输错误时服务端回旧快照（`stale: true`）。 */
-export function getSubscriptionQuota(id: string): Promise<{
-  tiers: SubscriptionQuotaTier[]
-  queried_at: string | null
-  stale: boolean
-}> {
-  return request(`/admin/subscriptions/${encodeURIComponent(id)}/quota`)
-}
-
-/** 改一条订阅的上游模型并推进网关；`upstream_model` 为 null = 清除显式选择、回落部署默认。 */
-export function updateSubscriptionUpstreamModel(id: string, upstreamModel: string | null): Promise<LlmSubscription> {
-  return request<LlmSubscription>(`/admin/subscriptions/${encodeURIComponent(id)}/upstream-model`, {
-    method: 'PATCH',
-    body: JSON.stringify({ upstream_model: upstreamModel }),
-  })
-}
-
-/** 移除一条订阅：置终态，并 best-effort 停用挂在网关上的模型。 */
-export function revokeSubscription(id: string): Promise<{ revoked: boolean }> {
-  return request<{ revoked: boolean }>(`/admin/subscriptions/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
 }
 
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */

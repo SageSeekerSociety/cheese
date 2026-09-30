@@ -35,8 +35,24 @@ interface Step {
   label: string
   at: string | null
   by: string | null
+  note: NotePart[]
   done: boolean
   current: boolean
+}
+
+interface NotePart {
+  text: string
+  href: string | null
+}
+
+// 说明里的链接（部署管线写的 PR 地址）画成可点的 `<a>`，其余原样是文本。只认
+// http(s)：说明是服务端写的，但一个能渲染任意 scheme 的 href 不该靠「写的人可信」撑着。
+function noteParts(note: string | null | undefined): NotePart[] {
+  if (!note) return []
+  return note
+    .split(/(https?:\/\/[^\s]+)/)
+    .filter((part) => part !== '')
+    .map((part) => ({ text: part, href: /^https?:\/\//.test(part) ? part : null }))
 }
 
 const steps = computed<Step[]>(() => {
@@ -50,6 +66,7 @@ const steps = computed<Step[]>(() => {
       label: statusLabel(status),
       at: entry?.at ?? null,
       by: entry?.by_handle ?? null,
+      note: noteParts(entry?.note),
       done: index < currentIndex,
       current: index === currentIndex,
     }
@@ -75,6 +92,12 @@ const steps = computed<Step[]>(() => {
           {{ relTime(step.at) }}<template v-if="step.by"> · <UserRef :handle="step.by" /></template>
         </div>
         <div v-else class="t-meta-read t-num">{{ t('feedback.timeline.notStarted') }}</div>
+        <div v-if="step.note.length" class="t-meta-read fb-step__note">
+          <template v-for="(part, i) in step.note" :key="i">
+            <a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer">{{ part.text }}</a>
+            <template v-else>{{ part.text }}</template>
+          </template>
+        </div>
       </div>
     </li>
   </ol>
@@ -127,6 +150,9 @@ const steps = computed<Step[]>(() => {
 }
 .fb-step--current .fb-step__dot {
   box-shadow: 0 0 0 3px var(--fill-2);
+}
+.fb-step__note {
+  overflow-wrap: anywhere;
 }
 .fb-step__title {
   font-size: 13px;

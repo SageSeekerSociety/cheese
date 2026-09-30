@@ -180,6 +180,8 @@ COPY --chown=cheese:python sandbox ./sandbox
 COPY --chown=cheese:python scripts/migrate_forge.py ./scripts/
 # Export only the App's public key to the separate event relay.
 COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
+# The dev deploy runs this after a release to move the feedback it fixes.
+COPY --chown=cheese:python scripts/ship_feedback.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

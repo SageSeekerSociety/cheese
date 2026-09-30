@@ -42,6 +42,18 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push, replace }),
 }))
 
+/** 页面这一层（Learning.vue）读的 `useRoute/useRouter` 就是上面那两个替身。
+ *  底下那几件（`LearningQuoteItem`）读路由走的是 `useNavigation`，它看的是 app 上
+ *  装的那颗 `$router` —— 和 vue-router 的插件装上的是同一个位置（`composables/
+ *  useNavigation.ts` 的文件头）。所以这里把同一颗替身也装到 app 上：组件走的是
+ *  产品里那条路，只是尽头是 `push` 这个 spy。 */
+const routerSeam = {
+  install(app: { config: { globalProperties: Record<string, unknown> } }) {
+    app.config.globalProperties.$router = { push, replace }
+    app.config.globalProperties.$route = route
+  },
+}
+
 import Learning from '../Learning.vue'
 
 const question = (over: Partial<SpaceLearningQuestion> = {}): SpaceLearningQuestion => ({
@@ -121,7 +133,7 @@ beforeEach(() => {
 })
 
 function mount() {
-  return render(Learning, { global: { plugins: [vuetify] } })
+  return render(Learning, { global: { plugins: [vuetify, routerSeam] } })
 }
 
 describe('没有数据源的那一格如实报缺', () => {

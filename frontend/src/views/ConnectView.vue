@@ -116,7 +116,7 @@ async function approve() {
         <div class="t-caption c-muted mb-4">
           命令行里的 <code>cheesehost link connect</code> 会接着完成接入，设备随即保持在线、接受任务
         </div>
-        <v-btn variant="tonal" :to="{ name: 'my-devices' }"> 去「我的设备」 </v-btn>
+        <v-btn variant="tonal" :to="{ name: 'UserSettingsDevices' }"> 查看设备 </v-btn>
       </v-card>
     </v-container>
   </div>

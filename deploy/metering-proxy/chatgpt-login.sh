@@ -175,9 +175,10 @@ case "${1:-}" in
     dir="$(account "${2:-}")"
     egress_url=""
     [[ -s "$dir/egress" ]] && egress_url="$(cat "$dir/egress")"
-    # The device flow, exchange and form fields are the backend's
-    # (backend/app/domain/subscription/openai_codex.py). It goes through the
-    # account's egress when it has one, like every refresh after it.
+    # OpenAI's device flow for the Codex client: request a user code, poll
+    # until the person has entered it, then exchange the authorization code for
+    # the token pair. It goes through the account's egress when it has one,
+    # like every refresh after it.
     pair="$(python3 - "$auth_base" "$egress_url" <<'PY'
 import base64, http.client, json, sys, time, urllib.parse
 
@@ -262,7 +263,7 @@ try:
     identity = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))) if len(parts) > 1 else {}
 except ValueError:
     identity = {}
-# The backend's rule: a login that names no stable identity does not count.
+# A login whose id_token names no account (no `sub`) does not count.
 if not isinstance(identity, dict) or not identity.get("sub"):
     raise SystemExit("OpenAI's id_token names no account; nothing was changed.")
 pair = {k: tokens.get(k) for k in ("access_token", "refresh_token", "id_token")}

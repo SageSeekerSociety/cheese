@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok
 from app.core.config import settings
@@ -64,10 +65,16 @@ async def list_servers(
 
 @router.post("/projects/{project_id}/mcp/servers/{name}/connect")
 async def connect(
-    project_id: uuid.UUID, name: str, db: Db, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    name: str,
+    request: Request,
+    db: Db,
+    resolver: ActorResolverDep,
 ) -> dict:
     handle = await member(db, project_id, resolver)
-    url = await service.begin_connect(db, project_id, name, handle)
+    url = await service.begin_connect(
+        db, project_id, name, handle, in_app=started_in_app(request)
+    )
     return ok({"authorization_url": url})
 
 
@@ -132,7 +139,8 @@ async def callback(
         query["mcp_error"] = str(exc)
     else:
         query["mcp_result"] = "connected"
-    return RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)
+    landing = RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)
+    return back_in_app(landing) if flow.get("app") else landing
 
 
 class ProxyIn(BaseModel):

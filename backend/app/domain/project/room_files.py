@@ -34,6 +34,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project.models import RoomFileRevision
@@ -60,7 +61,14 @@ async def save_to_library(
     if not leaf:
         raise ValidationError("这不是房间里的一份文件")
     data = await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
-    name = await asyncio.to_thread(library.write_library_file, project_id, leaf, data)
+    name = await library_records.add(
+        session,
+        project_id=project_id,
+        filename=leaf,
+        data=data,
+        added_by=by,
+        room_id=room_id,
+    )
     await announce(
         session,
         place_id=room_id,

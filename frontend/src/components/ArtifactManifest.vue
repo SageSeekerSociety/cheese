@@ -27,6 +27,7 @@ import { computed, ref, watch } from 'vue'
 import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } from '../api'
 import { relTime } from '../lib/relTime'
 
+import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -141,12 +142,12 @@ watch(
       <li v-for="(row, index) in rows" :key="row.id" class="made-row" :class="{ 'made-row--folded': index >= FOLDED }">
         <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
         <div class="made-row__what">
-          <router-link
+          <NavLink
             class="made-row__name t-body"
             :to="{ name: 'project-artifact', params: { projectId, artifactId: row.id } }"
           >
             {{ row.name }}
-          </router-link>
+          </NavLink>
           <!-- 这是什么东西、给谁的。判断「这两项是不是同一个东西」要的正是它：
                两个名字并排摆着，人也看不出什么。没人写过的就不占一行。 -->
           <span v-if="row.about" class="made-row__about t-meta c-faint">{{ row.about }}</span>

@@ -345,7 +345,10 @@ def periodic_jobs(
     from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
-    from app.domain.project.forge import reconcile_repository_webhooks
+    from app.domain.project.forge import (
+        reconcile_repository_webhooks,
+        sweep_orphan_accounts,
+    )
     from app.domain.review import pr_poll
     from app.domain.routine.service import sweep as sweep_routines
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
@@ -362,6 +365,11 @@ def periodic_jobs(
             "forge credential cache cleanup",
             3600,
             lambda: purge_expired_tokens(sessions),
+        ),
+        PeriodicRunner(
+            "forge orphan account sweep",
+            3600,
+            lambda: sweep_orphan_accounts(sessions),
         ),
         # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.

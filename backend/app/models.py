@@ -26,6 +26,7 @@ from app.domain.identity import models as identity  # noqa: F401
 from app.domain.integration import models as integration  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
+from app.domain.library import models as library  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
 from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
@@ -46,7 +47,6 @@ from app.domain.room_task import models as room_task  # noqa: F401
 from app.domain.routine import models as routine  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
-from app.domain.subscription import models as subscription  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.teaching import models as teaching  # noqa: F401

@@ -26,6 +26,7 @@ import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { goAuthorize } from '@/lib/desktopApp'
 
 const route = useRoute()
 const integrations = ref<Integration[]>([])
@@ -124,7 +125,7 @@ async function recheck(row: Integration) {
 
 async function authorize(row: Integration) {
   const out = await act(`${row.id}:auth`, () => feishuAuthorizeUrl(row.id))
-  if (out) window.location.href = out.url
+  if (out) goAuthorize(out.url)
 }
 
 async function remove(row: Integration) {
@@ -231,7 +232,7 @@ useCommands(() => [
 </script>
 
 <template>
-  <AppPage :title="t('navigation.userMenu.connections')">
+  <AppPage :title="t('account.settings.connections')">
     <p class="t-body c-muted mb-6">
       接入你自己的邮箱或飞书，并勾选允许哪些项目的 AI
       队友使用。它们用的是你的账号：可以搜索和阅读邮件、把回复写进你的草稿箱、读写你有权限的飞书文档；

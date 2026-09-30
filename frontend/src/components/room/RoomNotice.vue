@@ -19,6 +19,7 @@ import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import CloudStartupStatus from '../CloudStartupStatus.vue'
+import NavLink from '../common/NavLink.vue'
 
 import MailDraftCard from './MailDraftCard.vue'
 import RollingNumber from './RollingNumber.vue'
@@ -285,9 +286,9 @@ const ACTION_META: Record<string, { btn: string }> = {
           notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
         }}</span>
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
-        <router-link v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
+        <NavLink v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
           {{ t('work.room.notice.goConfirm') }}
-        </router-link>
+        </NavLink>
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click.prevent.stop="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>

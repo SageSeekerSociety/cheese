@@ -58,8 +58,8 @@ _NEW_MODEL = {
     "capabilities": {"reasoning": True, "vision": False},
 }
 
-#: 网关里一条**运行时**模型（`db_model` 为真，origin=runtime，可改）。订阅导入
-#: 挂的那种模型就长这样：`extra_headers` 三件套已经在 litellm_params 里。
+#: 网关里一条**运行时**模型（`db_model` 为真，origin=runtime，可改），
+#: litellm_params 里已经带着 `extra_headers`。
 _RUNTIME_MODEL = {
     "model_name": "runtime-x",
     "litellm_params": {
@@ -210,6 +210,25 @@ def test_days_outside_the_readable_window_is_refused(client, as_admin, gateway, 
     assert gateway.calls == []  # 参数不过关，一次网关都不该问
 
 
+def test_a_body_its_own_validator_refuses_is_a_400_that_says_why(
+    client, as_admin, gateway
+):
+    """请求体里的字段被 schema 自己的校验器拒掉（明文 http 的上游地址），答的是和
+    其它参数错误同一个 400 信封，并带上校验器那句话 —— 不是 500「服务器内部错误」。"""
+    r = client.post(
+        "/admin/gateway/models",
+        json={**_NEW_MODEL, "api_base": "http://open.bigmodel.cn/api/anthropic"},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["code"] == 400
+    details = body["error"]["data"]["details"]
+    assert [d["loc"] for d in details] == [["body", "api_base"]]
+    assert "https://" in details[0]["msg"]
+    assert gateway.calls == []
+
+
 def test_an_unreachable_gateway_is_a_503_not_an_empty_board(
     client, as_admin, unreachable_gateway
 ):
@@ -276,12 +295,12 @@ def test_a_failed_write_is_recorded_too(client, as_admin, gateway):
     assert "config.yaml" in detail
 
 
-# --- extra_headers 的 PATCH 合并语义 与 审计读回 -------------------------------
+# --- 网关上已有的 extra_headers 与 审计读回 --------------------------------------
 
 
 @pytest.fixture
 def runtime_gateway(client, monkeypatch) -> SimpleNamespace:
-    """模型表里有一条**运行时**模型的假网关（订阅导入挂的那种，头上已带三件套）。"""
+    """模型表里有一条**运行时**模型的假网关（头上已带 `extra_headers`）。"""
     gateway_models.reset_cache()
     calls: list[httpx.Request] = []
     _install(
@@ -310,43 +329,20 @@ def _patches(calls: list[httpx.Request]) -> list[dict]:
     ]
 
 
-def test_a_patch_without_extra_headers_leaves_the_gateway_side_alone(
+def test_a_patch_leaves_extra_headers_already_on_the_gateway_alone(
     client, as_admin, runtime_gateway
 ):
-    """PATCH 合并语义在**客户端**兑现：表单不知道订阅头（v1 不暴露编辑），改
-    标签的 PATCH 里不带 `extra_headers` —— 带了就是整组替换，会把订阅导入
-    写进去的三件套弄丢。"""
+    """网关上的模型行可能带着 `extra_headers`，这份 API 不读也不写它：请求体里
+    带了也不传给网关。网关按字段合并 PATCH，既有的头因此原样保留。"""
     r = client.patch(
         "/admin/gateway/models/runtime-x",
-        json={"label": "新标签"},
+        json={"label": "新标签", "extra_headers": {"chatgpt-account-id": "acct-2"}},
         headers=session_auth_headers(as_admin),
     )
     assert r.status_code == 200, r.text
     sent = _patches(runtime_gateway.calls)
     assert len(sent) == 1
-    # 标签只动 model_info：litellm_params 整个不出现（或出现了也不带头），
-    # 网关侧的既有三件套因此原样保留。
     assert "extra_headers" not in sent[0].get("litellm_params", {})
-
-
-def test_a_patch_with_extra_headers_replaces_the_whole_set(
-    client, as_admin, runtime_gateway
-):
-    """给了才整组替换（订阅导入/刷新推进走的就是这条路）。"""
-    headers = {
-        "chatgpt-account-id": "acct-2",
-        "originator": "codex_cli_rs",
-        "version": "0.154.0",
-    }
-    r = client.patch(
-        "/admin/gateway/models/runtime-x",
-        json={"extra_headers": headers},
-        headers=session_auth_headers(as_admin),
-    )
-    assert r.status_code == 200, r.text
-    sent = _patches(runtime_gateway.calls)
-    assert len(sent) == 1
-    assert sent[0]["litellm_params"]["extra_headers"] == headers
 
 
 def test_the_audit_endpoint_answers_what_changed(client, as_admin, gateway):

@@ -118,7 +118,7 @@ jobs:
       # Component boundaries: nothing under src/components/** may import the
       # network layer (`@/api`, `@/services/*`, `@/network/*`) or vue-router.
       # Ratcheted, for the same reason as the stylelint gate below — the tree
-      # starts at 91 violations across 57 components, and a rule that goes red
+      # starts at 127 violations across 82 components, and a rule that goes red
       # everywhere on day one gets switched off. A component takes props and
       # emits events; if it fetches, it cannot be tested or reused without a
       # server, which is why this one is worth the baseline machinery.

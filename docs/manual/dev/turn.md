@@ -121,7 +121,7 @@ steps:
 
 房间只有一条算力选择（`compute_configs.room_choice`），房间里每条会话要手时都从它解析（`machine/session_work._attempt`）；会话行上的 `execution_request.choice` 只是它的副本。选的是「系统挑一台」时，第一条要手的会话挑，后来的会话跟着房间里已经站着的那台（`_roommates_device`），不会一人一台。机器是房间的，工作目录是队友的：每条会话在那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
 
-改房间的机器（`PUT /topics/{id}/compute-profile`，人从成员名册改，或芝士用 `cheese_machine` 改）就是整个房间搬：`request_choice` 让每条会话先在离开的那台上把改动推到分支，全部推上去才写房间那一项、再移钉子；有一条推不上去，整个房间留在原地并说明原因。原来那台连不上时只有人可以选择不推送直接换。没有按会话单独换机器的接口。
+改房间的机器（`PUT /topics/{id}/compute-profile`，人从成员名册改，或芝士用 `cheese_machine` 改）就是整个房间搬：`request_choice` 让每条会话先在离开的那台上把改动推到分支，全部推上去才写房间那一项、再移钉子；有一条推不上去，整个房间留在原地并说明原因。例外是已结束的任务：它只备份不推，离开的是自有设备时，检出和文件都还留在那台上，备份失败就不拦——照样换，换机结果的 `warnings` 和房间里一条 `work_left_on_machine` 提示写明是哪条任务、为什么；离开的是 Cloud 机器（换完就删）时照样拦。推送前那台上的执行器若还是旧版本，先按新版本重新拉起再推，否则修过的 `cheese sync` 在那台上还是旧的行为。原来那台连不上时只有人可以选择不推送直接换。没有按会话单独换机器的接口。
 
 这条规则在 2026-09-28 取代了原来的结论 60（「手是 agent 的，不是房间的」）。
 
@@ -129,11 +129,11 @@ steps:
 
 会话记录按（话题, 队友, 骨架）存（`agent_sessions`），每位队友续跑自己的会话。内存里的运行时状态和算力池的归属按座位（话题, 队友）记（`DrivenRuntime`、`ComputePool._owners`）：`activate` 只停同一座位上换下来的旧骨架，不碰同一房间里别的队友。后端重启后，每个座位的会话都会被接回来（`placed_everywhere`）。
 
-机器上的文件也照这个分。**属于一位队友那一轮的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(队友名) 前 12 位>`）——执行目标 `remote-target.json`、从它派生的每轮配置 `remote-session/execution.json` 和同目录下的每轮文件、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`。这些以前写在房间层（`$HOME/.cheese/` 与 `$CLAUDE_CONFIG_DIR` 下），同一房间第二位队友开场时会把第一位正在用的那份盖掉：它的下一次执行器调用被判「Execution credential does not own this session」，那一位正在跑的轮次跟着死掉（2026-09-29）。
+机器上的文件也照这个分。**属于一位队友的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(队友名) 前 12 位>`）：执行目标 `remote-target.json`、每轮配置 `remote-session/`、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`、Claude 设置与技能（座位下的 `.claude/`），以及 `remote-execution/` 辅助程序。第二位队友开屏不会改写第一位的 hook 或辅助程序。
 
-留在房间层的是真正共用的：工作目录、环境运行器的状态（`$HOME/.cheese-environment/status.json`）、store，以及 `$CLAUDE_CONFIG_DIR`（transcript、settings、skills——读它们的是按房间解析路径的程序：续跑、换机器时的会话搬运、发布前的忙闲扫描）。一台机器一份 release，落在 `$HOME/.cheese/remote-execution/`。
+留在房间层的是工作目录、环境运行器的状态（`$HOME/.cheese-environment/status.json`）、store 和会话记录（`$HOME/.claude/projects/`）。每个座位的 `.claude/projects` 指向这份记录，续跑、迁机和发布前的忙闲扫描仍能找到原会话。辅助程序按座位更新；一个座位的更新不会覆盖另一位正在使用的文件。
 
-改动落在座位里以后，旧屏幕上的路径就和新代码写的不一样了；这不靠迁移解决——launch contract 变了（座位名和这些路径都在 `configure`/`prepare` 里），那块屏幕在它下一次空闲时被判为过期，退休后按新布局重开一轮（`_launch_identity`），所以升级期间既不会两边都写，也不会卡住。
+旧屏幕仍读房间层的文件。launch contract 变更后，平台等它空闲再退休，并按座位目录重开（`_launch_identity`）；新座位的开屏不改写旧屏幕依赖的文件。
 
 ### 串行只在座位内 {#seats-serial}
 

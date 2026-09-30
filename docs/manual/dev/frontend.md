@@ -1,7 +1,7 @@
 ---
 title: 前端结构
 kind: 参考
-summary: 两个入口、壳与路由、房间的两栏、工作面板的页签、状态与请求的两套栈、i18n 债务表和四道质量闸。
+summary: 两个入口（含组件预览站）、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求的两套栈、i18n 债务表和五道质量闸。
 covers:
   - frontend/src/main.ts
   - frontend/src/demo-main.ts
@@ -13,6 +13,10 @@ covers:
   - frontend/src/components/WorkPanel.vue
   - frontend/src/components/panels/
   - frontend/src/components/room/
+  - frontend/src/components/common/NavLink.vue
+  - frontend/src/composables/useNavigation.ts
+  - frontend/src/views/demo/catalog.ts
+  - frontend/src/views/demo/DemoCatalog.vue
   - frontend/src/stores/
   - frontend/src/api.ts
   - frontend/src/network/
@@ -26,18 +30,20 @@ covers:
 
 # 前端结构 {#frontend}
 
-前端是一个 Vue 3 + Vuetify 的单页应用，但 `frontend/index.html` 之外还有第二个入口：文档站用它内嵌的 `/demo/<名字>` 演示。
+前端是一个 Vue 3 + Vuetify 的单页应用，但 `frontend/index.html` 之外还有第二个入口：文档站用它内嵌的 `/demo/<名字>` 演示，`/demo/catalog` 则是脱离后端的组件预览站。
 
-> 讲：两个入口、壳与路由、房间两栏和它们的行管线、工作面板的页签、状态与请求的两套栈、翻译债务表和四道机器闸。不讲：设计 token 的取值和色板（见仓库内 `docs/design-system.md`，闸门见[质量闸](#gates)），文档站怎么构建和发布（见[文档站与问芝士](/dev/docs-site#build)），后端接口的形状和约定（见[后端结构与接口约定](/dev/backend-app#envelope)）。
+> 讲：两个入口、壳与路由、组件要路由时的那条缝、房间两栏和它们的行管线、工作面板的页签、状态与请求的两套栈、翻译债务表和机器闸。不讲：设计 token 的取值和色板（见仓库内 `docs/design-system.md`，闸门见[质量闸](#gates)），文档站怎么构建和发布（见[文档站与问芝士](/dev/docs-site#build)），后端接口的形状和约定（见[后端结构与接口约定](/dev/backend-app#envelope)）。
 
 ## 两个入口 {#entries}
 
 | 入口 HTML | 脚本 | 是什么 |
 |---|---|---|
 | `index.html` | `src/main.ts` | 整个应用：装 Vuetify / i18n / pinia、恢复登录、挂路由 |
-| `demo.html` | `src/demo-main.ts` | 只装演示页（`views/demo/DemoView.vue`）：不起路由、不恢复登录、不连后端 |
+| `demo.html` | `src/demo-main.ts` | 只装演示页（`views/demo/DemoView.vue`）和组件预览站（`views/demo/DemoCatalog.vue`）：不起路由、不恢复登录、不连后端 |
 
 `demo-main.ts` 的存在理由是「越轻越好」：文档把这一页嵌进 iframe，后端没起来它也不能挂，而整个应用那条入口两样都做不到。它照样 `.use(vuetify).use(i18n)`，所以画面用的是产品自己的组件和主题，和真界面长得一样。地址是 `/demo/<名字>`，不带就放第一个场景。
+
+同一条入口上还有**组件预览站**：`/demo/catalog` 是目录，`/demo/catalog/<id>` 是一个组件、一格里一种状态。注册表在 `views/demo/catalog.ts`（页面和测试读的是同一份），形状数据由 `views/demo/catalogFixtures.ts` 从产品自己的剧本里搭出来。它不起后端、不登录、不读环境变量，`pnpm dev` 打开就能看；往目录里加一个组件的三步写在仓库内的 `frontend/AGENTS.md`。
 
 nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files $uri $uri/ /index.html`（SPA 兜底），`location /demo/` 走 `try_files /demo.html =404`。dev server 在 `vite.config.ts` 里做同样的事（`req.url` 以 `/demo` 开头就改写成 `/demo.html`）。`/docs/`、`/docs/dev/` 各有自己的 location，见[文档站与问芝士](/dev/docs-site#build)。
 
@@ -65,6 +71,22 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 | `beforeEach`（话题预取） | 进 `workspace-topic` 且已登录时，立刻起消息请求并预热 pdf.js。**不在这里起头**的话，消息要等话题页那串 chunk 下完、ChatPanel 挂上之后才开始请求，冷打开一个话题时那条最大的消息晚半秒以上 |
 
 懒加载页面在导航时下载，所以 `router.onError(reloadForNewBuild)` 兜住「发版撞上这次点击」。
+
+## 组件要路由时 {#component-nav}
+
+`src/components/**` 里**不许 import `vue-router`**（`import type` 也算），闸门见[质量闸](#gates)。组件要「去某处」或「读当前位置」时，按轻重从这三样里挑：
+
+| 这一颗是 | 用什么 |
+|---|---|
+| 本身就是一个去处（一行、一张卡、一个页签） | `<NavLink :to="…">` —— `components/common/NavLink.vue` |
+| 只画「我在哪」（哪一格是当前页、当前的 spaceId） | `useNavigation()?.route` |
+| 点一下就得走、没有父级可问 | `useNavigation()?.navigate(to)` |
+
+**收 props 加 emit 仍然是默认答案。** 父级知道去向的（列表里每行去哪由页面给），组件只该把 `to` 收进来、把点击 emit 出去（`UserRef` 的 `navigate` 就是这样）；这个 composable 是给「没有父级可问」的那一类，比如一整行的链接、页签条、底部动作面板。
+
+`composables/useNavigation.ts` 读的是**应用**上的 `$router` / `$route`（`app.use(router)` 把它们挂在 `appContext.config.globalProperties` 上），拿不到就整个返回 `null` —— 没有路由的树里同一颗组件照样渲染，少的只是「去处」，而且不报警告。模板那一半是 `NavLink`：它画的是真 `<a>`，有路由才有 `href`，没有就不给（一个看起来能点、按下去什么都不发生的东西，比不画更糟）。`to` 的类型取 `lib/navTarget.ts` 的 `NavTarget`，不要从 `vue-router` 取 `RouteLocationRaw` —— 那一个 `import type` 同样算违规。
+
+为什么是注入而不是 props、哪 17 颗是这样转过来的：`frontend/AGENTS.md`。
 
 ## 房间：一列对话，一块工作面板 {#room}
 
@@ -157,18 +179,19 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 质量闸 {#gates}
 
-四道机器闸，全部**只读**（能改文件的版本是另一个脚本，见下），跑在 `.github/workflows/frontend.yml`：
+机器闸全部**只读**（能改文件的版本是另一个脚本，见下），跑在 `.github/workflows/frontend.yml`：
 
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
 | ESLint | `pnpm run lint`（`task fe:lint:check`） | 代码问题；故意不传 `--fix` —— 会重写工作区的闸门可以在它偷偷修好的违规上退出 0 |
+| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`@/network/*`、`vue-router` 导入（`import type` 也算）；判据和四条组件原则见 `.claude/rules/architecture.md` |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
 | 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错 |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
 
-两个棘轮的形状一样：`tsc-ratchet.mjs` / `stylelint-ratchet.mjs` 跑检查、解析报告、和基线 `tsc-baseline.json` / `stylelint-baseline.json` 比，**只拦新增**，`--update` 把基线降下来。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），`stylelint-baseline.json` 冻着 17 个文件的存量违规。两个脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
+棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），`stylelint-baseline.json` 冻着 17 个文件的存量违规，`import-boundary-baseline.json` 冻着 82 个组件、127 条。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
 
-调色板还有第三道闸（`color="grey-*"`、`bg-white` 这类固定色），在仓库根的 `.claude/scripts/check-repo-rules.sh`，存量冻在 `frontend/palette-baseline.json`。三份基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（排版、文案、动效）。
+仓库根还有两道：调色板（`color="grey-*"`、`bg-white` 这类固定色）与 `src/` 单文件行数上限（后端 1500、前端 1000，只判与 `origin/main` 不同的文件），分别在 `.claude/scripts/check-repo-rules.sh` 和 `.claude/scripts/check-file-sizes.py`，样式表那条的存量冻在 `frontend/palette-baseline.json`。所有基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（排版、文案、动效）。
 
 ## 测试约定 {#tests}
 
