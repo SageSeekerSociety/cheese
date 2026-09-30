@@ -35,6 +35,8 @@ const props = defineProps<{
   run: Block[]
   /** 署名：平台替谁写的这一条。算不出来就是 null，框里不画名字。 */
   name: string | null
+  /** 接在同一位队友上一条事件行下面：不再重复头像和名字。 */
+  cont?: boolean
   time: string
   /** 这个房间当前那位 AI 队友的名字，`fold` 档在「…处理中」里用。 */
   agentName: string
@@ -133,7 +135,14 @@ const ACTION_META: Record<string, { btn: string }> = {
   <div v-if="happening" class="room-happening im-event">
     <span v-html="renderPlain(noticeText(block))" /><span class="room-happening__time"> · {{ time }}</span>
   </div>
-  <AgentNoticeFrame v-else :name="name" :time="time" :class="{ 'notice-bump': bumped }" @animationend="bumped = false">
+  <AgentNoticeFrame
+    v-else
+    :name="name"
+    :cont="cont"
+    :time="time"
+    :class="{ 'notice-bump': bumped }"
+    @animationend="bumped = false"
+  >
     <div
       v-if="notice.mode === 'incident'"
       class="sys-row sys-row--danger platform-incident"
@@ -173,15 +182,15 @@ const ACTION_META: Record<string, { btn: string }> = {
             <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
             <span v-html="renderPlain(act.text)" />
           </template>
+          <button
+            v-if="notice.changes"
+            type="button"
+            class="sys-btn sys-btn--inline"
+            @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
+          >
+            {{ t('work.room.notice.viewChanges') }}
+          </button>
         </span>
-        <button
-          v-if="notice.changes"
-          type="button"
-          class="sys-btn"
-          @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
-        >
-          {{ t('work.room.notice.viewChanges') }}
-        </button>
       </div>
       <!-- 竖排，每个文件带自己的增删：路径一列，+n 和 −n 紧挨着各自对齐。 -->
       <ul v-if="shownFiles.length" class="sys-files" :aria-label="t('work.room.notice.changedFiles')">
@@ -208,21 +217,23 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-line">
         <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
          through the shared token→chip path so the actor is clickable. -->
-        <span class="sys-text" v-html="renderPlain(notice.text)" />
-        <button
-          v-if="ACTION_META[notice.resource]?.btn"
-          type="button"
-          class="sys-btn"
-          @click="
-            notice.resource === 'title'
-              ? emit('undo-title', block.id)
-              : splitTask
-                ? emit('open-card', splitTask)
-                : emit('open-resource', notice.resource, block.turn_id ?? undefined)
-          "
-        >
-          {{ t(ACTION_META[notice.resource].btn) }}
-        </button>
+        <span class="sys-text">
+          <span v-html="renderPlain(notice.text)" />
+          <button
+            v-if="ACTION_META[notice.resource]?.btn"
+            type="button"
+            class="sys-btn sys-btn--inline"
+            @click="
+              notice.resource === 'title'
+                ? emit('undo-title', block.id)
+                : splitTask
+                  ? emit('open-card', splitTask)
+                  : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+            "
+          >
+            {{ t(ACTION_META[notice.resource].btn) }}
+          </button>
+        </span>
       </div>
       <details v-if="notice.detail" class="sys-more">
         <summary class="sys-line">
@@ -368,6 +379,17 @@ details.sys-row > summary::-webkit-details-marker,
 .sys-text + .sys-btn,
 .sys-chev + .sys-btn {
   margin-left: auto;
+}
+/* 「撤销」「查看文档」这类只属于这一句话的动作，接在这句话的末尾，跟着字一起折行。
+   推到行尾的话，短句后面隔着大半行空白，长句一折行它就自己掉到下一行的最右边，
+   两种情况都看不出它是哪句话的。 */
+.sys-btn.sys-btn--inline {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: 8px;
+  vertical-align: middle;
+  font-size: 12px;
 }
 .sys-num {
   flex: none;
@@ -535,11 +557,12 @@ details[open]::details-content {
 .sys-sep {
   color: var(--faint);
 }
-/* 轻重只改底色和状态字的颜色。底色块往左多出 8px，字仍在正文那条竖线上。 */
+/* 轻重只改底色和状态字的颜色。底色块往左多出一截（外框给的 --notice-wash-inset，
+   默认 8px），字仍在正文那条竖线上。 */
 .sys-row--warn,
 .sys-row--danger {
-  margin-left: -8px;
-  padding: 4px 8px;
+  margin-left: calc(-1 * var(--notice-wash-inset, 8px));
+  padding: 4px 8px 4px var(--notice-wash-inset, 8px);
   border-radius: var(--radius-md);
 }
 .sys-row--warn {

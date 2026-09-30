@@ -229,3 +229,18 @@ describe('AI 说的话署谁的名', () => {
     expect(Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())).toContain('芝士')
   })
 })
+
+// 头像和名字点下去，和正文里点那个人的 @chip 一样：交给上一层去开他的成员页。
+describe('点消息上的头像和名字', () => {
+  it('头像和名字都通向说话的那个人', async () => {
+    history = [aiMsg('a', '看过了')]
+    const { container, emitted } = render(Panel, {
+      props: { topic: topicOf('t1'), showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await settle()
+    ;(container.querySelector('[data-mid="a"] .im-gutter button') as HTMLElement).click()
+    ;(container.querySelector('[data-mid="a"] .im-name') as HTMLElement).click()
+    expect(emitted()['mention-click']).toEqual([[SEAT], [SEAT]])
+  })
+})

@@ -31,10 +31,8 @@ export const workspaceRoutes: RouteRecordRaw = {
     sidebar: () => import('@/views/workspace/ProjectSidebar.vue'),
   },
   props: { default: true, sidebar: true },
-  // `projectFrame` 标出「项目这个框」。顶栏那颗 ← 靠它回答两个问题：这一跳是不是
-  // 从项目外面走进来的（是才记入口），以及现在还在不在同一个框里（在就别覆盖）。
-  // 用标记而不是比对 URL 前缀：`/project/<id>` 的旧链接会先经过一次重定向，比
-  // 前缀会把重定向前后判成两个不同的地方。
+  // `projectFrame` 标出「项目这个框」。没有浏览历史可退时，顶栏那颗 ← 靠它认出
+  // 自己站在项目的根上，退到项目所属的小队。
   // 顶栏标题是这个项目的名字（ProjectShell 按 `project-frame` 这个键填进来），不是
   // 一句对哪个项目都一样的「项目工作台」：顶栏回答的是「我在哪」，各页的页头回
   // 答「这一页是什么」。名字到货之前先用这句兜底。

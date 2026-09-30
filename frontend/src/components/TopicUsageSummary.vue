@@ -32,24 +32,22 @@ function usageTitle(u: UsageStats): string {
   <div class="usage-summary">
     <div class="usage-summary__usage">
       <div class="usage-summary__label">{{ t('work.room.menu.usage') }}</div>
-      <div v-if="loading" class="d-flex justify-center py-2">
-        <v-progress-circular indeterminate color="primary" size="20" />
+      <!-- 两行一直都在，数没到时是一条同样位置的占位条：卡片一弹出就是最终的尺寸，
+           不先转一圈再撑开。手里有旧数就先显示旧数，重取不打断它。 -->
+      <div
+        v-for="row in [
+          { label: t('work.room.menu.thisTopic'), u: topicUsage },
+          { label: t('work.room.menu.wholeProject'), u: projectUsage },
+        ]"
+        :key="row.label"
+        class="usage-row"
+        :title="row.u ? usageTitle(row.u) : undefined"
+      >
+        <span>{{ row.label }}</span>
+        <span v-if="row.u" class="usage-row__value">{{ usageLine(row.u) }}</span>
+        <span v-else-if="loading" class="usage-row__placeholder" aria-hidden="true" />
+        <span v-else class="usage-row__value">{{ t('work.room.menu.noUsage') }}</span>
       </div>
-      <template v-else>
-        <div
-          v-for="row in [
-            { label: t('work.room.menu.thisTopic'), u: topicUsage },
-            { label: t('work.room.menu.wholeProject'), u: projectUsage },
-          ]"
-          :key="row.label"
-          class="usage-row"
-          :title="row.u ? usageTitle(row.u) : undefined"
-        >
-          <span>{{ row.label }}</span>
-          <span v-if="row.u" class="usage-row__value">{{ usageLine(row.u) }}</span>
-          <span v-else class="usage-row__value">{{ t('work.room.menu.noUsage') }}</span>
-        </div>
-      </template>
     </div>
     <div v-if="shortId" class="usage-summary__foot t-meta" :title="topicId">#{{ shortId }}</div>
   </div>
@@ -79,6 +77,14 @@ function usageTitle(u: UsageStats): string {
 .usage-row__value {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+/* 和一行数字差不多宽、同一行高里居中：数到了换上去，这一行不跳。 */
+.usage-row__placeholder {
+  align-self: center;
+  width: 12em;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
 }
 .usage-summary__foot {
   padding: 8px 16px 4px;

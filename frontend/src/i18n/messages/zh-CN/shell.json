@@ -1,7 +1,8 @@
 {
   "back": {
     "to": "返回{label}",
-    "up": "返回上一级"
+    "up": "返回上一级",
+    "previous": "返回"
   },
   "countdown": {
     "days": "天",

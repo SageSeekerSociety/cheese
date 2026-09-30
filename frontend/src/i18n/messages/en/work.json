@@ -778,7 +778,6 @@
       "loadFailed": "Couldn't load members",
       "count": "No members | 1 member | {count} members",
       "agentBadge": "AI teammate",
-      "mark": " ({tag})",
       "role": {
         "owner": "Owner",
         "admin": "Admin",

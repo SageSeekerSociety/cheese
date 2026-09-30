@@ -1,7 +1,8 @@
 {
   "back": {
     "to": "Back to {label}",
-    "up": "Back"
+    "up": "Back",
+    "previous": "Back"
   },
   "countdown": {
     "days": "d",
