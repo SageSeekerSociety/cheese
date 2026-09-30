@@ -2,7 +2,9 @@
 
 import os
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -27,7 +29,17 @@ def shell_path(path):
 
 
 class PullCITest(unittest.TestCase):
-    def run_start(self, outcomes=(), *, overrides=None, missing=None, signal=None):
+    def run_start(
+        self,
+        outcomes=(),
+        *,
+        overrides=None,
+        missing=None,
+        signal=None,
+        signal_stage="pull",
+        real_timeout=False,
+        ignore_term=False,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             case = Path(directory)
             commands = case / "bin"
@@ -43,6 +55,26 @@ printf '\t%s' "$@" >> "$CALLS"
 printf '\n' >> "$CALLS"
 for arg in "$@"; do
   if [[ "$arg" == pull ]]; then
+    if [[ "$FAKE_REAL_TIMEOUT" == 1 && -n "$FAKE_SIGNAL" ]]; then
+      printf '%s' "$$" > "$CASE_DIR/client-pid"
+      if [[ "$FAKE_IGNORE_TERM" == 1 ]]; then
+        trap '' TERM
+      else
+        trap '
+          kill -TERM "$blocker"
+          wait "$blocker"
+          printf "lifecycle\tdocker\tterminated\t143\n" >> "$CALLS"
+          exit 143
+        ' TERM
+      fi
+      /usr/bin/sleep 8 &
+      blocker=$!
+      "$TEST_PYTHON" -c 'import time; print(time.monotonic())' > "$CASE_DIR/signal-sent"
+      kill -s "$FAKE_SIGNAL" "$(cat "$CASE_DIR/helper-pid")"
+      wait "$blocker"
+      printf 'lifecycle\tdocker\tcompleted\n' >> "$CALLS"
+      exit 0
+    fi
     count=0
     if [[ -f "$CASE_DIR/count" ]]; then count=$(cat "$CASE_DIR/count"); fi
     count=$((count + 1))
@@ -55,14 +87,29 @@ exit "${FAKE_UP_EXIT:-0}"
 """,
                 "timeout": r"""#!/usr/bin/env bash
 if [[ "$1" == --version ]]; then
+  if [[ "$FAKE_REAL_TIMEOUT" == 1 ]]; then exec "$REAL_TIMEOUT" "$@"; fi
   printf 'timeout (GNU coreutils) 9.5\n'
   exit 0
 fi
 printf 'timeout' >> "$CALLS"
 printf '\t%s' "$@" >> "$CALLS"
 printf '\n' >> "$CALLS"
-if [[ -n "${FAKE_SIGNAL:-}" ]]; then
+if [[ "$FAKE_REAL_TIMEOUT" == 1 ]]; then
+  printf '%s' "$PPID" > "$CASE_DIR/helper-pid"
+  exec "$REAL_TIMEOUT" "$@"
+fi
+if [[ -n "$FAKE_SIGNAL" && "$FAKE_SIGNAL_STAGE" == pull ]]; then
+  printf '%s' "$$" > "$CASE_DIR/client-pid"
+  trap '
+    printf "lifecycle\ttimeout\tterminated\t143\n" >> "$CALLS"
+    exit 143
+  ' TERM
+  "$TEST_PYTHON" -c 'import time; print(time.monotonic())' > "$CASE_DIR/signal-sent"
   kill -s "$FAKE_SIGNAL" "$PPID"
+  # Keep the command alive after signalling its parent. Any foreground child
+  # finishes within 1s, so the substitute can handle TERM and reap it promptly.
+  for tick in {1..8}; do /usr/bin/sleep 1; done
+  printf 'lifecycle\ttimeout\tcompleted\n' >> "$CALLS"
   exit 0
 fi
 shift 2
@@ -70,6 +117,17 @@ shift 2
 """,
                 "sleep": r"""#!/usr/bin/env bash
 printf 'sleep\t%s\n' "$*" >> "$CALLS"
+if [[ -n "$FAKE_SIGNAL" && "$FAKE_SIGNAL_STAGE" == backoff ]]; then
+  printf '%s' "$$" > "$CASE_DIR/client-pid"
+  trap '
+    printf "lifecycle\tsleep\tterminated\t143\n" >> "$CALLS"
+    exit 143
+  ' TERM
+  "$TEST_PYTHON" -c 'import time; print(time.monotonic())' > "$CASE_DIR/signal-sent"
+  kill -s "$FAKE_SIGNAL" "$PPID"
+  for tick in {1..8}; do /usr/bin/sleep 1; done
+  printf 'lifecycle\tsleep\tcompleted\n' >> "$CALLS"
+fi
 """,
                 "curl": "#!/usr/bin/env bash\nexit 0\n",
             }
@@ -94,6 +152,7 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
                 CASE_DIR=shell_path(case),
                 CALLS=shell_path(case / "calls"),
                 TEST_BIN=shell_path(commands),
+                TEST_PYTHON=shell_path(Path(sys.executable)),
                 START_SCRIPT=shell_path(HERE / "start.sh"),
                 FORGEJO_TEST_TOKEN_FILE=shell_path(case / "token"),
                 FORGEJO_TEST_PROJECT="isolated-pull-test",
@@ -102,6 +161,9 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
                 RUNNER_OS="Linux",
                 DOCKER_CONTEXT="default",
                 FAKE_SIGNAL=signal or "",
+                FAKE_SIGNAL_STAGE=signal_stage,
+                FAKE_REAL_TIMEOUT="1" if real_timeout else "0",
+                FAKE_IGNORE_TERM="1" if ignore_term else "0",
             )
             for key, value in (overrides or {}).items():
                 if value is None:
@@ -109,7 +171,10 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
                 else:
                     env[key] = value
             shell = os.environ.get("FORGEJO_PULL_TEST_BASH", "bash")
-            setup = 'export PATH="$TEST_BIN:$PATH"; exec bash "$START_SCRIPT"'
+            setup = (
+                'export REAL_TIMEOUT="$(command -v timeout)"; '
+                'export PATH="$TEST_BIN:$PATH"; exec bash "$START_SCRIPT"'
+            )
             if missing:
                 # Resolve the remaining tools before narrowing PATH. All
                 # wrappers are test-local. Unlike copied MSYS executables,
@@ -127,6 +192,7 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
                 )
                 env["MISSING_TOOL"] = missing
             argv = [shell, "-c", setup]
+            started = time.monotonic()
             try:
                 result = subprocess.run(
                     argv,
@@ -152,6 +218,23 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
                     line.split("\t")
                     for line in (case / "calls").read_text().splitlines()
                 ]
+            if signal:
+                signalled = (
+                    float((case / "signal-sent").read_text())
+                    if (case / "signal-sent").exists()
+                    else started
+                )
+                calls.append(["elapsed", str(time.monotonic() - signalled)])
+            if (case / "client-pid").exists():
+                client_pid = (case / "client-pid").read_text()
+                probe = subprocess.run(
+                    [shell, "-c", 'kill -0 "$1" 2>/dev/null', "probe", client_pid],
+                    capture_output=True,
+                    timeout=5,
+                )
+                calls.append(
+                    ["owned-client", "running" if probe.returncode == 0 else "exited"]
+                )
             return result, calls
 
     def docker_actions(self, calls, action):
@@ -174,6 +257,13 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
 
     def assert_no_start(self, calls):
         self.assertEqual(self.docker_actions(calls, "up"), [], calls)
+
+    def assert_prompt_cancel(self, calls, grace=0):
+        elapsed = float(next(c[1] for c in calls if c[0] == "elapsed"))
+        # Measure response after sending the signal, excluding fixture setup.
+        # The controlled child stays alive for 8s without cancellation; GNU
+        # timeout has 5s KILL grace when used.
+        self.assertLess(elapsed, 3 + grace, calls)
 
     def test_first_pull_success_starts_once_without_another_pull(self):
         result, calls = self.run_start([(0, " forgejo Pulled\n")])
@@ -257,6 +347,38 @@ printf 'sleep\t%s\n' "$*" >> "$CALLS"
                 result, calls = self.run_start(signal=name)
                 self.assertEqual(result.returncode, status, result.stderr)
                 self.assertEqual(len([c for c in calls if c[0] == "timeout"]), 1)
+                self.assert_prompt_cancel(calls)
+                self.assertIn(["lifecycle", "timeout", "terminated", "143"], calls)
+                self.assertIn(["owned-client", "exited"], calls)
+                self.assert_no_start(calls)
+
+    def test_backoff_interrupt_reaps_sleep_without_another_pull(self):
+        for name, status in (("INT", 130), ("TERM", 143)):
+            with self.subTest(signal=name):
+                result, calls = self.run_start(
+                    [(1, HTTP_503)], signal=name, signal_stage="backoff"
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assert_pull_count(calls, 1)
+                self.assert_prompt_cancel(calls)
+                self.assertIn(["lifecycle", "sleep", "terminated", "143"], calls)
+                self.assertIn(["owned-client", "exited"], calls)
+                self.assertEqual(
+                    [c for c in calls if c[0] == "sleep"], [["sleep", "10"]]
+                )
+                self.assert_no_start(calls)
+
+    def test_real_timeout_reaps_a_client_that_ignores_term_within_kill_grace(self):
+        for name, status in (("INT", 130), ("TERM", 143)):
+            with self.subTest(signal=name):
+                result, calls = self.run_start(
+                    signal=name, real_timeout=True, ignore_term=True
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assert_pull_count(calls, 1)
+                self.assert_prompt_cancel(calls, grace=5)
+                self.assertIn(["owned-client", "exited"], calls)
+                self.assertNotIn(["lifecycle", "docker", "completed"], calls)
                 self.assert_no_start(calls)
 
     def test_cached_images_still_use_missing_policy_and_never_pull_on_start(self):
