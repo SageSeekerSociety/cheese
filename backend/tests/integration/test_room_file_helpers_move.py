@@ -99,7 +99,17 @@ def _docx() -> bytes:
     )
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as package:
-        package.writestr(
+
+        def put(name: str, data: str) -> None:
+            # A fixed timestamp on purpose: bare ``writestr`` stamps the current
+            # ZIP time, and callers compare whole bytes across two ``_docx()``
+            # calls -- two calls that straddle a two-second boundary would then
+            # differ for no product reason at all. The assertions still compare
+            # real bytes; only the clock is gone.
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            package.writestr(info, data)
+
+        put(
             "[Content_Types].xml",
             f'{decl}<Types xmlns="{openxml}/package/2006/content-types">'
             '<Default Extension="rels" ContentType="application/vnd.'
@@ -110,7 +120,7 @@ def _docx() -> bytes:
             'wordprocessingml.document.main+xml"/>'
             "</Types>",
         )
-        package.writestr(
+        put(
             "_rels/.rels",
             f'{decl}<Relationships xmlns="{openxml}/package/2006/relationships">'
             '<Relationship Id="rId1"'
@@ -118,7 +128,7 @@ def _docx() -> bytes:
             ' Target="word/document.xml"/>'
             "</Relationships>",
         )
-        package.writestr("word/document.xml", document)
+        put("word/document.xml", document)
     return buffer.getvalue()
 
 

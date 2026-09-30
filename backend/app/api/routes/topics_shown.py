@@ -18,9 +18,11 @@ Where the shared names went. The four room-file rules -- `ARTIFACT_MIME`,
 `app.domain.project.room_files`, their own group there, and `record_shown` became
 `add_shown_block` in `app.domain.block.shown` (it writes the block; the broadcast
 stays with each caller, so a caller keeps its own order and its own commit). The
-source read (`_source_bytes`) and the binding check (`_bind_source_task`) moved to
-the API layer -- `app.api.routes.topics_file_sources.source_bytes` and
-`TaskService.require_source_in_room`. None of them is read from topics.py any more.
+source read (`_source_bytes`) and the binding check (`_bind_source_task`) went to
+their own homes -- `app.api.routes.topics_file_sources.source_bytes` (API read
+orchestration) and `TaskService.require_source_in_room` in `app.domain.room_task`,
+which is a rule about a task, not about HTTP. None of them is read from topics.py
+any more.
 `BlockRepository` is still imported from topics.py rather than from
 `app.domain.block.repositories`, the shape `topics_side_routes.py` uses: the guard
 in `tests/unit/test_domain_import_guard.py` ratchets (route module, repository
