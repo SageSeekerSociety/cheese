@@ -22,8 +22,6 @@ import {
 import { connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
-import { useCommands } from '@/commands'
-import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
@@ -47,31 +45,44 @@ const busy = ref('')
 const confirming = ref<MailDraft | null>(null)
 const removing = ref<Integration | null>(null)
 
-const STATUS: Record<Integration['status'], string> = {
-  ok: '正常',
-  auth_failed: '授权失效',
-  unreachable: '连不上',
-  error: '出错',
-}
+const statusLabel = (status: Integration['status']) => t(`account.connections.status.${status}`)
 
 const PRESETS = [
-  { title: 'QQ 邮箱（用授权码）', imap: 'imap.qq.com', smtp: 'smtp.qq.com', smtpPort: 465, security: 'ssl' },
-  { title: '163 邮箱（用授权码）', imap: 'imap.163.com', smtp: 'smtp.163.com', smtpPort: 465, security: 'ssl' },
   {
-    title: '腾讯企业邮',
+    title: t('account.connections.preset.qq'),
+    imap: 'imap.qq.com',
+    smtp: 'smtp.qq.com',
+    smtpPort: 465,
+    security: 'ssl',
+  },
+  {
+    title: t('account.connections.preset.163'),
+    imap: 'imap.163.com',
+    smtp: 'smtp.163.com',
+    smtpPort: 465,
+    security: 'ssl',
+  },
+  {
+    title: t('account.connections.preset.exmail'),
     imap: 'imap.exmail.qq.com',
     smtp: 'smtp.exmail.qq.com',
     smtpPort: 465,
     security: 'ssl',
   },
   {
-    title: '阿里企业邮',
+    title: t('account.connections.preset.aliyun'),
     imap: 'imap.qiye.aliyun.com',
     smtp: 'smtp.qiye.aliyun.com',
     smtpPort: 465,
     security: 'ssl',
   },
-  { title: 'Gmail（用应用专用密码）', imap: 'imap.gmail.com', smtp: 'smtp.gmail.com', smtpPort: 465, security: 'ssl' },
+  {
+    title: t('account.connections.preset.gmail'),
+    imap: 'imap.gmail.com',
+    smtp: 'smtp.gmail.com',
+    smtpPort: 465,
+    security: 'ssl',
+  },
   {
     title: 'Outlook / Microsoft 365',
     imap: 'outlook.office365.com',
@@ -79,8 +90,13 @@ const PRESETS = [
     smtpPort: 587,
     security: 'starttls',
   },
-  { title: '其他（自己填）', imap: '', smtp: '', smtpPort: 465, security: 'ssl' },
+  { title: t('account.connections.preset.other'), imap: '', smtp: '', smtpPort: 465, security: 'ssl' },
 ]
+
+const attachmentList = (d: MailDraft) =>
+  d.attachments.length
+    ? d.attachments.map((a) => t('account.connections.attachment', { name: a.name, size: a.size })).join('、')
+    : t('account.connections.none')
 
 const projectName = (id: string) => projects.value.find((p) => p.id === id)?.name ?? id
 const pending = computed(() => drafts.value.filter((d) => d.status === 'drafted'))
@@ -98,7 +114,7 @@ async function load() {
     drafts.value = waiting.data
     projects.value = projectList.data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未能读取连接'
+    error.value = e instanceof Error ? e.message : t('account.connections.loadFailed')
   } finally {
     loading.value = false
   }
@@ -121,7 +137,7 @@ async function act<T>(key: string, fn: () => Promise<T>): Promise<T | undefined>
   try {
     return await fn()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '操作没有成功'
+    error.value = e instanceof Error ? e.message : t('account.connections.actionFailed')
     return undefined
   } finally {
     busy.value = ''
@@ -169,8 +185,9 @@ async function send(draft: MailDraft) {
   const out = await act(`${draft.id}:send`, () => sendMailDraft(draft.id))
   if (out) {
     drafts.value = drafts.value.filter((d) => d.id !== draft.id)
-    const refused = out.refused.length ? `；这些收件人被服务器拒收：${out.refused.join('、')}` : ''
-    notice.value = `已发送「${draft.subject}」${refused}${out.notes.length ? `（${out.notes.join('，')}）` : ''}`
+    const refused = out.refused.length ? t('account.connections.refused', { list: out.refused.join('、') }) : ''
+    const notes = out.notes.length ? t('account.connections.notes', { list: out.notes.join('，') }) : ''
+    notice.value = t('account.connections.sent', { subject: draft.subject }) + refused + notes
   } else {
     await load()
   }
@@ -223,90 +240,80 @@ async function save() {
     integrations.value = [...integrations.value, row]
     adding.value = false
   } catch (e) {
-    formError.value = e instanceof Error ? e.message : '没有连上'
+    formError.value = e instanceof Error ? e.message : t('account.connections.connectFailed')
   } finally {
     saving.value = false
   }
 }
 
 onMounted(load)
-
-useCommands(() => [
-  {
-    id: 'connections.refresh',
-    title: '刷新',
-    palette: false,
-    icon: 'mdi-refresh',
-    loading: loading.value,
-    header: {},
-    run: load,
-  },
-])
 </script>
 
 <template>
-  <AppPage :title="t('account.settings.connections')">
-    <p class="t-body c-muted mb-6">
-      接入你自己的邮箱或飞书，并勾选允许哪些项目的 AI
-      队友使用。它们用的是你的账号：可以搜索和阅读邮件、把回复写进你的草稿箱、读写你有权限的飞书文档；
-      <strong>邮件一律要你在下面核对之后才会发出</strong>
-    </p>
-    <p v-if="notice" role="status" class="t-body mb-4">{{ notice === 'ok' ? '飞书授权成功' : notice }}</p>
-    <p v-if="error" role="alert" class="t-body c-danger mb-4">{{ error }}</p>
+  <div class="settings-page">
+    <header class="conn__head">
+      <div>
+        <h1 class="t-page-title">{{ t('account.settings.connections') }}</h1>
+        <p class="settings-page__lede">{{ t('account.connections.lede') }}</p>
+      </div>
+      <v-btn
+        icon="mdi-refresh"
+        variant="text"
+        size="small"
+        :loading="loading"
+        :aria-label="t('account.connections.refresh')"
+        :title="t('account.connections.refresh')"
+        @click="load"
+      />
+    </header>
 
-    <section class="mb-8" aria-label="待发送的邮件">
-      <h2 class="t-section mb-2">待你确认发送（{{ pending.length }}）</h2>
-      <p v-if="!pending.length" class="t-meta c-faint">没有等待发送的草稿</p>
-      <ul class="conn-list">
-        <li v-for="d in pending" :key="d.id" class="conn-row" :data-draft="d.id">
-          <dl class="conn-spec t-meta">
-            <dt>收件人</dt>
-            <dd>{{ d.to.join('、') }}</dd>
-            <template v-if="d.cc.length">
-              <dt>抄送</dt>
-              <dd>{{ d.cc.join('、') }}</dd>
-            </template>
-            <dt>主题</dt>
-            <dd class="t-body">{{ d.subject }}</dd>
-            <dt>正文</dt>
-            <dd class="conn-body">{{ d.body }}</dd>
-            <dt>附件</dt>
-            <dd>
-              {{ d.attachments.length ? d.attachments.map((a) => `${a.name}（${a.size} 字节）`).join('、') : '无' }}
-            </dd>
-            <dt>来自</dt>
-            <dd>
-              {{ projectName(d.project_id) }} · <UserRef :handle="d.created_by" :project-id="d.project_id" /> 起草
-            </dd>
-          </dl>
-          <div class="conn-actions">
-            <v-btn
-              color="primary"
-              variant="flat"
-              size="small"
-              :loading="busy === `${d.id}:send`"
-              @click="confirming = d"
-            >
-              确认发送
-            </v-btn>
-            <v-btn variant="text" size="small" :loading="busy === `${d.id}:discard`" @click="discard(d)">
-              不发了
-            </v-btn>
-          </div>
-        </li>
-      </ul>
+    <p v-if="notice" role="status" class="conn__notice">
+      {{ notice === 'ok' ? t('account.connections.feishuAuthorized') : notice }}
+    </p>
+    <p v-if="error" role="alert" class="conn__notice c-danger">{{ error }}</p>
+
+    <section class="settings-card" :aria-label="t('account.connections.pendingTitle')">
+      <div class="settings-card__title">{{ t('account.connections.pendingTitle') }}</div>
+      <div class="settings-card__desc">{{ t('account.connections.pendingDesc') }}</div>
+      <p v-if="!pending.length" class="settings-empty">{{ t('account.connections.pendingEmpty') }}</p>
+      <div v-for="d in pending" :key="d.id" class="conn-row" :data-draft="d.id">
+        <dl class="conn-spec">
+          <dt>{{ t('account.connections.to') }}</dt>
+          <dd>{{ d.to.join('、') }}</dd>
+          <template v-if="d.cc.length">
+            <dt>{{ t('account.connections.cc') }}</dt>
+            <dd>{{ d.cc.join('、') }}</dd>
+          </template>
+          <dt>{{ t('account.connections.subject') }}</dt>
+          <dd class="conn-spec__subject">{{ d.subject }}</dd>
+          <dt>{{ t('account.connections.body') }}</dt>
+          <dd class="conn-body">{{ d.body }}</dd>
+          <dt>{{ t('account.connections.attachments') }}</dt>
+          <dd>{{ attachmentList(d) }}</dd>
+          <dt>{{ t('account.connections.from') }}</dt>
+          <dd>{{ projectName(d.project_id) }} · <UserRef :handle="d.created_by" :project-id="d.project_id" /></dd>
+        </dl>
+        <div class="conn-actions">
+          <v-btn variant="text" size="small" :loading="busy === `${d.id}:discard`" @click="discard(d)">
+            {{ t('account.connections.discard') }}
+          </v-btn>
+          <v-btn color="primary" variant="flat" size="small" :loading="busy === `${d.id}:send`" @click="confirming = d">
+            {{ t('account.connections.send') }}
+          </v-btn>
+        </div>
+      </div>
     </section>
 
-    <section aria-label="连接">
-      <div class="connections__head">
-        <h2 class="t-section">连接</h2>
-        <div class="connections__add">
-          <v-btn prepend-icon="mdi-email-plus-outline" variant="text" size="small" @click="adding = true">
-            接入邮箱
+    <section class="settings-card" :aria-label="t('account.connections.accountsTitle')">
+      <div class="settings-card__head">
+        <div class="settings-card__title">{{ t('account.connections.accountsTitle') }}</div>
+        <div class="conn__add">
+          <v-btn prepend-icon="mdi-email-plus-outline" variant="outlined" size="small" @click="adding = true">
+            {{ t('account.connections.addMail') }}
           </v-btn>
           <v-btn
             prepend-icon="mdi-link-variant-plus"
-            variant="text"
+            variant="outlined"
             size="small"
             :disabled="feishuMissing"
             :loading="busy === 'feishu:connect'"
@@ -316,84 +323,96 @@ useCommands(() => [
           </v-btn>
         </div>
       </div>
-      <p v-if="feishuMissing" class="t-meta c-faint mb-2">{{ t('integrations.member.notConfigured') }}</p>
-      <p v-if="!integrations.length && !loading" class="t-meta c-faint">还没有接入任何邮箱或飞书</p>
-      <ul class="conn-list">
-        <li v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
-          <div class="conn-row__head">
-            <div class="conn-row__id">
-              <div class="t-body">{{ row.provider === 'mail' ? '邮箱' : '飞书' }} · {{ row.label }}</div>
-              <div v-if="row.last_error" class="t-meta c-danger">{{ row.last_error }}</div>
-              <!-- 平台应用那一行在授权回来之前什么也做不了（凭据是管理员的，账号是你的），
-                   所以这里说的是「连结上了没有」，不是「工作正常」—— 上面那枚徽章在授权
-                   之前说的「正常」只到「这一行本身没问题」为止。 -->
-              <div v-else-if="row.shared_app && !row.user_authorized" class="t-meta c-faint">
-                {{ t('integrations.member.notConnected') }}
-              </div>
+      <p v-if="feishuMissing" class="settings-card__desc">{{ t('integrations.member.notConfigured') }}</p>
+      <p v-if="!integrations.length && !loading" class="settings-empty">{{ t('account.connections.accountsEmpty') }}</p>
+      <div v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
+        <div class="conn-row__head">
+          <div class="conn-row__id">
+            <div class="conn-row__name">
+              {{ row.provider === 'mail' ? t('account.connections.mail') : t('account.connections.feishu') }} ·
+              {{ row.label }}
             </div>
-            <v-chip size="small" variant="tonal" :color="row.status === 'ok' ? 'success' : 'error'">
-              {{ STATUS[row.status] }}
-            </v-chip>
+            <div v-if="row.last_error" class="conn-row__sub c-danger">{{ row.last_error }}</div>
+            <!-- 平台应用那一行在授权回来之前什么也做不了（凭据是管理员的，账号是你的），
+                 所以这里说的是「连结上了没有」，不是「工作正常」—— 旁边那个状态在授权
+                 之前说的「正常」只到「这一行本身没问题」为止。 -->
+            <div v-else-if="row.shared_app && !row.user_authorized" class="conn-row__sub">
+              {{ t('integrations.member.notConnected') }}
+            </div>
           </div>
-          <v-select
-            :model-value="row.grants"
-            autocomplete="off"
-            :items="projects"
-            item-title="name"
-            item-value="id"
-            multiple
-            chips
-            density="compact"
-            label="允许这些项目的 AI 队友使用"
-            :loading="busy === `${row.id}:grants`"
-            @update:model-value="(v: string[]) => setGrants(row, v)"
-          />
-          <div class="conn-actions">
-            <v-btn variant="text" size="small" :loading="busy === `${row.id}:check`" @click="recheck(row)">
-              测试连接
-            </v-btn>
-            <!-- 自带凭据的老连接：授权个人账号是它在搜索上差的那一步，按钮留着是为了让
-                 这些行照旧能用（`feishu_settings` 优先用它自己那套凭据）。走平台应用的那
-                 些行没有这一颗 —— 它们连接的方式就是上面那颗「连接飞书」。 -->
-            <v-btn
-              v-if="row.provider === 'feishu' && !row.shared_app"
-              variant="text"
-              size="small"
-              :loading="busy === `${row.id}:auth`"
-              @click="authorize(row)"
-            >
-              {{ row.user_authorized ? '重新授权个人账号' : '授权个人账号（用于搜索）' }}
-            </v-btn>
-            <v-btn variant="text" size="small" color="on-surface-variant" @click="removing = row">删除</v-btn>
-          </div>
-        </li>
-      </ul>
+          <span class="conn-state" :class="row.status === 'ok' ? 'conn-state--ok' : 'conn-state--bad'">
+            <span class="conn-state__dot" aria-hidden="true" />{{ statusLabel(row.status) }}
+          </span>
+        </div>
+        <v-select
+          :model-value="row.grants"
+          autocomplete="off"
+          :items="projects"
+          item-title="name"
+          item-value="id"
+          multiple
+          chips
+          density="compact"
+          :label="t('account.connections.grants')"
+          :loading="busy === `${row.id}:grants`"
+          @update:model-value="(v: string[]) => setGrants(row, v)"
+        />
+        <div class="conn-actions">
+          <v-btn variant="text" size="small" :loading="busy === `${row.id}:check`" @click="recheck(row)">
+            {{ t('account.connections.check') }}
+          </v-btn>
+          <!-- 自带凭据的老连接：授权个人账号是它在搜索上差的那一步，按钮留着是为了让
+               这些行照旧能用（`feishu_settings` 优先用它自己那套凭据）。走平台应用的那
+               些行没有这一颗 —— 它们连接的方式就是上面那颗「连接飞书」。 -->
+          <v-btn
+            v-if="row.provider === 'feishu' && !row.shared_app"
+            variant="text"
+            size="small"
+            :loading="busy === `${row.id}:auth`"
+            @click="authorize(row)"
+          >
+            {{ row.user_authorized ? t('account.connections.reauthorize') : t('account.connections.authorize') }}
+          </v-btn>
+          <v-btn variant="text" size="small" @click="removing = row">{{ t('account.connections.remove') }}</v-btn>
+        </div>
+      </div>
     </section>
 
     <v-dialog :model-value="!!confirming" max-width="480" @update:model-value="confirming = null">
       <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">发送「{{ confirming.subject }}」</v-card-title>
+        <v-card-title class="t-dialog-title">
+          {{ t('account.connections.sendTitle', { subject: confirming.subject }) }}
+        </v-card-title>
         <v-card-text class="t-body">
-          将从你的邮箱发给 {{ [...confirming.to, ...confirming.cc].join('、') }}
-          <template v-if="confirming.attachments.length">，带 {{ confirming.attachments.length }} 个附件</template>
-          。发出后无法撤回
+          {{
+            confirming.attachments.length
+              ? t('account.connections.sendBodyAttachments', {
+                  to: [...confirming.to, ...confirming.cc].join('、'),
+                  n: confirming.attachments.length,
+                })
+              : t('account.connections.sendBody', { to: [...confirming.to, ...confirming.cc].join('、') })
+          }}
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirming = null">取消</v-btn>
-          <v-btn variant="text" color="primary" @click="send(confirming)">发送</v-btn>
+          <v-btn variant="text" @click="confirming = null">{{ t('account.connections.cancel') }}</v-btn>
+          <v-btn variant="text" color="primary" @click="send(confirming)">
+            {{ t('account.connections.sendShort') }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog :model-value="!!removing" max-width="420" @update:model-value="removing = null">
       <v-card v-if="removing">
-        <v-card-title class="t-dialog-title">删除「{{ removing.label }}」</v-card-title>
-        <v-card-text class="t-body">删除后 AI 队友不再能用它，保存的密码或密钥一并删除</v-card-text>
+        <v-card-title class="t-dialog-title">
+          {{ t('account.connections.removeTitle', { label: removing.label }) }}
+        </v-card-title>
+        <v-card-text class="t-body">{{ t('account.connections.removeBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="removing = null">取消</v-btn>
-          <v-btn variant="text" color="error" @click="remove(removing)">删除</v-btn>
+          <v-btn variant="text" @click="removing = null">{{ t('account.connections.cancel') }}</v-btn>
+          <v-btn variant="text" color="error" @click="remove(removing)">{{ t('account.connections.remove') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -402,8 +421,8 @@ useCommands(() => [
          只剩邮箱 —— 飞书那一栏不是一张表单，是上面那颗「连接飞书」。 -->
     <AdaptiveDialog
       :model-value="adding"
-      title="接入邮箱"
-      primary-label="测试并保存"
+      :title="t('account.connections.addMail')"
+      :primary-label="t('account.connections.testAndSave')"
       :primary-loading="saving"
       :max-width="560"
       @update:model-value="adding = false"
@@ -414,27 +433,42 @@ useCommands(() => [
           :model-value="mailForm.preset"
           autocomplete="off"
           :items="PRESETS.map((p) => p.title)"
-          label="邮箱服务"
+          :label="t('account.connections.form.service')"
           @update:model-value="applyPreset"
         />
-        <v-text-field v-model="mailForm.address" autocomplete="email" label="邮箱地址" />
+        <v-text-field v-model="mailForm.address" autocomplete="email" :label="t('account.connections.form.address')" />
         <v-text-field
           v-model="mailForm.password"
           autocomplete="new-password"
           type="password"
-          label="密码或授权码"
-          hint="QQ、163 等要在邮箱设置里开启 IMAP/SMTP 并生成授权码；Gmail 用应用专用密码"
+          :label="t('account.connections.form.password')"
+          :hint="t('account.connections.form.passwordHint')"
           persistent-hint
         />
         <div class="conn-form-row mt-2">
-          <v-text-field v-model="mailForm.imap_host" autocomplete="off" label="IMAP 服务器" />
-          <v-text-field v-model.number="mailForm.imap_port" autocomplete="off" type="number" label="端口" />
+          <v-text-field v-model="mailForm.imap_host" autocomplete="off" :label="t('account.connections.form.imap')" />
+          <v-text-field
+            v-model.number="mailForm.imap_port"
+            autocomplete="off"
+            type="number"
+            :label="t('account.connections.form.port')"
+          />
         </div>
         <div class="conn-form-row">
-          <v-text-field v-model="mailForm.smtp_host" autocomplete="off" label="SMTP 服务器" />
-          <v-text-field v-model.number="mailForm.smtp_port" autocomplete="off" type="number" label="端口" />
+          <v-text-field v-model="mailForm.smtp_host" autocomplete="off" :label="t('account.connections.form.smtp')" />
+          <v-text-field
+            v-model.number="mailForm.smtp_port"
+            autocomplete="off"
+            type="number"
+            :label="t('account.connections.form.port')"
+          />
         </div>
-        <v-select v-model="mailForm.security" autocomplete="off" :items="['ssl', 'starttls']" label="加密方式" />
+        <v-select
+          v-model="mailForm.security"
+          autocomplete="off"
+          :items="['ssl', 'starttls']"
+          :label="t('account.connections.form.security')"
+        />
         <v-select
           v-model="mailForm.grants"
           autocomplete="off"
@@ -443,50 +477,48 @@ useCommands(() => [
           item-value="id"
           multiple
           chips
-          label="允许这些项目的 AI 队友使用"
+          :label="t('account.connections.grants')"
         />
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
     </AdaptiveDialog>
-  </AppPage>
+  </div>
 </template>
 
+<style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
-.connections__head {
+.conn__head {
   display: flex;
-  align-items: center;
+  gap: 16px;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
 }
 
-.connections__add {
+.conn__notice {
+  margin: 0;
+  font-size: 14px;
+  line-height: var(--lh-14);
+}
+
+.conn__add {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-}
-
-.conn-list {
-  display: flex;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-  flex-direction: column;
   gap: 8px;
+  margin-top: 16px;
 }
 
 .conn-row {
-  padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 24px 16px;
+  border-top: 1px solid var(--line);
 }
 
 .conn-row__head {
   display: flex;
-  align-items: flex-start;
   gap: 12px;
-  margin-bottom: 8px;
+  align-items: flex-start;
 }
 
 .conn-row__id {
@@ -494,11 +526,58 @@ useCommands(() => [
   min-width: 0;
 }
 
+.conn-row__name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+}
+
+.conn-row__sub {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.conn-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.conn-state__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+}
+
+.conn-state--ok {
+  color: var(--ok-ink);
+}
+
+.conn-state--ok .conn-state__dot {
+  background: var(--ok);
+}
+
+.conn-state--bad {
+  color: var(--danger-ink);
+}
+
+.conn-state--bad .conn-state__dot {
+  background: var(--danger);
+}
+
 .conn-spec {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
-  margin: 0 0 8px;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 .conn-spec dt {
@@ -511,6 +590,12 @@ useCommands(() => [
   overflow-wrap: anywhere;
 }
 
+.conn-spec__subject {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: var(--lh-14);
+}
+
 .conn-body {
   max-height: 240px;
   overflow: auto;
@@ -521,11 +606,18 @@ useCommands(() => [
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  justify-content: flex-end;
 }
 
 .conn-form-row {
   display: grid;
   grid-template-columns: 1fr 120px;
   gap: 8px;
+}
+
+@media (max-width: 599.98px) {
+  .conn-row {
+    padding: 12px 16px 14px;
+  }
 }
 </style>
