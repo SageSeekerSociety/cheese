@@ -88,17 +88,17 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         stamp = record.get("cheese") or {}
         if not stamp.get("receipt"):
             return None
-        if not self.session_id:
-            raise ValueError("Native receipt has no session identity")
+        if stamp.get("receipt_session_id") != self.session_id:
+            raise ValueError("Native receipt has a different session identity")
         return InputReceipt(
             InputIdentity(
                 self.session.project_id,
                 self.session.topic_id,
                 self.recipient_handle,
                 self.session.harness,
-                self.session_id,
+                stamp["receipt_session_id"],
                 uuid.UUID(record["uuid"]),
-                uuid.UUID(stamp["work_id"]),
+                uuid.UUID(stamp["receipt_work_id"]),
             ),
             "native_echo",
         )

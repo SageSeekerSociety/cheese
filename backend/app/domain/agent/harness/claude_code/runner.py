@@ -556,12 +556,21 @@ class Runner(runner.Runner[Journal]):
             # inside the turn it was said to; one the session reads only after
             # that turn ended starts a turn of its own.
             if not self.working:
-                self._open(self.sent.get(str(record.get("command_uuid"))))
+                self._open(self._sent_input(str(record.get("command_uuid"))))
                 stamp["turn_start"] = True
-        elif kind == "user" and record.get("isReplay"):
-            sent = self.sent.pop(str(record.get("uuid")), None)
-            if sent is not None and sent[0] in ("send", "steer"):
-                stamp["receipt"] = True
+        elif main and kind == "user" and record.get("isReplay"):
+            identifier = str(record.get("uuid"))
+            sent = self._sent_input(identifier)
+            self.sent.pop(identifier, None)
+            receipt = self.journal.recall(f"receipt:{identifier}")
+            if receipt is not None:
+                identity = json.loads(receipt)
+                if identity["session_id"] == self.session_id:
+                    stamp.update(
+                        receipt=True,
+                        receipt_work_id=identity["work_id"],
+                        receipt_session_id=identity["session_id"],
+                    )
             if not self.working:
                 self._open(sent)
                 stamp["turn_start"] = True
@@ -594,6 +603,18 @@ class Runner(runner.Runner[Journal]):
                 if future is not None and not future.done():
                     future.set_result(record)
             self._end()
+
+    def _sent_input(self, identifier: str) -> tuple[str, str | None] | None:
+        sent = self.sent.get(identifier)
+        if sent is not None:
+            return sent
+        receipt = self.journal.recall(f"receipt:{identifier}")
+        if receipt is None:
+            return None
+        identity = json.loads(receipt)
+        if identity["session_id"] != self.session_id:
+            return None
+        return identity["how"], identity["work_id"]
 
     def _open(self, sent: tuple[str, str | None] | None) -> None:
         """A turn begins, for the input that started it (None: no input of ours)."""
@@ -863,6 +884,17 @@ class Runner(runner.Runner[Journal]):
         content: str | list = (
             [{"type": "text", "text": text}, *images] if images else text
         )
+        if how in ("send", "steer"):
+            if self.session_id is None or work is None:
+                raise ValueError("An input needs its native session and work identity")
+            # Commit the association before stdin: a failed drain can still have
+            # written the input, and an echo may arrive after runner replacement.
+            self.journal.remember(
+                f"receipt:{identifier}",
+                json.dumps(
+                    {"session_id": self.session_id, "work_id": work, "how": how}
+                ),
+            )
         self.sent[identifier] = (how, work)
         try:
             await self._write(
