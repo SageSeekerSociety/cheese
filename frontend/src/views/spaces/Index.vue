@@ -104,7 +104,13 @@
                     <v-card-item>
                       <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下
                            它会提亮到 #FFA733，白字只有 1.9:1；surface 在深色下是深墨。 -->
-                      <v-avatar size="60" color="primary" class="mt-2 mb-4">
+                      <v-avatar
+                        size="60"
+                        :rounded="false"
+                        :style="{ borderRadius: squareRadius(60) }"
+                        color="primary"
+                        class="mt-2 mb-4"
+                      >
                         <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
                           <!-- seed avatars may be invalid; fall back to the initial.
                                The #error slot fills the v-img, so the char must be a
@@ -223,6 +229,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { squareRadius } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 import { usePaging } from '@/utils/paging'
 

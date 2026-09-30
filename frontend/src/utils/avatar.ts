@@ -162,3 +162,13 @@ export function avatarColor(seed?: string | null): string {
   if (!s) return hexAt(0, 0)
   return backgroundForHue(hueFromString(s))
 }
+
+/**
+ * 不是人的头像（AI 队友、团队、空间、项目）画成圆角方块，圆角约为边长的四分之一：
+ * 20px 的是 5px，48px 的是 12px。都用一个固定值的话，小的看着像圆、大的看着像直角。
+ * 人是圆的，不用这个。
+ */
+export function squareRadius(size: string | number): string {
+  const px = Number.parseFloat(String(size))
+  return `${Math.round((Number.isFinite(px) ? px : 32) / 4)}px`
+}

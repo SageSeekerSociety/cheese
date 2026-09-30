@@ -331,20 +331,20 @@ function width(i: number): string {
   height: 16px;
   flex: none;
 }
-/* 头像、状态点的尺寸和圆角照抄真东西：ChatPanel 的 .im-avatar 是 28px / 8px，
-   TopicMembers 的 .roster__avatar 是 26px / 8px，看板的 .board-dot 是 10px 的圆。
+/* 头像、状态点的尺寸和形状照抄真东西：ChatPanel 的 .im-avatar 是 28px 的圆（人），
+   TopicMembers 的 .roster__avatar 是 26px 的圆，看板的 .board-dot 是 10px 的圆。
    对不上的话内容到达那一刻整行会挪一下，而骨架存在的意义正是不让它挪。 */
 .skel__bone--avatar {
   width: 28px;
   height: 28px;
   flex: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
 }
 .skel__bone--face {
   width: 26px;
   height: 26px;
   flex: none;
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
 }
 .skel__bone--dot {
   width: 10px;
