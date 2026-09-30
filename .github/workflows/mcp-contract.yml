@@ -54,7 +54,7 @@ jobs:
         # way a room does; the MCP contract checks the build's zsh too.
         run: |
           .github/scripts/allow-user-namespaces.sh
-          command -v zsh || { sudo apt-get update -q && sudo apt-get install -yq zsh; }
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh zsh
       - run: >-
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
@@ -62,7 +62,7 @@ jobs:
       - name: Install tmux
         # The resume checks drive the interactive CLI in a tmux pane.
         if: ${{ !cancelled() }}
-        run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -yq tmux; }
+        run: .github/scripts/ensure-apt.sh tmux
       - name: Headless stream-json contract
         # Runs even when the MCP checks failed, so one run reports both.
         if: ${{ !cancelled() }}
@@ -124,8 +124,7 @@ jobs:
         # only `fusermount3`, which takes the same arguments. zsh is the
         # executor shell of the zsh run.
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq fuse3 libfuse2t64 zsh
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh fuse3 libfuse2t64 zsh
           command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
           python3 -m venv tmp/equivalence-venv
           tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
@@ -179,7 +178,7 @@ jobs:
         # way a room does; the MCP contract checks the build's zsh too.
         run: |
           .github/scripts/allow-user-namespaces.sh
-          command -v zsh || { sudo apt-get update -q && sudo apt-get install -yq zsh; }
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh zsh
       - run: >-
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
@@ -187,7 +186,7 @@ jobs:
       - name: Install tmux
         # The resume checks drive the interactive CLI in a tmux pane.
         if: ${{ !cancelled() }}
-        run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -yq tmux; }
+        run: .github/scripts/ensure-apt.sh tmux
       - name: Headless stream-json contract
         # Runs even when the MCP checks failed, so one run reports both.
         if: ${{ !cancelled() }}
@@ -212,8 +211,7 @@ jobs:
         # executor shell the second equivalence run and the shell contract use.
         if: ${{ !cancelled() }}
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq fuse3 libfuse2t64 zsh
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh fuse3 libfuse2t64 zsh
           command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
           python3 -m venv tmp/equivalence-venv
           tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1

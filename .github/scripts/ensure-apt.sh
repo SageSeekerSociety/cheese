@@ -39,15 +39,31 @@ fi
 # Run `sudo apt-get "$@"`, waiting up to CHEESE_APT_WAIT_SECONDS for a lock that
 # another apt holds. Any other failure is returned at once: a lock refusal
 # happens before apt changes anything, so only that one is safe to repeat.
+#
+# apt's own network waits are unbounded by default: on 2026-09-30 a stalled
+# mirror held four hosted jobs in `apt-get update` until their job timeouts, 20
+# and 30 minutes, with nothing in the log. The Acquire options turn a stall into
+# an error within about a minute, Error-Mode=any makes `update` report a failed
+# index instead of exiting 0, and a download failure is retried a few times
+# before the step gives up.
+apt_net=(-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+  -o Acquire::Retries=3 -o APT::Update::Error-Mode=any)
+
 apt_waiting() {
-  local deadline=$((SECONDS + ${CHEESE_APT_WAIT_SECONDS:-600})) out
-  until out="$(sudo apt-get "$@" 2>&1)"; do
-    if ! grep -q 'Could not get lock' <<<"$out" || [ "$SECONDS" -ge "$deadline" ]; then
+  local deadline=$((SECONDS + ${CHEESE_APT_WAIT_SECONDS:-600})) out fetches=0
+  until out="$(sudo apt-get "${apt_net[@]}" "$@" 2>&1)"; do
+    if grep -q 'Could not get lock' <<<"$out" && [ "$SECONDS" -lt "$deadline" ]; then
+      echo "ensure-apt: another apt holds its lock; waiting ($(grep -m1 'Could not get lock' <<<"$out"))"
+      sleep 5
+    elif grep -qE 'Failed to fetch|Could not connect|Connection timed out|Temporary failure resolving|Unable to connect' <<<"$out" \
+        && [ "$fetches" -lt 3 ]; then
+      fetches=$((fetches + 1))
+      echo "ensure-apt: download failed; retrying ($fetches/3): $(grep -m1 -E 'Failed to fetch|Could not connect|Connection timed out|Temporary failure resolving|Unable to connect' <<<"$out")"
+      sleep 15
+    else
       printf '%s\n' "$out" >&2
       return 1
     fi
-    echo "ensure-apt: another apt holds its lock; waiting ($(grep -m1 'Could not get lock' <<<"$out"))"
-    sleep 5
   done
   printf '%s\n' "$out"
 }
