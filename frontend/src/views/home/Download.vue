@@ -10,17 +10,15 @@ import LandingShell from './LandingShell.vue'
 import appIcon from '@/assets/app-icon.png'
 import i18n, { t } from '@/i18n'
 import { downloadForThisComputer, DOWNLOADS } from '@/lib/desktop'
-import { inDesktopApp } from '@/lib/desktopApp'
 import { fetchDesktopRelease } from '@/lib/desktopChangelog'
 import { canPromptInstall, detectIos, isInstalled, promptInstall } from '@/lib/pwaInstall'
 
 // 下载页：电脑上是一颗下载按钮（其他版本在它右边的下拉里）、一张真实界面的截图、
-// 更新日志和一个扫码去手机的二维码；手机上是添加到主屏幕。桌面 app 里已经装好了，
-// 只剩手机那一块和更新日志。截图由 e2e/download-shots.mjs 从真实前端截出来。
+// 更新日志和一个扫码去手机的二维码；手机上是添加到主屏幕。桌面 app 里不开这一页
+// （router/home.ts）。截图由 e2e/download-shots.mjs 从真实前端截出来。
 
 const ios = detectIos()
 const phone = ios || /Android/i.test(navigator.userAgent)
-const inApp = inDesktopApp()
 
 const primary = ref<Download>(DOWNLOADS[0])
 const version = ref<string | null>(null)
@@ -111,7 +109,7 @@ onMounted(async () => {
         </div>
 
         <!-- 电脑：这台电脑的版本一颗按钮，其他版本和手机在右边的下拉里。 -->
-        <template v-else-if="!inApp">
+        <template v-else>
           <div class="dl-split">
             <v-btn
               color="primary"
@@ -165,7 +163,7 @@ onMounted(async () => {
         </template>
       </section>
 
-      <section v-if="!phone && !inApp" class="dl-shot">
+      <section v-if="!phone" class="dl-shot">
         <img
           src="/images/download/app-light.webp"
           :alt="t('publicSite.downloadPage.screenshotAlt')"

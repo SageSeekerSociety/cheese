@@ -20,7 +20,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getFeedbackMeta = vi.fn()
 const getFeedbackCounts = vi.fn()
@@ -33,6 +33,8 @@ vi.mock('@/api', async () => {
     getFeedbackCounts: (...a: unknown[]) => getFeedbackCounts(...a),
   }
 })
+
+import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 
@@ -149,5 +151,48 @@ describe('帮助与反馈入口', () => {
 
     await fireEvent.click(entry)
     await waitFor(() => expect(document.body.textContent).toContain('反馈中心'))
+  })
+})
+
+// 桌面 app 里「了解知是」是「关于」：推广页只在浏览器里开；文档站在 app 的窗口里没有
+// 回来的路，也交给浏览器。
+describe('帮助与反馈，在桌面 app 里', () => {
+  type AppWindow = { __TAURI__?: unknown; __CHEESE_APP__?: unknown }
+  beforeEach(() => {
+    ;(window as AppWindow).__TAURI__ = { core: { invoke: vi.fn() } }
+    ;(window as AppWindow).__CHEESE_APP__ = { origin: 'https://okcheese.com', can: ['links', 'updates'] }
+  })
+  afterEach(() => {
+    delete (window as AppWindow).__TAURI__
+    delete (window as AppWindow).__CHEESE_APP__
+    vi.restoreAllMocks()
+  })
+
+  it('「关于知是」打开关于对话框，不去推广页', async () => {
+    const { container } = await mount()
+    await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
+    await waitFor(() => expect(document.body.textContent).toContain('关于知是'))
+    expect(document.body.textContent).not.toContain('了解知是')
+    expect(Array.from(document.querySelectorAll('a')).some((a) => a.getAttribute('href')?.includes('/about'))).toBe(
+      false
+    )
+    const { aboutOpen } = useDesktopApp()
+    const item = Array.from(document.querySelectorAll('.v-list-item')).find((el) =>
+      el.textContent?.includes('关于知是')
+    ) as HTMLElement
+    await fireEvent.click(item)
+    expect(aboutOpen.value).toBe(true)
+  })
+
+  it('使用文档在浏览器里打开', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { container } = await mount()
+    await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
+    await waitFor(() => expect(document.body.textContent).toContain('使用文档'))
+    const item = Array.from(document.querySelectorAll('.v-list-item')).find((el) =>
+      el.textContent?.includes('使用文档')
+    ) as HTMLElement
+    await fireEvent.click(item)
+    expect(open).toHaveBeenCalledWith(`${window.location.origin}/docs/`, '_blank')
   })
 })

@@ -212,6 +212,11 @@
 
     <!-- 有新版本: shows while a new service worker waits for the user to click. -->
     <UpdateBanner />
+    <!-- The desktop app's 关于 and 在手机上使用 dialogs, opened from menus that close as they do. -->
+    <template v-if="inApp">
+      <DesktopAboutDialog />
+      <DesktopPhoneDialog />
+    </template>
     <CommandPalette />
   </my-app>
 </template>
@@ -261,6 +266,7 @@ import {
   desktopBadge,
   desktopListenForNotices,
   desktopStopNotices,
+  inDesktopApp,
   onDesktopOpenPage,
   tellDesktopTheme,
 } from '@/lib/desktopApp'
@@ -353,6 +359,9 @@ const keptAlivePages = ['ProjectDocsView', 'ProfileView', 'CalendarView']
 
 // 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
 const SudoDialog = defineAsyncComponent(() => import('./components/account/SudoDialog.vue'))
+const inApp = inDesktopApp()
+const DesktopAboutDialog = defineAsyncComponent(() => import('./components/common/DesktopAboutDialog.vue'))
+const DesktopPhoneDialog = defineAsyncComponent(() => import('./components/common/DesktopPhoneDialog.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true

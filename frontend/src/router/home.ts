@@ -16,6 +16,15 @@ async function landingForMember(): Promise<RouteLocationRaw> {
   return { name: 'inbox' }
 }
 
+// 推广页（了解知是、方案、下载）是写给还没装上的人看的。桌面 app 里的人已经装上了，
+// 这几页在 app 的窗口里既没有意义、也没有回去的路：一律回到首页那一格，由它决定
+// 落在工作台还是登录页。app 里对应的东西各有去处——「关于知是」对话框（版本与检查
+// 更新）、用户菜单的「在手机上使用」，推广页本身在浏览器里打开。
+async function awayFromMarketingInApp(): Promise<RouteLocationRaw | true> {
+  const { inDesktopApp } = await import('@/lib/desktopApp')
+  return inDesktopApp() ? { name: 'HomeDefault' } : true
+}
+
 export default {
   path: '/',
   name: 'Home',
@@ -58,6 +67,7 @@ export default {
         titleKey: 'publicSite.aboutCheese',
         publicLanding: true,
       },
+      beforeEnter: awayFromMarketingInApp,
       component: () => import('@/views/home/Landing.vue'),
     },
     {
@@ -69,6 +79,7 @@ export default {
         titleKey: 'publicSite.solutionsPage.title',
         publicLanding: true,
       },
+      beforeEnter: awayFromMarketingInApp,
       component: () => import('@/views/home/Solutions.vue'),
     },
     {
@@ -80,6 +91,7 @@ export default {
         titleKey: 'publicSite.downloadPage.title',
         publicLanding: true,
       },
+      beforeEnter: awayFromMarketingInApp,
       component: () => import('@/views/home/Download.vue'),
     },
     {
