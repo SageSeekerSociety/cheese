@@ -85,6 +85,11 @@
 
 **`submit` 不落时间线**。`_run` 的入参注释写着 *Human message already persisted by `receive_message`*（`runtime.py:2140-2141`），而 `post_user_message` 只在 `runtime.py:240` 的 `receive_message` 里调。走 `record_agent` 的投递，`begin_send` 登记的 `block_ids` 是**空列表**（`chat.py:4620`）——即它只喂 prompt，不产生可见的对话行。
 
+**回执匹配今天只有文本、没有投递身份**，两处要在 P1 里修（wangchangxin 2026-09-30 核过同一份代码）：
+
+- 命中条件只有 **topic + 文本相等/前缀**（`chat.py:1320-1331` 的 docstring：*the receipt matches on equality or on carrying our text as its prefix*）。两批相同题面/相同答案、两个席位在同一个 topic 里，就会把**第一条文本的回执记到另一笔 delivery 上**。
+- `pending.remove(entry)` 在 `mark_consumed` / `receive_attempt` / `commit` **之前**（`chat.py:1339-1340` 摘除，`:1343-1355` 才落库）。那三步抛异常时外层 `except` 只 `logger.exception`（`:1356-1359`），候选已经摘掉 —— **这份内存候选就丢了**，回执再迟到也没有对象可对。注释里 *a failed stamp just replays* 只对「摘除之前就失败」成立。
+
 **忙/闲**：`submit` 的 docstring 明写 *Turns on the same topic serialize on ChatService's per-topic lock (so a second submit queues behind the first)*（`runtime.py:816-817`）——**排队，不是丢弃**。`_consume_message` 再按 `(topic_id, recipient_handle)` 开一条 per-recipient 锁（`runtime.py:928-930`），并先 `await self._wait_to_start()`。同一席位的两条消息顺序化，不同席位互不阻塞。
 
 #### 2.4.2 三种故障窗口的证据（**不承诺「所有崩溃都恰好一次/永不不接续」**）
@@ -287,15 +292,22 @@ POST /topics/asks/{group_id}/settle
 - 因为 `_run` **不落时间线**（`runtime.py:2140-2141`：*Human message already persisted by `receive_message`*），`record_agent` 那条只喂 prompt、`block_ids` 为空（`chat.py:4620`）——这正是「一份文本 + 一条可关联投递」的分工：文本给人看，投递给席位，两者同一个 `event_id`。
 - 保留的 `broker.receive_message` 调用只剩真正的人类发消息入口（`chat.py:235`）。**作答链路上不再有第二条**（R33）。
 
-#### 4.6.2 `uncertain` 的对账与反馈（今天完全没有）
+#### 4.6.2 回执要认投递身份，`uncertain` 的可见不等于恢复
 
-按 2.4.2，`pending`/`claimed` 能补送，`sending` 失回执只到 `uncertain` 且**不自动重放**。所以契约只承诺：**意图不静默丢失**（生产者事务内落库），**不承诺所有崩溃都恰好一次**。要补三样，缺一不可：
+按 2.4.2，`pending`/`claimed` 能补送，`sending` 失回执只到 `uncertain` 且**不自动重放**。契约只承诺：**意图不静默丢失**（生产者事务内落库）。**不承诺所有崩溃都恰好一次**。
 
-1. **可查**：`uncertain` 行有查询入口（topic 维度的投递列表，带 `state`/`last_error`/`attempts`/`sent_at`），人和 agent 都能看见「有一条唤醒卡在 uncertain」。
-2. **可对账**：对账以**真实回执**为准 —— `receive_attempt` 认迟到回执（`agent.py:330`），所以对账动作是「问收方：你到底读到没有」，读到了就用真实回执结算成 `received`。**不读到就绝不重放**（模块原话：*never permission to inject the instruction a second time*）。
-3. **反馈路径**：`uncertain` 超过 `LEASE_SECONDS` 仍未解决 → 向出题席位/房间发一条人看得见的提示「这条唤醒没确认送达，需要你确认一下对方收到没有」，而不是悄悄标成成功。**未确认不许谎报已接续**（R37）。
+**先修两处，回执才配叫凭据**（最小改动，不另开通用投递重构）：
 
-对账是**人/agent 判定**，不是定时盲重放；`uncertain` 的语义就是「不知道」，把它说成「已送达」或「已丢失」都是编。
+1. **回执按 `delivery_id` 归属**，不再只按 topic + 文本相等/前缀。`_pending_receipts` 的候选里带上 `delivery_id`（`begin_send` 已经拿着它，`chat.py:4610`），命中时 `receive_attempt` 结算的是**这一笔** delivery。回答文本那条块的 `meta.delivery_event_id` 是同一个 key（4.6.1），所以「一份文本 ↔ 一条投递」两边都有落点。两批相同题面/相同答案、两个席位同 topic 不串账（R40）。
+2. **`pending.remove(entry)` 挪到 DB commit 成功之后**。摘除是「已结算」的记账，不是「开始尝试」。DB 那三步失败就留在候选里，下一条回执还能对上 —— 这才是可再对账的真实凭据。**收到 native receipt 但 commit 失败**：不许只留 logger，也不许把已读文本重新盲 inject（R41、R42）。
+
+**「列出 `uncertain` + 反馈」是可见边界，不是恢复实现。** 三者关系是这样：
+
+- **可查**：`uncertain` 行有查询入口（topic 维度的投递列表，带 `state`/`last_error`/`attempts`/`sent_at`）。这只解决「看不见」，不解决「没送到」。
+- **反馈**：超时未解决 → 向出题席位/房间发一条人看得见的提示「这条唤醒没确认送达，需要确认对方收到没有」。这也是提示，不是动作。
+- **恢复只有一条路**：真实迟到回执 → `receive_attempt` 认 `uncertain` → `received`（`agent.py:330`）。这条有代码证据。**没有被真实回执推进过的状态，一律如实标「未确认」**，不许说已接续，也不许说已丢失（R37）。把 uncertain 说成「已送达」或「丢了」都是编。
+
+安全 reconcile / 迟到回执的推进必须用**原 runner/hook 的真实数据**证明（真轮次里拿到 receipt 后 `receive_attempt` 落成 `received`）；证明之前它就是未确认。对账是**人/agent 判定 + 真回执**，不是定时盲重放 —— 模块原话：*never permission to inject the instruction a second time*。
 
 ### 4.7 原子切换（P1 不做「只后端先上」）
 
@@ -417,9 +429,13 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 | R34 | 窗口 A：`pending` 未认领时进程死了 | 行仍 `pending`/`sent_at` NULL，`dispatch_pending` 补送；同 `dedup_key` 重投不重复记账 |
 | R35 | 窗口 B：`begin_send` 之后、回执之前进程死了 | 行变 `uncertain`，**不自动再注入**；`last_error` 是「Receiver result was not confirmed」 |
 | R36 | 窗口 C：迟到的真实回执 | `receive_attempt` 认 `uncertain` → `received`，并补 `TimedDelivery.delivered_at` |
-| R37 | 有 `uncertain` 行时 | 查询入口能看到它；对账**只认真实回执**；超时未解决向人反馈；**未确认不许说已接续** |
+| R37 | 有 `uncertain` 行时 | 查询入口能看到它、超时向人反馈 —— 但**可见 ≠ 恢复**；恢复只认真实迟到回执（`receive_attempt`）；**未确认不许说已接续、也不许说已丢失** |
 | R38 | settle 同 `client_op_id` 同 `payload_hash` 重发 | 200 返回原结果，`group_settle` 与 `Delivery` 都不新增 |
 | R39 | 两个 settle 并发（同 `group_id` 不同 `client_op_id`） | 按 `members` id 升序加锁，只出一版；落败那个 409 |
+| R40 | 两批相同题面/相同答案、两个席位同 topic | 回执按 `delivery_id` 归属，第一条文本的回执**不**记到另一笔 delivery 上 |
+| R41 | 回执命中但 DB `mark_consumed`/`receive_attempt`/`commit` 失败 | `pending.remove` 在 commit **之后**，候选还在、可再对账；**不只留 logger** |
+| R42 | native receipt 到了、commit 失败 | **不**把已读文本重新盲 inject；凭据仍在，下一条真实回执能把它推成 `received` |
+| R43 | 状态没被真实回执推进过 | 如实标「未确认」；不许用「已列出 + 已反馈」当作恢复完成 |
 
 ---
 
