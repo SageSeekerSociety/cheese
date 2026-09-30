@@ -628,6 +628,18 @@ async def _restart_executor(db, row, lease):
     )
 
 
+async def lock_room(db, topic_id):
+    """Lock the room, then its machine slot — the order every path taking both
+    keeps. A room change that took the slot first and then waited for the room
+    deadlocked with an agent getting its machine, which holds the room and waits
+    for the slot; Postgres killed one of the two and it answered 500."""
+    from app.domain.machine.repositories import ProjectMachineRepository
+
+    topic = await TopicService(db).lock_for_execution(topic_id)
+    await ProjectMachineRepository(db).lock_topic(topic_id)
+    return topic
+
+
 async def request_choice(
     db,
     *,

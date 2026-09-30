@@ -167,6 +167,52 @@ def test_select_persists_only_to_topic(client, monkeypatch):
     assert pbody["default"]["profile"] == "device"
 
 
+def test_changing_the_room_while_an_agent_is_getting_its_machine_does_not_deadlock(
+    client, monkeypatch
+):
+    """An agent asking for its machine locks the room, then the room's machine
+    slot. A person changing the room at that moment must wait behind it, not
+    take the slot first and then wait for the room: that pair of waits is a
+    deadlock, and one of the two requests failed with a 500 on dev."""
+    import threading
+
+    from app.domain.machine.repositories import ProjectMachineRepository
+    from app.domain.topic.services import TopicService
+
+    pid = _project(client)
+    tid = _topic(client, pid)
+    monkeypatch.setattr("app.api.routes.topics_compute.project_device_online", _online)
+    room_held = threading.Event()
+    change_sent = threading.Event()
+    agent_failure: list[BaseException] = []
+
+    async def agent_getting_its_machine() -> None:
+        async with client.test_factory() as session:
+            await TopicService(session).lock_for_execution(uuid.UUID(tid))
+            room_held.set()
+            await asyncio.to_thread(change_sent.wait, 10)
+            # Long enough for the change to reach whichever lock it waits on.
+            await asyncio.sleep(1.5)
+            await ProjectMachineRepository(session).lock_topic(uuid.UUID(tid))
+            await session.commit()
+
+    def run_agent() -> None:
+        try:
+            asyncio.run(agent_getting_its_machine())
+        except BaseException as exc:  # noqa: BLE001 - reported to the test body
+            agent_failure.append(exc)
+
+    agent = threading.Thread(target=run_agent)
+    agent.start()
+    assert room_held.wait(10)
+    change_sent.set()
+    response = client.put(f"/topics/{tid}/compute-profile", json={"profile": "device"})
+    agent.join(20)
+
+    assert agent_failure == []
+    assert response.status_code == 200, response.text
+
+
 def test_named_device_resolves_instead_of_first_healthy_device(client, monkeypatch):
     pid = _project(client)
     tid = _topic(client, pid)

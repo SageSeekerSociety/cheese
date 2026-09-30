@@ -22,11 +22,7 @@ topics.py merely imports, and it is imported from topics.py rather than from
 `tests/unit/test_domain_import_guard.py` ratchets (route module, repository
 module) pairs, and a direct import would add a line to that ratchet. topics.py
 still reads `ProjectRepository` in three handlers of its own, so its line stays
-matched. `ProjectMachineRepository`, read once inside
-`set_topic_compute_profile`, is the one edge that really does leave topics.py:
-the guard's entry for it is relocated from `app.api.routes.topics` to
-`app.api.routes.topics_compute` -- the same debt under a new owner, so that
-ratchet gains no line and keeps its size. `.importlinter` is untouched: nothing
+matched. `.importlinter` is untouched: nothing
 here imports an `app.domain.*.models` module, so the C2 baseline does not move
 either.
 
@@ -249,7 +245,7 @@ async def set_topic_compute_profile(
         standard_choice,
         validate_choice,
     )
-    from app.domain.machine.repositories import ProjectMachineRepository
+    from app.domain.machine import session_work as work_lease
 
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
@@ -258,7 +254,7 @@ async def set_topic_compute_profile(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    await ProjectMachineRepository(db).lock_topic(topic_id)
+    await work_lease.lock_room(db, topic_id)
     # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
     # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
@@ -367,8 +363,6 @@ async def set_topic_compute_profile(
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
     # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
-    from app.domain.machine import session_work as work_lease
-
     moved = await work_lease.request_choice(
         db,
         topic_id=topic_id,
