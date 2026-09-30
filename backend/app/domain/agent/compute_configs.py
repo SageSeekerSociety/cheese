@@ -14,6 +14,7 @@ from app.domain.agent.market import (
     compute_default_name,
 )
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine.supply import PLATFORM_BOUNDS, check_choice
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
 
@@ -24,9 +25,19 @@ class ComputeChoice(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     profile: Literal["cloud", "device"]
     device_id: str | None = None
-    cores: int | None = Field(default=None, ge=1, le=256)
-    memory_mb: int | None = Field(default=None, ge=512, le=1048576)
-    disk_gb: int | None = Field(default=None, ge=1, le=16384)
+    cores: int | None = Field(
+        default=None, ge=PLATFORM_BOUNDS["cores"][0], le=PLATFORM_BOUNDS["cores"][1]
+    )
+    memory_mb: int | None = Field(
+        default=None,
+        ge=PLATFORM_BOUNDS["memory_mb"][0],
+        le=PLATFORM_BOUNDS["memory_mb"][1],
+    )
+    disk_gb: int | None = Field(
+        default=None,
+        ge=PLATFORM_BOUNDS["disk_gb"][0],
+        le=PLATFORM_BOUNDS["disk_gb"][1],
+    )
 
     @model_validator(mode="after")
     def resource_kind(self):
@@ -84,6 +95,13 @@ async def validate_choice(session: AsyncSession, project_id, choice: ComputeChoi
     if choice.profile == "cloud":
         if not cloud_provisionable(settings):
             raise ValidationError("云端尚未接入，暂不可用")
+        await check_choice(
+            {
+                "cores": choice.cores,
+                "memory_mb": choice.memory_mb,
+                "disk_gb": choice.disk_gb,
+            }
+        )
         return
     devices = await sql_device_service(session).list_devices_for_project(project_id)
     if choice.device_id:
