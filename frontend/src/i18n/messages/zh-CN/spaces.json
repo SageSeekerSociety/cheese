@@ -47,7 +47,6 @@
     "publishedAt": "发布于 {time}",
     "updateSuccess": "更新成功",
     "updateFailed": "更新失败",
-    "dangerZone": "危险操作",
     "deleteSpace": "删除空间",
     "deleteSpaceHint": "删除后这个空间会从所有人的列表里消失，且无法恢复。只有空间所有者能删除它。",
     "confirmDeleteSpace": "确定要删除空间「{name}」吗？删除后它对所有人消失，且无法恢复。",
@@ -79,8 +78,13 @@
     "manageTemplates": {
       "back": "返回",
       "createTemplate": "创建模板",
-      "noTemplates": "暂无任务模板",
-      "deleteConfirm": "确定要删除这个模板吗？"
+      "noTemplates": "暂无题目模板",
+      "deleteConfirm": "确定要删除这个模板吗？",
+      "edit": "编辑模板",
+      "delete": "删除模板",
+      "defaultDeadline": "领取后 {n} 天",
+      "realName": "需要实名",
+      "noRealName": "不需要实名"
     },
     "manageTopics": {
       "addTopics": "添加话题",
@@ -88,7 +92,8 @@
       "add": "添加",
       "cancel": "取消",
       "addSuccess": "添加话题成功",
-      "addFailed": "添加话题失败"
+      "addFailed": "添加话题失败",
+      "delete": "移除话题"
     },
     "manageCategories": {
       "noCategories": "暂无分类",
@@ -233,7 +238,46 @@
     "copy": "复制",
     "createdTitle": "这是你的邀请码",
     "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。",
-    "openSpace": "进入空间"
+    "openSpace": "进入空间",
+    "create": "新建",
+    "current": "当前使用中的码",
+    "noneUsable": "暂无可用的码",
+    "newTitle": "新建一个码",
+    "maxUses": "可用人数",
+    "expiresOn": "有效期至（不填 = 永不过期）",
+    "expiresOnEdit": "有效期至（留空 = 永不过期）",
+    "note": "说明（这张码给谁 / 干什么用，可不填）",
+    "noteEdit": "说明（留空 = 清掉）",
+    "cancel": "取消",
+    "generate": "生成",
+    "save": "保存",
+    "edit": "调整",
+    "revoke": "撤销",
+    "confirmRevoke": "确认撤销",
+    "status": {
+      "usable": "可用",
+      "expired": "已过期",
+      "exhausted": "已用尽"
+    },
+    "usage": "{used} / {max} 人已用",
+    "usageUnlimited": "{used} / 不限 人已用",
+    "expiresAt": "有效期至 {date}",
+    "neverExpires": "永不过期",
+    "maker": "建码人",
+    "unknownMaker": "未知",
+    "noNote": "没写说明",
+    "empty": "暂无邀请码",
+    "toast": {
+      "loadFailed": "邀请码读不出来",
+      "maxUsesInvalid": "可用人数要是正整数",
+      "maxUsesBelowUsed": "可用人数不能少于已经用掉的 {n} 人",
+      "updated": "已更新",
+      "updateFailed": "更新失败",
+      "revoked": "已撤销，这个码从此加入不了",
+      "revokeFailed": "撤销失败",
+      "created": "已生成",
+      "createFailed": "生成失败"
+    }
   },
   "index": {
     "searchPlaceholder": "搜索空间",
@@ -298,7 +342,10 @@
       "visibleLimitLimited": "限制数量",
       "visibleLimitInput": "数量上限",
       "visibleLimitRequired": "填写数量上限",
-      "visibleLimitInvalid": "数量上限需为大于等于 0 的整数"
+      "visibleLimitInvalid": "数量上限需为大于等于 0 的整数",
+      "avatar": "头像",
+      "changeAvatar": "更换头像",
+      "visibleLimitLabel": "题目可见上限"
     }
   },
   "announcements": {

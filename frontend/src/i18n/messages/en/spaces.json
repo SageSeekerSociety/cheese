@@ -40,7 +40,6 @@
     "allContests": "All problems",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
-    "dangerZone": "Danger zone",
     "deleteSpace": "Delete space",
     "deleteSpaceHint": "Deleting removes this space from everyone's lists for good. Only its owner can delete it.",
     "confirmDeleteSpace": "Delete the space \"{name}\"? It disappears for everyone and can't be undone.",
@@ -71,8 +70,13 @@
     },
     "manageTemplates": {
       "createTemplate": "Create template",
-      "noTemplates": "No problem templates yet",
-      "deleteConfirm": "Delete this template?"
+      "noTemplates": "No templates",
+      "deleteConfirm": "Delete this template?",
+      "edit": "Edit template",
+      "delete": "Delete template",
+      "defaultDeadline": "{n} days after claiming",
+      "realName": "Real name required",
+      "noRealName": "No real name needed"
     },
     "manageTopics": {
       "addTopics": "Add topics",
@@ -80,7 +84,8 @@
       "add": "Add",
       "cancel": "Cancel",
       "addSuccess": "Topic added",
-      "addFailed": "Couldn't add topic"
+      "addFailed": "Couldn't add topic",
+      "delete": "Remove topic"
     },
     "manageCategories": {
       "noCategories": "No categories yet",
@@ -176,13 +181,53 @@
     "domainPlaceholder": "e.g. example.com",
     "confirmDelete": "Delete the domain group {name}?",
     "nameRequired": "Domain group name is required",
-    "invalidDomain": "Enter a valid domain"
+    "invalidDomain": "Enter a valid domain",
+    "deleteGroup": "Delete domain group"
   },
   "inviteCodes": {
     "copy": "Copy",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this space.",
-    "openSpace": "Open space"
+    "openSpace": "Open space",
+    "create": "New",
+    "current": "Code in use",
+    "noneUsable": "No usable code",
+    "newTitle": "New code",
+    "maxUses": "Uses allowed",
+    "expiresOn": "Valid until (blank = never expires)",
+    "expiresOnEdit": "Valid until (blank = never expires)",
+    "note": "Note (who it's for, optional)",
+    "noteEdit": "Note (blank clears it)",
+    "cancel": "Cancel",
+    "generate": "Generate",
+    "save": "Save",
+    "edit": "Adjust",
+    "revoke": "Revoke",
+    "confirmRevoke": "Confirm revoke",
+    "status": {
+      "usable": "Usable",
+      "expired": "Expired",
+      "exhausted": "Used up"
+    },
+    "usage": "{used} / {max} used",
+    "usageUnlimited": "{used} / unlimited used",
+    "expiresAt": "Valid until {date}",
+    "neverExpires": "Never expires",
+    "maker": "Created by",
+    "unknownMaker": "Unknown",
+    "noNote": "No note",
+    "empty": "No invite codes",
+    "toast": {
+      "loadFailed": "Couldn't load invite codes",
+      "maxUsesInvalid": "Uses allowed must be a positive whole number",
+      "maxUsesBelowUsed": "Uses allowed can't be below the {n} already used",
+      "updated": "Updated",
+      "updateFailed": "Couldn't update",
+      "revoked": "Revoked. This code no longer lets anyone join",
+      "revokeFailed": "Couldn't revoke",
+      "created": "Generated",
+      "createFailed": "Couldn't generate"
+    }
   },
   "index": {
     "sortOptions": {
@@ -245,7 +290,10 @@
       "visibleLimitLimited": "Limited",
       "visibleLimitInput": "Limit",
       "visibleLimitRequired": "Enter a limit",
-      "visibleLimitInvalid": "The limit must be a whole number of 0 or more"
+      "visibleLimitInvalid": "The limit must be a whole number of 0 or more",
+      "avatar": "Avatar",
+      "changeAvatar": "Change avatar",
+      "visibleLimitLabel": "Visible problem limit"
     }
   },
   "announcements": {

@@ -1,15 +1,15 @@
 <template>
   <SettingsToolbar>
-    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.domainGroups.createGroup') }}
     </v-btn>
   </SettingsToolbar>
-  <v-sheet flat rounded="lg">
+  <div class="settings-card">
     <div v-if="loading" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
     </div>
 
-    <v-list v-else-if="domainGroups.length > 0" rounded="lg">
+    <v-list v-else-if="domainGroups.length > 0" class="settings-list" bg-color="transparent">
       <v-list-item
         v-for="group in domainGroups"
         :key="group.id"
@@ -17,20 +17,28 @@
         :subtitle="group.description || undefined"
       >
         <template #prepend>
-          <v-avatar color="primary-lighten-5" size="42" class="me-3">
-            <v-icon color="primary">mdi-web</v-icon>
-          </v-avatar>
+          <v-icon size="18" class="c-faint">mdi-web</v-icon>
         </template>
         <template #append>
-          <v-btn icon="mdi-pencil" variant="text" @click="openEditDialog(group)"></v-btn>
-          <v-btn icon="mdi-delete" variant="text" color="error" @click="deleteGroup(group)"></v-btn>
+          <v-btn
+            icon="mdi-pencil-outline"
+            variant="text"
+            size="small"
+            :aria-label="t('spaces.domainGroups.editGroup')"
+            @click="openEditDialog(group)"
+          ></v-btn>
+          <v-btn
+            icon="mdi-delete-outline"
+            variant="text"
+            size="small"
+            :aria-label="t('spaces.domainGroups.deleteGroup')"
+            @click="deleteGroup(group)"
+          ></v-btn>
         </template>
       </v-list-item>
     </v-list>
 
-    <v-sheet v-else class="pa-4 text-center">
-      <p class="text-medium-emphasis">{{ t('spaces.domainGroups.noGroups') }}</p>
-    </v-sheet>
+    <p v-else class="settings-empty">{{ t('spaces.domainGroups.noGroups') }}</p>
 
     <!-- 创建/编辑对话框 -->
     <v-dialog v-model="dialogOpen" max-width="520">
@@ -95,7 +103,7 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-sheet>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -251,11 +259,4 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
-.v-list-item {
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.1);
-}
-.v-list-item:last-child {
-  border-bottom: none;
-}
-</style>
+<style scoped src="@/styles/settings-card.css"></style>

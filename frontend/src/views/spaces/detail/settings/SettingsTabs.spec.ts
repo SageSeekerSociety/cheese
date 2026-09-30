@@ -41,7 +41,7 @@ async function mountAt(name: string) {
 
 const current = () =>
   screen
-    .getAllByRole('tab')
+    .getAllByRole('link')
     .filter((tab) => tab.getAttribute('aria-current') === 'page')
     .map((tab) => tab.textContent?.trim())
 

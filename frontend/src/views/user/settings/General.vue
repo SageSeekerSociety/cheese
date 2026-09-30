@@ -61,4 +61,4 @@ async function change(on: boolean | null) {
 }
 </script>
 
-<style scoped src="./settings-card.css"></style>
+<style scoped src="@/styles/settings-card.css"></style>

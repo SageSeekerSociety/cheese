@@ -95,6 +95,29 @@
   color: var(--text);
 }
 
+/* A card that holds a list (categories, templates, invite codes): one row per
+   item, separated by --line, with the item's actions at the end. */
+.settings-list {
+  padding: 0;
+}
+
+.settings-list .v-list-item + .v-list-item {
+  border-top: 1px solid var(--line);
+}
+
+.settings-list .v-list-item {
+  min-height: 52px;
+  padding-inline: 16px 8px;
+}
+
+.settings-empty {
+  padding: 16px 24px;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
 @media (max-width: 599.98px) {
   .settings-page {
     padding: 16px 16px 32px;

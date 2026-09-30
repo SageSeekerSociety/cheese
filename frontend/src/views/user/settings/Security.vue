@@ -699,7 +699,7 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped src="./settings-card.css"></style>
+<style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
 /* A passkey sits under the passkey row, as its detail; the columns stay put. */

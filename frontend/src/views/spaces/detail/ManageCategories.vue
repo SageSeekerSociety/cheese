@@ -1,15 +1,15 @@
 <template>
   <SettingsToolbar :title="t('spaces.settings.sections.categories')">
-    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.detail.manageCategories.addCategory') }}
     </v-btn>
   </SettingsToolbar>
-  <v-sheet flat rounded="lg">
+  <div class="settings-card">
     <div v-if="loadingCategories" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
     </div>
 
-    <v-list v-else-if="categories.length > 0" rounded="lg">
+    <v-list v-else-if="categories.length > 0" class="settings-list" bg-color="transparent">
       <v-list-item
         v-for="category in categories"
         :key="category.id"
@@ -20,9 +20,9 @@
         :subtitle="category.description || undefined"
       >
         <template #prepend>
-          <v-avatar color="primary-lighten-5" size="42" class="me-3">
-            <v-icon color="primary">{{ category.archivedAt ? 'mdi-archive' : 'mdi-shape' }}</v-icon>
-          </v-avatar>
+          <v-icon size="18" class="c-faint">{{
+            category.archivedAt ? 'mdi-archive-outline' : 'mdi-shape-outline'
+          }}</v-icon>
         </template>
         <template #append>
           <v-tooltip v-if="!category.archivedAt && currentSpace?.defaultCategoryId !== category.id" location="top">
@@ -31,18 +31,25 @@
                 v-bind="props"
                 icon="mdi-star-outline"
                 variant="text"
-                color="warning"
+                size="small"
                 @click="setAsDefault(category.id)"
               ></v-btn>
             </template>
             {{ t('spaces.detail.manageCategories.setAsDefault') }}
           </v-tooltip>
 
-          <v-btn v-if="!category.archivedAt" icon="mdi-pencil" variant="text" @click="openEditDialog(category)"></v-btn>
+          <v-btn
+            v-if="!category.archivedAt"
+            icon="mdi-pencil-outline"
+            variant="text"
+            size="small"
+            :aria-label="t('spaces.detail.manageCategories.updateCategory')"
+            @click="openEditDialog(category)"
+          ></v-btn>
 
           <v-menu location="bottom end">
             <template #activator="{ props }">
-              <v-btn icon="mdi-dots-vertical" variant="text" v-bind="props"></v-btn>
+              <v-btn icon="mdi-dots-horizontal" variant="text" size="small" v-bind="props"></v-btn>
             </template>
             <v-list density="compact">
               <v-list-item v-if="!category.archivedAt" @click="teachingCategory = category">
@@ -54,21 +61,21 @@
 
               <v-list-item v-if="category.archivedAt" @click="unarchiveCategory(category.id)">
                 <template #prepend>
-                  <v-icon color="success">mdi-archive-arrow-up</v-icon>
+                  <v-icon>mdi-archive-arrow-up-outline</v-icon>
                 </template>
                 <v-list-item-title>{{ t('spaces.detail.manageCategories.unarchiveCategory') }}</v-list-item-title>
               </v-list-item>
 
               <v-list-item v-else @click="archiveCategory(category.id)">
                 <template #prepend>
-                  <v-icon color="warning">mdi-archive-arrow-down</v-icon>
+                  <v-icon>mdi-archive-arrow-down-outline</v-icon>
                 </template>
                 <v-list-item-title>{{ t('spaces.detail.manageCategories.archiveCategory') }}</v-list-item-title>
               </v-list-item>
 
               <v-list-item @click="deleteCategory(category.id)">
                 <template #prepend>
-                  <v-icon color="error">mdi-delete</v-icon>
+                  <v-icon color="error">mdi-delete-outline</v-icon>
                 </template>
                 <v-list-item-title>{{ t('spaces.detail.manageCategories.deleteCategory') }}</v-list-item-title>
               </v-list-item>
@@ -78,9 +85,7 @@
       </v-list-item>
     </v-list>
 
-    <v-sheet v-else class="pa-4 text-center">
-      <p class="text-medium-emphasis">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
-    </v-sheet>
+    <p v-else class="settings-empty">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
 
     <CategoryTeachingDialog :category="teachingCategory" @close="teachingCategory = null" />
 
@@ -132,7 +137,7 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-sheet>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -280,11 +285,4 @@ const setAsDefault = async (categoryId: number) => {
 }
 </script>
 
-<style scoped>
-.v-list-item {
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.1);
-}
-.v-list-item:last-child {
-  border-bottom: none;
-}
-</style>
+<style scoped src="@/styles/settings-card.css"></style>
