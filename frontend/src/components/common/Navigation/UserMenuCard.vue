@@ -40,7 +40,11 @@
       <v-list-item :to="{ name: 'my-archived-projects' }">
         <v-list-item-title>{{ t('navigation.userMenu.archivedProjects') }}</v-list-item-title>
       </v-list-item>
-      <v-list-item :to="{ name: 'Download' }">
+      <!-- 桌面 app 里已经装好了，下载页剩下有意义的只有手机那一块：一个扫码的对话框。 -->
+      <v-list-item v-if="inApp" @click="phoneOpen = true">
+        <v-list-item-title>{{ t('navigation.userMenu.usePhone') }}</v-list-item-title>
+      </v-list-item>
+      <v-list-item v-else :to="{ name: 'Download' }">
         <v-list-item-title>{{ t('navigation.userMenu.download') }}</v-list-item-title>
       </v-list-item>
     </v-list>
@@ -65,11 +69,17 @@
 <script setup lang="ts">
 import type { useUserMenu } from '@/composables/useUserMenu'
 
+import { useDesktopApp } from '@/composables/useDesktopApp'
+
 import LanguagePreference from '@/components/common/LanguagePreference.vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { t } from '@/i18n'
+import { inDesktopApp } from '@/lib/desktopApp'
 
 defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
+
+const inApp = inDesktopApp()
+const { phoneOpen } = useDesktopApp()
 </script>
 
 <style scoped>

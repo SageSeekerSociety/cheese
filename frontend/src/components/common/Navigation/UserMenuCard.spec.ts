@@ -8,7 +8,9 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import UserMenuCard from './UserMenuCard.vue'
 
@@ -84,5 +86,25 @@ describe('「我」的菜单', () => {
     const view = await mount()
     expect(view.getByText('爱丽丝')).toBeTruthy()
     expect(view.getByText('UID 42')).toBeTruthy()
+  })
+})
+
+// 桌面 app 已经装在这台电脑上了：菜单里不再劝人下载，只留下还有意义的手机那一块。
+describe('「我」的菜单，在桌面 app 里', () => {
+  beforeEach(() => {
+    setLocale('zh-CN')
+    ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+  })
+  afterEach(() => {
+    delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
+  })
+
+  it('不给下载，给「在手机上使用」的扫码框', async () => {
+    const view = await mount()
+    expect(view.queryByText('下载客户端')).toBeNull()
+    const { phoneOpen } = useDesktopApp()
+    expect(phoneOpen.value).toBe(false)
+    await fireEvent.click(view.getByText('在手机上使用'))
+    expect(phoneOpen.value).toBe(true)
   })
 })

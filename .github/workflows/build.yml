@@ -462,6 +462,10 @@ jobs:
           file: ./frontend/Dockerfile
           target: prod
           push: true
+          # The commit the web build is made from, shown in the desktop app's
+          # 关于 dialog next to the app's own version.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,version=2,scope=frontend

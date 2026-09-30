@@ -51,7 +51,8 @@
       "dark": "Dark"
     },
     "archivedProjects": "Archived projects",
-    "download": "Download apps"
+    "download": "Download apps",
+    "usePhone": "Use on your phone"
   },
   "shell": {
     "close": "Close",
@@ -112,5 +113,28 @@
   },
   "sidebar": {
     "resize": "Drag to resize"
+  },
+  "desktopApp": {
+    "about": "About Cheese",
+    "appVersion": "App version",
+    "webVersion": "Web version",
+    "earlierVersion": "An earlier version",
+    "devBuild": "Development build",
+    "check": "Check for updates",
+    "checking": "Checking for updates…",
+    "downloading": "Downloading version {version}…",
+    "latest": "You're up to date",
+    "failed": "Couldn't check for updates. Try again later.",
+    "ready": "Version {version} is ready",
+    "readyHint": "Or close the window and it installs in the background",
+    "restart": "Restart to update",
+    "busyConnecting": "This computer is still connecting. Restart once it's done.",
+    "restartFailed": "Couldn't finish the update. Try again later.",
+    "updatesItself": "New versions install on their own while the window is closed",
+    "changelog": "What's new",
+    "website": "Visit the website",
+    "close": "Close",
+    "phoneTitle": "Use on your phone",
+    "phoneScan": "Scan with your phone, then add it to your Home Screen"
   }
 }
