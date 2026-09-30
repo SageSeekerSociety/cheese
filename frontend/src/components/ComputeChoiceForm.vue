@@ -3,6 +3,8 @@ import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
 
 import { computed, ref } from 'vue'
 
+import { t } from '../i18n'
+
 const props = defineProps<{ devices: TopicComputeDevice[]; cloudAvailable: boolean; busy?: boolean }>()
 const emit = defineEmits<{ select: [choice: ComputeChoice] }>()
 const target = ref(props.cloudAvailable ? 'cloud' : props.devices[0]?.device_id ?? '')
@@ -11,8 +13,11 @@ const cores = ref(4)
 const memory = ref(8)
 const disk = ref(64)
 const options = computed(() => [
-  ...(props.cloudAvailable ? [{ title: '云端', value: 'cloud' }] : []),
-  ...props.devices.map((d) => ({ title: `${d.name} · ${d.online ? '在线' : '离线'}`, value: d.device_id })),
+  ...(props.cloudAvailable ? [{ title: t('work.computeChoice.cloud'), value: 'cloud' }] : []),
+  ...props.devices.map((d) => ({
+    title: t(d.online ? 'work.computeChoice.deviceOnline' : 'work.computeChoice.deviceOffline', { name: d.name }),
+    value: d.device_id,
+  })),
 ])
 const valid = computed(
   () =>
@@ -22,6 +27,9 @@ const valid = computed(
 function submit() {
   if (!valid.value) return
   const cloud = target.value === 'cloud'
+  // `name` is not UI copy: the backend stores it on the project or topic and shows it to
+  // every member in every language, and its own defaults are the same Chinese labels.
+  // Translating it here would save whichever language the chooser happened to use.
   emit('select', {
     name: cloud
       ? custom.value
@@ -43,18 +51,18 @@ function submit() {
       v-model="target"
       autocomplete="off"
       :items="options"
-      label="工作电脑"
+      :label="t('work.computeChoice.computer')"
       density="compact"
       variant="outlined"
       hide-details
     />
-    <p v-if="!options.length" class="text-body-2 my-3">暂无可用的工作电脑</p>
+    <p v-if="!options.length" class="text-body-2 my-3">{{ t('work.computeChoice.none') }}</p>
     <template v-if="target === 'cloud'">
-      <v-checkbox v-model="custom" label="自定义 CPU、内存和磁盘" density="compact" hide-details />
+      <v-checkbox v-model="custom" :label="t('work.computeChoice.custom')" density="compact" hide-details />
       <div v-if="custom" class="d-flex ga-2 my-2">
         <v-text-field
           v-model.number="cores"
-          label="CPU 核"
+          :label="t('work.computeChoice.cores')"
           type="number"
           min="1"
           density="compact"
@@ -63,7 +71,7 @@ function submit() {
         />
         <v-text-field
           v-model.number="memory"
-          label="内存 GB"
+          :label="t('work.computeChoice.memory')"
           type="number"
           min="0.5"
           step="0.5"
@@ -73,7 +81,7 @@ function submit() {
         />
         <v-text-field
           v-model.number="disk"
-          label="磁盘 GB"
+          :label="t('work.computeChoice.disk')"
           type="number"
           min="1"
           density="compact"
@@ -81,13 +89,13 @@ function submit() {
           hide-details
         />
       </div>
-      <p class="text-body-2 text-medium-emphasis my-3">首次运行时分配，计入团队云额度；超出供应范围时会提示调整</p>
+      <p class="text-body-2 text-medium-emphasis my-3">{{ t('work.computeChoice.cloudHint') }}</p>
     </template>
     <p v-else-if="target" class="text-body-2 text-medium-emphasis my-3">
-      设备已加入团队，无需再次授权；离线时需要等待设备上线
+      {{ t('work.computeChoice.deviceHint') }}
     </p>
-    <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit"
-      >使用此配置</v-btn
-    >
+    <v-btn class="mt-3" color="primary" variant="tonal" :disabled="!valid || busy" :loading="busy" @click="submit">{{
+      t('work.computeChoice.submit')
+    }}</v-btn>
   </div>
 </template>

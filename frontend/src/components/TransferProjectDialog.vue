@@ -28,6 +28,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { listProjectMembers, lookupUser, setProjectOwner } from '@/api'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -85,7 +86,7 @@ async function runLookup(raw: string) {
     found.value = user
   } catch (e) {
     if (seq !== lookupSeq) return
-    lookupError.value = e instanceof Error ? e.message : '没有找到这个账号'
+    lookupError.value = e instanceof Error ? e.message : t('work.projectTransfer.lookupFailed')
   } finally {
     if (seq === lookupSeq) lookingUp.value = false
   }
@@ -119,7 +120,7 @@ async function load() {
     const payload = await listProjectMembers(pid)
     if (props.projectId === pid && open.value) rows.value = payload.data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载成员失败'
+    error.value = e instanceof Error ? e.message : t('work.projectTransfer.loadFailed')
   }
 }
 
@@ -178,7 +179,7 @@ async function doTransfer() {
   try {
     await setProjectOwner(props.projectId, handle)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '转让失败'
+    error.value = e instanceof Error ? e.message : t('work.projectTransfer.failed')
     transferring.value = false
     confirming.value = false
     return
@@ -197,19 +198,19 @@ async function doTransfer() {
        换成「确认转让」，取消换成「返回」（返回、Esc、点遮罩都只退回上一步）。 -->
   <AdaptiveDialog
     :model-value="open"
-    title="转让项目"
-    :primary-label="confirming ? '确认转让' : '转让'"
+    :title="t('work.projectTransfer.title')"
+    :primary-label="confirming ? t('work.projectTransfer.confirm') : t('work.projectTransfer.submit')"
     :primary-loading="transferring"
     :primary-disabled="!confirming && !picked"
     :primary-danger="confirming"
-    :cancel-label="confirming ? '返回' : '取消'"
+    :cancel-label="confirming ? t('work.projectTransfer.back') : t('work.projectTransfer.cancel')"
     :max-width="480"
     @update:model-value="onDismiss"
     @primary="confirming ? doTransfer() : submit()"
   >
     <div class="t-body c-muted">
-      项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出
-      <div v-if="candidates.length === 0" class="t-meta mt-3">暂无可以接手的成员</div>
+      {{ t('work.projectTransfer.intro') }}
+      <div v-if="candidates.length === 0" class="t-meta mt-3">{{ t('work.projectTransfer.noCandidates') }}</div>
       <v-list v-else density="compact" nav class="mt-2 transfer-list">
         <v-list-item
           v-for="m in candidates"
@@ -226,7 +227,7 @@ async function doTransfer() {
         </v-list-item>
       </v-list>
 
-      <div class="t-meta mt-4">团队里没人可交？直接找一个人：</div>
+      <div class="t-meta mt-4">{{ t('work.projectTransfer.lookupIntro') }}</div>
       <v-text-field
         v-model="query"
         autocomplete="off"
@@ -235,7 +236,7 @@ async function doTransfer() {
         hide-details
         clearable
         class="mt-2"
-        label="用户名或邮箱（要写完整）"
+        :label="t('work.projectTransfer.lookupLabel')"
         :loading="lookingUp"
       />
       <v-alert v-if="lookupError" type="warning" density="comfortable" class="mt-2">
@@ -254,8 +255,7 @@ async function doTransfer() {
       <!-- 不在团队里 = 项目跟着 TA 走。这句话必须在按下按钮之前就说清楚，不能让人
          以为只是换个人挂名字。 -->
       <v-alert v-if="movingOut" type="warning" density="comfortable" class="mt-4">
-        @{{ picked?.handle }} 不在这个项目的团队里：转让会把项目整个搬到 TA 名下。转完你就不再是项目成员，
-        也看不到它的任何话题。（项目属于某个共享团队时只能转给团队里的人，后端会拒。）
+        {{ t('work.projectTransfer.movingOut', { handle: picked?.handle ?? '' }) }}
       </v-alert>
 
       <v-alert v-if="error" type="error" density="comfortable" class="mt-4">

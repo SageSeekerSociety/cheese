@@ -41,6 +41,8 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 
 import TransferProjectDialog from './TransferProjectDialog.vue'
 
+import { setLocale } from '@/i18n'
+
 const Dialog = TransferProjectDialog as unknown as Component
 
 let vuetify: ReturnType<typeof createVuetify>
@@ -72,6 +74,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  setLocale('zh-CN')
   setProjectOwner.mockReset().mockResolvedValue({})
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)

@@ -105,7 +105,9 @@ const bpBusy = computed(() => props.saving !== null)
           </div>
           <div v-for="(c, i) in bp.required_checks" :key="`${c.name}-${i}`" class="bp-check">
             <span class="bp-check-name">{{ c.name }}</span>
-            <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{ c.paths.join('、') }}</span>
+            <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{
+              c.paths.join(t('work.projectSettings.merge.pathSeparator'))
+            }}</span>
             <span v-else class="bp-check-paths c-faint">{{ t('work.projectSettings.merge.allFiles') }}</span>
             <v-spacer />
             <v-btn

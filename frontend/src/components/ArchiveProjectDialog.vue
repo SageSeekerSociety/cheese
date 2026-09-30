@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 
 import { archiveProject } from '@/api'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string; projectName: string }>()
@@ -37,7 +38,7 @@ async function submit() {
   try {
     await archiveProject(props.projectId)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '归档失败'
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.archive.dialog.failed')
     archiving.value = false
     return
   }
@@ -52,8 +53,8 @@ async function submit() {
 <template>
   <AdaptiveDialog
     v-model="open"
-    title="归档项目"
-    primary-label="归档"
+    :title="t('work.projectSettings.archive.dialog.title')"
+    :primary-label="t('work.projectSettings.archive.dialog.submit')"
     primary-danger
     :primary-loading="archiving"
     :primary-disabled="!confirmed"
@@ -61,7 +62,7 @@ async function submit() {
     @primary="submit"
   >
     <div class="t-body c-muted">
-      项目会从所有成员的项目列表中移除，不能再修改，正在运行的任务会停止。内容全部保留，可以在「已归档的项目」里取消归档
+      {{ t('work.projectSettings.archive.dialog.body') }}
     </div>
     <v-text-field
       v-model="typed"
@@ -70,7 +71,7 @@ async function submit() {
       variant="outlined"
       hide-details
       class="mt-4"
-      :label="`输入项目名称「${projectName}」确认`"
+      :label="t('work.projectSettings.archive.dialog.confirmLabel', { name: projectName })"
       @keydown.enter.prevent="submit"
     />
     <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
