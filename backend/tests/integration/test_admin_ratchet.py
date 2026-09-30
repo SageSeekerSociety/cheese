@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
+from app.domain.agent.github_app import GitHubAppError
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectGitInstallation
 from app.domain.ratchet import ingest as ratchet_ingest
@@ -396,3 +397,91 @@ def test_a_failed_collection_marker_is_archived_as_a_hole(
     failed = [point for point in body["collections"] if point["collection"] == "failed"]
     assert len(failed) == 1
     assert "no interpreter" in failed[0]["reason"]
+
+
+def test_a_mint_github_refuses_is_reported_instead_of_raised(
+    client, as_admin, monkeypatch: pytest.MonkeyPatch
+):
+    """App 拒签（403、安装信息读不到）也要落在 `refresh.error` 里，不能穿成 500。
+
+    铸牌子这一步原来在两个 try 之外：`installation_token()` 抛 `GitHubAppError`
+    就直接出了路由，POST 回 500 —— 页面连「为什么没有新点」都读不到。现在它在
+    `project.forge` 那一边做完，把原因交回来。
+    """
+
+    class _RefusingMint:
+        async def installation_token(self) -> tuple[str, str]:
+            raise GitHubAppError("GitHub refused to mint (HTTP 403)")
+
+    async def _refusing(project_id, session) -> _RefusingMint:
+        return _RefusingMint()
+
+    seed_user(client, ADMIN)
+    _connect_repo(client)
+    monkeypatch.setattr(project_forge, "github_app_tokens_for_project", _refusing)
+
+    response = client.post(
+        "/admin/ratchet/refresh", headers=session_auth_headers(ADMIN)
+    )
+
+    assert response.status_code == 200
+    refresh = response.json()["data"]["refresh"]
+    assert "403" in refresh["error"]
+    assert "签发" in refresh["error"]
+    assert refresh["listed"] == 0
+
+
+def test_a_download_github_refuses_is_named_in_the_report(
+    client, as_admin, monkeypatch: pytest.MonkeyPatch
+):
+    """一件工件拉不动：其余照存，但**原因**要出现在 `refresh.error` 里。
+
+    只有 `unreadable += 1` 的话，一次丢了三件和一次一件没丢读起来是一样的 —— 而
+    「谁拒绝了、为什么」正是这句话存在的理由。
+    """
+
+    class _HalfRefusingSource:
+        async def list(self, *, owner: str, repo: str, token: str, limit: int):
+            return [
+                Artifact(
+                    id=2,
+                    run_id=22,
+                    head_sha="2" * 40,
+                    created_at=BASE + timedelta(days=2),
+                    run_url="https://example.invalid/runs/22",
+                    expired=False,
+                ),
+                Artifact(
+                    id=1,
+                    run_id=21,
+                    head_sha="1" * 40,
+                    created_at=BASE + timedelta(days=1),
+                    run_url="https://example.invalid/runs/21",
+                    expired=False,
+                ),
+            ]
+
+        async def download(
+            self, *, owner: str, repo: str, artifact_id: int, token: str
+        ):
+            if artifact_id == 1:
+                raise RatchetGitHubError(
+                    "GitHub 拒绝下载棘轮工件 1（HTTP 403）：rate limit"
+                )
+            return _artifact_zip(_payload("d" * 40, actual=3, day=2))
+
+    seed_user(client, ADMIN)
+    _connect_repo(client)
+    monkeypatch.setattr(ratchet_ingest, "GitHubArtifacts", _HalfRefusingSource)
+    _fake_tokens(monkeypatch)
+
+    body = client.post(
+        "/admin/ratchet/refresh", headers=session_auth_headers(ADMIN)
+    ).json()["data"]
+
+    refresh = body["refresh"]
+    assert refresh["stored"] == 1  # 拉得动的那一件还是进了库
+    assert refresh["unreadable"] == 1
+    assert "工件 1" in refresh["error"]
+    assert "rate limit" in refresh["error"]
+    assert body["points"] == 1

@@ -145,7 +145,60 @@ def test_direction_within_one_segment():
     assert _check_of(_board(flat), "be-contracts")["direction"] == "flat"
 
 
-def test_a_hole_ends_the_comparison_instead_of_being_stepped_over():
+def test_a_hole_inside_one_segment_ends_the_comparison():
+    """一次采集好端端地采完了，只是**这道检查**这次没跑 —— 洞在序列中间。
+
+    这才是那个 bug 的原形状：指纹没变（规则没换），collection 全是 ok（采集没失败），
+    序列里有一个 `not_collected`。旧实现把有数的两点挑出来相减，读成「5 → 3，还了
+    2 条债」—— 一个三次采集里没有任何一次量到过的变化。
+    """
+    rows = [
+        _row("a" * 40, [_check("be-contracts", actual=5)], day=1),
+        _row(
+            "b" * 40,
+            [_check("be-contracts", status="not_collected", actual=None)],
+            day=2,
+        ),
+        _row("c" * 40, [_check("be-contracts", actual=3)], day=3),
+    ]
+    check = _check_of(_board(rows), "be-contracts")
+
+    assert [point["actual"] for point in check["points"]] == [5, None, 3]
+    assert {point["rule_fingerprint"] for point in check["points"]} == {"fp1"}
+    assert [point["collection"] for point in check["points"]] == ["ok", "ok", "ok"]
+    assert [point["status"] for point in check["points"]] == [
+        "pass",
+        "not_collected",
+        "pass",
+    ]
+    assert check["direction"] == "unknown"
+
+    # 洞之后再量到一个点就恢复比较，比的是 3 → 2，不与洞之前那些数相减。
+    rows.append(_row("d" * 40, [_check("be-contracts", actual=2)], day=4))
+    assert _check_of(_board(rows), "be-contracts")["direction"] == "improving"
+
+
+def test_a_hole_at_the_end_ends_the_comparison_too():
+    """最近一次没跑到：往前追也只有一个连着有数的点，同样没有方向。
+
+    这一条挡的是「只往回看一格」的写法 —— 两端都在，但中间那次没量到。
+    """
+    rows = [
+        _row("a" * 40, [_check("be-contracts", actual=5)], day=1),
+        _row("b" * 40, [_check("be-contracts", actual=3)], day=2),
+        _row(
+            "c" * 40,
+            [_check("be-contracts", status="not_collected", actual=None)],
+            day=3,
+        ),
+    ]
+    check = _check_of(_board(rows), "be-contracts")
+
+    assert [point["actual"] for point in check["points"]] == [5, 3, None]
+    assert check["direction"] == "unknown"
+
+
+def test_a_failed_collection_is_a_hole_at_the_row_level():
     rows = [
         _row("a" * 40, [_check("be-contracts", actual=10)], day=1),
         _row("b" * 40, [], collection="failed", day=2),
@@ -153,16 +206,11 @@ def test_a_hole_ends_the_comparison_instead_of_being_stepped_over():
     ]
     check = _check_of(_board(rows), "be-contracts")
 
-    # 10 → 3 跨过一次失败的采集。中间那次一个数都没量到，两个端点不是同一个状态下
-    # 的读数；照 10 → 3 算会得出「还掉了 7 条债」，而这是页面唯一见证的一个变化。
-    # 只有洞**之后**的连续点才互相比，这里只剩一个点，所以没有方向。
+    # 采集本身失败的那次，每道检查都是一个 `not_collected` 的点 —— 和上面两种洞
+    # 在序列里长得一样，但来源不同（这一条报的是 run 级失败）。
     assert [point["actual"] for point in check["points"]] == [10, None, 3]
+    assert check["points"][1]["rule_fingerprint"] is None
     assert check["direction"] == "unknown"
-
-    # 洞之后再量到一个点就恢复比较，比的是 3 → 2，不与洞之前那些数相减。
-    rows.append(_row("d" * 40, [_check("be-contracts", actual=2)], day=4))
-    resumed = _check_of(_board(rows), "be-contracts")
-    assert resumed["direction"] == "improving"
 
 
 def test_better_up_reads_the_other_way():

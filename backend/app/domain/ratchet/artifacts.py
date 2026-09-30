@@ -163,33 +163,64 @@ class GitHubArtifacts:
     async def download(
         self, *, owner: str, repo: str, artifact_id: int, token: str
     ) -> bytes:
-        """Fetch an artifact's zip.
+        """Fetch an artifact's zip, stopping as soon as it passes the cap.
 
         Two requests because the API answers with a 302 to a signed URL that
         expires in a minute. The redirect is followed by hand so the token is
         not resent to the storage host: it is not ours, and the App's token is
         not what that URL authenticates with.
+
+        Streamed, not buffered: `client.get` returns only once the whole body is
+        in memory, so a length check after it measures something already eaten.
+        Here the read stops mid-body — `_read_capped` never holds more than one
+        chunk past the cap.
         """
+        url = (
+            f"{self._api_base}/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip"
+        )
+        location: str | None = None
         async with httpx.AsyncClient(transport=self._transport, timeout=60.0) as client:
-            resp = await client.get(
-                f"{self._api_base}/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip",
+            async with client.stream(
+                "GET",
+                url,
                 headers=self._headers(token),
                 follow_redirects=False,
-            )
-            if resp.status_code in (301, 302, 303, 307, 308):
-                location = resp.headers.get("location")
-                if not location:
-                    raise RatchetGitHubError("GitHub 的工件下载重定向没有 Location")
-                resp = await client.get(location, follow_redirects=True)
-        if resp.status_code != 200:
-            raise RatchetGitHubError(
-                f"GitHub 拒绝下载棘轮工件 {artifact_id}（HTTP {resp.status_code}）"
-            )
-        if len(resp.content) > _MAX_ARTIFACT_BYTES:
+            ) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    # The signed URL, not the artifact: this body is dropped with
+                    # the response and the download is taken from the redirect
+                    # target below.
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise RatchetGitHubError("GitHub 的工件下载重定向没有 Location")
+                else:
+                    return await _read_capped(resp, artifact_id)
+            async with client.stream("GET", location, follow_redirects=True) as resp:
+                return await _read_capped(resp, artifact_id)
+
+
+async def _read_capped(resp: httpx.Response, artifact_id: int) -> bytes:
+    """The body of a streaming response, refusing one that grows past the cap.
+
+    The check is on the running total, and it aborts the moment a chunk pushes
+    it over: the response is not read to the end first. That is the difference
+    between a cap on what the platform agrees to hold and a cap it applies after
+    holding everything.
+    """
+    if resp.status_code != 200:
+        raise RatchetGitHubError(
+            f"GitHub 拒绝下载棘轮工件 {artifact_id}（HTTP {resp.status_code}）"
+        )
+    total = 0
+    chunks: list[bytes] = []
+    async for chunk in resp.aiter_bytes():
+        total += len(chunk)
+        if total > _MAX_ARTIFACT_BYTES:
             raise RatchetGitHubError(
                 f"棘轮工件 {artifact_id} 超过 {_MAX_ARTIFACT_BYTES} 字节，不下载"
             )
-        return resp.content
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _read_member(archive: zipfile.ZipFile, name: str) -> bytes | None:

@@ -12,7 +12,12 @@ writes to GitHub.
 **A pull that could not happen reports instead of raising.** The callers are a
 periodic job and the page's refresh button; neither has anywhere to put a
 traceback, and a 500 would lose the one thing worth reading — GitHub's own
-sentence about why. So GitHub's failures come back in `report["error"]`.
+sentence about why. So every way this pull can fail comes back in
+``report["error"]``, in the same words the other side used: no installation or a
+refused mint, a listing GitHub will not serve, and the artifacts of one run that
+could not be downloaded. The last one is per artifact and does not end the pull —
+the others are still stored — but it is still written out, because a run that
+dropped three artifacts and a run that dropped none must not read the same.
 """
 
 from dataclasses import dataclass
@@ -24,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.project.forge import github_tokens_for_repo
+from app.domain.project.forge import github_read_token_for_repo
 from app.domain.ratchet.artifacts import (
     Artifact,
     GitHubArtifacts,
@@ -181,14 +186,14 @@ async def ingest_once(
     store = RatchetSnapshots(session)
 
     # 凭据按**仓库名**问 project 那一块要（`project.forge` 正是「哪个仓库、什么凭据」
-    # 的边界），采集自己不摸别的领域的 repository。
-    tokens = await github_tokens_for_repo(repo, session)
-    if tokens is None:
-        report["error"] = (
-            f"{repo} 没有可用的 GitHub App 安装（没连接，或平台 App 未配置）"
-        )
+    # 的边界），采集自己不摸别的领域的 repository。**铸牌子也在那一步做完**：App 拒签
+    # 是那一边的故障，它把那句话交回来，这里写进 report —— 让异常穿出去，路由只剩一个
+    # 500，页面上已存下的点还在，却没人知道这次为什么没有新的。
+    credential = await github_read_token_for_repo(repo, session)
+    if credential.token is None:
+        report["error"] = credential.reason
         return report
-    token, _expires = await tokens.installation_token()
+    token = credential.token
 
     # GitHub 那侧的失败**不走异常**：这一趟拉不到，页面上已经存下的点还是真的，所以把
     # 原因原话写进 report，让它出现在 `board.refresh.error` 里。抛出去的话路由只回一个
@@ -202,6 +207,7 @@ async def ingest_once(
     known = await store.known_run_ids(repo, [a.run_id for a in artifacts if a.run_id])
 
     rows: list[dict[str, Any]] = []
+    skipped: list[str] = []
     for artifact in artifacts:
         if not artifact.run_id or artifact.run_id in known:
             report["already_stored"] += 1
@@ -216,10 +222,14 @@ async def ingest_once(
             blob = await reader.download(
                 owner=owner, repo=name, artifact_id=artifact.id, token=token
             )
-        except (RatchetGitHubError, httpx.HTTPError):
+        except (RatchetGitHubError, httpx.HTTPError) as exc:
             # One artifact of many: the rest of the pull is still worth doing, and
-            # this run stays unstored so the next pull offers it again.
+            # this run stays unstored so the next pull offers it again. The reason
+            # is kept for the report, not just counted — a run that dropped three
+            # artifacts and a run that dropped none must not read the same, and
+            # 「谁拒绝了、为什么」is the one sentence that says which it was.
             report["unreadable"] += 1
+            skipped.append(f"工件 {artifact.id}：{exc}")
             continue
         pulled = row_for(artifact, read_snapshot(blob), repo)
         if pulled.row is not None:
@@ -228,4 +238,8 @@ async def ingest_once(
         report["failed"] += int(pulled.failed)
 
     report["stored"] = await store.store_many(rows)
+    if skipped:
+        shown = "；".join(skipped[:3])
+        more = f"；另有 {len(skipped) - 3} 件" if len(skipped) > 3 else ""
+        report["error"] = f"有工件这次没拉到（下次再试）：{shown}{more}"
     return report

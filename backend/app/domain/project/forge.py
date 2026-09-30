@@ -7,6 +7,7 @@ import math
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from urllib.parse import quote
@@ -24,7 +25,11 @@ from app.domain.agent.forgejo_tokens import (
     forge_password,
     seal_forge_password,
 )
-from app.domain.agent.github_app import GitHubAppTokens, github_app_tokens_for_project
+from app.domain.agent.github_app import (
+    GitHubAppError,
+    GitHubAppTokens,
+    github_app_tokens_for_project,
+)
 from app.domain.project.models import Project, ProjectForge
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
@@ -52,22 +57,40 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
     raise GatewayUnavailableError("项目的代码托管类型无法识别")
 
 
-async def github_tokens_for_repo(
-    repo: str, session: AsyncSession
-) -> GitHubAppTokens | None:
-    """The App minter for whichever project is connected to ``repo``, or None.
+@dataclass(frozen=True)
+class RepoReadToken:
+    """A read token for one repository's own CI, or why there is none."""
+
+    token: str | None
+    reason: str
+
+
+async def github_read_token_for_repo(repo: str, session: AsyncSession) -> RepoReadToken:
+    """A read token for ``repo``'s own CI, or the reason there is none.
 
     棘轮的采集按**仓库名**找人：它手上没有项目 id（那份快照说的是仓库的 CI），而
     要读的正是这个仓库的工件。所以这里多一个按仓库查的入口，而不是让采集自己去摸
     `project.repositories` —— 「哪个仓库归哪个项目、拿什么凭据」是这一块的事，别处
     只该问这一句。按仓库查这一步复用 `ProjectGitInstallationRepository.get_by_repo`
-    （仓库名大小写不敏感的那条既有查法），不另写一遍。没连接、或平台 App 没配置，
-    都返回 None。
+    （仓库名大小写不敏感的那条既有查法），不另写一遍。
+
+    铸牌子也在这里做完，理由相同：App 拒签（403、安装信息读不到）是**这一块**的
+    故障。调用方要的是「没有凭据，原因是这句」；让异常穿出去，采集那侧只剩一个
+    500 —— 页面上已存下的点还在，却没人知道这次为什么没有新的。
     """
     installation = await ProjectGitInstallationRepository(session).get_by_repo(repo)
     if installation is None:
-        return None
-    return await github_app_tokens_for_project(installation.project_id, session)
+        return RepoReadToken(
+            None, f"{repo} 没有可用的 GitHub App 安装（没连接，或平台 App 未配置）"
+        )
+    tokens = await github_app_tokens_for_project(installation.project_id, session)
+    if tokens is None:
+        return RepoReadToken(None, f"{repo} 所属的项目没有可用的 GitHub App 凭据")
+    try:
+        token, _expires = await tokens.installation_token()
+    except GitHubAppError as exc:
+        return RepoReadToken(None, f"GitHub 拒绝为 {repo} 签发凭据：{exc}")
+    return RepoReadToken(token, "")
 
 
 async def ensure_author_email(
