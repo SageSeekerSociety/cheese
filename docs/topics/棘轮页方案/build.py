@@ -8,9 +8,12 @@ Inputs (all real, collected 2026-09-30):
 import json, pathlib, html
 
 HERE = pathlib.Path(__file__).parent
-OUT = HERE  # series.json sits next to this file
+OUT = pathlib.Path("/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/14047829-f6b3-410d-bdd8-1846943c9113/work/out")
+SNAP_SHA = "ccc8a18e4"
 series = json.loads((OUT / "series.json").read_text())
-snap = json.loads((OUT / "snap" / "arch-metrics.json").read_text())
+# The page reads one snapshot; history stops at that commit so every number shares one SHA.
+series = series[: [r["sha"] for r in series].index(SNAP_SHA) + 1]
+snap = json.loads((OUT / "snap3" / "arch-metrics.json").read_text())
 
 tpl = (HERE / "template.html").read_text()
 data = {
