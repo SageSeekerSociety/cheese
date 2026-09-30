@@ -402,11 +402,6 @@ async function onSetRole(handle: string, role: string) {
 .roster {
   width: 360px;
   max-width: 88vw;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  box-shadow: var(--shadow-2);
 }
 .roster__head {
   display: flex;

@@ -108,7 +108,7 @@
                   >
                     {{ t('tasks.roster.view') }}
                   </v-btn>
-                  <v-menu v-if="row.approved === 'APPROVED'" location="bottom end">
+                  <AdaptiveMenu v-if="row.approved === 'APPROVED'" :actions="rowActions(row)">
                     <template #activator="{ props: menu }">
                       <v-btn
                         v-bind="menu"
@@ -118,10 +118,7 @@
                         :aria-label="t('tasks.roster.more')"
                       />
                     </template>
-                    <v-list density="compact">
-                      <v-list-item :title="t('tasks.roster.setDeadline')" @click="openDeadline(row)" />
-                    </v-list>
-                  </v-menu>
+                  </AdaptiveMenu>
                 </div>
               </td>
             </tr>
@@ -224,6 +221,7 @@
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
 import type {
   Task,
   TaskMembership,
@@ -235,6 +233,8 @@ import type {
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
+
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
@@ -414,6 +414,17 @@ function confirmReject() {
 const deadlineOpen = ref(false)
 const deadlineValue = ref('')
 const minDeadline = computed(() => dayjs().format('YYYY-MM-DDTHH:mm'))
+
+function rowActions(row: Row): MenuAction[] {
+  return [
+    {
+      key: 'deadline',
+      label: t('tasks.roster.setDeadline'),
+      icon: 'mdi-calendar-clock-outline',
+      onSelect: () => openDeadline(row),
+    },
+  ]
+}
 
 function openDeadline(row: Row) {
   selected.value = row

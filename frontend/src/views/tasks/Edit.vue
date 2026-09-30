@@ -39,9 +39,7 @@
       </TaskForm>
 
       <!-- 提交审核成功提示 -->
-      <v-snackbar v-model="showResubmitSuccess" color="success" :timeout="3000">
-        重新提交审核成功，等待管理员审核
-      </v-snackbar>
+      <v-snackbar v-model="showResubmitSuccess" :timeout="3000"> 重新提交审核成功，等待管理员审核 </v-snackbar>
     </v-card>
   </v-container>
 </template>

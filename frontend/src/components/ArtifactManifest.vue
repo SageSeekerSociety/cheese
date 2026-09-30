@@ -21,12 +21,14 @@
 // 能做的三件事都是人的判断，芝士 做不了：改名（它起错了名字）、合并（两项其实是
 // 同一个东西）、删除（它本来就不该是一项）。
 import type { ProjectArtifact } from '../api'
+import type { MenuAction } from './common/menuAction'
 
 import { computed, ref, watch } from 'vue'
 
 import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } from '../api'
 import { relTime } from '../lib/relTime'
 
+import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
@@ -47,6 +49,17 @@ const newName = ref('')
 const merging = ref<ProjectArtifact | null>(null)
 const mergeInto = ref('')
 const removing = ref<ProjectArtifact | null>(null)
+
+/** 一项的 ⋯：合并要有别的项可以并进去才出现；删除先过确认框。 */
+function rowActions(row: ProjectArtifact): MenuAction[] {
+  return [
+    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => openRename(row) },
+    ...(rows.value.length > 1
+      ? [{ key: 'merge', label: '合并到…', icon: 'mdi-call-merge', onSelect: () => openMerge(row) }]
+      : []),
+    { key: 'remove', label: '删除', icon: 'mdi-delete-outline', danger: true, onSelect: () => (removing.value = row) },
+  ]
+}
 
 /** 合并的目标只能是清单上**别的**那几项。 */
 const mergeTargets = computed(() =>
@@ -153,7 +166,7 @@ watch(
           <span v-if="row.about" class="made-row__about t-meta c-faint">{{ row.about }}</span>
           <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         </div>
-        <v-menu location="bottom end">
+        <AdaptiveMenu :actions="rowActions(row)" :title="row.name">
           <template #activator="{ props: menu }">
             <v-btn
               v-bind="menu"
@@ -165,12 +178,7 @@ watch(
               :aria-label="`${row.name} 的操作`"
             />
           </template>
-          <v-list density="compact" min-width="140">
-            <v-list-item title="重命名" @click="openRename(row)" />
-            <v-list-item v-if="rows.length > 1" title="合并到…" @click="openMerge(row)" />
-            <v-list-item title="删除" @click="removing = row" />
-          </v-list>
-        </v-menu>
+        </AdaptiveMenu>
       </li>
       <li v-if="rows.length > FOLDED" class="made__fold t-meta">
         <button type="button" class="made__fold-btn tap-target" :aria-expanded="expanded" @click="expanded = !expanded">
