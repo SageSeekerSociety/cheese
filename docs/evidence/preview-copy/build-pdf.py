@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """生成后台布局方案 B 的中文 PDF。图片以 base64 内联，产物自包含。"""
 import base64
+import json
 import pathlib
 import subprocess
 import sys
@@ -46,19 +47,20 @@ SHOTS_390 = pathlib.Path('/var/tmp/shots-390')
 SHOTS_COPY = pathlib.Path('/var/tmp/shots-copy')
 
 # 出错态文案对照页的逐行图。编号跟产品里的真实调用点对齐：#1–#10 是十处读失败。
+# 图注里的结构名是**接入前**的去向；每张图右侧那半是接入后，产品现在就是那一侧。
 COPY_ROWS = [
-    ('row-n5.png', '#5 模型管理 · 模型段（结构甲：原话当标题）'),
-    ('row-n6.png', '#6 模型管理 · 额度段（结构甲）'),
-    ('row-n7.png', '#7 模型管理 · 操作记录段（结构甲）'),
-    ('row-n9.png', '#9 成员管理（结构甲）'),
-    ('row-n1.png', '#1 反馈队列 · 列表视图（结构乙：原话挂 title，悬停才见）'),
-    ('row-n2.png', '#2 反馈队列 · 表格视图（结构乙）'),
-    ('row-n4.png', '#4 功能数据（结构丙：原话丢了）'),
-    ('row-n8.png', '#8 空间申请（结构丙）'),
-    ('row-n10.png', '#10 飞书应用（结构丙）'),
-    ('row-n3.png', '#3 看板（结构丁：原话作说明行 —— 就是建议的形状）'),
+    ('row-n5.png', '#5 模型管理 · 模型段（接入前结构甲：原话当标题）'),
+    ('row-n6.png', '#6 模型管理 · 额度段（接入前结构甲）'),
+    ('row-n7.png', '#7 模型管理 · 操作记录段（接入前结构甲）'),
+    ('row-n9.png', '#9 成员管理（接入前结构甲）'),
+    ('row-n1.png', '#1 反馈队列 · 列表视图（接入前结构乙：原话挂 title，悬停才见）'),
+    ('row-n2.png', '#2 反馈队列 · 表格视图（接入前结构乙）'),
+    ('row-n4.png', '#4 功能数据（接入前结构丙：原话丢了）'),
+    ('row-n8.png', '#8 空间申请（接入前结构丙）'),
+    ('row-n10.png', '#10 飞书应用（接入前结构丙）'),
+    ('row-n3.png', '#3 看板（接入前就是结构丁：原话作说明行，别处照它改）'),
 ]
-COPY_WRITE = ('write-table.png', '五处写失败横幅 W1–W5：都没有按钮，本轮不新加入口')
+COPY_WRITE = ('write-table.png', '五处写失败横幅 W1–W5：都没有按钮，本轮不新加入口（W1 已改措辞，图沿用）')
 
 def img_path(name: str) -> pathlib.Path:
     # 24 张沿用图在 /var/tmp/shots，390 浅深七页在 /var/tmp/shots-390，
@@ -97,6 +99,49 @@ def two_up(pairs):
     return '\n'.join(out)
 
 
+def caller_table() -> str:
+    """§4.5 那张表：从取证脚本的 manifest.json 现读现排，**不手抄数字**。
+
+    手抄会和脚本输出分叉，而这张表的全部说服力就在「这些数是脚本自己判出来的」。
+    manifest 不在就当场退出 —— 宁可出不了 PDF，也不出一张没有出处的表。
+    """
+    mf = SHOTS_COPY / 'manifest.json'
+    if not mf.exists():
+        sys.exit(f'缺 manifest：{mf}。先跑 copy-and-error-states.mjs 再建 PDF。')
+    rows = json.loads(mf.read_text(encoding='utf-8'))
+    pages = [r for r in rows if r.get('name', '').startswith('err-')]
+    if not pages:
+        sys.exit('manifest 里没有 err-* 条目，七条产品路由的取证没跑成。')
+
+    out = [
+        '<table>',
+        '<tr><th>页面</th><th>路由</th><th>出错块</th><th>原话作说明行</th>'
+        '<th>原话当标题</th><th>原话在壳 title</th><th>中性标题</th><th>带重试</th><th>判定</th></tr>',
+    ]
+    for r in pages:
+        v = r['verdict']
+        ok = '过' if v.get('pass') else '<strong>没过</strong>'
+        out.append(
+            f"<tr><td>{r.get('label', '')}</td><td><code>{r.get('route', '')}</code></td>"
+            f"<td class='n'>{v.get('blocks', 0)}</td>"
+            f"<td class='n'>{v.get('rawAsDesc', 0)}</td>"
+            f"<td class='n'>{v.get('rawAsTitle', 0)}</td>"
+            f"<td class='n'>{v.get('rawOnShell', 0)}</td>"
+            f"<td class='n'>{v.get('neutralTitles', 0)}</td>"
+            f"<td class='n'>{v.get('withRetry', 0)}</td>"
+            f"<td>{ok}</td></tr>"
+        )
+    out.append('</table>')
+    passed = sum(1 for r in pages if r['verdict'].get('pass'))
+    out.append(
+        f'<p class="note">七条路由 <strong>{passed} / {len(pages)}</strong> 过。'
+        f'取证时刻 <code>{pages[0].get("capturedAt", "")}</code>；'
+        f'构建落盘时刻 <code>{pages[0].get("bundleLastModified", "")}</code>'
+        '（<strong>只记落盘时刻，不当代码哈希用</strong>，代码归属看 head）。</p>'
+    )
+    return '\n'.join(out)
+
+
 CSS = """
 @page { size: A4; margin: 16mm 14mm; }
 * { box-sizing: border-box; }
@@ -119,6 +164,10 @@ table {
 }
 th, td { border: 1px solid #cfcfcf; padding: 5px 7px; text-align: left; vertical-align: top; }
 th { background: #f2f2f2; font-weight: 600; }
+/* 计数列右对齐：§4.5 那张表的六列数字要能上下对齐着扫。 */
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+/* 首列是名字（页面名 / 编号 / 结构名），不能从中间断开换行。 */
+td:first-child, th:first-child { white-space: nowrap; }
 .lede {
   background: #f5f5f4; border: 1px solid #e0e0e0; border-radius: 8px;
   padding: 11px 14px; margin: 12px 0 16px;
@@ -149,13 +198,13 @@ HTML = f"""<!doctype html>
 <body>
 
 <h1>后台管理布局统一：方案 B 实现与核验</h1>
-<p class="meta">2026-09-30 · 分支 <code>task/d0241114</code> · 审基线 head <code>0c8565785</code> · PR #2206</p>
+<p class="meta">2026-09-30 · 分支 <code>task/d0241114</code> · 审基线 head <code>a25a32001</code> · PR #2206</p>
 
 <div class="lede">
 <p><strong>结论</strong>：方案 B 已实现到可评审状态。八个后台页的页头、正文宽度、间距、筛选与操作区、表格卡片、加载/空/出错三态收成一套；<strong>功能和权限一字未改</strong>。</p>
 <p>这一版修掉了一个窄屏真缺陷：390 下长空间申请卡的标题与说明被右侧整段裁掉（不是省略号）。修的是 <code>AdminSpacesPage</code> 窄屏列布局的横轴约束，行内动作与功能未动，见第 5.6 节的前后对照。</p>
-<p>图片沿用情况：<strong>24 张里 23 张原样沿用</strong>（未空重拍）；<code>long-content-spaces-390.png</code> 因上述修复<strong>重拍</strong>了这一张；另<strong>新增 14 张</strong> 390 窄屏七页 × 浅深两色，补上此前只核过三页的空缺。本 PDF 里出现的每张图都标了它属于哪一类。</p>
-<p>第 4 节给的是<strong>出错态文案的修订提案</strong>（十处读失败 + 五处写失败，按真实调用点唯一编号）。<strong>「重试」按钮不是本轮加的</strong>，#1859 就在 <code>main</code> 上；本轮动的是标题与说明行的措辞，以及服务端原话的去向。这些修订<strong>还没写进产品组件，等确认</strong>。</p>
+<p>图片沿用情况：<strong>这一版一张图都没重拍</strong>。此前 24 张里 23 张原样沿用、<code>long-content-spaces-390.png</code> 因窄屏修复重拍过一次、另新增 14 张 390 窄屏七页 × 浅深两色；本轮只是把批准的错误文案接进产品，<strong>图上「接入后」那一侧的 props 本来就等于产品现在实际收到的</strong>，重拍不会多出信息，所以全部沿用。本 PDF 里出现的每张图都标了它属于哪一类。</p>
+<p>第 4 节是<strong>出错态文案的接入结果</strong>（十处读失败 + 五处写失败，按真实调用点唯一编号）：批准的那套已经写进产品组件，并且从<strong>七条产品路由</strong>的 DOM 读回验证过（4.5 节）。<strong>「重试」按钮不是本轮加的</strong>，#1859 就在 <code>main</code> 上；本轮动的是标题与说明行的措辞，以及服务端原话的去向。</p>
 </div>
 
 <h2>1. 三个方案的对照</h2>
@@ -188,52 +237,61 @@ HTML = f"""<!doctype html>
 <tr><td>加载 / 出错态</td><td>骨架屏 / 出错居中 + 「重试」</td></tr>
 </table>
 
-<h2 class="pb">4. 出错态文案：十处读失败 + 五处写失败（修订待确认）</h2>
-<p><strong>先说这一版没改什么。</strong>「重试」按钮<strong>不是本轮加的</strong>：<code>AdminEmptyState</code> 的 <code>action</code> 槽在 #1859 就在 <code>main</code> 上，十处读失败本来都挂着它。本轮分支的 41 个改动文件里<strong>没有</strong> <code>AdminEmptyState</code>、i18n、错误文案的任何一处——全是布局、预览入口与取证脚本。</p>
-<p><strong>这一版给出的是待确认的文案修订</strong>，还没写进产品组件。下面用真实组件把「现状」和「建议」并排渲染出来，等确认之后才改产品。</p>
+<h2 class="pb">4. 出错态文案：十处读失败 + 五处写失败（已接进产品）</h2>
+<p><strong>先说这一版没改什么。</strong>「重试」按钮<strong>不是本轮加的</strong>：<code>AdminEmptyState</code> 的 <code>action</code> 槽在 #1859 就在 <code>main</code> 上，十处读失败本来都挂着它。本轮<strong>没有</strong>新增任何动作入口，也没有改 <code>AdminEmptyState</code> 本身。</p>
+<p><strong>这一版已经把批准的文案接进产品组件</strong>，不是预览页里画的对照。改动落在 22 个文件上：5 个后台页、3 个模型段组件、<code>useAdminQueue.ts</code>、12 份 i18n 词条、1 个测试。4.3 的对照图<strong>沿用未重拍</strong>——图上「接入后」那一侧传的 props 就是产品现在实际收到的，重拍不会多出信息。</p>
 <p><strong>编号口径</strong>：按<strong>每个真实调用点唯一编号</strong>，不按页数算。<strong>#1–#10 是十处读失败结构，W1–W5 是五处写失败横幅，合计 15 个调用点</strong>；它们落在 7 个后台页上（模型管理一页内有 3 段，反馈队列一页内有 2 个视图）。表、图、正文都按这套编号对齐，标题页数与错误实例数分开算，不混。</p>
 
-<h3>4.1 十处读失败：原话去向分四种结构</h3>
-<p>十处<strong>全都有「重试」按钮</strong>，按钮本轮不动。真正的差别在「服务端那句原话最后去了哪」，分四种结构，<strong>合计 3+4+2+1=10</strong>：</p>
+<h3>4.1 十处读失败：原话去向分四种结构（接入前）</h3>
+<p>下面这张表是<strong>接入前</strong>的分布，用来说明为什么不能「只改 i18n」。十处<strong>全都有「重试」按钮</strong>，按钮本轮不动。真正的差别在「服务端那句原话最后去了哪」，分四种结构，<strong>合计 3+4+2+1=10</strong>：</p>
 <table>
-<tr><th>结构</th><th>服务端原话的去向</th><th>编号</th><th>处数</th></tr>
+<tr><th>结构</th><th>服务端原话的去向（接入前）</th><th>编号</th><th>处数</th></tr>
 <tr><td>甲</td><td><strong>当标题显示</strong> —— 原话常常很长，标题行被撑得不像标题</td><td>#5 #6 #7 #9</td><td>4</td></tr>
 <tr><td>乙</td><td><strong>挂在外层 title 属性</strong> —— 只有悬停才看得到</td><td>#1 #2</td><td>2</td></tr>
 <tr><td>丙</td><td><strong>丢了</strong> —— 页面只留下一句固定话，原因无处可查</td><td>#4 #8 #10</td><td>3</td></tr>
 <tr><td>丁</td><td><strong>直接作说明行</strong>，可见</td><td>#3</td><td>1</td></tr>
 </table>
-<p><strong>建议的形状只有一种</strong>，取自 #3 看板——<strong>它现在就是这个形状</strong>，是别处照着改的样板：<strong>中性标题「某某加载失败」+ 服务端原话作说明行 + 一颗对应动作的按钮</strong>。原话一律保留，<strong>不用泛化提示吞掉原因</strong>。有「重试」的地方就放「重试」；写失败横幅没有按钮，就写真实的下一步，<strong>不新加入口</strong>。</p>
+<p><strong>接入后十处一律是丁这一种形状</strong>，样板取自 #3 看板（它接入前就是这个形状）：<strong>中性标题「某某加载失败」+ 服务端原话作说明行 + 一颗对应动作的按钮</strong>。原话一律保留，<strong>不用泛化提示吞掉原因</strong>。有「重试」的地方就放「重试」；写失败横幅没有按钮，就写真实的下一步，<strong>不新加入口</strong>。</p>
 
-<h3>4.2 逐处变化清单（唯一编号）</h3>
+<h3>4.2 逐处最小产品 delta（唯一编号）</h3>
+<p>每一行说的是<strong>产品代码里实际改了什么</strong>。原话去向那一列是<strong>接入前</strong>的结构，用来对上 4.1。</p>
 <table>
-<tr><th>编号</th><th>调用点</th><th>组件链</th><th>原话去向</th><th>按钮</th><th>变化</th></tr>
-<tr><td>#1</td><td>反馈队列 · 列表视图</td><td>AdminQueueEmpty 壳 → AdminEmptyState</td><td>乙</td><td>有「重试」</td><td>说明行从「检查网络后重试。」换成服务端原话；悬停那句取消（已经看得见了）。标题、按钮不动。</td></tr>
-<tr><td>#2</td><td>反馈队列 · 表格视图</td><td>同上，插槽挂在表格上</td><td>乙</td><td>有「重试」</td><td>同 #1。</td></tr>
-<tr><td>#3</td><td>看板</td><td>AdminEmptyState（整块）</td><td>丁</td><td>有「重试」</td><td><strong>不动。</strong>已经是建议的形状，它是别处照着改的样板。</td></tr>
-<tr><td>#4</td><td>功能数据</td><td>AdminEmptyState（整块）</td><td>丙</td><td>有「重试」</td><td>标题改中性；新增说明行显示原话。<strong>要改组件</strong>：failed 得从布尔换成字符串。</td></tr>
-<tr><td>#5</td><td>模型管理 · 模型段</td><td>AdminModelsTable → AdminEmptyState</td><td>甲</td><td>有「重试」</td><td>标题换成中性「模型加载失败」，原话移到说明行。</td></tr>
-<tr><td>#6</td><td>模型管理 · 额度段</td><td>AdminModelsBudgets → AdminEmptyState</td><td>甲</td><td>有「重试」</td><td>同 #5，标题换成「额度加载失败」。</td></tr>
-<tr><td>#7</td><td>模型管理 · 操作记录段</td><td>AdminModelsAudit → AdminEmptyState</td><td>甲</td><td>有「重试」</td><td>同 #5，标题换成「最近操作加载失败」。</td></tr>
-<tr><td>#8</td><td>空间申请</td><td>AdminEmptyState（紧凑版，在卡里）</td><td>丙</td><td>有「重试」</td><td>标题改中性；新增说明行显示原话。<strong>要改组件</strong>：loadError 得存原话而不是固定话。</td></tr>
-<tr><td>#9</td><td>成员管理</td><td>AdminEmptyState（表格 #error 槽）</td><td>甲</td><td>有「重试」</td><td>标题换成中性「成员加载失败」，原话移到说明行。</td></tr>
-<tr><td>#10</td><td>飞书应用</td><td>AdminEmptyState（整块）</td><td>丙</td><td>有「重试」</td><td>标题改中性并说清是哪一页；新增说明行显示原话。<strong>要改组件</strong>：布尔换成字符串。</td></tr>
+<tr><th>编号</th><th>调用点</th><th>组件链</th><th>接入前</th><th>按钮</th><th>产品里改了什么</th></tr>
+<tr><td>#1</td><td>反馈队列 · 列表视图</td><td>AdminQueueEmpty 壳 → AdminEmptyState</td><td>乙</td><td>有「重试」</td><td><code>useAdminQueue.ts</code> 的 <code>copy</code>：说明行换成 <code>listError</code> 原话；<code>AdminQueuePage.vue</code> 去掉 <code>:raw</code>（不再挂悬停）。标题、按钮不动。顺带删掉失去引用的词条「检查网络后重试。」。</td></tr>
+<tr><td>#2</td><td>反馈队列 · 表格视图</td><td>同上，插槽挂在表格上</td><td>乙</td><td>有「重试」</td><td>同 #1，同一段 <code>copy</code> 分支。</td></tr>
+<tr><td>#3</td><td>看板</td><td>AdminEmptyState（整块）</td><td>丁</td><td>有「重试」</td><td><strong>不动。</strong>接入前就是这个形状，它是别处照着改的样板。</td></tr>
+<tr><td>#4</td><td>功能数据</td><td>AdminEmptyState（整块）</td><td>丙</td><td>有「重试」</td><td><code>AdminFeatureStatsPage.vue</code>：<code>failed</code> 从布尔换成 <code>ref&lt;string | null&gt;</code> 存原话，模板传 <code>:desc</code>。</td></tr>
+<tr><td>#5</td><td>模型管理 · 模型段</td><td>AdminModelsTable → AdminEmptyState</td><td>甲</td><td>有「重试」</td><td><code>AdminModelsTable.vue</code>：标题换成 <code>models.table.loadFailed</code>，原话（含网关兜底那句）挪到 <code>:desc</code>。</td></tr>
+<tr><td>#6</td><td>模型管理 · 额度段</td><td>AdminModelsBudgets → AdminEmptyState</td><td>甲</td><td>有「重试」</td><td><code>AdminModelsBudgets.vue</code>：同上，标题换成 <code>models.budget.loadFailed</code>。</td></tr>
+<tr><td>#7</td><td>模型管理 · 操作记录段</td><td>AdminModelsAudit → AdminEmptyState</td><td>甲</td><td>有「重试」</td><td><code>AdminModelsAudit.vue</code>：标题换成 <code>models.audit.loadFailed</code>；判空从真值改成 <code>!== null</code>。</td></tr>
+<tr><td>#8</td><td>空间申请</td><td>AdminEmptyState（紧凑版，在卡里）</td><td>丙</td><td>有「重试」</td><td><code>AdminSpacesPage.vue</code>：<code>loadError</code> 改存原话（原来是那句固定话），模板传 <code>:desc</code>。</td></tr>
+<tr><td>#9</td><td>成员管理</td><td>AdminEmptyState（表格 #error 槽）</td><td>甲</td><td>有「重试」</td><td><code>AdminMembersPage.vue</code>：标题换成 <code>members.error.loadFailed</code>，原话落到 <code>:desc</code>（原话恰好等于标题时不重复）。</td></tr>
+<tr><td>#10</td><td>飞书应用</td><td>AdminEmptyState（整块）</td><td>丙</td><td>有「重试」</td><td><code>AdminIntegrationsPage.vue</code>：<code>loadError</code> 从布尔换成 <code>ref&lt;string | null&gt;</code> 存原话，模板传 <code>:desc</code>。</td></tr>
 </table>
-<p class="note"><strong>要改组件的只有三处</strong>（#4 #8 #10），因为它们把服务端原话在页面状态里就换成了布尔或固定话，界面上无从还原。<strong>「仅改 i18n 不动组件」在这里不成立</strong>：<code>AdminEmptyState</code> 的 <code>desc</code> 是可选 prop，六处调用点原本没传 <code>:desc</code>，只加一条 i18n 键什么都不会渲染出来。</p>
+<p class="note"><strong>「仅改 i18n 不动组件」在这里不成立</strong>：<code>AdminEmptyState</code> 的 <code>desc</code> 是可选 prop，六处调用点原本没传 <code>:desc</code>，只加一条 i18n 键什么都不会渲染出来。<strong>必须改组件的有三处</strong>（#4 #8 #10），它们把服务端原话在页面状态里就换成了布尔或固定话，界面上无从还原。</p>
+<p class="note"><strong>一个容易漏掉的坑</strong>：把错误标志从布尔换成字符串之后，模板不能写 <code>v-if="loadError"</code>。服务端报错但没给话时它是<strong>空串</strong>，真值判会把这次失败当成「没失败」，页面落进「暂无功能页」那个空态——把接口挂掉画成一切正常。所以一律 <code>v-if="loadError !== null"</code>：<code>null</code> 是没失败，空串是失败了但没话。<code>useAdminQueue.ts</code> 的 <code>state</code> 里原来那句真值判也是同一个毛病，一起改了。</p>
 
-<h3 class="pb">4.3 实际渲染的代表错误态（按四种结构分组）</h3>
-<p>下面每张都是<strong>真实组件按 props 渲染的</strong>，不是画的示意图：左边按现状传 props，右边按建议传 props。四组分别对应 4.1 里的甲 / 乙 / 丙 / 丁。</p>
+<h3 class="pb">4.3 实际渲染的代表错误态（按接入前的四种结构分组）</h3>
+<p>下面每张都是<strong>真实组件按 props 渲染的</strong>，不是画的示意图：<strong>左边是接入前</strong>传的 props，<strong>右边是接入后</strong>——产品现在实际收到的就是右边这一组。四组分别对应 4.1 里的甲 / 乙 / 丙 / 丁。图<strong>沿用未重拍</strong>。</p>
 <h3>结构甲 · 原话当标题（#5 #6 #7 #9）</h3>
 {figures(COPY_ROWS[0:4])}
 <h3 class="pb">结构乙 · 原话挂 title，悬停才见（#1 #2）</h3>
 {figures(COPY_ROWS[4:6])}
 <h3>结构丙 · 原话丢了（#4 #8 #10）</h3>
 {figures(COPY_ROWS[6:9])}
-<h3 class="pb">结构丁 · 原话作说明行（#3，已是建议的形状）</h3>
+<h3 class="pb">结构丁 · 原话作说明行（#3，接入前就是这个形状）</h3>
 {figures(COPY_ROWS[9:10])}
 
 <h3>4.4 五处写失败横幅（W1–W5）</h3>
-<p>写失败横幅<strong>没有按钮</strong>，本轮<strong>不新加入口</strong>。五处里有四处已经在显示服务端原话，<strong>不动</strong>；只有 <strong>W1</strong> 的措辞要改——它现在写「请刷新确认申请状态后重试」，可旁边没有按钮，容易看成按钮丢了。改成真实的下一步（刷新确认状态）。</p>
+<p>写失败横幅<strong>没有按钮</strong>，本轮<strong>不新加入口</strong>。五处里有四处已经在显示服务端原话，<strong>没动</strong>；只有 <strong>W1</strong> 改了措辞——它原来写「请刷新确认申请状态后重试」，可旁边没有按钮，容易看成按钮丢了。产品里 <code>spaces.review.actionFailed</code> 现在是<strong>「审核未完成，刷新页面确认申请状态。」</strong>，写的是真实下一步。</p>
 {figures([COPY_WRITE])}
+
+<h3 class="pb">4.5 真实 caller 验证：七条产品路由的 DOM 读回</h3>
+<p>上一节的对照图是<strong>对照页</strong>画的（左边旧右边新），它证明不了文案真的接进了产品。这一节走的是<strong>产品自己的路由和调用点</strong>：<code>?fail=1</code> 让假后端对所有管理端 GET 返回失败，然后打开 <code>#/admin/queue</code>、<code>#/admin/models</code> 等<strong>七条真路由</strong>，从 DOM 读回出错块的标题 / 说明行 / 按钮。</p>
+<p><strong>每条都要过四条判据，缺一条都算没接上</strong>：① 标题是那一页的中性句式；② 服务端原话在<strong>看得见的说明行</strong>上，不是标题、也不是外层 <code>title</code> 属性；③ 按钮是「重试」；④ 队列那层壳的 <code>title</code> 上<strong>没有</strong>原话（产品已不再往那儿挂）。取证脚本 <code>docs/evidence/preview-copy/copy-and-error-states.mjs</code> 把这四条写成了断言，任何一条不成立就 <code>exit 1</code>——<strong>只改 i18n 不传 <code>desc</code> 的半接上会在这里直接红</strong>。下表由该脚本的 <code>manifest.json</code> 现读现排，不是手抄。</p>
+{caller_table()}
+
+<p class="note">「原话作说明行」那一列是<strong>出错块个数</strong>：模型管理一页有 3 段，所以块数可以多于页数——这和 4.1 的「15 个调用点」是同一套编号口径，不按页数算。<strong>九块对十个调用点，差的那一个是 #2 队列表格视图</strong>：队列的列表和表格两个视图同屏只挂一个，路由取证抓的是默认的列表视图。#2 由 <code>AdminQueuePage.sections.spec.ts</code> 覆盖——那条测试点了「表格」再断言标题换成「表格加载失败」、原话仍在说明行。</p>
 
 <h2 class="pb">5. 截图</h2>
 <p>每张图在<strong>截取前</strong>把「路由 + 状态样本 + 宽度 + 主题」写进 manifest，截完再从 DOM 读回实际渲染的页面与状态，一起记进去。判定只认这份 manifest，不认像素像不像。</p>
@@ -309,7 +367,7 @@ HTML = f"""<!doctype html>
 </div>
 
 <h2>8. 核验方式</h2>
-<p>三件事分开核，不混着说：</p>
+<p>五件事分开核，不混着说：</p>
 <ol>
 <li><strong>逐页 manifest</strong> — 两份，各自记「路由 / 状态样本 / 宽度 / 主题」四项（截图前记，截完 DOM 读回实际渲染结果）。沿用集 24 张（<code>/var/tmp/shots/manifest.json</code>，其中 1 张标了 <code>reShot</code>）与本轮新拍集 14 张（<code>/var/tmp/shots-390/manifest.json</code>），<strong>38 / 38 对得上</strong>。</li>
 <li><strong>像素客观复核</strong> — 尺寸、亮度、边缘密度。<strong>沿用集 24 / 24</strong>：尺寸与 manifest 一致；深色图平均亮度 26–33、浅色 247–250，主题没串；无空白图。加载态与出错态的边缘密度明显低于正常态（0.006–0.011 对 0.02–0.07），符合少内容的样子。</li>
@@ -322,10 +380,12 @@ HTML = f"""<!doctype html>
     <li><strong>出口认两种路径</strong>：<code>/api/...</code> 与无前缀的 <code>/admin/...</code>、<code>/feedback/...</code>。<code>network/api</code> 的 <code>baseURL</code> 取 <code>VITE_API_BASE_URL</code> 且无 fallback，而 Vite 不加载 <code>.env.sample</code>，干净 checkout 下它发的就是无前缀那种。所以取证<strong>构建时不给 env</strong>，跑的正是默认配置。</li>
   </ul>
 </li>
+<li><strong>出错态文案接没接进产品</strong> — 见 4.5。判据写在 <code>copy-and-error-states.mjs</code> 里，走七条产品路由读 DOM，四条缺一不可（中性标题 / 原话在说明行 / 有「重试」/ 壳 title 上没有原话）。另有组件单测把同一套文案钉在真实页面上（<code>AdminQueuePage.sections.spec.ts</code> 等），走的是 <code>api → store → 页 → 组件</code> 整条真链子。</li>
 </ol>
 
 <h2>9. 还没核的</h2>
 <ul>
+<li><strong>出错态验证打的是假后端给的那句样例原话</strong>（「服务暂时不可用（样例错误）」），不是真实后端失败时给的话。真实后端的措辞、长度、以及非中文响应下的排版都没测。判据本身是通用的——它只看「原话有没有落在说明行上」，不看那句话是什么——但长句撑破布局这种事要等真实数据才看得到。</li>
 <li><strong>700px 以下已补齐</strong>：此前只核过队列、模型、空间申请三页，现在 390 七页 × 浅深都拍了图并跑了 DOM 判据（第 5.6 节，14 / 14 通过）。</li>
 <li><strong>1024 / 1280 这些中间宽度本轮不要求补</strong>，不作为本轮门禁。只核了 390 / 1440 / 1920 三档；中间宽度按 1440 上限 + 流式收缩的同一条规则推，没有逐档截图。</li>
 <li>预览用的是样例数据，真实后端数据下的表现没测。</li>

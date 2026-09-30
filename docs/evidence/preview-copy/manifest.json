@@ -6,7 +6,7 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html#/copy-preview",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "heading": "出错态文案 · 现状与建议",
       "facts": [
@@ -235,7 +235,7 @@
     },
     "net": [],
     "screenshot": "/var/tmp/shots-copy/copy-preview-full.png",
-    "capturedAt": "2026-09-30T15:26:31.983Z"
+    "capturedAt": "2026-09-30T18:20:51.915Z"
   },
   {
     "name": "err-queue",
@@ -245,25 +245,38 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/queue",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
           "title": "队列加载失败",
-          "desc": "检查网络后重试。",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
-          "shellTitle": "服务暂时不可用（样例错误）"
+          "shellTitle": ""
         }
       ],
-      "rawVisible": false,
+      "rawVisible": true,
       "hasRetryButton": true,
       "hScroll": false
     },
-    "rawFate": "挂外层 title 属性，悬停可见",
-    "rawVisible": false,
+    "rawFate": "作说明行，可见",
+    "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 1,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 1,
+      "withRetry": 1,
+      "blocks": 1,
+      "pass": true
+    },
+    "expectedTitles": [
+      "队列加载失败",
+      "表格加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-queue.png",
-    "capturedAt": "2026-09-30T15:26:36.923Z"
+    "capturedAt": "2026-09-30T18:20:56.726Z"
   },
   {
     "name": "err-dashboard",
@@ -273,7 +286,7 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/dashboard",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
@@ -289,9 +302,21 @@
     },
     "rawFate": "作说明行，可见",
     "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 1,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 1,
+      "withRetry": 1,
+      "blocks": 1,
+      "pass": true
+    },
+    "expectedTitles": [
+      "看板加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-dashboard.png",
-    "capturedAt": "2026-09-30T15:26:41.859Z"
+    "capturedAt": "2026-09-30T18:21:01.566Z"
   },
   {
     "name": "err-feature-stats",
@@ -301,25 +326,37 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/feature-stats",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
-          "title": "读不到功能清单。",
-          "desc": "",
+          "title": "功能数据加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         }
       ],
-      "rawVisible": false,
+      "rawVisible": true,
       "hasRetryButton": true,
       "hScroll": false
     },
-    "rawFate": "丢了",
-    "rawVisible": false,
+    "rawFate": "作说明行，可见",
+    "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 1,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 1,
+      "withRetry": 1,
+      "blocks": 1,
+      "pass": true
+    },
+    "expectedTitles": [
+      "功能数据加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-feature-stats.png",
-    "capturedAt": "2026-09-30T15:26:46.731Z"
+    "capturedAt": "2026-09-30T18:21:06.428Z"
   },
   {
     "name": "err-models",
@@ -329,24 +366,24 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/models",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
-          "title": "服务暂时不可用（样例错误）",
-          "desc": "",
+          "title": "模型加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         },
         {
-          "title": "服务暂时不可用（样例错误）",
-          "desc": "",
+          "title": "额度加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         },
         {
-          "title": "服务暂时不可用（样例错误）",
-          "desc": "",
+          "title": "最近操作加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         }
@@ -355,11 +392,25 @@
       "hasRetryButton": true,
       "hScroll": false
     },
-    "rawFate": "当标题显示",
+    "rawFate": "作说明行，可见",
     "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 3,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 3,
+      "withRetry": 3,
+      "blocks": 3,
+      "pass": true
+    },
+    "expectedTitles": [
+      "模型加载失败",
+      "额度加载失败",
+      "最近操作加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-models.png",
-    "capturedAt": "2026-09-30T15:26:51.578Z"
+    "capturedAt": "2026-09-30T18:21:11.357Z"
   },
   {
     "name": "err-spaces",
@@ -369,25 +420,37 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/spaces",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
-          "title": "加载失败，请重试。",
-          "desc": "",
+          "title": "空间申请加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         }
       ],
-      "rawVisible": false,
+      "rawVisible": true,
       "hasRetryButton": true,
       "hScroll": false
     },
-    "rawFate": "丢了",
-    "rawVisible": false,
+    "rawFate": "作说明行，可见",
+    "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 1,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 1,
+      "withRetry": 1,
+      "blocks": 1,
+      "pass": true
+    },
+    "expectedTitles": [
+      "空间申请加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-spaces.png",
-    "capturedAt": "2026-09-30T15:26:56.372Z"
+    "capturedAt": "2026-09-30T18:21:16.109Z"
   },
   {
     "name": "err-members",
@@ -397,12 +460,12 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/members",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
-          "title": "服务暂时不可用（样例错误）",
-          "desc": "",
+          "title": "成员加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         }
@@ -411,11 +474,23 @@
       "hasRetryButton": true,
       "hScroll": false
     },
-    "rawFate": "当标题显示",
+    "rawFate": "作说明行，可见",
     "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 1,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 1,
+      "withRetry": 1,
+      "blocks": 1,
+      "pass": true
+    },
+    "expectedTitles": [
+      "成员加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-members.png",
-    "capturedAt": "2026-09-30T15:27:01.279Z"
+    "capturedAt": "2026-09-30T18:21:20.970Z"
   },
   {
     "name": "err-integrations",
@@ -425,24 +500,36 @@
     "width": 1440,
     "theme": "light",
     "url": "http://127.0.0.1:5210/feedback-proto.html?fail=1#/admin/integrations",
-    "bundleLastModified": "Wed, 30 Sep 2026 15:24:09 GMT",
+    "bundleLastModified": "Wed, 30 Sep 2026 18:20:05 GMT",
     "dom": {
       "blocks": [
         {
-          "title": "无法读取",
-          "desc": "",
+          "title": "飞书应用加载失败",
+          "desc": "服务暂时不可用（样例错误）",
           "action": "重试",
           "shellTitle": ""
         }
       ],
-      "rawVisible": false,
+      "rawVisible": true,
       "hasRetryButton": true,
       "hScroll": false
     },
-    "rawFate": "丢了",
-    "rawVisible": false,
+    "rawFate": "作说明行，可见",
+    "rawVisible": true,
+    "verdict": {
+      "rawAsDesc": 1,
+      "rawAsTitle": 0,
+      "rawOnShell": 0,
+      "neutralTitles": 1,
+      "withRetry": 1,
+      "blocks": 1,
+      "pass": true
+    },
+    "expectedTitles": [
+      "飞书应用加载失败"
+    ],
     "net": [],
     "screenshot": "/var/tmp/shots-copy/err-integrations.png",
-    "capturedAt": "2026-09-30T15:27:06.084Z"
+    "capturedAt": "2026-09-30T18:21:25.762Z"
   }
 ]
