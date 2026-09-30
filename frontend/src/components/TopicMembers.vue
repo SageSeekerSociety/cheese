@@ -26,6 +26,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
+import CheeseAvatar from './CheeseAvatar.vue'
 import TopicComputePicker from './TopicComputePicker.vue'
 
 const props = defineProps<{
@@ -202,6 +203,7 @@ async function onSetRole(handle: string, role: string) {
             <img
               v-if="faceSrc(m)"
               class="members-mini__face members-mini__face--photo"
+              :class="{ 'members-mini__face--ai': m.agent }"
               :src="faceSrc(m)!"
               :alt="m.name || m.member_handle"
               :style="{ zIndex: MAX_FACES - i }"
@@ -233,9 +235,7 @@ async function onSetRole(handle: string, role: string) {
       <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <span v-if="m.agent" class="roster__avatar roster__avatar--agent">{{
-            initial(m.name || m.member_handle)
-          }}</span>
+          <CheeseAvatar v-if="m.agent" :size="26" :name="m.name || m.member_handle" />
           <img
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"
@@ -397,7 +397,8 @@ async function onSetRole(handle: string, role: string) {
   color: var(--muted);
   font-size: 0.6rem;
 }
-/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：反色的方块。 */
+/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：反色的圆角方块，圆角是边长
+   的四分之一（22px → 6px，见 squareRadius）。人是圆的。 */
 .members-mini__face--ai {
   color: var(--inverse-ink);
   background: var(--inverse-surface);
@@ -500,7 +501,8 @@ async function onSetRole(handle: string, role: string) {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  /* 人是圆的；AI 队友那一行画的是 CheeseAvatar。 */
+  border-radius: var(--radius-pill);
   font-size: 0.72rem;
   font-weight: 700;
   color: #fff; /* theme-invariant ground, see .members-mini__face */
@@ -509,14 +511,6 @@ async function onSetRole(handle: string, role: string) {
 }
 .roster__avatar--photo {
   object-fit: cover;
-}
-.roster__avatar--agent {
-  /* --ink inverts with the theme, so the ink on it has to invert too: --surface
-     is #fff in light (unchanged) and #1B1D20 in dark. The inherited #fff would
-     be white-on-near-white there. */
-  color: var(--surface);
-  background: var(--ink);
-  font-size: 0.62rem;
 }
 .roster__who {
   display: flex;
@@ -555,7 +549,7 @@ async function onSetRole(handle: string, role: string) {
   gap: 1px;
   padding: 2px 6px;
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   cursor: pointer;
 }

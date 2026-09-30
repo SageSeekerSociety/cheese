@@ -54,7 +54,9 @@
                   :disabled="!row.hasDetails"
                   @click="expanded = expanded === row.id ? null : row.id"
                 >
-                  <span class="rs__avatar">{{ row.name.slice(0, 1) }}</span>
+                  <span class="rs__avatar" :class="{ 'rs__avatar--team': row.teamSize }">{{
+                    row.name.slice(0, 1)
+                  }}</span>
                   <span class="rs__name">{{ row.name }}</span>
                   <small v-if="row.teamSize" class="rs__small">{{
                     t('tasks.roster.teamSize', { n: row.teamSize })
@@ -560,6 +562,10 @@ function saveDeadline() {
   background: var(--fill-2);
   color: var(--text);
   font-size: 11px;
+}
+/* 团队来领的那一行不是一个人：圆角方块（形状照 GitHub 的规则，人才是圆的）。 */
+.rs__avatar--team {
+  border-radius: var(--radius-sm);
 }
 
 .rs__small,

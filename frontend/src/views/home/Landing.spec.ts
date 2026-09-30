@@ -57,20 +57,23 @@ afterEach(() => {
 async function mount(path = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: HomeRoutes.children!.map((route) => ({
-      path: `/${route.path}`,
-      name: route.name,
-      meta: route.meta,
-      beforeEnter: route.beforeEnter,
-      component:
-        route.name === 'Solutions'
-          ? Solutions
-          : route.name === 'Download'
-            ? Download
-            : route.meta?.publicLanding
-              ? Landing
-              : { template: '<div>Workspace</div>' },
-    })),
+    routes: [
+      { path: '/account/signin', name: 'SignIn', component: { template: '<div>SignIn</div>' } },
+      ...HomeRoutes.children!.map((route) => ({
+        path: `/${route.path}`,
+        name: route.name,
+        meta: route.meta,
+        beforeEnter: route.beforeEnter,
+        component:
+          route.name === 'Solutions'
+            ? Solutions
+            : route.name === 'Download'
+              ? Download
+              : route.meta?.publicLanding
+                ? Landing
+                : { template: '<div>Workspace</div>' },
+      })),
+    ],
   })
   await router.push(path)
   const view = render(
@@ -162,17 +165,6 @@ describe('公开首页', () => {
     expect(await view.findByText(/仍要打开/)).toBeTruthy()
   })
 
-  it('offers no installer inside the desktop app, which is installed already', async () => {
-    ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
-    try {
-      const view = await mount('/download')
-      await waitFor(() => expect(view.getByRole('heading', { name: '下载知是' })).toBeTruthy())
-      expect(view.queryByRole('link', { name: /下载 Mac 版|下载 Windows 版/ })).toBeNull()
-    } finally {
-      delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
-    }
-  })
-
   it('keeps the introduction open to signed-in users and links back to work', async () => {
     AccountService.loggedIn = true
     const view = await mount('/about')
@@ -201,5 +193,28 @@ describe('公开首页', () => {
     await view.router.push('/')
     expect(view.router.currentRoute.value.path).toBe('/')
     expect(view.getAllByRole('link', { name: /开始使用/ }).length).toBeGreaterThan(0)
+  })
+})
+
+// The desktop app is used by people who have it installed already: the pages
+// written to win them over have no place in its window, which has no way back
+// from them either.
+describe('inside the desktop app', () => {
+  beforeEach(() => {
+    ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+  })
+  afterEach(() => {
+    delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
+  })
+
+  it.each(['/', '/about', '/solutions', '/download'])('%s asks a signed-out person to sign in', async (path) => {
+    const view = await mount(path)
+    await waitFor(() => expect(view.router.currentRoute.value.name).toBe('SignIn'))
+  })
+
+  it.each(['/about', '/solutions', '/download'])('%s takes a signed-in person back to work', async (path) => {
+    AccountService.loggedIn = true
+    const view = await mount(path)
+    await waitFor(() => expect(view.router.currentRoute.value.name).toBe('inbox'))
   })
 })

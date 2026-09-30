@@ -179,7 +179,7 @@ function close() {
   >
     <template #head>
       <div class="whose">
-        <UserAvatar :name="projectName" size="32" rounded="md" />
+        <UserAvatar :name="projectName" size="32" kind="org" />
         <div class="whose__text">
           <span class="whose__name">{{ projectName }}</span>
           <span class="whose__sub">{{ t('work.projectSettings.title') }}</span>

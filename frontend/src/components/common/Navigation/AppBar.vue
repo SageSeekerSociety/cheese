@@ -20,6 +20,8 @@
          代价是直达反馈中心多一次点击，取舍写在那个组件的文件头里。
          登录与否都显示：没登录的人遇到的问题同样值得记下来（未读点那时画不出来，
          因为计数要登录）。 -->
+    <!-- 桌面 app 的新版本下载好了、等一次重启时才出现；不点就不重启。 -->
+    <DesktopUpdateReady />
     <HelpAndFeedbackMenu />
     <!-- 登录后语言在「我」的菜单里（和外观并排）；没登录的人没有那个菜单，语言留在这儿。 -->
     <LanguageToggle v-if="!loggedIn" />
@@ -31,6 +33,7 @@ import { computed, ref, watch } from 'vue'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 

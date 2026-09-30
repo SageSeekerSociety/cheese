@@ -83,7 +83,7 @@ const emit = defineEmits<{
 
           <!-- 底部信息 -->
           <v-card-actions class="pa-4 pt-0">
-            <v-avatar size="24" color="surface-variant">
+            <v-avatar size="24" rounded="circle" color="surface-variant">
               <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
             </v-avatar>
             <span class="text-caption ml-2">{{ resource.creator.nickname }}</span>

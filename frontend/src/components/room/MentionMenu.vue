@@ -160,7 +160,8 @@ defineExpose({ scrollActiveIntoView })
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: var(--radius-sm);
+  /* 人是圆的；AI 队友、「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。 */
+  border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
   /* 底色是 avatarColor() 按 handle 算出来的定值，和时间线上这个人的头像一个颜色，
@@ -182,6 +183,11 @@ defineExpose({ scrollActiveIntoView })
      has to invert too; --surface is #fff in light (unchanged) and #1B1D20 dark. */
   color: var(--surface);
   background: var(--ink);
+}
+.mention-avatar--broadcast,
+.mention-avatar--topic,
+.mention-avatar--file {
+  border-radius: var(--radius-sm);
 }
 .mention-avatar--topic,
 .mention-avatar--file {

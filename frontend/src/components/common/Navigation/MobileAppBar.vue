@@ -80,6 +80,7 @@
                  (LeftAppRail) 同一套兜底。 -->
             <v-avatar
               size="28"
+              rounded="circle"
               :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
             >
               <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
