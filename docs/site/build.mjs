@@ -37,17 +37,18 @@ const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }
 const rel = (p) => path.relative(REPO, p).split(path.sep).join('/')
 const hash = (buf) => crypto.createHash('sha256').update(buf).digest('hex').slice(0, 10)
 
-// ---------- logo: motion direction A「冒孔」 ----------
+// ---------- logo: the 「冒孔」 motion ----------
 const LOGO_DIR = path.join(HERE, 'logo')
 const tpl = fs.readFileSync(path.join(LOGO_DIR, 'template.html'), 'utf8')
 const parts = JSON.parse(fs.readFileSync(path.join(LOGO_DIR, 'parts.json'), 'utf8'))
-const GRADS = parts.grads; delete parts.grads
 const cut = (a, b) => { const i = tpl.indexOf(a), j = tpl.indexOf(b, i); if (i < 0 || j < 0) fail(`logo template marker ${a}`); return tpl.slice(i, j) }
-const motionCore = cut('const P = __PARTS__;', '// ---------- 四个方向').replace('__PARTS__', JSON.stringify(parts))
-const bubble = cut("{\n  key:'bubble'", "{\n  key:'bite'").trim().replace(/,$/, '')
+const motionCore = cut('const P = __PARTS__;', '// ---------- 把 frame 的调用').replace('__PARTS__', JSON.stringify(parts))
 const stage = cut('function stageFor(svg){', '// 调试用')
-const motionModule = `${motionCore}\nconst BUBBLE = ${bubble};\n${stage}\nexport { build, stageFor, BUBBLE };`
-const LOGO_SVG = new Function(motionCore + '\nreturn build;')()('lg').replace('<defs>', '<defs>' + GRADS).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')
+const motionModule = `${motionCore}\n${stage}\nexport { build, stageFor, BUBBLE };`
+const LOGO_SVG = new Function(motionCore + '\nreturn build;')()('lg').replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')
+// The 知是 wordmark, inlined so it takes the text colour of whatever holds it.
+const WORDMARK = fs.readFileSync(path.join(REPO, 'frontend/src/assets/brand/wordmark-zh.svg'), 'utf8').trim()
+  .replace('<svg xmlns="http://www.w3.org/2000/svg" ', '<svg class="brand-wordmark" aria-hidden="true" ').replace(/ role="img" aria-label="[^"]*"/, '')
 
 // ---------- markdown ----------
 const FM = /^---\n([\s\S]*?)\n---\n/
@@ -689,7 +690,7 @@ const site = {
   ],
   userSections: SECTIONS.map(([key, label]) => ({ label, href: firstUrl(key) })),
 }
-const ctx = { site, assets, grads: GRADS }
+const ctx = { site, assets, wordmark: WORDMARK }
 
 const flatNav = (nav) => nav.flatMap(([, items]) => items)
 for (const [key] of SECTIONS) {

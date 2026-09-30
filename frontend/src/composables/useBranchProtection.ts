@@ -17,6 +17,7 @@ import type { BranchProtection, BranchProtectionPatch, ProjectMemberRow } from '
 import { computed, ref } from 'vue'
 
 import { getBranchProtection, listProjectMembers, setBranchProtection } from '@/api'
+import { t } from '@/i18n'
 import { parseApprovalsInput, parseCheckPaths } from '@/lib/branchProtection'
 
 /** 这一块自己的四态：GET 可能慢到要单独显示加载中/失败。 */
@@ -52,7 +53,10 @@ export function useBranchProtection(projectId: () => string) {
         value: m.user_handle,
       }))
   )
-  const bpReviewerItems = computed(() => [{ title: '未指定', value: '' }, ...bpMemberItems.value])
+  const bpReviewerItems = computed(() => [
+    { title: t('work.projectSettings.merge.unassigned'), value: '' },
+    ...bpMemberItems.value,
+  ])
 
   async function loadBranchProtection() {
     bpLoadState.value = 'loading'
@@ -64,7 +68,7 @@ export function useBranchProtection(projectId: () => string) {
       approvalsDraft.value = String(rules.approvals_required)
       bpLoadState.value = 'loaded'
     } catch (e) {
-      bpLoadError.value = e instanceof Error ? e.message : '加载分支保护规则失败'
+      bpLoadError.value = e instanceof Error ? e.message : t('work.projectSettings.merge.loadFailed')
       bpLoadState.value = 'error'
     }
   }
@@ -81,7 +85,7 @@ export function useBranchProtection(projectId: () => string) {
       approvalsDraft.value = String(rules.approvals_required)
       return true
     } catch (e) {
-      bpError.value = e instanceof Error ? e.message : '保存分支保护规则失败'
+      bpError.value = e instanceof Error ? e.message : t('work.projectSettings.merge.saveFailed')
       return false
     } finally {
       bpSaving.value = null
@@ -110,7 +114,7 @@ export function useBranchProtection(projectId: () => string) {
     if (!bp.value) return
     const parsed = parseApprovalsInput(approvalsDraft.value)
     if (parsed === null) {
-      bpError.value = '批准人数要是不小于 1 的整数'
+      bpError.value = t('work.projectSettings.merge.approvalsInvalid')
       approvalsDraft.value = String(bp.value.approvals_required)
       return
     }

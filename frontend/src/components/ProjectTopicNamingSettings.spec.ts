@@ -48,5 +48,5 @@ it('is read-only for someone who cannot manage the project', async () => {
   const view = mount()
   const manual = (await view.findByRole('radio', { name: /手动命名/ })) as HTMLButtonElement
   expect(manual.disabled).toBe(true)
-  expect(view.getByText('只有项目管理员可以修改。')).toBeTruthy()
+  expect(view.getByText('仅项目管理员可修改')).toBeTruthy()
 })

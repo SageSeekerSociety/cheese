@@ -180,17 +180,20 @@ export const workspaceRoutes: RouteRecordRaw = {
       // AI 队友回到了项目设置里：队友的角色设定和模型本来就是这个项目的设置，而
       // 设置页原本只有仓库那几块，对没绑仓库的项目是空的。发出去的旧链接照旧能用。
       path: 'agents',
-      redirect: (to) => ({ name: 'project-settings', params: { projectId: to.params.projectId } }),
+      redirect: (to) => ({ name: 'project-settings', params: { projectId: to.params.projectId, section: 'agents' } }),
     },
     {
+      // 盖在整个窗口上的一层，八栏各有地址（`settings/agents`…）。不带栏时桌面落到第一
+      // 栏，手机上是目录。
       name: 'project-settings',
-      path: 'settings',
+      path: 'settings/:section?',
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
       meta: {
         title: '项目设置',
         hideTabs: true,
         backTo: 'workspace-project',
+        settingsOverlay: true,
         palette: { label: 'navigation.project.settings', icon: 'mdi-cog-outline' },
       },
     },

@@ -672,7 +672,7 @@ async function confirmNewProject() {
     await loadCxProjects()
     newProjectDialog.value = false
     if (newProjectForgeKind.value === 'github_app') {
-      router.push(`/projects/${project.id}/settings`)
+      router.push(`/projects/${project.id}/settings/repository`)
       return
     }
     // 直接落到大本营，而不是项目地址。一个刚建出来的项目没有任何活，而 /projects
