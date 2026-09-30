@@ -81,12 +81,16 @@ class AssistantConversations:
         self._s = session
 
     async def list(self, user_id: int, place: Place) -> list[AssistantConversation]:
+        """This person's conversations here, latest first. One that never got a
+        question (started, then refused for lack of credits, say) is not
+        listed: it has nothing to go back to."""
         stmt = (
             select(AssistantConversation)
             .where(
                 AssistantConversation.user_id == user_id,
                 AssistantConversation.place_kind == place.kind,
                 AssistantConversation.place_id == place.id,
+                AssistantConversation.title != "",
             )
             .order_by(AssistantConversation.last_active_at.desc())
             .limit(50)
@@ -199,7 +203,7 @@ def _last_prompt_tokens(messages: list[ModelMessage]) -> int:
 
 
 async def _fold(
-    key: str, summary: str, messages: list[ModelMessage]
+    key: str, summary: str, messages: list[ModelMessage], conversation_id: uuid.UUID
 ) -> tuple[str, list[ModelMessage], RunUsage] | None:
     """Summarise all but the latest questions; None when there is nothing to
     fold or the summary could not be written (the history is kept whole)."""
@@ -221,7 +225,9 @@ async def _fold(
     try:
         result = await summariser.run(prompt)
     except Exception:  # noqa: BLE001 — a failed fold only means a longer prompt
-        logger.warning("folding an assistant conversation failed", exc_info=True)
+        logger.warning(
+            "folding assistant conversation %s failed", conversation_id, exc_info=True
+        )
         return None
     return result.output.strip(), messages[cut:], result.usage
 
@@ -326,7 +332,7 @@ async def _settle(
     if messages is not None and (
         _last_prompt_tokens(messages) > settings.assistant_history_cap_tokens
     ):
-        folded = await _fold(key, summary, messages)
+        folded = await _fold(key, summary, messages, conversation_id)
         if folded is not None:
             summary, messages, fold_usage = folded
             spent.append(fold_usage)

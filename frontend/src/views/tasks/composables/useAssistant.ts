@@ -116,6 +116,9 @@ export function useAssistant(taskId: () => number) {
     const at = new Date().toISOString()
     messages.value = [...messages.value, { role: 'user', text, at }]
     let answer = ''
+    // 面板只留服务端存下的东西：被拒的问题不留那一句，没答完的回答不留半截。
+    let asked = false
+    let failed = false
     try {
       const id = await ensureConversation()
       const res = await post(id, text)
@@ -124,6 +127,7 @@ export function useAssistant(taskId: () => number) {
         notice.value = body.message || fallback
         return
       }
+      asked = true
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -146,14 +150,17 @@ export function useAssistant(taskId: () => number) {
           } else if (event === 'tool') {
             tool.value = payload.name ?? null
           } else if (event === 'error') {
+            failed = true
             notice.value = payload.message || fallback
           }
         }
       }
     } catch {
+      failed = true
       notice.value = fallback
     } finally {
-      if (answer)
+      if (!asked) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      else if (answer && !failed)
         messages.value = [...messages.value, { role: 'assistant', text: answer, at: new Date().toISOString() }]
       streaming.value = null
       tool.value = null

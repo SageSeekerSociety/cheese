@@ -14,6 +14,7 @@ OpenAI-compatible model, stepping through a script of tool calls and answers.
 import asyncio
 import json
 import threading
+import uuid
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -32,6 +33,7 @@ from tests.conftest import seed_task_with_protocol, seed_user
 USAGE = {
     "prompt_tokens": 300,
     "completion_tokens": 20,
+    "total_tokens": 320,
     "prompt_tokens_details": {"cached_tokens": 200},
 }
 RATES = (1e-6, 2e-6, 1e-8)  # input, output, cached input — USD per token
@@ -425,3 +427,50 @@ def test_the_retired_task_advice_is_gone(client, gateway):
         "/ai/quota",
     ):
         assert client.get(path, headers=me).status_code == 404, path
+
+
+def test_a_long_conversation_is_folded_into_a_summary_and_the_fold_is_paid_for(
+    client, gateway, monkeypatch
+):
+    # Every prompt is over the cap, so once there is something before the
+    # last two questions, it is summarised away.
+    monkeypatch.setattr(settings, "assistant_history_cap_tokens", 1)
+    me = _auth(client, "asker")
+    conversation = _start(client, _task(client), me)
+    gateway.script = [
+        ("text", "一"),
+        ("text", "二"),
+        ("text", "三"),
+        ("text", "用户在复现 ResNet-18。"),
+    ]
+    for question in ("第一个问题", "第二个问题", "第三个问题"):
+        assert _ask(client, conversation, question, me).status_code == 200
+
+    async def read():
+        from app.domain.assistant.models import AssistantConversation
+
+        async with client.test_factory() as s:
+            row = await s.get(AssistantConversation, uuid.UUID(conversation))
+            return row.summary, json.dumps(row.history, ensure_ascii=False)
+
+    summary, history = asyncio.run(read())
+    assert summary == "用户在复现 ResNet-18。"
+    assert "第一个问题" not in history and "第三个问题" in history
+    # The person still sees everything that was said.
+    shown = client.get(f"/assistant/conversations/{conversation}", headers=me)
+    assert len(shown.json()["data"]["messages"]) == 6
+    # Three answers and the fold, each charged.
+    _, _, spent = _ledger(client, "asker")
+    assert len(spent) == 4
+
+
+def test_a_refused_question_leaves_nothing_in_the_list(client, gateway, monkeypatch):
+    monkeypatch.setattr(settings, "personal_credits_monthly", 0.0)
+    me = _auth(client, "asker")
+    task_id = _task(client)
+    conversation = _start(client, task_id, me)
+
+    assert _ask(client, conversation, "从哪里入手？", me).status_code == 429
+
+    listed = client.get(f"/assistant/tasks/{task_id}/conversations", headers=me)
+    assert listed.json()["data"]["conversations"] == []
