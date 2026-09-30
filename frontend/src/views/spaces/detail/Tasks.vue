@@ -30,6 +30,21 @@
           >
             {{ option.title }}
           </v-chip>
+          <!-- 「我发布的」下再收窄一步：有报名待审核或提交待评审的题 -->
+          <template v-if="scope === 'publishing'">
+            <v-divider vertical class="mx-1" />
+            <v-chip
+              :color="pendingOnly ? 'primary' : undefined"
+              :variant="pendingOnly ? 'flat' : 'outlined'"
+              :aria-pressed="pendingOnly"
+              prepend-icon="mdi-clipboard-clock-outline"
+              class="filter-chip"
+              label
+              @click="togglePendingOnly"
+            >
+              {{ t('spaces.detail.tasks.pendingOnly') }}
+            </v-chip>
+          </template>
         </div>
 
         <!-- Row 1: Search + Sort + Publish -->
@@ -269,6 +284,17 @@ const selectScope = (value: TaskScope) => {
   const query = { ...route.query }
   if (value === 'all') delete query.filter
   else query.filter = value
+  if (value !== 'publishing') delete query.pending
+  router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
+}
+
+/** 「只看待处理」：只在「我发布的」下生效，写在地址的 `pending=1` 里。 */
+const pendingOnly = computed(() => scope.value === 'publishing' && route.query.pending === '1')
+
+const togglePendingOnly = () => {
+  const query = { ...route.query }
+  if (pendingOnly.value) delete query.pending
+  else query.pending = '1'
   router.push({ name: 'SpacesDetailTasksList', params: { spaceId: route.params.spaceId }, query })
 }
 
@@ -359,11 +385,14 @@ const loadPublishedTasks = async () => {
   }
 }
 
-/** 接口一次给全，搜索在本地按题目名筛。 */
+/** 接口一次给全，搜索与「只看待处理」都在本地筛。待处理 = 有报名待审核或提交待评审。 */
 const visiblePublishedTasks = computed(() => {
   const keywords = searchQuery.value?.trim().toLowerCase()
-  if (!keywords) return publishedTasks.value
-  return publishedTasks.value.filter((task) => task.taskName.toLowerCase().includes(keywords))
+  return publishedTasks.value.filter((task) => {
+    if (keywords && !task.taskName.toLowerCase().includes(keywords)) return false
+    if (pendingOnly.value && task.pendingParticipantApprovalCount === 0 && task.pendingReviewCount === 0) return false
+    return true
+  })
 })
 
 const submitSearch = () => {

@@ -147,7 +147,8 @@
         "participating": "Joined",
         "publishing": "Published"
       },
-      "loadFailed": "Couldn't load problems"
+      "loadFailed": "Couldn't load problems",
+      "pendingOnly": "Needs action only"
     },
     "templateForm": {
       "editTitle": "Edit problem template",

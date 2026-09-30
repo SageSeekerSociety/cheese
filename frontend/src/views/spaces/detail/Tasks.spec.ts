@@ -1,9 +1,10 @@
-// 题目列表顶上的「全部 / 我参与的 / 我发布的」。守的是三条规矩：
+// 题目列表顶上的「全部 / 我参与的 / 我发布的」。守的是四条规矩：
 //
 // 1. 选「我参与的」只列我领过的题：向列表要的是 joined=true，不是在本地筛一页。
 // 2. 这一格写在地址里（?filter=），和分类（?category=）一起留着，换一格不丢另一格。
 // 3. 「我发布的」要看得到还没过审的题：通用列表只给已通过的，所以这一格读的是
 //    「我发布的题目」接口，那里的待审核题目得出现在屏幕上。
+// 4. 「只看待处理」只留有报名待审核或提交待评审的题，也写在地址里。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -58,7 +59,7 @@ function task(id: number, name: string) {
   return { id, name, topics: [], joined: false }
 }
 
-function publishedTask(taskId: number, taskName: string) {
+function publishedTask(taskId: number, taskName: string, overrides: Record<string, unknown> = {}) {
   return {
     taskId,
     taskName,
@@ -78,6 +79,7 @@ function publishedTask(taskId: number, taskName: string) {
     failedParticipantCount: 0,
     submissionConversionRate: 0,
     successRate: 0,
+    ...overrides,
   }
 }
 
@@ -153,5 +155,24 @@ describe('题目列表的范围', () => {
 
     await waitFor(() => expect(router.currentRoute.value.query).toEqual({ category: '7' }))
     await waitFor(() => expect(screen.getByText('别人的题')).toBeTruthy())
+  })
+
+  it('「只看待处理」只留有待评审提交的题', async () => {
+    myPublished.mockImplementation(async () => ({
+      data: {
+        tasks: [
+          publishedTask(5, '没有待处理的题', { approved: 'APPROVED', visibilityStatus: 'APPROVED_VISIBLE' }),
+          publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 1 }),
+        ],
+      },
+    }))
+    const router = await mount({ filter: 'publishing' })
+    await waitFor(() => expect(screen.getByText('没有待处理的题')).toBeTruthy())
+
+    await fireEvent.click(screen.getByText('只看待处理'))
+
+    await waitFor(() => expect(router.currentRoute.value.query).toMatchObject({ filter: 'publishing', pending: '1' }))
+    await waitFor(() => expect(screen.queryByText('没有待处理的题')).toBeNull())
+    expect(screen.getByText('有提交待评审的题')).toBeTruthy()
   })
 })

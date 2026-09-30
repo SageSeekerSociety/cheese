@@ -191,7 +191,8 @@
         "participating": "我参与的",
         "publishing": "我发布的"
       },
-      "loadFailed": "无法加载题目"
+      "loadFailed": "无法加载题目",
+      "pendingOnly": "只看待处理"
     },
     "templateForm": {
       "editTitle": "编辑题目模板",
