@@ -88,14 +88,18 @@ API_EXCLUDED = ("frontend/src/utils/apiBase.ts",)
 
 
 def repo_src(root: Path) -> Path:
-    """The `frontend/src` directory of a repo root — or no grading at all.
+    """The `frontend/src` directory of a repo root, resolved — or no grading.
 
-    A caller that hands the grader a directory that is not the repo root must
-    not get a green answer: with a missing `frontend/src` the import graph is
-    empty, every component looks standalone, and a gate would pass everything.
-    So this raises instead of returning an empty tree. The CLI turns the
-    LookupError into exit 2 — "cannot judge" — which is the only way a wrong
-    root is allowed to fail loud."""
+    Two ways this silently turned every grade into A, and both bit this line
+    of work. One: a directory that is not the repo root has no `frontend/src`,
+    so the import graph is empty and everything looks standalone. Two: a bare
+    relative root (`Path(".")`) leaves `resolve_spec` results relative while
+    `api_reach` keys its graph by resolved paths, so the transitive closure
+    compares unlike-with-unlike and the chain test never fires. Both are
+    fixed here: resolve the root first, and refuse to grade when the tree is
+    missing. The CLI turns the LookupError into exit 2 — "cannot judge" —
+    which is the only way a wrong root is allowed to fail loud."""
+    root = Path(root).resolve()
     src = root / "frontend" / "src"
     if not src.is_dir():
         raise LookupError(f"not a repo root (frontend/src missing): {root}")

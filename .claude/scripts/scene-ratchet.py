@@ -77,6 +77,7 @@ readable baseline, an unreadable scene file). 2 is never a pass.
 from __future__ import annotations
 
 import argparse
+import os
 import importlib.util
 import json
 import re
@@ -973,6 +974,18 @@ def self_test() -> int:
         wrong = run_cli(root / "frontend", baseline_path)
         check("a root without frontend/src exits 2", wrong.returncode, 2)
         check("and says why", "frontend/src" in wrong.stderr, True)
+        # A bare relative root must still grade the same tree. The resolution
+        # is what keeps the chain test alive: `main()` resolves the root today,
+        # and `repo_src()` resolves it again for callers that grade directly —
+        # either going missing turns the chain test off silently. --list, not
+        # exit 0: exit 0 alone would also accept the silent-A answer, since
+        # debt going A is not a failure.
+        _fixture(root)
+        baseline_path = _fixture_baseline(root)
+        rel = Path(os.path.relpath(root, Path.cwd()))
+        result = run_cli(rel, baseline_path, "--list")
+        check("a relative root still follows the chain",
+              "C src/views/Heavy.vue" in result.stdout, True)
 
     if failures:
         print("SELF-TEST FAIL:")
