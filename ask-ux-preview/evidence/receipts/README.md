@@ -71,4 +71,16 @@ Source: `bdbe461d0b0534751915ed521f57935a9d83d65c`.
 
 The same real PostgreSQL commit-path abort leaves the landing cursor before that echo and rolls back receipt/delivery/two consumed blocks/two seen reactions. A new Python interpreter reopens the existing journal, reconstructs the settlement-only ChatService/subscription and commits those effects without send/steer. Only the isolated test runner is closed after it produces its result. The native process is not restarted, no external live-model reasoning is tested, and neither full converse nor original-executor recovery is exercised. This is not COMMIT-success/confirmation-loss evidence.
 
-The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete Ask group effects, overlapping holds/safe release, full converse recovery and original executor continuation remain incomplete. The migration and this draft PR are not independently releasable.
+## Shared-batch admission and consumption-release query (WIP)
+
+Source: `148eaa1e`. `batch-ownership-first.txt` and manifest record 10 passed, 12 test-JWT key-length warnings, exit 0. Two real PostgreSQL transactions contend for the same two block rows through separate delivery attempts. A third connection observes the actual blocking PID before releasing the first transaction; registration commits before a counted external admission. Only one new identity registers and reaches that counter. Same-input retries verify one persisted identity; this test does not prove transport deduplication on that retry.
+
+Three cases let independent seat/topic/project batches commit while the first holds its block locks. They use disjoint block IDs, not overlapping blocks assigned to two seats. Another case keeps initial holds after accepted/native_echo and after a different work's consumption marker, then removes them after the registered work's consumption. Four validation cases reject missing/foreign blocks or another receiver's seen effects without persisting a registration/reaction.
+
+The external channel is a counter, not a native executor. Consumption in the release case is a direct repository operation, not a recovered executor Stop. The query uses the current block consumption marker; durable completion history and proven-never-sent runtime release still need implementation. Complete group effects are not exercised here.
+
+`batch-ownership-negative.txt` and manifest record 1 failed, 9 deselected, exit 1 at `79728bbb`. `overlapping_batch_control.py` suppresses only overlap detection for new registration, retaining real row locks and all assertions. Both distinct identities register; the assertion rejects the second admission. It is an observable overlap failure, not a deadlock, setup failure or safety-timeout result. The manifest preserves the control and stdout hashes.
+
+The existing contract now includes Delivery→NativeInput→sorted Block ordering, including INSERT/unique-key waiting before block locks. The new overlap/independent-batch tests do not rerun the previously closed Delivery→NativeInput checkpoint. Work completion and remaining group/caller transaction paths still require consistent locking and validation.
+
+The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete Ask group effects, safe hold release, full converse recovery and original executor continuation remain incomplete. The migration and this draft PR are not independently releasable.

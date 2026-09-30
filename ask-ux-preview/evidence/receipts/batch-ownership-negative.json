@@ -1,0 +1,20 @@
+{
+  "source": "79728bbbbf45b8e2c4dc9f5cb7b53c382d6b9b7b",
+  "argv": [
+    "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/bin/python",
+    "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/ask-ux-preview/evidence/receipts/overlapping_batch_control.py"
+  ],
+  "cwd": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend",
+  "env": {
+    "TEST_PG_BASE": "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433",
+    "REDIS_URL": "redis://127.0.0.1:6379/12",
+    "CHEESE_CI_SLOT": "ask_s_concurrency",
+    "CHEESE_CI_REDIS_BASE_DB": "12",
+    "PYTHONPATH": "."
+  },
+  "started_at": "2026-09-30T23:49:21.044640+00:00",
+  "ended_at": "2026-09-30T23:49:34.009272+00:00",
+  "exit": 1,
+  "stdout_sha256": "6ad69d12548a30aca983be7dd50b21eca4ed0763ddd4f60b470a2d8502fa0acf",
+  "control_sha256": "f60bfd058dd2b28ae7b24f5f3d64d7edded1bbc48a7447638c1dafd8aff34a9f"
+}

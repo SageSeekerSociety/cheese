@@ -1,0 +1,605 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_two_deliveries_compete_for_one_batch_without_reverse_lock_edge[False] __
+
+client = <starlette.testclient.TestClient object at 0x79278c128590>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x79278c37e9e0>
+same_input = False
+
+    @pytest.mark.parametrize("same_input", [False, True])
+    def test_two_deliveries_compete_for_one_batch_without_reverse_lock_edge(
+        client,
+        monkeypatch,
+        same_input,
+    ):
+        project = uuid.UUID(_project(client, "batch contention"))
+        topic = uuid.UUID(_room(client, str(project), "shared batch"))
+    
+        async def run():
+            factory = client.test_request_factory
+            ids = await _blocks(factory, project, topic)
+            identities = [_identity(project, topic), _identity(project, topic)]
+            links = [await _delivery(factory, identity) for identity in identities]
+            if same_input:
+                identities[1], links[1] = identities[0], links[0]
+            effects = [
+                InputEffects(held_block_ids=ids, delivery_id=link[0], attempt_id=link[1])
+                for link in links
+            ]
+            locked, release, second_entered = (
+                asyncio.Event(),
+                asyncio.Event(),
+                asyncio.Event(),
+            )
+            pids, decisions, admissions = {}, [], []
+            original = AsyncSession.scalars
+            holder = None
+    
+            async def pause_block_lock(session, statement, *args, **kwargs):
+                result = await original(session, statement, *args, **kwargs)
+                if (
+                    session is holder
+                    and getattr(statement, "_for_update_arg", None) is not None
+                ):
+                    locked.set()
+                    await release.wait()
+                return result
+    
+            monkeypatch.setattr(AsyncSession, "scalars", pause_block_lock)
+    
+            async def transact(index):
+                nonlocal holder
+                async with factory() as session:
+                    pids[index] = await session.scalar(text("SELECT pg_backend_pid()"))
+                    if index == 0:
+                        holder = session
+                    else:
+                        await locked.wait()
+                        second_entered.set()
+                    try:
+                        await register_input(session, identities[index], effects[index])
+                        await session.commit()
+                    except ValidationError:
+                        await session.rollback()
+                        decisions.append((index, "held"))
+                    else:
+                        decisions.append((index, "registered"))
+                        admissions.append(identities[index].input_id)
+    
+            async def observer():
+                await second_entered.wait()
+                async with factory() as session:
+                    while True:
+                        blockers = await session.scalar(
+                            text("SELECT pg_blocking_pids(:pid)"), {"pid": pids[1]}
+                        )
+                        if pids[0] in blockers:
+                            assert pids[0] != pids[1]
+                            release.set()
+                            return
+                        await asyncio.sleep(0.01)
+    
+            async with asyncio.timeout(15):
+                async with asyncio.TaskGroup() as group:
+                    group.create_task(transact(0))
+                    group.create_task(transact(1))
+                    group.create_task(observer())
+            if same_input:
+                assert sorted(decisions) == [(0, "registered"), (1, "registered")]
+                # Same-ID registration retry verifies one persisted identity; runtime
+                # runner dedup owns transport retries, not this registration function.
+                assert set(admissions) == {identities[0].input_id}
+            else:
+                assert sorted(decisions) == [(0, "registered"), (1, "held")]
+                assert admissions == [identities[0].input_id]
+            async with factory() as session:
+                rows = list(await session.scalars(select(NativeInput)))
+                assert len(rows) == 1
+                assert set(rows[0].held_block_ids) == {str(block) for block in ids}
+                assert await held_blocks(
+                    session,
+                    project_id=project,
+                    topic_id=topic,
+                    recipient_handle=identities[0].recipient_handle,
+                ) == set(ids)
+    
+>       client.portal.call(run)
+
+tests/integration/test_native_batch_ownership.py:176: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def run():
+        factory = client.test_request_factory
+        ids = await _blocks(factory, project, topic)
+        identities = [_identity(project, topic), _identity(project, topic)]
+        links = [await _delivery(factory, identity) for identity in identities]
+        if same_input:
+            identities[1], links[1] = identities[0], links[0]
+        effects = [
+            InputEffects(held_block_ids=ids, delivery_id=link[0], attempt_id=link[1])
+            for link in links
+        ]
+        locked, release, second_entered = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        pids, decisions, admissions = {}, [], []
+        original = AsyncSession.scalars
+        holder = None
+    
+        async def pause_block_lock(session, statement, *args, **kwargs):
+            result = await original(session, statement, *args, **kwargs)
+            if (
+                session is holder
+                and getattr(statement, "_for_update_arg", None) is not None
+            ):
+                locked.set()
+                await release.wait()
+            return result
+    
+        monkeypatch.setattr(AsyncSession, "scalars", pause_block_lock)
+    
+        async def transact(index):
+            nonlocal holder
+            async with factory() as session:
+                pids[index] = await session.scalar(text("SELECT pg_backend_pid()"))
+                if index == 0:
+                    holder = session
+                else:
+                    await locked.wait()
+                    second_entered.set()
+                try:
+                    await register_input(session, identities[index], effects[index])
+                    await session.commit()
+                except ValidationError:
+                    await session.rollback()
+                    decisions.append((index, "held"))
+                else:
+                    decisions.append((index, "registered"))
+                    admissions.append(identities[index].input_id)
+    
+        async def observer():
+            await second_entered.wait()
+            async with factory() as session:
+                while True:
+                    blockers = await session.scalar(
+                        text("SELECT pg_blocking_pids(:pid)"), {"pid": pids[1]}
+                    )
+                    if pids[0] in blockers:
+                        assert pids[0] != pids[1]
+                        release.set()
+                        return
+                    await asyncio.sleep(0.01)
+    
+        async with asyncio.timeout(15):
+            async with asyncio.TaskGroup() as group:
+                group.create_task(transact(0))
+                group.create_task(transact(1))
+                group.create_task(observer())
+        if same_input:
+            assert sorted(decisions) == [(0, "registered"), (1, "registered")]
+            # Same-ID registration retry verifies one persisted identity; runtime
+            # runner dedup owns transport retries, not this registration function.
+            assert set(admissions) == {identities[0].input_id}
+        else:
+>           assert sorted(decisions) == [(0, "registered"), (1, "held")]
+E           AssertionError: assert [(0, 'registe...'registered')] == [(0, 'registe..., (1, 'held')]
+E             
+E             At index 1 diff: (1, 'registered') != (1, 'held')
+E             Use -v to get more diff
+
+tests/integration/test_native_batch_ownership.py:163: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-30 23:49:28 [warning  ] agent-user seed skipped        [cheesex.runtime] reason="Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', "
+2026-09-30 23:49:28 [warning  ] agent identity backfill skipped [cheesex.runtime] reason="Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', "
+------------------------------ Captured log setup ------------------------------
+WARNING  cheesex.runtime:_base.py:224 {'reason': "Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', ", 'event': 'agent-user seed skipped', 'level': 'warning', 'logger': 'cheesex.runtime', 'timestamp': '2026-09-30 23:49:28'}
+WARNING  cheesex.runtime:_base.py:224 {'reason': "Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', ", 'event': 'agent identity backfill skipped', 'level': 'warning', 'logger': 'cheesex.runtime', 'timestamp': '2026-09-30 23:49:28'}
+----------------------------- Captured stderr call -----------------------------
+2026-09-30 23:49:28 [error    ] could not ask for the owner lock [app.core.ownership]
+Traceback (most recent call last):
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 74, in try_acquire
+    connection = await self._connect()
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 55, in _connect
+    connection = await self._engine.connect()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 307, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 955, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connection.py", line 2443, in connect
+    return await connect_utils._connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<22 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1249, in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+    ...<2 lines>...
+    )
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1218, in _connect
+    conn = await _connect_addr(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1054, in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1099, in __connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 969, in _create_ssl_connection
+    tr, pr = await loop.create_connection(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        host, port)
+        ^^^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+2026-09-30 23:49:28 [info     ] another backend owns the running work; waiting for it [app.core.ownership]
+2026-09-30 23:49:28 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=370e2aa0664d
+2026-09-30 23:49:28 [info     ] req                            [http] bytes=652 client=testclient host=testserver method=POST ms=760.3 path=/projects req=370e2aa0664d status=200 ua=testclient
+2026-09-30 23:49:28 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-09-30 23:49:30 [warning  ] event loop stalled             [cheesex.loop] note='one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.' stalled_ms=1154 worst_ms=1154
+2026-09-30 23:49:30 [error    ] could not ask for the owner lock [app.core.ownership]
+Traceback (most recent call last):
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 74, in try_acquire
+    connection = await self._connect()
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 55, in _connect
+    connection = await self._engine.connect()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 307, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 955, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connection.py", line 2443, in connect
+    return await connect_utils._connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<22 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1249, in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+    ...<2 lines>...
+    )
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1218, in _connect
+    conn = await _connect_addr(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1054, in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1099, in __connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 969, in _create_ssl_connection
+    tr, pr = await loop.create_connection(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        host, port)
+        ^^^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+2026-09-30 23:49:30 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=12af312af6cd
+2026-09-30 23:49:30 [info     ] req                            [http] bytes=730 client=testclient host=testserver method=POST ms=1296.8 path=/topics req=12af312af6cd status=200 ua=testclient
+2026-09-30 23:49:30 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+------------------------------ Captured log call -------------------------------
+ERROR    app.core.ownership:ownership.py:81 could not ask for the owner lock
+Traceback (most recent call last):
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 74, in try_acquire
+    connection = await self._connect()
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 55, in _connect
+    connection = await self._engine.connect()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 307, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 955, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connection.py", line 2443, in connect
+    return await connect_utils._connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<22 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1249, in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+    ...<2 lines>...
+    )
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1218, in _connect
+    conn = await _connect_addr(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1054, in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1099, in __connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 969, in _create_ssl_connection
+    tr, pr = await loop.create_connection(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        host, port)
+        ^^^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+INFO     app.core.ownership:ownership.py:93 another backend owns the running work; waiting for it
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '370e2aa0664d', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 23:49:28'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 760.3, 'req': '370e2aa0664d', 'bytes': 652, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 23:49:28'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+WARNING  cheesex.loop:loop_lag.py:75 {'stalled_ms': 1154, 'worst_ms': 1154, 'note': 'one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.', 'event': 'event loop stalled', 'level': 'warning', 'logger': 'cheesex.loop', 'timestamp': '2026-09-30 23:49:30'}
+ERROR    app.core.ownership:ownership.py:81 could not ask for the owner lock
+Traceback (most recent call last):
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 74, in try_acquire
+    connection = await self._connect()
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/core/ownership.py", line 55, in _connect
+    connection = await self._engine.connect()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 307, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 955, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connection.py", line 2443, in connect
+    return await connect_utils._connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<22 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1249, in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+    ...<2 lines>...
+    )
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1218, in _connect
+    conn = await _connect_addr(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1054, in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 1099, in __connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+  File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py", line 969, in _create_ssl_connection
+    tr, pr = await loop.create_connection(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        host, port)
+        ^^^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '12af312af6cd', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-09-30 23:49:30'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 1296.8, 'req': '12af312af6cd', 'bytes': 730, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-09-30 23:49:30'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+tests/integration/test_native_batch_ownership.py::test_two_deliveries_compete_for_one_batch_without_reverse_lock_edge[False]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_native_batch_ownership.py::test_two_deliveries_compete_for_one_batch_without_reverse_lock_edge[False]
+1 failed, 9 deselected, 2 warnings in 3.68s
