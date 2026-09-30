@@ -79,7 +79,7 @@ covers:
 
 备份和推送各自遇到连接被重置或超时，就在同一次 sync 里再试一次；连着两次才算失败——一次重置是网络，连着两次多半是这个请求本身（大小、中间代理的限制），再试只会拖长换机时那两分钟的推送。
 
-备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」），服务端按 sha256 复核 digest、并校验它真是个 git bundle。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
+备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回；再问一次后端这条任务最新那份备份（`GET …/snapshots/latest`），它的 head 和文件树跟现在一样，也不再发——快照提交每次现做，不问这一句，没动过的已结束任务每次 sync 都会重新打包上传一遍，换机时的推送就等着它们。问不通、还没有备份、本机已经没有那份快照，都照常上传。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」），服务端按 sha256 复核 digest、并校验它真是个 git bundle。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
 
 同步失败**会在房间里说一句**（`_report_sync_failure`）：一轮结束时改动还在机器上，和一轮成功长得一模一样——这正是「一次被拒的推送被读成了一个完成的回合」的由来，直到机器被回收、改动跟着没了。成功不发消息，那会是训练人跳过它的噪音。
 
@@ -129,7 +129,7 @@ covers:
 
 ## 边界与坑 {#traps}
 
-- 「失联」只在**没人知道那个分身还在不在**的时候说话（`worker_live` 为 None），退回时间戳，宽限期 10 分钟（`LOST_SIGNAL_AFTER`，实测轮内 block 间隔中位数 8 秒、p90 34 秒）。跑轮次的进程说它收工了就是收工了——那是缺席的证据，立刻算失联；说它还在做就是在跑，一个埋头跑四十分钟长命令、一条 block 都不落的分身是正常干法。安静不是证据，缺席才是。
+- 「失联」只在**没人知道那个分身还在不在**的时候说话，退回时间戳，宽限期 10 分钟（`LOST_SIGNAL_AFTER`，实测轮内 block 间隔中位数 8 秒、p90 34 秒）。知道的有两处：跑轮次的进程（`ChatService.worker_live`）说它收工了就是收工了——那是缺席的证据，立刻算失联；说它还在做就是在跑。进程那处会忘，忘的三种情形都和分身死没死无关（后端重启、房间换一个会话、分身交回一次话），所以还有第二处：这条活**开工那一轮还开不开**（`Task.execution_turn_id`，见 `agent.liveness`）——关掉区间的是孤儿扫描，它知道容器真的死了没有。两处都答不出来才退回时间戳。一个埋头跑四十分钟长命令、一条 block 都不落的分身是正常干法——安静不是证据，缺席才是。
 - 「待回答」是唯一会**中断运行**的一格，它压过「运行中」——看板显示「运行中」正是让人不来看的那句话。
 - `has_progress`（「已动工」的判据）只读平台看得见的两个痕迹：`pr_number` 非空或 `author_handle` 非空。主 agent 自己动手那条路平台看不见过程（提交直接推去托管平台、工作树在沙箱里自己开），所以这一位只够把「做了一半停着」和「还没人碰过」分开，不够说明「正在做」。
 - `Task.model` / `effort` 今天**只有卡片渲染读，没有任何接口写**：平台还没有「派活」这条路径，一条活是房间会话里的子 agent，由 agent 自己起。卡上显示哪个模型也从 `usage` 里这条活最后一行算出来（`presentation.card_model`），不存一列。

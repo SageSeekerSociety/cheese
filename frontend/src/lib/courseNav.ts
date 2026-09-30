@@ -139,7 +139,7 @@ export function courseCells(isTeacher: boolean): readonly CourseNavCell[] {
  *
  * 落点必须由入口链接定，因为 `/spaces/{id}` 这个地址本身不区分 —— 它一律 redirect
  * 到老树（`router/spaces.ts` 里那条 redirect 不许动，老链接的零感知靠它）。所以
- * 列表页、我的工作页、申请列表三处都走这个函数，谁也别自己拼地址。
+ * 列表页、首页侧栏、申请列表三处都走这个函数，谁也别自己拼地址。
  *
  * 一个已知的边界：直接在地址栏敲 `/spaces/{id}`（或刷新一个这样的地址）仍然落到
  * 老树 —— 那条地址是 redirect，读不到「该不该去题目板」，为它加一个往返不划算。

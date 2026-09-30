@@ -12,12 +12,11 @@
 // defaults），和「有没有路由」无关。这条线画在「路由和 pinia」上，也正是这批组件
 // 从前缺的那两样：从前它们各要一个 `createRouter()` + `createPinia()` 才肯渲染。
 //
-// 名单里的 `components/**` 七个是全仓 `components/` 下仅有的这一类；另外五个是同一
-// 形状的视图级组件（DetailSidebar / LearningQuoteItem / AnalyticsNavigationTabs /
-// 404 / DetailAnswerList），路由同样是它们唯一的全局依赖。
+// 名单里的 `components/**` 七个是全仓 `components/` 下仅有的这一类；另外四个是同一
+// 形状的视图级组件（LearningQuoteItem / AnalyticsNavigationTabs / 404 /
+// DetailAnswerList），路由同样是它们唯一的全局依赖。
 import type { Component } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
-import type { Team } from '@/types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -36,7 +35,6 @@ import i18n, { setLocale } from '@/i18n'
 import NotFound from '@/views/404.vue'
 import AnalyticsNavigationTabs from '@/views/spaces/detail/analytics/components/AnalyticsNavigationTabs.vue'
 import LearningQuoteItem from '@/views/spaces/detail/analytics/components/LearningQuoteItem.vue'
-import DetailSidebar from '@/views/teams/DetailSidebar.vue'
 
 // 装了产品自己的主题和语言，**没有 vue-router、没有 pinia**：这份清单要证的就是
 // 「这两样不在场也能渲染」。
@@ -197,29 +195,6 @@ const CASES: Case[] = [
       },
     },
     text: '因为瑞利散射，短波长的光被散射得更多。',
-  },
-  {
-    name: 'DetailSidebar',
-    component: DetailSidebar as unknown as Component,
-    props: {
-      teamData: {
-        id: 7,
-        handle: 'cheese-core',
-        name: 'Cheese 核心组',
-        intro: '一起把芝士做完',
-        avatarId: 3,
-        owner: { id: 1, nickname: '队长' },
-        admins: { total: 0, examples: [] },
-        members: { total: 1, examples: [] },
-        role: 'OWNER',
-        visibility: 'public',
-      } as unknown as Team,
-      teamMembersCount: 3,
-    },
-    text: 'Cheese 核心组',
-    // 这一颗底下挂着外壳的二级导航（它读 application shell 的 navigation store），
-    // 那和路由不是一回事 —— 这里换成空壳，只谈这一颗自己对路由的依赖。
-    stubs: { SecondaryNavigation: { template: '<nav><slot /></nav>' } },
   },
   {
     name: '404',

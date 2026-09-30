@@ -37,6 +37,7 @@ from app.domain.agent.compute_configs import (
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
+from app.domain.agent.liveness import task_liveness
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_TIERS,
@@ -857,9 +858,8 @@ async def list_project_tasks(
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
-    # 分身住在它房间的会话里，所以这一位按房间问，一个房间只问一次（内存里的
-    # 当下事实，不走库）。
-    live_rooms = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
+    # 第五次批查询：这一屏每行的屏幕和分身（`agent.liveness`：分身那位不止看内存）。
+    live = await task_liveness(chat, db, tasks)
     items = []
     for task in tasks:
         card = cards.get(task.id)
@@ -868,8 +868,8 @@ async def list_project_tasks(
                 task,
                 card,
                 beats.get(task.id),
-                room_screen_live=live_rooms[task.room_id],
-                worker_live=chat.worker_live(task.room_id, task.subagent_id),
+                room_screen_live=live[task.id].screen,
+                worker_live=live[task.id].worker,
                 awaiting_answer=task.id in asked,
             ),
             now=now,

@@ -505,6 +505,136 @@ describe('卡上的步骤清单', () => {
   })
 })
 
+// 卡下的块发在这条活自己的频道上（后端 publish 的就是卡的 id，见 topics.py 里
+// 「卡下的实时帧走这条活自己的频道」那段注释）。以前这条 socket 只认清单和
+// `block_updated`，别的帧全被丢掉，而 `block_updated` 对不在列表里的 id 又是空
+// 操作——于是分身干活时新落下的话和步骤块要等人离开这张卡再进来才看得见。
+describe('卡下的时间线跟着自己的频道长出来', () => {
+  function cardSocket(): FakeWebSocket {
+    const socket = FakeWebSocket.instances.filter((s) => s.url.includes('/topics/task-1/chat')).at(-1)
+    if (!socket) throw new Error('卡的频道没连上')
+    return socket
+  }
+
+  /** 把时间线那段做成一个能读写的滚动盒：`top` 是离底部的距离，用来钉住跟不跟底。 */
+  function scrollBox(container: Element, distanceFromBottom: number) {
+    const el = container.querySelector('.panel-card__timeline') as HTMLElement
+    let top = 0
+    Object.defineProperty(el, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(el, 'scrollHeight', { value: 400 + distanceFromBottom, configurable: true })
+    Object.defineProperty(el, 'scrollTop', {
+      get: () => top,
+      set: (v: number) => (top = v),
+      configurable: true,
+    })
+    return el
+  }
+
+  it('分身新说的一句话，卡的频道上一到就出现在时间线上', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    cardSocket().emit({
+      type: 'assistant_block',
+      block: block({
+        id: 'b9',
+        author: 'cheese-a1',
+        content: '改完了，测试也过了',
+        created_at: '2026-09-06T02:00:00Z',
+      }),
+    })
+    expect(await view.findByText('改完了，测试也过了')).toBeTruthy()
+  })
+
+  it('它做的每一步也长出来，不只是一句话', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    cardSocket().emit({
+      type: 'event_block',
+      block: block({
+        id: 'e9',
+        author: 'cheese-a1',
+        kind: 'event',
+        content: '',
+        meta: { tool: 'Bash', arg: 'pnpm test' },
+        created_at: '2026-09-06T02:00:00Z',
+      }),
+    })
+    expect(await view.findByText('1 步操作')).toBeTruthy()
+  })
+
+  it('同一块推两遍只画一次', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    const same = block({ id: 'b9', author: 'cheese-a1', content: '改完了', created_at: '2026-09-06T02:00:00Z' })
+    cardSocket().emit({ type: 'assistant_block', block: same })
+    cardSocket().emit({ type: 'assistant_block', block: same })
+    await view.findByText('改完了')
+    expect(view.queryAllByText('改完了')).toHaveLength(1)
+  })
+
+  it('撤回的那一条从时间线上拿走', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    cardSocket().emit({ type: 'retract_block', block_id: 'b1' })
+    await waitFor(() => expect(view.queryByText('这条先别动 routes')).toBeNull())
+  })
+
+  it('没见过的块变了一下，也能插进来，而不是空操作', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    cardSocket().emit({
+      type: 'block_updated',
+      block: block({ id: 'b7', author: 'cheese-a1', content: '这条是后来补的', created_at: '2026-09-06T02:00:00Z' }),
+    })
+    expect(await view.findByText('这条是后来补的')).toBeTruthy()
+  })
+
+  it('晚到的旧块按时间插在中间，不是挂到最后', async () => {
+    getRoomTask.mockResolvedValue(
+      card({
+        blocks: [
+          block({ id: 'b1', content: '先说的一句', created_at: '2026-09-06T01:00:00Z' }),
+          block({ id: 'b3', content: '后说的一句', created_at: '2026-09-06T03:00:00Z' }),
+        ],
+      })
+    )
+    const view = mount()
+    await view.findByText('后说的一句')
+    cardSocket().emit({
+      type: 'assistant_block',
+      block: block({ id: 'b2', content: '夹在中间的一句', created_at: '2026-09-06T02:00:00Z' }),
+    })
+    await view.findByText('夹在中间的一句')
+    const said = Array.from(view.container.querySelectorAll('.card-msg__text')).map((n) => n.textContent)
+    expect(said).toEqual(['先说的一句', '夹在中间的一句', '后说的一句'])
+  })
+
+  it('人停在底部时，新落下的块把视口一起带下去', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    const el = scrollBox(view.container, 20) // 离底部 20px：在底部
+    cardSocket().emit({
+      type: 'assistant_block',
+      block: block({ id: 'b9', author: 'cheese-a1', content: '新的一条', created_at: '2026-09-06T02:00:00Z' }),
+    })
+    await view.findByText('新的一条')
+    await waitFor(() => expect(el.scrollTop).toBe(420))
+  })
+
+  it('翻上去看历史时，新落下的块不把人拽走', async () => {
+    const view = mount()
+    await view.findByText('这条先别动 routes')
+    const el = scrollBox(view.container, 600) // 离底部 600px：在翻历史
+    cardSocket().emit({
+      type: 'assistant_block',
+      block: block({ id: 'b9', author: 'cheese-a1', content: '新的一条', created_at: '2026-09-06T02:00:00Z' }),
+    })
+    await view.findByText('新的一条')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(el.scrollTop).toBe(0)
+  })
+})
+
 describe('改自己在卡上说过的话', () => {
   it('自己的话有「编辑」，别人的没有', async () => {
     getRoomTask.mockResolvedValue(card({ blocks: [block(), block({ id: 'b2', author: 'bob', content: '好的' })] }))

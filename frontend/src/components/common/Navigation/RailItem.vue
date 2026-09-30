@@ -10,6 +10,7 @@
     :border="false"
     class="app-rail-item"
     :aria-label="badgeLabel"
+    :aria-current="current"
     :class="{
       'app-rail-item-cheese': item.icon === 'cheese',
       'app-rail-item--tile': item.img,
@@ -56,6 +57,7 @@
       <v-icon size="24">{{ item.icon }}</v-icon>
     </template>
     <span v-if="badge" class="app-rail-item__badge" aria-hidden="true">{{ badge > 99 ? '99+' : badge }}</span>
+    <span v-else-if="dot" class="app-rail-item__dot" aria-hidden="true" />
   </v-card>
   <template v-else>
     <!-- separates 本体(首页) from the project list — a short, visible rule -->
@@ -69,9 +71,12 @@ import type { DropEdge } from '@/lib/projectOrder'
 import { computed, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { useNavigation } from '@/composables/useNavigation'
+
 import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import { t } from '@/i18n'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
 // 自定义的拖拽类型，不是 text/plain：rail 只接自己格子拖过来的东西，从桌面拖一个
@@ -98,10 +103,21 @@ const { item } = toRefs(navBarProps)
 const projectId = computed(() => (item.value.type === 'item' ? item.value.projectId : undefined))
 
 const badge = computed(() => (item.value.type === 'item' ? item.value.badge || 0 : 0))
-// 角标是画给眼睛的（aria-hidden），读屏从名字里听到件数。
+const dot = computed(() => item.value.type === 'item' && !badge.value && !!item.value.dot)
+// 角标和小点都是画给眼睛的（aria-hidden），读屏从名字里听到件数或「有新动态」。
 const badgeLabel = computed(() => {
   if (item.value.type !== 'item') return undefined
-  return badge.value ? `${item.value.title}（${badge.value}）` : item.value.title
+  if (badge.value) return `${item.value.title}（${badge.value}）`
+  if (dot.value) return `${item.value.title}（${t('home.nav.unreadActivity')}）`
+  return item.value.title
+})
+
+// 一格底下住着好几条并列的路由时（首页那一格：待办、团队、空间），由它自己说
+// 哪些地址算「正待着」；其余格子照旧交给链接自己判断。
+const nav = useNavigation()
+const current = computed(() => {
+  if (item.value.type !== 'item' || !item.value.match) return undefined
+  return item.value.match(nav?.route?.path ?? '') ? 'page' : undefined
 })
 
 function onDragStart(e: DragEvent) {
@@ -287,6 +303,18 @@ function warmDestination() {
 // 这个暖色上只有 2.4:1，而 --ink 在深色主题下正好是白的。--inverse-surface 就是
 // 这块深墨（浅色 #23242A / 深色 #3A3D44），压在 --warn 上量出来 6.2:1 与 5.4:1，
 // 两套主题都过 4.5:1。
+.app-rail-item__dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--canvas);
+  pointer-events: none;
+}
+
 .app-rail-item__badge {
   position: absolute;
   top: -4px;

@@ -94,11 +94,7 @@ async function mountApp(path: string, width: number) {
       {
         path: '/home',
         component: Home,
-        meta: { barSlot: true },
         children: [
-          // 手机上那一格分段里也有「我的工作」：这一页的假路由要和真路由一致，
-          // 否则点它就是在往一个不存在的地址推。
-          { path: 'work', name: 'HomeWork', component: blank },
           { path: 'spaces', name: 'HomeSpaces', component: blank },
           { path: 'teams', name: 'HomeTeams', component: blank },
         ],
@@ -153,17 +149,17 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
-it('desktop rail carries 待办 as its own destination, right under 首页', async () => {
+it('desktop rail opens 待办 from 首页, the first tile, with no separate 待办 tile', async () => {
   const app = await mountApp('/', 1280)
   try {
     expect(app.failures).toEqual([])
     const rail = app.container.querySelector('.app-rail')
     expect(rail).not.toBeNull()
-    // 桌面以前只有手机底栏到得了 /inbox（顶栏那颗铃铛是通知，不是待办）：
-    // 这一格是链接，不是装饰，而且钉在首页下面、项目之前。
+    // 首页那一格点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一格。
     const labels = Array.from(rail!.querySelectorAll('a[aria-label]')).map((a) => a.getAttribute('aria-label'))
-    expect(labels.slice(0, 2)).toEqual(['首页', '待办'])
-    expect(rail!.querySelector('a[href="/inbox"]')).not.toBeNull()
+    expect(labels[0]).toBe('首页')
+    expect(labels).not.toContain('待办')
+    expect(rail!.querySelectorAll('a[href="/inbox"]')).toHaveLength(1)
     // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
     // 这套测试的假路由只要从 /projects/:id 这种 barSlot 页出栈就崩（与本改动
     // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
@@ -195,22 +191,3 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
     }
   }
 )
-
-it.each([
-  { locale: 'zh-CN' as const, spaces: '空间', teams: '团队' },
-  { locale: 'en' as const, spaces: 'Spaces', teams: 'Teams' },
-])('mounts $locale home tabs into the mobile bar after a breakpoint change', async ({ locale, spaces, teams }) => {
-  setLocale(locale)
-  const app = await mountApp('/home/spaces', 1280)
-  try {
-    await app.resize(390)
-    expect(app.failures).toEqual([])
-    expect(document.querySelector('#app-bar-slot')?.textContent).toContain(spaces)
-    await app.resize(1280)
-    await app.resize(390)
-    expect(app.failures).toEqual([])
-    expect(document.querySelector('#app-bar-slot')?.textContent).toContain(teams)
-  } finally {
-    app.dispose()
-  }
-})
