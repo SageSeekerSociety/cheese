@@ -11,9 +11,11 @@ import { ref } from 'vue'
 
 const lastPage = ref<string | null>(null)
 
-/** 路由每走一步调一次：走到的是普通页面就记下它。 */
+/** 路由每走一步调一次：走到的是普通页面就记下它。设置自己不算；登录、两步验证
+ *  这些不在应用外框里的页（`hideAppBar`）也不算——没登录时点开设置的链接会先去登录，
+ *  登录完关掉设置不该回到登录页。 */
 export function rememberPageBeforeSettings(to: RouteLocationNormalized) {
-  if (to.matched.some((record) => record.meta.settingsOverlay)) return
+  if (to.matched.some((record) => record.meta.settingsOverlay || record.meta.hideAppBar)) return
   lastPage.value = to.fullPath
 }
 
