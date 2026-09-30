@@ -8,16 +8,18 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const SRC = dirname(fileURLToPath(import.meta.url))
-const view = readFileSync(join(SRC, 'views/ProjectSettingsView.vue'), 'utf8')
+// 拆分（#2143）之后这一块自己是一个组件，扫的对象跟着搬过来。断言的东西没变：
+// 还是「哪条规则在什么位置、跟着哪个状态灰掉」。
+const view = readFileSync(join(SRC, 'components/settings/BranchProtectionSection.vue'), 'utf8')
 
 /** The markup between a `<span class="page-section-title">TITLE</span>` and the
- *  next section title — i.e. one settings section's body. */
+ *  end of its `<section>` — i.e. one settings section's body. */
 function section(title: string): string {
   const head = `<span class="page-section-title">${title}</span>`
   const start = view.indexOf(head)
   expect(start, `section 「${title}」 not found`).toBeGreaterThan(-1)
-  const next = view.indexOf('<span class="page-section-title">', start + head.length)
-  return view.slice(start, next === -1 ? undefined : next)
+  const end = view.indexOf('</section>', start)
+  return view.slice(start, end === -1 ? undefined : end)
 }
 
 describe('the 分支保护 section', () => {
