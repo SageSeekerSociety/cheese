@@ -1,223 +1,364 @@
-# 提问作答完整流程：实现步骤 / 真实契约 / 读写 owner / 必要反例
+# 提问作答完整流程：实现步骤 / 真实契约 / 读写 owner / 必要反例（v2）
 
-基线 head `21a94a90`。行号都是这一个 head 上的，改了就重查。
-批准来源：用户答复「采用完整方案（推荐）」，基线 `5135b0cb` 的 20 页 PDF `c751255126…`。
-八项目标全保留，多人作答本次另定、不偷加。
+基线 head `21a94a90`（契约行号实查），文档 v2。
+批准来源：用户答复「采用完整方案（推荐）」，基线 `5135b0cb` 的 20 页 PDF `c751255126…`。八项目标全保留，多人作答本次另定、不偷加。
 
-这份东西先给你审，审过才动代码。
+**v2 相对 v1 改了什么**（v1 已由 wangchangxin 审过，这里只列 delta）：
+五点实现决策全部采用并加上他给的前提；补进 A–E 五条遗漏（已批动作不能只列标题、`allow_other` 必须持久化、授权只信 `actor.handle`、落库后唤醒失败的补送、P1 不做「只后端先上」）；多题生成与批次提交的 caller/载荷写死；`answer_log` 加 `kind` 以免伪造合法项；补两条可靠性反例。
 
 ---
 
-## 一、真实契约（现状，已逐行核过）
+## 一、已定的实现决策（wangchangxin 2026-09-30）
 
-### 1.1 建问题 —— `POST /topics/{topic_id}/ask`
-`backend/app/api/routes/topics_messages.py:229-307`
+| # | 决策 | 前提 |
+|---|---|---|
+| 1 | `options` 对象化，所有 caller 同改，不留 `string[]` 分支 | — |
+| 2 | 不新建 group 后端实体 | 题组**一次创建、固定顺序与总数**；按 `同 topic + 原出题席位` 归组；**不许凭临时已有 blocks 算总进度** |
+| 3 | 草稿只在本地 | 键必须含**账号身份**；换账号读不到、也提交不了上一位的草稿 |
+| 4 | `answer_log` 末版生效，删 `answered`/`answered_by` | **同批数据迁移保全历史答案与署名**；旧作答时间未知就**留空不伪造**；走正常迁移 pipeline |
+| 5 | `AskFlow` 按真实职责拆，保住已批界面与行为 | **不登记新豁免，不放宽文件守卫** |
+
+---
+
+## 二、真实契约（现状，逐行核过）
+
+### 2.1 建问题 —— `POST /topics/{topic_id}/ask`（`topics_messages.py:229-307`）
 
 | 项 | 现状 |
 |---|---|
 | 入参 | `{question: str, options: str[]}`，`question` 非空，`2 ≤ len(options) ≤ 4` |
 | 落库 | `meta = {"options": [...], "asked": ...}` |
-| `asked` | `str \| null`。发起那一轮的人的 handle；平台轮次是 `None`；轮次没记时退到 `last_summoner` |
-| 通知 | `notify_question`（`announce.py:145`）投递给 `asked`；`asked=None` 时 `address(Event(asked=None))` 谁也不通知 |
+| `asked` | `str \| null`。发起那一轮的人的 handle；平台轮次 `None`；轮次没记时退到 `last_summoner` |
+| 通知 | `notify_question`（`announce.py:145`）投给 `asked`；`asked=None` 谁也不通知 |
 | 广播 | `assistant_block` |
+| CLI | `backend/sandbox/cheese:484-495` 工具 schema `{question, option: string[]}`，`:726-734` 转成 `{question, options}`，**一次只出一题** |
 
-### 1.2 作答 —— `POST /topics/blocks/{id}/answer`
-`backend/app/api/routes/topics.py:1228-1296`
+### 2.2 作答 —— `POST /topics/blocks/{id}/answer`（`topics.py:1228-1296`）
 
 | 项 | 现状 |
 |---|---|
-| 入参 | `{option: str, author: str}`，只有这两个字段 |
-| 校验链 | `option` 非空 → `option in meta.options`（**逐字比对**）→ `meta.answered` 没有 |
-| 落库 | `meta["answered"] = option`；`meta["answered_by"] = author`。**`asked` 不清** |
-| 广播 | `block_updated` |
-| 唤醒 | `receive_message` 发一条 `<@{seat}> {option}`。`seat` = 问题的署名者（还在名册上时），否则房间默认席位 |
+| 入参 | `{option: str, author: str}`，只有这两个 |
+| 校验链 | `option` 非空 → `option in meta.options`（逐字）→ `meta.answered` 没有 |
+| 落库 | `meta["answered"]` / `meta["answered_by"]`。`asked` 不清 |
+| 顺序 | **先 `db.commit()`，再 `publish`，再 `receive_message`** ← 落库后唤醒失败就永久不接续 |
+| 唤醒 | `receive_message` 发 `<@{seat}> {option}`；`seat` = 问题署名者（还在名册上时），否则默认席位 |
 
-### 1.3 读取端
+### 2.3 读取端（真实 reader 全清单）
 
 | 位置 | 读什么 |
 |---|---|
-| `frontend/src/lib/blockDisplay.ts:66` `askOptions` | `meta.options` 是不是非空数组 |
-| `frontend/src/lib/blockDisplay.ts:72` `askAnswered` | `meta.answered` / `meta.answered_by` |
-| `frontend/src/components/room/RoomMessage.vue:269-286` | 未答出按钮、已答出「谁选了什么」 |
-| `frontend/src/composables/useChatPanel.ts:141-156` `pickOption` | 调 `answerOptions`（`api.ts:1996`），成功 `timeline.replace`，失败弹 `e.message`，`askBusy` 清掉让按钮松开 |
-| `backend/app/domain/block/repositories.py:810-855` | `meta.asked` + `meta.answered`，外加「题问出后被问的人打过字就不算在等」 |
-| `backend/app/domain/room_task/presentation.py:507, 622` | `awaiting_answer` → 看板列 `needs_you`、状态句「待回答」 |
-| `backend/app/api/routes/awaiting.py:120-135` | 「待我处理」清单，`reason='asked'` |
-| `frontend/src/views/InboxView.vue:54-63, 105` | 渲染那一行，点进去只跳到房间 `{projectId, topicId}` |
+| `frontend/src/lib/blockDisplay.ts:66, 72` | `meta.options` / `meta.answered` / `meta.answered_by` |
+| `frontend/src/components/room/RoomMessage.vue:269, 282` | 未答出按钮、已答出「谁选了什么」 |
+| `frontend/src/composables/useChatPanel.ts:141-156` | `pickOption` → `answerOptions`（`api.ts:1996`） |
+| `frontend/src/components/NeedsYou.vue:161` | 待我处理里 `reason='asked'` 那一节 |
+| `frontend/src/views/InboxView.vue:54-63, 105` | 待办行，点进去只跳房间 `{projectId, topicId}` |
+| `frontend/src/cx_types.ts:215-231` | `WaitingItem`（`reason: 'reviewer'\|'reporter'\|'asked'`） |
+| `backend/app/domain/block/repositories.py:806, 815, 837` | `meta.options` 是否存在、`meta.answered`、`meta.asked` |
+| `backend/app/domain/room_task/presentation.py:507, 622` | `awaiting_answer` → 列 `needs_you`、状态「待回答」 |
+| `backend/app/api/routes/awaiting.py:120-135` | 待我处理清单 |
+| `backend/sandbox/cheese:726-734` | CLI 出题 |
+| `frontend/src/views/demo/catalogFixtures.ts` | 预览夹具 |
+
+`Block.meta` 是 `JSON` 列（`block/models.py:296`），所以「迁移」= 改 JSON 行内容，不改表结构。
+
+### 2.4 可靠投递 seam（本次要挂上去的那个）
+
+`backend/app/domain/delivery/agent.py`，模块原话：*The ledger owns intent; the runner owns admission. A transport receipt ends delivery independently of model-work completion. **An interrupted sending attempt is uncertain, never permission to inject the instruction a second time.***
+
+| 函数 | 作用 |
+|---|---|
+| `record_agent(session, event, *, topic_id, instance_id, content)` | **在生产者的事务里、不做 I/O** 记一条投递意图。`state="pending"`，`dedup_key=dedup_key(event.id, seat)`，`on_conflict_do_nothing` |
+| `dispatch_pending(sessions, *, chat, runner)` | 认领 `pending/claimed/sending` 且租约到期的行（`with_for_update(skip_locked=True)`），`runner.submit(..., addressed=addressed_to_agent(seat))` 真正唤醒 |
+| `begin_send` / `run_attempt` / `receive_attempt` | 认领、续租、回执结算 |
+| 状态 | `pending` / `claimed` / `sending` / `uncertain` / `failed`；中断的 `sending` 变 `uncertain`，**不重放** |
+| 常量 | `LEASE_SECONDS=120`、`RETRY_SECONDS=30`、账本 `MAX_ATTEMPTS=5` |
+
+人那侧的账本在 `delivery/ledger.py`：`Ledger.deliver` = `record`（去重键唯一）再 `send`，`resend_unsent_deliveries` 定时补发，`dedup_key(event_id, handle)`。
 
 ---
 
-## 二、契约缺口（这是要补的，不是 bug）
+## 三、契约缺口 G1–G9
 
 | # | 缺口 | 证据 |
 |---|---|---|
-| G1 | **没有 `note`**。自由输入写不进去 | `answer_options` 只读 `body["option"]` |
-| G2 | **自动补的「以上都不是」过不了校验** | `option not in options` 是逐字比对，补进来的字不在 `meta.options` 里 |
-| G3 | **已答 = 400，没有更正路径** | `if meta.get("answered"): raise ValidationError(...)` |
-| G4 | **没有版本号，没有幂等键** | 并发两次提交，后写的被拒但前面那次已经落库；重试同一次提交拿到的是 400 而不是幂等成功 |
-| G5 | **回执是单值，装不下「原答案 + 更正」** | `answered` / `answered_by` 各只有一个 |
-| G6 | **待办行不指到题** | `WaitingItem` 没有 `blockId`，`InboxView` 只跳房间 |
-| G7 | **多题没有实体** | `cheese_ask` 一次一题，`meta` 是每块自己的 |
-| G8 | **草稿没有持久化** | `useChatComposer` 的 `outbox` 是内存 `Ref`；全前端只有 theme / token / user / sidebarWidth 用 localStorage |
+| G1 | 没有 `note`，自由输入写不进去 | `answer_options` 只读 `body["option"]` |
+| G2 | 自动补的「以上都不是」过不了逐字校验 | `option not in options` |
+| G3 | 已答 400，没有更正路径 | `if meta.get("answered"): raise` |
+| G4 | 无版本号、无幂等键、无持久存储 | 并发后写被拒但前一次已落库；重试拿 400 |
+| G5 | 回执单值装不下「原答案 + 更正」 | `answered`/`answered_by` 各一个 |
+| G6 | 待办行不指到题 | `WaitingItem` 无 `blockId` |
+| G7 | 多题没有实体，也没有一次建一组的入口 | CLI 一次一题 |
+| G8 | 草稿无持久化，且没有账号隔离 | `outbox` 是内存 `Ref` |
+| G9 | **落库后唤醒失败永久不接续** | `db.commit()` 在 `receive_message` 之前，而重试只返回旧答案 |
 
 ---
 
-## 三、新契约（提案）
+## 四、新契约
 
-### 3.1 `meta` 形状
+### 4.1 `meta` 形状
 
 ```ts
 meta = {
-  options: { text: string; explain?: string; reject?: boolean }[],  // 2-4 项，reject 至多 1
+  options: { text: string; explain?: string }[],  // 提问方给的，2-3 项（见 4.4）
   asked: string | null,          // 不变：在等谁
-  ask_group?: string,            // 同一批题的批次 id，多题成组用；不给就是单题
+  allow_other: boolean,          // 作答许可，**建题时写入 meta 持久化**（见 4.4）
+  reject_option: boolean,        // 界面自动补「以上都不是」；不在 options 里
+  ask_group?: {
+    id: string,                  // 同一批题共用
+    index: number,               // 固定顺序，0 起
+    total: number,               // 固定总数
+    asked_by: string | null,     // 原出题席位；归组键 = 同 topic + 这个
+  },
   answer_log: {                  // 有序，末项是当前生效的那一版
-    v: number,                   // 从 1 起
-    option: string | null,       // 选的哪一项的 text；纯自由输入时为 null
+    v: number,                   // 从 1 起，初答 v=1（`expect_version` 初答给 0）
+    kind: 'option' | 'note' | 'reject',  // 不伪造合法项（见 4.4）
+    option: string | null,       // kind='option' 时是 options[].text；其余为 null
     note: string | null,
-    by: string,
-    at: string,                  // ISO-8601
+    by: string,                  // resolver.resolve 出来的 actor.handle
+    at: string | null,           // ISO-8601；迁移来的旧答案时间未知 → null，不伪造
+    client_op_id: string,        // 幂等键，**持久存在这里**
   }[],
+  group_settle?: {               // 批次提交的结果，同值复制到组内每一块（见 4.5）
+    at: string,
+    by: string,
+    answered: string[],          // block_id
+    later: string[],             // 明确稍后
+    unanswered: string[],        // 明确未答
+  },
 }
 ```
 
-**`answered` / `answered_by` 删掉**，所有 reader 改读 `answer_log.at(-1)`。不做长期 compat 转发，新旧一起改（`blockDisplay.askAnswered`、`repositories._awaiting_an_answer`、catalog fixtures 一次改完）。
+`answered` / `answered_by` **删掉**。`options` 从 `string[]` 升对象数组。所有 reader/writer **同一批原子切换**（见 4.7），不留 compat 双路。
 
-`options` 从 `string[]` 升成对象数组，同理：**建问题端点和所有 caller 同时改**，`askOptions` 改返回 `{text, explain, reject}[]`。
-
-### 3.2 建问题 —— `POST /topics/{topic_id}/ask`
+### 4.2 建问题
 
 ```jsonc
+POST /topics/{topic_id}/ask
 {
-  "question": "这次的作业按哪种方式收？",
-  "options": [
-    { "text": "课程平台收文件", "explain": "统一入口，助教一次收齐" },
-    { "text": "发到课程邮箱",   "explain": "适合大文件" }
+  "questions": [                       // 1-8 题，一次给全
+    {
+      "question": "这次的作业按哪种方式收？",
+      "options": [
+        { "text": "课程平台收文件", "explain": "统一入口，助教一次收齐" },
+        { "text": "发到课程邮箱",   "explain": "适合大文件" }
+      ],
+      "allow_other": true,
+      "reject_option": true
+    }
   ],
-  "allow_other": true,     // 可以只写 note 不选项
-  "reject_option": true,   // 自动补一项「以上都不是」，标 reject
-  "ask_group": "…"         // 可选；同一批题给同一个
+  "ask_group": "…"                     // 可选；不给则服务端生成并在响应里回
 }
 ```
 
-`allow_other` 和 `reject_option` **是两个开关，不合成一个**：
-- `allow_other` = 允许「只写自由输入」这种回答（`option` 可为 `null`）。
-- `reject_option` = 选项里多一项文字「以上都不是」，它是**合法选项**，不是被校验拒绝的项。
+**一次建一组，一个事务写完全部块**：顺序就是数组顺序，总数就是数组长度，两者在建题那一刻定死并写进每块的 `ask_group`。**不从「时间线上已有哪些块」倒推组员**，所以中途有人插一条消息、或者另一批题落地，都不会把总进度算错。
 
-多题不新建后端「题目组」实体：多题就是时间线上多个 ask 块，靠 `ask_group` 归组，切换和总进度由前端算。理由是 `answer` 的语义本来就是 per-block 的，多一个实体就要多一套「部分作答怎么算」的规则，和现有 `Block` 的独立性打架。
+归组键 = `同 topic + ask_group.asked_by`（原出题席位）。同一席位在同一 topic 里连出两批题是两个 group，不合并。
 
-### 3.3 作答 / 更正 —— `POST /topics/blocks/{id}/answer`
+### 4.3 多题的 caller 与「一次生成真实多题」
+
+| 问题 | 答案 |
+|---|---|
+| 怎样一次生成真实多题 | `cheese_ask` 的入参从一题改成一组：`questions: [...]`（1–8）。一题就是组大小 1，同一条路。工具 schema（`backend/sandbox/cheese:484-495`）和实现（`:726-734`）一起改 |
+| 谁提供 group 完整清单 | **出题的那个 agent，就在这一次 `cheese_ask` 调用里给全**。服务端只负责原子落库、固定顺序与总数。不接受「先建两题、过一会儿再补第三题」——那正是会让总进度算错的做法 |
+| 最终/部分提交交给执行者什么 | 见 4.5。一次提交把「交了哪几题、哪几题明确未答、哪几题标了稍后」一次说清，唤醒文案照实写，**不得称整组全答** |
+
+### 4.4 作答 / 更正
 
 ```jsonc
+POST /topics/blocks/{id}/answer
 {
-  "option": "课程平台收文件",   // 可为 null（allow_other 时）
-  "note": "另外请开一个补交通道", // 可为 null，≤2000 字
-  "author": "wangchangxin",
-  "expect_version": 1,          // 并发控制；不给就跳过校验（不推荐）
-  "client_op_id": "…"           // 幂等键
+  "kind": "option" | "note" | "reject",
+  "option": "课程平台收文件",   // 仅 kind='option'
+  "note": "另外请开一个补交通道", // 可与 option 同给（选项 + 解释），≤2000 字
+  "author": "wangchangxin",     // 只作 fallback 寻址，不参与授权
+  "expect_version": 0,          // 必带。初答 0，之后是 answer_log[-1].v
+  "client_op_id": "…"           // 必带，持久存在 answer_log 里
 }
 ```
 
 处理顺序：
 
-1. `option` 与 `note` 都空 → 400。
-2. `option` 非空且不在 `options[].text` 里 → 400「不在选项里」。`reject` 项的 text 是合法的。
-3. 已有 `answer_log` 时走**更正**，三条闸门：
-   - `author != answer_log[-1].by` → 400「只有原答者能更正」 ← 跨用户授权边界
-   - `expect_version != answer_log[-1].v` → 409，并发安全
-   - 同 `client_op_id` 已存在 → 幂等返回那一版，**不追加、不重复唤醒**
-4. 追加 `{v: len+1, option, note, by, at}` 进 `answer_log`（**旧版本留着**）。
-5. 发布 `block_updated`。
-6. 唤醒：`receive_message` 发 `<@{seat}> {option 或 note}`；更正时发 `<@{seat}> 更正：…`。
+0. **幂等查重在版本拒绝之前**：同 `(block_id, actor.handle, client_op_id)` 已存在 →
+   - payload 与已存那一版**相同** → 200 返回那一版，不追加、不唤醒
+   - payload **不同** → 409「同一个 client_op_id 换了内容」
+1. `resolver.resolve(fallback_handle=body["author"], …)` 取 `actor`，`authorize_topic(actor, …)`。**授权比较一律用 `actor.handle`**；`body.author` 不参与授权（`auth.py:115` 明写 *Legacy authorship fallback does not authenticate*）。
+2. `kind='option'` 时 `option` 必须在 `options[].text` 里，否则 400「不在选项里」。`kind='note'` / `'reject'` 时 `option` 必须为空 —— **不伪造合法项**。
+3. `kind='note'` 需要 `allow_other`（读建题 meta，不是读请求）；没有就 400「这道题不接受自由输入」。
+4. `note` 与 `kind='option'` 可同给（选项 + 补充）。
+5. 已有 `answer_log` 走**更正**：
+   - `actor.handle != answer_log[-1].by` → 400「只有原答者能更正」
+   - `expect_version != answer_log[-1].v` → 409
+   - 旧版本留着，追加 `{v: len+1, …}`
+6. **CAS**：`UPDATE … SET meta = … WHERE id = :id AND (meta->'answer_log' 的长度 == expect_version + 1)`，或对行 `SELECT … FOR UPDATE`；两并发只出一版，落败的那个拿 409。
+7. **同事务**里做三件事：写 `answer_log`、落时间线那条 `<@{seat}> …` 消息块、`record_agent(event_id, content=唤醒文案)` 记投递意图。
+8. `db.commit()`。
+9. 之后才 `publish`（`block_updated` + 新消息块）。广播是尽力而为，状态已经落库，前端可以重取。
 
-### 3.4 更正的唤醒语义（按你上一轮的更正写准）
+`event_id` 用 `event_id_for(type, f"{block_id}:{v}")` —— **只取决于 block 和版本**，所以同版本重算是同一个 id、`record_agent` 的 `on_conflict_do_nothing` 保证不重复记账；不同版本是不同的 event，更正的唤醒不会被第一版的去重键吞掉。
 
-**复用现有 `receive_message`，不新造机制、不重放原回答。**
+`seat` 仍按现状：问题署名者（还在名册上时），否则房间默认席位。**`asked=None` 维持现有范围**，不新定多人规则。
 
-- 出题席位**空闲** → 正常唤醒，接下一轮（不是「为了不开新轮而永不处理」）。
-- 出题席位**还在跑** → 走平台既有的安全注入/排队（`chat.notify_running_turn` / `merge_into_running_turn`）接新指令。
-- 边界保持：同话题、同席位、不新开任务卡。
+### 4.5 批次提交
 
-依据：`answer_options` 今天的唤醒就是 `receive_message`，而 `runtime.receive_message`（`runtime.py:204`）→ `post_user_message` 里本来就分「在跑就合进那一轮 / 空闲就起一轮」两叉。更正走同一条路，只换正文。
+```jsonc
+POST /topics/asks/{group_id}/settle
+{
+  "answered":   [{ "block_id": "…", "kind": "option", "option": "…", "note": "…", "client_op_id": "…" }],
+  "later":      [{ "block_id": "…", "client_op_id": "…" }],   // 明确稍后
+  "unanswered": [{ "block_id": "…", "client_op_id": "…" }],   // 明确未答
+  "author": "…",
+  "expect_version": 0,
+  "client_op_id": "…"          // 整批的幂等键
+}
+```
 
-### 3.5 草稿与恢复
+- 三个列表**合起来必须恰好覆盖组内全部 `block_id`**，多一个少一个都 400 —— 这就是「一次表达所交题与明确未答/稍后题」。
+- `answered` 里的每一项按 4.4 的规则逐个写 `answer_log`（各自幂等键）。
+- `group_settle` 写到组内**每一块**上（同值冗余），任何一块都能自己说清「本组 2/3 已交」，不用 join。
+- **唤醒文案照实写**：`3 题里交了 2 题，1 题标了稍后（第 3 题）。` 而不是「整组都答完了」。文案由 settle 的三个列表拼，不从 `answer_log` 数量倒推。
+- `later` / `unanswered` **不写 `answer_log`**（没答就是没答），只进 `group_settle`。
+- 唤醒仍是**一条**投递（一个 `event_id`、一个 seat），不给每题各起一轮。
+- p6「还有未答 → 回去补 / 照样交」：settle 允许 `unanswered` 非空（= 照样交，但明确标出没答的），也允许整组还没 settle 时用户点「回去补」。UI 两种都出。
 
-**草稿只在本地，不落库。** 草稿是用户还没提交的想法，推到服务端就等于多一套可见性与权限规则，而这一项要的只是「刷新不丢」。
+### 4.6 更正的唤醒语义
 
-- 存 `localStorage`，键 `ask-draft:{topicId}:{blockId}`，值 `{option, note, at}`。
+**复用现有寻址，不新造机制、不重放原回答。** 唤醒走 4.4 第 7 步的 `record_agent` → `dispatch_pending` → `runner.submit(…, addressed=addressed_to_agent(seat))`：
+
+- 出题席位**空闲** → 正常唤醒接下一轮（不是「不开新轮」就永不处理）。
+- 出题席位**还在跑** → 平台既有的安全注入/排队（`chat.notify_running_turn` / `merge_into_running_turn`）。
+- 同话题、同席位、不新开任务卡。
+
+### 4.7 原子切换（P1 不做「只后端先上」）
+
+schema 变更 + 数据迁移 + **所有**真实 reader/writer 在**同一批（同一 PR 或同一原子 release）** 切换，不让旧 FE/CLI 坏在半路：
+
+后端 `topics_messages.py`（建题）、`topics.py`（作答）、`block/repositories.py`（待办 SQL）、`delivery/agent.py`（唤醒）、alembic 迁移；
+CLI `backend/sandbox/cheese`（工具 schema + 实现）；
+前端 `blockDisplay.ts`、`RoomMessage.vue`、`useChatPanel.ts`、`api.ts`、`NeedsYou.vue`、`InboxView.vue`、`cx_types.ts`、`views/demo/catalogFixtures.ts`、`catalogAsk.ts`；
+文档 `docs/manual/dev/*.md` 里 `cheese_ask` 那几处。
+
+**不留 compat 双路**：没有「新旧 meta 都认」的分支代码。
+
+### 4.8 数据迁移（决策 4）
+
+alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格见 `f3a8c5d2e917_*.py`：模块 docstring 说明为什么、SQL 内联、downgrade 说明为什么不还原）：
+
+- `meta.options` 的 `string[]` → `{text: string}[]`（无 `explain`）。
+- `meta.answered` / `meta.answered_by` → `meta.answer_log = [{v: 1, kind: 'option', option: <原 answered>, note: null, by: <原 answered_by>, at: null, client_op_id: "migrated"}]`。
+- **`at` 写 `null`，不伪造作答时间**（旧记录里没有这个信息）。
+- `meta.asked` 原样不动。
+- 旧块**不补** `allow_other` / `reject_option` / `ask_group` / `group_settle` —— 它们不存在就是不存在，读端按缺省处理（`allow_other` 缺省 false = 老题不接受纯 note；`reject_option` 缺省 false = 老题不自动补）。
+- downgrade 说明不还原的理由。
+
+### 4.9 草稿与恢复（决策 3）
+
+- 键必须含**账号身份**：`ask-draft:{userId}:{topicId}:{blockId}`、`ask-pending:{userId}:{topicId}:{blockId}`。换账号读不到上一位的草稿，也提交不了。
+- 草稿只在本地不落库。值 `{kind, option, note, at}`。
 - 未提交提示：有草稿的题在房间里出一个小标记，说清「还没提交」。
-- 提交成功即删草稿。
-- 「刷新后 pending」= 已提交但 `block_updated` 还没回来的那些，也落 `localStorage`（`ask-pending:{topicId}:{blockId}`），回来即删；刷新后仍挂着的就重试（幂等键保证不重复记）。
+- 提交成功即删。刷新后 pending = 已提交但回执未到，回来即删；挂着的重试（`client_op_id` 保证不重复记）。
+- p9「稍后处理可找回」：`later` 进 `group_settle`，待我处理那条链路继续亮（见 4.10）。
 
-### 3.6 稍后找回（复用现有待办入口）
+### 4.10 稍后找回（复用现有待办入口，不合并项目邀请）
 
-**不新建入口。** 「待我处理」那条链路已经是这件事的正确位置，`REASON_ASKED = "asked"` 的注释原话就是「芝士停在一个待确认问题上，只有他能回答」（`delivery/addressing.py:68`）。
+`REASON_ASKED = "asked"` 的注释原话就是「芝士停在一个待确认问题上，只有他能回答」（`delivery/addressing.py:68`）。看板「待回答」列、通知、待办三处共用 `address()` 一份判据，不动。
 
-只补一个缺口：`WaitingItem` 加 `blockId`，`InboxView` 点行跳到那道题（房间 + 定位到 block），而不是只跳房间。看板的「待回答」列、通知、待办三处共用 `address()` 那一份判据，不动。
+只补两处：
+- `WaitingItem` 加 `blockId`，`InboxView` / `NeedsYou` 点行**定位到那道题**，不是只跳房间。
+- 组内多题时 `blockId` 指组里第一道还没答的。
 
-**不把项目邀请合并进来** —— 项目邀请是另一条关系（`Event.audience` / `machine_owner`），语义不同，合了就分不清「谁该答这道题」。
+**不把项目邀请合并进来**（那是 `Event.audience` / `machine_owner`，另一条关系，合了分不清「谁该答这道题」）。
+
+### 4.11 已批动作 → 实现落点（wangchangxin A）
+
+| 已批行为 | 出处 | 实现落点 | 阶段 |
+|---|---|---|---|
+| 还有未答 → 回去补 / 照样交 | p6 | settle 允许 `unanswered` 非空 + UI 两个动作 | P2 |
+| 失败重试不重复问确认 | p7 | `client_op_id` 幂等；重试直接重发同一 op | P2 |
+| 稍后处理可找回 | p9 | `later` 进 `group_settle` + 待办 `blockId` 定位 | P3 |
+| 按旧回答已开工的更正提示 | p18 | 更正时若出题席位已按旧答开工，回执与提示明说「已按原答案开工，更正会接下一轮」 | P4 |
+| 批次提交一次说清交/未答/稍后 | — | 4.5 | P2 |
+| 唤醒不误称整组全答 | — | 4.5 文案 | P2 |
+| 草稿 / 刷新恢复 | — | 4.9 | P3 |
+| 总进度、多题切换 | — | `ask_group` + 前端算 | P2 |
 
 ---
 
-## 四、读写 owner
+## 五、读写 owner
 
 | 谁 | 读 | 写 |
 |---|---|---|
-| 建问题 `topics_messages.py:229` | 轮次发起人 / `last_summoner` | `meta.options` / `asked` / `ask_group` |
-| 作答 `topics.py:1228` | `meta.options` / `answer_log` | `meta.answer_log`（追加） |
+| 建问题 `topics_messages.py:229` | 轮次发起人 / `last_summoner` | `meta.options` / `asked` / `allow_other` / `reject_option` / `ask_group` |
+| 作答 `topics.py:1228` | `meta.options` / `allow_other` / `answer_log` | `meta.answer_log`（追加） |
+| 批次提交 `topics.py`（新） | `meta.ask_group` / `answer_log` | `meta.answer_log` / `meta.group_settle` |
 | 通知 `announce.py:145` | `meta.asked` | — |
-| 待办判据 `repositories.py:810` | `meta.asked` + `meta.answer_log` | — |
+| 待办判据 `repositories.py:806, 815, 837` | `meta.options` 存在性 / `answer_log` / `asked` | — |
 | 看板 `presentation.py:507, 622` | `awaiting_answer` 布尔 | — |
-| 唤醒 `runtime.py:204` | 消息正文里的 `@` | — |
-| 前端渲染 `blockDisplay.ts:66` | `meta.options` / `answer_log` | — |
+| 投递意图 `delivery/agent.py:44` | — | `Delivery` 行（`state=pending`） |
+| 投递执行 `delivery/agent.py:105` | `Delivery` 行 | 状态机 |
+| 唤醒寻址 `runtime.py:204` | 消息正文里的 `@` | — |
+| 前端渲染 `blockDisplay.ts:66, 72` | `meta.options` / `answer_log` | — |
 | 前端动作 `useChatPanel.ts:141` | — | 调 API |
-| 前端待办 `InboxView.vue:54` | `reason='asked'` | — |
-| 前端草稿（新增） | localStorage | localStorage |
+| 前端待办 `InboxView.vue` / `NeedsYou.vue` | `reason='asked'` + `blockId` | — |
+| 前端草稿 | localStorage（含 userId） | 同左 |
+| CLI `backend/sandbox/cheese:726` | — | 出题请求 |
 
-一句话：**`meta` 只有 `answer_options` 一个写入方**（建问题端写 `options`/`asked`/`ask_group`，之后不再动它们）；`asked` 由谁写清、谁不清，是 §1.1 / §3.1 那条。
+`meta` 的写入方严格分两类：**建问题端写一次后不再动**（`options`/`asked`/`allow_other`/`reject_option`/`ask_group`），**作答与 settle 写**（`answer_log`/`group_settle`）。
 
 ---
 
-## 五、必要反例（每条都要有会红的测试）
+## 六、必要反例（每条都要有会红的测试）
 
 | # | 输入 | 必须 |
 |---|---|---|
-| R1 | `option` 空且 `note` 空 | 400 |
-| R2 | `option` 不在 `options[].text` 里 | 400「不在选项里」 |
-| R3 | 点 `reject` 项（「以上都不是」） | **成功**，不是 R2 |
-| R4 | A 答完，B 想更正 | 400「只有原答者能更正」 |
-| R5 | A 并发两次提交，`expect_version` 都是 1 | 第二次 409 |
-| R6 | A 用同 `client_op_id` 重发 | 200，`answer_log` 长度不变，**不重复唤醒** |
-| R7 | `options` 少于 2 项或多于 4 项 | 400（现状 `2 ≤ len ≤ 4`） |
-| R8 | 平台轮次问的题（`asked=None`） | 谁都能答；更正仍限原答者；`notify_question` 谁也不通知 |
-| R9 | 已答的题再点按钮 | 前端不出按钮（现状 `!askAnswered`）；直接打 API 走更正路径 |
-| R10 | A 更正两次 | `answer_log` 三版都在，末项生效，回执显示「更正为「X」（原选「Y」）」 |
-| R11 | 出题席位在跑时更正 | 注入/排队接新指令，**不重放原回答** |
-| R12 | 草稿写了、刷新、不提交 | 草稿回来，且**不标已答** |
-| R13 | 提交成功后刷新 | 回执在，草稿没了 |
-| R14 | `WaitingItem` 里 `reason='asked'` 的行 | 能点到那道题本身，不只是房间 |
+| R1 | `kind` 与内容都空 | 400 |
+| R2 | `kind='option'` 但 `option` 不在 `options[].text` | 400「不在选项里」 |
+| R3 | `kind='reject'`（界面上的「以上都不是」） | 成功；`answer_log.kind='reject'`、`option=null` |
+| R4 | `kind='note'` 但建题 `allow_other=false` | 400「这道题不接受自由输入」 |
+| R5 | `kind='note'` 且 `allow_other=true` | 成功；`option=null`，**不伪造合法项** |
+| R6 | A 答完，B 想更正 | 400「只有原答者能更正」（比较 `actor.handle`） |
+| R7 | A 并发两次，`expect_version` 都是 0 | 只出一版；落败那次 409 |
+| R8 | 同 `client_op_id` 同 payload 重发 | 200，`answer_log` 长度不变，**不重复记账、不重复唤醒** |
+| R9 | 同 `client_op_id` 换 payload | 409「同一个 client_op_id 换了内容」 |
+| R10 | `expect_version` 与 `answer_log[-1].v` 不符 | 409 |
+| R11 | `body.author` 写成别人的名字（有凭据时） | 仍按 `actor.handle` 记录与授权，`body.author` 无效 |
+| R12 | 提问方给 1 项或 4 项 | 400（`2 ≤ 提问方选项 ≤ 3`，界面自动补的那项不计入） |
+| R13 | `kind='reject'` 或纯 note | **不**把「以上都不是」写进 `options`，**不**造出一条假的 `options[].text` |
+| R14 | 平台轮次问的题（`asked=None`） | 谁都能答；更正仍限原答者；谁也不通知 |
+| R15 | 已答的题再点按钮 | 前端不出按钮；直接打 API 走更正路径 |
+| R16 | A 更正两次 | `answer_log` 三版都在、末项生效；回执「更正为「X」（原选「Y」）」 |
+| R17 | **提交成功但 HTTP 丢回包**（客户端没收到响应） | 客户端同 `client_op_id` 重试 → 200 返回已存那一版；`answer_log` 与 `Delivery` 都不新增 |
+| R18 | **postcommit 通知故障**（`answer_log` 已提交、唤醒那步抛异常） | `Delivery` 行已在同事务里落成 `pending`；`dispatch_pending` 之后补送，**恰好一次**；不允许永久不接续 |
+| R19 | 出题席位在跑时更正 | 注入/排队接新指令，**不重放原回答** |
+| R20 | 出题席位空闲时更正 | 正常唤醒接下一轮 |
+| R21 | settle 的三个列表没覆盖全组 / 多出一个 | 400 |
+| R22 | settle 后唤醒文案 | 明写「交了 X 题、稍后 Y 题、未答 Z 题」，**不得**称整组全答 |
+| R23 | `later` 的题 | 不写 `answer_log`；待我处理里能按 `blockId` 找回 |
+| R24 | 迁移前的旧答案 | `answer_log` 一条、`at=null`、`by` 是原 `answered_by`、`option` 是原 `answered`；**没有伪造的时间** |
+| R25 | 草稿写了、换账号、刷新 | 上一位的草稿**读不到也提交不了** |
+| R26 | 草稿写了、同账号刷新、不提交 | 草稿回来，且**不标已答** |
+| R27 | 提交成功后刷新 | 回执在，草稿没了 |
+| R28 | `reason='asked'` 的待办行 | 能点到那道题本身 |
+| R29 | 一批题中途插进别的消息 / 另一批题 | 总进度不变（顺序与总数在建题那一刻定死） |
 
 ---
 
-## 六、实现步骤（四段，每段独立可验）
+## 七、实现步骤（四段）
 
 | 段 | 做什么 | 覆盖目标 | 真实链路证据 | 未验 |
 |---|---|---|---|---|
-| **A 契约层** | `meta.options` 升对象数组、`answer_log`、`note`、reject 项、更正三闸门、幂等键。只后端 + 后端集成测试，无 UI 变化 | 5、6 | 后端集成测试对真库跑 R1–R11 | UI 未接 |
-| **B 多题与解释** | 建问题端 `allow_other`/`reject_option`/`ask_group`；前端多题切换 + 总进度 + 选项解释 + 自由输入，接真实 API | 1、2 | 真 API 调用链（建题 → 作答 → 回执） | 刷新恢复未做 |
-| **C 草稿与找回** | 草稿 localStorage、未提交提示、pending 重试、`WaitingItem.blockId` + 定位 | 3、4、7 | 真浏览器 reload 后草稿在、不标已答 | 跨设备不保（本地存储，如实说） |
-| **D 归属与接续** | 更正后仍归原执行者、忙时注入/排队、空闲正常唤醒 | 8 | 真轮次：空闲起一轮 / 在跑注入，两条各留证据 | — |
+| **P1 原子 schema 切换 + 后端契约** | alembic 迁移、`answer_log`+`kind`、`note`/reject、`allow_other` 持久化、更正三闸门、`client_op_id` 持久化、CAS、`record_agent` 同事务记投递意图；**同批改完 §4.7 全部 reader/writer** | 5、6 | 后端集成测试对真库跑 R1–R20、R24 | 多题/草稿未接 |
+| **P2 多题生成与批次提交** | `cheese_ask` 改成一次一组、建题端原子建组、`settle`、唤醒文案、总进度、p6/p7 | 1、2、5（部分） | 真 API 链（建一组 → 逐题/批量作答 → settle → 回执） | 刷新恢复未做 |
+| **P3 草稿与找回** | 含 userId 的本地草稿、未提交提示、pending 重试、`WaitingItem.blockId` 定位、p9 | 3、4、7 | 真浏览器 reload 后草稿在、不标已答、换账号隔离 | 跨设备不保（如实说） |
+| **P4 归属与接续 + 已批交互补齐** | 更正后归原执行者、忙时注入/排队、空闲正常唤醒、p18 更正提示、`AskFlow` 按职责拆 | 8 | 真轮次两条各留证据（空闲起一轮 / 在跑注入） | — |
 
-每段收口：固定 head、覆盖了哪几项、哪些未验，中文 PDF 只在**用户可见**的修订上出。
+每段收口报：固定 head、八项覆盖表、未验项。用户可见的修订才出中文 PDF。假服务 12/12、挂载 133 **不当**真实后端证据。
 
 ---
 
-## 七、这几处要你拍板
+## 八、仍然不做的
 
-1. **`options` 升对象数组**要不要按上面这么做（所有 caller 同时改，不留 `string[]` 分支）？
-2. **多题不新建后端实体**，靠 `ask_group` 归组、前端算进度 —— 认不认？
-3. **草稿只在本地**，跨设备不保 —— 认不认？
-4. **`answered`/`answered_by` 删掉**改读 `answer_log.at(-1)`，四处 reader 一起改 —— 认不认？
-5. `AskFlow.vue` 1077 行超 `frontend/src` 的 1000 上限（分支上原有的，不是这次合 main 造成的）：**拆**还是**登记豁免**？
-
-其余按 §6 顺序推进，不再问。
+- 多人作答（wangchangxin：本次另定，不偷加）。
+- `AskFlow` 不登记新豁免、不放宽 `.claude/scripts/check-file-sizes.py` 的守卫。
+- 不改生产/权限；dev 只走正常 CI/CD，无热改、无压测、不借他人 token。
+- 不新建内部任务卡、不递验收、不等采纳；正常小 PR + Required + merge queue。
+- `ask-ux-preview/` 里已批的 20 页 PDF 与预览成果原样保全。
