@@ -44,6 +44,7 @@ import {
   WANG_LINES,
 } from './catalogFixtures'
 import { QUEUE_ENTRIES } from './catalogQueue'
+import { MODELS_ENTRIES } from './catalogModels'
 import { RAIL_ENTRIES } from './catalogRail'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
@@ -606,6 +607,9 @@ export const CATALOG: CatalogEntry[] = [
   ...QUEUE_ENTRIES,
   // 聊天面板那一组（ChatPanel 拆出来的那四件）在自己的文件里：`catalogChat.ts`。
   ...CHAT_ENTRIES,
+  // 模型管理那六件（从 1428 行的 AdminModelsPage 拆出来的三段 + 页头 + 那条横条 +
+  // 确认框）在自己的文件里：`catalogModels.ts`（数据在 `catalogModelsFixtures.ts`）。
+  ...MODELS_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',
