@@ -1,9 +1,8 @@
 <script setup lang="ts">
+import type { CloudSupply, SupplyBound } from '../composables/useCloudSupply'
 import type { ComputeChoice, TopicComputeDevice } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
-
-import type { CloudSupply, SupplyBound } from '../composables/useCloudSupply'
 
 const props = defineProps<{
   devices: TopicComputeDevice[]
