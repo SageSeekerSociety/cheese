@@ -5,6 +5,7 @@ import { BusinessError, ServerError } from '../types/error'
 
 import refreshToken from './hooks/refreshToken'
 
+import { t } from '@/i18n'
 import { isTransportFailure, transportFailureMessage } from '@/lib/transportFailure'
 
 export default (error: AxiosError<ResponseDataType>) => {
@@ -49,8 +50,7 @@ function createBusinessError(error: AxiosError<ResponseDataType>): Error {
   }
 
   // 返回通用业务错误
-  // messageFailed(response?.message || '无权限执行此操作')
-  return new BusinessError(response?.message || '无权限执行此操作', 403)
+  return new BusinessError(response?.message || t('shell.errors.noPermission'), 403)
 }
 
 // 创建一般错误对象
@@ -59,7 +59,7 @@ function createError(error: AxiosError<ResponseDataType>): Error {
   const statusCode = error.response?.status || 500
 
   if (!response) {
-    return new Error(error.message || '网络请求失败')
+    return new Error(error.message || t('shell.errors.network'))
   }
 
   // 处理带有详细错误信息的响应
@@ -68,6 +68,5 @@ function createError(error: AxiosError<ResponseDataType>): Error {
   }
 
   // 其他服务器错误
-  // messageFailed(response.message || '服务器错误')
-  return new ServerError(response.message || '服务器错误', statusCode)
+  return new ServerError(response.message || t('shell.errors.server'), statusCode)
 }

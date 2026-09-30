@@ -9,6 +9,7 @@ import type { FileSource } from '../cx_types'
 import { ref, watch } from 'vue'
 
 import { previewDocumentPdf, previewFileBytes, PreviewRendererUnavailable } from '../api'
+import { t } from '../i18n'
 
 import { NEEDS_CONVERSION, suffixOf } from './fileKind'
 
@@ -63,7 +64,7 @@ export function useDocumentBytes(source: DocumentSource) {
       // 文档，换来一句错误——而这份文档仍然是这个文件最新的可见状态。
       loadedKey = ''
       rendererMissing.value = e instanceof PreviewRendererUnavailable
-      error.value = e instanceof Error ? e.message : '无法显示这个文件'
+      error.value = e instanceof Error ? e.message : t('files.preview.cannotShow')
     } finally {
       if (mine === generation) loading.value = false
     }

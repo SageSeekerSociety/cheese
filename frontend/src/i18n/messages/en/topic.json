@@ -1,0 +1,21 @@
+{
+  "time": {
+    "justNow": "just now"
+  },
+  "notice": {
+    "legacyAction": "Cheese: {action}"
+  },
+  "accept": {
+    "notMergingNow": "Accepting now won't merge",
+    "separator": ": ",
+    "approveFailed": "Couldn't approve",
+    "reassignFailed": "Couldn't hand the review to someone else",
+    "conflict": "It conflicts with the main branch and wasn't merged. {agent} is on it; accept again once that's done",
+    "createPrFailed": "Couldn't create the PR",
+    "acceptFailed": "Couldn't accept",
+    "undoFailed": "Couldn't undo the acceptance",
+    "autoMergeFailed": "Couldn't set up auto-merge",
+    "returnFailed": "Couldn't return it",
+    "voidFailed": "Couldn't void it"
+  }
+}

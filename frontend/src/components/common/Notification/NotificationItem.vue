@@ -224,7 +224,7 @@ const navigateToTarget = () => {
     router.push(routerLinkTarget.value).catch((error) => {
       if (error.name !== 'NavigationDuplicated') {
         console.error('导航错误:', error)
-        toast.error('无法访问该页面，您可能没有权限或页面不存在')
+        toast.error(t('notifications.common.unreachable'))
       }
     })
   }

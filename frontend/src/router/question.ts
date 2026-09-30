@@ -7,7 +7,7 @@ export default {
   name: 'Question',
   component: RouterPassThrough,
   meta: {
-    title: '问答',
+    titleKey: 'navigation.pages.questions',
     disabled: true,
   },
   children: [
@@ -16,7 +16,7 @@ export default {
       name: 'QuestionAsk',
       component: () => import('@/views/question/Ask.vue'),
       meta: {
-        title: '提问',
+        titleKey: 'navigation.pages.ask',
         disabled: true,
       },
     },
@@ -25,7 +25,7 @@ export default {
       name: 'QuestionDetail',
       component: () => import('@/views/question/Detail.vue'),
       meta: {
-        title: '问题详情',
+        titleKey: 'navigation.pages.questionDetail',
         disabled: true,
       },
       children: [

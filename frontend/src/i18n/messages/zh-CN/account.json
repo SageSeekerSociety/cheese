@@ -213,7 +213,8 @@
       "setPasswordHint": "设置后也可以用用户名和密码登录",
       "bindSubmit": "关联并登录",
       "unavailable": "无法继续登录",
-      "emailBelongsToAccount": "该邮箱已被现有账号使用"
+      "emailBelongsToAccount": "该邮箱已被现有账号使用",
+      "pageTitle": "OAuth 账户选择"
     },
     "app": {
       "leaving": "正在前往 {provider}",

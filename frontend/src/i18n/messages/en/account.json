@@ -213,7 +213,8 @@
       "setPasswordHint": "You can then sign in with your username and password too",
       "bindSubmit": "Link and sign in",
       "unavailable": "Cannot continue signing in",
-      "emailBelongsToAccount": "This email is used by an existing account"
+      "emailBelongsToAccount": "This email is used by an existing account",
+      "pageTitle": "Choose an account"
     },
     "app": {
       "leaving": "Going to {provider}",

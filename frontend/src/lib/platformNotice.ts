@@ -306,7 +306,9 @@ export function actionResource(block: Block): string | null {
 
 /** meta.action 事件的 content 自带主语（张衡/芝士 编辑了文档）；老卡片要补「芝士」。 */
 function actionText(block: Block): string {
-  return typeof meta(block)?.action === 'string' ? noticeText(block) : `芝士${block.content}`
+  return typeof meta(block)?.action === 'string'
+    ? noticeText(block)
+    : t('topic.notice.legacyAction', { action: block.content })
 }
 
 /** 卡面上留一句就够了，超过这个长度就切断 —— 切掉的部分原样进展开区，不丢。 */

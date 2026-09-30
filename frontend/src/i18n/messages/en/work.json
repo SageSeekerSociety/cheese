@@ -1446,5 +1446,44 @@
     "deleteTitle": "Delete \"{title}\"",
     "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
     "cancel": "Cancel"
+  },
+  "nodeBoard": {
+    "loadFailed": "Couldn't load machine status",
+    "title": "Machine status",
+    "hint": "Whether work computers are available now",
+    "active": "{count} runs in progress across the platform",
+    "online": "Online",
+    "offline": "Offline",
+    "device": "Own device",
+    "cloud": "Cloud",
+    "current": "Used when nothing is chosen"
+  },
+  "needsYou": {
+    "changeAlert": "Change alert",
+    "waiting": "Waiting for your answer",
+    "answerFailed": "Couldn't answer",
+    "dismissFailed": "Couldn't dismiss",
+    "feedbackFailed": "Couldn't send feedback",
+    "next": "Next",
+    "open": "Open topic",
+    "dismiss": "Dismiss",
+    "helpful": "Helpful",
+    "notHelpful": "Not helpful"
+  },
+  "push": {
+    "ask": "This run may take a while. Get notified when it finishes",
+    "enable": "Turn on notifications",
+    "decline": "Not now"
+  },
+  "image": {
+    "alt": "Image",
+    "failed": "Couldn't load the image"
+  },
+  "agentAvatar": {
+    "defaultName": "Cheese"
+  },
+  "liveView": {
+    "connecting": "Connecting to the live view…",
+    "closed": "Live view disconnected"
   }
 }

@@ -194,7 +194,9 @@ wrong on turn one:
   `catalog.spec.ts` fails on entries that no longer describe reality (already
   translated, already referenced, or dangling), so the lists can only shrink
   honestly.
-- `pnpm exec vitest run --dir src/i18n` is the whole i18n gate — seconds, runs anywhere.
+- The i18n gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run --dir src/i18n`
+  (the catalog against itself) and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
+  catalog, a per-file ceiling in `i18n-cjk-baseline.json` that only goes down).
 
 ## The two ratchets
 

@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestSiteSession } from '../api'
+import { t } from '../i18n'
 
 const route = useRoute()
 const loading = ref(false)
@@ -39,7 +40,7 @@ async function openSite() {
   } catch (e) {
     if (String(route.params.projectId) !== projectId) return
     if (e instanceof ApiError && e.status === 401) needsLogin.value = true
-    else error.value = e instanceof Error ? e.message : '网站打开失败'
+    else error.value = e instanceof Error ? e.message : t('project.open.site.failed')
   } finally {
     loading.value = false
   }
@@ -57,15 +58,15 @@ watch(
 <template>
   <v-container class="py-8">
     <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
-    <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">打开网站</h1>
+    <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">{{ t('project.open.site.title') }}</h1>
     <template v-if="needsLogin">
-      <p class="t-body mb-4">这个网站仅项目成员可访问，请先登录</p>
-      <v-btn color="primary" :to="loginLink">登录</v-btn>
+      <p class="t-body mb-4">{{ t('project.open.site.membersOnly') }}</p>
+      <v-btn color="primary" :to="loginLink">{{ t('project.open.signIn') }}</v-btn>
     </template>
     <template v-else-if="error">
       <v-alert type="error" class="mb-4">{{ error }}</v-alert>
-      <v-btn color="primary" variant="tonal" :loading="loading" @click="openSite">重试</v-btn>
+      <v-btn color="primary" variant="tonal" :loading="loading" @click="openSite">{{ t('project.open.retry') }}</v-btn>
     </template>
-    <v-progress-circular v-else indeterminate aria-label="正在打开网站" />
+    <v-progress-circular v-else indeterminate :aria-label="t('project.open.site.opening')" />
   </v-container>
 </template>

@@ -26,6 +26,11 @@ vi.mock('@/pwa', async () => {
 
 import UpdateBanner from './UpdateBanner.vue'
 
+import { setLocale } from '@/i18n'
+
+// 这组用例读的是中文界面上的字。
+setLocale('zh-CN')
+
 const Banner = UpdateBanner as unknown as Parameters<typeof render>[0]
 
 let vuetify: ReturnType<typeof createVuetify>

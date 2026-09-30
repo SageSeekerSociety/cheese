@@ -3,6 +3,7 @@ import type { BusinessError } from '@/network/types/error'
 import { toast } from 'vuetify-sonner'
 
 import { reportError } from '@/errorReporter'
+import { t } from '@/i18n'
 
 // 定义错误处理器类型
 export type ErrorHandler<T extends Error = Error> = (error: T) => Promise<boolean> | boolean
@@ -22,7 +23,6 @@ class ErrorHandlerService {
   private handlers: ErrorHandlers = {}
   private defaultOptions: ErrorHandlerOptions = {
     showToast: true,
-    defaultMessage: '操作失败',
   }
 
   // 注册错误处理器
@@ -53,19 +53,20 @@ class ErrorHandlerService {
     //
     // Dedup lives in the reporter: one per fingerprint per 60s, 50 per session,
     // so an impatient click or a failing poll cannot flood the timeline.
-    reportError(error.message || opts.defaultMessage || '操作失败', error.stack, `ui:${error.name || 'Error'}`)
+    const fallback = opts.defaultMessage || t('shell.errors.actionFailed')
+    reportError(error.message || fallback, error.stack, `ui:${error.name || 'Error'}`)
 
     // 如果是业务错误但没有特定处理器
     if ('code' in error && (error as BusinessError).code) {
       if (opts.showToast) {
-        toast.error(error.message || opts.defaultMessage || '操作失败')
+        toast.error(error.message || fallback)
       }
       return false
     }
 
     // 未知错误
     if (opts.showToast) {
-      toast.error(opts.defaultMessage || '操作失败')
+      toast.error(fallback)
     }
 
     return false
@@ -89,20 +90,20 @@ const errorHandler = new ErrorHandlerService()
 errorHandler.register('TeamLockedError', (error) => {
   if (error instanceof Error && 'error' in error && (error as any).error?.data) {
     const data = (error as any).error.data
-    toast.warning(`团队已锁定：参与了任务 ${data.lockingTasks}`)
+    toast.warning(t('shell.errors.teamLockedBy', { tasks: data.lockingTasks }))
   } else {
-    toast.warning('团队已锁定，无法修改成员')
+    toast.warning(t('shell.errors.teamLocked'))
   }
   return false
 })
 
 errorHandler.register('AccessDeniedError', (error) => {
-  toast.error('您没有权限执行此操作')
+  toast.error(t('shell.errors.noPermission'))
   return false
 })
 
 errorHandler.register('PermissionDeniedError', (error) => {
-  toast.error('您没有权限执行此操作')
+  toast.error(t('shell.errors.noPermission'))
   return false
 })
 

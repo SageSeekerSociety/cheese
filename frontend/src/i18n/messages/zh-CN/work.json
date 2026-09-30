@@ -1446,5 +1446,44 @@
     "deleteTitle": "删除「{title}」",
     "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
     "cancel": "取消"
+  },
+  "nodeBoard": {
+    "loadFailed": "加载机器状态失败",
+    "title": "机器状态",
+    "hint": "工作电脑现在是否可用",
+    "active": "全平台进行中 {count} 轮",
+    "online": "在线",
+    "offline": "离线",
+    "device": "自有设备",
+    "cloud": "云端",
+    "current": "没有选择时落在这里"
+  },
+  "needsYou": {
+    "changeAlert": "变更提醒",
+    "waiting": "等你回答",
+    "answerFailed": "未能答复",
+    "dismissFailed": "未能收起",
+    "feedbackFailed": "未能提交反馈",
+    "next": "下一条",
+    "open": "去话题",
+    "dismiss": "收起",
+    "helpful": "有帮助",
+    "notHelpful": "没帮助"
+  },
+  "push": {
+    "ask": "这次运行时间可能较长，完成后通知你",
+    "enable": "开启通知",
+    "decline": "暂不开启"
+  },
+  "image": {
+    "alt": "图片",
+    "failed": "图片加载失败"
+  },
+  "agentAvatar": {
+    "defaultName": "芝士"
+  },
+  "liveView": {
+    "connecting": "连接现场中…",
+    "closed": "现场已断开"
   }
 }

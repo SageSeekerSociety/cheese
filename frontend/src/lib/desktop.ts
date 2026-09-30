@@ -6,6 +6,7 @@ import { reactive } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { connectDevice, deviceProposedName, listMyDevices } from '../api'
+import { t } from '../i18n'
 
 // The site serves the desktop build itself: build.yml copies the `desktop-latest`
 // release (.github/workflows/desktop.yml) into the frontend image, because GitHub
@@ -77,7 +78,9 @@ export function desktopBridge(): DesktopBridge | null {
       progress.onmessage = (message) => {
         if (message.kind === 'step') return onStep(message.text)
         approve(message.text).catch((err: unknown) => {
-          approveError = new Error(`批准失败：${err instanceof Error ? err.message : String(err)}`)
+          approveError = new Error(
+            t('compute.desktop.approveFailed', { reason: err instanceof Error ? err.message : String(err) })
+          )
           void invoke('cancel_connect')
         })
       }
@@ -115,7 +118,7 @@ export async function connectThisComputer(): Promise<boolean> {
   if (!bridge || thisComputer.connecting) return false
   thisComputer.connecting = true
   thisComputer.error = null
-  thisComputer.step = '正在准备'
+  thisComputer.step = t('compute.desktop.preparing')
   try {
     await bridge.connectThisMachine({
       knownDeviceIds: (await myDevices()).map((d) => d.device_id),
@@ -164,9 +167,9 @@ export async function autoConnectThisComputer(userId: number) {
   const [stored, devices] = await Promise.all([bridge.thisDevice(), myDevices().catch(() => null)])
   if (devices === null) return
   if (stored && devices.some((d) => d.device_id === stored && d.online)) return
-  toast('正在把这台电脑接入 Cheese')
-  if (await connectThisComputer()) toast.success('这台电脑已接入，可以在「设置 → 设备」里看到它')
-  else toast.error(`这台电脑没能接入：${thisComputer.error}`)
+  toast(t('compute.desktop.connecting'))
+  if (await connectThisComputer()) toast.success(t('compute.desktop.connected'))
+  else toast.error(t('compute.desktop.connectFailed', { reason: thisComputer.error ?? '' }))
 }
 
 // Whether a device in the list is the computer this app runs on.

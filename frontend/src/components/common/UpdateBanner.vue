@@ -14,6 +14,7 @@
 <script setup lang="ts">
 import { useOnline } from '@vueuse/core'
 
+import { t } from '@/i18n'
 import { applyUpdate, dismissUpdate, updateReady } from '@/pwa'
 
 const online = useOnline()
@@ -23,15 +24,17 @@ const online = useOnline()
   <Transition name="update-slide">
     <div v-if="updateReady && online" class="update-banner" role="status" aria-live="polite">
       <v-icon size="16" class="update-banner__icon">mdi-download</v-icon>
-      <span class="update-banner__text">芝士有新版本，更新后自动刷新</span>
+      <span class="update-banner__text">{{ t('shell.update.ready') }}</span>
       <button
         type="button"
         class="update-banner__action update-banner__action--primary tap-target"
         @click="applyUpdate"
       >
-        立即更新
+        {{ t('shell.update.now') }}
       </button>
-      <button type="button" class="update-banner__action tap-target" @click="dismissUpdate">稍后</button>
+      <button type="button" class="update-banner__action tap-target" @click="dismissUpdate">
+        {{ t('shell.update.later') }}
+      </button>
     </div>
   </Transition>
 </template>

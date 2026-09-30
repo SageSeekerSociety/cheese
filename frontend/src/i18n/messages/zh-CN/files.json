@@ -1,0 +1,10 @@
+{
+  "library": {
+    "uploadFailed": "上传失败（HTTP {status}）",
+    "readFailed": "无法读取这份资料（HTTP {status}）"
+  },
+  "preview": {
+    "cannotShow": "无法显示这个文件"
+  },
+  "downloadFailed": "下载失败"
+}

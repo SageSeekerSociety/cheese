@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 // 内容在路上时，先画出它的形状。
 //
 // 判据（工作台的加载态都按这条挑）：**你知道等会儿长什么样，就画骨架；不知道要
@@ -69,7 +70,7 @@ function width(i: number): string {
   <!-- aria-busy + 一句给读屏软件的话：骨架对眼睛说「在加载」，对屏幕阅读器
        什么都没说——它读到的只是一堆空 div。 -->
   <div class="skel" :class="`skel--${variant}`" role="status" aria-busy="true" aria-live="polite">
-    <span class="skel__sr">加载中</span>
+    <span class="skel__sr">{{ t('shell.loading') }}</span>
 
     <!-- 聊天：消息是平铺的，人和芝士都靠左，所以骨架也是头像 + 名字 + 一两行字。
          行高逐条抄自真的那一行，到货那一刻整列不跳。 -->

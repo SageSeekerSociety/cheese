@@ -26,6 +26,7 @@ import type { MenuAction } from './common/menuAction'
 import { computed, ref, watch } from 'vue'
 
 import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } from '../api'
+import { t } from '../i18n'
 import { relTime } from '../lib/relTime'
 
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
@@ -53,11 +54,29 @@ const removing = ref<ProjectArtifact | null>(null)
 /** 一项的 ⋯：合并要有别的项可以并进去才出现；删除先过确认框。 */
 function rowActions(row: ProjectArtifact): MenuAction[] {
   return [
-    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => openRename(row) },
+    {
+      key: 'rename',
+      label: t('project.artifacts.rename'),
+      icon: 'mdi-pencil-outline',
+      onSelect: () => openRename(row),
+    },
     ...(rows.value.length > 1
-      ? [{ key: 'merge', label: '合并到…', icon: 'mdi-call-merge', onSelect: () => openMerge(row) }]
+      ? [
+          {
+            key: 'merge',
+            label: t('project.artifacts.mergeInto'),
+            icon: 'mdi-call-merge',
+            onSelect: () => openMerge(row),
+          },
+        ]
       : []),
-    { key: 'remove', label: '删除', icon: 'mdi-delete-outline', danger: true, onSelect: () => (removing.value = row) },
+    {
+      key: 'remove',
+      label: t('project.artifacts.delete'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (removing.value = row),
+    },
   ]
 }
 
@@ -81,9 +100,9 @@ async function load() {
 }
 
 function version(row: ProjectArtifact): string {
-  if (!row.version) return '尚未交付'
+  if (!row.version) return t('project.artifacts.notDelivered')
   const when = row.delivered_at ? ` · ${relTime(row.delivered_at)}` : ''
-  return `第 ${row.version} 版${when}`
+  return `${t('project.artifacts.version', { version: row.version })}${when}`
 }
 
 function openRename(row: ProjectArtifact) {
@@ -115,7 +134,11 @@ async function rename() {
   const row = renaming.value
   if (!row) return
   renaming.value = null
-  await act(row.id, () => renameProjectArtifact(props.projectId, row.id, newName.value), '未能改名')
+  await act(
+    row.id,
+    () => renameProjectArtifact(props.projectId, row.id, newName.value),
+    t('project.artifacts.renameFailed')
+  )
 }
 
 async function merge() {
@@ -123,14 +146,14 @@ async function merge() {
   const into = mergeInto.value
   if (!row || !into) return
   merging.value = null
-  await act(row.id, () => mergeProjectArtifacts(props.projectId, row.id, into), '未能合并')
+  await act(row.id, () => mergeProjectArtifacts(props.projectId, row.id, into), t('project.artifacts.mergeFailed'))
 }
 
 async function remove() {
   const row = removing.value
   if (!row) return
   removing.value = null
-  await act(row.id, () => deleteProjectArtifact(props.projectId, row.id), '未能删除')
+  await act(row.id, () => deleteProjectArtifact(props.projectId, row.id), t('project.artifacts.deleteFailed'))
 }
 
 watch(
@@ -151,7 +174,7 @@ watch(
     <PublishedSite :project-id="projectId" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
-      <li v-if="!rows.length" class="made__empty t-body">暂无产物</li>
+      <li v-if="!rows.length" class="made__empty t-body">{{ t('project.artifacts.empty') }}</li>
       <li v-for="(row, index) in rows" :key="row.id" class="made-row" :class="{ 'made-row--folded': index >= FOLDED }">
         <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
         <div class="made-row__what">
@@ -175,14 +198,16 @@ watch(
               variant="text"
               color="on-surface-variant"
               :loading="busy === row.id"
-              :aria-label="`${row.name} 的操作`"
+              :aria-label="t('project.artifacts.actionsOf', { name: row.name })"
             />
           </template>
         </AdaptiveMenu>
       </li>
       <li v-if="rows.length > FOLDED" class="made__fold t-meta">
         <button type="button" class="made__fold-btn tap-target" :aria-expanded="expanded" @click="expanded = !expanded">
-          {{ expanded ? '收起' : `展开其余 ${rows.length - FOLDED} 项` }}
+          {{
+            expanded ? t('project.artifacts.collapse') : t('project.artifacts.expand', { count: rows.length - FOLDED })
+          }}
         </button>
       </li>
     </ul>
@@ -190,11 +215,11 @@ watch(
     <!-- 改名。卡指着的是这一项，不是这个名字，所以已经交付过的那几版照样算它的。 -->
     <v-dialog :model-value="!!renaming" max-width="420" @update:model-value="renaming = null">
       <v-card v-if="renaming">
-        <v-card-title class="t-dialog-title">重命名</v-card-title>
+        <v-card-title class="t-dialog-title">{{ t('project.artifacts.rename') }}</v-card-title>
         <v-card-text>
           <v-text-field
             v-model="newName"
-            label="名字"
+            :label="t('project.artifacts.nameLabel')"
             autocomplete="off"
             density="compact"
             variant="outlined"
@@ -205,8 +230,10 @@ watch(
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="renaming = null">取消</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!newName.trim()" @click="rename">保存</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="renaming = null">{{ t('global.cancel') }}</v-btn>
+          <v-btn variant="text" color="primary" :disabled="!newName.trim()" @click="rename">{{
+            t('global.save')
+          }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -214,35 +241,41 @@ watch(
     <!-- 合并：同一样东西被声明成了两项，这是把它们收回一项。 -->
     <v-dialog :model-value="!!merging" max-width="420" @update:model-value="merging = null">
       <v-card v-if="merging">
-        <v-card-title class="t-dialog-title">合并《{{ merging.name }}》</v-card-title>
+        <v-card-title class="t-dialog-title">{{
+          t('project.artifacts.mergeTitle', { name: merging.name })
+        }}</v-card-title>
         <v-card-text>
           <v-select
             v-model="mergeInto"
             :items="mergeTargets"
             autocomplete="off"
-            label="合并到"
+            :label="t('project.artifacts.mergeLabel')"
             density="compact"
             variant="outlined"
             hide-details
           />
-          <p class="t-meta c-faint mt-3">《{{ merging.name }}》的版本记录归入所选的那一项，它不再单独列出</p>
+          <p class="t-meta c-faint mt-3">{{ t('project.artifacts.mergeHint', { name: merging.name }) }}</p>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="merging = null">取消</v-btn>
-          <v-btn variant="text" color="primary" :disabled="!mergeInto" @click="merge">合并</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="merging = null">{{ t('global.cancel') }}</v-btn>
+          <v-btn variant="text" color="primary" :disabled="!mergeInto" @click="merge">{{
+            t('project.artifacts.merge')
+          }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog :model-value="!!removing" max-width="420" @update:model-value="removing = null">
       <v-card v-if="removing">
-        <v-card-title class="t-dialog-title">删除《{{ removing.name }}》</v-card-title>
-        <v-card-text class="t-body">删除后它不再列在这里，已完成的交付记录保留</v-card-text>
+        <v-card-title class="t-dialog-title">{{
+          t('project.artifacts.deleteTitle', { name: removing.name })
+        }}</v-card-title>
+        <v-card-text class="t-body">{{ t('project.artifacts.deleteBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="removing = null">取消</v-btn>
-          <v-btn variant="text" color="error" @click="remove">删除</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="removing = null">{{ t('global.cancel') }}</v-btn>
+          <v-btn variant="text" color="error" @click="remove">{{ t('project.artifacts.delete') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

@@ -4,6 +4,8 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const requestSiteSession = vi.fn()
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
@@ -33,10 +35,19 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
+
 it('requires login before asking for a Site grant', async () => {
   mount()
   expect(await screen.findByText('这个网站仅项目成员可访问，请先登录')).toBeTruthy()
   expect(requestSiteSession).not.toHaveBeenCalled()
+})
+
+it('reads in English under the en locale', async () => {
+  setLocale('en')
+  mount()
+  expect(await screen.findByText('Only project members can open this site. Sign in first')).toBeTruthy()
 })
 
 it('posts only the Site grant to the content host', async () => {

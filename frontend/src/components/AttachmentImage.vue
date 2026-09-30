@@ -10,6 +10,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentImageUrl } from '../api'
+import { t } from '../i18n'
 
 const props = defineProps<{
   topicId: string | null
@@ -21,7 +22,7 @@ const props = defineProps<{
 }>()
 
 // 路径是工作区里的，`uploads/<id>/…`；说给读者听的是文件名那一段。
-const altText = computed(() => props.alt || props.path.split('/').pop() || '图片')
+const altText = computed(() => props.alt || props.path.split('/').pop() || t('work.image.alt'))
 
 const url = ref('')
 const failed = ref(false)
@@ -72,7 +73,7 @@ onBeforeUnmount(() => {
     <img class="im-image" :src="url" :alt="altText" loading="lazy" />
   </a>
   <!-- 失败说一句，别留一块空白：空白和「这条消息本来就没图」长得一样。 -->
-  <span v-else-if="failed" class="im-image-failed">图片加载失败</span>
+  <span v-else-if="failed" class="im-image-failed">{{ t('work.image.failed') }}</span>
 </template>
 
 <style scoped>
