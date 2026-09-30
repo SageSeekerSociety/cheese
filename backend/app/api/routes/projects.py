@@ -31,23 +31,11 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.models import AgentInstance
-from app.domain.agent_instance.schemas import (
-    AgentInstanceCreate,
-    AgentInstanceOut,
-    AgentInstanceUpdate,
-    ProjectDefaultAgentIn,
-)
-from app.domain.agent_instance.services import (
-    AgentInstanceService,
-    ResolvedAgent,
-)
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
+from app.domain.identity.handles import ANONYMOUS_HANDLE
 from app.domain.machine.limits import get_machine_limit
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
@@ -345,163 +333,6 @@ async def get_project(
         db
     ).manages(project_id, actor.handle)
     return ok(payload)
-
-
-def _holds_the_default(project: Project, row: AgentInstance) -> bool:
-    """Whether this row is what a new topic in the project gets.
-
-    One way to be it: the project points at it. A project is created with its
-    芝士 and pointed at it right there, so there is no longer a second way — an
-    agent that holds the default before anything points at it.
-    """
-    return row.id == project.default_agent_instance_id
-
-
-def _agent_out(
-    project_id: uuid.UUID,
-    agent: ResolvedAgent,
-    *,
-    is_default: bool,
-    is_active: bool = True,
-) -> dict:
-    return AgentInstanceOut(
-        id=agent.instance_id,
-        project_id=project_id,
-        handle=agent.handle,
-        seat_handle=agent_instance_handle(agent.instance_id),
-        type_name=agent.type_name,
-        display_name=agent.display_name,
-        configuration=AgentConfiguration.model_validate(agent.configuration),
-        is_default=is_default,
-        is_active=is_active,
-    ).model_dump(mode="json")
-
-
-@router.get("/{project_id}/agents")
-async def list_project_agents(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """The project's saved agents, including its default for new rooms."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    await service.for_project(project)
-    rows = await service.list_for_project(project_id)
-    items = [
-        _agent_out(
-            project_id,
-            AgentInstanceService.resolved(row),
-            is_default=_holds_the_default(project, row),
-            is_active=row.is_active,
-        )
-        for row in rows
-    ]
-    return ok(page(items, len(items)))
-
-
-@router.post("/{project_id}/agents")
-async def create_project_agent(
-    project_id: uuid.UUID,
-    body: AgentInstanceCreate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Add an agent to this project. It starts with an empty memory pool."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.create(
-        project_id=project_id,
-        handle=body.handle or f"agent-{uuid.uuid4().hex[:8]}",
-        type_name=body.type_name,
-        display_name=body.display_name,
-        configuration=body.configuration,
-    )
-    await db.flush()
-    return ok(
-        _agent_out(
-            project_id, AgentInstanceService.resolved(instance), is_default=False
-        )
-    )
-
-
-@router.put("/{project_id}/agents/{agent_id}")
-async def update_project_agent(
-    project_id: uuid.UUID,
-    agent_id: uuid.UUID,
-    body: AgentInstanceUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Edit one agent's name and saved configuration.
-
-    ``handle`` is not editable and is not accepted here: it keys the memory
-    pool, so changing it would hand the agent an empty one and orphan
-    everything it had learned in this project.
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
-    fields = body.model_fields_set
-    if "display_name" in fields and body.display_name is not None:
-        await service.rename(instance, body.display_name)
-    if body.configuration is not None:
-        await service.configure(instance, body.configuration)
-    await db.flush()
-    return ok(
-        _agent_out(
-            project_id,
-            AgentInstanceService.resolved(instance),
-            is_default=_holds_the_default(project, instance),
-            is_active=instance.is_active,
-        )
-    )
-
-
-@router.delete("/{project_id}/agents/{agent_id}")
-async def deactivate_project_agent(
-    project_id: uuid.UUID,
-    agent_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Retire an agent — not a delete.
-
-    The rooms already working with it carry on and its memory is kept; it just
-    stops being offered for new work. The response says ``deleted`` because
-    that is the shape a DELETE returns everywhere here, not because a row went
-    away.
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
-    await service.deactivate(project, instance)
-    return ok({"deleted": True})
-
-
-@router.put("/{project_id}/default-agent")
-async def set_project_default_agent(
-    project_id: uuid.UUID,
-    body: ProjectDefaultAgentIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Select the existing agent that new rooms start with."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.get_in_project(
-        project_id=project_id, instance_id=body.instance_id
-    )
-    agent = await service.set_project_default(project, instance)
-    return ok(_agent_out(project_id, agent, is_default=True))
 
 
 @router.get("/{project_id}/decisions")
