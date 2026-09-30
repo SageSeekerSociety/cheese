@@ -275,7 +275,7 @@ class FeedbackCounts(BaseModel):
     hot: int
     active: int
     resolved: int
-    #: 「上线」单独一个数。`resolved` 装的是**修复 + 上线**这一对（`_tab_where` 的
+    #: 「上线」单独一个数。`resolved` 装的是全部办完的（`_tab_where` 的
     #: docstring 写着那条决定），这里只是**另外**多给一个，栏位口径不变 —— 看板上
     #: 「解决」和「上线」要画成两条线，缺了它「上线了多少」在这个平台上没被数过。
     deployed: int = 0

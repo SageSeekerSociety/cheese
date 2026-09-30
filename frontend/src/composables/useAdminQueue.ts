@@ -38,7 +38,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
-import { statusMeta } from '@/lib/feedbackMeta'
+import { allStatuses, statusMeta } from '@/lib/feedbackMeta'
 import { relativeDays } from '@/lib/feedbackWindows'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -128,7 +128,7 @@ export function useAdminQueue(deps: AdminQueueDeps) {
 
   /* ---- 手上这一页 ---- */
 
-  const tabs = computed<(FeedbackStatus | 'all')[]>(() => ['all', ...store.statusLadder])
+  const tabs = computed<(FeedbackStatus | 'all')[]>(() => ['all', ...allStatuses(store.meta?.statuses)])
   const items = computed(() => store.adminItems)
 
   /** 状态页签那一排（`AdminTabs`）要的形状：`{ value, label }`。文案口径和原来那颗裸
@@ -382,10 +382,11 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     return items.value.find((item) => item.id === id)?.status ?? null
   }
 
-  /** 梯子上的位置。合法性只按它判：目标必须**在当前位置之后**，所以「从已上线不可回退」
-   *  是它的一个特例而不是一条额外规则 —— 回退和原地下键都会落进同一个分支。 */
+  /** 在全部状态里的位置（梯子四级，「不修复」排最后）。合法性只按它判：目标必须**在当前
+   *  位置之后**，所以「从已上线、不修复不可回退」是它的特例而不是额外规则 —— 回退和原地
+   *  下键都会落进同一个分支。 */
   function rank(status: FeedbackStatus): number {
-    return store.statusLadder.indexOf(status)
+    return allStatuses(store.meta?.statuses).indexOf(status)
   }
 
   async function writeStatus(id: string, to: FeedbackStatus, byKey: boolean) {
@@ -409,6 +410,7 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     in_progress: 'resolved',
     resolved: 'deployed',
     deployed: null,
+    declined: null,
   }
 
   function advance(id: string) {
@@ -604,7 +606,8 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     }
 
     const status = typeof query.status === 'string' ? query.status : null
-    if (status && store.statusLadder.includes(status as FeedbackStatus)) statusTab.value = status as FeedbackStatus
+    if (status && allStatuses(store.meta?.statuses).includes(status as FeedbackStatus))
+      statusTab.value = status as FeedbackStatus
 
     const windows: [string, string | null, (v: string | null) => void][] = [
       ['since', store.adminSince, (v) => store.setAdminSince(v)],

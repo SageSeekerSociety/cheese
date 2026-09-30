@@ -160,7 +160,7 @@ describe('工具行三组控件', () => {
     expect(input.getAttribute('placeholder')).toBe('搜索反馈')
   })
 
-  it('状态页签五档：全部 + 四个状态名', async () => {
+  it('状态页签六档：全部 + 梯子四级 + 不修复', async () => {
     const { getAllByRole } = await mountQueue()
     await waitFor(() => expect(getAllByRole('tab').length).toBeGreaterThan(0))
 
@@ -170,6 +170,7 @@ describe('工具行三组控件', () => {
       '处理中',
       '已修复',
       '已上线',
+      '不修复',
     ])
   })
 

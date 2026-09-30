@@ -1152,8 +1152,8 @@ function inPublicList(item: FeedbackCard): boolean {
   return item.visibility === 'public' && !item.security
 }
 
-/** 「办完了」= 已修复 **和** 已上线，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
-const CLOSED: FeedbackStatus[] = ['resolved', 'deployed']
+/** 「办完了」= 已修复、已上线、不修复，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
+const CLOSED: FeedbackStatus[] = ['resolved', 'deployed', 'declined']
 
 /** 栏位谓词。这是 `repositories._tab_where` 的镜像，**形状也照抄**：
  *  `sunk` 一处定义、三个栏位共用，免得这里写着写着就和后端分了叉 —— 预览存在的

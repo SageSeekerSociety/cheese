@@ -83,13 +83,15 @@ covers:
 
 `STATUS_LADDER` 是 已收录 → 处理中 → 已修复 → 已上线（`received` / `in_progress` / `resolved` / `deployed`）。后两级从任何状态都能到，也允许退回（resolved → in_progress）：反馈确实会被重新打开，而一个禁止退回的状态集会被人用「再提一条重复的」绕开，代价是丢掉那段让反馈有用的历史。
 
+梯子之外还有第五个状态 `declined`（不修复）：看过了，不改，原因写在评论里（有意的设计、不在范围内、平台侧复现不出来）。它是另一种结局，不是「已上线」之后的一级，所以不在 `STATUS_LADDER` 里：提交者那根时间线画到它就停，不再画「已修复 / 已上线」。它在 `CLOSED_STATUSES` 里，和修复、上线一样不再接受支持、bug 会沉底、计进「已完成」。管理端的状态选项和前后顺序用 meta 的 `statuses`（梯子四级加 `declined`），所以它排在最后，设成它之后和「已上线」一样不能在界面上退回。状态列是 VARCHAR（`_enum`），加这个值不需要迁移。
+
 `set_status` 是**唯一**写 `status` 的方法，它和 `append_timeline` 共用调用方的事务 —— 没有一条路由能写状态却不写历史。同状态重复提交是空操作，不是第二条历史：相隔一秒的两条一模一样的记录读起来像历史出了 bug。`patch_admin` 只收 `priority` / `assignee_handle` / `security`，**不收** `visibility`、也不收 `status`。
 
 `security` 变化会补一条时间线（状态不变）：把一条标成安全问题是一次路由决定，提它的人应当看得见，而那也是它停止对同事可见的一刻。
 
 评论是**两层**：`parent_id` 永远指向顶层评论，回复的回复被重新挂到祖父上（和原型 `stores/feedback.ts::addComment` 一样）。`reply_to_handle` 是为了补上折叠丢掉的那一点 —— 折叠之后浏览器分不清这条在回楼主还是在回楼里的另一条，所以服务端在写入时，从它加载的那一行记下被点「回复」的手柄，客户端不许自己编一个名字。只有被回复的那条本身也是回复时才写。
 
-支持是 `FeedbackSupport`，唯一约束 `(feedback_id, author_handle)` 让重复点是空操作；已办完的（`CLOSED_STATUSES` = resolved + deployed）不再接受支持，回 412 而不是 403（客户端该做的是重新读一遍这条，不是别问了）。
+支持是 `FeedbackSupport`，唯一约束 `(feedback_id, author_handle)` 让重复点是空操作；已办完的（`CLOSED_STATUSES` = resolved + deployed + declined）不再接受支持，回 412 而不是 403（客户端该做的是重新读一遍这条，不是别问了）。
 
 ## 修复上线时自动改成「已上线」 {#shipped}
 
@@ -112,7 +114,7 @@ Fixes-feedback: FB-12, FB-15
 
 公开侧四个栏位 `all` / `hot` / `active` / `resolved`，定义只写在 `_tab_where` 一处，列表和计数共用：
 
-- `resolved` 装的是 `CLOSED_STATUSES`，也就是**修复 + 上线**这一对 —— 对提它的人来说那是同一个答复的两半。
+- `resolved` 装的是 `CLOSED_STATUSES`，也就是修复、上线和不修复 —— 对提它的人来说那都是一个答复。
 - 办完的条目会从工作栏下沉，但**只有办完的 bug**：一条办完的建议是本该做、也做了的东西，仍然值得读，把它藏起来是更宽的那种读法。
 - 推论：栏位是过滤器不是分区，一条办完的建议同时出现在 `all` 和 `resolved` 里，四个数加起来不等于总数。这是决定，不是记账错误。
 
