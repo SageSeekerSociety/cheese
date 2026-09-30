@@ -5,8 +5,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.domain.shell.catalog import DEFAULT_CATEGORY_SHELL_NAME, is_course_shell
-from app.domain.space.course_modules import normalize as normalize_course_modules
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -83,7 +81,6 @@ class SpaceLabel:
     """How a board is named where something happened on it."""
 
     name: str
-    is_course: bool
 
 
 class SpaceLabels:
@@ -98,11 +95,8 @@ class SpaceLabels:
 
     async def describe(self, space_ids: Sequence[int]) -> dict[int, SpaceLabel]:
         """Each of these boards' labels, in one query; unknown ids are left out."""
-        rows = await self._repo.names_and_shells(space_ids=space_ids)
-        return {
-            space_id: SpaceLabel(name=name, is_course=is_course_shell(shell))
-            for space_id, (name, shell) in rows.items()
-        }
+        rows = await self._repo.names(space_ids=space_ids)
+        return {space_id: SpaceLabel(name=name) for space_id, name in rows.items()}
 
 
 class SpaceService:
@@ -133,25 +127,6 @@ class SpaceService:
         self._invite_code_repo = invite_code_repo
         self._knowledge_service = knowledge_service
         self._material_service = material_service
-
-    # ------------------------------------------------------------------
-    # What a 题目板 is
-    # ------------------------------------------------------------------
-
-    async def default_category_shells(
-        self, *, space_ids: Sequence[int]
-    ) -> dict[int, str | None]:
-        """The 壳 each of these 题目板's default 分组 declares.
-
-        The answer is a name, not a verdict: `app.domain.shell.catalog` owns
-        which names mean 「this board is a course」, so callers ask it rather
-        than comparing strings themselves.
-        """
-        return await self._repo.default_category_shells(space_ids=space_ids)
-
-    async def is_course(self, *, space_id: int) -> bool:
-        shells = await self.default_category_shells(space_ids=[space_id])
-        return is_course_shell(shells.get(space_id))
 
     # ------------------------------------------------------------------
     # Classification topics
@@ -258,17 +233,13 @@ class SpaceService:
             visible_task_limit=visible_task_limit,
         )
 
-        # Default category "General". It declares the course 壳: a 题目板 is a
-        # course now, so a new one opens as the course template rather than a
-        # blank board. The 壳 is a DEFAULT on the one protocol chain — a 题目
-        # may replace it and a project's own settings outrank both — and the
-        # name comes from the catalog so no 壳 is named twice.
+        # Default category "General". It declares no 壳, so projects under it
+        # run the default one unless a 题目 or the project itself says otherwise.
         default_category = await self._category_repo.create_category(
             space_id=space.id,
             name="General",
             description="Auto generated default category",
             display_order=0,
-            shell=DEFAULT_CATEGORY_SHELL_NAME,
         )
         space.default_category_id = default_category.id
         await self._repo.save(space)
@@ -309,7 +280,6 @@ class SpaceService:
         default_category_id: int | None = None,
         visible_task_limit: int | None = None,
         set_visible_task_limit: bool = False,
-        course_modules: dict[str, bool] | None = None,
     ) -> Space:
         space = await self._get_space_or_error(space_id)
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
@@ -345,11 +315,6 @@ class SpaceService:
                     data={"spaceId": space_id, "categoryId": default_category_id},
                 )
             space.default_category_id = default_category_id
-        if course_modules is not None:
-            # Only what was declared; absent keys keep meaning ON, so the map
-            # stays a list of exceptions rather than a copy of the whole board.
-            space.course_modules = normalize_course_modules(course_modules)
-
         space.updated_at = datetime.now(UTC)
         return await self._repo.save(space)
 

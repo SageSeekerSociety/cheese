@@ -210,7 +210,6 @@ class UserRealNameService:
                     "accessModuleType": log.module_type,
                     "accessEntityId": log.module_entity_id,
                     "accessEntityName": space.name if space else None,
-                    "accessEntityIsCourse": space.is_course if space else None,
                     "accessTime": access_time_ms,
                     "accessType": log.access_type,
                     "accessReason": log.access_reason,
