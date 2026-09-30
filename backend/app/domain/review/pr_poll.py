@@ -87,7 +87,7 @@ async def poll_uncarded_task_prs(
         WHO_PLATFORM,
         notice,
     )
-    from app.domain.project.forge import proposal_client
+    from app.domain.project.forge import background_may_use_forge, proposal_client
     from app.domain.review.models import AcceptCard
     from app.domain.room_task.checkouts import after_close
     from app.domain.room_task.models import Task, TaskStatus
@@ -136,6 +136,8 @@ async def poll_uncarded_task_prs(
                 if task is None or task.pr_number is None:
                     continue
                 number, project = task.pr_number, task.project_id
+                if not await background_may_use_forge(project, session):
+                    continue
                 client = await proposal_client(project, session)
             if client is None:
                 continue
