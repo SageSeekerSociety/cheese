@@ -21,7 +21,6 @@ import {
 } from '../lib/desktop'
 
 import { useCommands } from '@/commands'
-import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import accountService from '@/services/account'
 
@@ -47,7 +46,7 @@ const error = ref<string | null>(null)
 // team's 「工作电脑」 page — the chips here are read-only links into those pages.
 const myTeams = ref<MyTeam[]>([])
 function teamName(id: number): string {
-  return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
+  return myTeams.value.find((t) => t.id === id)?.name ?? t('account.devices.teamFallback', { id })
 }
 // The team page lives at its handle; a team you are not in has no page for you.
 function teamRoute(id: number) {
@@ -69,8 +68,8 @@ const draftName = ref('')
 const addDeviceOpen = ref(false)
 // One per shell: install.sh for Mac and Linux, install.ps1 for Windows.
 const installCommands = computed(() => [
-  { os: 'Mac / Linux', command: `curl -fsSL ${window.location.origin}/connector/install.sh | sh` },
-  { os: 'Windows（PowerShell）', command: `irm ${window.location.origin}/connector/install.ps1 | iex` },
+  { os: t('account.devices.os.unix'), command: `curl -fsSL ${window.location.origin}/connector/install.sh | sh` },
+  { os: t('account.devices.os.windows'), command: `irm ${window.location.origin}/connector/install.ps1 | iex` },
 ])
 const copied = ref<string | null>(null)
 
@@ -123,7 +122,7 @@ async function load() {
     // Team names for the read-only chips — best-effort, never blocks the list.
     myTeams.value = await listMyTeams().catch(() => [])
   } catch (e) {
-    const msg = e instanceof Error ? e.message : '加载设备失败'
+    const msg = e instanceof Error ? e.message : t('account.devices.loadFailed')
     // We are (client-side) authoritatively signed in, so the connector's
     // "requires a logged-in user" gate is not the truth about the session — it
     // means the connector has no owner record for us yet (no device enrolled).
@@ -154,7 +153,7 @@ async function saveRename(d: MyDevice) {
     const updated = await renameMyDevice(d.device_id, name)
     Object.assign(d, updated)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '重命名失败'
+    error.value = e instanceof Error ? e.message : t('account.devices.renameFailed')
   } finally {
     renaming.value = null
   }
@@ -170,8 +169,14 @@ const unbinding = ref(false)
 const { mdAndUp } = useDisplay()
 function deviceActions(d: MyDevice): MenuAction[] {
   return [
-    { key: 'rename', label: '重命名', icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
-    { key: 'unbind', label: '解绑', icon: 'mdi-link-variant-off', danger: true, onSelect: () => askUnbind(d) },
+    { key: 'rename', label: t('account.devices.rename'), icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
+    {
+      key: 'unbind',
+      label: t('account.devices.unbind'),
+      icon: 'mdi-link-variant-off',
+      danger: true,
+      onSelect: () => askUnbind(d),
+    },
   ]
 }
 
@@ -190,7 +195,7 @@ async function confirmUnbind() {
     devices.value = devices.value.filter((x) => x.device_id !== d.device_id)
     unbindTarget.value = null
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '解绑失败'
+    error.value = e instanceof Error ? e.message : t('account.devices.unbindFailed')
   } finally {
     unbinding.value = false
   }
@@ -198,208 +203,197 @@ async function confirmUnbind() {
 
 onMounted(load)
 
-useCommands(() => [
-  {
-    id: 'devices.refresh',
-    title: '刷新',
-    palette: false,
-    icon: 'mdi-refresh',
-    loading: loading.value,
-    header: { iconOnly: true },
-    run: () => void load(),
-  },
-  ...(isLoggedIn.value
+// 「添加设备」也能从命令面板去；页面上那颗按钮在标题旁边。
+useCommands(() =>
+  isLoggedIn.value
     ? [
         {
           id: 'devices.add',
-          title: '添加设备',
+          title: t('account.devices.add'),
           icon: 'mdi-plus',
-          header: { primary: true, accent: true },
           run: () => (addDeviceOpen.value = true),
         },
       ]
-    : []),
-])
+    : []
+)
 </script>
 
 <template>
-  <AppPage :title="t('account.settings.devices')">
-    <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4"> 登录后即可管理已接入的设备 </v-alert>
+  <div class="settings-page">
+    <header class="devices__head">
+      <div>
+        <h1 class="t-page-title">{{ t('account.settings.devices') }}</h1>
+        <p class="settings-page__lede">{{ t('account.devices.lede') }}</p>
+      </div>
+      <div v-if="isLoggedIn" class="devices__actions">
+        <v-btn
+          icon="mdi-refresh"
+          variant="text"
+          size="small"
+          :loading="loading"
+          :aria-label="t('account.devices.refresh')"
+          :title="t('account.devices.refresh')"
+          @click="load"
+        />
+        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
+          {{ t('account.devices.add') }}
+        </v-btn>
+      </div>
+    </header>
+
+    <p v-if="!isLoggedIn" class="settings-empty">{{ t('account.devices.signInFirst') }}</p>
 
     <template v-else>
-      <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+      <v-alert v-if="error" type="error" density="comfortable" closable @click:close="error = null">
         {{ error }}
       </v-alert>
 
-      <!-- Big spinner only on the FIRST load (list still empty). A refresh with data
-           already on screen keeps the list mounted — the refresh button spins instead
-           — so re-fetching never tears the list down and flashes. -->
-      <div v-if="loading && devices.length === 0" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
+      <section class="settings-card">
+        <div class="settings-card__title">{{ t('account.devices.listTitle') }}</div>
 
-      <div v-else-if="devices.length === 0 && desktop" class="empty-state text-center py-10">
-        <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
-        <div class="t-body c-muted mb-1">暂无已连接的设备</div>
-        <div class="t-caption c-muted mb-5">接入后，AI 队友可以在这台电脑上运行任务</div>
-        <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
-          >接入这台电脑</v-btn
-        >
-        <div v-if="thisComputer.connecting" class="t-caption c-muted mt-3">{{ thisComputer.step }}</div>
-        <div v-if="thisComputer.error" class="t-caption c-danger mt-3">{{ thisComputer.error }}</div>
-      </div>
-
-      <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
-        <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
-        <div class="t-body c-muted mb-1">暂无已连接的设备</div>
-        <div class="t-caption c-muted mb-5">
-          Mac 和 Windows 电脑可以在「添加设备」里下载桌面端一键接入；其他机器运行下面对应系统的命令，再运行
-          <code>cheesehost link connect</code> 按提示批准
+        <!-- 第一次加载（列表还是空的）才转圈；已经有设备时刷新不拆列表，转的是标题旁那颗
+             刷新按钮，所以再取一次不会闪。 -->
+        <div v-if="loading && devices.length === 0" class="d-flex justify-center py-6">
+          <v-progress-circular indeterminate size="24" />
         </div>
 
-        <!-- Copyable install one-liner, right in the empty-state so the user can
-             act without hunting for a dialog. -->
-        <div v-for="c in installCommands" :key="c.command" class="mx-auto mb-3" style="max-width: 480px">
-          <div class="t-caption c-muted text-left mb-1">{{ c.os }}</div>
-          <div class="install-cmd">
-            <code class="install-cmd__code">{{ c.command }}</code>
-            <v-btn
-              :color="copied === c.command ? 'success' : 'primary'"
-              variant="text"
-              size="small"
-              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
-              @click="copyInstall(c.command)"
-            >
-              {{ copied === c.command ? '已复制' : '复制' }}
+        <div v-else-if="devices.length === 0" class="settings-empty devices__empty">
+          <span>{{ t('account.devices.empty') }}</span>
+          <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
+          <template v-if="desktop">
+            <v-btn variant="outlined" :loading="thisComputer.connecting" @click="connectThisMachine">
+              {{ t('account.devices.connectThis') }}
             </v-btn>
-          </div>
+            <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
+            <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
+          </template>
         </div>
 
-        <!-- 顶上已经有一颗琥珀的「添加设备」，空状态里这一颗是指路的，用中性的。 -->
-        <v-btn variant="tonal" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
-      </div>
-
-      <v-card v-for="d in devices" :key="d.device_id" class="mb-3 pa-4" variant="outlined">
-        <div class="d-flex align-center">
-          <v-icon :color="d.online ? 'success' : 'grey'" size="12" class="mr-2"> mdi-circle </v-icon>
-
-          <template v-if="renaming === d.device_id">
+        <div v-for="d in devices" :key="d.device_id" class="device">
+          <div class="device__line">
+            <span class="device__dot" :class="{ 'device__dot--on': d.online }" aria-hidden="true" />
             <v-text-field
+              v-if="renaming === d.device_id"
               v-model="draftName"
               autocomplete="off"
               density="compact"
               variant="outlined"
               hide-details
               autofocus
-              style="max-width: 260px"
+              class="device__rename"
               @keyup.enter="saveRename(d)"
               @blur="saveRename(d)"
             />
-          </template>
-          <template v-else>
-            <span class="t-title">{{ d.name }}</span>
-            <v-btn
-              v-if="mdAndUp"
-              variant="text"
-              size="x-small"
-              icon="mdi-pencil"
-              class="ml-1"
-              @click="startRename(d)"
-            />
-          </template>
-
-          <v-spacer />
-          <span class="t-caption mr-3" :class="d.online ? 'text-success font-weight-medium' : 'c-muted'">
-            {{ d.online ? '在线' : '离线' }}
-          </span>
-          <v-btn v-if="mdAndUp" variant="text" size="small" color="error" @click="askUnbind(d)"> 解绑 </v-btn>
-          <AdaptiveMenu v-else :actions="deviceActions(d)" :title="d.name">
-            <template #activator="{ props: menuProps }">
+            <template v-else>
+              <span class="device__name">{{ d.name }}</span>
               <v-btn
-                v-bind="menuProps"
-                icon="mdi-dots-horizontal"
-                size="small"
+                v-if="mdAndUp"
                 variant="text"
-                color="on-surface-variant"
-                class="tap-target"
-                aria-label="更多操作"
+                size="x-small"
+                icon="mdi-pencil-outline"
+                :aria-label="t('account.devices.rename')"
+                :title="t('account.devices.rename')"
+                @click="startRename(d)"
               />
             </template>
-          </AdaptiveMenu>
-        </div>
-
-        <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
-             are the 现场 chips below — each screen carries its own agent identity. -->
-        <div class="t-caption c-muted mt-1">
-          设备 ID · <span style="font-family: monospace">{{ d.device_id }}</span>
-        </div>
-
-        <!-- Read-only 归属 overview: which teams this machine serves (personal team
-             included). Registering/removing happens on each team's 「工作电脑」 page —
-             each chip links straight there. -->
-        <div class="mt-3">
-          <div class="t-caption c-muted mb-1">正在为这些团队提供工作电脑</div>
-          <div class="d-flex flex-wrap align-center ga-2">
-            <v-chip
-              v-for="tid in d.team_ids"
-              :key="tid"
-              size="small"
-              variant="tonal"
-              color="primary"
-              :to="teamRoute(tid)"
-            >
-              <v-icon start size="14">mdi-account-group</v-icon>
-              {{ teamName(tid) }}
-            </v-chip>
-            <span v-if="!d.team_ids.length" class="t-caption c-muted">
-              暂无团队在用，可在团队页面的「工作电脑」里添加
+            <span class="device__state" :class="{ 'device__state--on': d.online }">
+              {{ d.online ? t('account.devices.online') : t('account.devices.offline') }}
             </span>
+            <v-btn v-if="mdAndUp" variant="text" size="small" @click="askUnbind(d)">
+              {{ t('account.devices.unbind') }}
+            </v-btn>
+            <AdaptiveMenu v-else :actions="deviceActions(d)" :title="d.name">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  icon="mdi-dots-horizontal"
+                  size="small"
+                  variant="text"
+                  class="tap-target"
+                  :aria-label="t('account.devices.more')"
+                />
+              </template>
+            </AdaptiveMenu>
           </div>
-        </div>
 
-        <div v-if="d.screens.length" class="mt-3">
-          <div class="t-caption c-muted mb-1">运行中的现场</div>
-          <div class="d-flex flex-wrap ga-2">
-            <v-chip
-              v-for="s in d.screens"
-              :key="s.sid"
-              color="primary"
-              variant="tonal"
-              size="small"
-              @click="liveScreen = s"
-            >
-              <v-icon start size="14">mdi-monitor-eye</v-icon>
-              看现场 · @{{ s.agent_handle }}
-            </v-chip>
+          <!-- 一台设备只是一台机器，不是队友：在它上面跑的是哪些队友，看下面的「现场」。 -->
+          <div class="device__meta">
+            {{ t('account.devices.deviceId') }} · <code>{{ d.device_id }}</code>
+          </div>
+
+          <!-- 只读的归属：这台机器在给哪些团队用（含个人团队）。加机器、移出在各团队的
+               「工作电脑」页里做，每一枚都直接链过去。 -->
+          <div class="device__block">
+            <div class="device__label">{{ t('account.devices.teams') }}</div>
+            <div class="device__chips">
+              <v-chip v-for="tid in d.team_ids" :key="tid" size="small" variant="outlined" :to="teamRoute(tid)">
+                <v-icon start size="14">mdi-account-group</v-icon>
+                {{ teamName(tid) }}
+              </v-chip>
+              <span v-if="!d.team_ids.length" class="device__meta">{{ t('account.devices.noTeams') }}</span>
+            </div>
+          </div>
+
+          <div v-if="d.screens.length" class="device__block">
+            <div class="device__label">{{ t('account.devices.screens') }}</div>
+            <div class="device__chips">
+              <v-chip v-for="s in d.screens" :key="s.sid" variant="outlined" size="small" @click="liveScreen = s">
+                <v-icon start size="14">mdi-monitor-eye</v-icon>
+                {{ t('account.devices.watch', { handle: s.agent_handle }) }}
+              </v-chip>
+            </div>
           </div>
         </div>
-      </v-card>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__title">{{ t('account.devices.commandsTitle') }}</div>
+        <div class="settings-card__desc">{{ t('account.devices.commandsDesc') }}</div>
+        <div v-for="c in installCommands" :key="c.command" class="srow">
+          <span class="srow__k">{{ c.os }}</span>
+          <div class="install-cmd">
+            <code class="install-cmd__code">{{ c.command }}</code>
+            <v-btn
+              variant="text"
+              size="small"
+              :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
+              @click="copyInstall(c.command)"
+            >
+              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
+            </v-btn>
+          </div>
+        </div>
+      </section>
     </template>
 
-    <!-- 添加设备: how to enroll this-or-another machine via the device flow. -->
+    <!-- 添加设备：这台电脑或另一台机器怎么接进来。 -->
     <v-dialog v-model="addDeviceOpen" max-width="560">
       <v-card class="pa-5">
         <div class="d-flex align-center mb-1">
-          <v-icon color="primary" class="mr-2">mdi-laptop-account</v-icon>
-          <span class="t-title">添加设备</span>
+          <span class="t-title">{{ t('account.devices.add') }}</span>
           <v-spacer />
-          <v-btn variant="text" icon="mdi-close" size="small" @click="addDeviceOpen = false" />
+          <v-btn
+            variant="text"
+            icon="mdi-close"
+            size="small"
+            :aria-label="t('account.devices.close')"
+            @click="addDeviceOpen = false"
+          />
         </div>
-        <!-- In the desktop app this computer connects in place; in a browser a Mac or
-           Windows computer gets the app, and any other machine (a server, Linux)
-           keeps the terminal route. -->
+        <!-- 在桌面 app 里这台电脑原地接入；在浏览器里，Mac 和 Windows 装桌面端，别的机器
+             （服务器、Linux）走命令。 -->
         <template v-if="desktop">
-          <div class="t-title mt-3 mb-1">这台电脑</div>
-          <div class="t-caption c-muted mb-3">自动安装连接程序并完成批准，不用打开终端</div>
-          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine"
-            >接入这台电脑</v-btn
-          >
+          <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
+          <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
+          <v-btn color="primary" variant="flat" :loading="thisComputer.connecting" @click="connectThisMachine">
+            {{ t('account.devices.connectThis') }}
+          </v-btn>
           <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
           <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
         </template>
         <template v-else>
-          <div class="t-title mt-3 mb-1">Mac 或 Windows 电脑</div>
-          <div class="t-caption c-muted mb-3">下载桌面端，登录后点「接入这台电脑」，不用打开终端</div>
+          <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
+          <div class="t-caption c-muted mb-3">{{ t('account.devices.desktopHint') }}</div>
           <div class="d-flex flex-wrap ga-2">
             <v-btn
               v-for="(d, i) in downloads"
@@ -412,45 +406,35 @@ useCommands(() => [
               {{ t(d.labelKey) }}
             </v-btn>
           </div>
-          <div class="t-caption c-muted mt-2">
-            第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」，Windows 点「更多信息 → 仍要运行」
-          </div>
+          <div class="t-caption c-muted mt-2">{{ t('account.devices.gatekeeper') }}</div>
         </template>
 
-        <div class="t-title mt-6 mb-1">{{ desktop ? '其他机器' : '服务器，或不装桌面端的电脑' }}</div>
+        <div class="t-title mt-6 mb-1">
+          {{ desktop ? t('account.devices.otherMachines') : t('account.devices.serverTitle') }}
+        </div>
         <div v-for="c in installCommands" :key="c.command" class="mb-3">
           <div class="t-caption c-muted mb-1">{{ c.os }}</div>
           <div class="install-cmd">
             <code class="install-cmd__code">{{ c.command }}</code>
             <v-btn
-              :color="copied === c.command ? 'success' : 'primary'"
               variant="text"
               size="small"
               :prepend-icon="copied === c.command ? 'mdi-check' : 'mdi-content-copy'"
               @click="copyInstall(c.command)"
             >
-              {{ copied === c.command ? '已复制' : '复制' }}
+              {{ copied === c.command ? t('account.devices.copied') : t('account.devices.copy') }}
             </v-btn>
           </div>
         </div>
 
         <ol class="steps">
-          <li>
-            <span class="steps__n">1</span>
-            <span>在你想接入的机器上运行对应系统的那条命令</span>
-          </li>
-          <li>
-            <span class="steps__n">2</span>
-            <span>再运行 <code>cheesehost link connect</code>，在它给出的链接里批准</span>
-          </li>
-          <li>
-            <span class="steps__n">3</span>
-            <span>设备出现在这个页面，可看现场、重命名或解绑</span>
-          </li>
+          <li>{{ t('account.devices.step1') }}</li>
+          <li>{{ t('account.devices.step2') }}</li>
+          <li>{{ t('account.devices.step3') }}</li>
         </ol>
 
         <div class="d-flex justify-end mt-4">
-          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">确定</v-btn>
+          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">{{ t('account.devices.done') }}</v-btn>
         </div>
       </v-card>
     </v-dialog>
@@ -458,9 +442,9 @@ useCommands(() => [
     <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
         <div class="d-flex align-center mb-2">
-          <span class="t-title">现场 · @{{ liveScreen.agent_handle }}</span>
+          <span class="t-title">{{ t('account.devices.liveTitle', { handle: liveScreen.agent_handle }) }}</span>
           <v-spacer />
-          <v-btn variant="text" icon="mdi-close" @click="liveScreen = null" />
+          <v-btn variant="text" icon="mdi-close" :aria-label="t('account.devices.close')" @click="liveScreen = null" />
         </div>
         <div style="height: 60vh">
           <DeviceLiveViewer :sid="liveScreen.sid" />
@@ -468,95 +452,166 @@ useCommands(() => [
       </v-card>
     </v-dialog>
 
-    <!-- Unbind confirmation — an in-app dialog, not the browser's native confirm(). -->
+    <!-- 解绑前问一句：应用里的对话框，不是浏览器自带的 confirm()。 -->
     <v-dialog :model-value="unbindTarget !== null" max-width="440" @update:model-value="unbindTarget = null">
       <v-card v-if="unbindTarget" class="pa-5">
-        <div class="d-flex align-center mb-3">
-          <v-icon color="error" class="mr-2">mdi-link-variant-off</v-icon>
-          <span class="t-title">解绑设备</span>
-        </div>
-        <div class="t-body mb-1">
-          确定解绑设备「<strong>{{ unbindTarget.name }}</strong
-          >」吗？
-        </div>
-        <div class="t-caption c-muted mb-5">它的登录令牌将立即失效，该机器需重新接入才能再次连接</div>
+        <div class="t-title mb-3">{{ t('account.devices.unbindTitle', { name: unbindTarget.name }) }}</div>
+        <div class="t-caption c-muted mb-5">{{ t('account.devices.unbindHint') }}</div>
         <div class="d-flex justify-end">
-          <v-btn variant="text" class="mr-2" @click="unbindTarget = null">取消</v-btn>
-          <v-btn color="error" variant="flat" :loading="unbinding" @click="confirmUnbind"> 解绑 </v-btn>
+          <v-btn variant="text" class="mr-2" @click="unbindTarget = null">{{ t('account.devices.cancel') }}</v-btn>
+          <v-btn color="error" variant="flat" :loading="unbinding" @click="confirmUnbind">
+            {{ t('account.devices.unbind') }}
+          </v-btn>
         </div>
       </v-card>
     </v-dialog>
-  </AppPage>
+  </div>
 </template>
 
+<style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
-/* Copyable install one-liner: a monospace command in a soft amber-washed pill
-   with the copy button riding alongside. Scrolls horizontally on narrow widths
-   rather than wrapping the command. */
+.devices__head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.devices__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.devices__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.device {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 24px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.device__line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.device__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--faint);
+}
+
+.device__dot--on {
+  background: var(--ok);
+}
+
+.device__name {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+}
+
+.device__rename {
+  max-width: 260px;
+}
+
+.device__state {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.device__state--on {
+  color: var(--ok-ink);
+}
+
+.device__meta {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.device__meta code {
+  font-family: var(--font-mono);
+}
+
+.device__block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.device__label {
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+
+.device__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 一行可以复制的命令：等宽字放在浅灰底里，复制按钮贴在后面。窄屏上命令横着滚，
+   不折行。 */
 .install-cmd {
   display: flex;
-  align-items: center;
   gap: 8px;
-  max-width: 480px;
-  padding: 6px 6px 6px 14px;
-  border: 1px solid var(--accent-wash);
-  background: var(--accent-wash);
+  align-items: center;
+  min-width: 0;
+  padding: 4px 4px 4px 12px;
   border-radius: var(--radius-md);
+  background: var(--fill);
 }
+
 .install-cmd__code {
   flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
-  white-space: nowrap;
-  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  color: var(--ink);
+  font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--accent-ink);
-  background: transparent;
-  text-align: left;
+  line-height: var(--lh-13);
+  white-space: nowrap;
 }
 
-/* 1-2-3 steps: numbered amber discs with left-aligned copy. */
+.srow:has(.install-cmd) {
+  grid-template-columns: 180px minmax(0, 1fr);
+}
+
 .steps {
-  list-style: none;
-  padding: 0;
-  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-.steps li {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  color: var(--ink);
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: var(--lh-14);
 }
-.steps__n {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  /* on-primary —— 琥珀填充上的字全站只有这一种做法。浅色下 Vuetify 对 #F57F17 推出来的就是 #fff，所以这里仍然是
-     白字，2.65:1，低于 AA 的 4.5:1。这是已知豁免，不是漏掉的 bug：2026-08-16 项目负责
-     人拍板「保持白字」—— 改成深墨确实能到 5.84:1，但序号上的字会从白变深、观感肉眼可
-     见地变，而品牌琥珀 #F57F17 本身已锁定不动；同一次拍板里，琥珀选中指示条的 2.49:1
-     也按同样理由接受了。深色侧不受影响：on-primary 对 #FFA733 推成 #000，10.8:1，过 AA。
-     所以：别把它「修好」成钉死的深墨 —— 那是被推翻过的方案。 */
-  color: rgb(var(--v-theme-on-primary));
-  background: var(--accent);
-}
-.steps code {
-  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  background: var(--accent-wash);
-  color: var(--accent-ink);
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
+
+@media (max-width: 599.98px) {
+  .device {
+    padding: 12px 16px 14px;
+  }
+
+  .srow:has(.install-cmd) {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

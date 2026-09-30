@@ -246,7 +246,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/user/settings/Profile.vue` | C | 直接取数（`network/api/avatars`）；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `composables/useChosenAvatar.ts` 取数 |
 | `views/user/settings/RealName.vue` | C | 直接取数（`network/api/users`）；直接取数（`network/api/users/types.ts`）；直接取数（`services/account.ts`）；经 `utils/sudo.ts` 取数；经 `composables/useChosenAvatar.ts` 取数 |
 | `views/user/settings/Security.vue` | C | 直接取数（`api.ts`）；直接取数（`network/api/users`）；直接取数（`services/account.ts`）；经 `utils/sudo.ts` 取数 |
-| `views/user/settings/SettingsSidebar.vue` | C | 直接取数（`services/account.ts`） |
 | `views/workspace/DmView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/ProjectMembersView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/ProjectShell.vue` | D | 读路由；读 store（workspace） |

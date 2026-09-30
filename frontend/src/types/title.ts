@@ -20,6 +20,9 @@ export interface RouteMetaTitle {
   /** `backTo` 只在手机上算：这一页在桌面上是 rail 或头像菜单直接到的地方，不是谁的
    *  下一层，桌面顶栏不画 ←。 */
   backOnPhoneOnly?: boolean
+  /** 这一页是设置：画成盖在整个窗口上的一层（components/common/SettingsOverlay），
+   *  关掉回到打开之前的那一页（lib/settingsReturn）。 */
+  settingsOverlay?: boolean
   /** 「项目这个框」那条记录自己举的手——见 lib/projectEntry 的 projectFrameOf。 */
   projectFrame?: boolean
   /**

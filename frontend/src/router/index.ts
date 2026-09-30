@@ -18,6 +18,7 @@ import { workspaceRoutes } from './workspaceRoutes'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { recordEntry } from '@/lib/projectEntry'
+import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
@@ -144,9 +145,10 @@ router.beforeEach(async (to, from, next) => {
   next()
 })
 
-router.afterEach((to, from) => {
+router.afterEach((to, from, failure) => {
   const store = usePageTitleStore()
   store.triggerUpdate()
+  if (!failure) rememberPageBeforeSettings(to)
   // 走进一个项目时，把来路记下来——顶栏那颗 ← 靠它才回得去。名字必须**在这一刻**
   // 抓下来跟路由一起存：等按 ← 的时候再去取，那一页早就卸载了，只能显示一个光秃
   // 秃的箭头。
