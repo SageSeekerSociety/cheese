@@ -5,6 +5,7 @@
     :active="active"
     :index-to="{ name: 'UserSettings' }"
     :close-label="t('account.settings.close')"
+    :close-title="t('account.settings.closeHint')"
     :back-label="t('account.settings.back')"
     @close="close"
   >

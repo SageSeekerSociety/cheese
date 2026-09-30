@@ -40,6 +40,8 @@ const props = defineProps<{
   /** 手机上从某一页回目录去哪。 */
   indexTo: NavTarget
   closeLabel: string
+  /** 关闭按钮悬停时的说明，带上 Esc：键盘提示只放这里，不画在屏幕上。 */
+  closeTitle: string
   backLabel: string
 }>()
 
@@ -114,7 +116,7 @@ onBeforeUnmount(() => {
             <slot />
           </div>
         </main>
-        <button type="button" class="so__close" :aria-label="closeLabel" :title="closeLabel" @click="emit('close')">
+        <button type="button" class="so__close" :aria-label="closeLabel" :title="closeTitle" @click="emit('close')">
           <v-icon icon="mdi-close" size="20" />
         </button>
       </template>

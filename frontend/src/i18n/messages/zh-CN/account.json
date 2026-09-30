@@ -387,7 +387,8 @@
       "account": "账号",
       "devices": "设备与连接",
       "app": "桌面端"
-    }
+    },
+    "closeHint": "关闭设置（Esc）"
   },
   "emailCode": {
     "title": "邮箱验证码登录",

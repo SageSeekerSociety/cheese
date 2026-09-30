@@ -387,7 +387,8 @@
       "account": "Account",
       "devices": "Devices and connections",
       "app": "Desktop app"
-    }
+    },
+    "closeHint": "Close settings (Esc)"
   },
   "emailCode": {
     "title": "Sign in with an email code",

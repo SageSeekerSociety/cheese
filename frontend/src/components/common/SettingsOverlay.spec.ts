@@ -51,7 +51,7 @@ function mount(width: number, active: string | null) {
     template: `
       <v-app>
         <SettingsOverlay label="个人设置" :groups="groups" :active="active" index-to="/"
-          close-label="关闭设置" back-label="返回设置" @close="onClose">
+          close-label="关闭设置" close-title="关闭设置（Esc）" back-label="返回设置" @close="onClose">
           <p>这一页的内容</p>
           <button type="button" @click="dialog = true">打开对话框</button>
           <v-dialog v-model="dialog"><v-card>确认一下</v-card></v-dialog>
