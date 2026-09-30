@@ -326,26 +326,6 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     assert backend.deferred_work is True
 
 
-def _register_pi(monkeypatch):
-    """把 pi 写回注册表，就为这一条测试。
-
-    它今天答不出四条硬性要求，所以不在 `HARNESSES` 里，池子也就不挂它（结论
-    43）。下面两条钉的是另一件事——**一旦它答得出，挂在哪几条通道上由什么判据
-    说**——那条判据是活代码，不能因为今天没有骨架走到它就没人守。
-    """
-    from app.domain.agent.harness import HARNESSES, PI, Harness, SubagentRequirement
-
-    monkeypatch.setitem(
-        HARNESSES,
-        PI,
-        Harness(
-            PI,
-            "pi",
-            subagents=dict.fromkeys(SubagentRequirement, "本条测试里假定它答得出"),
-        ),
-    )
-
-
 def test_the_pool_runs_only_the_harnesses_the_registry_lists():
     """答不出四条的骨架不在注册表里，也就不在池子里（结论 43）。
 
@@ -359,14 +339,13 @@ def test_the_pool_runs_only_the_harnesses_the_registry_lists():
 
     pool = build_compute_pool()
 
-    assert set(HARNESSES) == {CLAUDE_CODE}
+    assert set(HARNESSES) == {CLAUDE_CODE, PI}
     for machine in pool.machines():
         assert pool.select(provider_id=machine, harness=CODEX) is None
-        assert pool.select(provider_id=machine, harness=PI) is None
         assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is not None
 
 
-def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine(monkeypatch):
+def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
     """pi 挂在哪几条通道上，由地点的能力位说。
 
     pi 的进程和它的工作区在同一台机器上——没有第二台机器要指派，也没有执行器要把
@@ -382,7 +361,6 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine(monkeyp
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.harness import CLAUDE_CODE, PI
 
-    _register_pi(monkeypatch)
     cloud = CloudChannel(
         configured=True,
         ensure_topic_cloud=AsyncMock(),
@@ -399,7 +377,7 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine(monkeyp
         assert wrapped.channel.channel.capabilities() == frozenset()
 
 
-def test_a_place_whose_hands_are_elsewhere_gets_no_pi(monkeypatch):
+def test_a_place_whose_hands_are_elsewhere_gets_no_pi():
     """负向对照：把判据换回 ``isinstance(c, DeviceChannel)``，这一条红。
 
     ``hands_here = False`` 的通道进这个池，说的是「会话进程在一台机器上，工具要再
@@ -413,8 +391,6 @@ def test_a_place_whose_hands_are_elsewhere_gets_no_pi(monkeypatch):
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import CLAUDE_CODE, PI
-
-    _register_pi(monkeypatch)
 
     class Elsewhere(DeviceChannel):
         name = "elsewhere"
