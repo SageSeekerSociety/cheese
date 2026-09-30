@@ -41,6 +41,7 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { RAIL_ENTRIES } from './catalogRail'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
@@ -592,6 +593,8 @@ export const CATALOG: CatalogEntry[] = [
       },
     ],
   },
+  // 侧栏那一组（TopicSidebar 拆出来的那六件）在自己的文件里：`catalogRail.ts`。
+  ...RAIL_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',

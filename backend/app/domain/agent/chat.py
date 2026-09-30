@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -42,8 +42,8 @@ from app.domain.agent.event_lines import (
     _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_tool_event,  # noqa: F401 — 测试仍从 chat.py 导它
-    _is_platform_tool,
-    _short_tool_name,
+    _is_platform_tool,  # noqa: F401 — 测试仍从 chat.py 导它
+    _short_tool_name,  # noqa: F401 — 测试仍从 chat.py 导它
     _subagent_event_text,  # noqa: F401 — 测试仍从 chat.py 导它
     _subagent_result_meta,  # noqa: F401 — 测试仍从 chat.py 导它
     _tool_event_meta,  # noqa: F401 — 测试仍从 chat.py 导它
@@ -65,6 +65,25 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     reply_quote,
     strip_platform_notice,
+)
+
+# 兼容门面：屏幕订阅送进来的那一条线（读一条事件、落块、重试与整理的提示、关
+# 这一轮的书）搬去了 `hook_stream.py`（那里有它们各自的文档）。这里重新导出，
+# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
+# 同名委托，调用点一格没动。带 noqa 的名字本文件不用，只是给外部留的导入路径。
+from app.domain.agent.hook_stream import (
+    _OUT_OF_CREDIT_MARKERS,  # noqa: F401
+    _TOOL_ACTION,  # noqa: F401
+    _consume_hook_event,
+    _HookWorkState,
+    _is_out_of_credit,  # noqa: F401 — 搬走的判决，测试仍从 chat.py 导它
+    _keep_note,  # noqa: F401 — 搬走后本文件不用，只是给外部留的导入路径
+    _note_compaction,  # noqa: F401
+    _note_reachability,
+    _note_retry,  # noqa: F401
+    _restate_note,  # noqa: F401
+    _turn_failure_notice,  # noqa: F401
+    _with_log,  # noqa: F401
 )
 
 # 兼容门面：点名解析、通知与 refs 搬去了 `mentions.py`（那里有直接的单测）。
@@ -90,21 +109,15 @@ from app.domain.agent.platform_failures import (
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
     RESPONSE_TRUNCATED_CODE,
-    SESSION_START_CODES,
     TOOL_UNAVAILABLE_CODE,
-    TURN_TIMEOUT_MESSAGE,
     classify_cli_notice,
-    classify_platform_failure,
 )
 from app.domain.agent.platform_notices import (
-    EVENT_API_RETRY,
-    EVENT_DEVICE_WAITING,
     EVENT_MCP_NOT_CONNECTED,
     EVENT_MEMORY_CHANGED,
     EVENT_PROMPT_REPLAYED,
     EVENT_ROUTINE_RUN,
     EVENT_TURN_FAILED,
-    EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
     SEVERITY_INFO,
     SEVERITY_WARN,
@@ -124,7 +137,7 @@ from app.domain.agent.prompt import (
     _REPLAY_NOTICE_EVERY,  # noqa: F401
     PLACEHOLDER_TITLE,
     _addressed_to,
-    _compaction_notice,
+    _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
     _is_pending_input,  # noqa: F401
     _pending_input_blocks,
     _pending_platform_notices,
@@ -180,22 +193,16 @@ from app.domain.agent.room_events import (
 from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
-    AgentMessage,
     AgentResult,
     AgentRetrying,
-    AgentSessionInfo,
-    AgentStepFailed,
-    AgentStepOutput,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
-    proves_output,
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
-from app.domain.agent.step_output import without_output
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.services import (
     AgentInstanceService,
@@ -265,61 +272,6 @@ CHEESE_AUTHOR = "cheese"
 REPLAYS_AT_ONCE = 4
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class _HookWorkState:
-    """Persistence context for work whose events arrive on a subscription."""
-
-    project_id: uuid.UUID
-    topic_id: uuid.UUID
-    work_id: uuid.UUID
-    pending_ids: set[uuid.UUID]
-    reply_to: uuid.UUID | None
-    # None where no prompt was assembled to read one — `_persist_assistant_message`
-    # then loads it, which is NOT the same as passing []: [] means 私聊 (no member
-    # list at all), and conflating the two flags every @ as a non-member.
-    roster: list[dict] | None
-    topic_refs: list[dict]
-    continuation_id: uuid.UUID | None
-    route: str
-    acting_agent: str
-    # Attribution and memory part ways here, deliberately: `acting_agent` is
-    # the seat of the agent that ran this turn (who did it), while the pool
-    # belongs to that agent across rooms (whose memory it is). Resolved at turn
-    # start and carried, because the hook path reaches turn end with no session
-    # left open to ask.
-    agent_pool: tuple[MemoryScope, str] | None
-    user_text: str
-    started_at: datetime
-    agent_instance_handle: str | None = None
-    # The model this turn's session was launched on, for the usage row a turn
-    # with no reported usage still writes. "" where this process never
-    # assembled a turn for the session (a screen recovered on the way up).
-    model: str = ""
-    assistant_count: int = 0
-    last_chat_at: datetime | None = None
-    # When this turn was last told it had gone quiet — NOT whether it has been.
-    # A flag meant one reminder per silent stretch, so a turn that worked for
-    # three hours without publishing was asked once, at the ten-minute mark, and
-    # then left alone for the remaining two hours and fifty minutes. The room
-    # showing nothing for that long is the complaint this reminder exists for.
-    last_progress_reminder_at: datetime | None = None
-    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
-    #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
-    #: 截输出和几个红点，不是记录。
-    steps: dict[str, uuid.UUID] = field(default_factory=dict)
-
-    # The topic branch's commits as of turn start — what makes "this turn's
-    # changes" answerable at turn end. A task rather than a value, because the
-    # read shells out to git and creates the repo on first use; see where it is
-    # started. `None` (or a read that failed) means the turn lands NO change
-    # summary rather than a wrong one: with no baseline, every commit looks new.
-    known_commits: asyncio.Task[set[str] | None] | None = None
-    # Did the SESSION open this work rather than the platform? Then its
-    # bookkeeping has no coroutine to fall out of, and turn end is the only
-    # place the marks it left in the runner can be dropped.
-    self_started: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,19 +364,6 @@ _SESSION_ROUTES_KEPT = 512
 MEMORY_TURNS_KEPT = 512
 
 
-# A platform tool → the action card 芝士 files for it when it calls it
-# (`_ACTION_LABEL`, `_announce_action`). Only the card: telling the room a panel
-# went stale is the job of the API handler that changed it (`announce_stale`),
-# which knows the change happened whoever called it. Keyed by the tool's short name
-# (`mcp__native__cheese_decision` → `cheese_decision`).
-_TOOL_ACTION = {
-    "cheese_decision": "decision",
-    "cheese_task": "topics",
-    "cheese_milestone": "milestone",
-    "cheese_notify": "notify",
-}
-
-
 # Persistent, clickable action cards (§3.1.1 控件): each cheese action 芝士 takes
 # is recorded as a system event block (shown in the conversation) tagged
 # refs=["action:<resource>"], which the UI renders as a card linking to it.
@@ -495,66 +434,6 @@ def _proposal_frames(landed: dict | None) -> list[dict]:
         frames.append({"type": "event_block", "block": landed})
     frames.append({"type": "done"})
     return frames
-
-
-def _turn_failure_notice(
-    text: str, code: str | None, *, log: str | None = None
-) -> tuple[str, dict]:
-    """A failed turn's room line and the structured card behind it.
-
-    Every failure gets one, classified or not. 平台提示统一契约: the room line
-    is ONE line and the service's own words go in `meta.detail` — pasting them
-    into the line is what made a plain system row run to seven or eight, and
-    only a classified failure used to get meta at all, so the three most common
-    ones (座位限流 / 余额用尽 / HTTP 错误) carried no structure whatsoever.
-
-    An unclassified failure shows the SERVICE'S OWN first line rather than a
-    generic label: 「AI 服务返回错误」 with the reason buried sent a whole room
-    hunting a mystery bug twice in one night (2026-08-16, topic ee17b136 — the
-    real text was the delivery timeout all along).
-    """
-    failure = classify_platform_failure(text, code=code)
-    if failure is not None:
-        if failure.code in SESSION_START_CODES and text.strip():
-            # The sentence it was raised with can name what was found.
-            return text.strip(), _with_log(failure.meta, log)
-        return failure.content, _with_log(failure.meta, log)
-    detail = (text or "").strip()
-    if _is_out_of_credit(detail):
-        # A spent balance is not a wait — no amount of retrying refills it, and
-        # telling someone to try again later sends them into a loop that cannot
-        # succeed. Say what actually has to happen.
-        line = "本轮未完成：AI 中继余额已用完"
-        hint = "需要充值，或者把机器切换到其他 AI 服务。重试没有作用。"
-        retryable = False
-    else:
-        first = detail.splitlines()[0].strip() if detail else ""
-        if len(first) > 160:
-            first = first[:160] + "…"
-        line = f"本轮未完成：{first}" if first else "本轮未完成：AI 服务返回错误"
-        hint = "稍后可以重试。"
-        retryable = True
-    return line, notice(
-        EVENT_TURN_FAILED,
-        severity=SEVERITY_ERROR,
-        who=WHO_HUMAN,
-        # 原话是唯一的一份——它没有第二个副本可以「去别处看」，所以原样收进
-        # detail，不截、不摘要。
-        detail="\n\n".join(
-            part for part in (hint, f"服务原话：\n{detail}" if detail else "") if part
-        )
-        or None,
-        detail_label="详细说明",
-        retryable=retryable,
-    )
-
-
-def _with_log(meta: dict, log: str | None) -> dict:
-    """What the failing process printed, on the fields only 现场 shows: a
-    failed row there, with the text as its error. The room reads neither."""
-    if not log or not log.strip():
-        return meta
-    return {**meta, "failed": True, "error": log.strip()}
 
 
 # CLI 自己印在对话里的那几句英文,换成平台自己的中文提示卡。
@@ -641,26 +520,6 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.gate_blocked,
     AcceptStatus.conflict,
 )
-
-
-# What an exhausted relay balance looks like coming back from newapi. It arrives
-# as HTTP 429, the same status as a rate limit, but the two need opposite advice:
-# a rate limit clears on its own, a spent balance never does.
-_OUT_OF_CREDIT_MARKERS = (
-    "余额不足",
-    "请充值",
-    "insufficient balance",
-    "insufficient_quota",
-    "quota exceeded",
-    "billing",
-)
-
-
-def _is_out_of_credit(detail: str | None) -> bool:
-    if not detail:
-        return False
-    lowered = detail.lower()
-    return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
 
 
 def _is_dm(topic: Topic) -> bool:
@@ -2800,302 +2659,27 @@ class ChatService:
         result_text_seen: bool,
         platform_unsolicited: bool,
     ) -> None:
-        """Persist and broadcast one event from a live screen subscription."""
+        """Persist and broadcast one event (hook_stream.py)."""
         from app.api.deps import get_work_runner
-        from app.domain.agent.runtime import get_broker
 
-        broker = get_broker()
-        frame: dict | None = None
-        state = self._hook_work.get((topic_id, turn_id))
-        if state is None and platform_unsolicited and proves_output([event]):
-            # Nobody fed this session anything and it is producing output anyway
-            # — one of its workers finished and the completion notice woke it.
-            # That is a whole turn, and it gets a turn's bookkeeping from here:
-            # an interval a sweep can find, and the context its Stop needs to
-            # close the books. Opened on OUTPUT rather than on the first hook of
-            # any kind, because only output guarantees the Stop that closes it.
-            state = await self._begin_self_started_turn(
-                project_id,
-                topic_id,
-                turn_id,
-                # The event's own seat first (stamped by the subscription that
-                # read it): with several seats live in one room, the
-                # room-keyed fallback below answers "who spoke LAST", not
-                # "whose session this output came from".
-                agent_handle=getattr(event, "agent_handle", None)
-                or self._room_session_agents.get(topic_id),
-            )
-        # Whose work this is. Deliberately NOT asked of AgentResult: that event
-        # is the turn ending, which is the session's business no matter what id
-        # rode in on it — re-addressing it would close a turn somewhere else.
-        task_id = (
-            None
-            if isinstance(event, AgentResult)
-            else await self._work_of_worker(
-                topic_id, getattr(event, "thread_label", None)
-            )
+        return await _consume_hook_event(
+            self,
+            self._sessions,
+            self._hook_work,
+            self._retry_notes,
+            self._waiting_notes,
+            self._compact_notes,
+            self._room_session_agents,
+            self._active_turn_ids,
+            get_work_runner(),
+            project_id,
+            topic_id,
+            turn_id,
+            event,
+            eid,
+            result_text_seen,
+            platform_unsolicited,
         )
-        # A thread's own channel is what its view subscribes to, and it is the
-        # room's when there is no thread. Attributed frames must not go out on
-        # the room's channel: the block lands in the thread, so a live watcher
-        # would see an event that a reload then moves somewhere else.
-        channel = str(task_id) if task_id is not None else str(topic_id)
-        if not isinstance(event, AgentRetrying):
-            # Anything else the turn does ends a streak of retries: the request
-            # went through. The next retry is news of its own.
-            self._retry_notes.pop(turn_id, None)
-        if isinstance(event, AgentResult):
-            self._waiting_notes.pop(turn_id, None)
-            if turn_id in self._compact_notes:
-                # The turn ended with the compaction still open (it was stopped,
-                # or the session died): the line must not go on saying it is
-                # compacting.
-                await self._note_compaction(
-                    turn_id,
-                    AgentCompacting(done=True, error="会话在整理完成前结束了"),
-                    channel=channel,
-                )
-        if isinstance(event, AgentSessionInfo):
-            self._note_room_session(topic_id, event.session_id)
-            if event.agent_handle:
-                self._room_session_agents[topic_id] = event.agent_handle
-            await self._save_session_pointer(
-                topic_id,
-                event.session_id,
-                agent_handle=event.agent_handle,
-                harness=event.harness,
-            )
-        elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
-            self._note_worker_agent(topic_id, event)
-            payload = await self._persist_worker_event(
-                project_id=project_id,
-                topic_id=topic_id,
-                event=event,
-                task_id=task_id,
-                turn_id=turn_id,
-                eid=eid,
-                platform_unsolicited=platform_unsolicited,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
-        elif isinstance(event, AgentMessage):
-            payload = await self._persist_assistant_message(
-                project_id=project_id,
-                topic_id=topic_id,
-                text=event.text,
-                turn_id=turn_id,
-                reply_to=(
-                    state.reply_to
-                    if state is not None and state.assistant_count == 0
-                    else None
-                ),
-                roster=state.roster if state is not None else None,
-                topic_refs=state.topic_refs if state is not None else [],
-                eid=eid or event.eid,
-                eids=event.eids,
-                platform_unsolicited=platform_unsolicited,
-                continuation_id=(state.continuation_id if state is not None else None),
-                at=event.at,
-                author=event.agent_handle
-                or (state.acting_agent if state is not None else None),
-                task_id=task_id,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
-        elif isinstance(event, AgentToolUse):
-            name = _short_tool_name(event.name)
-            args = event.input or {}
-            payload = await self._persist_tool_event(
-                project_id=project_id,
-                topic_id=topic_id,
-                name=name,
-                tool_input=args,
-                platform=_is_platform_tool(event.name, args),
-                turn_id=turn_id,
-                eid=eid or event.eid,
-                platform_unsolicited=platform_unsolicited,
-                task_id=task_id,
-                author=event.agent_handle,
-                at=event.at,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
-                if state is not None and event.call_id:
-                    state.steps[event.call_id] = uuid.UUID(payload["id"])
-            resource = _TOOL_ACTION.get(name)
-            if state is not None and resource is not None:
-                await self._announce_action(state, resource)
-        elif isinstance(event, AgentStepFailed):
-            # It changes a line that is already on the timeline rather than
-            # adding one, so it goes out as that line, restated. A step whose
-            # call we never saw (a restart mid-turn) is simply not marked — the
-            # timeline is still true, just less helpful.
-            block_id = state.steps.get(event.call_id) if state is not None else None
-            if block_id is not None:
-                payload = await self._mark_step_failed(block_id, event.text)
-                if payload is not None:
-                    frame = {"type": "block_updated", "block": without_output(payload)}
-        elif isinstance(event, AgentStepOutput):
-            # Written onto the step, like a failure. The frame says only that
-            # the step now has output: the text is read when somebody opens it.
-            block_id = state.steps.get(event.call_id) if state is not None else None
-            if block_id is not None:
-                payload = await self._record_step_output(block_id, event.text)
-                if payload is not None:
-                    frame = {"type": "block_updated", "block": without_output(payload)}
-        elif isinstance(event, AgentCompacting):
-            if event.done:
-                await self._note_compaction(turn_id, event, channel=channel)
-            else:
-                content, meta = _compaction_notice(event)
-                await self._keep_note(
-                    self._compact_notes,
-                    topic_id,
-                    turn_id,
-                    content,
-                    meta,
-                    author=state.acting_agent if state is not None else None,
-                    task_id=task_id,
-                    channel=channel,
-                )
-        elif isinstance(event, AgentRetrying):
-            await self._note_retry(
-                topic_id,
-                turn_id,
-                event,
-                author=state.acting_agent if state is not None else None,
-                task_id=task_id,
-                channel=channel,
-            )
-        elif isinstance(event, AgentToolResult):
-            payload = await self._persist_subagent_result(
-                project_id=project_id,
-                topic_id=topic_id,
-                event=event,
-                turn_id=turn_id,
-                eid=eid,
-                platform_unsolicited=platform_unsolicited,
-                task_id=task_id,
-            )
-            if payload is not None:
-                frame = {"type": "event_block", "block": payload}
-        elif isinstance(event, AgentResult):
-            error_line, error_code = "", None
-            if event.session_id:
-                await self._save_session_pointer(
-                    topic_id,
-                    event.session_id,
-                    agent_handle=event.agent_handle,
-                    harness=event.harness,
-                )
-            if event.is_error:
-                if event.text.strip() == TURN_TIMEOUT_MESSAGE:
-                    # The watchdog's own verdict, and the only failure whose
-                    # session may still be alive — everything downstream of it
-                    # is different, so it keeps its own card. Recognised by the
-                    # message because that is what the watchdog emits; nothing
-                    # overrides it today.
-                    line, meta = (
-                        event.text,
-                        notice(
-                            EVENT_TURN_TIMEOUT,
-                            severity=SEVERITY_WARN,
-                            who=WHO_HUMAN,
-                            detail="会话活动已停止；屏幕订阅仍会接收后续输出。",
-                            detail_label="详细说明",
-                        ),
-                    )
-                elif await self._turn_credits_refused(turn_id):
-                    # Admission already told the room WHY this turn is ending
-                    # (#715): it refused every `/v1/messages` call for spent
-                    # credits, and Claude Code's own reading of that refusal
-                    # — "Invalid API key" — is wrong advice for a spent
-                    # balance. Repeat the platform's own line rather than
-                    # Claude Code's text, however the hook happened to word it.
-                    from app.domain.usage.credits import (
-                        CREDITS_EXHAUSTED_EVENT,
-                        CREDITS_EXHAUSTED_META,
-                    )
-
-                    line, meta = CREDITS_EXHAUSTED_EVENT, CREDITS_EXHAUSTED_META
-                else:
-                    line, meta = _turn_failure_notice(
-                        event.text, event.failure_code, log=event.log
-                    )
-                error_line, error_code = line, meta.get("code")
-                payload = await self.post_system_event(
-                    topic_id, line, turn_id, meta=meta
-                )
-                if payload is not None:
-                    frame = {"type": "event_block", "block": payload}
-            elif event.text.strip():
-                # Terminal output, the final response included, stays in
-                # activity: a reply reaches the room only through chat_send,
-                # in a private chat exactly as in any other room.
-                payload = await self._persist_assistant_message(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    text=event.text,
-                    turn_id=turn_id,
-                    reply_to=state.reply_to if state is not None else None,
-                    roster=state.roster if state is not None else None,
-                    topic_refs=state.topic_refs if state is not None else [],
-                    author=event.agent_handle
-                    or (state.acting_agent if state is not None else None),
-                    eid=eid,
-                    platform_unsolicited=platform_unsolicited,
-                    continuation_id=(
-                        state.continuation_id if state is not None else None
-                    ),
-                    closing=result_text_seen,
-                )
-                if payload is not None:
-                    if state is not None:
-                        state.assistant_count += 1
-                    frame = {"type": "event_block", "block": payload}
-        if frame is not None:
-            await broker.publish(channel, frame)
-            if frame["type"] in ("assistant_block", "event_block"):
-                get_work_runner().note_session_output(
-                    turn_id, tool=isinstance(event, AgentToolUse)
-                )
-        if isinstance(event, AgentResult):
-            # 投喂 → Stop is the interval. Closing it HERE, rather than where the
-            # turn's own coroutine ends, is what lets a turn survive the backend
-            # being replaced under it: the screen kept working, the subscription
-            # reattached, and its Stop closes the books exactly as it would have
-            # if nothing had happened. A turn whose coroutine is alive closes the
-            # same row a moment later and finds it already closed, which is the
-            # correct answer either way.
-            await self._close_open_turns(topic_id)
-            if state is not None:
-                try:
-                    for close_frame in await self._close_hook_work(state, event):
-                        await broker.publish(str(topic_id), close_frame)
-                except Exception:  # noqa: BLE001 — Stop must close room state
-                    logger.exception(
-                        "hook work close failed (topic=%s, work=%s)",
-                        topic_id,
-                        turn_id,
-                    )
-                finally:
-                    self._hook_work.pop((topic_id, turn_id), None)
-                    if state.self_started:
-                        # No coroutine owns this one, so there is no `finally`
-                        # anywhere else to drop the marks it left in the runner.
-                        get_work_runner().close_turn_the_session_started(turn_id)
-            elif event.is_error:
-                await self._forget_room_claims(topic_id)
-            if event.is_error:
-                frame_out = {
-                    "type": "error",
-                    "message": error_line or event.text,
-                    "persisted": True,
-                }
-                if error_code:
-                    frame_out["code"] = error_code
-                await broker.publish(str(topic_id), frame_out)
-            await broker.publish(str(topic_id), {"type": "done"})
 
     async def _delivered_unread(
         self, session: AsyncSession, state: _HookWorkState
@@ -3865,45 +3449,13 @@ class ChatService:
         task_id: uuid.UUID | None,
         channel: str,
     ) -> None:
-        """Say the turn is retrying a failed request, on one line per streak.
-
-        The first retry of a streak lands a notice; every later one restates
-        that same line with the new count, so ten retries read as one line that
-        says 10 rather than ten lines. Not session output (`note_session_output`
-        is not told): nothing the session produced crossed here."""
-        count = (
-            f"{event.attempt}/{event.max_attempts}"
-            if event.attempt and event.max_attempts
-            else str(event.attempt or "")
-        )
-        content = "AI 服务请求失败，正在重试" + (f"（第 {count} 次）" if count else "")
-        said = " ".join(
-            part
-            for part in (
-                event.error,
-                f"HTTP {event.status}" if event.status is not None else "",
-            )
-            if part
-        )
-        meta = {
-            **notice(
-                EVENT_API_RETRY,
-                severity=SEVERITY_WARN,
-                who=WHO_PLATFORM,
-                detail=said or None,
-                detail_label="服务原话" if said else None,
-            ),
-            "attempt": event.attempt,
-            "max_attempts": event.max_attempts,
-            "delay_ms": event.delay_ms,
-            "at": datetime.now(UTC).isoformat(),
-        }
-        await self._keep_note(
+        """Say the turn is retrying a failed request (hook_stream.py)."""
+        return await _note_retry(
+            self._sessions,
             self._retry_notes,
             topic_id,
             turn_id,
-            content,
-            meta,
+            event,
             author=author,
             task_id=task_id,
             channel=channel,
@@ -3912,12 +3464,10 @@ class ChatService:
     async def _note_compaction(
         self, turn_id: uuid.UUID, event: AgentCompacting, *, channel: str
     ) -> None:
-        """Restate the turn's compaction line as over, if it has one."""
-        block_id = self._compact_notes.pop(turn_id, None)
-        if block_id is None:
-            return
-        content, meta = _compaction_notice(event)
-        await self._restate_note(block_id, content, meta, channel)
+        """Restate the turn's compaction line as over (hook_stream.py)."""
+        return await _note_compaction(
+            self._sessions, self._compact_notes, turn_id, event, channel=channel
+        )
 
     async def _note_reachability(
         self,
@@ -3927,41 +3477,16 @@ class ChatService:
         reachable: bool,
         reason: str,
     ) -> None:
-        """Say the turn is waiting for its machine, and later that the wait is
-        over — the same line both times."""
-        del project_id
-        if reachable:
-            block_id = self._waiting_notes.pop(work_id, None)
-            if block_id is None:
-                return
-            await self._restate_note(
-                block_id,
-                "机器已恢复连接",
-                {"state": "over", "at": datetime.now(UTC).isoformat()},
-                str(topic_id),
-            )
-            return
-        state = self._hook_work.get((topic_id, work_id))
-        meta = {
-            **notice(
-                EVENT_DEVICE_WAITING,
-                severity=SEVERITY_WARN,
-                who=WHO_PLATFORM,
-                detail=reason or None,
-                detail_label="原因" if reason else None,
-            ),
-            "state": "waiting",
-            "at": datetime.now(UTC).isoformat(),
-        }
-        await self._keep_note(
+        """Say the turn is waiting for its machine (hook_stream.py)."""
+        return await _note_reachability(
+            self._sessions,
+            self._hook_work,
             self._waiting_notes,
+            project_id,
             topic_id,
             work_id,
-            "等待机器连接",
-            meta,
-            author=state.acting_agent if state is not None else None,
-            task_id=None,
-            channel=str(topic_id),
+            reachable,
+            reason,
         )
 
     async def _keep_note(
@@ -3976,54 +3501,24 @@ class ChatService:
         task_id: uuid.UUID | None,
         channel: str,
     ) -> None:
-        """Land the turn's notice of this kind, or restate the one it has."""
-        from app.domain.agent.runtime import get_broker
-
-        block_id = notes.get(turn_id)
-        if block_id is not None:
-            await self._restate_note(block_id, content, meta, channel)
-            return
-        try:
-            async with self._sessions() as session:
-                block = await announce(
-                    session,
-                    place_id=topic_id,
-                    content=content,
-                    meta=meta,
-                    # The agent whose turn this is: the notice is about its
-                    # work, and 现场 files it under whoever did the work.
-                    author=author or "system",
-                    turn_id=turn_id,
-                    task_id=task_id,
-                )
-                if block is None:
-                    return
-                payload = _block_payload(BlockOut.model_validate(block))
-                await session.commit()
-        except Exception:  # noqa: BLE001 — a status line is not worth a turn
-            logger.exception("could not note %s for turn %s", content, turn_id)
-            return
-        notes[turn_id] = uuid.UUID(payload["id"])
-        await get_broker().publish(channel, {"type": "event_block", "block": payload})
+        """Land the turn's notice of this kind, or restate it (hook_stream.py)."""
+        return await _keep_note(
+            self._sessions,
+            notes,
+            topic_id,
+            turn_id,
+            content,
+            meta,
+            author=author,
+            task_id=task_id,
+            channel=channel,
+        )
 
     async def _restate_note(
         self, block_id: uuid.UUID, content: str, meta: dict, channel: str
     ) -> None:
-        from app.domain.agent.runtime import get_broker
-
-        try:
-            async with self._sessions() as session:
-                block = await BlockRepository(session).restate(
-                    block_id, content=content, meta=meta
-                )
-                if block is None:
-                    return
-                payload = _block_payload(BlockOut.model_validate(block))
-                await session.commit()
-        except Exception:  # noqa: BLE001 — a status line is not worth a turn
-            logger.exception("could not restate notice %s", block_id)
-            return
-        await get_broker().publish(channel, {"type": "block_updated", "block": payload})
+        """Restate a notice already on the timeline (hook_stream.py)."""
+        return await _restate_note(self._sessions, block_id, content, meta, channel)
 
     async def _persist_room_event(
         self,
