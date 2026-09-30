@@ -130,7 +130,7 @@ async def project_credits(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Credits this project can spend from its team's pool and restricted grants."""
-    await _require_project_access(project_id, db, resolver, mutate=False)
+    await _require_project_access(project_id, db, resolver)
     summary = await ComputeGrantRepository(db).summary(project_id)
     return ok(
         {

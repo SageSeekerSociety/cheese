@@ -16,6 +16,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.agent.compute_configs import PLATFORM_BOUNDS, ComputeChoice
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 
 # choice field -> (offering min key, offering max key, how a person reads it)
@@ -23,15 +24,6 @@ FIELDS: dict[str, tuple[str, str, str]] = {
     "cores": ("coresMin", "coresMax", "CPU 核数"),
     "memory_mb": ("memoryMbMin", "memoryMbMax", "内存"),
     "disk_gb": ("diskGbMin", "diskGbMax", "磁盘"),
-}
-
-
-# What a platform choice may hold at all, provider aside. `ComputeChoice`
-# declares its fields with these, so the schema and the range never disagree.
-PLATFORM_BOUNDS: dict[str, tuple[int, int]] = {
-    "cores": (1, 256),
-    "memory_mb": (512, 1048576),
-    "disk_gb": (1, 16384),
 }
 
 
@@ -126,13 +118,14 @@ async def read_supply(client: MicroCloudClient | None = None) -> dict[str, Any]:
         return {"available": False, "reason": str(exc)}
 
 
-async def check_choice(values: dict[str, int | None]) -> None:
-    """Refuse a custom spec the current supply cannot honour.
+async def check_choice(choice: ComputeChoice) -> None:
+    """Refuse a custom cloud spec the current supply cannot honour.
 
     Only when the range can be read: an unreadable offering leaves the choice to
     the check made when the machine is created, which reads it again.
     """
-    if all(values.get(name) is None for name in FIELDS):
+    values = {name: getattr(choice, name) for name in FIELDS}
+    if choice.profile != "cloud" or all(v is None for v in values.values()):
         return
     client = MicroCloudClient()
     if not client.configured:

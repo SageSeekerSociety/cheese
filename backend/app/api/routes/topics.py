@@ -79,6 +79,7 @@ from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
+from app.domain.machine.supply import check_choice
 from app.domain.mentions import canonicalize_refs
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
@@ -1941,6 +1942,7 @@ async def set_topic_compute_profile(
         raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
+        await check_choice(choice)
 
     device_service = sql_device_service(db)
     if device_id is not None:

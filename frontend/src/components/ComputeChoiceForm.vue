@@ -3,12 +3,11 @@ import type { CloudSupply, ComputeChoice, SupplyBound, TopicComputeDevice } from
 
 import { computed, ref, watch } from 'vue'
 
-import { getCloudSupply } from '../api'
-
 const props = defineProps<{
   devices: TopicComputeDevice[]
   cloudAvailable: boolean
-  projectId: string
+  // 云端此刻能开的范围，由挂它的地方去问（组件不直接碰接口）。
+  loadSupply: () => Promise<CloudSupply>
   busy?: boolean
 }>()
 const emit = defineEmits<{ select: [choice: ComputeChoice] }>()
@@ -32,7 +31,7 @@ watch(
     if (!wanted || supply.value || supplyLoading.value) return
     supplyLoading.value = true
     try {
-      supply.value = await getCloudSupply(props.projectId)
+      supply.value = await props.loadSupply()
     } catch (e) {
       supply.value = { available: false, reason: e instanceof Error ? e.message : '请求失败' }
     } finally {
