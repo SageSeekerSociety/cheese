@@ -29,8 +29,15 @@ Only the shape the ask route ever produced is touched (``meta`` an object,
 at one would be a second corruption.
 
 Revision ID: e5a1c7d3b284
-Revises: b7c2e4f1a903
+Revises: 3e8c5a1f7d24
 Create Date: 2026-09-30
+
+``3e8c5a1f7d24`` (``mcp_servers_leave_the_instance``) landed on main after this
+file was written, off the same parent ``b7c2e4f1a903``. Left alone the two
+would fork the chain, so this revision is re-chained onto ``3e8c5a1f7d24``
+rather than merged: the two touch different tables and a merge revision
+would only add a node nobody can read a meaning out of.
+
 """
 
 from collections.abc import Sequence
@@ -38,7 +45,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "e5a1c7d3b284"
-down_revision: str | Sequence[str] | None = "b7c2e4f1a903"
+down_revision: str | Sequence[str] | None = "3e8c5a1f7d24"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
