@@ -64,6 +64,30 @@ describe('document formatting', () => {
     expect(serializeDoc(editor)).toBe(original)
   })
 
+  it('scrolls only the toolbar to reveal keyboard focus in either direction', async () => {
+    mount()
+    const toolbar = screen.getByRole('toolbar')
+    const buttons = screen.getAllByRole('button')
+    toolbar.getBoundingClientRect = () => ({ left: 30, right: 130 }) as DOMRect
+    buttons.forEach((button, index) => {
+      button.getBoundingClientRect = () =>
+        ({
+          left: 38 + index * 30 - toolbar.scrollLeft,
+          right: 66 + index * 30 - toolbar.scrollLeft,
+        }) as DOMRect
+    })
+    buttons[0].focus()
+    for (const key of ['End', 'ArrowLeft', 'ArrowRight', 'Home', 'ArrowLeft', 'ArrowRight']) {
+      await fireEvent.keyDown(document.activeElement!, { key })
+      const rect = (document.activeElement as HTMLElement).getBoundingClientRect()
+      expect(rect.left).toBeGreaterThanOrEqual(30)
+      expect(rect.right).toBeLessThanOrEqual(130)
+      expect(window.scrollY).toBe(0)
+    }
+    expect(editor.state.selection.from).toBe(4)
+    expect(editor.state.selection.to).toBe(6)
+  })
+
   it('supports arrow, Home and End navigation with a single tab stop', async () => {
     mount()
     const buttons = screen.getAllByRole('button')

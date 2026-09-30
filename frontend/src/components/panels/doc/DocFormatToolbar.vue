@@ -104,7 +104,15 @@ function moveFocus(event: KeyboardEvent) {
       : event.key === 'End'
         ? count - 1
         : (focused.value + (event.key === 'ArrowRight' ? 1 : -1) + count) % count
-  toolbar.value?.querySelectorAll<HTMLButtonElement>('button')[focused.value]?.focus({ preventScroll: true })
+  const container = toolbar.value
+  const button = container?.querySelectorAll<HTMLButtonElement>('button')[focused.value]
+  if (!container || !button) return
+  button.focus({ preventScroll: true })
+  const viewport = container.getBoundingClientRect()
+  const target = button.getBoundingClientRect()
+  // Reveal the control without scrolling the document or its outer panels.
+  if (target.left < viewport.left) container.scrollLeft += target.left - viewport.left
+  else if (target.right > viewport.right) container.scrollLeft += target.right - viewport.right
 }
 function execute(index: number) {
   const action = actions.value[index]

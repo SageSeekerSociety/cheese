@@ -198,6 +198,7 @@ defineExpose({
           <DocFormatToolbar
             v-if="!sourceMode"
             :editor="surfaceRef?.editor ?? null"
+            @keydown="handleDocKeydown"
             :disabled="loading || !editable || editingBlocked"
             :disabled-reason="
               loading ? t('work.room.doc.loading') : !editable || editingBlocked ? t('work.room.doc.readOnly') : ''
