@@ -117,6 +117,7 @@
     "REGISTRATION_CLOSED": "Registration has closed",
     "PARTICIPANT_LIMIT_REACHED": "This task has no places left",
     "ALREADY_PARTICIPATING": "You have already claimed this task",
+    "MEMBER_ALREADY_PARTICIPATING": "Someone in this team has already claimed this task with another team",
     "MISSING_REAL_NAME": "This task requires real-name information",
     "USER_RANK_NOT_HIGH_ENOUGH": "Your rank is not high enough for this task",
     "TEAM_TOO_SMALL": "The team is smaller than this task requires",

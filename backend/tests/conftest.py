@@ -1969,6 +1969,57 @@ def seed_space(client: TestClient, name: str = "信院") -> int:
     return holder["id"]
 
 
+def seed_claim(
+    client: TestClient,
+    task_id: int,
+    *,
+    handle: str | None = None,
+    team_id: int | None = None,
+    approved: int = 2,
+) -> None:
+    """A claim on ``task_id``: by ``handle`` for an individual task, by
+    ``team_id`` for a team one. Pending (``approved=2``) unless told otherwise;
+    ``ApproveType.APPROVED == 0``.
+
+    A project can only be built from a task someone has claimed, so every test
+    that makes one from a task claims it first — through the DB, because the
+    claim itself is not what those tests are about.
+    """
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.task.models import TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    assert (handle is None) != (team_id is None), "a claim is by a person or a team"
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            member_id = team_id
+            if handle is not None:
+                users = UserRepository(session)
+                user = await users.get_by_username(handle)
+                if user is None:
+                    user = await users.create_user(
+                        username=handle, email=f"{handle}@example.com"
+                    )
+                member_id = user.id
+            now = datetime.now(UTC)
+            session.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=member_id,
+                    is_team=team_id is not None,
+                    approved=approved,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    _asyncio.run(_seed())
+
+
 def seed_task_with_protocol(
     client: TestClient,
     *,

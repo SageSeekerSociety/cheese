@@ -5,6 +5,7 @@ export type TaskSubmissionEntryType = 'TEXT' | 'FILE'
 export type TaskTeamMembershipLockPolicy = 'NO_LOCK' | 'LOCK_ON_APPROVAL'
 export type EligibilityRejectReasonCode =
   | 'ALREADY_PARTICIPATING'
+  | 'MEMBER_ALREADY_PARTICIPATING'
   | 'PARTICIPANT_LIMIT_REACHED'
   | 'TASK_NOT_APPROVED'
   | 'REGISTRATION_NOT_STARTED'

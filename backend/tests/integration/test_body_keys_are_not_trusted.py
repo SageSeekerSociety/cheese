@@ -17,7 +17,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from tests.conftest import seed_task_with_protocol, seed_user
+from tests.conftest import seed_claim, seed_task_with_protocol, seed_user
 from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "alice"
@@ -75,31 +75,6 @@ def _grants(client, project_id: str) -> list[tuple[int | None, float]]:
     return asyncio.run(_read())
 
 
-def _membership(client, *, task_id: int, handle: str, approved: int) -> None:
-    """A 报名 for ``handle`` on this 赛题, in the state ``approved`` names
-    (``ApproveType.APPROVED == 0``, pending is 2)."""
-    from app.domain.task.models import TaskMembership
-    from app.domain.user.repositories import UserRepository
-
-    async def _seed() -> None:
-        async with client.test_factory() as session:  # type: ignore[attr-defined]
-            user = await UserRepository(session).get_by_username(handle)
-            assert user is not None, handle
-            session.add(
-                TaskMembership(
-                    task_id=task_id,
-                    member_id=user.id,
-                    is_team=False,
-                    approved=approved,
-                    created_at=_now(),
-                    updated_at=_now(),
-                )
-            )
-            await session.commit()
-
-    asyncio.run(_seed())
-
-
 # --- F2: `POST /projects` 的 team_id ----------------------------------------
 
 
@@ -146,21 +121,28 @@ def test_a_personal_project_still_needs_no_team_named(client):
 # --- F3: `POST /projects` 的 external_task_id -------------------------------
 
 
-def test_a_stranger_gets_no_resource_pack_from_a_task(client):
-    """没报名的人建项目：项目是他的，赛题的资源包不是。"""
+def test_a_stranger_cannot_build_a_project_from_a_task(client):
+    """没报名的人拿一个题号建不了项目，更拿不到资源包。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
     seed_user(client, OUTSIDER)
 
-    for name in ("freeloader-1", "freeloader-2"):
-        made = _project(client, name, OUTSIDER, external_task_id=task_id)
-        assert _grants(client, made["id"]) == []
+    r = post_project(
+        client,
+        json={
+            "name": "freeloader",
+            "owner_handle": OUTSIDER,
+            "external_task_id": task_id,
+        },
+        headers=session_auth_headers(OUTSIDER),
+    )
+    assert r.status_code == 403, r.text
 
 
 def test_a_pending_application_gets_no_pack_either(client):
     """报名了但没过审：工作区可以先建起来，资源包要等审批。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
     seed_user(client, OUTSIDER)
-    _membership(client, task_id=task_id, handle=OUTSIDER, approved=2)  # NONE
+    seed_claim(client, task_id, handle=OUTSIDER)  # pending
 
     made = _project(client, "pending", OUTSIDER, external_task_id=task_id)
 
@@ -171,7 +153,7 @@ def test_an_approved_applicant_gets_the_pack(client):
     """过审的报名者照领——这正是修复要保住的那条正路。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
     seed_user(client, OUTSIDER)
-    _membership(client, task_id=task_id, handle=OUTSIDER, approved=0)  # APPROVED
+    seed_claim(client, task_id, handle=OUTSIDER, approved=0)  # APPROVED
 
     made = _project(client, "approved", OUTSIDER, external_task_id=task_id)
 

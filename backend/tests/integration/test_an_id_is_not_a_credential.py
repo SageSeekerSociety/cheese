@@ -30,6 +30,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import (
+    seed_claim,
     seed_space,
     seed_task_with_protocol,
     seed_user,
@@ -78,6 +79,7 @@ def _board(client, owner: str = "alice") -> tuple[int, dict]:
     """A Space with one 赛题 and one project opened from it — the board's one row."""
     space_id = seed_space(client, "明理书院")
     task_id = seed_task_with_protocol(client, space_id=space_id)
+    seed_claim(client, task_id, handle=owner)
     project = post_project(
         client,
         json={"name": "队伍A", "external_task_id": task_id, "owner_handle": owner},

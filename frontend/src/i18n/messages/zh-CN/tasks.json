@@ -134,6 +134,7 @@
     "REGISTRATION_CLOSED": "报名已截止",
     "PARTICIPANT_LIMIT_REACHED": "这道题的名额已满",
     "ALREADY_PARTICIPATING": "你已经领取了这道题",
+    "MEMBER_ALREADY_PARTICIPATING": "团队里有人已经通过别的团队领了这道题",
     "MISSING_REAL_NAME": "这道题需要实名信息才能参与",
     "USER_RANK_NOT_HIGH_ENOUGH": "你的等级还不够参与这道题",
     "TEAM_TOO_SMALL": "团队人数少于这道题的要求",
