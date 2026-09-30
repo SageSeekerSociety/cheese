@@ -143,7 +143,9 @@ async function submitUpload() {
                 ></v-img>
                 <!-- 原来这里挂着一个裸的 `grey-lighten-5` class：Vuetify 3 不生成这种
                      无前缀的调色板类（v2 才有），所以它一直是死代码、没有任何底色。
-                     删掉它，免得下一个人"顺手修好"成 bg-grey-lighten-5 反而钉死颜色。 -->
+                     删掉它，免得下一个人"顺手修好"、给它补上 `bg-` 前缀 —— 那等于往
+                     模板里钉一个固定色板的名字，主题一翻它不跟着走
+                     （固定色板那一关拦的就是这个）。 -->
                 <div v-else class="d-flex align-center justify-center py-3 rounded-lg">
                   <v-icon :icon="fileTypeIcon(form.file)" size="36" color="primary" class="mr-2"></v-icon>
                   <span class="text-body-2">{{ form.file.name }}</span>
