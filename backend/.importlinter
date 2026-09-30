@@ -200,7 +200,6 @@ ignore_imports =
     app.api.routes.project_environment -> app.domain.topic.models
     app.api.routes.project_skills -> app.domain.block.models
     app.api.routes.project_skills -> app.domain.project_skill.models
-    app.api.routes.projects -> app.domain.block.models
     app.api.routes.projects -> app.domain.project.models
     app.api.routes.projects_agents -> app.domain.agent_instance.models
     app.api.routes.recruitment -> app.domain.team.models

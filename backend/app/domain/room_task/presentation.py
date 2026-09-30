@@ -35,18 +35,63 @@
 
 import enum
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
+
+# `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
+# 只给 block / review 开了窄读出口，room_task 这边的活行仍按原样交到路由手上，由
+# `facts_for_task` 就地折成纯值。这一层只读它的属性、不顺着它查库，所以它没有把
+# session 带出去；等 room_task 也有了 `queries.py`，这里换成那份纯值即可。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:
+    # 本领域内的消费者手上是 `AcceptCard` 那一行，它是这一层唯一需要按名字说出来的
+    # 形状 —— 只在 `CardSignals` 的并集里出现，所以放在 TYPE_CHECKING 下：这一层是
+    # 纯的，导入它只为签名，运行时一行都不碰。
     from app.domain.review.models import AcceptCard
+
+
+class CardSignals(Protocol):
+    """一张卡能被折成 `CardFacts` 的五个信号 —— 折卡的人只读这五个，不多不少。
+
+    这是一份**结构**契约，不是某一种形状：`AcceptCard` 那一行满足它，别的领域从窄
+    读出口交出来的纯值也满足它，两边都不必把自己交出来给这一层当类型。刻意这么写
+    而不是把对方那个类标进签名 —— 标注一个类型就是 `room_task` 指向那个领域的一条
+    边，而这一层与 `review` 之间已经有两条类型边（`review.models`、
+    `review.notes`，都冻结在 `.importlinter` 里）。C3 要的是无环：再加一条，环就回
+    来了，而「加一条豁免让它绿」不是解法，是把那条规矩让掉。契约式写法下，对方换
+    成什么形状都行，只要这五个读得出来。
+
+    声明成 property 而不是普通属性是有意的：pyright 对只读属性按**协变**比对，所以
+    `AcceptStatus`（`str` 的子类）能满足 `status: str`，`RailCard` 的 `dict` 也能满足
+    `Mapping[str, object]`；写成可变属性就必须一模一样，两边都过不去。
+
+    五个正好是 `facts_for_card` 读的那五个。多一个字段，这里就多一条「对方必须记得
+    改」的绳子；少一个，那一格就折不出来。
+    """
+
+    @property
+    def status(self) -> str: ...
+
+    @property
+    def note_code(self) -> NoteCode | None: ...
+
+    @property
+    def merge_state(self) -> Mapping[str, object] | None: ...
+
+    @property
+    def decided_by(self) -> str | None: ...
+
+    @property
+    def auto_merge_armed_by(self) -> str | None: ...
+
 
 #: 一行说自己 `running`、却已经这么久没有任何动静 —— 那就不能说它在跑。
 #:
@@ -253,7 +298,17 @@ class RoomFacts:
     awaiting_answer: bool = False
 
 
-def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
+def facts_for_card(card: "AcceptCard | CardSignals | None") -> CardFacts | None:
+    """这张卡要读的几位，折成纯值。`None` 是「这条活上没有卡」，不是一张空卡。
+
+    收两种形状是因为卡有两处来源：领域内的人手上是 `AcceptCard` 那一行，HTTP 路由
+    手上是 `review` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多
+    查一行。这一层只读 `status` / `note_code` / `merge_state` / `decided_by` /
+    `auto_merge_armed_by` 五个属性（`CardSignals`），两种形状都长得出来，所以折出来
+    的 `CardFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了这件事）。
+    `merge_state` 的形状也不假设：不是 `dict`（`None`、或者镜像还没写过）就当空镜像
+    读，所以 `Mapping` 也收。
+    """
     if card is None:
         return None
     mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
@@ -270,7 +325,7 @@ def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
 
 def facts_for_task(
     task: Task,
-    card: "AcceptCard | None" = None,
+    card: "AcceptCard | CardSignals | None" = None,
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,

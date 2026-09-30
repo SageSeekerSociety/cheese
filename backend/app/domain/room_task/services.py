@@ -95,7 +95,26 @@ class TaskService:
         return task
 
     async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
+        """这个项目里的活，最老的在前。
+
+        交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
+        侧栏就是拿这批行就地折出展示态的（`presentation.facts_for_task`），行本身
+        不出这个进程、更不上线。等这边也开了 `queries.py`，这条就该只交纯值。
+        """
         return await self._repo.list_for_project(project_id)
+
+    async def last_block_at_for_tasks(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """These threads' heartbeats, newest block per task, in one query.
+
+        A narrow read out of this domain for callers that hold ids and need the
+        liveness signal the board draws from — the project rail is the one that
+        does. It is on the service and not on the repository because the
+        repository is this domain's own drawer and stays inside it: a caller
+        outside `room_task` reaches for the service.
+        """
+        return await self._repo.last_block_at_for_tasks(task_ids)
 
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.
