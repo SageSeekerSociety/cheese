@@ -1,41 +1,10 @@
 {
-  "attach": {
-    "tooMany": "A message can carry at most 9 attachments",
-    "tooLarge": "{name} is over 10 MB and can't be uploaded",
-    "uploadFailed": "Couldn't upload the file",
-    "addFailed": "Couldn't add the file"
-  },
   "library": {
     "uploadFailed": "Upload failed (HTTP {status})",
     "readFailed": "Can't read this file (HTTP {status})"
   },
   "preview": {
-    "notIsolated": "The preview address isn't isolated from the platform",
-    "cannotShow": "Can't display this file",
-    "cannotRead": "Can't read this file",
-    "authFailed": "Couldn't authorize the preview",
-    "addressUnavailable": "The preview address is unavailable right now"
+    "cannotShow": "Can't display this file"
   },
-  "kind": {
-    "word": "Word document",
-    "document": "Document",
-    "slides": "Slides",
-    "sheet": "Spreadsheet",
-    "csv": "CSV spreadsheet",
-    "web": "Web page",
-    "vector": "Vector image",
-    "file": "File"
-  },
-  "downloadFailed": "Download failed",
-  "loadFailed": "Couldn't load",
-  "readFailed": "Couldn't read the file",
-  "saveFailed": "Couldn't save",
-  "changes": {
-    "taskUnavailable": "Task unavailable",
-    "projectCode": "Current project code",
-    "readOnly": "Read-only",
-    "statusReadOnly": "{status} · Read-only",
-    "overviewFailed": "Couldn't load the changes",
-    "tasksFailed": "Couldn't load tasks"
-  }
+  "downloadFailed": "Download failed"
 }

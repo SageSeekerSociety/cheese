@@ -8,8 +8,6 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setLocale } from '@/i18n'
-
 const archiveProject = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -79,9 +77,6 @@ function archiveButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: '归档' }) as HTMLButtonElement
 }
 
-// These assertions read the Chinese copy; the English rendering is checked in its own case.
-beforeEach(() => setLocale('zh-CN'))
-
 describe('ArchiveProjectDialog', () => {
   it('项目名没打对之前不能归档', async () => {
     await mount()
@@ -109,13 +104,5 @@ describe('ArchiveProjectDialog', () => {
     await fireEvent.click(archiveButton())
     expect(await screen.findByText('只有项目所有者能归档或取消归档项目')).toBeTruthy()
     expect(push).not.toHaveBeenCalled()
-  })
-
-  it('reads in English under the en locale', async () => {
-    setLocale('en')
-    await mount()
-    await fireEvent.update(await screen.findByLabelText('Type the project name “毕业设计” to confirm'), '毕业设计')
-    await fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
-    await waitFor(() => expect(archiveProject).toHaveBeenCalledWith('p1'))
   })
 })

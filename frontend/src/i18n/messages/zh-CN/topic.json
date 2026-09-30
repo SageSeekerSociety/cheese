@@ -1,62 +1,4 @@
 {
-  "agentFallback": "芝士",
-  "state": {
-    "accepted": "已采纳",
-    "draft": "草稿",
-    "done": "已完成",
-    "open": "进行中",
-    "working": "施工中",
-    "delivering": "交付中",
-    "reviewing": "待审阅"
-  },
-  "board": {
-    "building": "施工中",
-    "delivering": "交付中",
-    "needs_you": "待处理",
-    "done": "已完成",
-    "archived": "已归档"
-  },
-  "merge": {
-    "clean": "可以合并",
-    "agentWorking": "{agent}正在处理",
-    "behind": "平台更新分支",
-    "unknown": "状态更新中",
-    "ci": "等待检查",
-    "human": "待审阅",
-    "platform": "平台处理中"
-  },
-  "wait": {
-    "minutes": "{n} 分钟 | {n} 分钟",
-    "hours": "{n} 小时 | {n} 小时",
-    "days": "{n} 天 | {n} 天",
-    "waited": "已等 {duration}",
-    "long": "等了很久",
-    "prRef": "PR #{n} ",
-    "stall": {
-      "deviceWaiting": "{agent}的机器够不着，{waited}——多半要有人去把那台设备开机或连上网",
-      "provisioning": "{agent}的机器还没创建好，{waited}",
-      "environment": "{agent}的运行环境还没恢复，{waited}",
-      "check": "{pr}检查没通过，{waited}，没有{agent}在处理",
-      "conflict": "{pr}有合并冲突，{waited}，没有{agent}在处理",
-      "rejected": "{pr}被退回了，{waited}，没有{agent}去改",
-      "gate": "{pr}质量闸门没过，{waited}，没有{agent}去改",
-      "mention": "有人 {'@'} 了{agent}，{waited}还没有回话"
-    }
-  },
-  "kind": {
-    "topic": "话题"
-  },
-  "ref": {
-    "fallback": "话题"
-  },
-  "reply": {
-    "image": "[图片]",
-    "file": "[文件]"
-  },
-  "day": {
-    "today": "今天",
-    "yesterday": "昨天"
-  },
   "time": {
     "justNow": "刚刚"
   },
@@ -67,12 +9,6 @@
       "human": "需要手动处理"
     },
     "legacyAction": "芝士{action}"
-  },
-  "agent": {
-    "generalType": "通用",
-    "handleInvalid": "只能用小写字母、数字和 . _ -，且以字母或数字开头",
-    "nameRequired": "请填写名字",
-    "nameTooLong": "名字最长 64 个字"
   },
   "accept": {
     "notMergingNow": "现在采纳不会合并",
@@ -86,52 +22,5 @@
     "autoMergeFailed": "设置自动合并失败",
     "returnFailed": "退回失败",
     "voidFailed": "作废失败"
-  },
-  "chat": {
-    "hintDirect": "给{agent}发消息",
-    "hintSummon": "输入消息，{'@'}{agent} 交给它处理",
-    "everyone": "所有人",
-    "online": "在线成员",
-    "everyoneHint": "{'@'}all · 通知话题全体成员",
-    "onlineHint": "{'@'}here · 通知在线成员",
-    "pickFailed": "选择失败",
-    "reactionFailed": "表情更新失败",
-    "undoFailed": "撤销失败",
-    "sending": "发送中…",
-    "waitingConnection": "等待连接",
-    "starter": {
-      "research": {
-        "label": "查找资料",
-        "text": "帮我查找相关资料，注明来源，并整理成文档。我要了解的是："
-      },
-      "draft": {
-        "label": "起草文档",
-        "text": "帮我起草一份文档，先和我确认目标与读者。我想写的是："
-      },
-      "plan": {
-        "label": "拆解任务",
-        "text": "帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是："
-      }
-    }
-  },
-  "mention": {
-    "file": "文件",
-    "image": "图片",
-    "archived": "已归档",
-    "active": "进行中",
-    "libraryCount": "{n} 份文件 | {n} 份文件"
-  },
-  "mail": {
-    "sendFailed": "没有发出去",
-    "discardFailed": "没有放弃成功"
-  },
-  "rail": {
-    "others": "其他话题",
-    "collapse": "收起",
-    "expand": "展开",
-    "expandStalled": "展开：里面有话题出了故障",
-    "expandAwaits": "展开：里面有待处理的事项",
-    "expandRunning": "展开：{agent}正在里面工作",
-    "expandMerging": "展开：里面有已采纳的改动在等合并"
   }
 }

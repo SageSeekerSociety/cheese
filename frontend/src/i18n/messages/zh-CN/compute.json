@@ -35,22 +35,5 @@
     "connecting": "正在把这台电脑接入 Cheese",
     "connected": "这台电脑已接入，可以在「设置 → 设备」里看到它",
     "connectFailed": "这台电脑没能接入：{reason}"
-  },
-  "form": {
-    "cloud": "云端",
-    "online": "在线",
-    "offline": "离线",
-    "deviceOption": "{name} · {state}",
-    "cloudCustom": "云端 · 自定义配置",
-    "cloudStandard": "云端 · 标准配置",
-    "computer": "工作电脑",
-    "empty": "暂无可用的工作电脑",
-    "custom": "自定义 CPU、内存和磁盘",
-    "cores": "CPU 核",
-    "memory": "内存 GB",
-    "disk": "磁盘 GB",
-    "cloudHint": "首次运行时分配，计入团队云额度；超出供应范围时会提示调整",
-    "deviceHint": "设备已加入团队，无需再次授权；离线时需要等待设备上线",
-    "submit": "使用此配置"
   }
 }

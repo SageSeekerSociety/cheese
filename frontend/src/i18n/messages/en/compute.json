@@ -35,22 +35,5 @@
     "connecting": "Connecting this computer to Cheese",
     "connected": "This computer is connected. You can find it under Settings → Devices",
     "connectFailed": "Couldn't connect this computer: {reason}"
-  },
-  "form": {
-    "cloud": "Cloud",
-    "online": "Online",
-    "offline": "Offline",
-    "deviceOption": "{name} · {state}",
-    "cloudCustom": "Cloud · Custom",
-    "cloudStandard": "Cloud · Standard",
-    "computer": "Work computer",
-    "empty": "No work computers available",
-    "custom": "Customize CPU, memory, and disk",
-    "cores": "CPU cores",
-    "memory": "Memory (GB)",
-    "disk": "Disk (GB)",
-    "cloudHint": "Allocated on the first run and counted against the team's cloud quota. You'll be asked to adjust if it's beyond what's available",
-    "deviceHint": "The device is already in the team, so there's nothing to authorize again. If it's offline, it will wait until the device is back",
-    "submit": "Use this setup"
   }
 }

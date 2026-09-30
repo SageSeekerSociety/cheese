@@ -1,62 +1,4 @@
 {
-  "agentFallback": "Cheese",
-  "state": {
-    "accepted": "Accepted",
-    "draft": "Draft",
-    "done": "Done",
-    "open": "In progress",
-    "working": "Working",
-    "delivering": "Delivering",
-    "reviewing": "Awaiting review"
-  },
-  "board": {
-    "building": "Working",
-    "delivering": "Delivering",
-    "needs_you": "Needs you",
-    "done": "Done",
-    "archived": "Archived"
-  },
-  "merge": {
-    "clean": "Ready to merge",
-    "agentWorking": "{agent} is on it",
-    "behind": "Platform is updating the branch",
-    "unknown": "Updating status",
-    "ci": "Waiting for checks",
-    "human": "Awaiting review",
-    "platform": "Platform is handling it"
-  },
-  "wait": {
-    "minutes": "{n} minute | {n} minutes",
-    "hours": "{n} hour | {n} hours",
-    "days": "{n} day | {n} days",
-    "waited": "waiting {duration}",
-    "long": "waiting a long time",
-    "prRef": " on PR #{n}",
-    "stall": {
-      "deviceWaiting": "{agent} can't reach its machine ({waited}). Someone probably needs to turn that device on or get it online",
-      "provisioning": "{agent}'s machine isn't ready yet ({waited})",
-      "environment": "{agent}'s environment hasn't recovered yet ({waited})",
-      "check": "Checks failed{pr} ({waited}), and {agent} isn't on it",
-      "conflict": "Merge conflict{pr} ({waited}), and {agent} isn't on it",
-      "rejected": "Returned{pr} ({waited}), and {agent} isn't revising it",
-      "gate": "Quality gate failed{pr} ({waited}), and {agent} isn't revising it",
-      "mention": "Someone mentioned {agent}, no reply yet ({waited})"
-    }
-  },
-  "kind": {
-    "topic": "Topic"
-  },
-  "ref": {
-    "fallback": "topic"
-  },
-  "reply": {
-    "image": "[Image]",
-    "file": "[File]"
-  },
-  "day": {
-    "today": "Today",
-    "yesterday": "Yesterday"
-  },
   "time": {
     "justNow": "just now"
   },
@@ -67,12 +9,6 @@
       "human": "Needs a person"
     },
     "legacyAction": "Cheese: {action}"
-  },
-  "agent": {
-    "generalType": "General",
-    "handleInvalid": "Use lowercase letters, digits, and . _ - only, starting with a letter or digit",
-    "nameRequired": "Enter a name",
-    "nameTooLong": "A name can be at most 64 characters"
   },
   "accept": {
     "notMergingNow": "Accepting now won't merge",
@@ -86,52 +22,5 @@
     "autoMergeFailed": "Couldn't set up auto-merge",
     "returnFailed": "Couldn't return it",
     "voidFailed": "Couldn't void it"
-  },
-  "chat": {
-    "hintDirect": "Message {agent}",
-    "hintSummon": "Type a message; {'@'}{agent} to hand it over",
-    "everyone": "Everyone",
-    "online": "Online members",
-    "everyoneHint": "{'@'}all · Notify everyone in the topic",
-    "onlineHint": "{'@'}here · Notify online members",
-    "pickFailed": "Couldn't select",
-    "reactionFailed": "Couldn't update the reaction",
-    "undoFailed": "Couldn't undo",
-    "sending": "Sending…",
-    "waitingConnection": "Waiting for connection",
-    "starter": {
-      "research": {
-        "label": "Research",
-        "text": "Find material on this for me, cite the sources, and put it together in a document. What I want to know: "
-      },
-      "draft": {
-        "label": "Draft a document",
-        "text": "Help me draft a document. Check the goal and the readers with me first. What I want to write: "
-      },
-      "plan": {
-        "label": "Break down a goal",
-        "text": "Break my goal into tasks we can act on, and show me a proposed split first. My goal: "
-      }
-    }
-  },
-  "mention": {
-    "file": "Files",
-    "image": "Images",
-    "archived": "Archived",
-    "active": "In progress",
-    "libraryCount": "{n} file | {n} files"
-  },
-  "mail": {
-    "sendFailed": "Couldn't send",
-    "discardFailed": "Couldn't discard"
-  },
-  "rail": {
-    "others": "Other topics",
-    "collapse": "Collapse",
-    "expand": "Expand",
-    "expandStalled": "Expand: a topic inside has a problem",
-    "expandAwaits": "Expand: something inside needs you",
-    "expandRunning": "Expand: {agent} is working inside",
-    "expandMerging": "Expand: accepted changes inside are waiting to merge"
   }
 }

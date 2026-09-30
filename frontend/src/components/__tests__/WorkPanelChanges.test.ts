@@ -92,11 +92,6 @@ import { provideTopicMemory } from '@/composables/useTopicMemory'
 import { listRoomTasks } from '../../api'
 import WorkPanel from '../WorkPanel.vue'
 
-import { setLocale } from '@/i18n'
-
-// These cases pin the Chinese copy of the room and rail strings.
-beforeEach(() => setLocale('zh-CN'))
-
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }

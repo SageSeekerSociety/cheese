@@ -46,40 +46,6 @@
     "text": "This page doesn’t exist",
     "home": "Back to home"
   },
-  "dm": {
-    "openFailed": "Couldn’t open the direct message"
-  },
-  "access": {
-    "signInTitle": "Sign in to view this project",
-    "signInBody": "If you’re a member of this project, you’ll see its content after signing in",
-    "archivedTitle": "This project is archived",
-    "archivedOwnerBody": "Everything is still here. Unarchive it to restore the project and the topics archived with it",
-    "archivedBody": "Everything is still here. It can be used again once the owner unarchives it",
-    "toMyProjects": "Back to my projects",
-    "notMemberTitle": "You’re not a member of this project",
-    "notMemberBody": "Only members can see this project. To get access, ask someone in the project to add you",
-    "unarchive": "Unarchive"
-  },
-  "topicMissing": {
-    "title": "This topic doesn’t exist",
-    "body": "It may have been deleted, or it belongs to another project"
-  },
-  "paneResize": "Drag to resize, double-click to reset",
-  "retry": "Retry",
-  "board": {
-    "loadFailed": "Couldn’t load",
-    "unknownRoom": "Unknown room",
-    "noneForYou": "No tasks assigned to you",
-    "emptyColumn": "No tasks in {column}",
-    "done": "Done",
-    "noTasks": "No tasks",
-    "mineOnly": "Only mine",
-    "openChat": "Open the chat",
-    "noOwner": "No owner",
-    "queued": "Queued",
-    "running": "Running",
-    "made": "What was made"
-  },
   "errors": {
     "actionFailed": "Something went wrong",
     "teamLockedBy": "This team is locked: it’s taking part in {tasks}",

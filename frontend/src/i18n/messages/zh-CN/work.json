@@ -1447,25 +1447,6 @@
     "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
     "cancel": "取消"
   },
-  "topicMembers": {
-    "title": "话题成员",
-    "count": "{count} 位",
-    "agentMark": "（AI 队友）",
-    "externalMark": "（{tag}）",
-    "agent": "AI 队友",
-    "role": {
-      "owner": "拥有者",
-      "admin": "管理员",
-      "member": "成员"
-    },
-    "loadFailed": "加载成员失败",
-    "failed": "操作失败",
-    "remove": "移出话题",
-    "addPlaceholder": "添加成员…",
-    "allIn": "项目成员和队友都已在话题中",
-    "add": "加入",
-    "readOnly": "只有拥有者和管理员能修改成员"
-  },
   "nodeBoard": {
     "loadFailed": "加载机器状态失败",
     "title": "机器状态",
@@ -1504,8 +1485,5 @@
   "liveView": {
     "connecting": "连接现场中…",
     "closed": "现场已断开"
-  },
-  "topicHeader": {
-    "disconnected": "未连接"
   }
 }

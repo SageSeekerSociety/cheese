@@ -1,41 +1,10 @@
 {
-  "attach": {
-    "tooMany": "每条消息最多添加 9 个附件",
-    "tooLarge": "{name} 超过 10MB，无法上传",
-    "uploadFailed": "文件上传失败",
-    "addFailed": "添加文件失败"
-  },
   "library": {
     "uploadFailed": "上传失败（HTTP {status}）",
     "readFailed": "无法读取这份资料（HTTP {status}）"
   },
   "preview": {
-    "notIsolated": "预览地址未与平台隔离",
-    "cannotShow": "无法显示这个文件",
-    "cannotRead": "无法读取这个文件",
-    "authFailed": "预览授权失败",
-    "addressUnavailable": "预览地址暂不可用"
+    "cannotShow": "无法显示这个文件"
   },
-  "kind": {
-    "word": "Word 文档",
-    "document": "文档",
-    "slides": "幻灯片",
-    "sheet": "表格",
-    "csv": "CSV 表格",
-    "web": "网页",
-    "vector": "矢量图",
-    "file": "文件"
-  },
-  "downloadFailed": "下载失败",
-  "loadFailed": "加载失败",
-  "readFailed": "读取文件失败",
-  "saveFailed": "保存失败",
-  "changes": {
-    "taskUnavailable": "任务不可用",
-    "projectCode": "项目当前代码",
-    "readOnly": "只读",
-    "statusReadOnly": "{status} · 只读",
-    "overviewFailed": "改动加载失败",
-    "tasksFailed": "任务加载失败"
-  }
+  "downloadFailed": "下载失败"
 }

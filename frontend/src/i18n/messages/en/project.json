@@ -1,44 +1,9 @@
 {
-  "archive": {
-    "title": "Archive project",
-    "confirm": "Archive",
-    "body": "The project leaves every member’s project list and can no longer be changed. Running tasks stop. Everything is kept, and you can unarchive it from “Archived projects”",
-    "typeName": "Type the project name “{name}” to confirm",
-    "failed": "Couldn't archive"
-  },
   "leave": {
     "title": "Leave project?",
     "body": "You will no longer see this project; existing messages and records are kept. You leave this project, not the team: your place in the team stays the same, and the team's other projects are unaffected. You can come back if invited again.",
     "confirm": "Leave",
     "failed": "Couldn't leave"
-  },
-  "transfer": {
-    "title": "Transfer project",
-    "submit": "Transfer",
-    "confirm": "Confirm transfer",
-    "back": "Back",
-    "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
-    "noCandidates": "No members who can take over",
-    "lookupHint": "No one in the team to hand it to? Find a person directly:",
-    "lookupLabel": "Username or email (in full)",
-    "notFound": "No account found",
-    "loadFailed": "Couldn't load members",
-    "failed": "Couldn't transfer",
-    "movingOut": "{'@'}{handle} is not in this project's team: transferring moves the whole project to them. Afterwards you are no longer a project member and can't see any of its topics. (A project in a shared team can only go to someone in that team.)"
-  },
-  "site": {
-    "stale": "The project’s accepted version changed. Check it, then publish again",
-    "failed": "Couldn't publish",
-    "none": "No published site",
-    "update": "Publish update",
-    "publish": "Publish",
-    "publishSite": "Publish site",
-    "noCandidates": "The project’s accepted version has no site to publish",
-    "publishVersion": "Publish the project’s accepted version",
-    "entry": "Site entry",
-    "entryFile": "Site entry: ",
-    "isCurrent": "The live site is already this accepted version",
-    "stays": "Once published, the site stays online; later changes need another publish"
   },
   "artifacts": {
     "rename": "Rename",
