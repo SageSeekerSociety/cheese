@@ -87,7 +87,8 @@ class Journal:
         """
         (first_since,) = self.connection.execute(
             f"SELECT MIN(sequence) FROM {self.table} "
-            "WHERE sequence > ? AND recorded_at >= ?",
+            "WHERE sequence > ? AND (recorded_at >= ? "
+            f"OR json_extract({self.column}, '$.cheese.receipt') = 1)",
             (after, before),
         ).fetchone()
         count, last = self.connection.execute(

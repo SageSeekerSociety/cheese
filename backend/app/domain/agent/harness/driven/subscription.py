@@ -224,6 +224,13 @@ class Subscription[B: Backlog]:
             try:
                 while page := await self.on_disk(reader.unread):
                     for entry in page:
+                        receipt = self.receipt(entry.record)
+                        if receipt is not None:
+                            # Settlement is never subject to output-age or poison
+                            # record skipping. Failure leaves this cursor replayable.
+                            if self.receipts is None:
+                                raise RuntimeError("Receipt consumer is not bound")
+                            await self.receipts(self.session.topic_id, receipt)
                         if entry.age_s >= STALE_S:
                             stale += 1
                         else:
@@ -298,9 +305,6 @@ class Subscription[B: Backlog]:
                     self.seat,
                     frozenset(self.marks(record, list(events))),
                 )
-            text = self.receipt(record)
-            if text is not None and self.receipts is not None:
-                await self.receipts(self.session.topic_id, text)
             for event in events:
                 # Which seat's session produced this event. Events that
                 # declare the field keep what the record said (the

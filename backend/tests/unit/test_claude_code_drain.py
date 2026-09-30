@@ -19,6 +19,10 @@ from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.service import AgentMessage, AgentResult
 
 
+async def _settle_receipt(topic, prompt):
+    """These tests exercise output delivery; receipt persistence is available."""
+
+
 def _journal(work: str) -> list[dict]:
     stamp = {"work_id": work}
     records = [
@@ -127,6 +131,7 @@ async def test_a_refused_command_does_not_stop_the_room_reading_the_turn(tmp_pat
         activity,
         session_id=None,
         announce=announce,
+        receipts=_settle_receipt,
         pulse=lambda seat, marks: pulses.append(marks),
     )
     try:
@@ -238,6 +243,7 @@ async def test_a_backlog_many_pages_long_reaches_the_room_a_page_at_a_time(tmp_p
             activity,
             session_id=None,
             announce=announce,
+            receipts=_settle_receipt,
         )
         made.pages = []
         return made
@@ -326,6 +332,7 @@ async def test_what_nobody_read_for_hours_never_reaches_the_room(tmp_path):
             activity,
             session_id=None,
             announce=announce,
+            receipts=_settle_receipt,
         )
 
     first = reading()
@@ -402,6 +409,7 @@ async def test_a_record_the_room_goes_on_refusing_is_stepped_over(
             activity,
             session_id=None,
             announce=announce,
+            receipts=_settle_receipt,
         )
         try:
             await reading.drain()
@@ -437,6 +445,8 @@ async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_pat
         {**row, "at": (now - timedelta(days=1)).isoformat()}
         for row in _long_turn(str(uuid.uuid4()), 5 * PAGE)
     ]
+    # This case contains only expired output. Receipts have separate retention.
+    old[0]["record"]["cheese"].pop("receipt")
     journal = [
         *old,
         *_said_turn(str(uuid.uuid4()), "said just now", first=len(old) + 1, at=now),
@@ -474,6 +484,7 @@ async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_pat
         activity,
         session_id=None,
         announce=announce,
+        receipts=_settle_receipt,
     )
     reading.pages = []
     try:
