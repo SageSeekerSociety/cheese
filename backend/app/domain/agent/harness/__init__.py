@@ -766,13 +766,45 @@ HARNESSES: dict[str, Harness] = {
         },
         carries_subscription=True,
     ),
+    PI: Harness(
+        PI,
+        "pi",
+        subagents={
+            SubagentRequirement.SPAWNS_WITH_A_MODEL: (
+                "pi 核心没有子 agent，起它的是平台给 pi 的 extension："
+                "`agent/harness/pi/platform.ts` 的 `registerSubagentTools` 给会话一个 "
+                "Task(model=...)，runner 在同一台机器、同一个检出里起第二个 pi。模型"
+                "由 `agent/harness/pi/subagents.py` 的 `admitted_model` 问平台准入"
+                "（/llm/admission，和 Claude Code 分身同一道目录、档位与预算校验），"
+                "没指定时答的就是项目的分身默认；`Subagent._configure` 用答出来的模型"
+                "照抄父会话的网关 provider，只换模型这一项。"
+            ),
+            SubagentRequirement.LABELS_ITS_THREAD: (
+                "`agent/harness/pi/subagents.py` 的 `Subagent.pull` 把子会话的每条"
+                "记录连同 `label_in_text` 从它的 prompt 里读出的线程标识，写进会话自"
+                "己的 journal（`agent/harness/pi/runner.py` 的 `note_page`），起停"
+                "各记一条 runner 自己的记录；`agent/harness/pi/events.py` 的 "
+                "`thread_of` 认出它，`Assembler._subagent` 把标识放在每个事件的 "
+                "`thread_label` 上。"
+            ),
+            SubagentRequirement.PARENT_RETASKS_IT: (
+                "改指令的是起它的父线程，做法写在 "
+                "`agent/skill_library/stage_delegating.md`：还在跑的，父线程调 "
+                "SendMessage，`agent/harness/pi/subagents.py` 的 `Subagent.send` "
+                "把消息 steer 进那条子会话；已经收工或停了的不再接指令，照原来的简报"
+                "用同一个线程标识重派。平台这一侧只有 `agent/harness/__init__.py` 上"
+                "的 `AgentRuntime.deliver`，把人对卡的操作送进父会话。"
+            ),
+            SubagentRequirement.PARENT_STOPS_IT: (
+                "停的是一条子会话：父线程调 TaskStop，"
+                "`agent/harness/pi/subagents.py` 的 `Subagent.stop` 停下那一条，同"
+                "一条会话里的其他分身照跑。会话被 interrupt 或关掉时，"
+                "`agent/harness/pi/runner.py` 先用 `stop_all` 停掉它起过的每一条"
+                "——那是结论 43 的「子 agent 与父进程同生同死」，不是这一条。"
+            ),
+        },
+    ),
 }
-
-# Codex 与 pi 是 Cheese 要支持的骨架。它们不在上面，只因为还答不出
-# ``SubagentRequirement`` 那四条（结论 43）：``Harness.__post_init__`` 造不出答不
-# 全的条目。它们的适配层在 `agent/harness/codex/` 与 `agent/harness/pi/`，契约夹具
-# 照跑、行为声明照写、pin 照被守卫管着。各自还差什么，见 #1607；答出四条的那一
-# 天回到上面这张表。
 
 
 def harness_name(name: str | None) -> str:
