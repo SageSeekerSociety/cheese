@@ -172,10 +172,16 @@ jobs:
             interpreter=backend/.venv/bin/python
           fi
           echo "the collector runs under $interpreter"
+          # `set -e` is on — GitHub runs the body of a `run:` step as `bash -e`
+          # — so the exit code is taken with `||` rather than read from `$?` on
+          # the next line. Under `-e` a non-zero command ends the step right
+          # there, which is precisely the case the record below exists for: the
+          # first version of this step exited 127 with no artifact at all, the
+          # failure it was written to describe.
+          code=0
           "$interpreter" .claude/scripts/ratchet-snapshot.py \
             --out "$OUT/ratchet-snapshot.json" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          code=$?
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || code=$?
           echo "the collector exited $code"
           # The collector writes its own failure record whenever it runs at all.
           # This is the last resort for the case where it could not start: the
@@ -200,7 +206,21 @@ jobs:
           OUT: ${{ runner.temp }}
         run: |
           set -uo pipefail
-          cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+          # Also `bash -e`: an unguarded `cat` of a board that the Measure step
+          # never wrote ended the step there, so the note below — the one thing
+          # the summary exists to say when a run collected nothing — was the
+          # part that went missing.
+          if [ -s "$OUT/arch-metrics.md" ]; then
+            cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo ""
+              echo "## The board was not measured"
+              echo ""
+              echo "This run has no numbers in the summary; the artifact says"
+              echo "what happened."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ ! -s "$OUT/ratchet-snapshot.json" ]; then
             {
               echo ""
