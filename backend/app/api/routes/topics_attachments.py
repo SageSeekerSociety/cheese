@@ -9,15 +9,16 @@ a download for a Word or PowerPoint deliverable (`GET
 /topics/{topic_id}/attachments/pdf`), with the two image-mime tables and the
 size ceiling nothing else in the tree names.
 
-What stays behind, and why. `_clean_artifact_path`, `_source_bytes`,
-`_bind_source_task`, `MAX_ARTIFACT_BYTES` and the `DbSession` alias are used by
-these routes but not only by them: the preview and room-file routes that stay in
-`topics.py` read the same ones, and `room_files.py` already imports
-`_clean_artifact_path` and `artifact_kind_for` from there. A helper two groups
-share does not belong to either, so it stays and this module imports it -- the
-shape `admin_models.py` uses for `DbSession` and `room_files.py` for the artifact
-helpers. That is also why there is no import cycle: `topics.py` imports nothing
-from this module.
+Where the shared names went. The three names this module used to read from
+topics.py now have their own homes: `clean_artifact_path` and
+`MAX_ARTIFACT_BYTES` are the room-file rules in `app.domain.project.room_files`,
+`source_bytes` is the API read-orchestration helper in
+`app.api.routes.topics_file_sources`, and the binding check became
+`TaskService.require_source_in_room`. `DbSession` is still imported from
+topics.py, the shape `admin_models.py` uses for it. A helper two groups share
+does not belong to either, so it moves out of topics.py rather than staying
+there -- and there is no import cycle, because none of the new homes imports
+this module.
 
 Ordering. This module sorts after `topics.py` (`.` < `_`), so its router mounts
 after that file's. Nothing registered earlier can shadow these paths: no
@@ -40,13 +41,8 @@ from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.api.routes.topics import (
-    MAX_ARTIFACT_BYTES,
-    DbSession,
-    _bind_source_task,
-    _clean_artifact_path,
-    _source_bytes,
-)
+from app.api.routes.topics import DbSession
+from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.domain.library import records as library_records
@@ -57,6 +53,11 @@ from app.domain.preview.office import (
     is_renderable,
     render_to_pdf,
 )
+from app.domain.project.room_files import (
+    MAX_ARTIFACT_BYTES,
+    clean_artifact_path,
+)
+from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -121,7 +122,7 @@ async def upload_attachment(
     if (file is None) == (library_path is None):
         raise ValidationError("要么上传一个文件，要么选资料库里的一份")
     if library_path is not None:
-        name = _clean_artifact_path(library_path)
+        name = clean_artifact_path(library_path)
         # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
         data = library.read_library_file(topic.project_id, name)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
@@ -179,14 +180,14 @@ async def attachment_raw(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    clean = _clean_artifact_path(path)
+    clean = clean_artifact_path(path)
     suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
     mime = _EXT_IMAGE_MIME.get(suffix)
     if mime is None and not download:
         raise ValidationError("只能读取图片附件")
     if task is not None:
-        await _bind_source_task(db, topic_id, task)
-    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
+        await TaskService(db).require_source_in_room(topic_id, task)
+    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -229,12 +230,12 @@ async def attachment_as_pdf(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    clean = _clean_artifact_path(path)
+    clean = clean_artifact_path(path)
     if not is_renderable(clean):
         raise ValidationError("这个格式不能转换为预览")
     if task is not None:
-        await _bind_source_task(db, topic_id, task)
-    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
+        await TaskService(db).require_source_in_room(topic_id, task)
+    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
