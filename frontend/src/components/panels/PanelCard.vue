@@ -178,8 +178,17 @@ const cardSocket = useRoomSocket({
     if (frame.type === 'todo') {
       liveSeq += 1
       checklist.value = frame.items
+    } else if (frame.type === 'assistant_block' || frame.type === 'event_block' || frame.type === 'user_block') {
+      // 卡下的块发在这条活自己的频道上（后端 publish 的就是卡的 id），所以这条
+      // socket 收得到。以前只认清单和 `block_updated`，于是分身干活时新落下的话和
+      // 步骤块全被丢掉——只有离开这张卡再进来（重新 fetch）才看得见。
+      applyLive(() => mergeBlock(frame.block))
     } else if (frame.type === 'block_updated') {
-      replaceBlock(frame.block)
+      // 块不一定已经在列表里：它可能落在初次取回的那一页之外。那时也要插进来，
+      // 不能像以前那样空操作。
+      applyLive(() => mergeBlock(frame.block))
+    } else if (frame.type === 'retract_block') {
+      applyLive(() => removeBlock(frame.block_id))
     } else if (frame.type === 'error' && cardSocket.isConnectRefusal(frame.code)) {
       cardSocket.connectRefused.value = true
     }
@@ -269,10 +278,35 @@ const editError = ref<string | null>(null)
 function canEdit(b: Block): boolean {
   return b.kind === 'message' && b.author === myHandle() && !isAgentBlock(b)
 }
-function replaceBlock(updated: Block) {
+// 卡上落下的每一块都从这里进：已经在列表里的原地换掉，不在的按 `created_at` 插进
+// 去。不能一律推到最后——帧到的顺序和初次取回来的那一段各自是有序的，合到一起却
+// 不保证还齐（断线重连补回来的那几条会晚到，落到末尾就成了「刚说的话」）。
+function mergeBlock(updated: Block) {
   const blocks = card.value?.blocks
-  const at = blocks?.findIndex((b) => b.id === updated.id) ?? -1
-  if (blocks && at >= 0) blocks.splice(at, 1, updated)
+  if (!blocks) return
+  const at = blocks.findIndex((b) => b.id === updated.id)
+  if (at >= 0) {
+    blocks.splice(at, 1, updated)
+    return
+  }
+  // 同一份后端序列化出来的时间戳，字符串比大小就是时间比大小。
+  const next = blocks.findIndex((b) => b.created_at > updated.created_at)
+  if (next < 0) blocks.push(updated)
+  else blocks.splice(next, 0, updated)
+}
+
+function removeBlock(id: string) {
+  const blocks = card.value?.blocks
+  if (!blocks) return
+  const at = blocks.findIndex((b) => b.id === id)
+  if (at >= 0) blocks.splice(at, 1)
+}
+
+/** 时间线变了一下：停在底部的人继续跟着最新的，翻上去看历史的不被拽走。 */
+function applyLive(mutate: () => void) {
+  const stick = atBottom()
+  mutate()
+  if (stick) void nextTick(scrollToBottom)
 }
 async function saveEdit(b: Block, text: string) {
   const content = text.trim()
@@ -284,7 +318,7 @@ async function saveEdit(b: Block, text: string) {
   editSaving.value = true
   editError.value = null
   try {
-    replaceBlock(await editMessage(b.id, content))
+    mergeBlock(await editMessage(b.id, content))
     if (editingId.value === b.id) editingId.value = null
   } catch {
     editError.value = t('work.room.message.saveFailed')
