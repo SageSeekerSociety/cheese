@@ -32,12 +32,16 @@ from tests.support.hang import HANG_S
 
 
 def _replace_chat_sleep(monkeypatch, sleep):
-    from app.domain.agent import chat
+    from app.domain.agent import chat, gateway_usage
 
     # Replacing the shared module's sleep also stalls the TestClient's loop monitor.
-    monkeypatch.setattr(
-        chat, "asyncio", SimpleNamespace(**{**vars(asyncio), "sleep": sleep})
-    )
+    # The turn's two waits — the settle-retry before the second spend read, and the
+    # deferred drain's twenty seconds — moved with the rest of the gateway path into
+    # `gateway_usage` (slice 7), so both modules get the replacement: either way it
+    # is a module global, because each module looks up its own `asyncio` name.
+    stub = SimpleNamespace(**{**vars(asyncio), "sleep": sleep})
+    for module in (chat, gateway_usage):
+        monkeypatch.setattr(module, "asyncio", stub)
 
 
 def _on_a_machine() -> ClaudeCodeRuntime:

@@ -101,6 +101,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 拆模块没有新增跨包的边，只是发起方从 chat.py 换成了 hook_stream.py，
         # 所以按同一笔债入账。
         ("app.domain.agent.hook_stream", "app.domain.block.repositories"),
+        # agent.gateway_usage 是从 agent.chat 里拆出来的那一块（这一轮的模型与
+        # 它的用量账：准入前解析模型、环境与项目的网关 key，轮次结束后把网关的
+        # 用量落成行、扣掉额度）。它摸的三个 repository 正是原先 chat.py 那一组
+        # 里跟着它走的：读项目表、读话题表、读额度与用量。拆模块没有新增跨包的
+        # 边，只是发起方从 chat.py 换成了 gateway_usage.py，所以按同一笔债入账。
+        ("app.domain.agent.gateway_usage", "app.domain.project.repositories"),
+        ("app.domain.agent.gateway_usage", "app.domain.topic.repositories"),
+        ("app.domain.agent.gateway_usage", "app.domain.usage.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
