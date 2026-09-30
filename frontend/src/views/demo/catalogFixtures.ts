@@ -14,6 +14,7 @@
  * 看哪几格，在 `catalog.ts`。
  */
 import type { RouteLocationRaw } from 'vue-router'
+import type { MenuCommand } from '@/commands'
 import type { OpenFileTab } from '@/composables/useTopicMemory'
 import type {
   Block,
@@ -28,6 +29,7 @@ import type {
 } from '@/cx_types'
 import type { FileDiff } from '@/lib/diff'
 import type { DocSaveStatus } from '@/lib/docEditState'
+import type { VisibleRow } from '@/lib/topicTree'
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
 import type { ChangesScene, ChatLine, Frame } from './demoScene'
 
@@ -367,6 +369,88 @@ export const EXCERPTS: SpaceLearningExcerpt[] = [
   },
 ]
 
+// ---- 项目侧栏：一行话题、顶上的置顶入口、项目头、组头、已归档 ----------------
+//
+// 侧栏拆成几个只管画的组件之后，这几件都能单独立着。它们吃的数据不少（一行的
+// `VisibleRow` 有十几个字段），所以这里造的是**产品里真会出现的那几格**：在跑的、
+// 等你拍板的、收起来的、出了故障的、在等合并的——而不是「随便来一条」。
+
+/** 一行话题的完整形状（`lib/topicTree.ts` 的 `VisibleRow`）：话题 + 缩进 + 折叠
+ *  开关要的那几个数（收起来了几个、里面有几条未读、里面有没有动静）。 */
+function railRow(
+  topic: Partial<Topic> & { id: string; title: string },
+  visible: Partial<VisibleRow<Topic>> = {}
+): VisibleRow<Topic> {
+  return {
+    topic: {
+      project_id: 'p1',
+      parent_id: null,
+      kind: 'topic',
+      status: 'active',
+      created_at: '2026-09-24T09:00:00Z',
+      ...topic,
+    },
+    depth: 0,
+    hasChildren: false,
+    collapsed: false,
+    hiddenCount: 0,
+    hiddenUnread: 0,
+    unreadTotal: 0,
+    hiddenRunning: false,
+    hiddenAwaits: false,
+    hiddenStalled: false,
+    hiddenMerging: false,
+    ...visible,
+  }
+}
+
+export const RAIL_ROWS = {
+  /** 芝士正在这个话题里跑：绿呼吸点。 */
+  running: railRow({ id: 't-1', title: '写第 4 章的教案', running: true }),
+  /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
+  awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, i_participate: true }),
+  /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
+  collapsed: railRow(
+    { id: 't-3', title: '期末复习' },
+    { hasChildren: true, collapsed: true, hiddenCount: 12, hiddenUnread: 4, unreadTotal: 4, hiddenAwaits: true }
+  ),
+  /** 子话题：缩进一级，左边一条竖向引导线。 */
+  sub: railRow({ id: 't-4', title: '第 3 题：为什么天空是蓝的', parent_id: 't-3' }, { depth: 1, unreadTotal: 2 }),
+  /** 红灯：最近一轮报错了。这一条不靠数据变——钟走到哪儿它都亮着。 */
+  stalled: railRow({ id: 't-5', title: '把成绩单导出成 CSV', turn_failed_at: '2026-09-29T08:41:00Z' }),
+  /** 在等合并：常亮的空心绿圈（和呼吸点靠「动不动」「实心还是空心」分开）。 */
+  merging: railRow({ id: 't-6', title: '重排第一章的目录', merging: true }),
+  /** 归档行：标题压暗一档，行尾是「取消归档」（`TopicRailArchivedGroup` 那一组）。 */
+  archived: { id: 't-7', title: '第 1 题：写一段自我介绍', kind: 'topic' } as Topic,
+}
+
+/** 一行的 ⋯ 里那几项（`commands/topicActions.ts` 在真环境里给的就是这个形状）。 */
+export const RAIL_ACTIONS: MenuCommand[] = [
+  { id: 'topic.rename', title: '重命名', icon: 'mdi-pencil', run: () => {} },
+  { id: 'topic.copyLink', title: '复制链接', icon: 'mdi-link-variant', run: () => {} },
+  { id: 'topic.archive', title: '归档', icon: 'mdi-archive-outline', run: () => {} },
+]
+
+/** 项目本体（全局房间）：置顶那一行，也是项目名的落点。 */
+export const RAIL_ROOT_TOPIC: Topic = {
+  id: 't-root',
+  project_id: 'p1',
+  parent_id: null,
+  title: '课程项目 · 项目总览',
+  kind: 'root',
+  status: 'active',
+  created_at: '2026-09-20T08:00:00Z',
+}
+
+/** 这个项目的壳摆出来的那几页（顺序就是壳说的顺序，见 `lib/shell.ts`）。 */
+export const RAIL_PAGES = [
+  { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+  { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+  { key: 'calendar', label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
+]
+
+/** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */
+export const RAIL_TERMS = { project: '项目', topic: '话题' }
 // ---- 工作面板那三格（#2143 拆出来的 View） ----------------------------------
 // 这三件是「props 进、事件出」的纯渲染组件（取数在 `composables/usePanel*` 里），
 // 所以下面造的全是数据 —— 挂起来不需要后端，也不需要登录。改动那一格的原料从剧本
