@@ -48,6 +48,7 @@ import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
+import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
@@ -618,6 +619,9 @@ export const CATALOG: CatalogEntry[] = [
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
   ...KNOWLEDGE_ENTRIES,
+  // 发题表单那一组（从 1089 行的 TaskForm 拆出来的七张卡加两个弹窗，夹具在自己
+  // 那一份里）在自己的文件里：`catalogTaskForm.ts`。
+  ...TASK_FORM_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',
