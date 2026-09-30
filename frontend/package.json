@@ -17,6 +17,8 @@
     "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
     "lint:boundary": "node scripts/import-boundary-ratchet.mjs",
     "lint:boundary:update": "node scripts/import-boundary-ratchet.mjs --update",
+    "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py",
+    "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest",
     "postinstall": "husky install",

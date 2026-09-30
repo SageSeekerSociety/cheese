@@ -131,6 +131,28 @@ jobs:
       - name: Component boundaries (eslint ratchet)
         run: pnpm run lint:boundary
 
+      # The scene ratchet: a page or a workbench panel that renders standalone
+      # today may not stop being able to, and every scene added from now on has
+      # to be able to from its first commit. 20 are frozen in
+      # frontend/scene-baseline.json and 137 are pre-existing debt that may only
+      # shrink — what a scene is, and how to pull a fetch out of one:
+      # docs/manual/dev/scenes.md.
+      #
+      # Not the same question as the boundary rule above: that one is about what
+      # a file under src/components/ imports, this one about whether a whole
+      # scene renders with no backend, no route and no business store — and it
+      # judges src/views/ too, which the ESLint rule leaves alone on purpose. It
+      # shells out to python3 (stdlib only, no venv, no node_modules) because it
+      # grades with the same module arch-metrics.py reports from, so the gate
+      # and the board cannot disagree about a scene.
+      #
+      # Read-only like every other step here; the writer is
+      # `pnpm run lint:scenes:update`, which only ever ADDS a scene to the
+      # baseline. Its own tests are `python3 .claude/scripts/scene-ratchet.py
+      # --self-test`, which repo-guards.yml runs in its Guards self-test step.
+      - name: Scenes (standalone-ratchet)
+        run: pnpm run lint:scenes
+
       # Design system: no hardcoded colours, radii on the 6/8/12/999 ladder.
       # Enforced through a ratchet (stylelint-baseline.json) because the tree
       # starts at 537 violations across 88 files — a rule that goes red
