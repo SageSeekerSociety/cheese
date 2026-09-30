@@ -1,4 +1,4 @@
-# 提问作答完整流程：实现步骤 / 真实契约 / 读写 owner / 必要反例（v2）
+# 提问作答完整流程：实现步骤 / 真实契约 / 读写 owner / 必要反例（v3）
 
 基线 head `21a94a90`（契约行号实查），文档 v2。
 批准来源：用户答复「采用完整方案（推荐）」，基线 `5135b0cb` 的 20 页 PDF `c751255126…`。八项目标全保留，多人作答本次另定、不偷加。
@@ -13,7 +13,7 @@
 | # | 决策 | 前提 |
 |---|---|---|
 | 1 | `options` 对象化，所有 caller 同改，不留 `string[]` 分支 | — |
-| 2 | 不新建 group 后端实体 | 题组**一次创建、固定顺序与总数**；按 `同 topic + 原出题席位` 归组；**不许凭临时已有 blocks 算总进度** |
+| 2 | 不新建 group 后端实体 | 题组**一次创建、固定顺序与总数**；归组键后来收准为 `(topic_id, asked_by, group_id)` 三元组（见 4.2）；**不许凭临时已有 blocks 算总进度** |
 | 3 | 草稿只在本地 | 键必须含**账号身份**；换账号读不到、也提交不了上一位的草稿 |
 | 4 | `answer_log` 末版生效，删 `answered`/`answered_by` | **同批数据迁移保全历史答案与署名**；旧作答时间未知就**留空不伪造**；走正常迁移 pipeline |
 | 5 | `AskFlow` 按真实职责拆，保住已批界面与行为 | **不登记新豁免，不放宽文件守卫** |
@@ -75,6 +75,30 @@
 
 人那侧的账本在 `delivery/ledger.py`：`Ledger.deliver` = `record`（去重键唯一）再 `send`，`resend_unsent_deliveries` 定时补发，`dedup_key(event_id, handle)`。
 
+#### 2.4.1 这条链实际怎么走（逐行核过，不是借来的承诺）
+
+`dispatch_pending` 认领后调 `runner.submit(..., delivery_id=..., recipient_instance_id=...)`（`delivery/agent.py:186-195`）。`submit` 把 `delivery_id` 传给 `run_attempt` 续租（`runtime.py:866-869`），一轮内部再由 `chat.py:4610-4615` 调 `begin_send` 把 `claimed → sending`，并**先把 prompt 登记进 `_pending_receipts`**（注释：*Staging a prompt on a booting machine is not receiver input. Register before send so a fast native receipt cannot race it.*）。
+
+**回执**是收方真读到 prompt 时才落的：`chat.py:1320-1360` 拿 `_pending_receipts` 里的 `(prompt_text, block_ids, turn_id)` 与实际收到的 prompt 做**相等或前缀**匹配，匹配上才在同一事务里做 `BlockRepository.mark_consumed(block_ids, turn_id)` + `receive_attempt(session, turn_id, now)`。`chat.py:1332-1334` 明说这两件事分工：👀 记号是尽力而为的，**`mark_consumed` 才是「下一轮不再重发」的功能边界**。
+
+所以「消费回执」**存在**，形态就是 `mark_consumed` + `receive_attempt`，触发条件是 prompt 文本匹配。**`_pending_receipts` 是进程内存**（`self._pending_receipts.setdefault(topic_id, []).append(...)`，`chat.py:4619-4621`）。
+
+**`submit` 不落时间线**。`_run` 的入参注释写着 *Human message already persisted by `receive_message`*（`runtime.py:2140-2141`），而 `post_user_message` 只在 `runtime.py:240` 的 `receive_message` 里调。走 `record_agent` 的投递，`begin_send` 登记的 `block_ids` 是**空列表**（`chat.py:4620`）——即它只喂 prompt，不产生可见的对话行。
+
+**忙/闲**：`submit` 的 docstring 明写 *Turns on the same topic serialize on ChatService's per-topic lock (so a second submit queues behind the first)*（`runtime.py:816-817`）——**排队，不是丢弃**。`_consume_message` 再按 `(topic_id, recipient_handle)` 开一条 per-recipient 锁（`runtime.py:928-930`），并先 `await self._wait_to_start()`。同一席位的两条消息顺序化，不同席位互不阻塞。
+
+#### 2.4.2 三种故障窗口的证据（**不承诺「所有崩溃都恰好一次/永不不接续」**）
+
+| 窗口 | 落库状态与证据 | 结果 |
+|---|---|---|
+| **A. `pending` 前后**（生产者事务已提交，尚未被认领） | 行在 `state='pending'`、`sent_at` NULL。意图在**生产者事务里**写成，进程死了也还在 | `dispatch_pending` 会认领补送。**不丢**。重投靠 `dedup_key` 的 `on_conflict_do_nothing` 不重复记账 |
+| **B. `claimed`/`sending` 前后**（已联系或将要联系收方，回执没回来） | `run_attempt` 的 `finally`：`claimed` → 退回 `pending` + `retry_at`（`agent.py:272-279`）；`sending` → **`uncertain`**，`last_error="Receiver result was not confirmed; automatic replay is withheld"`（`agent.py:280-285`）。进程整个没了则租约到期，`dispatch_pending` 见 `sending` 一律改 `uncertain`（`agent.py:129-131`） | **`uncertain` 不自动再注入**。模块原话就是这一句 |
+| **C. 迟到的真实回执** | `receive_attempt` 认 `sending` **和** `uncertain` 两种（`agent.py:330`），一条真回执就能结算成 `received`，并把 `TimedDelivery.delivered_at` 补上 | 可能迟到、也可能永远不来 |
+
+**`uncertain` 今天没有对账/反馈路径**：`uncertain` 这个词在 `delivery/agent.py` 之外只出现在三处无关的地方（`machine/warm.py:497`、`skill_library/chat_detail.md:35`、`sandbox/cheese:216` 的 `request_id` 描述），**没有任何查询入口、没有对账任务、没有向人反馈的通道**。这是要补的（见 4.6.2），补之前**不许说「已接续」**，也**不许盲重放**。
+
+反例 R34–R36 钉这三扇窗；R37 钉 `uncertain` 的对账与反馈，并钉「不许谎报已接续」。
+
 ---
 
 ## 三、契约缺口 G1–G9
@@ -104,10 +128,11 @@ meta = {
   allow_other: boolean,          // 作答许可，**建题时写入 meta 持久化**（见 4.4）
   reject_option: boolean,        // 界面自动补「以上都不是」；不在 options 里
   ask_group?: {
-    id: string,                  // 同一批题共用
+    id: string,                  // 同一批题共用；**组员与顺序据 id 保存/查验**
+    members: string[],           // 本组全部 block_id，建题那一刻定死、按 index 顺序
     index: number,               // 固定顺序，0 起
-    total: number,               // 固定总数
-    asked_by: string | null,     // 原出题席位；归组键 = 同 topic + 这个
+    total: number,               // 固定总数（== members.length）
+    asked_by: string | null,     // 原出题席位
   },
   answer_log: {                  // 有序，末项是当前生效的那一版
     v: number,                   // 从 1 起，初答 v=1（`expect_version` 初答给 0）
@@ -119,11 +144,15 @@ meta = {
     client_op_id: string,        // 幂等键，**持久存在这里**
   }[],
   group_settle?: {               // 批次提交的结果，同值复制到组内每一块（见 4.5）
-    at: string,
+    v: number,                   // settle 自己的版本，从 1 起
+    at: string | null,           // 迁移来的 → null，不伪造
     by: string,
     answered: string[],          // block_id
     later: string[],             // 明确稍后
     unanswered: string[],        // 明确未答
+    payload_hash: string,        // 三列表 + 各项 client_op_id 的稳定摘要
+    client_op_id: string,        // 整批的幂等键，**持久存在这里**
+    delivery_event_id: string,   // 这一批那条独立唤醒的 event_id，可对账
   },
 }
 ```
@@ -150,9 +179,9 @@ POST /topics/{topic_id}/ask
 }
 ```
 
-**一次建一组，一个事务写完全部块**：顺序就是数组顺序，总数就是数组长度，两者在建题那一刻定死并写进每块的 `ask_group`。**不从「时间线上已有哪些块」倒推组员**，所以中途有人插一条消息、或者另一批题落地，都不会把总进度算错。
+**一次建一组，一个事务写完全部块**：顺序就是数组顺序，总数就是数组长度，两者在建题那一刻定死并写进每块的 `ask_group`。**组员按 id 存进 `ask_group.members`**，之后一切校验与总进度都据这份 id 清单，**不从「时间线上已有哪些块」倒推组员**，所以中途有人插一条消息、或者另一批题落地，都不会把总进度算错。
 
-归组键 = `同 topic + ask_group.asked_by`（原出题席位）。同一席位在同一 topic 里连出两批题是两个 group，不合并。
+归组键 = **`(topic_id, asked_by, group_id)` 三元组**。只用「同 topic + 同席位」会把同一席位连出的两批题并成一组；只用 `group_id` 则跨 topic/跨席位可能撞。三个一起才是唯一的一组。
 
 ### 4.3 多题的 caller 与「一次生成真实多题」
 
@@ -176,23 +205,31 @@ POST /topics/blocks/{id}/answer
 }
 ```
 
-处理顺序：
+处理顺序（**鉴权在任何查重/返回之前**；「幂等在版本拒绝前」说的是幂等与版本的关系，不是幂等与鉴权的关系）：
 
-0. **幂等查重在版本拒绝之前**：同 `(block_id, actor.handle, client_op_id)` 已存在 →
+1. `resolver.resolve(fallback_handle=body["author"], …)` 取 `actor`，`authorize_topic(actor, …)`。**授权比较一律用 `actor.handle`**；`body.author` 不参与授权（`auth.py:80` 起 `ActorResolver`，其 docstring 明写 *Legacy authorship fallback does not authenticate*）。这一步不过就 401/403，**在它之前不查重、不读 `answer_log`、不返回任何题面状态**。
+2. **幂等查重在版本拒绝之前**：同 `(block_id, actor.handle, client_op_id)` 已存在 →
    - payload 与已存那一版**相同** → 200 返回那一版，不追加、不唤醒
    - payload **不同** → 409「同一个 client_op_id 换了内容」
-1. `resolver.resolve(fallback_handle=body["author"], …)` 取 `actor`，`authorize_topic(actor, …)`。**授权比较一律用 `actor.handle`**；`body.author` 不参与授权（`auth.py:115` 明写 *Legacy authorship fallback does not authenticate*）。
-2. `kind='option'` 时 `option` 必须在 `options[].text` 里，否则 422「不在选项里」。`kind='note'` / `'reject'` 时 `option` 必须为空 —— **不伪造合法项**。
-3. `kind='note'` 需要 `allow_other`（读建题 meta，不是读请求）；没有就 422「这道题不接受自由输入」。
-4. `note` 与 `kind='option'` 可同给（选项 + 补充）。
-5. 已有 `answer_log` 走**更正**：
+3. `kind='option'` 时 `option` 必须在 `options[].text` 里，否则 422「不在选项里」。`kind='note'` / `'reject'` 时 `option` 必须为空 —— **不伪造合法项**。
+4. `kind='note'` 需要 `allow_other`（读建题 meta，不是读请求）；没有就 422「这道题不接受自由输入」。
+5. `note` 与 `kind='option'` 可同给（选项 + 补充）。
+6. 已有 `answer_log` 走**更正**：
    - `actor.handle != answer_log[-1].by` → 422「只有原答者能更正」
    - `expect_version != answer_log[-1].v` → 409
-   - 旧版本留着，追加 `{v: len+1, …}`
-6. **CAS**：`UPDATE … SET meta = … WHERE id = :id AND (meta->'answer_log' 的长度 == expect_version + 1)`，或对行 `SELECT … FOR UPDATE`；两并发只出一版，落败的那个拿 409。
-7. **同事务**里做三件事：写 `answer_log`、落时间线那条 `<@{seat}> …` 消息块、`record_agent(event_id, content=唤醒文案)` 记投递意图。
-8. `db.commit()`。
-9. 之后才 `publish`（`block_updated` + 新消息块）。广播是尽力而为，状态已经落库，前端可以重取。
+   - 旧版本留着，追加 `{v: expect_version + 1, …}`
+7. **CAS / 行锁**：`SELECT … FOR UPDATE` 锁住这一块，再校验
+
+   ```
+   len(answer_log) == expect_version
+   ```
+
+   —— **旧日志长度等于 `expect_version`**。初答 `expect_version=0`、`answer_log` 空（长度 0）→ 0 == 0 成立 → 写第 1 版（`v=1`）。第一次更正 `expect_version=1`、长度 1 → 成立 → 写 `v=2`。
+
+   **不是** `len == expect_version + 1` —— 那个式子在初答时要求 `0 == 1`，会把第一次作答整个拒掉。落败的那个拿 409。锁与校验必须在**同一个事务**里，否则「锁了再读到旧值」不成立。
+8. **同事务**里做三件事：写 `answer_log`、落时间线那条 `<@{seat}> …` 消息块（**只落这一份回答文本**，见 4.6.1）、`record_agent(event_id, content=唤醒文案)` 记投递意图。
+9. `db.commit()`。
+10. 之后才 `publish`（`block_updated` + 新消息块）。广播是尽力而为，状态已经落库，前端可以重取。
 
 `event_id` 用 `event_id_for(type, f"{block_id}:{v}")` —— **只取决于 block 和版本**，所以同版本重算是同一个 id、`record_agent` 的 `on_conflict_do_nothing` 保证不重复记账；不同版本是不同的 event，更正的唤醒不会被第一版的去重键吞掉。
 
@@ -214,21 +251,51 @@ POST /topics/asks/{group_id}/settle
 }
 ```
 
-- 三个列表**合起来必须恰好覆盖组内全部 `block_id`**，多一个少一个都 422 —— 这就是「一次表达所交题与明确未答/稍后题」。
+- 三个列表**合起来必须恰好覆盖组内全部 `block_id`**，多一个少一个都 422 —— 这就是「一次表达所交题与明确未答/稍后题」。校验按 4.2 存下的 `ask_group.members` 逐个比：**三个集合各自无重复、彼此无交集、并集恰等于 `members`**（顺序不必一致）。
 - `answered` 里的每一项按 4.4 的规则逐个写 `answer_log`（各自幂等键）。
 - `group_settle` 写到组内**每一块**上（同值冗余），任何一块都能自己说清「本组 2/3 已交」，不用 join。
 - **唤醒文案照实写**：`3 题里交了 2 题，1 题标了稍后（第 3 题）。` 而不是「整组都答完了」。文案由 settle 的三个列表拼，不从 `answer_log` 数量倒推。
 - `later` / `unanswered` **不写 `answer_log`**（没答就是没答），只进 `group_settle`。
-- 唤醒仍是**一条**投递（一个 `event_id`、一个 seat），不给每题各起一轮。
+- 唤醒是**一条**独立投递：`event_id = event_id_for(type, f"group_settle:{group_id}:{v}")`，与 per-block 的 `event_id_for(type, f"{block_id}:{v}")` **分开**。**内部给每题写答案时不各发一条 agent delivery** —— 那是 n+1 次唤醒。一个 settle 只醒一次。
 - p6「还有未答 → 回去补 / 照样交」：settle 允许 `unanswered` 非空（= 照样交，但明确标出没答的），也允许整组还没 settle 时用户点「回去补」。UI 两种都出。
+
+**settle 自己也要能重试查重**（不只 per-block 那一层）：
+
+- `group_settle` 持久存 `v` / `client_op_id` / `payload_hash`（4.1）。同 `(group_id, client_op_id)` 且 `payload_hash` 相同 → 200 返回原结果，不追加、不唤醒；`payload_hash` 不同 → 409。
+- **锁全组按稳定顺序**：按 `ask_group.members` 的 id **升序**逐个 `SELECT … FOR UPDATE`。乱序加锁会让两个并发 settle 各锁一半后互相等，或者更糟地各写一半。
+- **一个事务写完整组**：两题分别更正、重复 settle、某一项校验失败 —— **都不许半组落库**。任一项不通过，整个事务回滚，组内一块都不变。所以「第 1 题写进去了、第 2 题被拒」这种半成品状态在库里不可能出现（R30）。
+- **已答的题不被 re-settle 覆盖**：`answer_log` 非空的题若出现在 `later`/`unanswered` 里，以 `answer_log` 为准 —— 答案留着、**不从进度里撤掉**，只在 `group_settle` 的文案里照实说「这题先前已答」（R31）。`later` 是「这题我等会儿再说」，不是「把我已经给的答案擦掉」。
+- `group_settle.v` 与 per-block 的 `answer_log[].v` **是两套版本号**，互不替代。
 
 ### 4.6 更正的唤醒语义
 
-**复用现有寻址，不新造机制、不重放原回答。** 唤醒走 4.4 第 7 步的 `record_agent` → `dispatch_pending` → `runner.submit(…, addressed=addressed_to_agent(seat))`：
+**复用现有寻址，不新造机制、不重放原回答。** 唤醒走 4.4 第 8 步的 `record_agent` → `dispatch_pending` → `runner.submit(…, addressed=addressed_to_agent(seat))`：
 
 - 出题席位**空闲** → 正常唤醒接下一轮（不是「不开新轮」就永不处理）。
-- 出题席位**还在跑** → 平台既有的安全注入/排队（`chat.notify_running_turn` / `merge_into_running_turn`）。
+- 出题席位**还在跑** → `submit` 的同一话题 per-topic 锁把新轮次**排在后面**（`runtime.py:816-817`），per-recipient 锁再保证同一席位的消息有序（`runtime.py:928-930`）；另有平台既有的安全注入/排队（`chat.notify_running_turn` / `merge_into_running_turn`）。
 - 同话题、同席位、不新开任务卡。
+- **不重放原回答**：更正是新的一版（新的 `v`、新的 `event_id`），不是把第一版再喂一遍。
+
+#### 4.6.1 退役 direct `receive_message`，回答文本只留一份
+
+今天 `topics.py:1290` 走的是 `broker.receive_message(content=f"<@{seat}> {option}")`，它**一通两用**：既落时间线那条可见的「他选了 X」，又靠 @ 解析把席位叫醒（`runtime.py:204` 起：*Persist one human message now, then deliver it to whoever it named*）。若同时改走 `record_agent`，就会**双唤醒**（`_consume_message` 一路 + `dispatch_pending` 一路），而且落两份文本。
+
+所以切换是**换掉而不是叠加**：
+
+- **回答文本只落一次**，就是 4.4 第 8 步那条 `<@{seat}> …` 时间线块。它必须带得上投递 identity：块的 `meta` 里存 `delivery_event_id`（= 4.4 的 `event_id_for(type, f"{block_id}:{v}")`），这样「这条可见文本」与「那条投递意图」能互相对上（R32）。
+- **唤醒只走 `record_agent`**，不再对同一次作答调 `broker.receive_message`。
+- 因为 `_run` **不落时间线**（`runtime.py:2140-2141`：*Human message already persisted by `receive_message`*），`record_agent` 那条只喂 prompt、`block_ids` 为空（`chat.py:4620`）——这正是「一份文本 + 一条可关联投递」的分工：文本给人看，投递给席位，两者同一个 `event_id`。
+- 保留的 `broker.receive_message` 调用只剩真正的人类发消息入口（`chat.py:235`）。**作答链路上不再有第二条**（R33）。
+
+#### 4.6.2 `uncertain` 的对账与反馈（今天完全没有）
+
+按 2.4.2，`pending`/`claimed` 能补送，`sending` 失回执只到 `uncertain` 且**不自动重放**。所以契约只承诺：**意图不静默丢失**（生产者事务内落库），**不承诺所有崩溃都恰好一次**。要补三样，缺一不可：
+
+1. **可查**：`uncertain` 行有查询入口（topic 维度的投递列表，带 `state`/`last_error`/`attempts`/`sent_at`），人和 agent 都能看见「有一条唤醒卡在 uncertain」。
+2. **可对账**：对账以**真实回执**为准 —— `receive_attempt` 认迟到回执（`agent.py:330`），所以对账动作是「问收方：你到底读到没有」，读到了就用真实回执结算成 `received`。**不读到就绝不重放**（模块原话：*never permission to inject the instruction a second time*）。
+3. **反馈路径**：`uncertain` 超过 `LEASE_SECONDS` 仍未解决 → 向出题席位/房间发一条人看得见的提示「这条唤醒没确认送达，需要你确认一下对方收到没有」，而不是悄悄标成成功。**未确认不许谎报已接续**（R37）。
+
+对账是**人/agent 判定**，不是定时盲重放；`uncertain` 的语义就是「不知道」，把它说成「已送达」或「已丢失」都是编。
 
 ### 4.7 原子切换（P1 不做「只后端先上」）
 
@@ -297,7 +364,9 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 | 看板 `presentation.py:507, 622` | `awaiting_answer` 布尔 | — |
 | 投递意图 `delivery/agent.py:44` | — | `Delivery` 行（`state=pending`） |
 | 投递执行 `delivery/agent.py:105` | `Delivery` 行 | 状态机 |
-| 唤醒寻址 `runtime.py:204` | 消息正文里的 `@` | — |
+| 投递回执 `chat.py:1320` → `receive_attempt` | `_pending_receipts` 的 prompt 文本 | `Delivery.state='received'` + `mark_consumed` |
+| `uncertain` 对账（新） | `Delivery` 行 `state='uncertain'` | 只经真实回执 → `received`；不自动改状态 |
+| 唤醒寻址 `runtime.py:204` | 消息正文里的 `@` | —（**作答链退役**，见 4.6.1） |
 | 前端渲染 `blockDisplay.ts:66, 72` | `meta.options` / `answer_log` | — |
 | 前端动作 `useChatPanel.ts:141` | — | 调 API |
 | 前端待办 `InboxView.vue` / `NeedsYou.vue` | `reason='asked'` + `blockId` | — |
@@ -329,7 +398,7 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 | R15 | 已答的题再点按钮 | 前端不出按钮；直接打 API 走更正路径 |
 | R16 | A 更正两次 | `answer_log` 三版都在、末项生效；回执「更正为「X」（原选「Y」）」 |
 | R17 | **提交成功但 HTTP 丢回包**（客户端没收到响应） | 客户端同 `client_op_id` 重试 → 200 返回已存那一版；`answer_log` 与 `Delivery` 都不新增 |
-| R18 | **postcommit 通知故障**（`answer_log` 已提交、唤醒那步抛异常） | `Delivery` 行已在同事务里落成 `pending`；`dispatch_pending` 之后补送，**恰好一次**；不允许永久不接续 |
+| R18 | **postcommit 通知故障**（`answer_log` 已提交、唤醒那步抛异常） | `Delivery` 行已在同事务里落成 `pending`，意图不丢；之后由 `dispatch_pending` 补送。**不承诺恰好一次**：`sending` 期间失回执只到 `uncertain` 且不自动重放（R35），对账见 4.6.2 |
 | R19 | 出题席位在跑时更正 | 注入/排队接新指令，**不重放原回答** |
 | R20 | 出题席位空闲时更正 | 正常唤醒接下一轮 |
 | R21 | settle 的三个列表没覆盖全组 / 多出一个 | 422 |
@@ -341,6 +410,16 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 | R27 | 提交成功后刷新 | 回执在，草稿没了 |
 | R28 | `reason='asked'` 的待办行 | 能点到那道题本身 |
 | R29 | 一批题中途插进别的消息 / 另一批题 | 总进度不变（顺序与总数在建题那一刻定死） |
+| R30 | settle 里第 1 题合法、第 2 题校验失败 | **整事务回滚**，组内一块都不变（不许半组落库） |
+| R31 | 某题已答，settle 又把它放进 `later` | 答案留着、**不从进度撤掉**；文案照实说「这题先前已答」 |
+| R32 | 回答文本与投递能不能对上 | 那条时间线块的 `meta.delivery_event_id` == `event_id_for(type, f"{block_id}:{v}")` |
+| R33 | 作答一次的唤醒条数 / 文本份数 | **一条** agent 投递、**一份**回答文本；`broker.receive_message` 在这条链上不出现 |
+| R34 | 窗口 A：`pending` 未认领时进程死了 | 行仍 `pending`/`sent_at` NULL，`dispatch_pending` 补送；同 `dedup_key` 重投不重复记账 |
+| R35 | 窗口 B：`begin_send` 之后、回执之前进程死了 | 行变 `uncertain`，**不自动再注入**；`last_error` 是「Receiver result was not confirmed」 |
+| R36 | 窗口 C：迟到的真实回执 | `receive_attempt` 认 `uncertain` → `received`，并补 `TimedDelivery.delivered_at` |
+| R37 | 有 `uncertain` 行时 | 查询入口能看到它；对账**只认真实回执**；超时未解决向人反馈；**未确认不许说已接续** |
+| R38 | settle 同 `client_op_id` 同 `payload_hash` 重发 | 200 返回原结果，`group_settle` 与 `Delivery` 都不新增 |
+| R39 | 两个 settle 并发（同 `group_id` 不同 `client_op_id`） | 按 `members` id 升序加锁，只出一版；落败那个 409 |
 
 ---
 
@@ -348,7 +427,7 @@ alembic 一次数据迁移（`backend/alembic/versions/`，共 235 个，风格�
 
 | 段 | 做什么 | 覆盖目标 | 真实链路证据 | 未验 |
 |---|---|---|---|---|
-| **P1 原子 schema 切换 + 后端契约** | alembic 迁移、`answer_log`+`kind`、`note`/reject、`allow_other` 持久化、更正三闸门、`client_op_id` 持久化、CAS、`record_agent` 同事务记投递意图；**同批改完 §4.7 全部 reader/writer** | 5、6 | 后端集成测试对真库跑 R1–R20、R24 | 多题/草稿未接 |
+| **P1 原子 schema 切换 + 后端契约** | alembic 迁移、`answer_log`+`kind`、`note`/reject、`allow_other` 持久化、更正三闸门、`client_op_id` 持久化、CAS（`len(answer_log) == expect_version`）、`record_agent` 同事务记投递意图、**退役作答链上的 direct `receive_message`**（4.6.1）、`uncertain` 可查/对账/反馈（4.6.2）；**同批改完 §4.7 全部 reader/writer** | 5、6 | 后端集成测试对真库跑 R1–R20、R24、R32–R37（三种投递故障窗 + 真 runner 链），**发布前验** | 多题/草稿未接 |
 | **P2 多题生成与批次提交** | `cheese_ask` 改成一次一组、建题端原子建组、`settle`、唤醒文案、总进度、p6/p7 | 1、2、5（部分） | 真 API 链（建一组 → 逐题/批量作答 → settle → 回执） | 刷新恢复未做 |
 | **P3 草稿与找回** | 含 userId 的本地草稿、未提交提示、pending 重试、`WaitingItem.blockId` 定位、p9 | 3、4、7 | 真浏览器 reload 后草稿在、不标已答、换账号隔离 | 跨设备不保（如实说） |
 | **P4 归属与接续 + 已批交互补齐** | 更正后归原执行者、忙时注入/排队、空闲正常唤醒、p18 更正提示、`AskFlow` 按职责拆 | 8 | 真轮次两条各留证据（空闲起一轮 / 在跑注入） | — |
