@@ -1,16 +1,14 @@
 """Topic routes."""
 
-import asyncio
 import base64
 import binascii
 import shutil
 import uuid
 from collections.abc import Mapping
-from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +17,6 @@ from app.api.deps import (
     get_broker,
     get_chat_service,
     get_work_runner,
-    project_device_online,
 )
 from app.api.place import project_reader
 from app.api.response import ok, page
@@ -32,25 +29,11 @@ from app.core.errors import (
 )
 from app.domain.agent.announce import announce, notify_question
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.liveness import task_liveness
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    COMPUTE_DEVICE,
-    MACHINE_VISIBILITY_NOTICE,
-    VISIBILITY_HOST,
-    compute_default_name,
-    compute_listings,
-    compute_selectable,
-    visibility_listings,
-)
 from app.domain.agent.platform_notices import (
-    EVENT_BLOCK_UPGRADED,
     EVENT_MENTION_FUSED,
-    SEVERITY_INFO,
     SEVERITY_WARN,
-    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
@@ -72,16 +55,11 @@ from app.domain.block.models import (
 )
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.addressing import Event as Addressee
-from app.domain.device.wiring import sql_device_service
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
-from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
-from app.domain.policy import gate
-from app.domain.policy.proposals import propose
 from app.domain.project import room_files
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
@@ -115,7 +93,6 @@ from app.domain.topic.schemas import (
     SplitIn,
     TopicCreate,
     TopicOut,
-    UpgradeBlockIn,
 )
 from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -1725,334 +1702,6 @@ async def edit_topic_doc(
     )
 
 
-@router.get("/{topic_id}/compute-profile")
-async def get_topic_compute_profile(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The room's work computer: the one choice every session in it works on.
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：`sessions` 报的每一行都是那
-    一台——一个房间里的会话不再各有各的机器。没开工的会话也答那一项，它开工时拿的
-    就是那一台。"""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    project = await ProjectRepository(db).get(topic.project_id)
-    from app.domain.agent.compute_configs import project_configs, room_choice
-
-    configs = project_configs(project.settings if project else None)
-    choice = room_choice(topic, project.settings if project else None)
-    current = choice.profile
-    device_online = await project_device_online(db, topic.project_id)
-    device_service = sql_device_service(db)
-    devices = await device_service.list_devices_for_project(topic.project_id)
-    binding = await device_service.topic_binding(topic_id)
-    if current == COMPUTE_DEVICE and binding is not None and choice.device_id is None:
-        # 「自动选一台」的房间，第一轮钉下的是哪一台。
-        choice.device_id = binding.device_id
-        if topic.compute_config is None:
-            named = next((d for d in devices if d.device_id == binding.device_id), None)
-            choice.name = named.name if named else "自有设备"
-    # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
-    # machine. 一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里的会话看的
-    # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
-    # so the room shows a visible safety badge instead of the platform granting
-    # whole-machine access silently (原则八).
-    from app.domain.machine.session_work import (
-        room_machine_visibility,
-        session_machines,
-    )
-
-    visibility = await room_machine_visibility(
-        db, topic, project.settings if project else None
-    )
-    sessions = await session_machines(db, topic)
-    effective_visibility = visibility.value if visibility is not None else None
-    return ok(
-        {
-            "current": current,
-            "choice": choice.model_dump(),
-            "project_default": configs.default.model_dump(),
-            # A machine id only has selection meaning under the self-hosted pool.
-            # Cloud also records its connector in device_topic, but that endpoint is
-            # an implementation detail of the freshly provisioned topic machine, not
-            # a machine the person chose from a list.
-            "device_id": (
-                binding.device_id
-                if current == COMPUTE_DEVICE and binding is not None
-                else choice.device_id
-            ),
-            "devices": [
-                {
-                    "device_id": device.device_id,
-                    "name": device.name,
-                    "online": device_hub.is_online(device.device_id),
-                }
-                for device in devices
-            ],
-            # Each agent session and its machine — the room's, for every one of
-            # them; `choice` is None for one that has not taken hands yet and
-            # will be given `choice` above.
-            "sessions": [
-                {k: v for k, v in row.items() if k != "visibility"} for row in sessions
-            ],
-            "profiles": [
-                asdict(v)
-                for v in compute_listings(settings, device_online=device_online)
-            ],
-            "visibility": {
-                "options": [asdict(v) for v in visibility_listings()],
-                # "host" | "isolated" | null (no agent here on an enrolled machine).
-                "effective": effective_visibility,
-                # The one boolean the room's badge keys on: this turn can see and
-                # operate the whole machine.
-                "machine_access": effective_visibility == VISIBILITY_HOST,
-                # The honest #282 line, for the badge text / tooltip.
-                "notice": MACHINE_VISIBILITY_NOTICE,
-            },
-        }
-    )
-
-
-class WorkLeaseRequest(BaseModel):
-    env: dict[str, str] = Field(default_factory=dict)
-    timeout: float = Field(default=660, gt=0, le=660)
-
-
-@router.post("/{topic_id}/sessions/{session_id}/work-lease")
-async def acquire_session_work_lease(
-    topic_id: uuid.UUID,
-    session_id: uuid.UUID,
-    body: WorkLeaseRequest,
-    request: Request,
-    db: DbSession,
-) -> dict:
-    from app.core.errors import AuthenticationRequiredError
-    from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.machine import session_work as work_lease
-
-    token = request.headers.get("x-cheese-token", "")
-    claims = scoped_token_claims(token)
-    if claims is None:
-        raise AuthenticationRequiredError("A session execution credential is required")
-    from app.core.errors import GatewayTimeoutError
-
-    try:
-        # body.timeout caps how long the caller waits for a machine being
-        # prepared (wait_s). It is not the time to answer: a session that will
-        # not wait asks with ~0, and bounding the whole call by that answered
-        # 504 even when its machine was ready.
-        async with asyncio.timeout(max(body.timeout, work_lease.PREPARING_WAIT_S)):
-            return ok(
-                await work_lease.ensure(
-                    db,
-                    topic_id=topic_id,
-                    session_id=session_id,
-                    claims=claims,
-                    token=token,
-                    env=body.env,
-                    wait_s=min(work_lease.PREPARING_WAIT_S, body.timeout),
-                    gone=request.is_disconnected,
-                )
-            )
-    except TimeoutError as exc:
-        raise GatewayTimeoutError("工作电脑仍在准备，对话和平台工具仍可用") from exc
-
-
-@router.put("/{topic_id}/compute-profile")
-async def set_topic_compute_profile(
-    topic_id: uuid.UUID,
-    body: dict,
-    request: Request,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The room's work computer — the choice for the whole room.
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：改这一项就是改整个房间——房间
-    里坐着的每一条会话都跟着搬到那台机器上（各自先把改动推上去，见
-    ``machine/session_work.request_choice``），不再有「只在以后来的队友身上生效」这
-    一说。一条会话拿着自己的凭据来改，改的也是这一间房：凭据能证明它属于这个房间
-    的这一代，而房间只有一条选择。
-    """
-    from pydantic import ValidationError as SchemaError
-
-    from app.domain.agent.compute_configs import (
-        ComputeChoice,
-        machine_policy_call,
-        room_choice,
-        standard_choice,
-        validate_choice,
-    )
-    from app.domain.machine.repositories import ProjectMachineRepository
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    await ProjectMachineRepository(db).lock_topic(topic_id)
-    # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
-    # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
-    from app.core.sandbox_auth import scoped_token_claims
-
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
-    scoped_session = claims.get("session") if actor.via == "cheese" else None
-    if scoped_session and (
-        claims.get("t") != str(topic_id)
-        or claims.get("r") != str(topic.resource_id or topic.id)
-    ):
-        raise ForbiddenError("Execution credential does not own this room generation")
-    name = (body.get("profile") or "").strip() or compute_default_name()
-    try:
-        choice = ComputeChoice.model_validate(
-            body.get("choice")
-            or {
-                **standard_choice(name).model_dump(),
-                "profile": name,
-                "device_id": body.get("device_id"),
-            }
-        )
-    except SchemaError as exc:
-        raise ValidationError("工作电脑配置无效：检查名称、设备和规格") from exc
-    name = choice.profile
-    body = {**body, "device_id": choice.device_id}
-    raw_device_id = body.get("device_id")
-    if raw_device_id is not None and not isinstance(raw_device_id, str):
-        raise ValidationError("device_id 必须是字符串")
-    device_id = (raw_device_id or "").strip() or None
-    if name != COMPUTE_DEVICE and device_id is not None:
-        raise ValidationError("只有自有设备可以指定 device_id")
-
-    device_online = await project_device_online(db, topic.project_id)
-    allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
-    # A named self-hosted machine may deliberately be offline: the topic is pinned
-    # now and waits for that exact box. The automatic option keeps the old rule and
-    # is selectable only when at least one project-scoped device is online.
-    if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
-        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
-    if body.get("choice"):
-        await validate_choice(db, topic.project_id, choice)
-
-    device_service = sql_device_service(db)
-    if device_id is not None:
-        scoped_devices = await device_service.list_devices_for_project(topic.project_id)
-        if device_id not in {device.device_id for device in scoped_devices}:
-            raise ValidationError("设备不属于当前项目")
-
-    # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
-    # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
-    # 人的提议——自托管那台机器的提议收件人就是**机主本人**（结论 40「要那台机器
-    # 的主人点头」），Cloud 花的是项目的钱，收件人是项目的主人。
-    #
-    # 放在这里而不是更早：前面几步在答「这个选择本身成不成立」（池接没接入、设备
-    # 属不属于这个项目），闸门答的是「这个成立的选择可不可以自己发生」。
-    project = await ProjectRepository(db).get(topic.project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    policy = gate.policy_of(project.settings)
-    # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
-    # 备、再取一次机主，而不限档时判决与那几条查询无关。
-    verdict: gate.Allowed | gate.Proposal | None = None
-    if not policy.lets_everything_through:
-        call = await machine_policy_call(
-            db, project=project, topic=topic, choice=choice
-        )
-        # 「超档怎么办」全仓只有 `policy/gate.py` 回答，路由自己答一遍就是第二份
-        # 答案：项目把这一档的处置写成 `deny` 时，这里要的是一次**看得见的**拒绝
-        # （`OverTier` 抛出去，不变量 I27），而不是一条等人点头的提议 —— 提议读起
-        # 来像「再等等」，拒绝说的是「这条路不通」。
-        verdict = gate.check(call, policy, actor.handle)
-    if isinstance(verdict, gate.Proposal):
-        # 这次调用没有发生：绑定不写，`topic.compute_config` 不动。房间里多的
-        # 是一条提议，下一步在 approver 手上。
-        await propose(db, verdict, place_id=topic_id)
-        await db.flush()
-        # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-        # `room_choice` 算出来，不是 `topic` 上那一列还没被写过的值。第一轮之前
-        # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
-        # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
-        # 法，先信谁？
-        current = room_choice(topic, project.settings)
-        return ok(
-            {
-                "current": current.profile,
-                "choice": current.model_dump(),
-                "device_id": current.device_id,
-                "proposal": {
-                    "approver": verdict.approver,
-                    "tier": verdict.call.tier,
-                    "content": verdict.content,
-                },
-            }
-        )
-
-    # 到这里这次调用**真的要发生**，Cloud 花的是项目的钱，所以问一句花钱的这位有
-    # 没有这个权。它在闸门之后而不是之前：`require_use_authority` 要的是一个登录
-    # 用户（`actor.via == "token"`），而房间里跑着的那一轮拿的每一张凭据都是
-    # `via == "cheese"`（`api/auth.py`）。放在闸门之前，`cheese_machine(profile=
-    # "cloud")` 一句 401 撞死在这里，连那条「等项目主人点头」的提议都长不出来——
-    # 而那条提议正是 Cloud 这一档该有的产物（结论 23）。变成提议的那一次没有花任
-    # 何人的钱，该点头的人就是项目主人本人。
-    if name == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(topic.project_id, actor)
-
-    # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
-    # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
-    # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
-    from app.domain.machine import session_work as work_lease
-
-    moved = await work_lease.request_choice(
-        db,
-        topic_id=topic_id,
-        actor=actor,
-        choice=choice,
-        # 人的那一次可以在原来那台够不着时决定不推送——成员名册和设备页的批量切换
-        # 用的就是这个开关。会话凭据自己来改时它不成立（`_move_session`）。
-        abandon_unpushed=body.get("abandon_unpushed") is True,
-        # 设备页的批量切换跳过正在跑任务的房间，而不是把它手上的机器抽走。
-        if_idle=body.get("if_idle") is True,
-    )
-    # The room's pin is the choice itself, before the first turn and after it:
-    # 一个话题一个容器（2026-09-28，推翻结论 60），换机器是整个房间搬过去，钉子跟
-    # 着搬——在每条会话都搬成之后才动，一条推不上去整个房间连钉子一起留在原地。
-    # Release then bind keeps bind_topic_device write-once: the bind never
-    # overwrites, an explicit change removes the old pin first. Cloud or
-    # 「系统挑一台」 leaves no pin; resolve_pinned_device freezes it next turn.
-    binding = await device_service.topic_binding(topic_id)
-    if binding is not None and (
-        name != COMPUTE_DEVICE or binding.device_id != device_id
-    ):
-        await device_service.release_topic_device(
-            topic_id, reason="the room moved to another work computer"
-        )
-        binding = None
-    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
-        await device_service.bind_topic_device(
-            topic_id,
-            device_id,
-            visibility=await device_service.binding_visibility(device_id),
-        )
-    await db.flush()
-    return ok(
-        {
-            "current": name,
-            "choice": choice.model_dump(),
-            "device_id": device_id if name == COMPUTE_DEVICE else None,
-            "proposal": None,
-            "warnings": moved["warnings"],
-        }
-    )
-
-
 class ChatPublishIn(BaseModel):
     content: str = Field(min_length=1, max_length=100000)
     request_id: uuid.UUID
@@ -3336,145 +2985,3 @@ async def save_shown_to_library(
     )
     await db.commit()
     return ok({"name": name})
-
-
-# Per-project unread map lives under /api/projects (a "/unread" path under
-# /api/topics would be shadowed by the /{topic_id} route). Separate router.
-project_router = APIRouter(prefix="/projects", tags=["topics"])
-
-
-@project_router.get("/{project_id}/topic-unread")
-async def project_topic_unread(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    handle: str | None = None,
-) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
-    calling user, one query. Topics with zero unread are omitted.
-
-    Read-state is per-person, so the recipient comes from the verified
-    credential (``handle`` is only checked against it) — a caller without one
-    used to read anybody's badge map by naming them here.
-
-    The project door comes first, the way it does on every other route that
-    takes a ``project_id``: without it this map is a room directory. A
-    non-member has no read cursor, so every count equals that topic's message
-    total — the shape of the answer is "which rooms exist, and how busy each
-    one is", even though the topics themselves answer 403 to the same caller."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    recipient = await resolver.resolve_recipient(
-        requested=handle, project_id=project_id, allow_anonymous=False
-    )
-    counts = await TopicService(db).unread_counts(project_id, recipient)
-    return ok({str(topic_id): count for topic_id, count in counts.items()})
-
-
-@project_router.get("/{project_id}/private-unread")
-async def project_private_unread(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    handle: str | None = None,
-) -> dict:
-    """私聊未读数: {peer: unread_count} for the calling user, one query.
-
-    Keyed by the other party rather than by topic id — private chats are not in
-    the topic tree, so the roster page renders their rows from the member list
-    and has no topic id to look one up with. A person is their handle; an AI
-    teammate is `agent:<handle>`, which is also the word the DM's URL uses.
-    Peers with zero unread are omitted.
-
-    Same rule as ``topic-unread``: the recipient comes from the verified
-    credential, never from the query string. It matters more here — this map
-    names who a person is talking to privately, so honouring a caller-supplied
-    handle would leak the shape of everyone's DMs.
-
-    Same project door as ``topic-unread`` too, and for the same reason: the
-    recipient question ("whose inbox") is not the resource question ("may you
-    see this project"), and this route only used to ask the first."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    recipient = await resolver.resolve_recipient(
-        requested=handle, project_id=project_id, allow_anonymous=False
-    )
-    counts = await TopicService(db).private_unread_counts(project_id, recipient)
-    return ok(counts)
-
-
-# Block upgrade lives here (it produces a topic). Separate router prefix.
-block_router = APIRouter(prefix="/blocks", tags=["topics"])
-
-
-@block_router.post("/{block_id}/upgrade")
-async def upgrade_block(
-    block_id: uuid.UUID,
-    body: UpgradeBlockIn,
-    db: DbSession,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    resolver: ActorResolverDep,
-) -> dict:
-    """讨论升级：upgrade a block into a place of its own (eval A1).
-
-    Same mechanics as /split: the upgraded block is preset as the new place's
-    task-brief doc, and it starts untitled.
-
-    A message in a room becomes a CARD of work in that room; a message in a
-    private chat becomes a room, because private chats are not in the topic tree
-    and a card there would be one nobody else could open. The response says
-    which by carrying either a task or a topic.
-
-    **升级留下的是一条事件，不是一轮被平台点起来的对话**（结论 13）。以前这里 kickoff
-    一轮：作者 `system`、提示词是平台写的一段开工说明，房间被平台叫醒去给这条活起名
-    字、起分身。按结论 31，开一条活剩下的只有分支、卡和负责人，谁来做是负责人的事 ——
-    所以平台在这里只做投递：房间时间线上落一条事件，收件人恰好是这条活的负责人。
-
-    这是一条**在房间里造东西**的写：升级的 block 住在哪个房间，就要在那个房间站得
-    住。以前两样都没有 —— block id 就是全部的门票，一个匿名调用者能往别人的房间里
-    落一张卡，`created_by` 填谁它就是谁的。凭据由 resolve/authorize_topic 认
-    （`app.api.auth`：会话说 token、agent 的 scoped token、或沙箱 token），房间由
-    block 自己带 —— block 的 `topic_id` 就是那个房间，不是它自己去请求体里说。
-    """
-    block = await BlockRepository(db).get(block_id)
-    if block is None:
-        raise NotFoundError("Block not found")
-    parent = await TopicService(db).get_or_404(block.topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=parent.id, project_id=parent.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=parent.project_id, topic_id=parent.id
-    )
-    room, thread, created = await TopicService(db).upgrade_block_to_place(
-        block_id=block_id,
-        created_by=body.created_by,
-        reviewer_handle=body.reviewer_handle,
-    )
-    out = (
-        TaskOut.model_validate(thread).model_dump(mode="json")
-        if thread is not None
-        else TopicOut.model_validate(room).model_dump(mode="json")
-    )
-    if created:
-        # 负责人：卡是递给验收人的，没写验收人就是升级的那个人自己。事件和投递写在
-        # 同一个事务里，和这次升级一起提交 —— 回滚了就不会留下一条指向不存在的活的
-        # 通知。**幂等**：重复升级（created=False）不再落第二条事件。
-        owner = (body.reviewer_handle or body.created_by or "").strip()
-        await announce(
-            db,
-            place_id=room.id,
-            content=(
-                "一条消息已转为任务" if thread is not None else "一条消息已转为话题"
-            ),
-            meta=notice(
-                EVENT_BLOCK_UPGRADED,
-                severity=SEVERITY_INFO,
-                who=WHO_HUMAN,
-                detail=f"活 {thread.id}" if thread is not None else f"房间 {room.id}",
-                detail_label="升级成了什么",
-            ),
-            points_at=Addressee(reviewers=(owner,) if owner else ()),
-        )
-    await db.commit()
-    return ok(out)

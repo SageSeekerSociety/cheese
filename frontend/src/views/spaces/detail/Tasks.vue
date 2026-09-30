@@ -144,6 +144,8 @@ import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
@@ -172,6 +174,7 @@ const selectedTopic = ref<number | null>(null)
 const { t } = useI18n()
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpace, categories } = storeToRefs(spaceStore)
 
 const hotTopics = ref<Topic[]>([])
@@ -318,7 +321,7 @@ watch(
 )
 
 onMounted(async () => {
-  await spaceStore.fetchCategories() // 获取分类列表
+  await spaceData.fetchCategories() // 获取分类列表
   fetchHotTopics()
 })
 </script>

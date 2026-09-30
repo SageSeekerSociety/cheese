@@ -63,6 +63,17 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run lint:boundary
+  # Every page the router reaches and every panel under src/components/panels/
+  # must render with no backend, no route and no business store. Ratcheted:
+  # 20 are standalone-ready today (scene-baseline.json) and may not stop; a
+  # scene added from now on has to be from its first commit. 137 pre-existing
+  # debt entries may only shrink. Writer: `pnpm run lint:scenes:update`.
+  # Needs no install: it is python3 stdlib, and grades with the same module
+  # arch-metrics.py reports from.
+  lint:scenes:
+    desc: Check scenes render standalone (python ratchet, check only)
+    cmds:
+      - pnpm run lint:scenes
   typecheck:
     desc: Run vue-tsc type check
     deps: [install]
@@ -86,10 +97,11 @@ tasks:
     cmds:
       - pnpm exec eslint .
   check:
-    desc: Run all frontend checks (lint + boundaries + style + typecheck + test + build)
+    desc: Run all frontend checks (lint + boundaries + scenes + style + typecheck + test + build)
     cmds:
       - task: lint:check
       - task: lint:boundary
+      - task: lint:scenes
       - task: lint:style
       - task: typecheck
       - task: test

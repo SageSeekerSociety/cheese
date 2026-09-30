@@ -410,7 +410,7 @@ interface StoreState {
   fetchCalled: boolean
 }
 
-/** Simulates the new fetchDomainGroups that delegates to spaceStore */
+/** Simulates the new fetchDomainGroups that delegates to spaceData */
 async function fetchThroughStore(
   store: StoreState,
   apiResponse: ListResponse | null,
@@ -542,7 +542,7 @@ describe('store-based fetchDomainGroups (ManageDomainGroups → store integratio
 // ---------------------------------------------------------------------------
 
 /** Mirrors the updated ManageDomainGroups.vue fetchDomainGroups():
- *    await spaceStore.fetchDomainGroups(spaceId)
+ *    await spaceData.fetchDomainGroups(spaceId)
  *  where spaceId comes from route.params.spaceId.
  */
 async function fetchDomainGroupsWithExplicitSpaceId(

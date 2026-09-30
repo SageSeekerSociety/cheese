@@ -79,6 +79,8 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -88,6 +90,7 @@ const router = useRouter()
 const { confirm } = useDialog()
 
 const spaceStore = useSpaceStore()
+const spaceData = useSpaceData()
 const { currentSpaceId, templates } = storeToRefs(spaceStore)
 const { t } = useI18n()
 
@@ -103,7 +106,7 @@ const deleteTemplate = async (index: number) => {
   const result = await confirm(t('spaces.detail.manageTemplates.deleteConfirm')).wait()
   if (!result) return
 
-  await spaceStore.deleteTemplate(index)
+  await spaceData.deleteTemplate(index)
 }
 </script>
 

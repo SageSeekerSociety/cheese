@@ -18,7 +18,6 @@ from contextlib import contextmanager
 
 import pytest
 from sqlalchemy import event, text
-from sqlalchemy.engine import Engine
 
 from tests.integration.conftest import a_team, join_project_team, post_project
 
@@ -28,23 +27,25 @@ TOPIC_ONE = "00000000-0000-0000-0000-000000000001"
 
 
 @contextmanager
-def counting_sql() -> Iterator[list[str]]:
-    """Every SQL statement issued while the block runs, in order.
+def counting_sql(client) -> Iterator[list[str]]:
+    """Every SQL statement the app's requests issued while the block runs, in order.
 
-    Listens on the ``Engine`` class rather than one instance: the app's session
-    and the fixture's own both end up on sync engines underneath, and pinning
-    the count means catching whatever the request actually issued.
+    Listens on the engine requests are served from, not on every engine: the
+    app starts its own work as it comes up (taking over a previous process's
+    turns, sweeping storage) on an engine of its own, and on a slow machine
+    those queries land inside the block and get charged to the request.
     """
     seen: list[str] = []
 
     def _record(conn, cursor, statement, parameters, context, executemany):
         seen.append(" ".join(statement.split()))
 
-    event.listen(Engine, "after_cursor_execute", _record)
+    engine = client.test_app_engine.sync_engine
+    event.listen(engine, "after_cursor_execute", _record)
     try:
         yield seen
     finally:
-        event.remove(Engine, "after_cursor_execute", _record)
+        event.remove(engine, "after_cursor_execute", _record)
 
 
 def _seeded_rooms(client, project_id: str, headers: dict) -> list[dict]:
@@ -87,13 +88,13 @@ def test_roster_round_trips_do_not_grow_with_the_roster(client, bearer):
     project_id = _create_project(client)
     _add_members(client, bearer, project_id, [f"m{i:02d}" for i in range(3)])
 
-    with counting_sql() as small:
+    with counting_sql(client) as small:
         assert client.get(f"/projects/{project_id}/members").status_code == 200
     small_count = len(small)
 
     _add_members(client, bearer, project_id, [f"m{i:02d}" for i in range(3, 15)])
 
-    with counting_sql() as large:
+    with counting_sql(client) as large:
         r = client.get(f"/projects/{project_id}/members")
     assert r.status_code == 200
     # 15 members + the owner, so a per-member query would be plainly visible.
@@ -162,12 +163,12 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
 
     _make(3)
     url = f"/topics?project_id={project_id}&sort=last_activity_at&order=desc"
-    with counting_sql() as small:
+    with counting_sql(client) as small:
         assert client.get(url, headers=headers).status_code == 200
     small_count = len(small)
 
     _make(9)
-    with counting_sql() as large:
+    with counting_sql(client) as large:
         r = client.get(url, headers=headers)
     assert r.status_code == 200
     assert len(r.json()["data"]["data"]) >= 12

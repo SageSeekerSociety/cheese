@@ -16,6 +16,8 @@ import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useSpaceData } from '@/composables/useSpaceData'
+
 import { dayOfExpiry, expiryFromDay } from '../model'
 
 import AnnouncementCard from './AnnouncementCard.vue'
@@ -36,7 +38,7 @@ const { isManager } = storeToRefs(spaceStore)
 
 const spaceId = () => Number(route.params.spaceId)
 // 谁是管理员是拿登录的人跟空间的管理员名单对出来的。
-spaceStore.fetchSpace(spaceId())
+useSpaceData().fetchSpace(spaceId())
 
 const { current, expired, notifyCount, loaded, reload } = useSpaceAnnouncements(spaceId)
 
