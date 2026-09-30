@@ -16,15 +16,30 @@
 import type { RouteLocationRaw } from 'vue-router'
 import type { MenuCommand } from '@/commands'
 import type { OpenFileTab } from '@/composables/useTopicMemory'
-import type { Block, FeedbackCard, FeedbackStatus, Topic } from '@/cx_types'
+import type {
+  Block,
+  FeedbackCard,
+  FeedbackStatus,
+  FileContent,
+  FileSource,
+  GitCommit,
+  RoomTask,
+  Topic,
+  WorkspaceFile,
+} from '@/cx_types'
+import type { FileDiff } from '@/lib/diff'
+import type { DocSaveStatus } from '@/lib/docEditState'
 import type { VisibleRow } from '@/lib/topicTree'
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
-import type { ChatLine, Frame } from './demoScene'
+import type { ChangesScene, ChatLine, Frame } from './demoScene'
 
 import { answer } from './demoBackend'
+import { DEMO_PROJECT, DEMO_TOPIC, diffOf, filesOf, roomTask } from './demoPanels'
 import { frameAt } from './demoScene'
 import { SCENES } from './scenes'
 
+import { parseDiffLines, splitDiffByFile } from '@/lib/diff'
+import { DOCUMENT_TYPES } from '@/lib/fileKind'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const SCENE = SCENES.quickstart
@@ -436,3 +451,240 @@ export const RAIL_PAGES = [
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */
 export const RAIL_TERMS = { project: '项目', topic: '话题' }
+// ---- 工作面板那三格（#2143 拆出来的 View） ----------------------------------
+// 这三件是「props 进、事件出」的纯渲染组件（取数在 `composables/usePanel*` 里），
+// 所以下面造的全是数据 —— 挂起来不需要后端，也不需要登录。改动那一格的原料从剧本
+// 里那几份真东西出发（`demoPanels` 的 `diffOf` / `filesOf` / `roomTask`），只有剧本
+// 没演到的那几处（保存冲突、空、读不到）才补一小截。
+
+/** 改动那一格看的这一支活：一份新文件、一份改过的、一份删掉的。 */
+const CHANGES_SCENE: ChangesScene = {
+  files: [
+    {
+      path: 'README.md',
+      status: 'added',
+      diff: ['+# 课程资料', '+', '+这个项目放本课程的课件和作业。', '+', '+有不清楚的地方，在话题里问。'],
+    },
+    {
+      path: 'docs/week-1.md',
+      status: 'modified',
+      diff: [
+        ' 第一周的课件放在这里。',
+        '-习题答案：第 3、5、7 题',
+        '+习题答案：第 3、5、7、9 题',
+        '+',
+        '+最后一题的提示写在下面。',
+      ],
+    },
+    {
+      path: 'docs/old-plan.md',
+      status: 'removed',
+      diff: ['-# 旧的大纲', '-', '-这一版已经不用了。'],
+    },
+  ],
+}
+
+const CHANGES_FILE_DIFFS = splitDiffByFile(diffOf(CHANGES_SCENE))
+/** 打开的那一份（新文件，字都在正文里）。 */
+const CHANGES_OPEN = CHANGES_FILE_DIFFS[0]
+const CHANGES_BY_PATH = new Map(CHANGES_FILE_DIFFS.map((d) => [d.path, d]))
+const CHANGES_TREE: WorkspaceFile[] = filesOf(CHANGES_SCENE)
+
+/** 改动那一支活自己（面板顶上那条「来源」读的就是它）。 */
+const CHANGES_TASK: RoomTask = roomTask(
+  { id: 'demo-task-1', title: '整理第一周的课件', column: 'needs_you', status: '等你验收' },
+  0
+)
+
+/** 没打开文件时那一半画的是提交记录。 */
+const CHANGES_COMMITS: GitCommit[] = [
+  { hash: '1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c', author: '芝士', message: '整理第一周的课件' },
+  { hash: '4c3b2a1908f7e6d5c4b3a2918070605040302010', author: '芝士', message: '删掉旧的大纲' },
+]
+
+const CHANGES_BASE = {
+  topicId: DEMO_TOPIC,
+  readOnly: false,
+  overview: false,
+  taskOptions: [CHANGES_TASK],
+  taskLoadError: null,
+  tasksLoaded: true,
+  selectedTask: CHANGES_TASK.id,
+  currentTask: CHANGES_TASK,
+  sourceTitle: '整理第一周的课件',
+  sourceStatus: '等你验收',
+  sourceUnavailable: false,
+  requestedPath: null,
+  overviewDiffs: {},
+  overviewErrors: {},
+  expandedTasks: new Set<string>(),
+  showAll: false,
+  fileSource: 'committed' as FileSource,
+  fileToolReady: true,
+  loading: false,
+  refreshing: false,
+  errorMsg: null,
+  noRepo: false,
+  missing: null,
+  gitCommits: CHANGES_COMMITS,
+  fileDiffs: CHANGES_FILE_DIFFS,
+  diffByPath: CHANGES_BY_PATH,
+  treeFiles: CHANGES_TREE,
+  openPath: CHANGES_OPEN.path,
+  fileDraft: '# 课程资料\n\n这个项目放本课程的课件和作业。',
+  fileSaving: false,
+  fileDirty: false,
+  fileVersion: 'cd1f2a3',
+  fileBinary: false,
+  fileTooLarge: false,
+  fileBytes: 168,
+  fileReadOnly: false,
+  fileConflict: false,
+  openDiff: CHANGES_OPEN,
+  openDiffLines: parseDiffLines(CHANGES_OPEN.body),
+  effectiveView: 'diff' as const,
+  fileView: 'diff' as const,
+  openIsImage: false,
+  openIsDocument: false,
+  openDocumentType: null,
+  revisionPath: null,
+  openRawUrl: '/api/projects/demo/file/raw?path=README.md',
+  expandedDirs: new Set<string>(['docs']),
+  revealTick: 0,
+  draftCount: 0,
+  docBytes: null,
+  docLoading: false,
+  docError: '',
+  docRendererMissing: false,
+}
+
+/** 改动那一格的整串 props（六十来样 —— 这就是它的全部环境）。 */
+export function changesPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...CHANGES_BASE, ...over }
+}
+
+/** 空的那一格：这一支活什么都没改，提交记录也没有。 */
+export const CHANGES_EMPTY = changesPanelProps({
+  fileDiffs: [],
+  diffByPath: new Map<string, FileDiff>(),
+  treeFiles: [],
+  gitCommits: [],
+  openPath: null,
+  openDiff: null,
+  openDiffLines: [],
+  fileToolReady: false,
+})
+
+/** 预览那一格看的这一份：一篇 markdown，正文直接画出来。 */
+const PREVIEW_FILE: FileContent = {
+  path: 'docs/week-1.md',
+  content: '# 第一周\n\n课件和作业都在这里。\n\n- 课件：前三讲已经排好\n- 作业：第 3、5、7、9 题\n',
+  version: '9f8e7d6',
+  bytes: 132,
+  binary: false,
+  too_large: false,
+  source: 'live',
+}
+
+const PREVIEW_BASE = {
+  topicId: DEMO_TOPIC,
+  projectId: DEMO_PROJECT,
+  frameName: 'cheese-preview-demo',
+  loading: false,
+  refreshing: false,
+  previewFile: PREVIEW_FILE,
+  previewMime: 'text/markdown',
+  previewNamed: true,
+  previewUrl: null,
+  previewAppNote: '',
+  previewTunnelUp: true,
+  previewNamedPath: PREVIEW_FILE.path,
+  previewError: null,
+  previewReadError: null,
+  documentSuffix: 'md',
+  documentType: DOCUMENT_TYPES.md,
+  documentName: PREVIEW_FILE.path,
+  isImageArtifact: false,
+  downloadError: '',
+  docBytes: null,
+  docLoading: false,
+  docError: '',
+  docRendererMissing: false,
+}
+
+/** 预览那一格的整串 props。 */
+export function previewPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...PREVIEW_BASE, ...over }
+}
+
+/** 没有东西可看的那一格（房间里还没摆出过任何东西）。 */
+export const PREVIEW_EMPTY = previewPanelProps({
+  previewFile: null,
+  documentType: null,
+  documentName: '',
+  previewMime: '',
+  previewNamed: false,
+  previewNamedPath: '',
+})
+
+/** 文档那一格看的这一篇。 */
+export const DOC_TOPIC: Topic = {
+  id: DEMO_TOPIC,
+  project_id: DEMO_PROJECT,
+  parent_id: null,
+  title: '课程资料',
+  kind: 'topic',
+  status: 'open',
+  created_at: '2026-09-29T09:00:00Z',
+}
+
+/** 这一格接住的动作：真产品里它们落回 `usePanelDoc` 的 ref，预览站里什么都不做。 */
+const noop = () => {}
+const noopAsync = async () => {}
+
+const DOC_BASE = {
+  topic: DOC_TOPIC,
+  activityTick: 0,
+  agentName: AGENT_NAME,
+  topicList: [DOC_TOPIC],
+  mdAndUp: true,
+  editable: true,
+  editingBlocked: false,
+  loading: false,
+  saveStatus: 'saved' as DocSaveStatus,
+  paused: false,
+  pausedHint: '',
+  errorMsg: null,
+  lossy: false,
+  lossyConfirmOpen: false,
+  sourceMode: false,
+  sourceDraft: '',
+  pendingEdits: [],
+  hasPendingEdits: false,
+  externalDoc: null,
+  comments: [],
+  anchorNodes: [],
+  liveRefIndex: new Map<number, string>(),
+  commentMarkIndex: new Map<number, { id: string; quote: string }[]>(),
+  fetchDocNodes: async () => [],
+  imageSrc: (src: string) => src,
+  save: noopAsync,
+  confirmLossySave: noop,
+  handleBlur: noop,
+  handleDocKeydown: noop,
+  handleSourceInput: noop,
+  refreshComments: noopAsync,
+  toggleEditable: noop,
+  toggleSourceMode: noop,
+  enterSourceMode: noop,
+  applyPendingEdits: noop,
+  discardPendingEdits: noop,
+  viewExternalDoc: noop,
+  overwriteWithMine: noop,
+  setError: noop,
+}
+
+/** 文档那一格的整串 props（正文本身由容器在取到之后装进去，不由 props 进）。 */
+export function docPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...DOC_BASE, ...over }
+}
