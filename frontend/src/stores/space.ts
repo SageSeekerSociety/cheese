@@ -1,12 +1,4 @@
-import type {
-  DomainGroup,
-  Space,
-  SpaceAdminRoleType,
-  SpaceAnnouncement,
-  SpaceCategory,
-  SpaceTaskTemplate,
-  Topic,
-} from '@/types'
+import type { DomainGroup, Space, SpaceAdminRoleType, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
 
 import { computed, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
@@ -50,16 +42,6 @@ export const useSpaceStore = defineStore('space', () => {
       return JSON.parse(currentSpace.value.taskTemplates || '[]')
     } catch (error) {
       console.error('解析模板失败:', error)
-      return []
-    }
-  })
-
-  const announcements = computed<SpaceAnnouncement[]>(() => {
-    if (!currentSpace.value) return []
-    try {
-      return JSON.parse(currentSpace.value.announcements || '[]')
-    } catch (error) {
-      console.error('解析公告失败:', error)
       return []
     }
   })
@@ -118,34 +100,6 @@ export const useSpaceStore = defineStore('space', () => {
     const newTemplates = [...templates.value]
     newTemplates.splice(index, 1)
     await updateTemplates(newTemplates)
-  }
-
-  const updateAnnouncements = async (newAnnouncements: SpaceAnnouncement[]) => {
-    if (!currentSpace.value) return
-
-    try {
-      await updateSpace(currentSpace.value.id, { announcements: JSON.stringify(newAnnouncements) }, false)
-    } catch (error) {
-      console.error('更新公告失败:', error)
-      toast.error('更新公告失败')
-      throw error
-    }
-  }
-
-  const addAnnouncement = async (announcement: SpaceAnnouncement) => {
-    const updatedAnnouncements = [...announcements.value, announcement]
-    await updateAnnouncements(updatedAnnouncements)
-  }
-
-  const updateAnnouncement = async (index: number, announcement: SpaceAnnouncement) => {
-    const updatedAnnouncements = [...announcements.value]
-    updatedAnnouncements[index] = announcement
-    await updateAnnouncements(updatedAnnouncements)
-  }
-
-  const deleteAnnouncement = async (index: number) => {
-    const updatedAnnouncements = announcements.value.filter((_, i) => i !== index)
-    await updateAnnouncements(updatedAnnouncements)
   }
 
   const updateClassificationTopics = async (topicIds: number[]) => {
@@ -333,7 +287,6 @@ export const useSpaceStore = defineStore('space', () => {
     currentSpace,
     currentSpaceId,
     templates,
-    announcements,
     classificationTopics,
     categories,
     loadingCategories,
@@ -347,10 +300,6 @@ export const useSpaceStore = defineStore('space', () => {
     updateSpace,
     updateTemplates,
     deleteTemplate,
-    updateAnnouncements,
-    addAnnouncement,
-    updateAnnouncement,
-    deleteAnnouncement,
     updateClassificationTopics,
     addClassificationTopic,
     addClassificationTopics,

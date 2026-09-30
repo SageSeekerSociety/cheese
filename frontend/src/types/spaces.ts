@@ -6,7 +6,6 @@ export type Space = {
   name: string
   avatarId: number
   admins: SpaceAdmin[]
-  announcements: string
   taskTemplates: string
   classificationTopics: Topic[]
   defaultCategoryId?: number
@@ -106,20 +105,21 @@ export type SpaceCategory = {
   teaching?: SpaceTeaching
 }
 
+/** One 公告 — see `SpacesApi.listAnnouncements`. */
 export type SpaceAnnouncement = {
+  id: number
+  spaceId: number
   title: string
+  /** Rich text (the editor's HTML). */
   content: string
+  pinned: boolean
+  /** Epoch ms from which it is 已到期; null = it does not expire. */
+  expiresAt: number | null
   createdAt: number
+  /** Moves when the title, body or expiry change — not on pinning. Later than `createdAt` means 已编辑. */
   updatedAt: number
-  publisher: string
-  /** 置顶。**可选，因为它比这个类型新**：加这一格之前发出去的公告都没有它，
-   *  读的时候缺省当 `false`（见 `views/spaces/board/model.ts` 的
-   *  `compareAnnouncements`）。它只决定显示顺序 —— 谁能看、谁能发一件都不改。
-   *
-   *  后端不认这个字段，也不需要认：公告是随空间一起 PATCH 下去的 jsonb 元素，
-   *  服务端从头到尾只做「是不是一个数组」的检查（`_expect_list` /
-   *  `_normalize_json_list`），元素里的键原样透传。所以加它**没有迁移、没有后端改动**。 */
-  pinned?: boolean
+  /** Null only for an announcement carried over without a known publisher. */
+  author: { id: number; username: string; nickname: string; avatarId: number | null } | null
 }
 
 export type SpaceTaskTemplate = {
