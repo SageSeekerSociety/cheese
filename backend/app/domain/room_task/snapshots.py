@@ -69,12 +69,21 @@ async def save(
         .limit(1)
     )
     if existing is not None:
-        return existing
-    key = f"task-snapshots/{task.project_id}/{task.id}/{snapshot_sha}/{digest}.bundle"
-    # This bucket is private. Public upload URLs must never carry working files.
-    storage = storage or private_storage()
-    async with asyncio.timeout(120):
-        await storage.upload(file, key, "application/x-git-bundle")
+        if (await latest(session, task.id)).id == existing.id:
+            return existing
+        # The checkout went back to files it was already backed up with. Those
+        # bytes are stored; what has to change is which backup is latest, or a
+        # recovery restores the edit that was undone.
+        key = existing.storage_key
+    else:
+        key = (
+            f"task-snapshots/{task.project_id}/{task.id}/{snapshot_sha}/{digest}.bundle"
+        )
+        # This bucket is private. Public upload URLs must never carry working
+        # files.
+        storage = storage or private_storage()
+        async with asyncio.timeout(120):
+            await storage.upload(file, key, "application/x-git-bundle")
     row = TaskSnapshot(
         task_id=task.id,
         head_sha=head_sha,
