@@ -313,7 +313,7 @@ onMounted(() => {
       </div>
 
       <div class="td__act">
-        <v-btn class="td__ask" :active="asking" data-testid="task-ask" @click="openAssistant">
+        <v-btn class="td__ask" variant="outlined" :active="asking" data-testid="task-ask" @click="openAssistant">
           <span class="td__ask-mark" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
           {{ t('tasks.assistant.ask') }}
         </v-btn>
