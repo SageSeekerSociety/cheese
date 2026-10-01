@@ -128,9 +128,6 @@ class SessionChannel[H: Handle](Protocol):
     deferred_work: bool
     builds_model_env: bool
 
-    @property
-    def hands_here(self) -> bool: ...
-
     def available(self) -> bool: ...
 
     async def prepare_topic(self, **kwargs) -> tuple[bool, str]: ...
@@ -246,10 +243,6 @@ class DrivenRuntime[H: Handle]:
     @property
     def builds_model_env(self) -> bool:
         return self.channel.builds_model_env
-
-    @property
-    def hands_here(self) -> bool:
-        return self.channel.hands_here
 
     def available(self) -> bool:
         return self.channel.available()

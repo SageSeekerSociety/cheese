@@ -408,11 +408,11 @@ async def test_a_turn_waits_for_memory_on_the_session_host_then_runs(
 
 
 @pytest.mark.anyio
-async def test_a_room_not_on_the_session_host_starts_while_the_host_is_full(
+async def test_a_turn_that_starts_no_session_there_is_not_held_by_the_host(
     db_factory,
 ):
-    """The host's memory holds only turns whose session starts there: a room
-    running beside its own workspace starts as usual."""
+    """The host's memory holds only turns whose session starts there: a turn
+    with no backend on this deployment starts no session and goes on to say so."""
     chat = FakeChat(
         {
             "project_id": "proj-elsewhere",
