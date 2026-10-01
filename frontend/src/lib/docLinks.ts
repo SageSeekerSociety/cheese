@@ -2,6 +2,7 @@ import type { Editor } from '@tiptap/core'
 import type { Mark, Node as PMNode } from '@tiptap/pm/model'
 
 import { getMarkRange } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
 
 export interface DocLinkTarget {
   editor: Editor
@@ -21,9 +22,14 @@ export function captureDocLink(editor: Editor, position = editor.state.selection
   })
   return mark ? { editor, doc: editor.state.doc, ...range, mark, href: String(mark.attrs.href) } : null
 }
-export function captureNewDocLink(editor: Editor): DocLinkTarget | null {
-  const { from, to, empty, $from, $to } = editor.state.selection
-  if (empty || !$from.sameParent($to) || !$from.parent.isTextblock) return null
+export function captureNewDocLink(editor: Editor, selection = editor.state.selection): DocLinkTarget | null {
+  const { from, to, empty, $from, $to } = selection
+  if (!(selection instanceof TextSelection) || empty || !$from.sameParent($to) || !$from.parent.isTextblock) return null
+  let textOnly = true
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (node.isInline && !node.isText) textOnly = false
+  })
+  if (!textOnly) return null
   return { editor, doc: editor.state.doc, from, to, mark: null, href: '' }
 }
 export function safeDocHref(input: string): string | null {

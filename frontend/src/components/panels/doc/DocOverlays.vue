@@ -455,8 +455,9 @@ function onEdited() {
 }
 
 function newLink() {
-  const editor = commentCta.value?.editor
-  const target = editor && captureNewDocLink(editor)
+  const cta = commentCta.value
+  if (!cta || cta.editor.state.doc !== cta.doc) return
+  const target = captureNewDocLink(cta.editor, cta.selection)
   if (target) emit('open-link', target)
 }
 function askSelection() {

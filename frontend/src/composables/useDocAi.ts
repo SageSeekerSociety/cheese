@@ -37,6 +37,7 @@ export function useDocAi(context: Context) {
   const selection = shallowRef<DocAiSelection | null>(null)
   const selectionStatus = ref('')
   const unknown = shallowRef<Operation | null>(null)
+  let selectionRequest = 0
   let epoch = 0
   let disposed = false
   let restoring = false
@@ -96,6 +97,8 @@ export function useDocAi(context: Context) {
     source.value = null
     selectionStatus.value = ''
     const generation = epoch
+    const request = ++selectionRequest
+    const current = () => active(generation) && request === selectionRequest
     const version = context.version()
     const raw = context.raw()
     if (!room || !actor) {
@@ -104,17 +107,17 @@ export function useDocAi(context: Context) {
     }
     try {
       const canonical = await getDocAiSource(room, controller.signal)
-      if (!active(generation) || version !== context.version() || raw !== context.raw()) return
+      if (!current() || version !== context.version() || raw !== context.raw()) return
       source.value = canonical
       if (snapshot && !context.blocked()) {
         const span = await validateDocSelection(snapshot, canonical, raw, version, context.prefix())
-        if (!active(generation) || version !== context.version() || context.blocked()) return
+        if (!current() || version !== context.version() || raw !== context.raw() || context.blocked()) return
         selection.value = span
       }
       if (snapshot && !selection.value) selectionStatus.value = t('work.room.docAi.unverified')
       await refresh()
     } catch (cause) {
-      if (active(generation)) error.value = message(cause)
+      if (current()) error.value = message(cause)
     }
   }
   async function execute(operation: Operation) {

@@ -25,7 +25,7 @@ export interface DocThreadActions {
   reply: (id: string, content: string) => Promise<void>
   resolve: (id: string) => Promise<void>
   reopen: (id: string) => Promise<void>
-  recover: (id: string) => Promise<void>
+  recover: (id: string) => Promise<{ reply: string } | undefined>
 }
 export interface DocThreadState {
   threads: Record<string, DocThread>

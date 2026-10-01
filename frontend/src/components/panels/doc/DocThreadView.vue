@@ -18,17 +18,20 @@ const text = ref('')
 const localError = ref('')
 let generation = 0
 let disposed = false
+let restoring = false
 const key = () => `cheese.doc-thread.draft.v1:${props.actor}:${props.topic}:${props.id}`
 watch(
   () => [props.id, props.topic, props.actor],
   () => {
     generation++
     localError.value = ''
+    restoring = true
     try {
       text.value = localStorage.getItem(key()) ?? ''
     } catch {
       text.value = ''
     }
+    restoring = false
     void props.actions.load(props.id)
   },
   { immediate: true, flush: 'sync' }
@@ -36,6 +39,7 @@ watch(
 watch(
   text,
   (value) => {
+    if (restoring) return
     try {
       localStorage.setItem(key(), value)
     } catch {
@@ -49,10 +53,15 @@ async function act(action: 'reply' | 'resolve' | 'reopen' | 'recover') {
   const content = text.value
   localError.value = ''
   try {
-    if (action === 'reply') await props.actions.reply(props.id, content)
-    else await props.actions[action](props.id)
+    let submitted: string | undefined
+    if (action === 'reply') {
+      await props.actions.reply(props.id, content)
+      submitted = content
+    } else if (action === 'recover') {
+      submitted = (await props.actions.recover(props.id))?.reply
+    } else await props.actions[action](props.id)
     if (disposed || captured !== generation) return
-    if (action === 'reply' && text.value === content) text.value = ''
+    if (submitted !== undefined && text.value === submitted) text.value = ''
   } catch (cause) {
     if (!disposed && captured === generation) localError.value = cause instanceof Error ? cause.message : String(cause)
   }

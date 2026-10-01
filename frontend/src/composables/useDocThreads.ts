@@ -89,8 +89,13 @@ export function useDocThreads(topic: () => string | null) {
     resolve: (id) => write(id, 'resolve'),
     reopen: (id) => write(id, 'reopen'),
     recover: async (id) => {
-      if (operation?.id === id) await execute(operation)
-      else await load(id)
+      if (operation?.id === id) {
+        const frozen = operation
+        await execute(frozen)
+        return frozen.action === 'replies' ? { reply: frozen.body.content! } : undefined
+      }
+      await load(id)
+      return undefined
     },
   }
   function reset() {

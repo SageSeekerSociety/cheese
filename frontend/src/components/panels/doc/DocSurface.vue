@@ -132,16 +132,8 @@ async function highlightNode(nodeId: string) {
 }
 
 const linkTarget = shallowRef<DocLinkTarget | null>(null)
-const linkPosition = ref({ top: 0, left: 0 })
 function openLink(target: DocLinkTarget) {
-  const wrap = target.editor.view.dom.closest<HTMLElement>('.doc-editor-wrap')
-  if (!wrap) return
-  const bounds = wrap.getBoundingClientRect()
-  const rect = target.editor.view.coordsAtPos(target.from)
-  linkPosition.value = {
-    top: rect.bottom - bounds.top + 6,
-    left: Math.max(8, Math.min(rect.left - bounds.left, bounds.width - 280)),
-  }
+  if (target.editor.isDestroyed || target.editor.state.doc !== target.doc) return
   linkTarget.value = target
 }
 watch(
@@ -481,13 +473,7 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
          （v-show），卸了它每换一个话题都要重建一次。 -->
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
     <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
-    <DocLinkCallout
-      v-if="linkTarget"
-      :target="linkTarget"
-      :top="linkPosition.top"
-      :left="linkPosition.left"
-      @close="linkTarget = null"
-    />
+    <DocLinkCallout v-if="linkTarget" :target="linkTarget" @close="linkTarget = null" />
     <!-- 压在正文上的那几块：评论 CTA、slash 菜单、代码块工具条、块手柄。 -->
     <DocOverlays
       ref="overlaysRef"
