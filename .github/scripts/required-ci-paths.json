@@ -93,5 +93,13 @@
     "deploy/**",
     "cli/**",
     ".github/**"
+  ],
+  "cifast": [
+    ".github/scripts/ci-fast.py",
+    ".github/scripts/test_ci_fast.py",
+    ".github/scripts/required-ci.py",
+    ".github/scripts/required-ci-paths.json",
+    ".pre-commit-config.yaml",
+    "Taskfile.yml"
   ]
 }

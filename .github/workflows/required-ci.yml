@@ -33,23 +33,14 @@ jobs:
       mcp: ${{ steps.scope.outputs.mcp }}
       remote: ${{ steps.scope.outputs.remote }}
       docs: ${{ steps.scope.outputs.docs }}
+      cifast: ${{ steps.scope.outputs.cifast }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # ci-fast's black-box tests drive real pre-commit (system-language stub
-      # hooks), so this job needs the tool itself — provided the repo's way,
-      # through uv. Same pin as repo-guards.yml and test.yml.
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.1"
-          enable-cache: true
+      # Only the cheap selection/aggregation self-test runs here: every product
+      # suite waits on this job, so anything slow on it is serial time for the
+      # whole workflow. ci-fast's black-box tests have their own job below.
       - name: Test scope and result handling
-        env:
-          CI_FAST_PRECOMMIT: uvx pre-commit
-        run: |
-          python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
-          uvx pre-commit --version
-          python3 -m unittest discover -s .github/scripts -p 'test_ci_fast.py'
+        run: python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
       - name: Select suites for the complete merge diff
         id: scope
         env:
@@ -62,6 +53,30 @@ jobs:
     needs: scope
     if: needs.scope.outputs.backend == 'true'
     uses: ./.github/workflows/test.yml
+
+  # ci-fast's black-box tests drive real pre-commit against fixture repos
+  # (system-language stub hooks), so this job needs the tool itself — provided
+  # the repo's way, through uv. Same pin as repo-guards.yml and test.yml.
+  # A parallel lane like the product suites: it used to run inside scope,
+  # which put its ~65–121s on the serial path of every Required run.
+  cifast:
+    needs: scope
+    if: needs.scope.outputs.cifast == 'true'
+    # A merge-queue run takes this job on the cheese-ci pool, so it does not
+    # wait behind pull-request runs for one of the hosted runners.
+    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
+      - name: ci-fast black-box tests
+        env:
+          CI_FAST_PRECOMMIT: uvx pre-commit
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_fast.py'
 
   frontend:
     needs: scope
@@ -110,7 +125,7 @@ jobs:
   required:
     name: CI required
     if: ${{ !cancelled() }}
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs]
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs, cifast]
     # A merge-queue run takes this job on the cheese-ci pool, so it does not
     # wait behind pull-request runs for one of the hosted runners.
     runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}

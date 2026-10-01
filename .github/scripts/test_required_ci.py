@@ -141,6 +141,45 @@ class RequiredCITest(unittest.TestCase):
             all(gate.select([".github/workflows/required-ci.yml"]).values())
         )
 
+    def test_cifast_inputs_select_the_cifast_suite(self):
+        # The complete input set of ci-fast: its script and tests, the shared
+        # selector and path map it reuses, the hook command table it invokes,
+        # and the task entry that wires it.
+        for path in (
+            ".github/scripts/ci-fast.py",
+            ".github/scripts/test_ci_fast.py",
+            ".github/scripts/required-ci.py",
+            ".github/scripts/required-ci-paths.json",
+            ".pre-commit-config.yaml",
+            "Taskfile.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["cifast"])
+
+    def test_unrelated_change_does_not_select_cifast(self):
+        self.assertFalse(gate.select(["cli/main.go"])["cifast"])
+
+    def test_failed_cancelled_or_missing_selected_cifast_blocks(self):
+        for result in ("failure", "cancelled", "skipped", "missing"):
+            with self.subTest(result=result):
+                needs = self.needs()
+                needs["scope"]["outputs"]["cifast"] = "true"
+                needs["cifast"]["result"] = result
+                self.assertTrue(gate.failures(needs))
+        # A selected suite whose job never reported into needs is missing too.
+        needs = self.needs()
+        needs["scope"]["outputs"]["cifast"] = "true"
+        del needs["cifast"]
+        self.assertTrue(gate.failures(needs))
+
+    def test_missing_or_invalid_cifast_scope_output_blocks(self):
+        needs = self.needs()
+        del needs["scope"]["outputs"]["cifast"]
+        self.assertTrue(gate.failures(needs))
+        needs = self.needs()
+        needs["scope"]["outputs"]["cifast"] = "banana"
+        self.assertTrue(gate.failures(needs))
+
     def test_gateway_health_changes_select_their_behavior_suite(self):
         for path in (
             "backend/scripts/gateway_supply_probe.py",
