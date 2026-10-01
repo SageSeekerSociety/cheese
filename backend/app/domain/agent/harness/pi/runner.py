@@ -27,10 +27,11 @@ import os
 import shlex
 import shutil
 import sys
+import time
 import uuid
 from pathlib import Path
 
-from app.domain.agent.executor_transport import PlatformHost
+from app.domain.agent.executor_transport import PlatformHost, RemoteClient
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
@@ -112,6 +113,10 @@ class Runner(runner.Runner[Journal]):
         self.args: list[str] = []
         self.skill_args: list[str] = []
         self.extension_files: dict[str, str] = {}
+        # A session with no hands (`_start_without_hands`): where on the
+        # platform its tools are run (`path`), and what they are (`specs`).
+        self.tools: dict = {}
+        self.platform: RemoteClient | None = None
         self.children = Subagents(self)
         # The blocks of the assistant message pi is writing, by its content
         # index (``write``), and how many messages ended and how many of them
@@ -346,7 +351,12 @@ class Runner(runner.Runner[Journal]):
     # --- the platform extension ----------------------------------------------
 
     def write_extension(
-        self, files: dict[str, str], notice: str = "", *, home: Path | None = None
+        self,
+        files: dict[str, str],
+        notice: str = "",
+        *,
+        home: Path | None = None,
+        tools: list[dict] | None = None,
     ) -> Path:
         """Put the extension and its tool catalog on disk; answer with the entry.
 
@@ -355,26 +365,33 @@ class Runner(runner.Runner[Journal]):
         what belongs to the session alone — no subagents of its own, and no
         background jobs, which would outlive the subagent that started them with
         nobody left to be told they ended.
+
+        ``tools`` is a session with no hands (`_start_without_hands`): those
+        tools and nothing else, and no machine behind any of them.
         """
         child = home is not None
+        hands = tools is None
         home = home or self.state / "extension"
         home.mkdir(parents=True, exist_ok=True)
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
-        try:
-            tools, reason = catalog.tools(), ""
-        except Exception as error:  # noqa: BLE001 — a room still opens without them
-            tools, reason = [], f"{type(error).__name__}: {error}"
+        reason = ""
+        if tools is None:
+            try:
+                tools = catalog.tools()
+            except Exception as error:  # noqa: BLE001 — a room still opens without them
+                tools, reason = [], f"{type(error).__name__}: {error}"
         (home / "platform.json").write_text(
             json.dumps(
                 {
                     "socket": socket_path(self.state),
                     "state": str(self.state),
+                    "hands": hands,
                     # The checkout as the session sees it on the room's machine:
                     # where pi's own tools resolve a path and run a command.
                     "workspace": self.workspace,
-                    "jobs": "" if child else str(self.state / "bg"),
-                    "subagents": not child,
+                    "jobs": "" if child or not hands else str(self.state / "bg"),
+                    "subagents": hands and not child,
                     "tools": tools,
                     "unavailable": reason,
                     # The project's MCP servers' tools, listed when the session
@@ -421,8 +438,12 @@ class Runner(runner.Runner[Journal]):
         and ``catalog.argv`` re-parses what it built, so a call that could not
         have been typed fails here rather than reaching the CLI as a malformed
         command line.
+
+        A session with no hands has neither: each of its tools is one request
+        to the platform, under the tools' path and the session's own credential.
         """
-        assert self.machine is not None
+        if self.machine is None:
+            return await asyncio.to_thread(self._platform_tool, tool, arguments)
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
                 self.machine.client, self._invoke, call_id, self.doc_versions
@@ -443,6 +464,26 @@ class Runner(runner.Runner[Journal]):
             "stdout": output.decode("utf-8", "replace"),
             "stderr": "",
         }
+
+    def _platform_tool(self, tool: str, arguments: dict) -> dict:
+        names = {spec["name"] for spec in self.tools.get("specs") or []}
+        if tool not in names:
+            return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
+        if self.platform is None:
+            self.platform = RemoteClient({})
+        try:
+            answer = self.platform.platform_request(
+                {
+                    "method": "POST",
+                    "path": f"{self.tools['path'].rstrip('/')}/{tool}",
+                    "body": arguments,
+                }
+            )
+            body = json.loads(answer["value"]["stdout"] or "{}")
+        except Exception as error:  # noqa: BLE001 — the agent reads the reason
+            return {"status": 1, "stdout": "", "stderr": str(error)}
+        text = str((body.get("data") or {}).get("text") or "")
+        return {"status": 0, "stdout": text, "stderr": ""}
 
     async def tool_hooks(self, params: dict) -> dict:
         """The project's hooks for one event of one of pi's own tool calls,
@@ -580,14 +621,19 @@ class Runner(runner.Runner[Journal]):
         cwd: str,
         env: dict[str, str],
         args: list[str],
-        target: dict,
+        target: dict | None,
         skills: dict[str, str] | None = None,
         extension: dict[str, str] | None = None,
         notice: str = "",
+        tools: dict | None = None,
     ) -> str:
         """Start pi in `cwd`, a directory of this host's that holds nothing of
         the project: everything the session does in the project is on the room's
-        machine, as `target` names it (`machine.py`)."""
+        machine, as `target` names it (`machine.py`).
+
+        A `target` of None is a session with no hands at all (`_start_without_
+        hands`): a person's 芝士, which has no project, no machine and no files,
+        and only the tools `tools` lists."""
         self.claim()
         # pi's own temporary files — the whole output of a long command, which
         # its bash names for the model to read — stay with the session.
@@ -597,20 +643,16 @@ class Runner(runner.Runner[Journal]):
         self.cwd, self.env = cwd, env
         self.binary, self.args = binary, list(args)
         self.extension_files = dict(extension or {})
+        if target is None:
+            return await self._start_without_hands(
+                opening, binary, cwd, env, extension or {}, tools or {}
+            )
         mirror = self.state / "project-skills"
         self.machine = Machine(
             target, shipped=self.state / "skills", mirror=mirror, scratch=scratch
         )
         self.workspace = self.machine.workspace
-        saved = self.journal.recall("session_id")
-        if saved is not None and opening.resume_token not in (None, saved):
-            raise ValueError("A session directory cannot resume a different session")
-        session_id = saved or opening.resume_token or str(uuid.uuid4())
-        self.journal.remember("session_id", session_id)
-        self.journal.remember(
-            "owner",
-            json.dumps({"harness": "pi", "agent_handle": opening.agent_handle}),
-        )
+        session_id = self._session_id(opening)
         # The room's system prompt reaches pi as a FILE it is pointed at, never
         # as argv: it is assembled per room and runs to multiple KB, and argv is
         # both size-capped and readable by anyone who can list processes.
@@ -670,6 +712,57 @@ class Runner(runner.Runner[Journal]):
             # platform tool in the room.
             env = {**env, "CHEESE_PI_EXTENSION": str(home)}
         self.notice = notice
+        return await self._run(binary, session_id, [*appended, *args], cwd, env)
+
+    def _session_id(self, opening: Opening) -> str:
+        """The session this state directory holds, chosen once (see the module
+        docstring) and kept; the owner every record is stamped with."""
+        saved = self.journal.recall("session_id")
+        if saved is not None and opening.resume_token not in (None, saved):
+            raise ValueError("A session directory cannot resume a different session")
+        session_id = saved or opening.resume_token or str(uuid.uuid4())
+        self.journal.remember("session_id", session_id)
+        self.journal.remember(
+            "owner",
+            json.dumps({"harness": "pi", "agent_handle": opening.agent_handle}),
+        )
+        return session_id
+
+    async def _start_without_hands(
+        self,
+        opening: Opening,
+        binary: str,
+        cwd: str,
+        env: dict[str, str],
+        extension: dict[str, str],
+        tools: dict,
+    ) -> str:
+        """A session with nothing to work on but a conversation: no machine, no
+        project, no files and no commands — pi's own tools are not even
+        enabled — only the tools ``tools`` names, which the platform runs
+        (``run_cli``). Its system prompt replaces pi's own, which is a coding
+        assistant's and describes tools this session does not have."""
+        self.tools = tools
+        specs = list(tools.get("specs") or [])
+        session_id = self._session_id(opening)
+        prompt = self.state / "system-prompt.md"
+        prompt.write_text(opening.system_prompt, encoding="utf-8")
+        names = ",".join(spec["name"] for spec in specs)
+        flags = ["--system-prompt", str(prompt)]
+        flags += ["--tools", names] if names else ["--no-tools"]
+        home = self.write_extension(extension, "", tools=specs)
+        flags += ["--extension", str(home / "index.ts")]
+        env = {**env, "CHEESE_PI_EXTENSION": str(home)}
+        return await self._run(binary, session_id, [*flags, *self.args], cwd, env)
+
+    async def _run(
+        self,
+        binary: str,
+        session_id: str,
+        flags: list[str],
+        cwd: str,
+        env: dict[str, str],
+    ) -> str:
         self.errors = (self.state / "pi.log").open("ab")
         self.process = await asyncio.create_subprocess_exec(
             binary,
@@ -679,8 +772,7 @@ class Runner(runner.Runner[Journal]):
             session_id,
             "--session-dir",
             str(self.state / "sessions"),
-            *appended,
-            *args,
+            *flags,
             cwd=cwd,
             env=self.agent_env(env),
             stdin=asyncio.subprocess.PIPE,
@@ -889,6 +981,9 @@ class Runner(runner.Runner[Journal]):
                 "work_id": owner.get("work_id"),
                 "alive": self.alive(),
                 "capabilities": list(self.capabilities),
+                # How long since anything went in: which of a person's
+                # sessions is the least recently used (`host.configure`).
+                "idle_s": time.monotonic() - self.active_at,
             }
         raise ValueError(f"Unknown pi session operation: {method}")
 

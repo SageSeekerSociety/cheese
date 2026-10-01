@@ -185,8 +185,15 @@ def script(
     api_base: str,
     model: str,
     env: dict[str, str],
+    models: str | None = None,
+    host: dict | None = None,
 ) -> str:
     """The Python the session host runs (`python3 -`) to start the room's pi.
+
+    ``models`` is the provider file when this session's model needs one of its
+    own (``provider``'s by default). ``host`` is what ``host.configure`` does
+    beyond starting the runner, for a person's 芝士: how many of the person's
+    sessions may run at once, and the memory each may use.
 
     ``config`` is what the runner reads (`entry.py`) without its ``contract``:
     everything about this launch that a running pi could not be made to adopt —
@@ -195,7 +202,7 @@ def script(
     replaced once it is idle (`host.configure`).
     """
     archive = build()
-    models = provider(api_base, model)
+    models = models or provider(api_base, model)
     contract = hashlib.sha256(
         json.dumps(
             [
@@ -213,6 +220,7 @@ def script(
         "install": install(home="$HOME", base=api_base.rstrip("/")),
         "env": env,
         "archive": base64.b64encode(archive).decode(),
+        **(host or {}),
     }
     return f"""import base64,hashlib,json,os,sys,tempfile
 from pathlib import Path

@@ -42,6 +42,9 @@ type ToolSpec = {
 type Manifest = {
   socket: string;
   state: string;
+  // False for a session with nothing to work on but a conversation (a
+  // person's 芝士): no machine behind it, and only the tools listed.
+  hands?: boolean;
   workspace: string;
   jobs: string;
   tools: ToolSpec[];
@@ -1134,8 +1137,28 @@ function registerSubagentTools(pi: any, spec: Manifest) {
   });
 }
 
+// --- a session with no hands ----------------------------------------------------
+//
+// A person's 芝士 has no project and no machine: its conversation and the tools
+// listed are all it has. pi is started with only those tools enabled, so its own
+// read, bash, edit and write are not there to be left in place, and nothing here
+// reaches for a machine, a repository, hooks, subagents or background jobs.
+// pi still ends its system prompt with the directory it runs in, which on the
+// session host is nothing of the person's; that line goes.
+
+function withoutHands(pi: any, spec: Manifest) {
+  pi.on("before_agent_start", async (event: any) => {
+    const prompt: string = event.systemPrompt ?? "";
+    const at = prompt.lastIndexOf("\nCurrent working directory: ");
+    if (at < 0) return;
+    return { systemPrompt: prompt.slice(0, at).trimEnd() + "\n" };
+  });
+  registerPlatformTools(pi, spec);
+}
+
 export default function (pi: any) {
   const spec = manifest();
+  if (spec.hands === false) return withoutHands(pi, spec);
   placeTheSession(pi, spec);
   holdToAnswering(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
