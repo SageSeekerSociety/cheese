@@ -995,12 +995,9 @@ class ChatService:
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
-        """Run the AI half of a human message that is already durable.
-
-        ``InProcessBroker.receive_message`` owns the receive-before-admission ordering;
-        this method starts only after the project gate admits the model work.
-        """
+        """Prepare an already durable message after project admission."""
         seat_handle = await self._turn_seat_handle(
             topic_id,
             user_block_id=user_block_id,
@@ -1014,6 +1011,7 @@ class ChatService:
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
+                recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
 

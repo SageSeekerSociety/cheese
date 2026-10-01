@@ -91,6 +91,17 @@ async def admitted_initial(
         from app.domain.topic.repositories import TopicRepository
 
         async with chat.session_factory() as session:
+            if instance_id is not None:
+                from app.core.errors import ValidationError
+                from app.domain.identity.handles import agent_instance_handle
+                from app.domain.topic_membership.services import TopicMemberService
+
+                if agent_instance_handle(instance_id) not in await TopicMemberService(
+                    session
+                ).agent_handles(topic_id):
+                    raise ValidationError(
+                        "The addressed agent is no longer seated in this room"
+                    )
             topic = await TopicRepository(session).get(topic_id)
             project = await ProjectRepository(session).get(topic.project_id)
             agent = await chat._session_agent(

@@ -91,6 +91,51 @@ async def finish_deferred_message(
         allow.set()
         assert await chat.recover_sessions() == 1
         await chat.replays_settled()
+    elif mode == "ordinary-removed":
+        runner = get_work_runner()
+        admit = runner._admit
+        queued, released = asyncio.Event(), asyncio.Event()
+
+        async def paused_admit(service, room, turn):
+            if turn == ordinary_id:
+                queued.set()
+                await released.wait()
+            return await admit(service, room, turn)
+
+        monkeypatch.setattr(runner, "_admit", paused_admit)
+        allow.set()
+        async with asyncio.timeout(30):
+            while not queued.is_set():
+                for subscription in runtime.subscriptions.values():
+                    await subscription.drain()
+                await asyncio.sleep(0.01)
+        try:
+            from tests.integration.conftest import session_auth_headers
+
+            removed = await asyncio.to_thread(
+                client.delete,
+                f"/topics/{topic}/members/{recipient_handle}?actor=alice",
+                headers=session_auth_headers("alice"),
+            )
+            assert removed.status_code == 200, removed.text
+        finally:
+            released.set()
+        await runner.drain(10)
+        await settle_turn(chat, topic)
+        async with client.test_request_factory() as session:
+            rows = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.topic_id == topic)
+                )
+            )
+            assert len(rows) == 2 and all(row.completed_at for row in rows)
+            assert default_seat not in {row.recipient_handle for row in rows}
+            ordinary = await session.get(Block, ordinary_id)
+            assert consumed_turn(ordinary) is None and prompt_attempts(ordinary) == 0
+            assert await session.get(AgentTurn, ordinary_id) is None
+        assert operations.count("send") == sends and operations.count("steer") == 0
+        assert native_runner.session_id == native and native_runner.process is process
+        return chat, runtime
     else:
         allow.set()
 

@@ -2144,6 +2144,7 @@ class AgentWorkRunner:
                         user_block_id=landed_user_block_id,
                         continuation_id=continuation_id,
                         provision_actor=provision_actor,
+                        recipient_instance_id=recipient_instance_id,
                         **(
                             {"recipient_handle": recipient_handle}
                             if recipient_handle is not None

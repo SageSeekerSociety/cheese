@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import or_, select
@@ -182,6 +183,11 @@ async def resume_messages(runner, chat, *, topic_id=None):
             landed_user_block_ids=[block.id],
             live_delivery_expected=False,
             recipient_handle=recipient.get("handle"),
+            recipient_instance_id=(
+                uuid.UUID(recipient["instance_id"])
+                if recipient.get("instance_id")
+                else None
+            ),
         )
         started += 1
     return started
