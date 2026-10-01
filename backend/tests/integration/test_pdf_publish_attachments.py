@@ -34,7 +34,6 @@ from fastapi.testclient import TestClient
 
 from app.core import storage as storage_module
 from app.core.config import settings
-from app.domain.feature_stats import pricing
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from tests.integration.conftest import (
@@ -117,15 +116,11 @@ def llm(
     from app.api.routes.tasks import get_task_pdf_draft_service
 
     client = _EchoingLLMClient()
+    rates = {_EchoingLLMClient.model: (1e-6, 2e-6, 1e-7, 1e-6)}
     api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: (
-        TaskPdfDraftService(chat=client)  # type: ignore[arg-type]
+        TaskPdfDraftService(chat=client, rate_table=rates)  # type: ignore[arg-type]
     )
     monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
-
-    async def rates(*_args, **_kwargs):
-        return {_EchoingLLMClient.model: (1e-6, 2e-6, 1e-7, 1e-6)}
-
-    monkeypatch.setattr(pricing, "model_rates", rates)
     yield client
     api_client.app.dependency_overrides.pop(get_task_pdf_draft_service, None)
 
