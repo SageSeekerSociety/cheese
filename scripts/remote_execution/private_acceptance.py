@@ -1,9 +1,13 @@
 """Exercise the real private executor, using only disposable containers."""
 
 import argparse
+import http.server
 import json
 import os
+import socket
+import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -12,7 +16,59 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
 sys.path.insert(0, str(SOURCE))
 from client import RemoteClient  # noqa: E402
-from private import ensure, inspect, release, target  # noqa: E402
+from private import ensure, gate_name, inspect, release, target  # noqa: E402
+
+sys.path.append(str(ROOT / "backend/app/domain/fetch"))
+from addresses import is_public  # noqa: E402
+
+
+def host_service():
+    """An HTTP service on every interface of the host, as the backend's is."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("content-length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server.server_address[1]
+
+
+def bridge_gateway():
+    """The host as a container on the default bridge reaches it."""
+    found = subprocess.run(
+        ["docker", "network", "inspect", "bridge"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(found.stdout)[0]["IPAM"]["Config"][0]["Gateway"]
+
+
+def host_lan_address():
+    """The address the host leaves by: its LAN address on most machines."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(("1.1.1.1", 53))
+        return probe.getsockname()[0]
+
+
+#: Run in the container: one line per address, "open" or why it is not.
+REACH = r"""
+import socket, sys
+for target in sys.argv[1:]:
+    host, port = target.rsplit(":", 1)
+    try:
+        socket.create_connection((host, int(port)), timeout=5).close()
+        print(target, "open")
+    except OSError as error:
+        print(target, type(error).__name__)
+"""
 
 
 def main():
@@ -24,7 +80,12 @@ def main():
     if args.docker_host:
         os.environ["DOCKER_HOST"] = args.docker_host
     config = target(uuid.uuid4())
+    # The platform, on the host as dev's backend is; another service beside it.
+    gateway = bridge_gateway()
+    platform_port = host_service()
+    neighbour_port = host_service()
     env = {
+        "CHEESE_API": f"http://{gateway}:{platform_port}",
         "CHEESE_TOPIC": config["topic"],
         "CHEESE_TOKEN": "test-private-token",
         "ANTHROPIC_AUTH_TOKEN": "must-not-enter-executor",
@@ -184,6 +245,65 @@ def main():
             return inspect(config)["HostConfig"]["ReadonlyRootfs"]
 
         record("isolation", isolation)
+
+        def reach(*targets):
+            command = "python3 - " + " ".join(targets) + " <<'PY'\n" + REACH + "PY"
+            lines = shell(command)["stdout"].split("\n")
+            return dict(line.split(" ", 1) for line in lines if line.strip())
+
+        def network():
+            # Internal addresses are refused; the platform and the internet are not.
+            refused = [
+                f"{gateway}:{neighbour_port}",
+                "169.254.169.254:80",
+                f"{gateway}:22",
+            ]
+            lan = host_lan_address()
+            if not is_public(lan):
+                refused.append(f"{lan}:{platform_port}")
+            seen = reach(f"{gateway}:{platform_port}", *refused)
+            assert seen[f"{gateway}:{platform_port}"] == "open", seen
+            for address in refused:
+                assert seen[address] != "open", seen
+            platform = shell(
+                'python3 -c "import os, urllib.request; print(urllib.request'
+                ".urlopen(os.environ['CHEESE_API'], timeout=5).read().decode())\""
+            )
+            assert platform["stdout"].strip() == "ok", platform
+            # A public name resolves to public addresses, and they answer.
+            names = shell(
+                "python3 -c \"import socket; print(' '.join(sorted({a[4][0] for a in "
+                "socket.getaddrinfo('pypi.org', 443, socket.AF_INET)})))\""
+            )["stdout"].split()
+            assert names and all(is_public(a) for a in names), names
+            assert reach(f"{names[0]}:443")[f"{names[0]}:443"] == "open"
+            # Nothing the container runs can lift the rules.
+            lifted = shell("iptables -F OUTPUT 2>&1; echo status=$?")["stdout"]
+            assert "status=0" not in lifted, lifted
+            assert (
+                reach(f"{gateway}:{neighbour_port}")[f"{gateway}:{neighbour_port}"]
+                != "open"
+            )
+            return {"public": names, "lan": lan, **seen}
+
+        record("network", network)
+
+        def gate_lost():
+            # Without its gate the container has no rules; it is not reused.
+            subprocess.run(
+                ["docker", "rm", "--force", gate_name(config["topic"])],
+                check=True,
+                capture_output=True,
+            )
+            ensure(config, args.output, env)
+            result = shell("test ! -e /work/draft.md && printf 'replaced'")
+            assert "replaced" in result["stdout"], result
+            seen = reach(f"{gateway}:{platform_port}", "169.254.169.254:80")
+            assert seen[f"{gateway}:{platform_port}"] == "open", seen
+            assert seen["169.254.169.254:80"] != "open", seen
+            return seen
+
+        record("gate-lost", gate_lost)
 
         def quota():
             result = shell(

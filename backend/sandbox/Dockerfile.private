@@ -8,7 +8,7 @@ LABEL com.cheese.local-image="cheese-private-executor:${CLAUDE_CODE_VERSION}"
 RUN mkdir -p /etc/ssl/certs \
     && node -p 'require("tls").rootCertificates.join("\n")' > /etc/ssl/certs/ca-certificates.crt \
     && sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
-    && apt-get update && apt-get install -y --no-install-recommends python3 bash ca-certificates ripgrep \
+    && apt-get update && apt-get install -y --no-install-recommends python3 bash ca-certificates ripgrep iptables \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force \
@@ -16,6 +16,9 @@ RUN mkdir -p /etc/ssl/certs \
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py /opt/cheese/runtime.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py /opt/cheese/mcp_process.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/private.py /opt/cheese/private.py
+# The network gate each private chat's container runs behind (see private.py).
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/private_network.py /opt/cheese/private_network.py
+COPY backend/app/domain/fetch/addresses.py /opt/cheese/addresses.py
 COPY --chmod=0555 backend/sandbox/cheese /usr/local/bin/cheese
 ENV HOME=/work/.home TMPDIR=/work/.tmp PYTHONDONTWRITEBYTECODE=1
 USER 1000:1000
