@@ -816,6 +816,10 @@ class Settings(BaseSettings):
     # 问模型那一步的超时。一次问的是一批旧记忆（几十条、几万字），比一次普通对话
     # 长得多，默认的几十秒会在长项目上直接超时。
     memory_migration_timeout_s: float = 600.0
+    # The gateway model that sorts old memories, and what its key may spend per
+    # 30 days: the platform runs it, so no person's credits pay for it.
+    memory_migration_model: str = "deepseek-flash"
+    memory_migration_budget_usd: float = 10.0
     # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。
     memory_migration_chunk: int = 60
 
@@ -947,9 +951,11 @@ class Settings(BaseSettings):
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
     openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
     openai_timeout_seconds: float = Field(default=180.0, alias="OPENAI_TIMEOUT_SECONDS")
-    openai_pdf_timeout_seconds: float = Field(
-        default=300.0, alias="OPENAI_PDF_TIMEOUT_SECONDS"
-    )
+    # The gateway model that turns an uploaded PDF into task drafts; each page
+    # is one call, charged to the publisher's personal credits.
+    task_draft_model: str = "deepseek-flash"
+    task_draft_max_tokens: int = 4096
+    task_draft_timeout_s: float = 300.0
     pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"

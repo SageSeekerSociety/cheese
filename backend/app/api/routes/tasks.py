@@ -23,6 +23,7 @@ from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
+from app.domain.feature_stats import pricing
 from app.domain.llm.repositories import AIUserQuotaRepository
 from app.domain.llm.services import AiAdviceService
 from app.domain.space.rank_service import SpaceRankService
@@ -163,8 +164,7 @@ async def get_task_ai_advice_service(db=Depends(get_db)) -> TaskAIAdviceService:
 
 
 async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    _ = db
-    return TaskPdfDraftService()
+    return await TaskPdfDraftService.on_gateway(db, await pricing.model_rates())
 
 
 class ConfirmTaskPublishFromPdfRequest(BaseModel):
@@ -1602,8 +1602,7 @@ async def preview_task_from_pdf(
     if len(pdf_bytes) > 15 * 1024 * 1024:
         raise BadRequestError("PDF file is too large (max 15MB)")
 
-    space_repo = SpaceRepository(session=db)
-    space = await space_repo.get_by_id(space_id)
+    space = await SpaceRepository(session=db).get_by_id(space_id)
     if space is None:
         raise NotFoundError("Space not found")
 
@@ -1641,20 +1640,21 @@ async def preview_task_from_pdf(
         default_topic_ids.append(default_topic.id)
 
     template = draft_service.pick_template(space.task_templates or [], template_index)
-    (
-        drafts,
-        token_used,
-        illustrations,
-    ) = await draft_service.generate_task_payloads_from_pdf(
-        pdf_bytes=pdf_bytes,
-        template=template,
-        space_id=space_id,
-        category_id=resolved_category_id,
-        forced_submitter_type=forced_submitter_type,
-        user_id=auth_user.user_id,
-        default_topic_ids=default_topic_ids,
-        max_tasks=max_tasks,
-    )
+    async with draft_service.charged_to(db, auth_user.user_id):
+        (
+            drafts,
+            token_used,
+            illustrations,
+        ) = await draft_service.generate_task_payloads_from_pdf(
+            pdf_bytes=pdf_bytes,
+            template=template,
+            space_id=space_id,
+            category_id=resolved_category_id,
+            forced_submitter_type=forced_submitter_type,
+            user_id=auth_user.user_id,
+            default_topic_ids=default_topic_ids,
+            max_tasks=max_tasks,
+        )
 
     # 解析出来的东西落成**发布者本人名下**的附件行，把 id 交回给前端去勾：原 PDF 与
     # 那几张插图在服务端手上，只有这里能登记它们。挂在 ``meta.uploaderId`` 上的名字

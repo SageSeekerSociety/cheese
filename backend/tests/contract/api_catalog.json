@@ -1,20 +1,5 @@
 [
   {
-    "path": "/ai/quota",
-    "method": "GET",
-    "tags": [
-      "AI"
-    ],
-    "summary": "Get Current User's AI Quota",
-    "operationId": "get-user-ai-quota",
-    "deprecated": false,
-    "hasRequestBody": false,
-    "parameters": [],
-    "responseCodes": [
-      "200"
-    ]
-  },
-  {
     "path": "/discussions",
     "method": "GET",
     "tags": [

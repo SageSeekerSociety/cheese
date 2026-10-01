@@ -5,34 +5,28 @@ from pathlib import Path
 import pytest
 
 from app.core.errors import BadRequestError
-from app.domain.llm.llm_client import LLMResponse
+from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 
 
-class _FakeLLMClient:
-    def __init__(
-        self, content: str, *, configured: bool = True, total_tokens: int = 1200
-    ) -> None:
-        self.is_configured = configured
-        self._content = content
-        self._total_tokens = total_tokens
+class _FakeChat:
+    model = "fake-model"
 
-    async def get_completion(self, **kwargs) -> LLMResponse:
+    def __init__(self, content: str, *, usage: Usage | None = None) -> None:
+        self._content = content
+        self._usage = usage or Usage(prompt_tokens=600, completion_tokens=600)
+
+    async def complete(self, **kwargs) -> Completion:
         _ = kwargs
-        return LLMResponse(
-            content=self._content,
-            total_tokens=self._total_tokens,
-            prompt_tokens=600,
-            completion_tokens=600,
-        )
+        return Completion(self._content, self._usage)
 
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_only_builds_content_draft() -> None:
-    llm = _FakeLLMClient(
+    llm = _FakeChat(
         '{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}'  # noqa: E501
     )
-    service = TaskPdfDraftService(llm_client=llm)
+    service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
 
     payload, tokens = await service.generate_task_payload_from_text(
         text="这是一个关于图像识别的赛题说明。",
@@ -64,10 +58,10 @@ async def test_generate_payload_from_text_only_builds_content_draft() -> None:
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_ignores_publish_parameters() -> None:
-    llm = _FakeLLMClient(
+    llm = _FakeChat(
         '{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}'
     )
-    service = TaskPdfDraftService(llm_client=llm)
+    service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
 
     payload, _ = await service.generate_task_payload_from_text(
         text="赛题文本",
@@ -88,8 +82,8 @@ async def test_generate_payload_from_text_ignores_publish_parameters() -> None:
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_requires_required_fields() -> None:
-    llm = _FakeLLMClient('{"intro":"只有介绍","description":"只有详情"}')
-    service = TaskPdfDraftService(llm_client=llm)
+    llm = _FakeChat('{"intro":"只有介绍","description":"只有详情"}')
+    service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
 
     with pytest.raises(BadRequestError, match="missing required field: name"):
         await service.generate_task_payload_from_text(
@@ -104,8 +98,8 @@ async def test_generate_payload_from_text_requires_required_fields() -> None:
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_rejects_invalid_llm_json() -> None:
-    llm = _FakeLLMClient("not-json")
-    service = TaskPdfDraftService(llm_client=llm)
+    llm = _FakeChat("not-json")
+    service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
 
     with pytest.raises(BadRequestError, match="not valid JSON"):
         await service.generate_task_payload_from_text(
@@ -119,7 +113,7 @@ async def test_generate_payload_from_text_rejects_invalid_llm_json() -> None:
 
 
 def test_validate_page_count_rejects_oversized_pdf() -> None:
-    service = TaskPdfDraftService(llm_client=_FakeLLMClient("{}"), max_pages=20)
+    service = TaskPdfDraftService(chat=_FakeChat("{}"), max_pages=20)  # type: ignore[arg-type]
 
     with pytest.raises(BadRequestError, match="at most 20 pages"):
         service._validate_page_count(21)
@@ -130,7 +124,7 @@ async def test_pdf_generation_bounds_concurrency_and_stops_at_max_tasks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = TaskPdfDraftService(
-        llm_client=_FakeLLMClient("{}"),
+        chat=_FakeChat("{}"),  # type: ignore[arg-type]
         max_pages=20,
         max_concurrency=3,
     )
@@ -173,3 +167,25 @@ async def test_pdf_generation_bounds_concurrency_and_stops_at_max_tasks(
     # 这几页没有图，报回来的插图就该是空的 —— 不是「有几页就报几张」。
     assert illustrations == []
     assert not Path(temp_dir).exists()
+
+
+@pytest.mark.anyio
+async def test_a_page_whose_answer_cannot_be_read_still_counts_as_spent() -> None:
+    """模型答了、但答案读不出来的那一页，token 已经花了：它照样记进这次的花销。"""
+    service = TaskPdfDraftService(  # type: ignore[arg-type]
+        chat=_FakeChat(
+            "not-json",
+            usage=Usage(prompt_tokens=500, completion_tokens=40, cache_read_tokens=300),
+        )
+    )
+
+    with pytest.raises(BadRequestError):
+        await service.generate_task_payload_from_text(
+            text="赛题文本",
+            template={},
+            space_id=1,
+            category_id=None,
+            forced_submitter_type=None,
+            user_id=2,
+        )
+    assert service.spent == Usage(500, 40, 300, 0)
