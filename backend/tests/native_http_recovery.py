@@ -53,6 +53,34 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 await asyncio.sleep(0.05)
         await runner.drain(10)
 
+    async def received(expected):
+        # HTTP commits intent before the background runner performs the RPC.
+        # Establish its durable receipt before measuring retry/correction effects.
+        async with asyncio.timeout(90):
+            while True:
+                for subscription in channel.runtime.subscriptions.values():
+                    await subscription.drain()
+                async with factory() as session:
+                    deliveries = list(
+                        await session.scalars(
+                            select(Delivery).where(Delivery.topic_id == topic)
+                        )
+                    )
+                    rows = list(
+                        await session.scalars(
+                            select(NativeInput).where(NativeInput.topic_id == topic)
+                        )
+                    )
+                    if (
+                        len(deliveries) == expected
+                        and all(d.state == "received" for d in deliveries)
+                        and len(rows) == expected + 1
+                        and all(r.echoed_at and r.settled_at for r in rows)
+                    ):
+                        break
+                await asyncio.sleep(0.05)
+        await runner.drain(10)
+
     def body(option, op, version):
         # A supplied author must not override the authenticated answerer.
         return {
@@ -74,8 +102,12 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
             )
             assert first.status_code == 200, first.text
             assert first.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
+            await received(1)
             if descriptor["mode"] == "http-idle":
                 await settled(2)
+            assert (channel.calls.count("send"), channel.calls.count("steer")) == (
+                (0, 1) if descriptor["mode"] == "http-busy" else (1, 0)
+            )
             before = (channel.calls.count("send"), channel.calls.count("steer"))
             retry = await http.post(
                 path, json=first_body, headers=descriptor["alice_headers"]
@@ -99,6 +131,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 (1, "继续", "alice"),
                 (2, "更正", "alice"),
             ]
+            await received(2)
             if descriptor["mode"] == "http-busy":
                 Path(descriptor["gate"]).touch()
             await settled(3)
