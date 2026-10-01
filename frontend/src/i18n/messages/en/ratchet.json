@@ -85,9 +85,14 @@
     "harnessBoundary": "Harness boundary",
     "isPrivateReadPoints": "Private read points",
     "fileSizes": "File size",
+    "fileSizesScope": "Only files this change touched",
     "vueTsc": "Vue type check",
     "stylelintTokens": "Style tokens",
     "palette": "Palette"
+  },
+  "tree": {
+    "line": "{offenders} files in the whole tree are over their cap, {lines} lines over in total",
+    "unknown": "This collection did not measure the tree's sizes"
   },
   "pull": {
     "done": "{listed} artifacts on CI, {stored} newly stored, {already} already archived",

@@ -283,3 +283,29 @@ def test_areas_keep_the_check_registry_order():
     board = _board(rows)
 
     assert [area["area"] for area in board["areas"]] == ["场景", "边界", "规模"]
+
+
+def test_zero_diff_violations_does_not_mean_the_tree_is_within_limits():
+    row = _row("a" * 40, [_check("file-sizes", actual=0)])
+    row.payload["board"] = {
+        "size": {"offenders": 16, "excess_lines": 18695, "per_cap": {}}
+    }
+    check = _check_of(_board([row]), "file-sizes")
+
+    assert check["actual"] == 0
+    assert check["tree"] == {"offenders": 16, "excess_lines": 18695, "caps": []}
+
+
+def test_missing_latest_tree_measurement_never_reuses_an_older_count():
+    old = _row("a" * 40, [_check("file-sizes", actual=0)])
+    old.payload["board"] = {"size": {"offenders": 16, "excess_lines": 18695}}
+    latest = _row("b" * 40, [], collection="failed", day=2)
+
+    assert _check_of(_board([old, latest]), "file-sizes")["tree"] is None
+
+
+def test_zero_tree_measurement_is_distinct_from_missing_measurement():
+    row = _row("a" * 40, [_check("file-sizes", actual=0)])
+    assert _check_of(_board([row]), "file-sizes")["tree"] is None
+    row.payload["board"] = {"size": {"offenders": 0, "excess_lines": 0}}
+    assert _check_of(_board([row]), "file-sizes")["tree"]["offenders"] == 0
