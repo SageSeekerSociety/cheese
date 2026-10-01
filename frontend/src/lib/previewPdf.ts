@@ -1,5 +1,7 @@
 import type { FileSource } from '../cx_types'
 
+import { t } from '../i18n'
+
 export class PreviewRendererUnavailable extends Error {}
 
 export interface PdfPreview {
@@ -31,8 +33,8 @@ export function createPreviewPdfReader(base: string, authHeaders: () => Record<s
       message = ''
     }
     if (res.status === 503) {
-      throw new PreviewRendererUnavailable(message || '这个部署没有启用文档预览')
+      throw new PreviewRendererUnavailable(message || t('apiError.previewDisabled'))
     }
-    throw new Error(message || `无法生成预览（HTTP ${res.status}）`)
+    throw new Error(message || t('files.preview.generateFailed', { status: res.status }))
   }
 }
