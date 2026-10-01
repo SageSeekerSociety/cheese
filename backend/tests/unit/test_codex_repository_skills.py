@@ -206,7 +206,6 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
         "config": {
             "execution_target": target,
             "opening": {"system_prompt": "ROOM"},
-            "mcp_servers": [],
             "binary": codex_binary(),
             "skills": PLATFORM,
         },

@@ -139,7 +139,6 @@ async def test_standalone_owner_survives_client_disconnect(
             {
                 "execution_target": {"kind": "device", "url": endpoint + "/execution"},
                 "opening": {"system_prompt": "PROCESS_CONTRACT"},
-                "mcp_servers": [],
                 "binary": codex_binary(),
                 "cwd": str(workspace),
             }

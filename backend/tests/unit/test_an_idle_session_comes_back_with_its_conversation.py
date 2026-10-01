@@ -208,7 +208,7 @@ async def _codex_machine(tmp_path: Path):
             shipped=state / "platform-skills",
         )
         runner = CodexRunner(state, tools, skills=tools, **options)
-        schemas = await tools.discover([])
+        schemas = await tools.discover()
         tools.main_thread = await runner.start(
             Opening(system_prompt="FIXTURE"),
             binary=codex_binary(),
