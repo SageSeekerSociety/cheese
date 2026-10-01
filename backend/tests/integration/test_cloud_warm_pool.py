@@ -958,7 +958,7 @@ def cold_case(warm_case, monkeypatch):
 async def _fail(service, cloud, machine):
     """MicroCloud gives up building the machine, and the sweep reads that."""
     cloud.machines[machine.machine_id]["status"] = "error"
-    await service.refresh_unsettled()
+    await service.refresh_due()
     await service._session.commit()
 
 
@@ -988,7 +988,7 @@ def test_a_machine_the_provider_failed_to_build_is_replaced(cold_case):
             cloud.machines[fresh.machine_id].update(
                 status="running", ip="192.0.2.9", aiStatus="disabled"
             )
-            await service.refresh_unsettled()
+            await service.refresh_due()
             await db.commit()
             again = await service.ensure_session_machine(
                 session_id, actor=actor, choice=choice
