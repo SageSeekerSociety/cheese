@@ -491,6 +491,15 @@ def resource_paths(
     return paths[0], paths[1]
 
 
+def resource_tmp(machine_home: Path, resource: str) -> Path:
+    """The room's TMPDIR, where the launcher pointed its sessions: by resource
+    alone, so a socket made inside it still fits a socket path."""
+    path = machine_home / FOOTPRINT_ROOT / "tmp" / str(uuid.UUID(resource))
+    if path.is_symlink() or path.parent.is_symlink():
+        raise RuntimeError("resource path is a symlink")
+    return path
+
+
 def retained_transcripts(machine_home: Path, project: str, room: str, resource: str):
     """Where a removed home's session transcripts are kept until they expire.
 
@@ -741,7 +750,7 @@ def main() -> None:
             retain_transcripts(
                 home, retained_transcripts(Path.home(), project, room, resource)
             )
-        for path in (work, home):
+        for path in (work, home, resource_tmp(Path.home(), resource)):
             if path.exists():
                 remove_tree(path)
         print(json.dumps({"removed": True}))

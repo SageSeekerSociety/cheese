@@ -235,6 +235,12 @@ class Settings(BaseSettings):
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
+    # The memory one session on the session host may hold, in MiB; 0 lifts it.
+    # Every room's session shares that machine's kernel, so one without a cap
+    # can take the others into swap with it (#1544). It is also the room a new
+    # session needs: a turn that would start one waits until the host has that
+    # much available.
+    agent_session_memory_max_mb: int = 3072
     private_chat_executor_image: str = "cheese-private-executor:2.1.282"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
