@@ -1053,6 +1053,28 @@ def stub_project_forge(monkeypatch, tmp_path):
                     }
                 )
             return {"tree": tree, "truncated": False}
+        if route.startswith("/contents/"):
+            # No ref named: the default branch, as GitHub and Forgejo answer.
+            name = route.removeprefix("/contents/")
+            listed = git_store.git(repo, "ls-tree", "-l", "main", "--", name)
+            if not listed.strip():
+                return None
+            metadata, _ = listed.rstrip("\n").split("\t", 1)
+            mode, kind, oid, size = metadata.split()
+            if kind == "tree":
+                return []
+            if mode == "120000":
+                return {"type": "symlink", "path": name}
+            data = subprocess.check_output(
+                ["git", "-C", str(repo), "cat-file", "blob", oid]
+            )
+            return {
+                "type": "file",
+                "path": name,
+                "size": int(size),
+                "encoding": "base64",
+                "content": base64.b64encode(data).decode(),
+            }
         if route.startswith("/git/blobs/"):
             oid = route.removeprefix("/git/blobs/")
             data = subprocess.check_output(
@@ -1089,6 +1111,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
+    monkeypatch.setattr(forge, "repository_data", repository_data)
     monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
     monkeypatch.setattr(forge_files, "status_client", status_client)
 
