@@ -18,7 +18,7 @@ const postPreviewSession = vi.fn()
 const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
 const previewFileBytes = vi.fn()
-const previewDocumentPdf = vi.fn()
+const previewDocumentPdfSnapshot = vi.fn()
 
 vi.mock('../../api', () => ({
   getPreview: (...args: unknown[]) => getPreview(...args),
@@ -27,7 +27,7 @@ vi.mock('../../api', () => ({
   downloadFile: (...args: unknown[]) => downloadFile(...args),
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
-  previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  previewDocumentPdfSnapshot: (...args: unknown[]) => previewDocumentPdfSnapshot(...args),
   PreviewRendererUnavailable: class extends Error {},
 }))
 // 表单投递在测试里没有意义（它是在预览域的存储分区里落 cookie 的），换成一个
@@ -63,7 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
   downloadFile.mockResolvedValue(undefined)
-  previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
+  previewDocumentPdfSnapshot.mockResolvedValue({ bytes: new ArrayBuffer(4096), sourceVersion: null })
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
   requestPreviewSession.mockResolvedValue({ url: `${PREVIEW}_cheese/session`, grant: 'g' })
 })
@@ -95,7 +95,7 @@ it('never sends a markdown file to a viewer that does not exist', async () => {
   // 既没有 iframe（预览域只会把字节原样发出来），也没有假装缺了什么转换服务。
   expect(container.querySelector('iframe')).toBeNull()
   expect(requestPreviewSession).not.toHaveBeenCalled()
-  expect(previewDocumentPdf).not.toHaveBeenCalled()
+  expect(previewDocumentPdfSnapshot).not.toHaveBeenCalled()
   expect(screen.queryByText('文档预览未启用')).toBeNull()
   expect(screen.queryByText('无法显示这个文件')).toBeNull()
 })

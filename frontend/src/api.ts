@@ -69,6 +69,7 @@ import type {
 
 import { desktopAppHeaders } from './lib/desktopApp'
 import { refusalText } from './lib/noticeText'
+import { createPreviewPdfReader } from './lib/previewPdf'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -1798,7 +1799,10 @@ export function decideDocumentRevisions(
 /** Raised when the deployment has no document renderer, as opposed to when this
  *  particular file cannot be converted. The panel says a different thing for
  *  each: one is about the deployment and one is about the file. */
-export class PreviewRendererUnavailable extends Error {}
+export { PreviewRendererUnavailable } from './lib/previewPdf'
+
+/** Bytes and source fingerprint from the same authorized conversion response. */
+export const previewDocumentPdfSnapshot = createPreviewPdfReader(BASE, authHeaders)
 
 /** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
 export async function previewDocumentPdf(
@@ -1807,22 +1811,7 @@ export async function previewDocumentPdf(
   task?: string | null,
   source: FileSource = 'live'
 ): Promise<ArrayBuffer> {
-  const url =
-    `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
-    `?path=${encodeURIComponent(path)}&source=${source}` +
-    (task ? `&task=${encodeURIComponent(task)}` : '')
-  const res = await fetch(url, { headers: authHeaders() })
-  if (res.ok) return res.arrayBuffer()
-  let message = ''
-  try {
-    message = String((await res.json())?.message || '')
-  } catch {
-    message = ''
-  }
-  if (res.status === 503) {
-    throw new PreviewRendererUnavailable(message || '这个部署没有启用文档预览')
-  }
-  throw new Error(message || `无法生成预览（HTTP ${res.status}）`)
+  return (await previewDocumentPdfSnapshot(topicId, path, task, source)).bytes
 }
 
 // Downloads carry the same credentials as API requests, including token-only sessions.

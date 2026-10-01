@@ -4,7 +4,8 @@
     "readFailed": "Can't read this file (HTTP {status})"
   },
   "preview": {
-    "cannotShow": "Can't display this file"
+    "cannotShow": "Can't display this file",
+    "generateFailed": "Could not generate a preview (HTTP {status})"
   },
   "downloadFailed": "Download failed"
 }

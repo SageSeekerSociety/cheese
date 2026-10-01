@@ -12,18 +12,22 @@
 // 需要问后端。
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { FileContent } from '../../cx_types'
+import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
+import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
-import { computed, defineAsyncComponent, nextTick, ref } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
+import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 import AttachmentImage from '../AttachmentImage.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
+import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 
@@ -66,11 +70,24 @@ const props = withDefaults(
     isImageArtifact: boolean
     downloadError: string
     docBytes: ArrayBuffer | null
+    docIdentity?: DocumentIdentity | null
+    docSnapshot?: DocumentSnapshot | null
+    /** Identity verified against the actual conversion response, not current metadata alone. */
+    slideContext?: SlideSource
     docLoading: boolean
     docError: string
     docRendererMissing: boolean
   }>(),
-  { path: null, frames: undefined, displayedFrame: null, navigation: 'idle', navigationError: '' }
+  {
+    path: null,
+    frames: undefined,
+    displayedFrame: null,
+    navigation: 'idle',
+    navigationError: '',
+    docIdentity: null,
+    docSnapshot: null,
+    slideContext: undefined,
+  }
 )
 const emit = defineEmits<{
   (e: 'frame-load', id: number, event: Event): void
@@ -170,10 +187,12 @@ const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
 const locator = ref<{ label: string; quote: string; address: string } | null>(null)
+const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
 const locatorInput = ref<HTMLInputElement | null>(null)
 
 function openLocator(label: string, quote: string, address: string) {
+  pageContext.value = null
   locator.value = { label, quote, address }
   locatorNote.value = ''
   void nextTick(() => locatorInput.value?.focus())
@@ -181,8 +200,60 @@ function openLocator(label: string, quote: string, address: string) {
 
 function clearLocator() {
   locator.value = null
+  pageContext.value = null
   locatorNote.value = ''
 }
+function canUsePageContext(context: SlideSource): boolean {
+  const expected = props.slideContext
+  const current = props.docIdentity
+  const displayed = props.docSnapshot
+  if (
+    !expected ||
+    !current ||
+    !displayed ||
+    props.docBytes !== displayed.bytes ||
+    props.docLoading ||
+    props.docError ||
+    props.docRendererMissing ||
+    props.topicId !== current.topicId ||
+    props.previewFile?.path !== current.path ||
+    props.previewFile?.version !== current.version ||
+    (props.previewFile?.source ?? 'live') !== current.source
+  )
+    return false
+  const identity = { ...context, taskId: context.taskId ?? null }
+  return (
+    sameDocumentIdentity(identity, current) &&
+    sameDocumentIdentity(current, displayed.identity) &&
+    sameDocumentIdentity({ ...expected, taskId: expected.taskId ?? null }, current) &&
+    displayed.sourceVersion === current.version
+  )
+}
+
+function onPageContext(payload: SlidePageContext) {
+  if (payload.scope !== 'page' || !canUsePageContext(payload.context)) return
+  const page = t('work.room.preview.page', { page: payload.page })
+  openLocator(page, t('slides.wholePage'), page)
+  pageContext.value = { ...payload, context: { ...payload.context } }
+}
+watch(
+  [
+    () => props.docBytes,
+    () => props.docSnapshot,
+    () => props.docIdentity?.topicId,
+    () => props.docIdentity?.path,
+    () => props.docIdentity?.source,
+    () => props.docIdentity?.taskId,
+    () => props.docIdentity?.version,
+    () => props.slideContext?.version,
+    () => props.slideContext?.path,
+    () => props.slideContext?.source,
+    () => props.slideContext?.topicId,
+    () => props.slideContext?.taskId,
+  ],
+  clearLocator,
+  { flush: 'sync' }
+)
 
 function onQuote(payload: { text: string; page: number }) {
   // 一整页的选中没有指向性，当作没指。
@@ -202,6 +273,22 @@ function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
+  if (pageContext.value) {
+    const payload = pageContext.value
+    if (!canUsePageContext(payload.context)) return
+    emit(
+      'locate',
+      t('slides.pageMessage', {
+        ...payload.context,
+        task: payload.context.taskId ?? '',
+        page: payload.page,
+        text: payload.text,
+        note,
+      })
+    )
+    clearLocator()
+    return
+  }
   emit(
     'locate',
     t('work.room.preview.locateMessage', {
@@ -471,7 +558,17 @@ function sendLocator() {
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
       <div v-else class="doc__body">
-        <PreviewPages v-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
+        <PreviewSlides
+          v-if="['pptx', 'ppt', 'odp'].includes(documentSuffix)"
+          :data="docBytes"
+          :pending="docLoading"
+          :error="docError"
+          :renderer-missing="docRendererMissing"
+          :context="slideContext"
+          @quote="onQuote"
+          @page-context="onPageContext"
+        />
+        <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
         <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
