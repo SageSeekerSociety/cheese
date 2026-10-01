@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import memory_changed_notice
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -150,6 +150,16 @@ async def _acting_handle(
     if seat in await TopicMemberService(session).agent_handles(topic_id):
         return seat
     return await _agent_handle(session, topic_id)
+
+
+async def require_pinned_seat(
+    session: AsyncSession, topic_id: uuid.UUID, instance_id: uuid.UUID
+) -> str:
+    """An explicit recipient never borrows the room's default seat."""
+    seat = agent_instance_handle(instance_id)
+    if seat not in await TopicMemberService(session).agent_handles(topic_id):
+        raise ValidationError("The addressed agent is no longer seated in this room")
+    return seat
 
 
 async def _gateway_budget_target(

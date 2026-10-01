@@ -180,6 +180,7 @@ from app.domain.agent.queries import (
     _resolved_agent,
     _say_memory_change,
     _session_agent,
+    require_pinned_seat,
 )
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
@@ -248,7 +249,6 @@ from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
-    agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
     recipient_seat,
@@ -3741,16 +3741,10 @@ class ChatService:
         platform_turn: bool = False,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> "_TurnContext | _TurnBail":
-        """Everything a turn needs before anything runs it, read in one
-        transaction: who is here, what was said, what is remembered, which
-        machine, and the prompt built out of all of it.
+        """Read the recipient, history, memory, machine and prompt in one transaction.
 
-        Returns a ``_TurnBail`` when the turn ends here instead of starting —
-        nobody is actually waiting on an answer, or the machine is still being
-        built. Both are ordinary outcomes, not errors, and both have to reach
-        the room as frames, which is why they travel back rather than being
-        yielded: assembling is a question with an answer, and a coroutine can
-        return one.
+        Return a ``_TurnBail`` with room frames if no answer is pending or the
+        machine is still being built; neither outcome starts an executor.
         """
         started = time.monotonic()
         phases_ms: dict[str, float] = {}
@@ -3791,14 +3785,12 @@ class ChatService:
                 (addressed.meta or {}).get("agent_recipient") if addressed else None
             )
             agents = AgentInstanceService(session)
+            pinned_seat = None
             if recipient_instance_id is not None:
                 recipient = {"instance_id": str(recipient_instance_id)}
-                if agent_instance_handle(
-                    recipient_instance_id
-                ) not in await TopicMemberService(session).agent_handles(place.room_id):
-                    raise ValidationError(
-                        "The addressed agent is no longer seated in this room"
-                    )
+                pinned_seat = await require_pinned_seat(
+                    session, place.room_id, recipient_instance_id
+                )
             # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
             # 「收件人是项目的芝士」和今天的解析是同一个答案。
             if recipient is None or recipient.get("instance_id") is None:
@@ -3810,12 +3802,15 @@ class ChatService:
                         instance_id=uuid.UUID(recipient["instance_id"]),
                     )
                 )
+            acting_agent = pinned_seat or await self._acting_handle(
+                session, topic.id, agent
+            )
             pending = [block for block in pending if _addressed_to(block, agent.handle)]
             held = await held_blocks(
                 session,
                 project_id=topic.project_id,
                 topic_id=place.room_id,
-                recipient_handle=await self._acting_handle(session, topic.id, agent),
+                recipient_handle=acting_agent,
             )
             pending = [block for block in pending if block.id not in held]
             notices = [block for block in notices if block.id not in held]
@@ -3856,7 +3851,9 @@ class ChatService:
             # 二、这一轮要不要一双手？见 `_is_dm`：不租地点的一轮桌上只有对话、
             # 记忆和平台工具，加上会话自己那块 64 MiB 草稿区。
             needs_place = not _is_dm(topic)
-            acting_agent = await self._acting_handle(session, topic.id, agent)
+            acting_agent = pinned_seat or await self._acting_handle(
+                session, topic.id, agent
+            )
             doc_root = await blocks.doc_root(place.room_id)
             # 工作话题的文档还空着时是 `""`，不是 None：提示词据此告诉坐进来的
             # 队友「建第一版」（`build_system_prompt`）。私聊没有这份文档要维护。
@@ -4252,6 +4249,8 @@ class ChatService:
             # "this one batch keeps failing" look identical, and the second one
             # is the diagnosis. Counting at prompt-build time is the only place
             # that sees a failed attempt at all.
+            if recipient_instance_id is not None:
+                await require_pinned_seat(session, place.room_id, recipient_instance_id)
             replay_n = await blocks.bump_prompt_attempts(prompt_pending_ids, turn_id)
             # Committed HERE and not left to ride the conditional commit further
             # down: that one only fires on a topic's FIRST turn (compute_config
@@ -4284,6 +4283,8 @@ class ChatService:
                     topic, project.settings if project else None
                 ).model_dump()
                 await session.commit()
+            if recipient_instance_id is not None:
+                await require_pinned_seat(session, place.room_id, recipient_instance_id)
             phases_ms["committed"] = (time.monotonic() - started) * 1000
         logger.info(
             "chat_assembly_timing topic=%s turn=%s elapsed_ms=%.3f phases_ms=%s",

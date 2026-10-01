@@ -53,6 +53,7 @@ from tests.unit.test_claude_runner import Machine
         "ordinary-resume",
         "ordinary-recovery",
         "ordinary-removed",
+        "ordinary-prepare-removed",
         "history-multi",
         "history-multi-session",
         "history-multi-missing",

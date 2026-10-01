@@ -91,18 +91,53 @@ async def finish_deferred_message(
         allow.set()
         assert await chat.recover_sessions() == 1
         await chat.replays_settled()
-    elif mode == "ordinary-removed":
+    elif mode in ("ordinary-removed", "ordinary-prepare-removed"):
         runner = get_work_runner()
-        admit = runner._admit
         queued, released = asyncio.Event(), asyncio.Event()
+        if mode == "ordinary-removed":
+            admit = runner._admit
 
-        async def paused_admit(service, room, turn):
-            if turn == ordinary_id:
-                queued.set()
-                await released.wait()
-            return await admit(service, room, turn)
+            async def paused_admit(service, room, turn):
+                if turn == ordinary_id:
+                    queued.set()
+                    await released.wait()
+                return await admit(service, room, turn)
 
-        monkeypatch.setattr(runner, "_admit", paused_admit)
+            monkeypatch.setattr(runner, "_admit", paused_admit)
+        else:
+            from app.domain.agent_instance.services import AgentInstanceService
+
+            assemble = chat._assemble_turn
+            lookup = AgentInstanceService.get_in_project
+            held_blocks = chat_module.held_blocks
+            held_seats = []
+            preparing = None
+
+            async def tracked_assembly(**kwargs):
+                nonlocal preparing
+                if kwargs["turn_id"] == ordinary_id:
+                    preparing = asyncio.current_task()
+                try:
+                    return await assemble(**kwargs)
+                finally:
+                    preparing = None
+
+            async def paused_lookup(service, **kwargs):
+                # The explicit-instance roster check has returned; acting-seat
+                # selection and the final preparation check have not run yet.
+                if asyncio.current_task() is preparing:
+                    queued.set()
+                    await released.wait()
+                return await lookup(service, **kwargs)
+
+            async def observed_holds(session, **kwargs):
+                if asyncio.current_task() is preparing:
+                    held_seats.append(kwargs["recipient_handle"])
+                return await held_blocks(session, **kwargs)
+
+            monkeypatch.setattr(chat, "_assemble_turn", tracked_assembly)
+            monkeypatch.setattr(AgentInstanceService, "get_in_project", paused_lookup)
+            monkeypatch.setattr(chat_module, "held_blocks", observed_holds)
         allow.set()
         async with asyncio.timeout(30):
             while not queued.is_set():
@@ -122,6 +157,8 @@ async def finish_deferred_message(
             released.set()
         await runner.drain(10)
         await settle_turn(chat, topic)
+        if mode == "ordinary-prepare-removed":
+            assert held_seats == [recipient_handle]
         async with client.test_request_factory() as session:
             rows = list(
                 await session.scalars(
