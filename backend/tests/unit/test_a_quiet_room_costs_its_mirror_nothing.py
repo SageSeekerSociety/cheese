@@ -114,13 +114,15 @@ def _subscription(tmp_path, journal: list[dict], landed: list[object], asked: li
     async def announce():
         pass
 
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code")
     return Subscription(
-        SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese-a", harness="claude-code"),
+        session,
         tmp_path / "records.sqlite",
         call,
         consume,
         activity,
         session_id=None,
+        recipient_handle=session.agent_handle,
         announce=announce,
     )
 

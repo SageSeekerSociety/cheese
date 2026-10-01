@@ -139,6 +139,7 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
             base_url="http://testserver",
             headers=headers,
         ) as http:
+
             async def answer(name, payload):
                 token = requester.set(name)
                 try:

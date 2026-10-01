@@ -129,6 +129,46 @@ afterEach(() => {
 })
 
 describe('atomic Ask group controller', () => {
+  it('adopts current settlement from replay blocks without earlier websocket or GET', async () => {
+    const h = setup()
+    await flush()
+    h.choose()
+    h.choose('q2')
+    mocks.settle.mockRejectedValueOnce(new Error('lost response'))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    const original = JSON.parse(JSON.stringify(h.state().pending!.payload)) as AskGroupSubmission
+    const v1 = result(h.data, original)
+    const correction = makeGroupSubmission(v1, { q1: { ...emptyAskDraft(), kind: 'option', option: 'B' } })
+    const v2 = result(v1, correction)
+    v2.settlement!.delivery_event_id = 'current-event'
+    for (const block of v2.blocks) block.meta!.group_settle = v2.settlement
+    const oldReceipt = {
+      event_id: 'event',
+      state: 'received' as const,
+      attempts: 1,
+      last_error: null,
+      sent_at: null,
+      received_at: '2026-10-01T18:00:00Z',
+      completed_at: null,
+    }
+    mocks.settle.mockResolvedValueOnce({ ...v1, blocks: v2.blocks, receipt: oldReceipt })
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    expect(h.state().pending).toBeNull()
+    expect(h.state().data!.settlement!.v).toBe(2)
+    expect(h.state().data!.blocks[0]!.meta!.answer_log!.at(-1)!.v).toBe(2)
+    expect(h.state().data!.receipt).toBeNull()
+    expect(h.state().confirmedOperation).toEqual({ settlement: v1.settlement, receipt: oldReceipt })
+    expect(h.state().fresh).toBe(false)
+    expect(mocks.settle.mock.calls[1]![1]).toEqual(original)
+    mocks.read.mockResolvedValue(v2)
+    h.askGroupAction(h.data.group, { type: 'refresh' })
+    await flush()
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    expect(mocks.settle.mock.calls[2]![1].expect_version).toBe(2)
+  })
+
   it('confirms delayed POST v1 without rolling back websocket v2 or its new draft', async () => {
     const h = setup()
     await flush()

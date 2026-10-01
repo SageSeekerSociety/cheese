@@ -129,11 +129,7 @@ export const ACCEPT_CHECKS = frame(4).checks
  * 答完也**不清它** —— `answer_options` 只往 `answer_log` 追加，末条是生效的那一版。
  */
 const ASK_TEXT = '这次的作业按哪种方式收？'
-const ASK_OPTIONS = [
-  { text: '课程平台收文件' },
-  { text: '发到课程邮箱' },
-  { text: '课上交纸质' },
-]
+const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮箱' }, { text: '课上交纸质' }]
 /** 这道题在等谁答：发起那一轮的人，谁答谁就是他。 */
 const ASK_WAITING_FOR = 'wang'
 

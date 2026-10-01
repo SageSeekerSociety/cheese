@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.claude_code.protocol import (
     INPUT_PROTOCOL,
     InputProtocolUnavailable,
@@ -49,7 +49,7 @@ async def test_old_runner_refuses_before_registration_or_external_input(operatio
             await runtime.send(
                 session,
                 "answer",
-                None,
+                Opening(system_prompt=""),
                 work_id=work,
                 on_mark=lambda _: pytest.fail("must not open a work"),
                 register_input=register,

@@ -461,8 +461,10 @@ async def test_a_day_of_unread_output_is_stepped_over_without_reading_it(tmp_pat
         {**row, "at": (now - timedelta(days=1)).isoformat()}
         for row in _long_turn(str(uuid.uuid4()), 5 * PAGE)
     ]
-    # This case contains only expired output. Receipts have separate retention.
+    # Only expired output: neither a receipt nor an attributed legacy result.
+    # Both are retained independently until their input can be reconciled.
     old[0]["record"]["cheese"].pop("receipt")
+    old[-1]["record"]["cheese"] = {}
     journal = [
         *old,
         *_said_turn(str(uuid.uuid4()), "said just now", first=len(old) + 1, at=now),

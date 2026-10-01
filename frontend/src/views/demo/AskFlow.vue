@@ -25,61 +25,11 @@
  * 样式全走 `style.css` 的令牌，深色是白拿的（这里没有一个 `--xxx-dark`）。文案先写死
  * 中文，接进产品时再迁进 `zh-CN` / `en` 两张表。
  */
+import type { AskFlowProps, AskOption, AskQuestion, QState } from './askFlowState'
+
 import { computed, ref, watch } from 'vue'
-
-export interface AskOption {
-  /** 1-5 个字，给人看的短标签。 */
-  label: string
-  /** 一句「选了会怎样」。Codex 管这叫 impact/tradeoff —— 先看后果再点。 */
-  description?: string
-}
-
-export interface AskQuestion {
-  /** 稳定 id，答对得上题（Codex: snake_case）。 */
-  id: string
-  /** ≤12 字的短标签，用在题与题之间切换的那一条上。 */
-  header: string
-  /** 一句话，自包含 —— 不靠上面的上下文也看得懂。 */
-  question: string
-  options: AskOption[]
-  /** 「2 小时了」这种。没有就不画岁数那一段。 */
-  age?: string
-}
-
-export interface AskFlowProps {
-  questions: AskQuestion[]
-  /** 谁在答。只用来填回执。 */
-  answeredBy?: string
-  /** 预览站要能逐格摆出某个时刻，所以起点可以给定。产品里用不到这几样。 */
-  initialIndex?: number
-  initialPicked?: Record<string, number | null>
-  initialNotes?: Record<string, string>
-  /** 已交但没成功 —— 失败要看得见，不能假装答上了。 */
-  initialFailed?: string[]
-  /** 已经答过的题。 */
-  initialAnswered?: Record<string, { option: string; note: string; by: string; at: string }>
-  /** 稍后处理过的题。 */
-  initialDeferred?: string[]
-  /** 一开始就摆出「有 N 件没答，照样交吗」那一格。 */
-  initialConfirm?: boolean
-  /**
-   * 把回答交出去的那一步。产品里是 `POST /topics/blocks/{id}/answer`，预览里接假服务。
-   *
-   * **不给就当同步成功** —— 预览站要逐格摆固定时刻，不能每次渲染都去碰网络。
-   * 「失败 → 输入还在 → 重试成功」这条链路靠它走通：假服务第一次拒、第二次放行，
-   * **组件自己不造失败**。
-   */
-  submitAnswer?: (payload: { id: string; option: string; note: string }) => Promise<void>
-  /**
-   * 给了就按这个键把草稿和未交的回答存进 `localStorage`，刷新回来还在。
-   *
-   * **这是本次的新增目标，不是 Codex 已有的能力** —— 见报告里的来源核对：Codex 的
-   * 草稿只在它自己那次进程里（`AnswerState` 是内存态，打断时连已交的答案都不存）。
-   * 预览站里给它一个键是为了让「刷新回来还在」这句话当场成立；预览站各格要摆固定
-   * 时刻，所以不给键就不存，`initial*` 照旧钉住。
-   */
-  persistKey?: string
-}
+export type { AskFlowProps, AskOption, AskQuestion } from './askFlowState'
+import { restoreFlowDraft, saveFlowDraft } from './askFlowState'
 
 const props = withDefaults(defineProps<AskFlowProps>(), {
   answeredBy: '王长鑫',
@@ -99,20 +49,6 @@ const emit = defineEmits<{
   correct: [payload: { id: string; option: string; note: string; was: string }]
 }>()
 
-/** 一道题自己的答复状态。草稿和「交没交」都记在题上，不记在整批上。 */
-interface QState {
-  picked: number | null
-  note: string
-  /** Codex 管这叫 `answer_committed`：这道题的答复是否被明确交出去过。 */
-  committed: boolean
-  deferred: boolean
-  /** 交了但没成功。 */
-  failed: boolean
-  submitted: { option: string; note: string; by: string; at: string } | null
-  /** 改过答案的话，上一版留在这里 —— 更正不抹掉原来的答案。 */
-  was: { option: string; note: string } | null
-}
-
 const state = ref<Record<string, QState>>({})
 for (const q of props.questions) {
   state.value[q.id] = {
@@ -126,79 +62,19 @@ for (const q of props.questions) {
   }
 }
 
-const currentIdx = ref(
-  Math.min(Math.max(props.initialIndex, 0), Math.max(props.questions.length - 1, 0)),
-)
+const currentIdx = ref(Math.min(Math.max(props.initialIndex, 0), Math.max(props.questions.length - 1, 0)))
 
-/**
- * 草稿和未交的回答落 `localStorage`，刷新、断线重连回来还在 —— **本次新增目标**。
- *
- * 存的只有「还没交出去」的那部分和已经交过的那部分，不存界面位（当前第几题在
- * `sessionStorage` 里都不必，回来落在第一件还没答的事上更合用）。存不进去（隐私模式、
- * 配额满）就当没这回事，不能因为存不动就不让人答题。
- */
-const STORE_PREFIX = 'cheesex.askflow.'
-
-function save() {
-  if (!props.persistKey) return
-  try {
-    const out: Record<string, unknown> = {}
-    for (const q of props.questions) {
-      const s = state.value[q.id]
-      if (!s) continue
-      out[q.id] = {
-        picked: s.picked,
-        note: s.note,
-        deferred: s.deferred,
-        submitted: s.submitted,
-        was: s.was,
-      }
-    }
-    window.localStorage.setItem(STORE_PREFIX + props.persistKey, JSON.stringify(out))
-  } catch {
-    // 存不动就算了，答题不受影响。
-  }
-}
-
-function restore() {
-  if (!props.persistKey) return
-  try {
-    const raw = window.localStorage.getItem(STORE_PREFIX + props.persistKey)
-    if (!raw) return
-    const saved = JSON.parse(raw) as Record<string, Partial<QState>>
-    for (const q of props.questions) {
-      const s = saved[q.id]
-      if (!s) continue
-      const cur = state.value[q.id]
-      cur.picked = s.picked ?? cur.picked
-      cur.note = s.note ?? cur.note
-      cur.deferred = s.deferred ?? cur.deferred
-      cur.submitted = s.submitted ?? cur.submitted
-      cur.was = s.was ?? cur.was
-      cur.committed = Boolean(cur.submitted)
-      // 「没交上」是那一刻的事，刷新回来按还没交处理，让人重试而不是永远卡在红字上。
-      cur.failed = false
-    }
-  } catch {
-    // 读坏了就当没有。
-  }
-}
-
-restore()
-watch(state, save, { deep: true })
+restoreFlowDraft(props.persistKey, props.questions, state.value)
+watch(state, () => saveFlowDraft(props.persistKey, props.questions, state.value), { deep: true })
 const current = computed(() => props.questions[currentIdx.value])
 const cur = computed(() => state.value[current.value.id])
 
 const total = computed(() => props.questions.length)
-const answeredCount = computed(
-  () => props.questions.filter((q) => state.value[q.id]?.submitted).length,
-)
+const answeredCount = computed(() => props.questions.filter((q) => state.value[q.id]?.submitted).length)
 const deferredCount = computed(
-  () => props.questions.filter((q) => state.value[q.id]?.deferred && !state.value[q.id]?.submitted).length,
+  () => props.questions.filter((q) => state.value[q.id]?.deferred && !state.value[q.id]?.submitted).length
 )
-const failedCount = computed(
-  () => props.questions.filter((q) => state.value[q.id]?.failed).length,
-)
+const failedCount = computed(() => props.questions.filter((q) => state.value[q.id]?.failed).length)
 
 /**
  * 「以上都不是」是**界面自动加的**（Codex: the client will add a free-form "Other" option
@@ -218,9 +94,7 @@ const hasDraft = computed(() => {
   return !s.committed && (s.picked !== null || s.note.trim() !== '')
 })
 
-const isOtherPicked = computed(
-  () => cur.value.picked !== null && cur.value.picked === current.value.options.length,
-)
+const isOtherPicked = computed(() => cur.value.picked !== null && cur.value.picked === current.value.options.length)
 
 /** 这道题算不算「答了」：选了一项，或者写了话。纯问答题靠写话。 */
 function isAnswered(id: string, s: QState): boolean {
@@ -228,9 +102,7 @@ function isAnswered(id: string, s: QState): boolean {
   return s.picked !== null || s.note.trim() !== ''
 }
 
-const unansweredCount = computed(
-  () => props.questions.filter((q) => !isAnswered(q.id, state.value[q.id])).length,
-)
+const unansweredCount = computed(() => props.questions.filter((q) => !isAnswered(q.id, state.value[q.id])).length)
 
 /** 提交前若有没答的题，先问一句 —— Codex 的「Submit with N unanswered questions?」。 */
 const confirmUnanswered = ref(props.initialConfirm)
@@ -351,9 +223,7 @@ function onNoteEnter(e: KeyboardEvent) {
 function onKey(e: KeyboardEvent) {
   if (e.isComposing || e.keyCode === 229) return
   const t = e.target as HTMLElement | null
-  const typing =
-    t !== null &&
-    (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  const typing = t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
   if (typing) return
 
   const s = cur.value
@@ -424,10 +294,7 @@ function onKey(e: KeyboardEvent) {
     </nav>
 
     <!-- 当前这题 -->
-    <article
-      class="ask"
-      :class="{ 'ask--answered': cur.submitted, 'ask--deferred': cur.deferred && !cur.submitted }"
-    >
+    <article class="ask" :class="{ 'ask--answered': cur.submitted, 'ask--deferred': cur.deferred && !cur.submitted }">
       <header class="ask__status">
         <span class="ask__dot" aria-hidden="true"></span>
         <span class="ask__status-text">
@@ -490,6 +357,7 @@ function onKey(e: KeyboardEvent) {
           <span class="ask__note-label">备注（可不写）</span>
           <input
             v-model="cur.note"
+            autocomplete="off"
             class="ask__note"
             type="text"
             placeholder="或者写一句别的——选项都不合适时，这里说你真正想要的"
@@ -505,7 +373,9 @@ function onKey(e: KeyboardEvent) {
 
         <!-- 带着没答的题提交，先问一句。 -->
         <div v-if="confirmUnanswered" class="ask__confirm" role="alertdialog">
-          <p class="ask__confirm-text">还有 <strong>{{ unansweredCount }}</strong> 件没答，照样交吗？</p>
+          <p class="ask__confirm-text">
+            还有 <strong>{{ unansweredCount }}</strong> 件没答，照样交吗？
+          </p>
           <div class="ask__confirm-actions">
             <button type="button" class="ask__ghost" @click="confirmUnanswered = false">回去补</button>
             <button type="button" class="ask__primary" @click="submitCurrent">照样交</button>
@@ -514,7 +384,12 @@ function onKey(e: KeyboardEvent) {
 
         <footer class="ask__actions">
           <!-- 主操作，这一组里唯一的琥珀（设计规范 §1.6）。 -->
-          <button type="button" class="ask__primary" :disabled="cur.picked === null && !cur.note.trim()" @click="submitCurrent">
+          <button
+            type="button"
+            class="ask__primary"
+            :disabled="cur.picked === null && !cur.note.trim()"
+            @click="submitCurrent"
+          >
             提交回答
           </button>
           <button type="button" class="ask__later" @click="deferCurrent">稍后处理</button>
@@ -527,7 +402,9 @@ function onKey(e: KeyboardEvent) {
 
     <!-- 已答清单：Codex 的回执形状是「Questions N/M answered」+ 每题一行答案。 -->
     <section class="flow__echo">
-      <h3 class="flow__echo-title">已答 <span class="flow__echo-count">{{ answeredCount }}/{{ total }}</span></h3>
+      <h3 class="flow__echo-title">
+        已答 <span class="flow__echo-count">{{ answeredCount }}/{{ total }}</span>
+      </h3>
       <ul class="flow__echo-list">
         <li v-for="q in questions" :key="q.id" class="flow__echo-item">
           <span class="flow__echo-q">{{ q.header }}</span>
@@ -541,9 +418,7 @@ function onKey(e: KeyboardEvent) {
       </ul>
     </section>
 
-    <p class="flow__persist">
-      草稿和没交的回答存在这台设备上，刷新、断线重连回来都还在，不会当成已经答了。
-    </p>
+    <p class="flow__persist">草稿和没交的回答存在这台设备上，刷新、断线重连回来都还在，不会当成已经答了。</p>
   </section>
 </template>
 

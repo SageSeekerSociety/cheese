@@ -288,8 +288,12 @@ def test_only_the_original_answerer_can_correct(client):
     corrected = _answer(
         client,
         blk["id"],
-        {"client_op_id": "op-3", "expect_version": 1, "kind": "option",
-         "option": "pageStart"},
+        {
+            "client_op_id": "op-3",
+            "expect_version": 1,
+            "kind": "option",
+            "option": "pageStart",
+        },
     )
     assert corrected.status_code == 200, corrected.text
     log = corrected.json()["data"]["meta"]["answer_log"]
@@ -332,8 +336,12 @@ def test_a_stale_expect_version_loses_the_race(client):
     stale = _answer(
         client,
         blk["id"],
-        {"client_op_id": "op-2", "expect_version": 0, "kind": "option",
-         "option": "pageStart"},
+        {
+            "client_op_id": "op-2",
+            "expect_version": 0,
+            "kind": "option",
+            "option": "pageStart",
+        },
     )
     assert stale.status_code == 409, stale.text
 

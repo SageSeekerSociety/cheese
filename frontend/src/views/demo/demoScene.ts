@@ -379,22 +379,22 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
           const line = chat.find((l) => l.id === e.id)
           if (line?.block)
             line.block = {
-            ...line.block,
-            meta: {
-              ...line.block.meta,
-              answer_log: [
-                {
-                  v: 1,
-                  kind: 'option',
-                  option: e.option,
-                  note: null,
-                  by: e.by,
-                  at: `${created_at}`,
-                  client_op_id: 'demo',
-                },
-              ],
-            },
-          }
+              ...line.block,
+              meta: {
+                ...line.block.meta,
+                answer_log: [
+                  {
+                    v: 1,
+                    kind: 'option',
+                    option: e.option,
+                    note: null,
+                    by: e.by,
+                    at: `${created_at}`,
+                    client_op_id: 'demo',
+                  },
+                ],
+              },
+            }
           break
         }
         case 'checklist': {

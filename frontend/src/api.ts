@@ -1899,24 +1899,7 @@ export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
 }
 
-// 选项问题 (cheese_ask): one-click answer.
-//
-// `expect_version` 是这次作答读到的那一版（初答 0，之后是 `answer_log` 末项的 `v`），
-// `client_op_id` 是这次操作自己的 id —— 同一个 id 重试拿回的是同一版，不会记两次。
-export type AnswerPayload = {
-  kind: 'option' | 'note' | 'reject'
-  option?: string
-  note?: string
-  expect_version: number
-  client_op_id: string
-}
-
-export function answerOptions(blockId: string, payload: AnswerPayload, author: string): Promise<Block> {
-  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
-    method: 'POST',
-    body: JSON.stringify({ author, ...payload }),
-  })
-}
+export { answerOptions, type AnswerPayload } from './api/answers'
 
 // 叫芝士现在就读它还没读到的消息（一轮失败之后的「重试」）。不发新消息 —— 那些
 // 消息已经在时间线上了，补一条一模一样的只会让人分不清哪条是真的。

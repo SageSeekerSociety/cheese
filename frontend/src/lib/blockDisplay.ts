@@ -97,8 +97,7 @@ export function askAnswered(block: Block): AskAnswer | null {
   if (!Array.isArray(log) || !log.length) return null
   const last = log[log.length - 1] as Record<string, unknown>
   const kind = (last.kind ?? 'option') as AskAnswer['kind']
-  const label =
-    kind === 'reject' ? '以上都不是' : kind === 'note' ? String(last.note ?? '') : String(last.option ?? '')
+  const label = kind === 'reject' ? '以上都不是' : kind === 'note' ? String(last.note ?? '') : String(last.option ?? '')
   return { kind, label, by: String(last.by ?? '') }
 }
 

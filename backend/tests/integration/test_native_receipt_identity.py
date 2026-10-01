@@ -202,9 +202,12 @@ def test_registration_retry_and_echo_can_overlap(client, monkeypatch, first):
                 if name == "registration":
                     await register_input(session, identity, effects)
                 else:
-                    assert await record_receipt(
-                        session, InputReceipt(identity, "native_echo")
-                    ) is not None
+                    assert (
+                        await record_receipt(
+                            session, InputReceipt(identity, "native_echo")
+                        )
+                        is not None
+                    )
                 await session.commit()
 
         async def observe_wait():

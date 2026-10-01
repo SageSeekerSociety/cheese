@@ -54,16 +54,13 @@ describe('replySnippet', () => {
   })
 })
 
-
 function asked(meta: Record<string, unknown>): Block {
   return { ...said('cheese', '分页方案选哪个？'), meta } as Block
 }
 
 describe('一道选项题读出来是什么', () => {
   it('选项是对象，文字取 text，解释提问方给了才带', () => {
-    const opts = askOptions(
-      asked({ options: [{ text: 'cursor', explain: '一条 SQL' }, { text: 'pageStart' }] }),
-    )
+    const opts = askOptions(asked({ options: [{ text: 'cursor', explain: '一条 SQL' }, { text: 'pageStart' }] }))
     expect(opts).toEqual([{ text: 'cursor', explain: '一条 SQL' }, { text: 'pageStart' }])
   })
 
@@ -86,9 +83,17 @@ describe('答案是日志，末条生效', () => {
         options: [{ text: 'a' }, { text: 'b' }],
         answer_log: [
           { v: 1, kind: 'option', option: 'a', note: null, by: 'user-1', at: null, client_op_id: 'migrated' },
-          { v: 2, kind: 'option', option: 'b', note: null, by: 'user-1', at: '2026-09-30T00:00:00Z', client_op_id: 'op-2' },
+          {
+            v: 2,
+            kind: 'option',
+            option: 'b',
+            note: null,
+            by: 'user-1',
+            at: '2026-09-30T00:00:00Z',
+            client_op_id: 'op-2',
+          },
         ],
-      }),
+      })
     )
     expect(answered).toEqual({ kind: 'option', label: 'b', by: 'user-1' })
   })
@@ -98,7 +103,15 @@ describe('答案是日志，末条生效', () => {
       options: [{ text: 'a' }, { text: 'b' }],
       answer_log: [
         { v: 1, kind: 'option', option: 'a', note: null, by: 'user-1', at: null, client_op_id: 'migrated' },
-        { v: 2, kind: 'option', option: 'b', note: null, by: 'user-1', at: '2026-09-30T00:00:00Z', client_op_id: 'op-2' },
+        {
+          v: 2,
+          kind: 'option',
+          option: 'b',
+          note: null,
+          by: 'user-1',
+          at: '2026-09-30T00:00:00Z',
+          client_op_id: 'op-2',
+        },
       ],
     }).meta as { answer_log: { option: string | null }[] }
     expect(meta.answer_log.map((e) => e.option)).toEqual(['a', 'b'])
@@ -106,10 +119,18 @@ describe('答案是日志，末条生效', () => {
 
   it('reject 说「以上都不是」，note 说的是他自己写的那句', () => {
     expect(
-      askAnswered(asked({ answer_log: [{ v: 1, kind: 'reject', option: null, note: null, by: 'u', at: null, client_op_id: 'x' }] })),
+      askAnswered(
+        asked({
+          answer_log: [{ v: 1, kind: 'reject', option: null, note: null, by: 'u', at: null, client_op_id: 'x' }],
+        })
+      )
     ).toEqual({ kind: 'reject', label: '以上都不是', by: 'u' })
     expect(
-      askAnswered(asked({ answer_log: [{ v: 1, kind: 'note', option: null, note: '走第三条路', by: 'u', at: null, client_op_id: 'x' }] })),
+      askAnswered(
+        asked({
+          answer_log: [{ v: 1, kind: 'note', option: null, note: '走第三条路', by: 'u', at: null, client_op_id: 'x' }],
+        })
+      )
     ).toEqual({ kind: 'note', label: '走第三条路', by: 'u' })
   })
 
@@ -119,8 +140,8 @@ describe('答案是日志，末条生效', () => {
       askVersion(
         asked({
           answer_log: [{ v: 1, kind: 'option', option: 'a', note: null, by: 'u', at: null, client_op_id: 'x' }],
-        }),
-      ),
+        })
+      )
     ).toBe(1)
   })
 })

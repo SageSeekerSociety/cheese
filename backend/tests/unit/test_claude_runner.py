@@ -252,6 +252,7 @@ def test_a_send_opens_a_turn_for_its_work_and_result_closes_it(screen, contract)
         **owner,
         "receipt": True,
         "receipt_work_id": work,
+        "receipt_execution_work_id": work,
         "receipt_session_id": screen.call("ping")["session_id"],
     }
     turn = _turn(screen.records(), opened["sequence"])

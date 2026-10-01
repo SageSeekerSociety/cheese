@@ -47,7 +47,7 @@ const props = withDefaults(
     initialPicked: null,
     initialNote: '',
     initialSubmitted: null,
-  },
+  }
 )
 
 const emit = defineEmits<{
@@ -88,7 +88,9 @@ const notePlaceholder = '或者写一句别的——选项都不合适时，这�
     <!-- 状态条：一眼看出这是「等你回答」，而不是谁随口说的一句话。 -->
     <header class="ask__status">
       <span class="ask__dot" aria-hidden="true"></span>
-      <span class="ask__status-text">{{ phase === 'asking' ? '等你回答' : phase === 'deferred' ? '你先放着' : '已回答' }}</span>
+      <span class="ask__status-text">{{
+        phase === 'asking' ? '等你回答' : phase === 'deferred' ? '你先放着' : '已回答'
+      }}</span>
       <span v-if="age && phase !== 'answered'" class="ask__age">{{ age }}</span>
     </header>
 
@@ -136,6 +138,7 @@ const notePlaceholder = '或者写一句别的——选项都不合适时，这�
       <!-- 自由输入：跟着这一次回答走。选哪一项都能带一句，也可以不带。 -->
       <input
         v-model="note"
+        autocomplete="off"
         class="ask__note"
         type="text"
         :placeholder="notePlaceholder"

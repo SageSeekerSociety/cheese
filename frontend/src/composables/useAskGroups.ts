@@ -203,7 +203,7 @@ export function useAskGroups(options: {
     let settlement = incoming.settlement
     const candidates = [
       state.data?.settlement,
-      ...known
+      ...[...known, ...incoming.blocks]
         .filter((b) => {
           const scope = groupOf(b)
           return scope && groupKey(scope) === groupKey(state.scope)

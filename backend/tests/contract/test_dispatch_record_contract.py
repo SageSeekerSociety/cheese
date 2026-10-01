@@ -40,6 +40,7 @@ from sqlalchemy import select
 from app.core.db import get_db
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import dispatch_log, execution
+from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import harness_for
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
@@ -80,8 +81,17 @@ class _Chat:
     次」，多一个方法就多一处它可以从别的地方绿掉。
     """
 
+    # Admission resolves the fixture's real room and seat before the fake send.
+    _turn_seat_handle = ChatService._turn_seat_handle
+    _seat_lock_for = ChatService._seat_lock_for
+    _resolved_agent = ChatService._resolved_agent
+    _session_agent = staticmethod(ChatService._session_agent)
+    _acting_handle = ChatService._acting_handle
+
     def __init__(self, factory):
         self.session_factory = factory
+        self._sessions = factory
+        self._seat_locks = {}
         self.events: list[tuple[uuid.UUID, str, dict]] = []
         self.converse_calls: list[dict] = []
 

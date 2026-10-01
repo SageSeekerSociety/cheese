@@ -20,7 +20,7 @@
 // 用 `fireEvent` 不用 `userEvent`：本仓库只装了 `@testing-library/vue`，交互那几件
 // 事（`TransferProjectDialog.spec.ts` 等）也都走它，不为了这一份多引一个依赖。
 import { fireEvent, render } from '@testing-library/vue'
-import { describe, expect, it, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import AskFlow, { type AskQuestion } from './AskFlow.vue'
 import { fakeAnswerService } from './fakeAnswerService'

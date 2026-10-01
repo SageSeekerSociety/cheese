@@ -1,5 +1,6 @@
-import { request } from '../api'
 import type { AskGroupData, AskGroupScope, AskGroupSubmission } from '../lib/askGroup'
+
+import { request } from '../api'
 import { assertGroupData } from '../lib/askGroup'
 
 // Fixed contract: ask-ux-preview/group-api.md at 3f88423c. These are real
@@ -14,7 +15,8 @@ export async function readAskGroup(scope: AskGroupScope): Promise<AskGroupData> 
 
 export async function settleAskGroup(scope: AskGroupScope, payload: AskGroupSubmission): Promise<AskGroupData> {
   const data = await request<AskGroupData>(`/topics/asks/${encodeURIComponent(scope.id)}/settle`, {
-    method: 'POST', body: JSON.stringify(payload),
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
   assertGroupData(data, scope)
   return data
