@@ -152,7 +152,8 @@
         "knowledgeIds": "知识条目编号",
         "listHint": "用逗号分隔"
       },
-      "displayOrderHint": "越小越靠前显示"
+      "displayOrderHint": "越小越靠前显示",
+      "loadFailed": "获取分类失败"
     },
     "publishTask": {
       "title": "发布题目",
@@ -377,6 +378,19 @@
       "confirmNote": "确认后这 {n} 道都会进{queue}队列 —— 解析归解析，上板还是要人审。",
       "cancel": "取消",
       "confirm": "确认发布 {n} 道"
+    },
+    "data": {
+      "loadFailed": "获取空间信息失败",
+      "updateSuccess": "更新空间信息成功",
+      "updateFailed": "更新空间信息失败",
+      "templatesFailed": "更新模板失败",
+      "classificationTopicsFailed": "更新分类话题失败",
+      "adminAddSuccess": "添加管理员成功",
+      "adminAddFailed": "添加管理员失败",
+      "adminRoleSuccess": "更新管理员角色成功",
+      "adminRoleFailed": "更新管理员角色失败",
+      "adminRemoveSuccess": "移除管理员成功",
+      "adminRemoveFailed": "移除管理员失败"
     }
   },
   "domainGroups": {

@@ -96,7 +96,7 @@
                       <v-text-field
                         autocomplete="off"
                         clearable
-                        label="搜索用户"
+                        :label="t('questions.detail.searchUsers')"
                         variant="outlined"
                         density="compact"
                         single-line
@@ -109,7 +109,7 @@
                   <v-card-actions>
                     <v-spacer></v-spacer>
 
-                    <v-btn text="关闭" variant="text" @click="isActive.value = false"></v-btn>
+                    <v-btn :text="t('questions.detail.close')" variant="text" @click="isActive.value = false"></v-btn>
                   </v-card-actions>
                 </v-card>
               </template>
@@ -139,7 +139,8 @@
                       >
                         <template #append>
                           <span style="vertical-align: baseline; min-width: 5rem; text-align: end">
-                            <span>悬赏 {{ addBountyInput }} </span><v-icon>mdi-cheese</v-icon>
+                            <span>{{ t('questions.detail.bounty', { bounty: addBountyInput }) }} </span
+                            ><v-icon>mdi-cheese</v-icon>
                           </span>
                         </template>
                       </v-slider>
@@ -149,7 +150,7 @@
                   <v-card-actions>
                     <v-spacer></v-spacer>
 
-                    <v-btn text="取消" variant="text" @click="isActive.value = false"></v-btn>
+                    <v-btn :text="t('global.cancel')" variant="text" @click="isActive.value = false"></v-btn>
                     <v-btn variant="flat" color="primary" :loading="bountyLoading" @click="addBounty">{{
                       t('questions.detail.buttons.addBounty')
                     }}</v-btn>
@@ -226,7 +227,7 @@
             <v-card-text>
               <rich-editor
                 holder="editor"
-                :config="{ ...DEFAULT_CONFIG, placeholder: t('questions.detail.postAnswerPlaceholder') }"
+                :config="{ ...defaultEditorConfig(), placeholder: t('questions.detail.postAnswerPlaceholder') }"
                 @create="onCreate"
               />
             </v-card-text>
@@ -253,7 +254,7 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 
-import { DEFAULT_CONFIG } from '@/utils/editor'
+import { defaultEditorConfig } from '@/utils/editor'
 import { getAvatarUrl } from '@/utils/materials'
 import { parse } from '@/utils/parser'
 

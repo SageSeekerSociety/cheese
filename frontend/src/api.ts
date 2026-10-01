@@ -74,6 +74,7 @@ import { createPreviewPdfReader } from './lib/previewPdf'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
+import { t } from './i18n'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
@@ -159,7 +160,7 @@ export class ApiError extends Error {
 
 export class RequestTimeoutError extends Error {
   constructor() {
-    super('请求等待超时，请重试')
+    super(t('global.request.timeout'))
     this.name = 'RequestTimeoutError'
   }
 }
@@ -171,14 +172,14 @@ async function withinBudget<T>(
   ms: number,
   outer?: AbortSignal | null
 ): Promise<T> {
-  if (outer?.aborted) throw outer.reason ?? new DOMException('请求已取消', 'AbortError')
+  if (outer?.aborted) throw outer.reason ?? new DOMException(t('global.request.canceled'), 'AbortError')
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   const cancelled = new Promise<never>((_, reject) => {
     onAbort = () => {
       controller.abort(outer?.reason)
-      reject(outer?.reason ?? new DOMException('请求已取消', 'AbortError'))
+      reject(outer?.reason ?? new DOMException(t('global.request.canceled'), 'AbortError'))
     }
     if (outer?.aborted) onAbort()
     else outer?.addEventListener('abort', onAbort, { once: true })
@@ -350,7 +351,7 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       const serverSaid = refusalText(body, details.error?.message || details.message || '')
       throw new ApiError(
         res.status,
-        serverSaid || `请求失败（HTTP ${res.status}）`,
+        serverSaid || t('global.request.failed', { status: res.status }),
         details.error?.name,
         res.headers?.get('X-Request-ID') ?? undefined,
         details.error?.retryable
@@ -1601,7 +1602,7 @@ export async function artifactVersionBytes(
   } catch {
     /* Keep the HTTP error when the server sent no JSON. */
   }
-  throw new Error(message || `未能读取这一版（HTTP ${response.status}）`)
+  throw new Error(message || t('global.request.versionReadFailed', { status: response.status }))
 }
 
 export function getProjectArtifact(projectId: string, artifactId: string): Promise<ProjectArtifactDetail> {
@@ -1685,7 +1686,7 @@ export async function attachLibraryFile(topicId: string, libraryPath: string): P
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || `添加失败（HTTP ${res.status}）`)
+    throw new Error(envelope?.message || t('global.request.addFailed', { status: res.status }))
   }
   return envelope.data
 }
@@ -1710,7 +1711,7 @@ export async function uploadAttachment(
   })
   const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
   if (!res.ok || !envelope || envelope.code !== 200) {
-    throw new Error(envelope?.message || `上传失败（HTTP ${res.status}）`)
+    throw new Error(envelope?.message || t('global.request.uploadFailed', { status: res.status }))
   }
   return envelope.data
 }
@@ -1740,7 +1741,7 @@ export function attachmentRawUrl(
  */
 export async function attachmentImageUrl(topicId: string, path: string): Promise<string> {
   const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
-  if (!res.ok) throw new Error(`图片加载失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
   return URL.createObjectURL(await res.blob())
 }
 
@@ -1756,7 +1757,7 @@ export async function previewFileBytes(
   const res = await fetch(`${attachmentRawUrl(topicId, path, task, source)}&download=true`, {
     headers: authHeaders(),
   })
-  if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
   return res.arrayBuffer()
 }
 
@@ -1818,7 +1819,7 @@ export async function previewDocumentPdf(
 // Downloads carry the same credentials as API requests, including token-only sessions.
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
   const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
-  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
   const url = URL.createObjectURL(await res.blob())
   const link = document.createElement('a')
   link.href = url
@@ -3417,16 +3418,15 @@ export async function downloadRoomFileRevision(topicId: string, revision: RoomFi
     `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
     { headers: authHeaders() }
   )
-  if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
   const blob = await res.blob()
   const leaf = revision.path.split('/').pop() ?? 'file'
   const dot = leaf.lastIndexOf('.')
-  const name =
-    dot > 0 ? `${leaf.slice(0, dot)}（第${revision.seq}版）${leaf.slice(dot)}` : `${leaf}（第${revision.seq}版）`
+  const [base, ext] = dot > 0 ? [leaf.slice(0, dot), leaf.slice(dot)] : [leaf, '']
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = name
+  a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

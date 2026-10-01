@@ -462,7 +462,10 @@
       "keysHint": "Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给{name}，可直接粘贴图片",
       "pasteHint": "可直接粘贴图片",
       "placeholderDm": "给{name}发消息",
-      "placeholder": "输入消息，{'@'}{name} 交给它处理"
+      "placeholder": "输入消息，{'@'}{name} 交给它处理",
+      "attachFiles": "上传文件（每个最大 10MB）",
+      "sendPhotos": "发送照片",
+      "send": "发送"
     },
     "dispatched": {
       "created": "新建任务",
@@ -1095,7 +1098,16 @@
     "autoTitle": "标题由平台自动命名，话题方向变了会更新",
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子话题 {count} 条新消息",
-    "moreActions": "更多操作"
+    "moreActions": "更多操作",
+    "chooseProject": "选择项目",
+    "switchProject": "切换项目",
+    "chooseProjectFirst": "先选择一个项目",
+    "topics": "话题",
+    "newTopic": "新建话题",
+    "creatingTopic": "正在创建话题",
+    "noneMine": "暂无与你相关的话题",
+    "othersUnread": "其他话题里有新消息",
+    "empty": "暂无话题"
   },
   "members": {
     "leave": "退出项目",
@@ -1648,5 +1660,17 @@
   "liveView": {
     "connecting": "连接现场中…",
     "closed": "现场已断开"
+  },
+  "labels": {
+    "notifKind": {
+      "decisionRequest": "决策请求",
+      "changeAlert": "变更提醒",
+      "acceptRequest": "审阅"
+    },
+    "topicStatus": {
+      "active": "进行中",
+      "archived": "已归档",
+      "draft": "草稿"
+    }
   }
 }
