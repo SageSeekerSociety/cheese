@@ -461,14 +461,18 @@ class BlockRepository:
         await self._session.flush()
         return block
 
-    async def current_checklist(self, room_id: uuid.UUID, author: str) -> Block | None:
-        """The newest checklist message ``author`` posted on the room's own line."""
+    async def current_checklist(
+        self, room_id: uuid.UUID, author: str, *, message: uuid.UUID | None = None
+    ) -> Block | None:
+        """The newest checklist message ``author`` posted on the room's own line,
+        or, given ``message``, that checklist on the room's own line whoever
+        wrote it: whether its writer may edit it is the edit's own rule."""
         stmt = (
             select(Block)
             .where(
                 *self._in_place(room_id, None),
                 Block.kind == BlockKind.message,
-                Block.author == author,
+                Block.author == author if message is None else Block.id == message,
                 Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())

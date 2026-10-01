@@ -128,12 +128,27 @@ AGENT_NOTICE_META_KEY = "agent_notice"
 # room reads as 「已编辑」; see `app.domain.block.editing`.
 EDITED_AT_META_KEY = "edited_at"
 
-# This message is an agent's step checklist, the one `todo_write` keeps editing:
+# This message is a member's step checklist, the one `todo_write` (or a person
+# in the composer) keeps editing:
 # ``{"items": [{"id", "subject", "status"}], "result": str | None}``. The room
 # draws the list from it; the text says the same thing for every other reader.
-# Its presence is also how the next `todo_write` finds which of its author's
-# messages to edit.
+# Its presence is also how the next write finds which of its author's messages
+# to edit.
 CHECKLIST_META_KEY = "checklist"
+
+# The step markers of the checklist message's text — what every reader who
+# does not draw `meta.checklist` gets (the agent reading the history, a copy, a
+# notification preview).
+_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
+
+
+def checklist_text(items: list[dict], result: str | None) -> str:
+    """The checklist as the message's text: one line per step, and the result
+    line under it once there is one."""
+    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
+    if result:
+        lines += ["", f"✅ {result}"]
+    return "\n".join(lines)
 
 
 def consumed_turn(block: "Block") -> str | None:

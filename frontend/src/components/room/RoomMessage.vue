@@ -7,7 +7,7 @@
 //
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
-import type { Block } from '../../cx_types'
+import type { Block, TodoItem } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 
 import { computed, ref, watch } from 'vue'
@@ -93,6 +93,8 @@ const emit = defineEmits<{
   (e: 'edit'): void
   (e: 'save-edit', text: string): void
   (e: 'cancel-edit'): void
+  /** 自己的清单改了一步：改过之后的整份。 */
+  (e: 'checklist', block: Block, items: TodoItem[]): void
 }>()
 
 // 作者改过它：正文后面标一句「已编辑」。
@@ -266,6 +268,8 @@ async function onAgentTextClick(e: MouseEvent) {
         :updated-at="block.meta?.edited_at ?? block.created_at"
         :edited="edited"
         :live="!!live"
+        :editable="mine && !outgoing"
+        @change="emit('checklist', block, $event)"
       />
       <template v-else-if="isAgent">
         <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />

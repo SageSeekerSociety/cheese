@@ -54,6 +54,7 @@ import { myHandle } from '../me'
 
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
+import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
 
@@ -160,6 +161,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
       askBusy.value = null
     }
   }
+
+  // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
+  const { postChecklist, changeChecklist } = useOwnChecklist({
+    topicId: () => topic()?.id,
+    show: (block) => {
+      if (!timeline.find(block.id)) return
+      timeline.replace(block)
+      historyChanges?.set(block.id, block)
+    },
+    fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
+  })
 
   // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
   // MVP picker: a fixed strip of the 8 most common reactions.
@@ -938,6 +950,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     send,
     askBusy,
     pickOption,
+    postChecklist,
+    changeChecklist,
     onReact,
     undoTitle,
     downloadAttachment,

@@ -434,7 +434,19 @@
       "running": "In progress"
     },
     "checklist": {
-      "updatedAt": "Checklist updated {time}"
+      "updatedAt": "Checklist updated {time}",
+      "compose": "Post a checklist",
+      "newTitle": "New checklist",
+      "post": "Post",
+      "stepsLabel": "Steps",
+      "stepsHint": "One step per line",
+      "tooManySteps": "At most {max} steps",
+      "stepTooLong": "Each step can be at most {max} characters",
+      "saveFailed": "Couldn't save the checklist",
+      "advance": "{step}: {status}",
+      "statusPending": "Not started",
+      "statusInProgress": "In progress",
+      "statusCompleted": "Done"
     },
     "backToChat": "Back to chat",
     "unselected": "Select a topic",

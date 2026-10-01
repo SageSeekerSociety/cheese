@@ -5,6 +5,10 @@ The agent writes it with the platform tool `todo_write`, which lands on
 write survives the turn and the next turn is actually told about it — and, in
 the room, the list is the agent's own message: posted by the first write, then
 edited by the next ones, until the agent starts a new one.
+
+A person writes a checklist through the same route, under the same message
+rules, but their list is only their message: it never becomes the plan the
+agent's next turn is handed back.
 """
 
 import pytest
@@ -14,6 +18,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
     post_message,
     post_project,
     room_agent_seat,
@@ -266,16 +271,168 @@ def test_a_malformed_checklist_changes_nothing(client, todos):
     assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
 
 
-def test_only_the_rooms_agent_writes_the_checklist(client):
+def test_a_caller_the_room_does_not_admit_writes_nothing(client):
     topic, headers = _room(client)
     other, _ = _room(client)
-    assert _write(client, topic, {}, PLAN).status_code in (401, 403)
-    assert (
-        _write(client, topic, session_auth_headers("user-1"), PLAN).status_code == 403
-    )
+    anonymous = {"X-Cheese-Token": ""}
+    assert _write(client, topic, anonymous, PLAN).status_code == 401
+    # The development token opens rooms but is nobody, and a list needs a writer.
+    assert _write(client, topic, {}, PLAN).status_code == 403
     assert _write(client, other, headers, PLAN).status_code == 403
     assert _progress(client, topic) == []
     assert _progress(client, other) == []
+
+
+def _shared_room(client) -> str:
+    """A room of alice's project that bob is also in."""
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
+    join_project_team(client, project["id"], "bob")
+    return client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "话题", "created_by": "alice"},
+    ).json()["data"]["id"]
+
+
+def _messages_by(client, topic_id: str, author: str) -> list[dict]:
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    return [b for b in blocks if b["kind"] == "message" and b["author"] == author]
+
+
+def test_a_person_posts_a_checklist_as_their_own_message(client):
+    room = _shared_room(client)
+    alice = session_auth_headers("alice")
+    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+        response = _write(client, room, alice, PLAN)
+        assert response.status_code == 200, response.text
+        seen = _frame(bob, "assistant_block")
+    assert seen["author"] == "alice"
+    assert seen["content"] == CHECKLIST
+    assert [
+        (i["subject"], i["status"]) for i in seen["meta"]["checklist"]["items"]
+    ] == [(t["content"], t["status"]) for t in PLAN]
+    assert response.json()["data"]["message_id"] == seen["id"]
+
+
+def test_a_persons_next_write_edits_their_checklist_and_new_starts_another(client):
+    room = _shared_room(client)
+    alice = session_auth_headers("alice")
+    first = _write(client, room, alice, PLAN).json()["data"]["message_id"]
+    done = [{**t, "status": "completed"} for t in PLAN]
+    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+        assert _write(client, room, alice, done).status_code == 200
+        edited = _frame(bob, "block_updated")
+    assert edited["id"] == first
+    assert edited["content"] == "✓ 核实 issue 论断\n✓ 写实现\n✓ 补测试"
+    assert edited["meta"]["edited_at"]
+
+    second = _write(client, room, alice, PLAN, new=True).json()["data"]
+    assert second["posted"] is True
+    assert [m["id"] for m in _messages_by(client, room, "alice")] == [
+        first,
+        second["message_id"],
+    ]
+
+
+def test_nobody_writes_someone_elses_checklist(client):
+    """bob writing a list makes a list of his; alice's stays as she left it."""
+    room = _shared_room(client)
+    alice_list = _write(client, room, session_auth_headers("alice"), PLAN).json()[
+        "data"
+    ]["message_id"]
+    mine = [{"content": "我的事", "status": "pending"}]
+    bob_list = _write(client, room, session_auth_headers("bob"), mine).json()["data"]
+    assert bob_list["posted"] is True
+    assert bob_list["message_id"] != alice_list
+    (alice_message,) = _messages_by(client, room, "alice")
+    assert alice_message["content"] == CHECKLIST
+    assert "edited_at" not in alice_message["meta"]
+    # Nor through the edit every message has.
+    assert (
+        client.patch(
+            f"/blocks/{alice_list}",
+            json={"content": "改掉"},
+            headers=session_auth_headers("bob"),
+        ).status_code
+        == 403
+    )
+
+
+def test_a_person_ticks_a_step_on_an_earlier_checklist_of_theirs(client):
+    """The list a person is looking at is the one that changes, not just their
+    newest."""
+    room = _shared_room(client)
+    alice = session_auth_headers("alice")
+    older = _write(client, room, alice, PLAN).json()["data"]["message_id"]
+    newer = _write(client, room, alice, PLAN, new=True).json()["data"]["message_id"]
+    ticked = [{**PLAN[0]}, {**PLAN[1], "status": "completed"}, {**PLAN[2]}]
+    response = _write(client, room, alice, ticked, message=older)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["message_id"] == older
+    shown = {m["id"]: m["content"] for m in _messages_by(client, room, "alice")}
+    assert shown[older] == "✓ 核实 issue 论断\n✓ 写实现\n○ 补测试"
+    assert shown[newer] == CHECKLIST
+
+
+def test_naming_someone_elses_checklist_changes_nothing(client):
+    room = _shared_room(client)
+    alice_list = _write(client, room, session_auth_headers("alice"), PLAN).json()[
+        "data"
+    ]["message_id"]
+    done = [{**t, "status": "completed"} for t in PLAN]
+    bob = session_auth_headers("bob")
+    assert _write(client, room, bob, done, message=alice_list).status_code == 403
+    (alice_message,) = _messages_by(client, room, "alice")
+    assert alice_message["content"] == CHECKLIST
+    assert _messages_by(client, room, "bob") == []
+
+
+def test_only_a_checklist_is_written_as_one(client):
+    """A plain message is not turned into a list by naming it."""
+    room = _shared_room(client)
+    said = post_message(client, room, "alice", {"content": "周五交初稿"})
+    alice = session_auth_headers("alice")
+    assert _write(client, room, alice, PLAN, message=said["id"]).status_code == 404
+    (message,) = _messages_by(client, room, "alice")
+    assert message["content"] == "周五交初稿"
+
+
+def test_a_person_outside_the_room_cannot_post_one(client):
+    room = _shared_room(client)
+    assert (
+        _write(client, room, session_auth_headers("mallory"), PLAN).status_code == 403
+    )
+    assert _messages_by(client, room, "mallory") == []
+
+
+def test_a_persons_checklist_is_not_the_agents_plan(client, stub_hooks):
+    """The room's stored list is what its next turn is handed back as its own
+    progress; a person's list must not become that."""
+    topic, headers = _room(client)
+    _write(client, topic, headers, PLAN)
+    person = [{"content": "我自己的待办", "status": "in_progress"}]
+    assert (
+        _write(client, topic, session_auth_headers("user-1"), person).status_code == 200
+    )
+
+    assert _progress(client, topic) == [(t["content"], t["status"]) for t in PLAN]
+    _chat(client, topic)
+    prompt = stub_hooks.last_system_prompt or ""
+    assert "- [~] 写实现" in prompt
+    assert "我自己的待办" not in prompt
+    # And the agent's own message is left alone.
+    (agent_list,) = _checklists(client, topic)
+    assert agent_list["content"] == CHECKLIST
+
+
+def test_a_person_does_not_write_a_cards_checklist(client):
+    topic, _ = _room(client)
+    card = _card(client, topic)
+    person = [{"content": "x", "status": "pending"}]
+    response = _write(client, topic, session_auth_headers("user-1"), person, task=card)
+    assert response.status_code == 403
+    assert _progress(client, topic, task=card) == []
 
 
 def test_progress_is_per_topic(client):
