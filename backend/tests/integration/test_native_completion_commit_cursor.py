@@ -90,6 +90,11 @@ def test_native_completion_commit_failure_replays_after_start_landed(
         # Only the process created by this fixture is closed; no shared service.
         await runner.close()
         runner_path = runner.state / "records.sqlite"
+        journal = Journal(runner_path)
+        try:
+            last_sequence = journal.read()[-1]["sequence"]
+        finally:
+            journal.close()
         mirror_path = tmp_path / "mirror.sqlite"
         ref = SessionRef(project, topic, identity.recipient_handle, harness=CLAUDE_CODE)
         include_result = False
@@ -260,7 +265,7 @@ def test_native_completion_commit_failure_replays_after_start_landed(
         )
         stdout, stderr = await child.communicate()
         assert child.returncode == 0, stderr.decode()
-        assert json.loads(stdout)["landed"] == str(result_seq)
+        assert json.loads(stdout)["landed"] == str(last_sequence)
         async with factory() as session:
             row = await session.scalar(
                 select(NativeInput).where(NativeInput.input_id == identity.input_id)

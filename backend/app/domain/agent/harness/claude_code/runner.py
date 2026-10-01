@@ -562,6 +562,9 @@ class Runner(runner.Runner[Journal]):
             identifier = str(record.get("uuid"))
             sent = self._sent_input(identifier)
             self.sent.pop(identifier, None)
+            if not self.working:
+                self._open(sent)
+                stamp["turn_start"] = True
             receipt = self.journal.recall(f"receipt:{identifier}")
             if receipt is not None:
                 identity = json.loads(receipt)
@@ -570,10 +573,12 @@ class Runner(runner.Runner[Journal]):
                         receipt=True,
                         receipt_work_id=identity["work_id"],
                         receipt_session_id=identity["session_id"],
+                        receipt_execution_work_id=self.work,
                     )
-            if not self.working:
-                self._open(sent)
-                stamp["turn_start"] = True
+                    key = f"execution_inputs:{self.work}"
+                    inputs = set(json.loads(self.journal.recall(key) or "[]"))
+                    inputs.add(identifier)
+                    self.journal.remember(key, json.dumps(sorted(inputs)))
         elif main and not self.working and kind in ("assistant", "user"):
             # Nothing of ours started this. A background task finished and the
             # notification woke the session.
@@ -593,11 +598,15 @@ class Runner(runner.Runner[Journal]):
             and kind == "result"
             and self.working
             and self.work is not None
-            and not self.unsolicited
             and not record.get("is_error")
         ):
-            stamp["work_completed"] = True
-            stamp["completion_session_id"] = self.session_id
+            inputs = json.loads(
+                self.journal.recall(f"execution_inputs:{self.work}") or "[]"
+            )
+            if inputs:
+                stamp["work_completed"] = True
+                stamp["completion_session_id"] = self.session_id
+                stamp["completion_input_ids"] = inputs
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work is not None:
             owner["work_id"] = work

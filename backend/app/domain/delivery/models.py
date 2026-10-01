@@ -113,6 +113,7 @@ class NativeInput(UuidPk, Base):
     native_session_id: Mapped[str] = mapped_column(String(256))
     input_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     work_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    execution_work_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     delivery_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)

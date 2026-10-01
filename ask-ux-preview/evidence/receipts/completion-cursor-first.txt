@@ -1,0 +1,1077 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_native_completion_commit_failure_replays_after_start_landed[poison] ___
+
+client = <starlette.testclient.TestClient object at 0x793ca5ce8c20>
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-36/test_native_completion_commit_0')
+old = False
+
+    @pytest.mark.parametrize("old", [False, True], ids=["poison", "older-than-retention"])
+    def test_native_completion_commit_failure_replays_after_start_landed(
+        client, tmp_path, old
+    ):
+        scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
+        sys.path.insert(0, scripts)
+        import headless_contract
+    
+        machine = Machine(headless_contract, tmp_path)
+        project = uuid.UUID(_project(client, "completion cursor recovery"))
+        topic = uuid.UUID(_room(client, str(project), "completion"))
+    
+        async def run():
+            factory = client.test_request_factory
+            identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
+            ids = await _blocks(factory, project, topic)
+            chat = ChatService.__new__(ChatService)
+            chat._sessions, chat._unread_inputs = factory, {}
+            runner = Runner(machine.state)
+            identity = replace(
+                identity,
+                native_session_id=await runner.start(
+                    command=machine.command,
+                    env=machine.env,
+                    resume=None,
+                    agent_handle=identity.recipient_handle,
+                ),
+            )
+            await chat._input_registrar(InputEffects(held_block_ids=ids))(identity)
+            await runner.send(
+                str(identity.input_id), "complete this work", work_id=str(identity.work_id)
+            )
+            async with asyncio.timeout(90):
+                while not any(
+                    row["record"].get("type") == "result" for row in runner.journal.read()
+                ):
+                    await asyncio.sleep(0.05)
+            records = runner.journal.read()
+            result = next(row for row in records if row["record"].get("type") == "result")
+            result_seq = result["sequence"]
+            assert result["record"]["cheese"]["work_completed"] is True
+            assert result["record"]["cheese"]["work_id"] == str(identity.work_id)
+            assert (
+                result["record"]["cheese"]["completion_session_id"]
+                == identity.native_session_id
+            )
+            assert runner.working is False and runner.work is None
+            # Only the process created by this fixture is closed; no shared service.
+            await runner.close()
+            runner_path = runner.state / "records.sqlite"
+            mirror_path = tmp_path / "mirror.sqlite"
+            ref = SessionRef(project, topic, identity.recipient_handle, harness=CLAUDE_CODE)
+            include_result = False
+            calls = []
+    
+            async def remote(method, params):
+                calls.append(method)
+                assert method == "events", "Reconciliation must not call send/steer"
+                journal = Journal(runner_path)
+                try:
+                    page = journal.read(params["after"])
+                    return {
+                        "events": [
+                            row
+                            for row in page
+                            if include_result or row["sequence"] < result_seq
+                        ]
+                    }
+                finally:
+                    journal.close()
+    
+            async def noop(*args):
+                pass
+    
+            reading = Subscription(
+                ref,
+                mirror_path,
+                remote,
+                noop,
+                noop,
+                session_id=identity.native_session_id,
+                recipient_handle=identity.recipient_handle,
+                announce=noop,
+                receipts=chat.confirm_prompt_receipt,
+                completions=chat.confirm_work_completion,
+            )
+            try:
+                await reading.drain()
+                journal = Journal(mirror_path)
+                try:
+                    assert journal.recall("landed") == str(result_seq - 1)
+                finally:
+                    journal.close()
+                async with factory() as session:
+                    row = await session.scalar(
+                        select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                    )
+                    assert row.echoed_at is not None and row.released_block_ids == []
+                    url = session.bind.url.render_as_string(hide_password=False)
+                include_result = True
+                await reading.receive()
+                if old:
+                    journal = Journal(runner_path)
+                    try:
+                        before = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET recorded_at=? WHERE sequence=?",
+                                (before, result_seq),
+                            )
+                        journal.expire((datetime.now(UTC) - timedelta(days=1)).isoformat())
+                        assert any(row["sequence"] == result_seq for row in journal.read())
+                    finally:
+                        journal.close()
+                    journal = Journal(mirror_path)
+                    try:
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET recorded_at=? WHERE sequence=?",
+                                (before, result_seq),
+                            )
+                    finally:
+                        journal.close()
+                else:
+                    # A conflicting durable work must neither release nor land.
+                    journal = Journal(mirror_path)
+                    original = result["record"]
+                    conflicting = {
+                        **original,
+                        "cheese": {**original["cheese"], "work_id": str(uuid.uuid4())},
+                    }
+                    try:
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET record=? WHERE sequence=?",
+                                (json.dumps(conflicting), result_seq),
+                            )
+                    finally:
+                        journal.close()
+                    with pytest.raises(ValidationError):
+                        await reading.drain()
+                    journal = Journal(mirror_path)
+                    try:
+                        assert journal.recall("landed") == str(result_seq - 1)
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET record=? WHERE sequence=?",
+                                (json.dumps(original), result_seq),
+                            )
+                    finally:
+                        journal.close()
+                journal = Journal(mirror_path)
+                try:
+                    journal.remember(
+                        "refused",
+                        json.dumps(
+                            {
+                                "key": str(result_seq),
+                                "times": 3,
+                                "since": (
+                                    datetime.now(UTC) - timedelta(minutes=11)
+                                ).isoformat(),
+                            }
+                        ),
+                    )
+                finally:
+                    journal.close()
+                aborted = []
+    
+                def fail_commit(session):
+                    session.flush()
+                    aborted.append(True)
+                    session.execute(text("SELECT 1 / 0"))
+    
+                event.listen(Session, "before_commit", fail_commit)
+                try:
+                    for _ in range(4):
+                        with pytest.raises(DBAPIError):
+                            await reading.drain()
+                        journal = Journal(mirror_path)
+                        try:
+                            assert journal.recall("landed") == str(result_seq - 1)
+                            journal.prune(
+                                (datetime.now(UTC) + timedelta(days=1)).isoformat()
+                            )
+                            assert any(
+                                row["sequence"] == result_seq for row in journal.read()
+                            )
+                        finally:
+                            journal.close()
+                finally:
+                    event.remove(Session, "before_commit", fail_commit)
+                assert aborted == [True] * 4
+            finally:
+                await reading.release()
+            async with factory() as session:
+                row = await session.scalar(
+                    select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                )
+                assert row.released_block_ids == []
+                blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+                assert all(consumed_turn(block) is None for block in blocks)
+            child = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                _RECOVER_COMPLETION,
+                url,
+                str(runner_path),
+                str(mirror_path),
+                str(project),
+                str(topic),
+                identity.recipient_handle,
+                identity.harness,
+                identity.native_session_id,
+                env={**os.environ, "PYTHONPATH": "."},
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await child.communicate()
+            assert child.returncode == 0, stderr.decode()
+            assert json.loads(stdout)["landed"] == str(result_seq)
+            async with factory() as session:
+                row = await session.scalar(
+                    select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                )
+                assert set(row.released_block_ids) == {str(block) for block in ids}
+                assert (
+                    await held_blocks(
+                        session,
+                        project_id=project,
+                        topic_id=topic,
+                        recipient_handle=identity.recipient_handle,
+                    )
+                    == set()
+                )
+                blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+                assert all(
+                    consumed_turn(block) == str(identity.work_id) for block in blocks
+                )
+            assert calls and set(calls) == {"events"}
+    
+        try:
+>           client.portal.call(run)
+
+tests/integration/test_native_completion_commit_cursor.py:285: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def run():
+        factory = client.test_request_factory
+        identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
+        ids = await _blocks(factory, project, topic)
+        chat = ChatService.__new__(ChatService)
+        chat._sessions, chat._unread_inputs = factory, {}
+        runner = Runner(machine.state)
+        identity = replace(
+            identity,
+            native_session_id=await runner.start(
+                command=machine.command,
+                env=machine.env,
+                resume=None,
+                agent_handle=identity.recipient_handle,
+            ),
+        )
+        await chat._input_registrar(InputEffects(held_block_ids=ids))(identity)
+        await runner.send(
+            str(identity.input_id), "complete this work", work_id=str(identity.work_id)
+        )
+        async with asyncio.timeout(90):
+            while not any(
+                row["record"].get("type") == "result" for row in runner.journal.read()
+            ):
+                await asyncio.sleep(0.05)
+        records = runner.journal.read()
+        result = next(row for row in records if row["record"].get("type") == "result")
+        result_seq = result["sequence"]
+        assert result["record"]["cheese"]["work_completed"] is True
+        assert result["record"]["cheese"]["work_id"] == str(identity.work_id)
+        assert (
+            result["record"]["cheese"]["completion_session_id"]
+            == identity.native_session_id
+        )
+        assert runner.working is False and runner.work is None
+        # Only the process created by this fixture is closed; no shared service.
+        await runner.close()
+        runner_path = runner.state / "records.sqlite"
+        mirror_path = tmp_path / "mirror.sqlite"
+        ref = SessionRef(project, topic, identity.recipient_handle, harness=CLAUDE_CODE)
+        include_result = False
+        calls = []
+    
+        async def remote(method, params):
+            calls.append(method)
+            assert method == "events", "Reconciliation must not call send/steer"
+            journal = Journal(runner_path)
+            try:
+                page = journal.read(params["after"])
+                return {
+                    "events": [
+                        row
+                        for row in page
+                        if include_result or row["sequence"] < result_seq
+                    ]
+                }
+            finally:
+                journal.close()
+    
+        async def noop(*args):
+            pass
+    
+        reading = Subscription(
+            ref,
+            mirror_path,
+            remote,
+            noop,
+            noop,
+            session_id=identity.native_session_id,
+            recipient_handle=identity.recipient_handle,
+            announce=noop,
+            receipts=chat.confirm_prompt_receipt,
+            completions=chat.confirm_work_completion,
+        )
+        try:
+            await reading.drain()
+            journal = Journal(mirror_path)
+            try:
+                assert journal.recall("landed") == str(result_seq - 1)
+            finally:
+                journal.close()
+            async with factory() as session:
+                row = await session.scalar(
+                    select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                )
+                assert row.echoed_at is not None and row.released_block_ids == []
+                url = session.bind.url.render_as_string(hide_password=False)
+            include_result = True
+            await reading.receive()
+            if old:
+                journal = Journal(runner_path)
+                try:
+                    before = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET recorded_at=? WHERE sequence=?",
+                            (before, result_seq),
+                        )
+                    journal.expire((datetime.now(UTC) - timedelta(days=1)).isoformat())
+                    assert any(row["sequence"] == result_seq for row in journal.read())
+                finally:
+                    journal.close()
+                journal = Journal(mirror_path)
+                try:
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET recorded_at=? WHERE sequence=?",
+                            (before, result_seq),
+                        )
+                finally:
+                    journal.close()
+            else:
+                # A conflicting durable work must neither release nor land.
+                journal = Journal(mirror_path)
+                original = result["record"]
+                conflicting = {
+                    **original,
+                    "cheese": {**original["cheese"], "work_id": str(uuid.uuid4())},
+                }
+                try:
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET record=? WHERE sequence=?",
+                            (json.dumps(conflicting), result_seq),
+                        )
+                finally:
+                    journal.close()
+                with pytest.raises(ValidationError):
+                    await reading.drain()
+                journal = Journal(mirror_path)
+                try:
+                    assert journal.recall("landed") == str(result_seq - 1)
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET record=? WHERE sequence=?",
+                            (json.dumps(original), result_seq),
+                        )
+                finally:
+                    journal.close()
+            journal = Journal(mirror_path)
+            try:
+                journal.remember(
+                    "refused",
+                    json.dumps(
+                        {
+                            "key": str(result_seq),
+                            "times": 3,
+                            "since": (
+                                datetime.now(UTC) - timedelta(minutes=11)
+                            ).isoformat(),
+                        }
+                    ),
+                )
+            finally:
+                journal.close()
+            aborted = []
+    
+            def fail_commit(session):
+                session.flush()
+                aborted.append(True)
+                session.execute(text("SELECT 1 / 0"))
+    
+            event.listen(Session, "before_commit", fail_commit)
+            try:
+                for _ in range(4):
+                    with pytest.raises(DBAPIError):
+                        await reading.drain()
+                    journal = Journal(mirror_path)
+                    try:
+                        assert journal.recall("landed") == str(result_seq - 1)
+                        journal.prune(
+                            (datetime.now(UTC) + timedelta(days=1)).isoformat()
+                        )
+                        assert any(
+                            row["sequence"] == result_seq for row in journal.read()
+                        )
+                    finally:
+                        journal.close()
+            finally:
+                event.remove(Session, "before_commit", fail_commit)
+            assert aborted == [True] * 4
+        finally:
+            await reading.release()
+        async with factory() as session:
+            row = await session.scalar(
+                select(NativeInput).where(NativeInput.input_id == identity.input_id)
+            )
+            assert row.released_block_ids == []
+            blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+            assert all(consumed_turn(block) is None for block in blocks)
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            _RECOVER_COMPLETION,
+            url,
+            str(runner_path),
+            str(mirror_path),
+            str(project),
+            str(topic),
+            identity.recipient_handle,
+            identity.harness,
+            identity.native_session_id,
+            env={**os.environ, "PYTHONPATH": "."},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await child.communicate()
+        assert child.returncode == 0, stderr.decode()
+>       assert json.loads(stdout)["landed"] == str(result_seq)
+E       AssertionError: assert '7' == '6'
+E         
+E         - 6
+E         + 7
+
+tests/integration/test_native_completion_commit_cursor.py:263: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-01 00:49:53 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=bf2da196f28d
+2026-10-01 00:49:53 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 00:49:53 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 00:49:53 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 00:49:53 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 00:49:54 [info     ] req                            [http] bytes=662 client=testclient host=testserver method=POST ms=1508.1 path=/projects req=bf2da196f28d status=200 ua=testclient
+2026-10-01 00:49:54 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 00:49:55 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=356a0889fd35
+2026-10-01 00:49:55 [info     ] req                            [http] bytes=728 client=testclient host=testserver method=POST ms=704.1 path=/topics req=356a0889fd35 status=200 ua=testclient
+2026-10-01 00:49:55 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': 'bf2da196f28d', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 00:49:53'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 1508.1, 'req': 'bf2da196f28d', 'bytes': 662, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 00:49:54'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '356a0889fd35', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 00:49:55'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 704.1, 'req': '356a0889fd35', 'bytes': 728, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 00:49:55'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+_ test_native_completion_commit_failure_replays_after_start_landed[older-than-retention] _
+
+client = <starlette.testclient.TestClient object at 0x793c84607d90>
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-36/test_native_completion_commit_1')
+old = True
+
+    @pytest.mark.parametrize("old", [False, True], ids=["poison", "older-than-retention"])
+    def test_native_completion_commit_failure_replays_after_start_landed(
+        client, tmp_path, old
+    ):
+        scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
+        sys.path.insert(0, scripts)
+        import headless_contract
+    
+        machine = Machine(headless_contract, tmp_path)
+        project = uuid.UUID(_project(client, "completion cursor recovery"))
+        topic = uuid.UUID(_room(client, str(project), "completion"))
+    
+        async def run():
+            factory = client.test_request_factory
+            identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
+            ids = await _blocks(factory, project, topic)
+            chat = ChatService.__new__(ChatService)
+            chat._sessions, chat._unread_inputs = factory, {}
+            runner = Runner(machine.state)
+            identity = replace(
+                identity,
+                native_session_id=await runner.start(
+                    command=machine.command,
+                    env=machine.env,
+                    resume=None,
+                    agent_handle=identity.recipient_handle,
+                ),
+            )
+            await chat._input_registrar(InputEffects(held_block_ids=ids))(identity)
+            await runner.send(
+                str(identity.input_id), "complete this work", work_id=str(identity.work_id)
+            )
+            async with asyncio.timeout(90):
+                while not any(
+                    row["record"].get("type") == "result" for row in runner.journal.read()
+                ):
+                    await asyncio.sleep(0.05)
+            records = runner.journal.read()
+            result = next(row for row in records if row["record"].get("type") == "result")
+            result_seq = result["sequence"]
+            assert result["record"]["cheese"]["work_completed"] is True
+            assert result["record"]["cheese"]["work_id"] == str(identity.work_id)
+            assert (
+                result["record"]["cheese"]["completion_session_id"]
+                == identity.native_session_id
+            )
+            assert runner.working is False and runner.work is None
+            # Only the process created by this fixture is closed; no shared service.
+            await runner.close()
+            runner_path = runner.state / "records.sqlite"
+            mirror_path = tmp_path / "mirror.sqlite"
+            ref = SessionRef(project, topic, identity.recipient_handle, harness=CLAUDE_CODE)
+            include_result = False
+            calls = []
+    
+            async def remote(method, params):
+                calls.append(method)
+                assert method == "events", "Reconciliation must not call send/steer"
+                journal = Journal(runner_path)
+                try:
+                    page = journal.read(params["after"])
+                    return {
+                        "events": [
+                            row
+                            for row in page
+                            if include_result or row["sequence"] < result_seq
+                        ]
+                    }
+                finally:
+                    journal.close()
+    
+            async def noop(*args):
+                pass
+    
+            reading = Subscription(
+                ref,
+                mirror_path,
+                remote,
+                noop,
+                noop,
+                session_id=identity.native_session_id,
+                recipient_handle=identity.recipient_handle,
+                announce=noop,
+                receipts=chat.confirm_prompt_receipt,
+                completions=chat.confirm_work_completion,
+            )
+            try:
+                await reading.drain()
+                journal = Journal(mirror_path)
+                try:
+                    assert journal.recall("landed") == str(result_seq - 1)
+                finally:
+                    journal.close()
+                async with factory() as session:
+                    row = await session.scalar(
+                        select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                    )
+                    assert row.echoed_at is not None and row.released_block_ids == []
+                    url = session.bind.url.render_as_string(hide_password=False)
+                include_result = True
+                await reading.receive()
+                if old:
+                    journal = Journal(runner_path)
+                    try:
+                        before = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET recorded_at=? WHERE sequence=?",
+                                (before, result_seq),
+                            )
+                        journal.expire((datetime.now(UTC) - timedelta(days=1)).isoformat())
+                        assert any(row["sequence"] == result_seq for row in journal.read())
+                    finally:
+                        journal.close()
+                    journal = Journal(mirror_path)
+                    try:
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET recorded_at=? WHERE sequence=?",
+                                (before, result_seq),
+                            )
+                    finally:
+                        journal.close()
+                else:
+                    # A conflicting durable work must neither release nor land.
+                    journal = Journal(mirror_path)
+                    original = result["record"]
+                    conflicting = {
+                        **original,
+                        "cheese": {**original["cheese"], "work_id": str(uuid.uuid4())},
+                    }
+                    try:
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET record=? WHERE sequence=?",
+                                (json.dumps(conflicting), result_seq),
+                            )
+                    finally:
+                        journal.close()
+                    with pytest.raises(ValidationError):
+                        await reading.drain()
+                    journal = Journal(mirror_path)
+                    try:
+                        assert journal.recall("landed") == str(result_seq - 1)
+                        with journal.connection:
+                            journal.connection.execute(
+                                "UPDATE records SET record=? WHERE sequence=?",
+                                (json.dumps(original), result_seq),
+                            )
+                    finally:
+                        journal.close()
+                journal = Journal(mirror_path)
+                try:
+                    journal.remember(
+                        "refused",
+                        json.dumps(
+                            {
+                                "key": str(result_seq),
+                                "times": 3,
+                                "since": (
+                                    datetime.now(UTC) - timedelta(minutes=11)
+                                ).isoformat(),
+                            }
+                        ),
+                    )
+                finally:
+                    journal.close()
+                aborted = []
+    
+                def fail_commit(session):
+                    session.flush()
+                    aborted.append(True)
+                    session.execute(text("SELECT 1 / 0"))
+    
+                event.listen(Session, "before_commit", fail_commit)
+                try:
+                    for _ in range(4):
+                        with pytest.raises(DBAPIError):
+                            await reading.drain()
+                        journal = Journal(mirror_path)
+                        try:
+                            assert journal.recall("landed") == str(result_seq - 1)
+                            journal.prune(
+                                (datetime.now(UTC) + timedelta(days=1)).isoformat()
+                            )
+                            assert any(
+                                row["sequence"] == result_seq for row in journal.read()
+                            )
+                        finally:
+                            journal.close()
+                finally:
+                    event.remove(Session, "before_commit", fail_commit)
+                assert aborted == [True] * 4
+            finally:
+                await reading.release()
+            async with factory() as session:
+                row = await session.scalar(
+                    select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                )
+                assert row.released_block_ids == []
+                blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+                assert all(consumed_turn(block) is None for block in blocks)
+            child = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                _RECOVER_COMPLETION,
+                url,
+                str(runner_path),
+                str(mirror_path),
+                str(project),
+                str(topic),
+                identity.recipient_handle,
+                identity.harness,
+                identity.native_session_id,
+                env={**os.environ, "PYTHONPATH": "."},
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await child.communicate()
+            assert child.returncode == 0, stderr.decode()
+            assert json.loads(stdout)["landed"] == str(result_seq)
+            async with factory() as session:
+                row = await session.scalar(
+                    select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                )
+                assert set(row.released_block_ids) == {str(block) for block in ids}
+                assert (
+                    await held_blocks(
+                        session,
+                        project_id=project,
+                        topic_id=topic,
+                        recipient_handle=identity.recipient_handle,
+                    )
+                    == set()
+                )
+                blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+                assert all(
+                    consumed_turn(block) == str(identity.work_id) for block in blocks
+                )
+            assert calls and set(calls) == {"events"}
+    
+        try:
+>           client.portal.call(run)
+
+tests/integration/test_native_completion_commit_cursor.py:285: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def run():
+        factory = client.test_request_factory
+        identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
+        ids = await _blocks(factory, project, topic)
+        chat = ChatService.__new__(ChatService)
+        chat._sessions, chat._unread_inputs = factory, {}
+        runner = Runner(machine.state)
+        identity = replace(
+            identity,
+            native_session_id=await runner.start(
+                command=machine.command,
+                env=machine.env,
+                resume=None,
+                agent_handle=identity.recipient_handle,
+            ),
+        )
+        await chat._input_registrar(InputEffects(held_block_ids=ids))(identity)
+        await runner.send(
+            str(identity.input_id), "complete this work", work_id=str(identity.work_id)
+        )
+        async with asyncio.timeout(90):
+            while not any(
+                row["record"].get("type") == "result" for row in runner.journal.read()
+            ):
+                await asyncio.sleep(0.05)
+        records = runner.journal.read()
+        result = next(row for row in records if row["record"].get("type") == "result")
+        result_seq = result["sequence"]
+        assert result["record"]["cheese"]["work_completed"] is True
+        assert result["record"]["cheese"]["work_id"] == str(identity.work_id)
+        assert (
+            result["record"]["cheese"]["completion_session_id"]
+            == identity.native_session_id
+        )
+        assert runner.working is False and runner.work is None
+        # Only the process created by this fixture is closed; no shared service.
+        await runner.close()
+        runner_path = runner.state / "records.sqlite"
+        mirror_path = tmp_path / "mirror.sqlite"
+        ref = SessionRef(project, topic, identity.recipient_handle, harness=CLAUDE_CODE)
+        include_result = False
+        calls = []
+    
+        async def remote(method, params):
+            calls.append(method)
+            assert method == "events", "Reconciliation must not call send/steer"
+            journal = Journal(runner_path)
+            try:
+                page = journal.read(params["after"])
+                return {
+                    "events": [
+                        row
+                        for row in page
+                        if include_result or row["sequence"] < result_seq
+                    ]
+                }
+            finally:
+                journal.close()
+    
+        async def noop(*args):
+            pass
+    
+        reading = Subscription(
+            ref,
+            mirror_path,
+            remote,
+            noop,
+            noop,
+            session_id=identity.native_session_id,
+            recipient_handle=identity.recipient_handle,
+            announce=noop,
+            receipts=chat.confirm_prompt_receipt,
+            completions=chat.confirm_work_completion,
+        )
+        try:
+            await reading.drain()
+            journal = Journal(mirror_path)
+            try:
+                assert journal.recall("landed") == str(result_seq - 1)
+            finally:
+                journal.close()
+            async with factory() as session:
+                row = await session.scalar(
+                    select(NativeInput).where(NativeInput.input_id == identity.input_id)
+                )
+                assert row.echoed_at is not None and row.released_block_ids == []
+                url = session.bind.url.render_as_string(hide_password=False)
+            include_result = True
+            await reading.receive()
+            if old:
+                journal = Journal(runner_path)
+                try:
+                    before = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET recorded_at=? WHERE sequence=?",
+                            (before, result_seq),
+                        )
+                    journal.expire((datetime.now(UTC) - timedelta(days=1)).isoformat())
+                    assert any(row["sequence"] == result_seq for row in journal.read())
+                finally:
+                    journal.close()
+                journal = Journal(mirror_path)
+                try:
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET recorded_at=? WHERE sequence=?",
+                            (before, result_seq),
+                        )
+                finally:
+                    journal.close()
+            else:
+                # A conflicting durable work must neither release nor land.
+                journal = Journal(mirror_path)
+                original = result["record"]
+                conflicting = {
+                    **original,
+                    "cheese": {**original["cheese"], "work_id": str(uuid.uuid4())},
+                }
+                try:
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET record=? WHERE sequence=?",
+                            (json.dumps(conflicting), result_seq),
+                        )
+                finally:
+                    journal.close()
+                with pytest.raises(ValidationError):
+                    await reading.drain()
+                journal = Journal(mirror_path)
+                try:
+                    assert journal.recall("landed") == str(result_seq - 1)
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET record=? WHERE sequence=?",
+                            (json.dumps(original), result_seq),
+                        )
+                finally:
+                    journal.close()
+            journal = Journal(mirror_path)
+            try:
+                journal.remember(
+                    "refused",
+                    json.dumps(
+                        {
+                            "key": str(result_seq),
+                            "times": 3,
+                            "since": (
+                                datetime.now(UTC) - timedelta(minutes=11)
+                            ).isoformat(),
+                        }
+                    ),
+                )
+            finally:
+                journal.close()
+            aborted = []
+    
+            def fail_commit(session):
+                session.flush()
+                aborted.append(True)
+                session.execute(text("SELECT 1 / 0"))
+    
+            event.listen(Session, "before_commit", fail_commit)
+            try:
+                for _ in range(4):
+                    with pytest.raises(DBAPIError):
+                        await reading.drain()
+                    journal = Journal(mirror_path)
+                    try:
+                        assert journal.recall("landed") == str(result_seq - 1)
+                        journal.prune(
+                            (datetime.now(UTC) + timedelta(days=1)).isoformat()
+                        )
+                        assert any(
+                            row["sequence"] == result_seq for row in journal.read()
+                        )
+                    finally:
+                        journal.close()
+            finally:
+                event.remove(Session, "before_commit", fail_commit)
+            assert aborted == [True] * 4
+        finally:
+            await reading.release()
+        async with factory() as session:
+            row = await session.scalar(
+                select(NativeInput).where(NativeInput.input_id == identity.input_id)
+            )
+            assert row.released_block_ids == []
+            blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+            assert all(consumed_turn(block) is None for block in blocks)
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            _RECOVER_COMPLETION,
+            url,
+            str(runner_path),
+            str(mirror_path),
+            str(project),
+            str(topic),
+            identity.recipient_handle,
+            identity.harness,
+            identity.native_session_id,
+            env={**os.environ, "PYTHONPATH": "."},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await child.communicate()
+        assert child.returncode == 0, stderr.decode()
+>       assert json.loads(stdout)["landed"] == str(result_seq)
+E       AssertionError: assert '7' == '6'
+E         
+E         - 6
+E         + 7
+
+tests/integration/test_native_completion_commit_cursor.py:263: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-01 00:49:59 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=8b0d50456900
+2026-10-01 00:49:59 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 00:49:59 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 00:49:59 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 00:49:59 [info     ] req                            [http] bytes=662 client=testclient host=testserver method=POST ms=204.7 path=/projects req=8b0d50456900 status=200 ua=testclient
+2026-10-01 00:49:59 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 00:49:59 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=d08ac0b56f43
+2026-10-01 00:49:59 [info     ] req                            [http] bytes=728 client=testclient host=testserver method=POST ms=45.2 path=/topics req=d08ac0b56f43 status=200 ua=testclient
+2026-10-01 00:49:59 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '8b0d50456900', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 00:49:59'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 204.7, 'req': '8b0d50456900', 'bytes': 662, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 00:49:59'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:267 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': 'd08ac0b56f43', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 00:49:59'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 45.2, 'req': 'd08ac0b56f43', 'bytes': 728, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 00:49:59'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+=============================== warnings summary ===============================
+tests/integration/test_native_completion_commit_cursor.py::test_native_completion_commit_failure_replays_after_start_landed[poison]
+tests/integration/test_native_completion_commit_cursor.py::test_native_completion_commit_failure_replays_after_start_landed[older-than-retention]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_native_completion_commit_cursor.py::test_native_completion_commit_failure_replays_after_start_landed[poison]
+FAILED tests/integration/test_native_completion_commit_cursor.py::test_native_completion_commit_failure_replays_after_start_landed[older-than-retention]
+2 failed, 2 warnings in 12.34s

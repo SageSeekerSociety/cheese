@@ -178,6 +178,7 @@ async def complete_work_inputs(
     native_session_id,
     work_id,
     require_registered=False,
+    input_ids=None,
 ):
     """Commit consumption and durable release for this exact successful work.
 
@@ -193,14 +194,20 @@ async def complete_work_inputs(
                 NativeInput.recipient_handle == recipient_handle,
                 NativeInput.harness == harness,
                 NativeInput.native_session_id == native_session_id,
-                NativeInput.work_id == work_id,
+                NativeInput.execution_work_id == work_id,
+                NativeInput.input_id.in_(input_ids) if input_ids is not None else True,
             )
             .order_by(NativeInput.id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
     )
-    if require_registered and (not rows or any(row.echoed_at is None for row in rows)):
+    if require_registered and (
+        not rows
+        or any(row.echoed_at is None for row in rows)
+        or input_ids is None
+        or {row.input_id for row in rows} != set(input_ids)
+    ):
         raise ValidationError("Native completion has no confirmed registered work")
     owned = {
         uuid.UUID(block)
@@ -278,7 +285,15 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         return row
     if receipt.evidence != "native_echo":
         return None
+    execution_work = receipt.execution_work_id
+    if execution_work is not None and row.execution_work_id not in (
+        None,
+        execution_work,
+    ):
+        raise ValidationError("Native input has a different execution owner")
     if row.settled_at is not None:
+        if execution_work is not None:
+            row.execution_work_id = execution_work
         return row
     if row.delivery_id is not None and (
         delivery is None
@@ -297,10 +312,12 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     if row.seen_by is not None and row.seen_by != identity.recipient_handle:
         raise ValidationError("Input cannot mark blocks as read by another receiver")
     row.echoed_at = row.echoed_at or stamp
+    row.execution_work_id = execution_work
     blocks = BlockRepository(session)
-    await blocks.mark_consumed(
-        [uuid.UUID(block) for block in row.block_ids], row.work_id
-    )
+    if execution_work is not None:
+        await blocks.mark_consumed(
+            [uuid.UUID(block) for block in row.block_ids], execution_work
+        )
     for block in row.seen_block_ids:
         await blocks.add_reaction_if_absent(
             uuid.UUID(block), "👀", row.seen_by or row.recipient_handle

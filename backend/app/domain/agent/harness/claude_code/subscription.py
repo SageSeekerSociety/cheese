@@ -96,6 +96,9 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                 uuid.UUID(stamp["receipt_work_id"]),
             ),
             "native_echo",
+            execution_work_id=uuid.UUID(stamp["receipt_execution_work_id"])
+            if stamp.get("receipt_execution_work_id")
+            else None,
         )
 
     def completion(self, record: dict) -> WorkCompletion | None:
@@ -106,7 +109,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             record.get("type") != "result"
             or record.get("is_error")
             or stamp.get("interrupted")
-            or stamp.get("unsolicited")
+            or not stamp.get("completion_input_ids")
             or stamp.get("completion_session_id") != self.session_id
             or record.get("session_id") != self.session_id
             or stamp.get("agent_handle") != self.recipient_handle
@@ -119,6 +122,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             self.session.harness,
             stamp["completion_session_id"],
             uuid.UUID(stamp["work_id"]),
+            tuple(uuid.UUID(value) for value in stamp["completion_input_ids"]),
         )
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:

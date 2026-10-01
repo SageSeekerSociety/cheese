@@ -21,6 +21,7 @@ class InputIdentity:
 class InputReceipt:
     identity: InputIdentity
     evidence: Literal["accepted", "native_echo"]
+    execution_work_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class WorkCompletion:
     harness: str
     native_session_id: str
     work_id: uuid.UUID
+    input_ids: tuple[uuid.UUID, ...]
 
 
 @dataclass(frozen=True)
