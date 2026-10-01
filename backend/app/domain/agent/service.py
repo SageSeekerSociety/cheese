@@ -203,6 +203,8 @@ class AgentResult:
     thread_label: str | None = None
     agent_handle: str | None = None
     harness: str | None = None
+    # Successful native main-work completion, not cancellation or synthetic Stop.
+    input_work_completed: bool = False
 
 
 @dataclass

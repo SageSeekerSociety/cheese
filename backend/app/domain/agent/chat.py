@@ -237,7 +237,12 @@ from app.domain.delivery.input_identity import (
     InputReconciliationPending,
     InputRegistrar,
 )
-from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
+from app.domain.delivery.receipts import (
+    complete_work_inputs,
+    held_blocks,
+    record_receipt,
+    register_input,
+)
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -2703,6 +2708,24 @@ class ChatService:
         action_frames: list[dict] = []
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            # Exact native completion locks its input rows before touching blocks.
+            # A synthetic error or an identity-less result cannot release a hold.
+            if (
+                not result.is_error
+                and result.input_work_completed
+                and result.session_id
+                and result.harness
+                and result.agent_handle == state.acting_agent
+            ):
+                await complete_work_inputs(
+                    session,
+                    project_id=state.project_id,
+                    topic_id=state.topic_id,
+                    recipient_handle=result.agent_handle,
+                    harness=result.harness,
+                    native_session_id=result.session_id,
+                    work_id=state.work_id,
+                )
             if not usages:
                 await UsageRepository(session).add(
                     project_id=state.project_id,
@@ -2738,10 +2761,11 @@ class ChatService:
             fed = list(
                 state.pending_ids | set(await self._delivered_unread(session, state))
             )
-            if not result.is_error:
-                await blocks.mark_consumed(fed, state.work_id)
-            else:
+            if result.is_error:
                 await blocks.forget_prompted_turn(fed)
+            elif result.harness is None:
+                # Non-native providers do not register NativeInput batches.
+                await blocks.mark_consumed(fed, state.work_id)
             await session.commit()
 
         changeset = await self._turn_changeset(

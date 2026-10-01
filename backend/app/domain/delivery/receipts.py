@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
-from app.domain.block.models import Block, consumed_turn
+from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
@@ -151,7 +151,7 @@ async def held_blocks(
     """
     batches = (
         await session.execute(
-            select(NativeInput.held_block_ids, NativeInput.work_id).where(
+            select(NativeInput.held_block_ids, NativeInput.released_block_ids).where(
                 NativeInput.project_id == project_id,
                 NativeInput.topic_id == topic_id,
                 NativeInput.recipient_handle == recipient_handle,
@@ -161,19 +161,71 @@ async def held_blocks(
             )
         )
     ).all()
-    ids = {uuid.UUID(block) for batch, _ in batches for block in batch}
-    if not ids:
-        return ids
-    rows = await session.scalars(select(Block).where(Block.id.in_(ids)))
-    consumed = {block.id: consumed_turn(block) for block in rows}
-    # Only consumption by this input's registered work releases its hold.
-    # A different work's marker must not erase an uncertain input's ownership.
     return {
         uuid.UUID(block)
-        for batch, work in batches
-        for block in batch
-        if consumed.get(uuid.UUID(block)) != str(work)
+        for batch, released in batches
+        for block in set(batch) - set(released)
     }
+
+
+async def complete_work_inputs(
+    session,
+    *,
+    project_id,
+    topic_id,
+    recipient_handle,
+    harness,
+    native_session_id,
+    work_id,
+):
+    """Commit consumption and durable release for this exact successful work.
+
+    Called from the clean native result transaction. Never infer completion from
+    acceptance, an echo, another work's marker, or missing process-local state.
+    """
+    rows = list(
+        await session.scalars(
+            select(NativeInput)
+            .where(
+                NativeInput.project_id == project_id,
+                NativeInput.topic_id == topic_id,
+                NativeInput.recipient_handle == recipient_handle,
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.work_id == work_id,
+            )
+            .order_by(NativeInput.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+    owned = {
+        uuid.UUID(block)
+        for row in rows
+        if row.echoed_at is not None
+        for block in set(row.held_block_ids) - set(row.released_block_ids)
+    }
+    consumed = owned
+    if not consumed:
+        return set()
+    identity = InputIdentity(
+        project_id,
+        topic_id,
+        recipient_handle,
+        harness,
+        native_session_id,
+        rows[0].input_id if rows else work_id,
+        work_id,
+    )
+    await _lock_blocks(session, identity, consumed)
+    await BlockRepository(session).mark_consumed(list(consumed), work_id)
+    for row in rows:
+        if row.echoed_at is not None:
+            released = set(row.released_block_ids) | (
+                set(row.held_block_ids) & {str(block) for block in consumed}
+            )
+            row.released_block_ids = sorted(released)
+    return consumed
 
 
 async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
