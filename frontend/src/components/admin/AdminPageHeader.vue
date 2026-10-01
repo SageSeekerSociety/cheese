@@ -93,7 +93,12 @@ defineProps<{
     padding: 12px 16px;
   }
 
+  .aph__row {
+    flex-wrap: wrap;
+  }
+
   .aph__title {
+    flex-basis: 100%;
     font-size: 19px;
     line-height: 28px;
   }

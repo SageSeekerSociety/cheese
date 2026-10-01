@@ -178,8 +178,7 @@ const APPLICATIONS: SpaceApplication[] = [
  * 「0 和没量到分不分得清」这类问题就看不出来了。历史只取 12 次（真的归档有 60 次），
  * 所以行尾那条小线是**压缩过的走势**，不是真实形状。
  *
- * 唯一编的一处是 `RATCHET_HOLE`：真实的那 12 次采集都成功了，可一次失败的都没有就
- * 验不到这一页最要紧的那条规则（0 = 量过了没问题，没量到 = 不知道）。它单独标出来。
+ * 历史经过抽样，旧规则指纹为样例值；不作为线上报告。
  */
 
 /** 这 12 次采集的提交、时刻、以及 CI run 的编号 —— 逐字抄自归档，所以时间线上
@@ -620,7 +619,6 @@ const RATCHET_DETAILS: Record<string, unknown[]> = {
 
 /** 那个洞：`be-contracts` 这一次采集整个失败了。它不进走势线，时间线上标「采集失败」，
  *  「实际」那一格写「没跑到」—— 三处说的都是同一件事：**这次不知道**，不是 0。 */
-const RATCHET_HOLE = { slot: 7, check: 'be-contracts', reason: '采集步骤超时（样例原因）' }
 
 /** 换过规则指纹的那两道，换之前的指纹长什么样。两段必须真的不同 —— 走势线是靠相邻
  *  两格的指纹不相等来断开的，写成一样的话线不会断，而页面上看不出来它该断。 */
@@ -635,21 +633,20 @@ function ratchetPoints(check: (typeof RATCHET_CHECKS)[number]): RatchetPoint[] {
   const last = check.runs.length - 1
   return check.runs.map(([actual, frozen, stale, ruleChanged, newExemptions], slot) => {
     const [commit, at, run] = RATCHET_RUNS[slot]
-    const hole = RATCHET_HOLE.slot === slot && RATCHET_HOLE.check === check.id
     return {
       commit,
       collected_at: at,
       run_url: runUrl(run),
-      collection: hole ? 'failed' : 'ok',
-      status: hole ? 'unknown' : check.status,
-      actual: hole ? null : actual,
+      collection: 'ok',
+      status: check.status,
+      actual,
       frozen,
       stale_count: stale,
       rule_fingerprint: check.ruleAt >= 0 && slot < check.ruleAt ? RATCHET_OLD_RULE : check.rule_fingerprint,
       rule_changed: ruleChanged,
       new_exemptions: newExemptions,
       details: slot === last ? RATCHET_DETAILS[check.id] ?? [] : [],
-      reason: hole ? RATCHET_HOLE.reason : null,
+      reason: null,
     }
   })
 }
