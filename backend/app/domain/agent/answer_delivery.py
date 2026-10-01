@@ -35,11 +35,8 @@ async def run_with_answer_offer(
                 )
                 if offered is True or isinstance(offered, InputReconciliationPending):
                     return
-                entered = True
-                await work
-        else:
-            entered = True
-            await work
+        entered = True
+        await work
     finally:
         if not entered:
             work.close()

@@ -201,6 +201,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                 description="hold admitted answer work",
             )
             machine.server.state["actions"] = [
+                *([None] * len(machine.server.state["requests"])),
                 lambda _body: json.loads(directive[3:]),
                 None,
             ]

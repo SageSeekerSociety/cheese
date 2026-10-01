@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.compute import ComputePool
 from app.domain.delivery.input_identity import InputEffects
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.delivery.receipts import register_input
@@ -37,7 +38,12 @@ def test_prompt_hold_rolls_back_answer_fence_before_external_io(client, monkeypa
             delivery.state = "claimed"
             delivery.lease_until = datetime.now(UTC) + timedelta(minutes=2)
             await session.commit()
-        chat = ChatService(session_factory=factory, base_system_prompt="fixture")
+        chat = ChatService(
+            session_factory=factory,
+            base_system_prompt="fixture",
+            workspace_root="/unused",
+            compute=ComputePool([], "unused"),
+        )
         registrar = chat._input_registrar(
             InputEffects(
                 held_block_ids=ids, delivery_id=delivery_id, attempt_id=attempt
