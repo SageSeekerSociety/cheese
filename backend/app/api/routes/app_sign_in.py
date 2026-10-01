@@ -30,6 +30,7 @@ from app.common.auth import (
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, InternalServerError
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
+from app.domain.block.notice_text import say
 from app.domain.user.services import UserAuthService
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -57,7 +58,7 @@ async def start_app_sign_in(
     try:
         await reserve(_SCOPE, claims.jti, ttl_s=APP_SIGN_IN_TTL_S)
     except SingleUseUnavailableError:
-        raise InternalServerError("暂时无法登录 Cheese app，请稍后重试") from None
+        raise InternalServerError(say("appSignInUnavailable")) from None
     return {"code": 200, "message": "OK", "data": {"code": code}}
 
 
@@ -70,7 +71,7 @@ async def finish_app_sign_in(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     _require_same_origin(request)
-    refused = AuthenticationRequiredError("这次登录已失效，请在 Cheese app 里重新登录")
+    refused = AuthenticationRequiredError(say("appSignInExpired"))
     claims = verify_app_sign_in_code(payload.code)
     if claims is None:
         raise refused
@@ -82,7 +83,7 @@ async def finish_app_sign_in(
         if not await claim(_SCOPE, claims.jti):
             raise refused
     except SingleUseUnavailableError:
-        raise InternalServerError("暂时无法登录 Cheese app，请稍后重试") from None
+        raise InternalServerError(say("appSignInUnavailable")) from None
     try:
         user, _profile = await auth_service.get_user_with_profile(claims.user_id)
     except ValueError:

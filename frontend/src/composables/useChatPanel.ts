@@ -14,8 +14,9 @@
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, ChatMessageBody, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
+import type { NoticeAgent } from '../lib/platformNotice'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -32,10 +33,11 @@ import {
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
+import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
-import { useOutbox } from '../components/room/composables/useOutbox'
+import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
@@ -52,6 +54,7 @@ import { myHandle } from '../me'
 
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
+import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
 
@@ -131,7 +134,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
   // 往上报（working / site-turns / working-agents）是这里的事。
   const turns = useRoomTurns({ messages, agentName, agentNameOf })
-  const { awaitingReply, turnAgentName } = turns
+  const { awaitingReply, turnAgentName, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
   watch(turns.workingAgentNames, (v) => emit('working-agents', v))
@@ -158,6 +161,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
       askBusy.value = null
     }
   }
+
+  // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
+  const { postChecklist, changeChecklist } = useOwnChecklist({
+    topicId: () => topic()?.id,
+    show: (block) => {
+      if (!timeline.find(block.id)) return
+      timeline.replace(block)
+      historyChanges?.set(block.id, block)
+    },
+    fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
+  })
 
   // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
   // MVP picker: a fixed strip of the 8 most common reactions.
@@ -197,7 +211,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (touchOnly.value && target) rowActions.toggleTime(target)
     const el = target?.closest('.mention, .im-person') as HTMLElement | null
     if (!el) return
-    if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+    // 在动的那个头像：它此刻在干的事在「现场」，点它就去那里。
+    if (el.dataset.site !== undefined) emit('open-resource', 'site')
+    else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
     else if (el.dataset.topic) {
       const id = el.dataset.topic
       if (roomTasks.value.some((task) => task.id === id)) emit('open-card', id)
@@ -232,8 +248,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     close: closeSocket,
     isConnectRefusal,
     retryLater,
-    post: postFrame,
-    replaceStale: replaceStaleSocket,
   } = useRoomSocket({
     topicId: () => topic()?.id,
     onFrame: (frame) => {
@@ -244,9 +258,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // State frames are transient. A doc saved while disconnected may have no
       // remaining turn to replay it; refresh through the panel's conflict guard.
       emit('state-changed', 'doc')
-      flushOutbox() // 断线期间打的字，连上就自己走
+      void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
-    onDrop: () => requeueSending(),
     reconnect: (topicId) => {
       const current = topic()
       if (current?.id === topicId) void loadTopic(current)
@@ -320,7 +333,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         emit('state-changed', frame.resource)
         break
       case 'event_block':
-        // A persisted, clickable action card (decision/doc/...) for this turn.
+        // A persisted, clickable action card (milestone/doc/...) for this turn.
         pushBlock(frame.block)
         toSite(frame.block)
         autoScroll()
@@ -340,14 +353,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
         autoScroll()
         break
       case 'error':
-        if (frame.client_id) {
-          if (failOutgoing(frame.client_id, frame.message)) {
-            turns.settleIfIdle()
-          } else {
-            errorMsg.value = frame.message
-          }
-          return
-        }
         // The socket was refused at connect — the backend closes right after this
         // frame, so latch the reason and stop the reconnect loop from burying it.
         if (isConnectRefusal(frame.code)) {
@@ -564,12 +569,41 @@ export function useChatPanel(opts: ChatPanelOptions) {
     enqueue,
     flush: flushOutbox,
     settle: settleOutbox,
-    fail: failOutgoing,
-    requeueSending,
     retry: retrySend,
     drop: dropSend,
-    cancelTimers: cancelEchoTimers,
-  } = useOutbox({ post: postFrame, connected, onStale: () => replaceStaleSocket() })
+    pause: pauseOutbox,
+  } = useOutbox({
+    send: (item, signal) => {
+      const room = topic()
+      if (!room) return Promise.reject(new DOMException('no room', 'AbortError'))
+      const body: ChatMessageBody = {
+        content: item.content,
+        request_id: item.clientId,
+        reply_to: item.replyTo,
+        attachments: item.atts,
+      }
+      return postChatMessage(room.id, body, signal).catch((error: unknown) => {
+        // 4xx 是后端说了「不」（没权限、房间已归档、内容不合法）；408/429 和别的失败
+        // 都是这一刻的事，发件箱会带同一个 id 再试。
+        if (
+          error instanceof ApiError &&
+          error.status >= 400 &&
+          error.status < 500 &&
+          ![408, 429].includes(error.status)
+        ) {
+          throw new SendRefused(error.message)
+        }
+        throw error
+      })
+    },
+    onDelivered: (block) => {
+      // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
+      if (block.topic_id !== topic()?.id) return
+      delivered.add(block.id)
+      pushBlock(block)
+      autoScroll()
+    },
+  })
 
   function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
     const trimmed = content.trim()
@@ -589,8 +623,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   // The conversation stream shows messages + lightweight system lines only.
-  // doc/decision blocks are document state (they live in the doc panel), and AI
-  // tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
+  // doc blocks are document state (they live in the doc panel), and AI tool
+  // events belong in 现场 — neither belongs in the group chat (spec §7.1).
   // Historical SDK turns can contain one fenced Markdown block split across
   // consecutive message rows. Repair those rows before collapseNotices hides
   // event blocks, because an event is a hard boundary and must prevent an
@@ -719,24 +753,29 @@ export function useChatPanel(opts: ChatPanelOptions) {
     })
   )
 
-  function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
+  /** 某一轮那位队友：名字和 handle。认不出是谁的轮次，就是这个房间的那位。 */
+  function turnAgent(turnId: string | null | undefined): NoticeAgent {
+    return { name: turnAgentName(turnId), handle: turnAgentHandle(turnId) ?? agentSeat.value?.handle ?? null }
+  }
+
+  function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
     if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
     // This event contains the worker's actual result, rather than a status notice.
     if (block.meta?.event_type === 'subagent_stop') return null
     if (isPersonBlock(block)) return null
     // 关于某位 AI 队友那件事的通知，以那位队友的身份出现（头像和名字），不另署「平
-    // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgentName）。不属于任
+    // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgent）。不属于任
     // 何一位队友那一轮的平台通知（人编辑了文档之类）照旧不署队友。
     if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
-      return agentDisplayName(block.author)
+      return { name: agentDisplayName(block.author), handle: block.author }
     }
     if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
-    if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgentName(block.turn_id)
+    if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgent(block.turn_id)
     if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgentName(block.turn_id)
+      return turnAgent(block.turn_id)
     }
     if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgentName(block.turn_id)
+      return turnAgent(block.turn_id)
     }
     return null
   }
@@ -809,7 +848,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       if (oldId) rememberScroll(oldId)
       if (oldId) {
         composer.rememberComposer(oldId)
-        cancelEchoTimers()
+        pauseOutbox()
       }
       const room = topic()
       if (room) {
@@ -817,6 +856,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // await, so this topic's own draft has to be restored AFTER the call.
         void loadTopic(room, true)
         composer.restoreComposer(id)
+        void flushOutbox() // 上次在这个房间里没送完的，接着送
       } else {
         timeline.show({ blocks: [], hasMore: false })
         closeSocket()
@@ -847,6 +887,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rows,
     refMaps,
     awaitingReply,
+    agentFaces: turns.faces,
     timeline,
     hasMore,
     hasNewer,
@@ -869,7 +910,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     outgoingState,
     retrySend,
     outbox,
-    noticeAgentName,
+    noticeAgent,
     parentOf,
     showReplyCue,
     fmtTime,
@@ -909,6 +950,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     send,
     askBusy,
     pickOption,
+    postChecklist,
+    changeChecklist,
     onReact,
     undoTitle,
     downloadAttachment,

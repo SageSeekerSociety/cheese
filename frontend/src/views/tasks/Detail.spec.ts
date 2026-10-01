@@ -51,15 +51,7 @@ vi.mock('@/views/tasks/components', async () => {
   return {
     TaskDialogs: dc({
       name: 'TaskDialogsStub',
-      props: [
-        'taskData',
-        'availableTeams',
-        'loadingTeams',
-        'joinedTeams',
-        'selectedLeaveTeamId',
-        'selectedContext',
-        'participationInfo',
-      ],
+      props: ['taskData', 'availableTeams', 'loadingTeams', 'joinedTeams', 'selectedLeaveTeamId', 'participationInfo'],
       setup: () => () => hh('div'),
     }),
     LoadingErrorContainer: dc({
@@ -127,7 +119,6 @@ function makeRouter() {
         component: TaskDetail,
         children: [
           { path: '', name: 'TasksDetail', component: stub },
-          { path: 'ai-advice', name: 'TasksAIAdvice', component: stub },
           { path: 'submissions', name: 'TasksSubmissions', component: stub },
           { path: 'submit', name: 'TasksSubmit', component: stub },
           { path: 'participants', name: 'TasksParticipants', component: stub },

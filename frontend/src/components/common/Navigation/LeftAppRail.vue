@@ -206,6 +206,13 @@ const userMenu = useUserMenu()
     }
   }
 
+  // 首页那一格的未读点和件数角标往右上角外探 2px / 4px。这一段和下面的项目
+  // 列表一样会裁掉溢出的东西，而它的上沿就贴着标题栏：不留出角标探出去的那
+  // 4px，点的顶上就被削平一条。项目列表那一段有 8px 的上下内边距，所以一直没事。
+  .v-navigation-drawer__prepend {
+    padding-top: 4px;
+  }
+
   .app-rail-item {
     flex-shrink: 0;
   }

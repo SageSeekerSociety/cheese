@@ -144,41 +144,22 @@ DOM_STATE = """
 }
 """
 
-# Post a message into a topic over the chat WS (summon=false: persist only, no
-# AI turn) — a real "message landed while the user was in another topic".
+# Post a message into a topic the way the app does (no @: persist only, no AI
+# turn) — a real "message landed while the user was in another topic".
 POST_MESSAGE = """
 async ({ topicId, content, token }) => {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  // The socket authenticates once, at connect, from ?token= — and `author` in
-  // the frame is ignored, so the message lands under the token's handle. The
-  // token is passed in rather than read from localStorage: an empty one is not
-  // an error here, it is a refusal that looks exactly like a 4s timeout.
+  // The token is passed in rather than read from localStorage: an empty one is
+  // not an error here, it is a refusal that has to be named to be seen.
   // window.__cxApi.base, not '/api': the gateway strips exactly one prefix.
-  const ws = new WebSocket(
-    `${proto}://${location.host}${window.__cxApi.base}`
-    + `/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);
-  await new Promise((res, rej) => {
-    ws.onopen = res;
-    // The raw Event a socket rejects with prints as "Event" and says nothing;
-    // name the URL that failed instead.
-    ws.onerror = () => rej(new Error(`chat WS failed to open: ${ws.url}`));
+  const r = await fetch(`${window.__cxApi.base}/topics/${topicId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content, request_id: crypto.randomUUID() }),
   });
-  ws.send(JSON.stringify({ type: 'message', content, summon: false }));
-  // Wait for the persisted user_block echo so we know it's in the DB.
-  const echoed = await new Promise((res) => {
-    const timer = setTimeout(() => res('timeout'), 4000);
-    ws.onmessage = (ev) => {
-      try {
-        const f = JSON.parse(ev.data);
-        if (f.type === 'error') { clearTimeout(timer); res(f.code || f.message); }
-        if (f.type === 'user_block' && f.block?.content === content) {
-          clearTimeout(timer); res(true);
-        }
-      } catch {}
-    };
-  });
-  ws.close();
-  return echoed;
+  // A 200 means the message is stored.
+  if (r.ok) return true;
+  const body = await r.json().catch(() => ({}));
+  return body?.error?.name || `HTTP ${r.status}`;
 }
 """
 
@@ -323,7 +304,7 @@ async def main() -> None:
             POST_MESSAGE,
             {"topicId": topic_a["id"], "content": marker, "token": token},
         )
-        print(f"\n[C setup] posted new message to A over WS, echoed={echoed}")
+        print(f"\n[C setup] posted new message to A, stored={echoed}")
         if echoed is not True:
             # Scenario C measures the switch-back to a topic that just gained a
             # message; without the message it would silently re-run scenario A.

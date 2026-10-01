@@ -1660,38 +1660,6 @@ def transport(config, target_path):
                             },
                         },
                         {
-                            "name": "platform_request",
-                            "description": (
-                                "Call the Cheese backend with room credentials. "
-                                "Use for platform documents, tasks and metadata. "
-                                "Paths are relative to the API root. "
-                                "Use chat_send for messages and native tools "
-                                "for project files."
-                            ),
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "method": {
-                                        "type": "string",
-                                        "enum": [
-                                            "GET",
-                                            "POST",
-                                            "PUT",
-                                            "PATCH",
-                                            "DELETE",
-                                        ],
-                                    },
-                                    "path": {"type": "string"},
-                                    "body": {
-                                        "description": (
-                                            "JSON body, without shell parsing."
-                                        )
-                                    },
-                                },
-                                "required": ["method", "path"],
-                            },
-                        },
-                        {
                             "name": "permission",
                             "description": "Internal. Call Bash instead.",
                             "inputSchema": {"type": "object"},
@@ -1737,7 +1705,6 @@ def transport(config, target_path):
                 if tool not in (
                     "invoke",
                     "permission",
-                    "platform_request",
                     "send_user_file",
                     "project_tools",
                 ) and (tool not in cheese.PLATFORM_TOOLS):
@@ -1747,7 +1714,6 @@ def transport(config, target_path):
                 picked = {
                     "chat_send": ("content", "reply_to", "request_id"),
                     "project_tools": ("server", "name", "arguments"),
-                    "platform_request": ("method", "path", "body"),
                 }
                 if tool in picked:
                     payload = {
@@ -1804,9 +1770,7 @@ def transport(config, target_path):
                     receipt = platform_tool(tool, args, payload["id"], invoke)
                 else:
                     receipt = (
-                        client.platform_request(args)
-                        if tool == "platform_request"
-                        else client.publish_message(payload, args)
+                        client.publish_message(payload, args)
                         if tool == "chat_send"
                         else client.permission(payload, args, notice)
                         if tool == "permission"

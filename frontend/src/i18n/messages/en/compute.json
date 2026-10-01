@@ -5,7 +5,10 @@
     "standard": "Platform standard · prepared on the first run",
     "cores": "{n}-core CPU",
     "memory": "{n} GB memory",
-    "disk": "{n} GB disk"
+    "disk": "{n} GB disk",
+    "cloudStandard": "Cloud · Standard configuration",
+    "cloudCustom": "Cloud · Custom configuration",
+    "anyDevice": "Own device · Picked automatically"
   },
   "startup": {
     "elapsed": "Took",

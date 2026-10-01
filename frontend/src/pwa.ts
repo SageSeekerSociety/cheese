@@ -12,9 +12,11 @@
  *   见 lib/composerDrafts.ts）。所以新 worker 下好后停在 waiting。
  * - 也不弹提示让人点：草稿已经落盘，换版本本身不丢东西，没有什么需要人来决定。
  * - 换在下一次应用内跳转上：新版本在等时，把这次跳转换成一次整页加载。单页跳转
- *   本来就会扔掉当前页的临时状态，所以整页加载不多丢任何东西。联网时 HTML 走
- *   NetworkOnly（vite.config.ts），整页加载拿到的一定是新版本，不必等新 worker
- *   接管；同时让它接管，离线缓存和旧缓存的清理归它。
+ *   本来就会扔掉当前页的临时状态，所以整页加载不多丢任何东西。整页加载之前先
+ *   让新 worker 接管、等它真的接管了再走（`takeWaitingWorker`）：还是旧 worker
+ *   接着的话，导航那一下只要网络失败，它就拿缓存里的**旧** index.html 顶上
+ *   （vite.config.ts 里那条 NetworkOnly 的 precacheFallback），页面又回到旧版，
+ *   而旧版要的代码块服务器上已经没有了。
  * - 同一个浏览器里别的标签页：新 worker 一接管，它们也收到通知。它们不刷新，只记下
  *   「已经过期」，各自下一次跳转时整页加载。
  *
@@ -26,8 +28,6 @@ import { registerSW } from 'virtual:pwa-register'
 
 /** 新版本已下载、等着接管；或者别的标签页已经换上了新版本。下一次跳转整页加载。 */
 let stale = false
-
-let activateWaiting: ((reloadPage?: boolean) => Promise<void>) | null = null
 
 /**
  * 主动问一次「有没有新版本」。
@@ -50,8 +50,42 @@ function checkForUpdate() {
   })
 }
 
+const TAKEOVER_WAIT_MS = 3000
+
+function within<T>(ms: number, work: Promise<T>): Promise<T | undefined> {
+  return Promise.race([work, new Promise<undefined>((resolve) => window.setTimeout(() => resolve(undefined), ms))])
+}
+
+/**
+ * 有新版本在等的话，让它接管这一页，并等到它真的接管了才返回。
+ *
+ * 整页加载前调它：接管之后，导航就算退回缓存，缓存里也已经是新版的 index.html。
+ * 最多等几秒——等不到就照旧加载，宁可再落一次旧版，也不把人卡在一次点击上。
+ * `check` 为真时先问一次服务器有没有新版：代码块 404 那条路上，这一页可能还
+ * 不知道新版已经发了。
+ */
+export async function takeWaitingWorker({ check = false } = {}): Promise<void> {
+  const container = navigator.serviceWorker
+  if (!container) return
+  const registration = swRegistration ?? (await within(TAKEOVER_WAIT_MS, container.getRegistration()))
+  if (!registration) return
+  if (check && !registration.waiting)
+    await within(
+      TAKEOVER_WAIT_MS,
+      registration.update().catch(() => undefined)
+    )
+  const waiting = registration.waiting
+  if (!waiting) return
+  const taken = new Promise<void>((resolve) =>
+    container.addEventListener('controllerchange', () => resolve(), { once: true })
+  )
+  // workbox 生成的 sw.js 认这条消息（registerType: 'prompt' 时它不自己 skipWaiting）。
+  waiting.postMessage({ type: 'SKIP_WAITING' })
+  await within(TAKEOVER_WAIT_MS, taken)
+}
+
 export function registerPwa(router: Router): void {
-  activateWaiting = registerSW({
+  registerSW({
     immediate: true,
     onNeedRefresh() {
       stale = true
@@ -71,9 +105,9 @@ export function registerPwa(router: Router): void {
   })
   // 首次导航（`from` 没有匹配的路由）本来就是整页加载出来的；只换 hash 或 query
   // 的跳转不算离开这一页。
-  router.beforeEach((to, from) => {
+  router.beforeEach(async (to, from) => {
     if (!stale || from.matched.length === 0 || to.path === from.path) return
-    void activateWaiting?.(false)
+    await takeWaitingWorker()
     window.location.assign(router.resolve(to).href)
     return false
   })

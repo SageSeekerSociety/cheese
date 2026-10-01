@@ -113,7 +113,11 @@ beforeEach(() => {
     url: 'https://preview-topic-a.example/_cheese/session',
     grant: 'preview-only',
   })
-  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+    const frame = document.querySelector(`iframe[name="${this.target}"]`)!
+    Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null })
+    queueMicrotask(() => frame.dispatchEvent(new Event('load')))
+  })
 })
 
 describe('预览面板：运行中的应用到不了的时候说什么', () => {
@@ -172,7 +176,7 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     expect(frame?.getAttribute('name')).toBeTruthy()
     expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce()
     // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
-    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A', undefined)
     // The named form targets an isolated content origin, so storage can work.
     expect(frame?.getAttribute('sandbox')).toContain('allow-same-origin')
   })
@@ -195,7 +199,11 @@ describe('预览面板：文件读回来了但没有内容', () => {
 
     expect(container.textContent).not.toContain('太大')
     expect(container.querySelector('iframe.preview-frame')).toBeTruthy()
-    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A', {
+      artifact_id: 'a1',
+      path: 'report.html',
+      version: undefined,
+    })
   })
 
   it('文件不是文本 → 说的是它读不了，不是它太大', async () => {
@@ -220,6 +228,7 @@ describe('预览面板：文件读回来了但没有内容', () => {
 describe('预览面板：刷新', () => {
   it('静默刷新不重建 iframe——正在看的产物不会被重载', async () => {
     getPreview.mockResolvedValue({
+      version: 'v1',
       path: 'report.html',
       mime: 'text/html',
       artifact_id: 'a1',
@@ -239,6 +248,19 @@ describe('预览面板：刷新', () => {
     expect(getPreview.mock.calls.length).toBeGreaterThan(callsBefore)
     // 同一个 DOM 节点 = 没有卸载重建 = 产物没有重载。
     expect(container.querySelector('iframe.preview-frame')).toBe(frame)
+    expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce()
+  })
+
+  it('unknown static versions navigate again rather than claiming unchanged content', async () => {
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container, rerender } = mountPanel(true)
+    await flush()
+    await openPreview(container)
+    const frame = container.querySelector('iframe.preview-frame')
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: false })
+    await flush()
+    expect(container.querySelector('iframe.preview-frame')).not.toBe(frame)
+    expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(2)
   })
 })
 

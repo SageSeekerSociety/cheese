@@ -39,7 +39,7 @@ vi.mock('../panels/preview/PreviewPages.vue', () => ({
 const listFiles = vi.fn()
 const readFile = vi.fn()
 const getGitDiff = vi.fn()
-const previewDocumentPdf = vi.fn()
+const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
 
@@ -56,7 +56,7 @@ vi.mock('../../api', async () => {
           title: '写合同',
           status: 'open',
           branch_name: 'task/contract',
-          presentation: { column: 'building', display_status: '运行中' },
+          presentation: { column: 'building', phrase: 'running' },
           blocks: [],
         },
       ],
@@ -65,7 +65,7 @@ vi.mock('../../api', async () => {
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
     getGitDiff: (...a: unknown[]) => getGitDiff(...a),
-    previewDocumentPdf: (...a: unknown[]) => previewDocumentPdf(...a),
+    previewDocumentPdfSnapshot: (...a: unknown[]) => previewDocumentPdfSnapshot(...a),
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
     decideDocumentRevisions: (...a: unknown[]) => decideDocumentRevisions(...a),
     writeFile: vi.fn().mockResolvedValue({ path: 'x', version: 'v2' }),
@@ -139,7 +139,7 @@ beforeEach(() => {
   listFiles.mockResolvedValue({ data: [{ path: '合同.docx', bytes: 38705 }], total: 1 })
   readFile.mockResolvedValue(binaryFile('合同.docx'))
   getGitDiff.mockResolvedValue({ diff: 'diff --git a/合同.docx b/合同.docx\nBinary files differ\n' })
-  previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
+  previewDocumentPdfSnapshot.mockResolvedValue({ bytes: new ArrayBuffer(4096), sourceVersion: null })
   documentRevisions.mockResolvedValue({
     path: '合同.docx',
     version: 'v7',
@@ -167,7 +167,7 @@ describe('改动 tab: 一份文档', () => {
     await flush()
     await fireEvent.click(screen.getByText('已提交版本', { selector: '.v-list-item-title' }))
     await flush()
-    expect(previewDocumentPdf).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
+    expect(previewDocumentPdfSnapshot).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
     expect(documentRevisions).toHaveBeenLastCalledWith('topic-A', '合同.docx', 'task-1', 'committed')
     expect(container.textContent).toContain('这个版本只读，不能处理修订。')
     expect(
@@ -186,7 +186,7 @@ describe('改动 tab: 一份文档', () => {
     expect(container.querySelector('.stub-pages')?.getAttribute('data-bytes')).toBe('4096')
     expect(container.textContent).not.toContain('二进制文件，不能按文本编辑')
     // 来源跟着请求走：这一份在任务的工作树上，不是房间交付的那一份。
-    expect(previewDocumentPdf).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1', 'live')
+    expect(previewDocumentPdfSnapshot).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1', 'live')
   })
 
   it('修订在这里也能逐条处理，处理的是这个任务工作树上的那一份', async () => {
@@ -225,6 +225,6 @@ describe('改动 tab: 一份文档', () => {
 
     expect(container.querySelector('.diff-view')).toBeTruthy()
     expect(container.querySelector('.stub-pages')).toBeNull()
-    expect(previewDocumentPdf).not.toHaveBeenCalled()
+    expect(previewDocumentPdfSnapshot).not.toHaveBeenCalled()
   })
 })

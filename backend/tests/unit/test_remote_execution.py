@@ -8,7 +8,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -777,7 +776,13 @@ def test_executor_rooms_share_installed_tools(
             assert (cache / "setup-marker").read_text() == "cached"
             assert not (home / ".local/bin/shared-test-tool").exists()
             assert tally.read_text() == ("x" if room_project == project else "xx")
-        assert len(downloads.read_text().splitlines()) == 5
+        # One fetch per placed tool across all three rooms, however many that
+        # is — hardcoding the count silently breaks on the next placement.
+        from app.domain.agent import machine_launcher
+
+        assert len(downloads.read_text().splitlines()) == len(
+            machine_launcher.toolchain.PLACEMENTS
+        )
     finally:
         for state in states:
             subprocess.run(
@@ -1403,13 +1408,9 @@ class RemoteExecutionTests(unittest.TestCase):
         self.workspace = self.root / "project with spaces"
         self.workspace.mkdir()
         self.state = self.root / "state"
-        claude = os.environ.get("CHEESE_TEST_CLAUDE") or shutil.which("claude")
-        self.assertIsNotNone(
-            claude, "Install the pinned Claude Code build before running acceptance"
-        )
         self.config = {
             "workspace": str(self.workspace),
-            "claude": claude,
+            "claude": claude_binary(),
             "env": {"EXECUTOR_MARKER": "remote-environment"},
         }
         self.start()

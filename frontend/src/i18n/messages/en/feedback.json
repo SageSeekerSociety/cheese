@@ -589,7 +589,7 @@
     "submitted": "Submitted",
     "progress": "You can follow its progress in the feedback center.",
     "view": "View this feedback",
-    "confirm": "I've confirmed this looks like a platform problem, not the way you're using it",
+    "byline": "{name} thinks this is a platform problem, not the way you're using it",
     "userSaid": "What you said at the time",
     "why": "Why (and why this isn't the way you're using it)",
     "logs": "Logs",

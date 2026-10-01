@@ -1,4 +1,4 @@
-"""Own a pi process on the machine, and outlive whoever is reading from it.
+"""Own a pi process on the session host, and outlive whoever is reading from it.
 
 The backend is the thing that gets replaced. pi is not, and neither is this —
 so the session, its entries and the record of which input was already accepted
@@ -20,19 +20,23 @@ why a missed event costs nothing.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
-import signal
+import shlex
+import shutil
 import sys
 import uuid
 from pathlib import Path
 
+from app.domain.agent.executor_transport import PlatformHost
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi import catalog, hooks
+from app.domain.agent.harness.pi.jobs import Jobs
 from app.domain.agent.harness.pi.journal import (
     COMPACTING,
     GAVE_UP,
@@ -40,8 +44,8 @@ from app.domain.agent.harness.pi.journal import (
     THREAD,
     Journal,
 )
+from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.mcp import ProjectServers
-from app.domain.agent.harness.pi.project_skills import project_skills
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 from app.domain.agent.harness.pi.subagents import Subagents
 from app.domain.agent.nonce import nonce_in
@@ -52,8 +56,8 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
 
 class Runner(runner.Runner[Journal]):
-    def __init__(self, state: Path):
-        super().__init__(state, Journal, "entries.sqlite")
+    def __init__(self, state: Path, *, idle_exit_s: float = runner.IDLE_EXIT_S):
+        super().__init__(state, Journal, "entries.sqlite", idle_exit_s=idle_exit_s)
         self.client: Connection | None = None
         self.refreshing = asyncio.Lock()
         self.doorbell = asyncio.Event()
@@ -91,10 +95,18 @@ class Runner(runner.Runner[Journal]):
         # The project's MCP servers (`mcp.py`), opened with the session.
         self.servers: ProjectServers | None = None
         self.mcp_tools: list[dict] = []
-        # The checkout and environment pi runs in, which its tool calls'
-        # hooks run in too (`tool_hooks`).
+        # The room's machine, where every file and command of the session's is
+        # (`machine.py`), and the checkout as the session sees it there. `cwd`
+        # is the directory pi runs in on this host, which holds nothing of the
+        # project; `env` is pi's environment here.
+        self.machine: Machine | None = None
+        self.jobs: Jobs | None = None
         self.workspace = ""
+        self.cwd = ""
         self.env: dict[str, str] = {}
+        # What the repository says about itself (`repository.py`), read once the
+        # session is on its machine and added to every turn's prompt.
+        self.context = ""
         # What a subagent is started from (`subagents.py`): the parent's own
         # pin, argv, skills and extension, as `start` was given them.
         self.binary = ""
@@ -334,31 +346,19 @@ class Runner(runner.Runner[Journal]):
     ) -> Path:
         """Put the extension and its tool catalog on disk; answer with the entry.
 
-        The catalog is built HERE, from the CLI installed on this machine,
-        because that is the copy the calls will run against. A list shipped
-        from the backend would be a claim about a file the backend cannot see,
-        and the first thing to go wrong would be a tool the agent can name and
-        the machine cannot run.
-
-        A machine with no CLI still gets the extension: it has four more
-        reasons to exist than the platform tools, and a room where the CLI
-        failed to install is one where saying so beats loading nothing.
-
         ``home`` is a subagent's (`subagents.py`): the same extension with the
         platform's tools, the project's MCP servers and its hooks, and none of
         what belongs to the session alone — no subagents of its own, and no
-        background shell, whose jobs would outlive the subagent that started
-        them with nobody left to be told they ended.
+        background jobs, which would outlive the subagent that started them with
+        nobody left to be told they ended.
         """
         child = home is not None
         home = home or self.state / "extension"
         home.mkdir(parents=True, exist_ok=True)
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
-        cli = catalog.cli_path()
         try:
-            tools = catalog.tools(cli) if cli is not None else []
-            reason = "" if cli is not None else f"no {catalog.CLI} on PATH"
+            tools, reason = catalog.tools(), ""
         except Exception as error:  # noqa: BLE001 — a room still opens without them
             tools, reason = [], f"{type(error).__name__}: {error}"
         (home / "platform.json").write_text(
@@ -366,13 +366,9 @@ class Runner(runner.Runner[Journal]):
                 {
                     "socket": socket_path(self.state),
                     "state": str(self.state),
-                    # A backgrounded command has to survive this session, so
-                    # what starts it is a script and an interpreter, not a
-                    # thread. Both named here because the runner is the side
-                    # that knows: it was started by that interpreter and it
-                    # just wrote that script.
-                    "python": "" if child else sys.executable,
-                    "background": "" if child else str(home / "background.py"),
+                    # The checkout as the session sees it on the room's machine:
+                    # where pi's own tools resolve a path and run a command.
+                    "workspace": self.workspace,
                     "jobs": "" if child else str(self.state / "bg"),
                     "subagents": not child,
                     "tools": tools,
@@ -392,61 +388,56 @@ class Runner(runner.Runner[Journal]):
         )
         return home
 
-    async def open_servers(
-        self,
-        *,
-        workspace: str,
-        env: dict[str, str],
-        remote: dict | None,
-        agent: dict | None = None,
-    ) -> None:
-        """Start the checkout's and the teammate's type's stdio MCP servers and
-        list every server's tools, before the extension's manifest is written."""
+    async def open_servers(self) -> None:
+        """List every MCP server's tools, before the extension's manifest is
+        written."""
+        assert self.machine is not None
         self.servers = ProjectServers(
-            self.state, workspace=workspace, env=env, remote=remote, agent=agent
+            self.machine, self.journal.recall("session_id") or ""
         )
         self.mcp_tools = await self.servers.discover()
 
-    async def run_cli(self, tool: str, arguments: dict, cwd: str | None) -> dict:
+    def _invoke(self, payload: dict, args: dict) -> dict:
+        """A command on the machine, answered the way an executor's Bash is:
+        what the platform's tools need from the machine (`PlatformHost`)."""
+        assert self.machine is not None
+        code, output = self.machine.run(args["command"])
+        text = output.decode("utf-8", "replace")
+        return {"value": {"stdout": text if code == 0 else f"Exit code {code}\n{text}"}}
+
+    async def run_cli(
+        self, tool: str, arguments: dict, cwd: str | None, call_id: str
+    ) -> dict:
         """One platform tool call.
 
-        A tool from the platform's table runs in-process against the backend.
-        Anything else is a CLI command, run as the CLI would have been typed:
+        A tool from the platform's table runs here against the backend, reaching
+        the machine only for what it needs from it. Anything else is a CLI
+        command, run on the machine as the CLI would have been typed there:
         argparse is the authority twice over — it says what the arguments mean,
         and ``catalog.argv`` re-parses what it built, so a call that could not
         have been typed fails here rather than reaching the CLI as a malformed
         command line.
         """
-        source = catalog.cli_path()
-        if source is None:
-            raise RuntimeError(f"{catalog.CLI} is not installed on this machine")
-        if catalog.is_platform_tool(source, tool):
+        assert self.machine is not None
+        if catalog.is_platform_tool(tool):
+            host = PlatformHost(
+                self.machine.client, self._invoke, call_id, self.doc_versions
+            )
             try:
                 text = await asyncio.to_thread(
-                    catalog.run_platform_tool,
-                    source,
-                    tool,
-                    arguments,
-                    cwd=cwd,
-                    doc_versions=self.doc_versions,
+                    catalog.run_platform_tool, tool, arguments, host
                 )
             except Exception as error:  # noqa: BLE001 — the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": str(error)}
             return {"status": 0, "stdout": text, "stderr": ""}
-        process = await asyncio.create_subprocess_exec(
-            str(source),
-            *catalog.argv(source, tool, arguments),
-            cwd=cwd or None,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            limit=LINE_LIMIT,
+        command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
+        code, output = await asyncio.to_thread(
+            self.machine.run, f"exec {command} </dev/null", cwd=cwd
         )
-        out, err = await process.communicate()
         return {
-            "status": process.returncode,
-            "stdout": out.decode("utf-8", "replace"),
-            "stderr": err.decode("utf-8", "replace"),
+            "status": code,
+            "stdout": output.decode("utf-8", "replace"),
+            "stderr": "",
         }
 
     async def tool_hooks(self, params: dict) -> dict:
@@ -457,21 +448,83 @@ class Runner(runner.Runner[Journal]):
         it, or adds it to the result. A hook that could not run is a failure,
         and pi blocks a call whose `tool_call` handler throws.
         """
+        assert self.machine is not None
         try:
             args = await hooks.run(
                 params["event"],
                 params["tool"],
                 params.get("input") or {},
                 call_id=params["id"],
-                root=self.workspace,
+                machine=self.machine,
                 cwd=params.get("cwd"),
-                env=self.env,
-                session_id=self.state.name,
                 result=params.get("result"),
             )
         except hooks.Denied as denied:
             return {"denied": str(denied)}
         return {"input": args}
+
+    # --- the machine, for pi's own tools ---------------------------------------
+
+    async def files(self, params: dict) -> dict:
+        """One of the file operations pi's own tools are built on
+        (`platform.ts`), on the room's machine; the few files the session
+        keeps on this host are read here (`Machine.local`)."""
+        assert self.machine is not None
+        machine, path = self.machine, params["path"]
+        operation = params["operation"]
+        if operation == "read":
+            data = await asyncio.to_thread(machine.read_file, path)
+            return {"data": base64.b64encode(data).decode()}
+        if operation == "access":
+            await asyncio.to_thread(
+                machine.access, path, write=bool(params.get("write"))
+            )
+            return {}
+        if operation == "image":
+            return {"type": await asyncio.to_thread(machine.image_type, path)}
+        more = {k: v for k, v in params.items() if k not in ("operation", "path")}
+        return await asyncio.to_thread(machine.files, operation, path, **more)
+
+    async def shell(self, params: dict) -> dict:
+        """pi's shell, as its bash runs it (`platform.ts`): a command started on
+        the machine, then read from an offset until it has ended."""
+        assert self.machine is not None
+        machine = self.machine
+        operation = params["operation"]
+        if operation == "start":
+            command_id = "pi-" + uuid.uuid4().hex
+            await asyncio.to_thread(
+                machine.start,
+                command_id,
+                # As the executor's own Bash runs one for Codex: in the user's
+                # shell, from the snapshot of their profile.
+                f"eval {shlex.quote(params['command'])} </dev/null",
+                cwd=params.get("cwd"),
+                shell=True,
+            )
+            return {"id": command_id}
+        if operation == "read":
+            read = await asyncio.to_thread(
+                machine.read,
+                params["id"],
+                int(params.get("offset") or 0),
+                wait=float(params.get("wait") or 1.0),
+            )
+            answer = {
+                "data": base64.b64encode(read["data"]).decode(),
+                "offset": read["offset"],
+            }
+            if "exit" in read:
+                answer["exit"] = read["exit"]
+            if read.get("lost"):
+                answer["lost"] = True
+            return answer
+        if operation == "signal":
+            running = await asyncio.to_thread(
+                machine.signal, params["id"], int(params["signal"])
+            )
+            return {"running": running}
+        raise ValueError(f"Unknown shell operation: {operation}")
 
     # --- subagents -------------------------------------------------------------
 
@@ -523,16 +576,28 @@ class Runner(runner.Runner[Journal]):
         cwd: str,
         env: dict[str, str],
         args: list[str],
+        target: dict,
         skills: dict[str, str] | None = None,
         extension: dict[str, str] | None = None,
         notice: str = "",
-        remote_mcp: dict | None = None,
-        agent_mcp: dict | None = None,
     ) -> str:
+        """Start pi in `cwd`, a directory of this host's that holds nothing of
+        the project: everything the session does in the project is on the room's
+        machine, as `target` names it (`machine.py`)."""
         self.claim()
-        self.workspace, self.env = cwd, env
+        # pi's own temporary files — the whole output of a long command, which
+        # its bash names for the model to read — stay with the session.
+        scratch = self.state / "tmp"
+        scratch.mkdir(exist_ok=True)
+        env = {**env, "TMPDIR": str(scratch)}
+        self.cwd, self.env = cwd, env
         self.binary, self.args = binary, list(args)
         self.extension_files = dict(extension or {})
+        mirror = self.state / "project-skills"
+        self.machine = Machine(
+            target, shipped=self.state / "skills", mirror=mirror, scratch=scratch
+        )
+        self.workspace = self.machine.workspace
         saved = self.journal.recall("session_id")
         if saved is not None and opening.resume_token not in (None, saved):
             raise ValueError("A session directory cannot resume a different session")
@@ -551,17 +616,26 @@ class Runner(runner.Runner[Journal]):
             ["--append-system-prompt", str(prompt)] if opening.system_prompt else []
         )
         # pi starts with `--no-skills` because it would otherwise read whatever
-        # the machine's owner keeps in their own ~/.agents. That drops the
-        # project's own skills as well, so they are named here, found the way
-        # pi finds them in a project it trusts. They come first: pi keeps the
-        # first skill of a name, and in a project opened with plain pi, the
-        # project's skill wins over one of the same name from anywhere else.
-        for path in project_skills(cwd):
-            appended += ["--skill", path]
+        # this host keeps in its own ~/.agents. That drops the project's own
+        # skills as well, so they are named here, found on the machine the way pi
+        # finds them in a project it trusts and copied where pi can load them.
+        # They come first: pi keeps the first skill of a name, and in a project
+        # opened with plain pi, the project's skill wins over one of the same
+        # name from anywhere else. A session started before its machine has
+        # neither the project's skills nor what the repository says; it is
+        # started again on the machine once it has one.
+        shutil.rmtree(mirror, ignore_errors=True)
+        if not self.machine.placeholder:
+            try:
+                self.context = await asyncio.to_thread(self.machine.context)
+                for path in await asyncio.to_thread(self.machine.project_skills):
+                    appended += ["--skill", path]
+            except Exception as error:  # noqa: BLE001 — the room still opens
+                print(f"[cheese] the project was not read: {error!r}", file=sys.stderr)
         # Explicit `--skill` paths are additive even under `--no-skills`, so the
         # platform's own skills are written here and named — for the same
         # reason the system prompt is: they are assembled by the platform, and
-        # the machine has no copy to point at.
+        # this host has no copy to point at.
         #
         # A skill is a directory and everything under it travels, so the files
         # go wherever their relative paths say — but only the directories that
@@ -580,10 +654,10 @@ class Runner(runner.Runner[Journal]):
             if flag == "--skill"
             for value in (flag, path)
         ]
+        self.jobs = Jobs(self.machine, self.state / "bg")
+        self.jobs.resume()
         if extension is not None:
-            await self.open_servers(
-                workspace=cwd, env=env, remote=remote_mcp, agent=agent_mcp
-            )
+            await self.open_servers()
             home = self.write_extension(extension, notice)
             appended += ["--extension", str(home / "index.ts")]
             # Named rather than derived: an extension that had to work out
@@ -704,6 +778,14 @@ class Runner(runner.Runner[Journal]):
         extension's `bash` (`platform.ts`), which watches the file the debt was
         just written to and lets go of its command as soon as it changes."""
 
+    def busy(self) -> bool:
+        return bool(
+            self.working
+            or (self.continuing is not None and not self.continuing.done())
+            or any(not agent.ended.done() for agent in self.children.started.values())
+            or (self.jobs is not None and self.jobs.running() > 0)
+        )
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
@@ -711,7 +793,7 @@ class Runner(runner.Runner[Journal]):
             await self.refresh()
             since = params.get("since")
             after = self.journal.sequence_of(since) if since else 0
-            return {"entries": [row["record"] for row in self.journal.read(after)]}
+            return {"entries": [row["record"] for row in self.records(after)]}
         if method == "send":
             return await self.send(
                 params["input_id"],
@@ -731,7 +813,10 @@ class Runner(runner.Runner[Journal]):
             )
         if method == "cli":
             return await self.run_cli(
-                params["tool"], params.get("arguments") or {}, params.get("cwd")
+                params["tool"],
+                params.get("arguments") or {},
+                params.get("cwd"),
+                params.get("id") or str(uuid.uuid4()),
             )
         if method == "mcp":
             if self.servers is None:
@@ -740,10 +825,31 @@ class Runner(runner.Runner[Journal]):
                 params["tool"],
                 params.get("arguments") or {},
                 call_id=params.get("id") or str(uuid.uuid4()),
-                cwd=params.get("cwd"),
             )
         if method == "hooks":
             return await self.tool_hooks(params)
+        if method == "files":
+            return await self.files(params)
+        if method == "shell":
+            return await self.shell(params)
+        if method == "context":
+            assert self.machine is not None
+            return {"context": self.context or self.machine.instructions}
+        if method == "job_start":
+            assert self.jobs is not None
+            return await self.jobs.start(
+                params["command"],
+                params.get("label") or "",
+                params.get("cwd") or self.workspace,
+            )
+        if method == "job_write":
+            assert self.jobs is not None
+            await self.jobs.write(params["id"], params["text"])
+            return {}
+        if method == "job_signal":
+            assert self.jobs is not None
+            await self.jobs.signal(params["id"], int(params["signal"]))
+            return {}
         if method == "subagent_spawn":
             return await self.children.spawn(
                 params["prompt"],
@@ -777,53 +883,25 @@ class Runner(runner.Runner[Journal]):
                 "pid": os.getpid(),
                 "session_id": self.journal.recall("session_id"),
                 "working": self.working,
+                # Background jobs still running: a relaunch would end them.
+                "tasks": self.jobs.running() if self.jobs is not None else 0,
                 "work_id": owner.get("work_id"),
                 "alive": self.process is not None and self.process.returncode is None,
             }
         raise ValueError(f"Unknown pi session operation: {method}")
-
-    def end_background_jobs(self) -> None:
-        """Take down what the room started, now that the room is going.
-
-        A backgrounded command is deliberately not killed at the end of a turn —
-        that is the whole point of it. But it is not the machine's to keep
-        either: this runner IS the screen's program, so when it goes the room
-        is being torn down, and a dev server nobody can reach any more would
-        hold its port until somebody found it by hand.
-
-        What is signalled is the COMMAND's process group, not the supervisor's.
-        The two are different sessions — that separation is what lets a job
-        outlive pi — so a signal aimed at the supervisor would leave the command
-        running with nothing left holding its name. Signalled this way the
-        supervisor sees its child go, drains what it printed on the way out and
-        records the exit, which is also what a reader needs afterwards.
-        """
-        jobs = self.state / "bg"
-        if not jobs.is_dir():
-            return
-        for job in jobs.iterdir():
-            if (job / "exit").exists():
-                continue
-            try:
-                meta = json.loads((job / "meta.json").read_text())
-                os.killpg(os.getpgid(meta["child"]), signal.SIGTERM)
-            except (OSError, ValueError, KeyError):
-                # Already gone, never written, or ours no longer to signal.
-                continue
 
     async def stopped(self) -> None:
         with contextlib.suppress(Exception):
             await super().stopped()
 
     async def close(self) -> None:
-        # A subagent lives and dies with the session that started it.
+        # A subagent lives and dies with the session that started it, and so do
+        # the jobs it started: the room is going, and a dev server nobody can
+        # reach any more would hold its port until somebody found it by hand.
         await self.children.stop_all()
-        self.end_background_jobs()
+        if self.jobs is not None:
+            await self.jobs.close(end=True)
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)
-        try:
-            await super().close()
-        finally:
-            if self.servers is not None:
-                await self.servers.close()
+        await super().close()

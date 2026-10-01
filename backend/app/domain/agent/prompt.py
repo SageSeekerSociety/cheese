@@ -52,7 +52,13 @@ from app.domain.block.notice_text import say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,  # noqa: F401 — re-exported through `agent.chat`
+    TitleSource,
+    Topic,
+    TopicKind,
+    TopicStatus,
+)
 from app.domain.topic.overview import (
     project_brief,
     render_overview,
@@ -66,7 +72,7 @@ def _progress_lines(items: list[dict]) -> list[str]:
     """进度层 (#187): the checklist this topic's work left behind, as prompt text.
 
     This is the one thing a fresh machine cannot reconstruct from the repo. Code
-    survives in git, conclusions survive in the doc and the decision log, but
+    survives in git, conclusions survive in the doc and the conversation, but
     "which of the five things am I on" only ever lived in the dead turn's stream.
     So it is stated here as a fact about the topic, not as memory — see
     TopicProgress's docstring for why the two must not be merged.
@@ -195,12 +201,6 @@ def _resume_notice() -> str:
     )
 
 
-# A topic created from the rail's + has no human-typed title ("新话题"); 芝士 names
-# it via `cheese_title` (titles are AI-generated, never deterministically derived
-# from human input or the agent's output — see CLAUDE.md).
-PLACEHOLDER_TITLE = "新话题"
-
-
 def _topic_ref_lists(
     topics: list[Topic], *, exclude_id: uuid.UUID
 ) -> tuple[list[dict], list[dict]]:
@@ -236,7 +236,8 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     live = [
         t
         for t in topics
-        if t.status != TopicStatus.archived and t.title != PLACEHOLDER_TITLE
+        if t.status != TopicStatus.archived
+        and t.title_source != TitleSource.placeholder
     ]
     titles = Counter(t.title for t in live)
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
@@ -408,10 +409,10 @@ async def project_overview(
     all_topics: list[Topic],
     roster: list[dict],
 ) -> str:
-    """注入用的项目总览：① 从总览文档来，②~⑤ 从结构化数据现拼（#1889）。
+    """注入用的项目总览：① 从总览文档来，②~④ 从结构化数据现拼（#1889）。
 
-    在总览房间（项目根话题）里，总览就是本房间的实况文档，五块都拼给它；别的
-    房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余四块要哪一块就自己
+    在总览房间（项目根话题）里，总览就是本房间的实况文档，四块都拼给它；别的
+    房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余三块要哪一块就自己
     去查哪一块，不必每轮往每间房塞一份项目快照。
     """
     in_overview_room = project.root_topic_id == room_id
@@ -420,7 +421,7 @@ async def project_overview(
     if in_overview_room:
         from app.domain.topic.services import TopicService
 
-        # ②~⑤ 的取数在 topic 领域，和前端那一条
+        # ②~④ 的取数在 topic 领域，和前端那一条
         # （`TopicService.overview_auto`）是同一份：两个读者，一份来源。
         auto = render_overview_auto(
             **await TopicService(session).overview_auto_data(

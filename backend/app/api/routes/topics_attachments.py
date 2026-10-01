@@ -45,6 +45,7 @@ from app.api.routes.topics import DbSession
 from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
+from app.domain.block.notice_text import exception_text, say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview.office import (
@@ -58,6 +59,7 @@ from app.domain.project.room_files import (
     clean_artifact_path,
 )
 from app.domain.room_task.services import TaskService
+from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -141,9 +143,9 @@ async def upload_attachment(
             mime = "application/octet-stream"
         data = await file.read(MAX_ATTACHMENT_BYTES + 1)
         if not data:
-            raise ValidationError("空文件")
+            raise ValidationError(say("emptyFile"))
         if len(data) > MAX_ATTACHMENT_BYTES:
-            raise ValidationError("文件太大（上限 10MB）")
+            raise ValidationError(say("attachmentTooLarge"))
         name = library.clean_upload_name(file.filename)
         if ext and not name.lower().endswith(ext):
             name += ext
@@ -232,13 +234,13 @@ async def attachment_as_pdf(
     )
     clean = clean_artifact_path(path)
     if not is_renderable(clean):
-        raise ValidationError("这个格式不能转换为预览")
+        raise ValidationError(say("previewFormatUnsupported"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
+            say("previewTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     try:
         pdf = await render_to_pdf(data, clean, settings.office_render_endpoint)
@@ -247,9 +249,9 @@ async def attachment_as_pdf(
         # absent or unreachable, which the panel reports as its own state and
         # pairs with the download — a different sentence from "这个文件转换不了",
         # which is about the file and will not improve on a retry.
-        raise SystemBusyError(str(exc)) from exc
+        raise SystemBusyError(exception_text(exc)) from exc
     except OfficeRenderFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -257,8 +259,7 @@ async def attachment_as_pdf(
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": (
-                "no-store" if task or source == "committed" else "private, max-age=3600"
-            ),
+            "Cache-Control": "no-store",
+            "X-Cheese-Source-Version": content_version(data),
         },
     )

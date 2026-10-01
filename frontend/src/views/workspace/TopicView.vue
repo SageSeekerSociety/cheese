@@ -260,18 +260,17 @@ function handleStateChanged(resource: string) {
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
-  else activityTick.value += 1 // doc / decision / milestone / notify → reload
+  else activityTick.value += 1 // doc / milestone / notify → reload
 }
 
-// An action card's button → open the relevant view (§3.1.1 控件). 决策记录 has
-// exactly ONE address now (`docs/decisions`, a child of this project frame) —
-// it used to be a separate full page here and an in-place swap in the sidebar,
-// so the same words led to two different places.
+// An action card's button → open the relevant view (§3.1.1 控件).
 async function handleOpenResource(resource: string, turnId?: string) {
-  if (resource === 'decision') {
-    void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
-  } else if (resource === 'milestone') {
+  if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
+  } else if (resource === 'site') {
+    // 对话里在动的那个头像：它此刻在干什么，去现场看。
+    focusMode.value = false
+    onPanelTab('site')
   } else if (resource === 'changes') {
     // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
     focusMode.value = false

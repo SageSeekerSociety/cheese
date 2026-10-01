@@ -309,6 +309,9 @@ class AgentRetrying:
     delay_ms: int | None = None
     #: The HTTP status of the failed request; None for a connection error.
     status: int | None = None
+    #: How long the harness waited without any response before giving up on
+    #: this attempt, when it says (Claude Code does, for a request that got none).
+    no_response_ms: int | None = None
     thread_label: str | None = None
 
 

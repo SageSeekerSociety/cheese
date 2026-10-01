@@ -90,5 +90,20 @@
     "machineNote": "The AI teammate's work computer must be online to start. Projects on the cloud can start any time; for projects on your own device, a run waits while the device is offline and is marked failed, with a notification, if it hasn't started within two hours"
   },
   "deleteTitle": "Delete “{title}”",
-  "deleteBody": "It stops running and its run history is deleted too; result files already in the room are kept"
+  "deleteBody": "It stops running and its run history is deleted too; result files already in the room are kept",
+  "roomsFailed": "Failed to load this project’s rooms",
+  "archivedStopped": "Stopped with the archived room",
+  "readonly": "Owned by {owner} — only they and project admins can change it",
+  "refreshAria": "Refresh rules",
+  "cancel": "Cancel",
+  "save": "Save",
+  "weekday": {
+    "mon": "Mon",
+    "tue": "Tue",
+    "wed": "Wed",
+    "thu": "Thu",
+    "fri": "Fri",
+    "sat": "Sat",
+    "sun": "Sun"
+  }
 }

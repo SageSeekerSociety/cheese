@@ -26,6 +26,7 @@ from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -79,17 +80,6 @@ def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
     )
     assert r.status_code == 200, r.text
     assert _stale(frames, rid) == ["doc"]
-
-
-def test_recording_a_decision_refreshes_the_room(client, frames):
-    pid, rid = _room(client)
-    r = client.post(
-        f"/topics/{rid}/decision",
-        json={"decision": "用 A 方案"},
-        headers=_agent(pid, rid),
-    )
-    assert r.status_code == 200, r.text
-    assert _stale(frames, rid) == ["decision"]
 
 
 def test_opening_a_piece_of_work_refreshes_the_rooms_work_list(client, frames):
@@ -244,7 +234,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     _, topic_id = _room(client)
     seen: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 改一下文档"})
+        post_message(client, topic_id, "alice", {"content": "@芝士 改一下文档"})
         while True:
             frame = ws.receive_json()
             seen.append(frame)
@@ -258,7 +248,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     [
         ("mcp__native__cheese_doc_set", {"path": "/tmp/x.md"}),
         ("mcp__native__cheese_accept_request", {"task": "t", "subject": "fix: x"}),
-        ("mcp__native__cheese_decision", {"text": "用 A 方案"}),
+        ("mcp__native__cheese_milestone", {"title": "中期汇报"}),
     ],
 )
 def test_a_call_the_backend_never_received_refreshes_nothing(
@@ -278,27 +268,27 @@ def test_a_call_the_backend_never_received_refreshes_nothing(
 def test_the_turn_still_files_its_action_card(client, tmp_path):
     """The action card for what the turn did is a separate record and stays."""
 
-    class _Decides(_CallsATool):
-        tool = "mcp__native__cheese_decision"
-        arguments = {"text": "用 A 方案"}
+    class _Pins(_CallsATool):
+        tool = "mcp__native__cheese_milestone"
+        arguments = {"title": "中期汇报"}
 
-    seen = _turn_frames(client, tmp_path, _Decides())
+    seen = _turn_frames(client, tmp_path, _Pins())
     assert any(
         f["type"] == "event_block"
-        and (f["block"].get("meta") or {}).get("action") == "decision"
+        and (f["block"].get("meta") or {}).get("action") == "milestone"
         for f in seen
     )
 
 
-def _is_decision_card(frame: dict) -> bool:
+def _is_milestone_card(frame: dict) -> bool:
     return (
         frame["type"] == "event_block"
-        and (frame["block"].get("meta") or {}).get("action") == "decision"
+        and (frame["block"].get("meta") or {}).get("action") == "milestone"
     )
 
 
 def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path):
-    class _DecidesAndKeepsGoing(StubChannel):
+    class _PinsAndKeepsGoing(StubChannel):
         def emit_turn(
             self,
             topic_id: uuid.UUID,
@@ -310,11 +300,11 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
             del prompt, reply
             self.starts(topic_id)
             self.uses(
-                topic_id, "mcp__native__cheese_decision", eid="e-1", text="用 A 方案"
+                topic_id, "mcp__native__cheese_milestone", eid="e-1", title="中期汇报"
             )
-            self.says(topic_id, "定了，接着改代码")
+            self.says(topic_id, "钉好了，接着改代码")
 
-    channel = _DecidesAndKeepsGoing()
+    channel = _PinsAndKeepsGoing()
     service = ChatService(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
@@ -329,10 +319,10 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
             rows = await session.scalars(
                 select(Block).where(Block.topic_id == uuid.UUID(topic_id))
             )
-            return sum((row.meta or {}).get("action") == "decision" for row in rows)
+            return sum((row.meta or {}).get("action") == "milestone" for row in rows)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 定一下方案"})
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")):
+        post_message(client, topic_id, "alice", {"content": "@芝士 钉一个里程碑"})
         deadline = time.monotonic() + 5
         while asyncio.run(cards()) != 1:
             assert time.monotonic() < deadline, "the running turn announced nothing"
@@ -341,7 +331,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
 
 
 def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
-    class _DecidesTwice(StubChannel):
+    class _PinsTwice(StubChannel):
         def emit_turn(
             self,
             topic_id: uuid.UUID,
@@ -353,12 +343,12 @@ def test_a_turn_announces_each_kind_of_action_once(client, tmp_path):
             del prompt
             self.starts(topic_id)
             self.uses(
-                topic_id, "mcp__native__cheese_decision", eid="e-1", text="用 A 方案"
+                topic_id, "mcp__native__cheese_milestone", eid="e-1", title="中期汇报"
             )
             self.uses(
-                topic_id, "mcp__native__cheese_decision", eid="e-2", text="再加 B"
+                topic_id, "mcp__native__cheese_milestone", eid="e-2", title="终期答辩"
             )
             self.stops(topic_id, reply)
 
-    seen = _turn_frames(client, tmp_path, _DecidesTwice())
-    assert len([f for f in seen if _is_decision_card(f)]) == 1
+    seen = _turn_frames(client, tmp_path, _PinsTwice())
+    assert len([f for f in seen if _is_milestone_card(f)]) == 1

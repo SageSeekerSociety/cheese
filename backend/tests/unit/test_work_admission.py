@@ -361,6 +361,91 @@ async def test_concurrency_gate_allows_up_to_limit_without_queueing(db_factory):
 
 
 @pytest.mark.anyio
+async def test_a_turn_waits_for_memory_on_the_session_host_then_runs(
+    db_factory, monkeypatch
+):
+    """A host with no memory for one more session holds the turn, says so in
+    the room once, and starts it by itself once memory frees: nobody resends."""
+    from app.domain.agent import admission
+
+    monkeypatch.setattr(admission, "RECHECK_S", 0.01)
+    chat = FakeChat(
+        {
+            "project_id": "proj-mem",
+            "max_concurrent_turns": 4,
+            "credits_exhausted": False,
+            "on_session_host": True,
+        },
+        db_factory,
+    )
+    memory = asyncio.Event()
+
+    async def host_has_room(_topic):
+        return memory.is_set()
+
+    runner = AgentWorkRunner(
+        InProcessBroker(), turn_timeout_s=5.0, host_has_room=host_has_room
+    )
+    runner.subscribe_messages()
+
+    runner.submit(
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="a",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
+    await _until(lambda: len(chat.system_events) == 1)
+    await asyncio.sleep(0.1)
+    assert chat.running == 0
+
+    memory.set()
+    await _until(lambda: chat.running == 1)
+    assert len(chat.system_events) == 1
+
+    chat.release.set()
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_a_turn_that_starts_no_session_there_is_not_held_by_the_host(
+    db_factory,
+):
+    """The host's memory holds only turns whose session starts there: a turn
+    with no backend on this deployment starts no session and goes on to say so."""
+    chat = FakeChat(
+        {
+            "project_id": "proj-elsewhere",
+            "max_concurrent_turns": 4,
+            "credits_exhausted": False,
+            "on_session_host": False,
+        },
+        db_factory,
+    )
+
+    async def host_has_room(_topic):
+        return False
+
+    runner = AgentWorkRunner(
+        InProcessBroker(), turn_timeout_s=5.0, host_has_room=host_has_room
+    )
+    runner.subscribe_messages()
+
+    runner.submit(
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="a",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
+    await _until(lambda: chat.running == 1)
+    assert chat.system_events == []
+
+    chat.release.set()
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
 async def test_exhausted_credits_refuses_turn_but_lands_message():
     chat = FakeChat(
         {

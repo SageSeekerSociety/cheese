@@ -11,7 +11,7 @@ import re
 import uuid
 
 from app.domain.agent_session.services import AgentSessionService
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 _LINE = re.compile(r"这个房间里已经有 (\d+) 条聊天消息")
 
@@ -44,7 +44,7 @@ def _messages(client, room: str) -> int:
 
 def _turn(client, room: str, text: str) -> None:
     with client.websocket_connect(chat_ws_url(room, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": text})
+        post_message(client, room, "user-1", {"content": text})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

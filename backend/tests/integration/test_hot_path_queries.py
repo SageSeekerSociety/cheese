@@ -221,11 +221,11 @@ def test_talking_in_a_room_moves_it_to_the_top(client, bearer):
         ids.append(r.json()["data"]["id"])
 
     oldest = ids[0]
-    # `/decision` is how the rest of the suite lands a real block in a topic.
+    # `/weekly` lands a real block in a topic.
     assert (
         client.post(
-            f"/topics/{oldest}/decision",
-            json={"decision": "hello"},
+            f"/topics/{oldest}/weekly",
+            json={"body": "hello"},
             headers=headers,
         ).status_code
         == 200

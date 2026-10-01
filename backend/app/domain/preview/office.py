@@ -29,6 +29,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
+from app.domain.block.notice_text import exception_text, say
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ async def render_to_pdf(
     if suffix not in RENDERABLE_SUFFIXES:
         raise OfficeRenderFailed(f"这个格式不能转换为预览：{suffix or path}")
     if not endpoint:
-        raise OfficeRenderUnavailable("这个部署没有启用文档预览")
+        raise OfficeRenderUnavailable(say("previewDisabled"))
 
     key = hashlib.sha256(raw).hexdigest()
     cached = _cache.get(key)
@@ -152,7 +153,7 @@ async def render_to_pdf(
                 headers={"Content-Type": "application/octet-stream"},
             )
     except Exception as exc:  # noqa: BLE001 — every transport failure reads alike
-        raise OfficeRenderUnavailable("文档预览服务暂时无法访问") from exc
+        raise OfficeRenderUnavailable(say("previewServiceUnreachable")) from exc
 
     if response.status_code != 200:
         # The service states its own refusals in a sentence; pass that through
@@ -170,7 +171,7 @@ async def render_to_pdf(
 
     pdf = response.content
     if not pdf.startswith(b"%PDF"):
-        raise OfficeRenderFailed("转换结果不是有效的 PDF")
+        raise OfficeRenderFailed(say("previewNotPdf"))
     _remember(key, pdf)
     await asyncio.to_thread(_disk_put, key, pdf)
     return pdf
@@ -206,12 +207,12 @@ def prewarm(raw: bytes, path: str) -> None:
 async def preview_pdf(data: bytes, filename: str) -> bytes:
     """一份 Office 文档转成 PDF，给页面预览：交付的某一版、资料库里的一份。"""
     if len(data) > 10 * 1024 * 1024:
-        raise ValidationError("文件超过 10 MB，无法生成预览")
+        raise ValidationError(say("previewOver10Mb"))
     if not is_renderable(filename):
-        raise ValidationError("这个格式不能转换为预览")
+        raise ValidationError(say("previewFormatUnsupported"))
     try:
         return await render_to_pdf(data, filename, settings.office_render_endpoint)
     except OfficeRenderUnavailable as exc:
-        raise SystemBusyError(str(exc)) from exc
+        raise SystemBusyError(exception_text(exc)) from exc
     except OfficeRenderFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc

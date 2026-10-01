@@ -1,8 +1,8 @@
 """API driver for the isolated eval backend.
 
 Scenarios drive the REAL backend the same way the frontend does: REST for
-structure (projects/topics/blocks/docs/memory) and the chat WebSocket for
-messages — a real agent turn streams real frames back.
+structure (projects/topics/blocks/docs/memory) and for messages, and the chat
+WebSocket to watch what lands — a real agent turn streams real frames back.
 """
 
 import asyncio
@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 import httpx
+import jwt
 import websockets
 
 
@@ -23,12 +24,26 @@ class EvalApi:
     """Thin typed wrapper over the backend's REST + WS surface."""
 
     def __init__(
-        self, base_url: str, ws_base_url: str, *, sandbox_token: str
+        self, base_url: str, ws_base_url: str, *, sandbox_token: str, jwt_secret: str
     ) -> None:
         self._base = base_url.rstrip("/")
         self._ws_base = ws_base_url.rstrip("/")
         self._sandbox_token = sandbox_token
+        self._jwt_secret = jwt_secret
         self._http = httpx.AsyncClient(base_url=self._base, timeout=30.0)
+
+    def session_token(self, handle: str) -> str:
+        """A session token naming ``handle``, signed with the eval backend's own
+        secret: scenarios speak as several people with no login behind them."""
+        now = int(time.time())
+        claims = {
+            "sub": handle,
+            "handle": handle,
+            "type": "access",
+            "iat": now,
+            "exp": now + 3600,
+        }
+        return jwt.encode(claims, self._jwt_secret, algorithm="HS256")
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -131,7 +146,7 @@ class EvalApi:
             f"after {timeout_s}s"
         )
 
-    # ---- chat over WebSocket -------------------------------------------------
+    # ---- chat: POST a message, watch the room's socket ------------------------
 
     async def send_chat(
         self,
@@ -139,25 +154,21 @@ class EvalApi:
         *,
         content: str,
         author: str,
-        summon: bool,
         turn_timeout_s: float = 360.0,
     ) -> list[dict]:
-        """Send one chat message and collect the WS frames until the turn's
-        `done` frame (summon=False turns produce user_block + done immediately).
-        Returns every frame received, in order."""
+        """Send one chat message as ``author`` and collect the room's frames until
+        the turn's `done` frame (a message that names no teammate produces
+        user_block + done at once). Returns every frame received, in order."""
+        token = self.session_token(author)
         frames: list[dict] = []
-        url = f"{self._ws_base}/api/topics/{topic_id}/chat"
+        url = f"{self._ws_base}/api/topics/{topic_id}/chat?token={token}"
         async with websockets.connect(url, max_size=8 * 1024 * 1024) as ws:
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "message",
-                        "content": content,
-                        "author": author,
-                        "summon": summon,
-                    }
-                )
+            resp = await self._http.post(
+                f"/api/topics/{topic_id}/messages",
+                json={"content": content, "request_id": str(uuid.uuid4())},
+                headers={"Authorization": f"Bearer {token}"},
             )
+            self._unwrap(resp)
             deadline = time.monotonic() + turn_timeout_s
             while True:
                 remaining = deadline - time.monotonic()

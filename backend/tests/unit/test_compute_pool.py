@@ -345,21 +345,15 @@ def test_the_pool_runs_only_the_harnesses_the_registry_lists():
         assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is not None
 
 
-def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
-    """pi 挂在哪几条通道上，由地点的能力位说。
-
-    pi 的进程和它的工作区在同一台机器上——没有第二台机器要指派，也没有执行器要把
-    工具转过去。所以断言的是真实构造下的那一份池：两条进得了池的通道手都在会话机
-    上，两条都挂 pi；而每一条被 ``CentralChannel`` 包出来的 backend 手在执行机上，
-    一条 pi 都没有。
-
-    这一条只看这份池的内容；判据换没换形状由下一条钉。
-    """
+def test_pi_runs_on_every_machine_and_takes_it_only_for_work():
+    """pi's session runs on the session host and reaches the room's machine
+    for its work (#1106), as the other harnesses' do: it is on every machine
+    in the pool, and a turn on it does not wait for a machine to start."""
     from unittest.mock import AsyncMock
 
     from app.domain.agent.cloud_provider import CloudChannel
     from app.domain.agent.compute import build_compute_pool
-    from app.domain.agent.harness import CLAUDE_CODE, PI
+    from app.domain.agent.harness import PI
 
     cloud = CloudChannel(
         configured=True,
@@ -368,45 +362,79 @@ def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
     )
     pool = build_compute_pool(cloud_channel=cloud)
 
-    assert pool.select(provider_id="device", harness=PI) is not None
-    assert pool.select(provider_id="cloud", harness=PI) is not None
-    # 包出来的那两个 backend 手在执行机上，所以它们身上挂的是要转一程的骨架。
     for provider in ("device", "cloud"):
-        wrapped = pool.select(provider_id=provider, harness=CLAUDE_CODE)
-        assert wrapped is not None
-        assert wrapped.channel.channel.capabilities() == frozenset()
+        backend = pool.select(provider_id=provider, harness=PI)
+        assert backend is not None
+        assert backend.provisions_machine is False
+        assert backend.deferred_work is True
 
 
-def test_a_place_whose_hands_are_elsewhere_gets_no_pi():
-    """负向对照：把判据换回 ``isinstance(c, DeviceChannel)``，这一条红。
+def test_a_room_runs_a_harness_that_hands_tools_over(monkeypatch):
+    """要远端执行的场景不会派给没声明它的骨架，哪怕项目指定了它。
 
-    ``hands_here = False`` 的通道进这个池，说的是「会话进程在一台机器上，工具要再
-    跳一程到另一台」——pi 把进程和工作区放在同一台机器上，挂不住。能力位看的是这
-    个事实，所以它不挂；``isinstance`` 看的是类，而这条通道照样是 ``DeviceChannel``
-    （今天进得了这个池的都是），所以它会挂上一个跑不起来的 backend。
-
-    今天池里恰好没有这样一条通道，这正是为什么它要在这里被造出来：判据换没换形
-    状，是可以脱开「今天池里装了什么」单独钉住的。
+    每台机器上，会话跑在中心机、工具交给执行机。拿掉 pi 的这一项声明，挑出来的
+    就是下一个声明了的；声明在，pi 照旧被挑中。
     """
+    from app.core.config import settings
+    from app.domain.agent import harness as harness_module
     from app.domain.agent.compute import build_compute_pool
-    from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness import CLAUDE_CODE, PI
+    from app.domain.agent.harness import (
+        CLAUDE_CODE,
+        HARNESS_SETTING,
+        HARNESSES,
+        PI,
+        Harness,
+        harness_on,
+    )
 
-    class Elsewhere(DeviceChannel):
-        name = "elsewhere"
-        hands_here = False
+    monkeypatch.setattr(settings, "agent_harnesses", [CLAUDE_CODE, PI])
+    project = {HARNESS_SETTING: PI}
 
-    pool = build_compute_pool(cloud_channel=Elsewhere())
+    def chosen() -> str | None:
+        pool = build_compute_pool()
+        return harness_on(
+            project,
+            lambda name: pool.select(provider_id="device", harness=name) is not None,
+        )
 
-    assert pool.select(provider_id="elsewhere", harness=CLAUDE_CODE) is not None
-    assert pool.select(provider_id="elsewhere", harness=PI) is None
-    # 而手在会话机上的那一条照旧挂着 pi——排除的是这一条通道，不是 pi 这个骨架。
+    assert chosen() == PI
+    pi = HARNESSES[PI]
+    monkeypatch.setitem(
+        harness_module.HARNESSES, PI, Harness(pi.name, pi.label, subagents=pi.subagents)
+    )
+    assert chosen() == CLAUDE_CODE
+
+
+def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_host(
+    monkeypatch,
+):
+    """会话在中心机、手在执行机的那条路，只挂声明了远端执行的骨架。
+
+    把 Claude Code 的这一项声明拿掉，它就哪台机器都不挂：一个答不出「工具交给执行
+    机」的骨架挂在那里，跑起来是在中心机上碰项目文件。
+    """
+    from app.core.config import settings
+    from app.domain.agent import harness as harness_module
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import CLAUDE_CODE, HARNESSES, PI, Harness
+
+    claude = HARNESSES[CLAUDE_CODE]
+    monkeypatch.setitem(
+        harness_module.HARNESSES,
+        CLAUDE_CODE,
+        Harness(claude.name, claude.label, subagents=claude.subagents),
+    )
+    monkeypatch.setattr(settings, "agent_harnesses", [PI])
+    pool = build_compute_pool()
+
+    for machine in pool.machines():
+        assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is None
     assert pool.select(provider_id="device", harness=PI) is not None
 
 
 def test_resolve_compute_id_uses_room_then_explicit_project_default():
-    from app.domain.agent.chat import _resolve_compute_id
     from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs
+    from app.domain.agent.work_policy import resolve_compute_id
 
     configs = ProjectComputeConfigs(
         default=ComputeChoice(name="Lab", profile="device", device_id="lab")
@@ -415,6 +443,6 @@ def test_resolve_compute_id_uses_room_then_explicit_project_default():
     cloud = ComputeChoice(name="Cloud", profile="cloud")
     room = SimpleNamespace(compute_config=cloud.model_dump())
     fresh = SimpleNamespace(compute_config=None)
-    assert _resolve_compute_id(values, room) == "cloud"
-    assert _resolve_compute_id(values, fresh) == "device"
-    assert _resolve_compute_id(values) == "device"
+    assert resolve_compute_id(values, room) == "cloud"
+    assert resolve_compute_id(values, fresh) == "device"
+    assert resolve_compute_id(values) == "device"

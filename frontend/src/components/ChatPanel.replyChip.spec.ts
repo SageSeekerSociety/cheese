@@ -48,22 +48,37 @@ beforeEach(() => {
         setTimeout(() => this.onopen?.(), 0)
       }
       close() {}
-      send(payload: string) {
-        sent.push(JSON.parse(payload))
-      }
+      send() {}
     }
   )
-  vi.stubGlobal('fetch', async (url: string) => ({
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => ({
     ok: true,
     status: 200,
     json: async () =>
-      String(url).includes('/progress')
-        ? { code: 200, data: { items: [], updated_at: null } }
-        : String(url).includes('/tasks')
-          ? { code: 200, data: { data: [], total: 0 } }
-          : { code: 200, data: { data: history, total: history.length, has_more: false } },
+      init?.method === 'POST' && String(url).endsWith('/messages')
+        ? { code: 200, data: posted(JSON.parse(String(init.body))) }
+        : String(url).includes('/progress')
+          ? { code: 200, data: { items: [], updated_at: null } }
+          : String(url).includes('/tasks')
+            ? { code: 200, data: { data: [], total: 0 } }
+            : { code: 200, data: { data: history, total: history.length, has_more: false } },
   }))
 })
+
+// 发出去的那条：记下请求体，回一条落了库的块。
+function posted(body: Record<string, unknown>): Block {
+  sent.push(body)
+  return {
+    id: String(body.request_id),
+    topic_id: 't1',
+    kind: 'message',
+    author: 'me',
+    content: String(body.content),
+    reply_to: (body.reply_to as string | undefined) ?? null,
+    meta: { client_id: body.request_id },
+    created_at: new Date().toISOString(),
+  } as unknown as Block
+}
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 

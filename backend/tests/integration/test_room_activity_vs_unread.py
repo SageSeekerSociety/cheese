@@ -14,6 +14,7 @@
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -77,7 +78,7 @@ def _say(client, place_id: str, who: str, text: str) -> None:
     with threads.
     """
     with client.websocket_connect(chat_ws_url(place_id, who)) as ws:
-        ws.send_json({"type": "message", "content": text})
+        post_message(client, place_id, who, {"content": text})
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):

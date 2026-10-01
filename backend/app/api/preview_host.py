@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import mimetypes
 import re
 import time
@@ -40,9 +41,20 @@ SESSION_TTL = 8 * 3600
 APP_MIME = "application/x-cheesex-app"
 
 
-def preview_origin(topic_id: uuid.UUID) -> str:
-    # Sites already validates the dedicated content domain and its TLS settings.
-    return content_origin(topic_id).replace("://", "://preview-", 1)
+def resource_key(resource: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(resource, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:22]
+
+
+def preview_origin(topic_id: uuid.UUID, resource: dict | None = None) -> str:
+    # One DNS label stays covered by the content domain's existing wildcard TLS.
+    origin = content_origin(topic_id).replace("://", "://preview-", 1)
+    if resource:
+        origin = origin.replace(
+            topic_id.hex, topic_id.hex + "-" + resource_key(resource), 1
+        )
+    return origin
 
 
 def room_file_path(path: str) -> str | None:
@@ -78,14 +90,20 @@ def _key() -> bytes:
 
 
 def mint_preview_token(
-    topic_id: uuid.UUID, handle: str, *, purpose: str, ttl: int
+    topic_id: uuid.UUID,
+    handle: str,
+    *,
+    purpose: str,
+    ttl: int,
+    resource: dict | None = None,
 ) -> str:
     now = int(time.time())
     return jwt.encode(
         {
             "sub": handle,
             "topic": str(topic_id),
-            "aud": preview_origin(topic_id),
+            "aud": preview_origin(topic_id, resource),
+            **({"resource": resource} if resource else {}),
             "type": purpose,
             "iat": now,
             "exp": now + ttl,
@@ -95,13 +113,15 @@ def mint_preview_token(
     )
 
 
-def _claims(token: str, topic_id: uuid.UUID, purpose: str) -> dict | None:
+def _claims(
+    token: str, topic_id: uuid.UUID, purpose: str, origin: str | None = None
+) -> dict | None:
     try:
         claims = jwt.decode(
             token,
             _key(),
             algorithms=["HS256"],
-            audience=preview_origin(topic_id),
+            audience=origin or preview_origin(topic_id),
             options={"require": ["sub", "topic", "aud", "type", "iat", "exp"]},
         )
     except (jwt.PyJWTError, AppError, BaseError):
@@ -111,6 +131,10 @@ def _claims(token: str, topic_id: uuid.UUID, purpose: str) -> dict | None:
         or claims["type"] != purpose
         or not isinstance(claims["sub"], str)
         or not claims["sub"]
+    ):
+        return None
+    if preview_origin(topic_id, claims.get("resource")) != (
+        origin or preview_origin(topic_id)
     ):
         return None
     return claims
@@ -180,7 +204,10 @@ class PreviewHostMiddleware:
         )
         domain = settings.sites_domain.strip().lower()
         match = (
-            re.fullmatch(r"preview-([0-9a-f]{32})\." + re.escape(domain), host)
+            re.fullmatch(
+                r"preview-([0-9a-f]{32})(?:-([0-9a-f]{22}))?\." + re.escape(domain),
+                host,
+            )
             if domain
             else None
         )
@@ -188,13 +215,16 @@ class PreviewHostMiddleware:
             await self.app(scope, receive, send)
             return
         topic_id = uuid.UUID(hex=match[1])
+        origin = preview_origin(topic_id)
+        if match[2]:
+            origin = origin.replace(topic_id.hex, topic_id.hex + "-" + match[2], 1)
         if scope["type"] == "websocket":
-            await self.websocket(WebSocket(scope, receive, send), topic_id)
+            await self.websocket(WebSocket(scope, receive, send), topic_id, origin)
             return
         request = Request(scope, receive)
         try:
             preview_origin(topic_id)
-            response = await self.respond(request, topic_id)
+            response = await self.respond(request, topic_id, origin)
         except (AppError, BaseError):
             response = Response("Preview unavailable", status_code=404)
         except ClientDisconnect:
@@ -210,7 +240,10 @@ class PreviewHostMiddleware:
         provider = self.platform.dependency_overrides.get(get_db, get_db)
         return aclosing(provider())
 
-    async def respond(self, request: Request, topic_id: uuid.UUID) -> Response:
+    async def respond(
+        self, request: Request, topic_id: uuid.UUID, content: str | None = None
+    ) -> Response:
+        content = content or preview_origin(topic_id)
         exchange = request.url.path == AUTH_PATH
         destination = "/"
         if exchange:
@@ -228,7 +261,9 @@ class PreviewHostMiddleware:
                 if len(body) > 8192:
                     return Response(status_code=413)
             values = parse_qs(body.decode("utf-8", errors="replace"))
-            claims = _claims(values.get("grant", [""])[0], topic_id, "preview-grant")
+            claims = _claims(
+                values.get("grant", [""])[0], topic_id, "preview-grant", content
+            )
             destination = values.get("path", ["/"])[0]
             if not _destination(destination):
                 return Response(status_code=400)
@@ -236,7 +271,7 @@ class PreviewHostMiddleware:
             # Sibling previews share a top-level storage partition. Block their
             # fetches, including no-cors GETs that carry no Origin header.
             origin = request.headers.get("origin")
-            if origin and origin != preview_origin(topic_id):
+            if origin and origin != content:
                 return Response(status_code=403)
             if (
                 request.headers.get("sec-fetch-site") in {"same-site", "cross-site"}
@@ -244,7 +279,10 @@ class PreviewHostMiddleware:
             ):
                 return Response(status_code=403)
             claims = _claims(
-                request.cookies.get(cookie_name(), ""), topic_id, "preview-session"
+                request.cookies.get(cookie_name(), ""),
+                topic_id,
+                "preview-session",
+                content,
             )
         if not claims:
             if (
@@ -266,14 +304,37 @@ class PreviewHostMiddleware:
         # 一份房间文件有自己的地址（`ROOM_FILES_PATH`）。它不挂在当前 artifact 下
         # 面，也不需要房间先摆出过东西——人传上来的页面、芝士写完还没摆的报告，都
         # 是房间文件。所以只有 artifact 那条路才去要 artifact。
-        target = room_file_path(destination if exchange else request.url.path)
+        resource = claims.get("resource")
+        if resource:
+            # A fixed grant never resolves latest again, including subresources.
+            if resource["kind"] == "file" and exchange:
+                destination = "/"
+            target = None
+        else:
+            target = room_file_path(destination if exchange else request.url.path)
         if target is not None and not room_file_addressable(target):
             return Response("Preview unavailable", status_code=404)
         async with self.sessions() as sessions:
             session = await anext(sessions)
             place = await require_preview_access(session, topic_id, claims["sub"])
+            if request.url.path == "/_cheese/runtime.js" and not exchange:
+                from app.api.preview_runtime import RUNTIME_SCRIPT
+
+                platform = urlsplit(settings.frontend_url)
+                script = RUNTIME_SCRIPT.replace(
+                    "__PLATFORM_ORIGIN__",
+                    json.dumps(f"{platform.scheme}://{platform.netloc}"),
+                )
+                if request.method not in {"GET", "HEAD"}:
+                    return Response(status_code=405)
+                response = Response(
+                    script if request.method == "GET" else b"",
+                    media_type="text/javascript",
+                )
+                response.headers["Content-Length"] = str(len(script.encode()))
+                return response
             artifact = None
-            if target is None:
+            if target is None and resource is None:
                 artifact = await BlockRepository(session).latest_artifact(place.room_id)
                 if artifact is None:
                     return Response("Preview unavailable", status_code=404)
@@ -286,6 +347,7 @@ class PreviewHostMiddleware:
                         claims["sub"],
                         purpose="preview-session",
                         ttl=SESSION_TTL,
+                        resource=claims.get("resource"),
                     ),
                     max_age=SESSION_TTL,
                     path="/",
@@ -312,16 +374,31 @@ class PreviewHostMiddleware:
             )
             response.headers["Content-Length"] = str(len(data))
             return response
-        assert artifact is not None  # 上面那条已经为 None 的情形返回了。
-        mime, entry = artifact.mime_type, artifact.content
-        if mime == APP_MIME:
-            return await relay_http(topic_id, artifact.author, request)
+        if resource:
+            if resource["kind"] == "app":
+                return await relay_http(
+                    topic_id, resource["seat"], request, instance=resource["instance"]
+                )
+            mime, entry = resource["mime"], resource["path"]
+        else:
+            assert artifact is not None
+            mime, entry = artifact.mime_type, artifact.content
+            if mime == APP_MIME:
+                return await relay_http(topic_id, artifact.author, request)
         if request.method not in {"GET", "HEAD"}:
             return Response(status_code=405)
         relative = request.url.path.lstrip("/") or PurePosixPath(entry).name
         data = await asyncio.to_thread(
             library.read_preview_file, project, topic_id, entry, relative
         )
+        if (
+            resource
+            and relative == PurePosixPath(entry).name
+            and hashlib.sha256(data).hexdigest()[:16] != resource["version"]
+        ):
+            return Response(
+                "Preview entry changed; open the current version", status_code=409
+            )
         media = (
             mime
             if relative == PurePosixPath(entry).name
@@ -334,24 +411,43 @@ class PreviewHostMiddleware:
         response.headers["Content-Length"] = str(len(data))
         return response
 
-    async def websocket(self, websocket: WebSocket, topic_id: uuid.UUID) -> None:
+    async def websocket(
+        self, websocket: WebSocket, topic_id: uuid.UUID, content: str | None = None
+    ) -> None:
+        content = content or preview_origin(topic_id)
         claims = _claims(
-            websocket.cookies.get(cookie_name(), ""), topic_id, "preview-session"
+            websocket.cookies.get(cookie_name(), ""),
+            topic_id,
+            "preview-session",
+            content,
         )
-        if not claims or websocket.headers.get("origin") != preview_origin(topic_id):
+        if not claims or websocket.headers.get("origin") != content:
             await websocket.close(code=1008)
             return
         try:
             async with self.sessions() as sessions:
                 session = await anext(sessions)
                 place = await require_preview_access(session, topic_id, claims["sub"])
-                artifact = await BlockRepository(session).latest_artifact(place.room_id)
-                if artifact is None or artifact.mime_type != APP_MIME:
-                    raise NotFoundError("Preview unavailable")
-                seat = artifact.author
+                resource = claims.get("resource")
+                if resource:
+                    if resource["kind"] != "app":
+                        raise NotFoundError("Preview unavailable")
+                    seat = resource["seat"]
+                else:
+                    artifact = await BlockRepository(session).latest_artifact(
+                        place.room_id
+                    )
+                    if artifact is None or artifact.mime_type != APP_MIME:
+                        raise NotFoundError("Preview unavailable")
+                    seat = artifact.author
             # No DB session or read transaction lives for the HMR connection.
             async with asyncio.timeout(max(0, claims["exp"] - time.time())):
-                await relay_ws(websocket, topic_id, seat)
+                await relay_ws(
+                    websocket,
+                    topic_id,
+                    seat,
+                    **({"instance": resource["instance"]} if resource else {}),
+                )
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:
                 await websocket.close(code=1008)

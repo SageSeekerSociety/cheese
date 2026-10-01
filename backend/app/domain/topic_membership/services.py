@@ -14,6 +14,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -240,7 +241,7 @@ class TopicMemberService:
     async def require_archive_manager(self, topic_id: uuid.UUID, actor: str) -> None:
         member = await self._repo.get(topic_id=topic_id, member_handle=actor)
         if member is None or member.role not in _MANAGER_ROLES:
-            raise ForbiddenError("只有房间的 owner / admin 能归档或取消归档")
+            raise ForbiddenError(say("roomArchiveManagerOnly"))
 
     async def managed_topic_ids(
         self, topic_ids: list[uuid.UUID], actor: str
@@ -440,7 +441,7 @@ class TopicMemberService:
         own = await self._project_agent_seat(room)
         if not handles:
             if own is None:
-                raise NotFoundError("这个项目还没有芝士，答不出这间房里「我是谁」")
+                raise NotFoundError(say("projectHasNoCheese"))
             return own
         return own if own in handles else handles[0]
 
@@ -629,9 +630,7 @@ class TopicMemberService:
         )
         if orphaned:
             raise ValidationError(
-                "你是话题「"
-                + "」「".join(orphaned)
-                + "」唯一的 owner，先把话题交给别人"
+                say("soleTopicOwner", topics="".join(f"「{t}」" for t in orphaned))
             )
         # 一条 DELETE 清掉全部席位，返回值就是数据库真的删掉的那些房间。以前是一条
         # 一条 get + delete —— 项目多少间房就多少次往返，而且「查到」被当成了「删

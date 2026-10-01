@@ -14,7 +14,12 @@ from sqlalchemy import select
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client) -> dict:
@@ -95,7 +100,7 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
 
     stub_hooks.emit_turn = start_child
     with client.websocket_connect(chat_ws_url(room["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 start child"})
+        post_message(client, room["id"], "user-1", {"content": "@芝士 start child"})
         _drain_until_done(ws)
     _wait_work_idle()
     stub_hooks.emit_turn = emit
@@ -194,22 +199,24 @@ def test_writing_on_a_thread_wakes_the_room_to_relay_it(client, stub_hooks):
     client.portal.call(assert_replaced_worker_is_fenced)
 
 
-def test_a_card_has_no_chat_socket_of_its_own(client, stub_hooks):
-    """对着活的 id 连聊天通道 —— 那不是一个地点，连不上。
+def test_a_card_is_not_a_place_to_send_a_message_to(client, stub_hooks):
+    """对着活的 id 发一条消息 —— 那不是一个地点，发不进去。
 
-    这不是一条被特意加上的拒绝：聊天通道认的是房间，活的 id 名下没有房间，所以
-    它自然连不上。人要在卡下面说话，走的是那张卡的地址。
+    这不是一条被特意加上的拒绝：消息认的是房间，活的 id 名下没有房间，所以
+    它自然落不下。人要在卡下面说话，走的是那张卡的地址。
     """
     p = _project(client)
     room = _room(client, p["id"])
     thread = _thread(client, room["id"])
     _wait_work_idle()
 
-    with client.websocket_connect(chat_ws_url(thread["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 进度怎么样"})
-        frames = _drain_until_done(ws)
-
-    assert frames[-1]["type"] == "error", frames
+    sent = client.post(
+        f"/topics/{thread['id']}/messages",
+        json={"content": "@芝士 进度怎么样", "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers("user-1"),
+    )
+    assert sent.status_code == 404
+    assert "进度怎么样" not in [b["content"] for b in _blocks(client, room["id"])]
 
 
 def test_a_room_still_answers_on_its_own_line(client, stub_hooks):
@@ -219,7 +226,7 @@ def test_a_room_still_answers_on_its_own_line(client, stub_hooks):
 
     screens = _record_screens(stub_hooks)
     with client.websocket_connect(chat_ws_url(room["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 在吗"})
+        post_message(client, room["id"], "user-1", {"content": "@芝士 在吗"})
         _drain_until_done(ws)
     _wait_work_idle()
 

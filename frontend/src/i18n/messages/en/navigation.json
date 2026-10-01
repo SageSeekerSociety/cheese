@@ -94,7 +94,6 @@
     "projectDocs": "Project documents",
     "library": "Library",
     "comment": "Comment",
-    "decision": "Decision",
     "copyLink": "Copy link to this page",
     "verbOpen": "Open",
     "verbRun": "Run",
@@ -113,6 +112,9 @@
   },
   "sidebar": {
     "resize": "Drag to resize"
+  },
+  "backTo": {
+    "own": "your projects"
   },
   "desktopApp": {
     "about": "About Cheese",
@@ -154,7 +156,6 @@
     "ask": "Ask a question",
     "questionDetail": "Question",
     "spaceTasks": "Tasks",
-    "taskAdvice": "AI advice",
     "taskSubmissions": "My submissions",
     "taskSubmit": "Submit",
     "taskParticipants": "Participants",

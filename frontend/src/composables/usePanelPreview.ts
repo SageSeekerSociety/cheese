@@ -11,13 +11,16 @@
 // 那一页的字节是哪一版。用哪种查看器画、空态写哪句话、全屏按钮在不在，是画的那一半
 // 的事（判据都在递下去的 props 里）。
 import type { FileContent, PreviewInfo } from '../cx_types'
+import type { DocumentIdentity } from '../lib/documentBytes'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, getPreview, readPreviewFile, requestPreviewSession } from '../api'
-import { useDocumentBytes } from '../lib/documentBytes'
+import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
-import { postPreviewSession, roomFileDestination } from '../lib/previewSession'
+import { roomFileDestination } from '../lib/previewSession'
+
+import { usePreviewFrames } from './usePreviewFrames'
 
 import { t } from '@/i18n'
 
@@ -51,6 +54,7 @@ export interface PanelPreviewOptions {
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
+  const host = usePreviewFrames(options.frameName)
   const loading = ref(false)
   const refreshing = ref(false)
   const previewFile = ref<FileContent | null>(null)
@@ -65,7 +69,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   const downloadError = ref('')
   // 路上那一次属于哪一代：话题换了、或者又按了一次刷新，先前那一次的结果就不再算数
   // （它带的是上一份内容，落下来就是「刚切换的这一格显示着上一格的东西」）。
-  let loadedArtifact: string | null = null
   let generation = 0
 
   // ---- 这一份是什么 ----
@@ -81,23 +84,26 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   // 消息里的 `<&路径>` 只是一个路径，不带它在哪个库。房间自己的文件都在这里，芝士
   // 点名的当前预览也只是其中一份，所以看其中任何一份都是同一套显示，只是不跟着当前
   // 预览走。
-  async function loadFile(path: string, opts: { silent?: boolean } = {}) {
+  async function loadFile(path: string, opts: { silent?: boolean; reload?: boolean } = {}) {
     const tid = props.topicId
     if (!tid) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
     const current = ++generation
     if (opts.silent) refreshing.value = true
     else loading.value = true
     try {
       const content = await readPreviewFile(tid, path)
       if (current !== generation) return
-      previewUrl.value = null
+      if (!isWebPage(path)) {
+        host.reset()
+        previewUrl.value = null
+      }
       previewAppNote.value = ''
       previewError.value = null
       previewReadError.value = null
       previewNamed.value = true
       previewNamedPath.value = path
-      previewMime.value = ''
-      loadedArtifact = null
+      if (!isWebPage(path)) previewMime.value = ''
       previewFile.value = content
       if (isWebPage(path)) await mountWebPage(tid, path, content, current, opts)
     } catch (e) {
@@ -118,36 +124,49 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   //
   // 网页不由展示组件渲染：`readPreviewFile` 拿回来的只有那几行源码，挂上去读者看到的
   // 是标签本身。字节交给 iframe。
-  const webMountedVersion = ref<string | null>(null)
 
   async function mountWebPage(
     tid: string,
     path: string,
     content: FileContent,
     current: number,
-    opts: { silent?: boolean }
+    opts: { silent?: boolean; reload?: boolean }
   ) {
-    // 已经画着这一份、而它没变（一轮收工的重读）：不动它。重新 POST 一次是让 iframe
-    // 整个重新导航，读者在这个页面里的状态会没掉。
-    if (opts.silent && previewUrl.value && webMountedVersion.value === (content.version ?? null)) return
+    // This is metadata identity, not a server snapshot or entry precondition.
+    // Reuse only a loaded/pending context with a known version; POST is not load.
+    const identity = content.version ? JSON.stringify([tid, path, content.version]) : undefined
+    if (opts.silent && !opts.reload && identity) {
+      if (host.failedIdentity.value === identity) return
+      if (host.incoming.value?.identity === identity) return
+      if (host.displayed.value?.identity === identity && host.navigation.value !== 'failed') return
+    }
+    host.authorize(identity)
     let session: Awaited<ReturnType<typeof requestPreviewSession>>
     try {
-      session = await requestPreviewSession(tid)
+      session = await requestPreviewSession(tid, { path, version: content.version })
     } catch (e) {
       // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
       if (current !== generation) return
       previewError.value = e instanceof Error ? e.message : t('work.room.preview.authFailed')
+      host.fail(previewError.value)
       return
     }
     if (current !== generation) return
     previewMime.value = webMimeOf(suffixOf(path))
     previewUrl.value = session.url
-    webMountedVersion.value = content.version ?? null
-    // Mount the named frame before POSTing: a missing target opens a new tab.
-    loading.value = false
-    await nextTick()
-    if (current !== generation) return
-    postPreviewSession(session, { target: options.frameName, path: roomFileDestination(path) })
+    await host.navigate(
+      session,
+      {
+        url: session.url,
+        label: path,
+        mime: previewMime.value,
+        version: content.version ?? null,
+        live: false,
+        identity,
+      },
+      () => current === generation,
+      roomFileDestination(path)
+    )
   }
 
   async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
@@ -178,21 +197,44 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewNamedPath.value = art?.path ?? ''
       options.onLoaded?.(art?.artifact_id ?? null)
       if (!art) {
+        host.reset()
         previewUrl.value = null
         previewFile.value = null
         previewAppNote.value = ''
-        loadedArtifact = null
         return
       }
-      const identity = `${art.kind ?? 'file'}:${art.artifact_id ?? art.path}:${art.url ?? ''}:${art.version ?? ''}`
-      const unchanged = identity === loadedArtifact && art.url === previewUrl.value
+      const identity = JSON.stringify([
+        tid,
+        art.kind ?? 'file',
+        art.artifact_id ?? art.path,
+        art.url,
+        art.version ?? null,
+        art.instance ?? null,
+      ])
+      const known = art.kind === 'app' || !!art.version
+      const unchanged =
+        known &&
+        (host.incoming.value?.identity === identity ||
+          (host.displayed.value?.identity === identity && host.navigation.value !== 'failed'))
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
       if (art.kind === 'app') {
+        host.observeConnection(art.instance, !!art.url && !!art.tunnel_up)
+        const displayed = host.displayed.value
+        if (
+          !opts.reload &&
+          displayed?.live &&
+          displayed.instance &&
+          displayed.identity &&
+          JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
+        ) {
+          return
+        }
         previewFile.value = null
-        if (!art.url) {
+        if (!art.url || !art.tunnel_up) {
           previewUrl.value = null
-          loadedArtifact = null
+          host.authorize(identity)
+          host.fail(t('tasks.preview.unavailable'))
           return
         }
       } else {
@@ -216,6 +258,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         // - 其它二进制（docx/xlsx 走 documentType 那份分支，这里指没认出来的）：
         //   没有 iframe 能显示它，停下。
         if (previewFile.value.content === null && !previewFile.value.too_large && !isImageArtifact.value) {
+          host.reset()
           previewUrl.value = null
           return
         }
@@ -224,30 +267,46 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         // 网页：一份字节其实是文字的 .pdf 会被按 application/pdf 发进沙箱 iframe，
         // 浏览器画不出也不报错，面板就是一片空白。交给查看器，它会说清楚。
         if (documentType.value) {
+          host.reset()
           previewUrl.value = null
           return
         }
       }
-      if (unchanged && !opts.reload) return
+      if (!opts.reload && (unchanged || (opts.silent && host.failedIdentity.value === identity))) return
       if (!art.url) {
         previewUrl.value = null
         previewError.value = t('work.room.preview.urlUnavailable')
         return
       }
       try {
-        const session = await requestPreviewSession(tid)
+        host.authorize(identity)
+        const session = await requestPreviewSession(
+          tid,
+          art.kind === 'app'
+            ? art.instance
+              ? { artifact_id: art.artifact_id, instance: art.instance }
+              : undefined
+            : { artifact_id: art.artifact_id, version: art.version, path: art.path }
+        )
         if (!stillCurrent()) return
         previewUrl.value = art.url
-        // Mount the named frame before POSTing: a missing target opens a new tab.
-        loading.value = false
-        await nextTick()
-        if (!stillCurrent()) return
-        postPreviewSession(session, { target: options.frameName })
-        loadedArtifact = identity
+        await host.navigate(
+          session,
+          {
+            url: art.url,
+            label: art.path,
+            mime: art.mime || 'text/html',
+            version: art.version ?? null,
+            live: art.kind === 'app',
+            identity,
+          },
+          stillCurrent
+        )
       } catch (e) {
         if (!stillCurrent()) return
-        previewUrl.value = null
+        if (!host.displayed.value) previewUrl.value = null
         previewError.value = e instanceof Error ? e.message : t('work.room.preview.authFailed')
+        host.fail(previewError.value)
       }
     } finally {
       if (stillCurrent()) {
@@ -261,12 +320,31 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     () => props.active,
     (active) => {
       if (active) void load({ silent: !!previewUrl.value })
+      else {
+        generation += 1
+        host.pause()
+        loading.value = false
+        refreshing.value = false
+        if (!host.displayed.value) {
+          previewUrl.value = null
+        }
+      }
     },
     { immediate: true }
   )
   watch(
-    () => props.path,
+    () => [props.topicId, props.path],
     () => {
+      generation += 1
+      host.reset()
+      previewUrl.value = null
+      previewFile.value = null
+      previewError.value = null
+      previewReadError.value = null
+      previewNamed.value = false
+      previewAppNote.value = ''
+      loading.value = false
+      refreshing.value = false
       if (props.active) void load()
     }
   )
@@ -318,17 +396,46 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   // 那一页的字节由 `useDocumentBytes` 取：浏览器画不出来的先转 PDF，其余读原始字节。
   // 「改动」那一格取的是同一份东西，所以这件事只写在一处。
   const docNonce = ref(0)
+  const docIdentity = computed<DocumentIdentity | null>(() => {
+    const file = previewFile.value
+    if (!props.topicId || !file) return null
+    return {
+      topicId: props.topicId,
+      path: file.path,
+      taskId: null,
+      source: file.source ?? 'live',
+      version: file.version,
+    }
+  })
   const {
     bytes: docBytes,
+    snapshot: docSnapshot,
     loading: docLoading,
     error: docError,
     rendererMissing: docRendererMissing,
   } = useDocumentBytes({
-    topicId: () => props.topicId,
-    path: () => previewFile.value?.path ?? null,
-    version: () => previewFile.value?.version ?? null,
+    topicId: () => docIdentity.value?.topicId ?? null,
+    path: () => docIdentity.value?.path ?? null,
+    version: () => docIdentity.value?.version ?? null,
+    task: () => docIdentity.value?.taskId ?? null,
+    source: () => docIdentity.value?.source ?? 'live',
     nonce: () => docNonce.value,
     enabled: () => !!documentType.value && documentType.value.view !== 'markdown',
+  })
+  const slideContext = computed(() => {
+    const current = docIdentity.value
+    const displayed = docSnapshot.value
+    if (
+      !current?.version ||
+      !displayed ||
+      docLoading.value ||
+      docError.value ||
+      docRendererMissing.value ||
+      !sameDocumentIdentity(current, displayed.identity) ||
+      displayed.sourceVersion !== current.version
+    )
+      return undefined
+    return { ...current, version: current.version }
   })
 
   /**
@@ -341,6 +448,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
 
   return {
     // 这一格现在画的是什么
+    frames: host.frames,
+    displayedFrame: host.displayed,
+    navigation: host.navigation,
+    navigationError: host.error,
+    frameLoaded: host.loaded,
+    frameFailed: host.failed,
     loading,
     refreshing,
     previewFile,
@@ -358,6 +471,9 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     isImageArtifact,
     downloadError,
     docBytes,
+    docIdentity,
+    docSnapshot,
+    slideContext,
     docLoading,
     docError,
     docRendererMissing,

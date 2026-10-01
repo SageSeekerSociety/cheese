@@ -67,6 +67,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.auth import SudoPurpose, create_access_token
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import InternalServerError, SudoRequiredError
+from app.domain.block.notice_text import say
 from app.domain.user.sessions import SessionService
 from app.domain.user.trusted_devices import Granted, TrustedDeviceService
 
@@ -102,7 +103,7 @@ async def _spend_sudo_ticket(
         spent = await claim(_SUDO_TICKET_SCOPE, claims.jti)
     except SingleUseUnavailableError:
         logger.exception("sudo: cannot claim ticket uid=%s", user_id)
-        raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
+        raise InternalServerError(say("securityCheckUnavailable")) from None
     if not spent:
         raise SudoRequiredError("Re-authentication required for this operation")
 

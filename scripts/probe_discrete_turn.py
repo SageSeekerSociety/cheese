@@ -84,38 +84,31 @@ async def main() -> None:
         await pg.wait_for_load_state("networkidle")
         await pg.wait_for_timeout(800)
 
-        # Summon 芝士 through the real composer path (WS message, summon=True).
-        # The token is passed in, not read from localStorage: a refusal is one
-        # error frame and a close, which from here would look like 芝士 simply
-        # never answering.
+        # Summon 芝士 the way the composer does: POST a message that @s it.
+        # The token is passed in, not read from localStorage: a refusal has to
+        # be named, or from here it would look like 芝士 simply never answering.
         refused = await pg.evaluate(
             """
             async ({ topicId, token }) => {
               // window.__cxApi.base: the gateway strips one '/api', so the app
               // addresses itself doubled — see frontend/src/api.ts.
-              const ws = new WebSocket(
-                `ws://${location.host}${window.__cxApi.base}`
-                + `/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);
-              await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-              const refusal = new Promise((res) => {
-                ws.addEventListener('message', (ev) => {
-                  const f = JSON.parse(ev.data);
-                  if (f.type === 'error') res(f.code || f.message);
-                }, { once: false });
-                setTimeout(() => res(null), 1500);
+              const r = await fetch(`${window.__cxApi.base}/topics/${topicId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                  content: '@芝士 你好，用一句话介绍你自己',
+                  request_id: crypto.randomUUID(),
+                }),
               });
-              ws.send(JSON.stringify({
-                type: 'message', content: '芝士你好，用一句话介绍你自己',
-                summon: true,
-              }));
-              window.__probeWs = ws;  // keep it open so frames keep flowing
-              return await refusal;
+              if (r.ok) return null;
+              const body = await r.json().catch(() => ({}));
+              return body?.error?.name || `HTTP ${r.status}`;
             }
             """,
             {"topicId": topic["id"], "token": tok},
         )
         if refused:
-            raise SystemExit(f"chat WS refused the summon: {refused}")
+            raise SystemExit(f"the summon was refused: {refused}")
         # Indicator should appear at once (turn_active/awaiting path uses the
         # page's own ChatPanel socket, which receives the broker frames).
         await pg.wait_for_timeout(1200)

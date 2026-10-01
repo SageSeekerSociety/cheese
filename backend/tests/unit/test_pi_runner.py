@@ -15,6 +15,7 @@ import pytest
 
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.pi.runner import Runner, socket_path
+from tests.support.room_machine import NO_MACHINE, room_machine
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURE = Path(__file__).parent / "fixtures/pi-entries.json"
@@ -49,14 +50,15 @@ def shim(tmp_path) -> str:
     return str(path)
 
 
-async def running(tmp_path, resume=None):
-    runner = Runner(tmp_path / "state")
+async def running(tmp_path, resume=None, **options):
+    runner = Runner(tmp_path / "state", **options)
     session_id = await runner.start(
         Opening("system prompt", resume, agent_handle="teammate"),
         binary=shim(tmp_path),
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=["--no-context-files"],
+        target=NO_MACHINE,
     )
     return runner, session_id
 
@@ -78,6 +80,38 @@ async def test_the_platform_names_the_session_and_can_ask_for_it_again(tmp_path)
         await again.close()
     with pytest.raises(ValueError):
         await running(tmp_path, resume=str(uuid.uuid4()))
+
+
+@pytest.mark.anyio
+async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(tmp_path):
+    """A backend reads every session about once a second whether anyone talks
+    to it or not, so being read is not being used. The session goes, and its
+    directory starts the same one again."""
+    runner, session_id = await running(tmp_path, idle_exit_s=0.5)
+
+    async def backend():
+        while True:
+            await call(runner.state, "entries")
+            await asyncio.sleep(0.1)
+
+    reading = asyncio.create_task(backend())
+    try:
+        await call(
+            runner.state,
+            "send",
+            {"input_id": str(uuid.uuid4()), "text": "开始", "work_id": "w"},
+        )
+        assert runner.process is not None
+        await asyncio.wait_for(runner.process.wait(), 30)
+    finally:
+        reading.cancel()
+        await runner.close()
+
+    again, resumed = await running(tmp_path, resume=session_id)
+    try:
+        assert resumed == session_id
+    finally:
+        await again.close()
 
 
 @pytest.mark.anyio
@@ -178,66 +212,22 @@ async def test_steering_is_not_a_second_turn_and_abort_stops_the_work(tmp_path):
 # --- the platform's tools, over the same socket ------------------------------
 #
 # pi has no MCP client, so a room's platform tools reach it as extension tools
-# whose calls come back here. The catalog is read off the platform file installed on
-# the machine: its tool table, which runs here against the backend, and its
-# argparse tree, whose commands run as the CLI — a command exists exactly when
-# the CLI has it, and takes exactly what the command takes.
-
-CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
+# whose calls come back here. The catalog is the platform's own CLI file,
+# shipped with the runner: its tool table, which runs here against the backend,
+# and its argparse tree, whose commands run as the CLI on the room's machine — a
+# command exists exactly when the CLI has it, and takes exactly what it takes.
 
 # Shape, not content: what the runner does with these files is write them
 # where pi and the extension will look.
-EXTENSION = {
-    "index.ts": "export default function () {}\n",
-    "background.py": "# holds one command\n",
-}
+EXTENSION = {"index.ts": "export default function () {}\n"}
 
-ECHOING_CLI = '''#!/usr/bin/env python3
-"""A CLI shaped like the platform's: a parser to publish, and argv to report."""
-import argparse, json, os, sys
+ECHOING_CLI = """#!/usr/bin/env python3
+import json, os, sys
+json.dump({"argv": sys.argv[1:], "cwd": os.getcwd()}, sys.stdout)
+"""
 
 
-class _NoTools:
-    def schemas(self):
-        return []
-
-    def __contains__(self, name):
-        return False
-
-
-PLATFORM_TOOLS = _NoTools()
-
-
-def build_parser():
-    p = argparse.ArgumentParser(prog="cheese")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    sync = sub.add_parser("sync", description="同步任务")
-    sync.add_argument("--task")
-    sync.add_argument("note", nargs="?")
-    work = sub.add_parser("worktree", description="准备目录")
-    work.add_argument("task_id")
-    return p
-
-
-if __name__ == "__main__":
-    build_parser().parse_args(sys.argv[1:])
-    json.dump({"argv": sys.argv[1:], "cwd": os.getcwd()}, sys.stdout)
-'''
-
-
-def installed_cli(tmp_path, monkeypatch, program=None) -> Path:
-    """Put a `cheese` on PATH the way a launched machine has one."""
-    bindir = tmp_path / "cli-bin"
-    bindir.mkdir(exist_ok=True)
-    target = bindir / "cheese"
-    target.write_text(CLI.read_text() if program is None else program)
-    target.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
-    return target
-
-
-async def with_tools(tmp_path, monkeypatch, program=None):
-    installed_cli(tmp_path, monkeypatch, program)
+async def with_tools(tmp_path, target=NO_MACHINE):
     runner = Runner(tmp_path / "state")
     await runner.start(
         Opening("system prompt", None, agent_handle="teammate"),
@@ -245,22 +235,15 @@ async def with_tools(tmp_path, monkeypatch, program=None):
         cwd=str(tmp_path),
         env={"PATH": os.environ["PATH"]},
         args=["--no-context-files"],
+        target=target,
         extension=EXTENSION,
     )
     return runner
 
 
 @pytest.mark.anyio
-async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
-    tmp_path, monkeypatch
-):
-    """Read off the machine's own CLI, not shipped as a list from the backend.
-
-    A catalog assembled by the backend would be a claim about a file the backend
-    cannot see: a machine still holding an older CLI would offer the agent a
-    tool whose command is not there.
-    """
-    runner = await with_tools(tmp_path, monkeypatch)
+async def test_the_room_is_given_the_platforms_tools_and_the_clis_commands(tmp_path):
+    runner = await with_tools(tmp_path)
     try:
         spec = json.loads(
             (runner.state / "extension/platform.json").read_text(encoding="utf-8")
@@ -269,7 +252,7 @@ async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
         assert spec["socket"] == socket_path(runner.state)
         published = {tool["name"] for tool in spec["tools"]}
         # The platform's table, under the names every harness uses, and the
-        # commands that have to run here as a process.
+        # commands that run on the machine as a process.
         assert {"chat_send", "cheese_doc_get", "cheese_notify"} <= published
         assert {"cheese_worktree", "cheese_sync"} <= published
         assert "cheese_chat_send" not in published
@@ -282,7 +265,7 @@ async def test_the_room_is_given_the_tools_the_installed_cli_actually_has(
 
 @pytest.mark.anyio
 async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     """The prompt names the publishing tool on every turn. A session given no
     tool by that name is told to do the one thing it cannot, and says nothing
@@ -292,7 +275,7 @@ async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
     published = prompt.publication_prompt("x")
     named = {word.strip("`. ") for word in published.split() if "chat_send" in word}
     assert named, "the room's prompt no longer names a publishing tool"
-    runner = await with_tools(tmp_path, monkeypatch)
+    runner = await with_tools(tmp_path)
     try:
         spec = json.loads(
             (runner.state / "extension/platform.json").read_text(encoding="utf-8")
@@ -303,62 +286,38 @@ async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
 
 
 @pytest.mark.anyio
-async def test_a_machine_without_the_cli_still_opens_and_says_why(
-    tmp_path, monkeypatch
-):
-    """The tools are one of five things this extension is for. A room that lost
-    them keeps the other four, and records the reason where a launch failure is
-    read — from the inside, no tools looks exactly like a harness that was never
-    given any, and the agent concludes it should shell out."""
-    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
-    runner = Runner(tmp_path / "state")
-    await runner.start(
-        Opening("system prompt", None, agent_handle="teammate"),
-        binary=shim(tmp_path),
-        cwd=str(tmp_path),
-        env={"PATH": os.environ["PATH"]},
-        args=["--no-context-files"],
-        extension=EXTENSION,
-    )
-    try:
-        spec = json.loads(
-            (runner.state / "extension/platform.json").read_text(encoding="utf-8")
-        )
-        assert spec["tools"] == []
-        assert "cheese" in spec["unavailable"]
-        assert (runner.state / "extension/index.ts").is_file()
-    finally:
-        await runner.close()
-
-
-@pytest.mark.anyio
-async def test_a_tool_call_runs_the_command_that_tool_names(tmp_path, monkeypatch):
-    runner = await with_tools(tmp_path, monkeypatch, ECHOING_CLI)
-    work = tmp_path / "work"
-    work.mkdir()
-    try:
-        result = await call(
-            runner.state,
-            "cli",
-            {
-                "tool": "cheese_sync",
-                "arguments": {"note": "第一版好了", "task": "t-1"},
-                "cwd": str(work),
-            },
-        )
-        assert result["status"] == 0
-        ran = json.loads(result["stdout"])
-        assert ran["argv"] == ["sync", "--task=t-1", "--", "第一版好了"]
-        # Where the agent is working, not where the runner happens to be: half
-        # of what the CLI does is about this checkout.
-        assert ran["cwd"] == str(work)
-    finally:
-        await runner.close()
+async def test_a_command_runs_as_the_cli_in_the_checkout_on_the_machine(tmp_path):
+    bindir = tmp_path / "machine-bin"
+    bindir.mkdir()
+    (bindir / "cheese").write_text(ECHOING_CLI)
+    (bindir / "cheese").chmod(0o755)
+    path = f"{bindir}:{os.environ['PATH']}"
+    with room_machine(tmp_path / "machine", env={"PATH": path}) as target:
+        runner = await with_tools(tmp_path, target)
+        try:
+            result = await call(
+                runner.state,
+                "cli",
+                {
+                    "tool": "cheese_worktree",
+                    "arguments": {"task_id": "t-1"},
+                    "cwd": target["workspace"],
+                },
+            )
+            assert result["status"] == 0, result
+            ran = json.loads(result["stdout"])
+            assert ran["argv"][0] == "worktree"
+            assert "t-1" in ran["argv"]
+            # Where the agent is working, not where the runner happens to be:
+            # half of what the CLI does is about this checkout.
+            assert ran["cwd"] == target["workspace"]
+        finally:
+            await runner.close()
 
 
 @pytest.mark.anyio
 async def test_a_call_the_cli_would_refuse_is_refused_without_ending_the_session(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     """argparse answers a bad command line by exiting the process.
 
@@ -368,7 +327,7 @@ async def test_a_call_the_cli_would_refuse_is_refused_without_ending_the_session
     back instead is what the CLI would have printed, and the session is still
     answering afterwards.
     """
-    runner = await with_tools(tmp_path, monkeypatch, ECHOING_CLI)
+    runner = await with_tools(tmp_path)
     try:
         with pytest.raises(RuntimeError, match="Unknown Cheese tool"):
             await call(runner.state, "cli", {"tool": "cheese_nope", "arguments": {}})
@@ -382,11 +341,12 @@ async def test_a_call_the_cli_would_refuse_is_refused_without_ending_the_session
 
 
 @pytest.mark.anyio
-async def test_a_platform_tool_runs_against_the_backend_not_the_cli(
+async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
     tmp_path, monkeypatch
 ):
     """A tool from the table is not a command line: it goes to the backend with
-    the room's credentials, and its answer comes back as text."""
+    the room's credentials, its answer comes back as text, and a session that
+    has no machine yet is not made to take one for it."""
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -412,7 +372,9 @@ async def test_a_platform_tool_runs_against_the_backend_not_the_cli(
     monkeypatch.setenv("CHEESE_TOKEN", "room-token")
     monkeypatch.setenv("CHEESE_TOPIC", "room")
     monkeypatch.setenv("NO_PROXY", "*")
-    runner = await with_tools(tmp_path, monkeypatch)
+    runner = await with_tools(
+        tmp_path, {**NO_MACHINE, "lease_path": "/topics/room/sessions/s/work-lease"}
+    )
     try:
         result = await call(
             runner.state,

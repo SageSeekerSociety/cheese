@@ -23,6 +23,7 @@ from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineOut
 from app.domain.machine.services import MachineService
+from app.domain.machine.supply import read_supply
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
 
@@ -47,7 +48,7 @@ async def _require_project_access(
     db: AsyncSession,
     resolver: ActorResolverDep,
     *,
-    mutate: bool,
+    action: str | None = None,
 ) -> Actor:
     """Authorize the participant before exposing or spending team compute.
 
@@ -60,8 +61,10 @@ async def _require_project_access(
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to manage project machines")
 
-    if mutate:
-        await MachineService(db).require_create_authority(project_id, actor)
+    if action is not None:
+        await MachineService(db).require_manage_authority(
+            project_id, actor, action=action
+        )
         return actor
 
     project = await ProjectRepository(db).get(project_id)
@@ -83,7 +86,7 @@ async def list_machines(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """The project's machines, with status refreshed from MicroCloud."""
-    await _require_project_access(project_id, db, resolver, mutate=False)
+    await _require_project_access(project_id, db, resolver)
     service = _service(db)
     machines = await service.list_for_project(project_id)
     items = [MachineOut.model_validate(m).model_dump(mode="json") for m in machines]
@@ -104,6 +107,22 @@ async def list_machines(
     )
 
 
+@router.get("/{project_id}/cloud-supply")
+async def cloud_supply(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """What a Cloud work computer can be asked for right now.
+
+    Anyone who can choose the project's work computer can read it, so the form
+    can show the range before a choice is saved. `selectable` is what a choice
+    may hold; `provider` is MicroCloud's own offering. An unreadable offering
+    comes back as `available: false` with the reason, never a guessed range.
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    return ok(await read_supply())
+
+
 @router.delete("/{project_id}/machines/{machine_row_id}")
 async def delete_machine(
     project_id: uuid.UUID,
@@ -113,7 +132,7 @@ async def delete_machine(
 ) -> dict:
     """Destroy the machine. Asynchronous — it reports `deleting` until MicroCloud
     has torn it down, at which point the next read drops it."""
-    await _require_project_access(project_id, db, resolver, mutate=True)
+    await _require_project_access(project_id, db, resolver, action="删除")
 
     service = _service(db)
     machine = await service.get_or_404(machine_row_id)
@@ -141,7 +160,9 @@ async def change_machine_power(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    await _require_project_access(project_id, db, resolver, mutate=True)
+    await _require_project_access(
+        project_id, db, resolver, action="休眠" if operation == "suspend" else "恢复"
+    )
     service = _service(db)
     machine = await service.get_or_404(machine_row_id)
     if machine.project_id != project_id:

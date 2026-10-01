@@ -1,7 +1,8 @@
 import account from './account.json'
 import admin from './admin.json'
-import aiChat from './aiChat.json'
+import apiError from './apiError.json'
 import compute from './compute.json'
+import design from './design.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
 import feedback from './feedback.json'
@@ -21,6 +22,7 @@ import ratchet from './ratchet.json'
 import roomNotice from './roomNotice.json'
 import routines from './routines.json'
 import shell from './shell.json'
+import slides from './slides.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
@@ -30,7 +32,6 @@ import users from './users.json'
 import work from './work.json'
 
 export default {
-  aiChat,
   global,
   home,
   integrations,
@@ -51,13 +52,16 @@ export default {
   teams,
   notifications,
   roomNotice,
+  apiError,
   toolLabels,
   work,
   admin,
   compute,
+  design,
   files,
   project,
   routines,
   shell,
+  slides,
   topic,
 }

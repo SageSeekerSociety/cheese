@@ -11,7 +11,7 @@
 // ——某个房间四条在跑三条排队，从那个房间里面看是正常的，从这里看才是「它把队排
 // 到别处去了」。这两条理由是这一页存在的全部原因，改成板不能把它们弄丢。
 //
-// 屏幕上每一个状态词都是后端算好的 `presentation.display_status`，这里一个都不推。
+// 屏幕上每一个状态词都是后端算好的 `presentation.phrase`，这里一个都不推。
 import type { BoardColumn, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -22,13 +22,15 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
 import { isAgentHandle } from '@/lib/authorship'
-import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks } from '@/lib/board'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, liveBoardTasks, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
+import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -115,7 +117,7 @@ watch(
  *  截图里 AO 的每张卡显示的是分支名，我们这里显示不了：一条活**没有自己的分支**，
  *  多条活共用一棵树、一棵树开一个 PR。照抄那一行只会写出一个假的事实。 */
 const roomTitle = computed(() => {
-  const byId = new Map((store.topics as Topic[]).map((t) => [t.id, t.title]))
+  const byId = new Map((store.topics as Topic[]).map((t) => [t.id, topicTitle(t)]))
   return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 
@@ -146,11 +148,11 @@ function onAvatarError(handle?: string | null): void {
 
 /** 这会儿真的在跑的那些。
  *
- *  「运行中」是后端 `display_status` 的原词，这里只是认它，没有在前端另推一次状
+ *  `running` 是后端 `presentation.phrase` 的码，这里只是认它，没有在前端另推一次状
  *  态：色点是**列级**的，所以「施工中」那一列里在跑的和排队的原来长得一模一样，
  *  而这两件事对看的人不是一回事。 */
 function isRunning(row: RoomTask): boolean {
-  return row.presentation.display_status === '运行中'
+  return row.presentation.phrase === 'running'
 }
 
 /** 「只看我的」。
@@ -359,10 +361,16 @@ function openTask(task: RoomTask) {
                     <span class="board-card__room">{{ roomTitle(row.room_id) }}</span>
                     <span class="board-card__sep">·</span>
                     <span v-if="row.owner_handle" class="board-card__who">
+                      <CheeseAvatar
+                        v-if="isAgentHandle(row.owner_handle)"
+                        :size="18"
+                        :name="ownerName(row.owner_handle)"
+                        :handle="row.owner_handle"
+                        aria-hidden="true"
+                      />
                       <img
-                        v-if="avatarSrc(row.owner_handle)"
+                        v-else-if="avatarSrc(row.owner_handle)"
                         class="board-card__avatar"
-                        :class="{ 'board-card__avatar--agent': isAgentHandle(row.owner_handle) }"
                         :src="avatarSrc(row.owner_handle)!"
                         alt=""
                         @error="onAvatarError(row.owner_handle)"
@@ -370,7 +378,6 @@ function openTask(task: RoomTask) {
                       <span
                         v-else
                         class="board-card__avatar board-card__avatar--initial"
-                        :class="{ 'board-card__avatar--agent': isAgentHandle(row.owner_handle) }"
                         :style="{ backgroundColor: avatarColor(row.owner_handle) }"
                         aria-hidden="true"
                         >{{ avatarInitial(ownerName(row.owner_handle)) }}</span
@@ -401,7 +408,7 @@ function openTask(task: RoomTask) {
                       :style="columnDotStyle(row.presentation.column)"
                       aria-hidden="true"
                     />
-                    <span class="board-card__phrase">{{ row.presentation.display_status }}</span>
+                    <span class="board-card__phrase">{{ phraseLabel(row.presentation.phrase) }}</span>
                     <span class="board-card__when">{{ relTime(row.updated_at ?? row.created_at) }}</span>
                   </span>
                   <!-- 一条活骑一张卡、一棵树开一个 PR，是一对一 —— 所以这里永远只有
@@ -439,7 +446,7 @@ function openTask(task: RoomTask) {
                 <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                 <span class="done-row__title t-body">{{ row.title }}</span>
                 <span class="done-row__room t-meta">{{ roomTitle(row.room_id) }}</span>
-                <span class="done-row__phrase t-meta">{{ row.presentation.display_status }}</span>
+                <span class="done-row__phrase t-meta">{{ phraseLabel(row.presentation.phrase) }}</span>
               </button>
             </li>
           </ul>
@@ -732,10 +739,6 @@ function openTask(task: RoomTask) {
   height: 18px;
   border-radius: var(--radius-pill);
   object-fit: cover;
-}
-/* 负责人是 AI 队友时：圆角方块（人是圆的）。 */
-.board-card__avatar--agent {
-  border-radius: var(--radius-sm);
 }
 .board-card__avatar--initial {
   display: flex;

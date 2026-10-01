@@ -1,7 +1,8 @@
 {
   "leave": {
     "title": "Leave project?",
-    "body": "You will no longer see this project; existing messages and records are kept. You leave this project, not the team: your place in the team stays the same, and the team's other projects are unaffected. You can come back if invited again.",
+    "body": "You will no longer see this project; existing messages and records are kept. You can come back if invited again.",
+    "bodyTeam": "You will no longer see this project; existing messages and records are kept. You leave this project, not the team: your place in the team stays the same, and the team's other projects are unaffected. You can come back if invited again.",
     "confirm": "Leave",
     "failed": "Couldn't leave"
   },
@@ -83,7 +84,6 @@
   "docs": {
     "kind": {
       "charter": "Charter",
-      "decisions": "Decisions",
       "weeklies": "Weekly reports",
       "memory": "Memory"
     },
@@ -101,8 +101,6 @@
     "memoryDelete": "Delete this memory",
     "charterPlaceholder": "Cheese hasn't written the charter yet. It will keep this document up to date once you set the project's direction. You can also write here directly; it saves automatically.",
     "noCharter": "This project has no editable charter yet",
-    "decisionsEmpty": "No decisions",
-    "decisionsHint": "Cheese records key decisions here as they are made",
     "fromTopic": "From topic",
     "weekliesEmpty": "No weekly reports",
     "weekliesHint": "Mention {'@'}Cheese in the project room and ask for “this week's project report”. It is recorded here once written",

@@ -48,6 +48,7 @@ from app.core.config import settings
 from app.domain.docs_site import tools, visits
 from app.domain.docs_site.models import DocsQuestion
 from app.domain.docs_site.retrieval import Hit
+from app.domain.gateway_chat import Usage
 from app.domain.service_keys import KeySpec, service_key
 
 logger = logging.getLogger(__name__)
@@ -287,21 +288,11 @@ def _add_usage(result: Outcome, usage: object) -> None:
     the gateway several times, and the recorded cost is all of them."""
     if not isinstance(usage, dict):
         return
-    for field_name in ("prompt_tokens", "completion_tokens"):
-        value = usage.get(field_name)
-        if value is None:
-            continue
-        setattr(
-            result,
-            field_name,
-            (getattr(result, field_name) or 0) + int(value),
-        )
-    details = usage.get("prompt_tokens_details")
-    cached = details.get("cached_tokens") if isinstance(details, dict) else None
-    if cached is None:
-        cached = usage.get("prompt_cache_hit_tokens")
-    result.cache_read_tokens += int(cached or 0)
-    result.cache_write_tokens += int(usage.get("cache_creation_input_tokens") or 0)
+    spent = Usage.of(usage)
+    result.prompt_tokens = (result.prompt_tokens or 0) + spent.prompt_tokens
+    result.completion_tokens = (result.completion_tokens or 0) + spent.completion_tokens
+    result.cache_read_tokens += spent.cache_read_tokens
+    result.cache_write_tokens += spent.cache_write_tokens
 
 
 async def stream_answer(

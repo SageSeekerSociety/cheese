@@ -29,7 +29,7 @@ from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import Opening, SessionRef, deployment_harness
+from app.domain.agent.harness import Opening, SessionRef, harness_for
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.bundle import build
@@ -38,7 +38,7 @@ from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.launch import MachinePlace
-from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent.harness.pi.channel import PiChannel
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -69,7 +69,7 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
             "resource_id": str(resource),
             "channel": "device",
         },
-        harness=deployment_harness(),
+        harness=harness_for(None),
     )
 
 
@@ -170,13 +170,24 @@ async def test_a_harness_without_an_executor_is_refused_by_name(
     project, topic = room
     central = channel(client, monkeypatch)
 
+    class OnlyAMachine:
+        """A launch for a machine and nothing else: no executor to install."""
+
+        harness = "only-a-machine"
+        system_prompt = "System"
+        model = "glm-5.2"
+        resume_session_id = None
+
+        def on(self, place):
+            raise AssertionError("never asked where")
+
     async def exercise():
-        with pytest.raises(ScreenSetupError, match="pi"):
+        with pytest.raises(ScreenSetupError, match="only-a-machine"):
             await central.ensure_ready(
                 session=ref(project, topic),
                 token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
                 env={},
-                launch=PiLaunch(system_prompt="System", model="glm-5.2"),
+                launch=OnlyAMachine(),
                 precheck=await central.precheck(ref(project, topic), needs_place=True),
             )
 
@@ -333,6 +344,65 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         central.restore_screens.assert_awaited_once_with([(project, topic, "center")])
         # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
         # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
+        claude = ClaudeCodeRuntime(ClaudeCodeChannel(central))
+        assert await claude.recover("center") == []
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_pi_starts_on_the_session_host_and_recovers_only_as_pi(
+    client, room, monkeypatch
+):
+    """pi's session runs on the central host with its hands to come (#1106):
+    no machine is taken to start it, the host runs the launch, and a backend
+    that comes back finds the session as pi's and nobody else's."""
+    project, topic = room
+    central = channel(client, monkeypatch)
+
+    async def exercise():
+        central._hub.exec.side_effect = [
+            {
+                "exit": 0,
+                "stdout": json.dumps(
+                    {"session_id": "pi-session", "alive": True, "pid": 1}
+                ),
+            },
+        ]
+        pi = PiChannel(central, ClaudeLaunch("system").execution)
+        session = SessionRef(project, topic, AGENT, harness="pi")
+        actual_agent = (await central.precheck(session, needs_place=True)).agent_handle
+        handle = await pi.ensure(
+            session,
+            Opening(
+                "shared system",
+                model="fixture",
+                agent_handle=actual_agent,
+                needs_place=True,
+            ),
+        )
+        assert handle.session_id == "pi-session"
+        # Launched on the session host, as one program over its stdin.
+        ((device, argv), _), *_ = [
+            (call.args, call.kwargs) for call in central._hub.exec.await_args_list
+        ]
+        assert (device, argv) == ("center", ["python3", "-"])
+        place = await session_place(client.test_request_factory, topic, AGENT, "pi")
+        assert place is not None
+        assert place.machine == "center"
+        assert place.runtime == {
+            "harness": "pi",
+            "agent_handle": actual_agent,
+            "state": handle.state,
+        }
+        # Nothing was taken for it: the session's hands come with its work.
+        assert place.lease is None
+        central._hub.call_executor.return_value = {
+            "session_id": "pi-session",
+            "alive": True,
+        }
+        assert await pi.discover("center") == [handle]
+        central.restore_screens = AsyncMock()
         claude = ClaudeCodeRuntime(ClaudeCodeChannel(central))
         assert await claude.recover("center") == []
 
@@ -888,7 +958,7 @@ async def lease_machine(factory, topic, workspace):
     """The session's first project tool rented its machine; the lease is ready."""
     async with factory() as db:
         row = await AgentSessionService(db).ensure(
-            topic, AGENT, harness=deployment_harness()
+            topic, AGENT, harness=harness_for(None)
         )
         generation = str(uuid.uuid4())
         row.work_lease = {

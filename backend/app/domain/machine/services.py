@@ -47,6 +47,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.supply import SupplyRange, check_choice, pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus
@@ -102,36 +103,38 @@ class MachineService:
     def available(self) -> bool:
         return self._client.configured
 
-    async def require_team_create_authority(
-        self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
+    async def require_manage_authority(
+        self, project_id: uuid.UUID, actor: Actor, *, action: str
     ) -> None:
-        """Apply the paid machine-create rule to a team-scoped Cloud choice."""
-        if not actor.authenticated or actor.user_id is None:
-            raise AuthenticationRequiredError("Login required to create cloud machines")
-        teams = team_service(self._session)
-        if not await teams.is_team_member(team_id, actor.user_id):
-            if conceal_nonmember:
-                raise NotFoundError("Project not found")
-            raise ForbiddenError(
-                "Only team owners and admins can create cloud machines"
-            )
-        if not await teams.is_team_at_least_admin(team_id, actor.user_id):
-            raise ForbiddenError(
-                "Only team owners and admins can create cloud machines"
-            )
+        """The one rule for changing a project's billed machines.
 
-    async def require_create_authority(
-        self, project_id: uuid.UUID, actor: Actor
-    ) -> None:
-        """The one authorization rule for every path that can create a billed VM."""
-        if not actor.authenticated:
-            raise AuthenticationRequiredError("Login required to create cloud machines")
+        `action` is what the person was trying to do, in their words, so a
+        refusal names that operation rather than one they never attempted.
+        """
+        if not actor.authenticated or actor.user_id is None:
+            raise AuthenticationRequiredError(f"请先登录再{action}云端机器")
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        await self.require_team_create_authority(
-            project.team_id, actor, conceal_nonmember=True
-        )
+        teams = team_service(self._session)
+        if not await teams.is_team_member(project.team_id, actor.user_id):
+            raise NotFoundError("Project not found")
+        if not await teams.is_team_at_least_admin(project.team_id, actor.user_id):
+            raise ForbiddenError(f"只有团队所有者或管理员可以{action}云端机器")
+
+    async def admit_choice(
+        self, project_id: uuid.UUID, actor: Actor, choice: ComputeChoice
+    ) -> None:
+        """Let a saved choice stand only if it can be honoured and paid for.
+
+        A self-hosted choice spends nobody's cloud quota and has no supply range.
+        A cloud one must fit what the provider offers now (when that can be
+        read) and be chosen by someone the project lets spend its quota.
+        """
+        if choice.profile != "cloud":
+            return
+        await check_choice(choice)
+        await self.require_use_authority(project_id, actor)
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Being on the project authorizes room execution within the team's quota.
@@ -159,23 +162,7 @@ class MachineService:
         if not any(
             m.handle == actor.handle for m in await roster(self._session, project_id)
         ):
-            raise ForbiddenError("只有项目成员可以使用项目的云额度")
-
-    async def _pick_offering(self) -> dict:
-        offerings = await self._client.list_offerings()
-        if not offerings:
-            raise ValidationError(
-                "MicroCloud has granted this deployment no offering — an operator "
-                "must grant one before machines can be created"
-            )
-        wanted = settings.microcloud_offering_id
-        if wanted:
-            for offering in offerings:
-                if int(offering["id"]) == wanted:
-                    return offering
-            raise ValidationError(f"configured offering {wanted} is not granted")
-        active = [o for o in offerings if o.get("status") == "active"]
-        return (active or offerings)[0]
+            raise ForbiddenError(say("cloudQuotaMembersOnly"))
 
     async def _ensure_account(self, project_id: uuid.UUID) -> tuple[int, int]:
         """The project's MicroCloud customer + funded compute account."""
@@ -217,28 +204,31 @@ class MachineService:
         # only counting the team's machines and creating one need to be atomic,
         # and every provider call made under the lock keeps every other
         # admission of the team waiting with a pool connection each.
-        offering = await self._pick_offering()
+        offering = await pick_offering(self._client)
+        # A spec is only meaningful against the offering we actually landed on,
+        # and one it cannot honour is refused, never quietly shrunk to fit.
+        SupplyRange.of(offering).require(
+            {"cores": cores, "memory_mb": memory_mb, "disk_gb": disk_gb}
+        )
 
-        def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
-            # The allowed range is per-offering, so a spec is only meaningful
-            # against the offering we actually landed on.
-            if value is not None and not int(offering[lo]) <= value <= int(
-                offering[hi]
-            ):
-                raise ValidationError("所选云配置超出当前供应范围，请选择其他配置")
-            return max(int(offering[lo]), min(int(offering[hi]), int(value or default)))
+        def fill(value: int | None, default: int, lo: str, hi: str) -> int:
+            # Only the standard choice arrives without numbers; its defaults
+            # are the deployment's, fitted to whatever this offering allows.
+            if value is not None:
+                return value
+            return max(int(offering[lo]), min(int(offering[hi]), default))
 
         spec = {
-            "cores": clamp(
+            "cores": fill(
                 cores, settings.microcloud_default_cores, "coresMin", "coresMax"
             ),
-            "memoryMb": clamp(
+            "memoryMb": fill(
                 memory_mb,
                 settings.microcloud_default_memory_mb,
                 "memoryMbMin",
                 "memoryMbMax",
             ),
-            "diskGb": clamp(
+            "diskGb": fill(
                 disk_gb, settings.microcloud_default_disk_gb, "diskGbMin", "diskGbMax"
             ),
         }
@@ -251,8 +241,7 @@ class MachineService:
         limit = await get_machine_limit(self._session, team_id)
         if len(existing) >= limit:
             raise ValidationError(
-                f"团队云端机器已使用 {len(existing)} / {limit} 台，"
-                "请先释放不再使用的机器"
+                say("teamCloudMachineLimit", used=len(existing), limit=limit)
             )
         project_used = sum(m.project_id == project_id for m in existing)
         hostname = derive_hostname(project.name, project_id, project_used + 1)
@@ -610,6 +599,29 @@ class MachineService:
         await self._repo.mark_released(machine, when=datetime.now(UTC))
         await self._session.commit()
 
+    async def release_left_machines(self) -> int:
+        """Delete VMs their session left whose one delete attempt did not land.
+
+        ``release_left_machine`` runs once, as the session leaves; a provider
+        refusal or a restart before it runs leaves the VM superseded, and the
+        room's cleanup only comes when the room is archived, which an active room
+        never is. A VM still holding a session's unpushed work is left to that
+        cleanup.
+        """
+        # Past the moment the leaving session itself deletes it.
+        cutoff = datetime.now(UTC) - timedelta(minutes=5)
+        released = 0
+        for machine in await self._repo.list_left_older_than(cutoff):
+            if machine.status in GONE or await left_unpushed_on(
+                self._session, machine.topic_id, machine.device_id
+            ):
+                continue
+            await self.release_left_machine(machine.id)
+            await self._session.refresh(machine)
+            if machine.released_at is not None:
+                released += 1
+        return released
+
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         return await self._repo.list_active_for_topic(topic_id)
 
@@ -819,7 +831,7 @@ class MachineService:
         if machine.machine_id is None or machine.released_at is not None:
             raise ValidationError("machine is not available to suspend")
         if await self._repo.has_active_turn(machine):
-            raise ConflictError("机器上仍有 agent 任务运行，请等待任务结束后休眠")
+            raise ConflictError(say("machineBusyCannotSuspend"))
         remote = await self._client.suspend_machine(machine.machine_id)
         return await self._repo.set_state(
             machine,
@@ -1124,3 +1136,23 @@ def _as_ai_status(value: object) -> AiStatus:
         return AiStatus(str(value))
     except ValueError:
         return AiStatus.unknown
+
+
+async def left_unpushed_on(db, topic_id, device_id) -> bool:
+    """Another session of the room left this machine without pushing: its work
+    is only there, so the machine waits for the room's cleanup."""
+    from app.domain.agent_session.models import AgentSession
+
+    if device_id is None:
+        return False
+    requests = await db.scalars(
+        select(AgentSession.execution_request).where(
+            AgentSession.topic_id == topic_id,
+            AgentSession.execution_request.is_not(None),
+        )
+    )
+    return any(
+        lease.get("device_id") == device_id
+        for request in requests
+        for lease in request.get("retained_leases", [])
+    )

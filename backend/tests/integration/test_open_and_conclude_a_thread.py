@@ -13,7 +13,12 @@ names another room's work, a thread that already finished.
 import uuid
 
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, session_token
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_token,
+)
 
 
 def _bearer(handle: str) -> dict:
@@ -108,7 +113,7 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
     _, room_id = _room(client)
     task = _split(client, room_id)
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好"})
+        post_message(client, room_id, "alice", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
@@ -186,7 +191,7 @@ def test_a_card_nobody_has_started_on_is_idle_not_out_of_contact(client):
     _, room_id = _room(client)
     task = _split(client, room_id)
 
-    assert _shown(client, room_id, task["id"])["display_status"] == "待开工", (
+    assert _shown(client, room_id, task["id"])["phrase"] == "not_started", (
         "还没人做的活不是失联,是没人做"
     )
 
@@ -199,14 +204,14 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     task = _split(client, room_id)
     # 一轮普通的轮次，房间因此有了一个活着的会话（分身的记录才有地方来）。
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好"})
+        post_message(client, room_id, "alice", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
     # 分身开工：标识写在起它的那次调用里，平台因此知道是谁在做。
     stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     _wait_work_idle()
-    assert _shown(client, room_id, task["id"])["display_status"] == "运行中"
+    assert _shown(client, room_id, task["id"])["phrase"] == "running"
 
     _reports_back(
         stub_hooks,
@@ -225,7 +230,6 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
 
     shown = _shown(client, room_id, task["id"])
     assert shown["column"] == "building", f"报了一次完成就被当成干完了：{shown}"
-    assert shown["display_status"] != "已收工"
     listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
         "data"
     ]["data"]
@@ -246,7 +250,7 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
     _, room_id = _room(client)
     task = _split(client, room_id)
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好"})
+        post_message(client, room_id, "alice", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()

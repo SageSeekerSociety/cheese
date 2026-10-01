@@ -8,7 +8,9 @@ a sub-thread to its card may be far behind it.
 """
 
 import json
-from collections.abc import Awaitable, Callable
+from collections import ChainMap
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,7 +28,7 @@ CONTROL = "control:"
 TASKS_KEPT = 50
 
 
-def control_facts(record: dict, known: dict[str, str]) -> dict[str, str]:
+def control_facts(record: dict, known: Mapping[str, str]) -> dict[str, str]:
     """What a record changes about the state the room's controls show.
 
     Tasks by id (the build's own),
@@ -64,10 +66,44 @@ def control_facts(record: dict, known: dict[str, str]) -> dict[str, str]:
     return {key: json.dumps({**current, **update, "task_id": task}, ensure_ascii=False)}
 
 
+@dataclass
+class Known:
+    """What the mirror holds that every pass needs: where receiving got to, the
+    facts, the controls' state. Read from the mirror once, then kept in step
+    with it here: only a pass of ``receive`` writes any of them, on the mirror's
+    own thread, and this copy changes only after the mirror took the write.
+
+    Reading them back on every pass was a whole-table read of a table that only
+    grows, twice a pass, ten passes a second for a room in a turn, whether or
+    not the runner had anything new; with a few dozen rooms it held more of the
+    backend's one interpreter than everything else it does.
+    """
+
+    received: int
+    facts: dict[str, str]
+    controls: dict[str, str]
+
+    @classmethod
+    def read(cls, path: Path) -> "Known":
+        journal = Journal(path)
+        try:
+            return cls(
+                received=int(journal.recall("received") or 0),
+                facts=journal.facts(FACT),
+                controls={
+                    CONTROL + key: value
+                    for key, value in journal.facts(CONTROL).items()
+                },
+            )
+        finally:
+            journal.close()
+
+
 async def receive(
     path: Path,
     call: Callable[[str, dict], Awaitable[dict]],
     on_disk: Callable[..., Awaitable[Any]],
+    known: Known,
 ) -> bool:
     """Mirror what the runner has that we do not; True if a task moved.
 
@@ -75,32 +111,36 @@ async def receive(
     while somebody watches, while the session's ``init`` is the same every turn
     and is read when the controls are opened.
     """
-    journal = await on_disk(Journal, path)
     moved = False
+    while True:
+        entries = (await call("events", {"after": known.received}))["events"]
+        if not entries:
+            return moved
+        learned: dict[str, str] = {}
+        facts: dict[str, str] = {}
+        controls: dict[str, str] = {}
+        for entry in entries:
+            found = bind(entry["record"], ChainMap(facts, known.facts))
+            facts.update(found)
+            learned.update({FACT + key: value for key, value in found.items()})
+            changed = control_facts(entry["record"], ChainMap(controls, known.controls))
+            controls.update(changed)
+            learned.update(changed)
+            moved = moved or any(":task:" in key for key in changed)
+        await on_disk(_import, path, entries, learned)
+        known.facts.update(facts)
+        known.controls.update(controls)
+        known.received = entries[-1]["sequence"]
+        if len(entries) < PAGE:
+            return moved
+
+
+def _import(path: Path, entries: list[dict], learned: dict[str, str]) -> None:
+    journal = Journal(path)
     try:
-        facts = await on_disk(journal.facts, FACT)
-        controls = {
-            CONTROL + key: value
-            for key, value in (await on_disk(journal.facts, CONTROL)).items()
-        }
-        after = int(await on_disk(journal.recall, "received") or 0)
-        while True:
-            entries = (await call("events", {"after": after}))["events"]
-            learned: dict[str, str] = {}
-            for entry in entries:
-                found = bind(entry["record"], facts)
-                facts.update(found)
-                learned.update({FACT + key: value for key, value in found.items()})
-                changed = control_facts(entry["record"], controls)
-                controls.update(changed)
-                learned.update(changed)
-                moved = moved or any(":task:" in key for key in changed)
-            await on_disk(journal.import_records, entries, learned)
-            if len(entries) < PAGE:
-                return moved
-            after = entries[-1]["sequence"]
+        journal.import_records(entries, learned)
     finally:
-        await on_disk(journal.close)
+        journal.close()
 
 
 def control_state(path: Path | None) -> dict:
@@ -127,12 +167,23 @@ def control_state(path: Path | None) -> dict:
 class ClaudeCodeBacklog(JournalBacklog[Journal]):
     journal = Journal
 
-    def __init__(self, path: Path | None, session_id: str | None = None):
-        self.assembler = Assembler({}, session_id)
+    def __init__(
+        self,
+        path: Path | None,
+        session_id: str | None = None,
+        facts: dict[str, str] | None = None,
+    ):
+        # What the pass learns while it reads stays with the pass: the mirror's
+        # facts are ahead of the landing cursor, and replaying older records
+        # must not write back over what they already say. A caller that keeps
+        # them (`Known`) hands them over; one that does not has them read here.
+        self.given = facts
+        self.assembler = Assembler(ChainMap({}, facts or {}), session_id)
         super().__init__(path)
 
     def prepare(self, journal: Journal) -> None:
-        self.assembler.facts = journal.facts(FACT)
+        if self.given is None:
+            self.assembler.facts = ChainMap({}, journal.facts(FACT))
 
     def event(self, row: dict, now: datetime) -> HarnessEvent:
         record = row["record"]

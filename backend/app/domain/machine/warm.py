@@ -26,10 +26,21 @@ from app.domain.machine.models import (
     WarmMachine,
 )
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.supply import pick_offering
 from app.domain.project.services import ProjectService
 
 logger = logging.getLogger("cheese.machine.warm")
 POOL_LOCK = 728104913
+# A machine whose deletion failed five times may still be billed, so a pile of
+# them stops replacement — but a couple of stale ones must not: counted as pool
+# capacity, the two on dev in September held a size-2 pool at zero for 11 days.
+# The pool replaces at most one machine per max age, so a provider whose deletes
+# keep failing adds about one hidden machine an hour; this bounds that at three.
+UNRESOLVED_CLEANUP_LIMIT = 3
+# How long a deletion the provider accepted may go unconfirmed. A machine that
+# is still there after it is not being deleted: it waits with the cleanups that
+# failed, which hold no place in the pool and stop replacement once they pile up.
+DELETION_CONFIRM_S = 15 * 60
 # One provider claim per reservation per process; a second claimer waits here,
 # holding no database lock. One lock per machine ever claimed, so this stays small.
 _claim_locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -377,7 +388,6 @@ class WarmPoolService:
                             "preparing",
                             "ready",
                             "deleting",
-                            "cleanup_failed",
                             "reserved",
                             "claim_failed",
                         ]
@@ -385,18 +395,31 @@ class WarmPoolService:
                 )
             )
         ).all()
-        if len(active) < settings.microcloud_warm_pool_size:
-            await self._new()
+        if len(active) >= settings.microcloud_warm_pool_size:
+            return
+        unresolved = len(
+            (
+                await self.session.scalars(
+                    select(WarmMachine.id).where(WarmMachine.state == "cleanup_failed")
+                )
+            ).all()
+        )
+        if unresolved >= UNRESOLVED_CLEANUP_LIMIT:
+            logger.error(
+                "warm pool not replenished: %d machines failed cleanup and may "
+                "still be billed; resolve them at the provider first",
+                unresolved,
+            )
+            return
+        await self._new()
 
     async def _new(self) -> None:
-        from app.domain.machine.services import MachineService
-
         origin = settings.connector_public_base.rstrip("/")
         if not origin or "localhost" in origin or "127.0.0.1" in origin:
             raise ValidationError(
                 "warm pool requires a reachable connector_public_base"
             )
-        offering = await MachineService(self.session, self.client)._pick_offering()
+        offering = await pick_offering(self.client)
         ref = "cheese-platform-warm-pool"
         customer = await self.client.find_customer(
             ref
@@ -506,6 +529,16 @@ class WarmPoolService:
                 raise
         if await self.client.get_machine(row.machine_id) is not None:
             # Count accepted deletion until the provider confirms the machine gone.
+            if row.updated_at < datetime.now(UTC) - timedelta(
+                seconds=DELETION_CONFIRM_S
+            ):
+                row.state = "cleanup_failed"
+                row.error = "provider kept the machine after deletion"
+                logger.error(
+                    "warm cleanup unconfirmed id=%s machine=%s",
+                    row.id,
+                    row.machine_id,
+                )
             await self.session.commit()
             return
         if row.device_id:

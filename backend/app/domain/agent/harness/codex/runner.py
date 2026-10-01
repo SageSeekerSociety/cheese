@@ -34,8 +34,10 @@ class Runner(runner.Runner[Journal]):
         state: Path,
         on_tool: Callable[[str, dict], Awaitable[dict]],
         skills: Skills | None = None,
+        *,
+        idle_exit_s: float = runner.IDLE_EXIT_S,
     ):
-        super().__init__(state, Journal, "events.sqlite")
+        super().__init__(state, Journal, "events.sqlite", idle_exit_s=idle_exit_s)
         self.on_tool = on_tool
         self.skills = skills
         self.syncing: asyncio.Future[bool] | None = None
@@ -237,6 +239,12 @@ class Runner(runner.Runner[Journal]):
         (`tools.RemoteTools`), which watches the file the debt was just written
         to and has the executor let go of the command as soon as it changes."""
 
+    def busy(self) -> bool:
+        return bool(
+            (self.session is not None and self.session.turn_id is not None)
+            or (self.continuing is not None and not self.continuing.done())
+        )
+
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "configure":
             if self.session is None or self.session.turn_id is not None:
@@ -244,7 +252,7 @@ class Runner(runner.Runner[Journal]):
             self.session.model = params.get("model")
             return {"configured": True}
         if method == "events":
-            return {"events": self.journal.read(int(params.get("after", 0)))}
+            return {"events": self.records(int(params.get("after", 0)))}
         if method == "send":
             return await self.send(
                 params["input_id"],

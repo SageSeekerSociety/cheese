@@ -44,8 +44,8 @@ either ratchet and `.importlinter` is untouched.
 
 Ordering. This module sorts after `projects.py` (`_` > `.`) and before
 `push.py` (`projects_` < `push`), so its paths mount later in the route table
-than they did inside projects.py -- no longer between `/default-agent` and
-`/decisions`, but after every path that stays, up to `/upstream`. Every moved
+than they did inside projects.py -- no longer right after `/default-agent`,
+but after every path that stays, up to `/upstream`. Every moved
 path carries a literal `artifacts` where each route that now precedes it
 carries a literal of its own, and no route registered in between has a
 parameter in that segment, so none loses its first full match; resolving every
@@ -70,6 +70,7 @@ from app.api.place import project_reader, readable_room_titles
 from app.api.response import ok, page
 from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.documents.text import delivered_comparison
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -157,7 +158,7 @@ async def compare_artifact_versions(
     await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
     history = {v.card_id: v for v in await artifacts.versions(db, artifact_id)}
     if before not in history or after not in history:
-        raise NotFoundError("这一项没有所选的交付版本")
+        raise NotFoundError(say("deliveryVersionsMissing"))
     left, right = history[before], history[after]
     result = {
         "kind": "unavailable",
@@ -220,10 +221,10 @@ async def download_artifact_version(
         None,
     )
     if version is None:
-        raise NotFoundError("这一项没有这一版")
+        raise NotFoundError(say("itemVersionMissing"))
     if version.kind != "file" or not version.filename:
         # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
-        raise NotFoundError("这一版交出去的不是一份文件")
+        raise NotFoundError(say("versionNotAFile"))
     data = library.read_artifact_snapshot(project_id, card_id, version.filename)
     if preview_pdf:
         data = await office.preview_pdf(data, version.filename)

@@ -95,10 +95,10 @@ def _project(client, alice) -> str:
     return r.json()["data"]["id"]
 
 
-def _room(client, alice, project_id: str, title: str = "新话题") -> str:
-    r = client.post(
-        "/topics", json={"project_id": project_id, "title": title}, headers=alice
-    )
+def _room(client, alice, project_id: str, title: str | None = None) -> str:
+    """A room; without a title, an unnamed one — no title is how a client asks."""
+    body = {"project_id": project_id} | ({"title": title} if title else {})
+    r = client.post("/topics", json=body, headers=alice)
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -210,6 +210,20 @@ def test_a_room_created_with_a_name_is_a_persons_and_an_unnamed_one_is_not(
     named = client.get(f"/topics/{_room(client, alice, pid, '周报')}").json()["data"]
     assert unnamed["title_source"] == "placeholder"
     assert named["title_source"] == "human"
+
+
+def test_an_unnamed_room_is_known_by_its_flag_not_by_its_words(client, alice, gateway):
+    """Screens name an unnamed room in their reader's language, so the flag is
+    what says it has no name. The stored placeholder is what the agents read;
+    a person who types those same words has named the room."""
+    pid = _project(client, alice)
+    for body in ({}, {"title": ""}, {"title": "   "}):
+        r = client.post("/topics", json={"project_id": pid, **body}, headers=alice)
+        assert r.status_code == 200, r.text
+        room = r.json()["data"]
+        assert (room["title"], room["title_source"]) == ("新话题", "placeholder")
+    typed = _room(client, alice, pid, "新话题")
+    assert client.get(f"/topics/{typed}").json()["data"]["title_source"] == "human"
 
 
 def test_an_unnamed_room_waits_for_something_worth_naming_it_by(client, alice, gateway):

@@ -101,12 +101,11 @@ class NotificationType(str, Enum):
     #: （`outbox.MAILBOX_ONLY`）。改公告不再发；删公告连它发出去的这些一起撤回。
     SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
 
-    #: 平台报告自己的那四种（原 `AlertKind`）。值保持小写原样：`cheese_notify
+    #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒
     DECISION_REQUEST = "decision_request"  # 决策请求 (带选项)，拍板之前不离开收件箱
     ACCEPT_REQUEST = "accept_request"  # 验收卡 (点名)
-    HEARTBEAT = "heartbeat"  # 巡检催办
     # 房间里被 @ 走 `MENTION` —— 「有人点了你的名」在两个产品里是同一件事，
     # 原来的 `AlertKind.mention` 没有第二份语义。
 

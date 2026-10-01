@@ -214,8 +214,8 @@ export interface ListPayload<T> {
 
 /** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。
  *
- *  `displayStatus` 就是看板卡面上那一句，后端算好的 —— 前端不做第二张映射表，理由
- *  和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
+ *  `phrase` 就是看板卡面上那一句的码，后端算好的 —— 前端不推状态，理由和
+ *  `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
  *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
  *  待回答的问题上 (`asked`)。 */
 export interface WaitingItem {
@@ -225,7 +225,7 @@ export interface WaitingItem {
   topicTitle: string
   taskId: string | null
   taskTitle: string | null
-  displayStatus: string
+  phrase: BoardPhrase
   reason: 'reviewer' | 'reporter' | 'asked'
   at: string
 }
@@ -312,15 +312,15 @@ export interface RoomTask {
  */
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-/** 后端算好的呈现，前端照抄。
- *
- *  `display_status` 已经是可以直接显示的中文，**前端不再做第二张映射表**——这正是
- *  这个字段存在的理由。同一个客观事实（比如快检红了）在不同的列里是不同的话：平台
- *  自己在修时是「修复检查」，等人拍板时是「检查未通过」，所以短语属于列，一列只会
- *  产出属于它自己的那几个词。前端再映射一次，两边就会各说各的。 */
+type BuildingPhrase = 'running' | 'started' | 'not_started' | 'returned' | 'idle' | 'draft' | 'lost'
+type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
+type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
+export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | 'accepted' | 'closed' | 'archived'
+
+/** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {
   column: BoardColumn
-  display_status: string
+  phrase: BoardPhrase
 }
 
 /** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
@@ -349,7 +349,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean; code?: string; client_id?: string }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string }
   | { type: 'done' }
   // `agent`：这一轮在哪个座位上跑（块署名的那个 handle）。一间房几个队友并行
   // 在干时，「谁在干活」靠它区分；老后端没有这个字段，界面退回默认名字。
@@ -397,22 +397,21 @@ export interface ChatAttachment {
   mime: string
 }
 
-// WebSocket client -> server frame. 帧上没有「叫不叫芝士」这一位：这条消息点了谁
-// 的名，由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要
-// 叫它，就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
-export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
+// The client sends only the liveness probe on the room's socket; a message is a POST.
+export type WsClientMessage = { type: 'ping' }
 
-export interface WsClientChatMessage {
-  type: 'message'
+// POST /topics/{id}/messages. 请求体上没有「叫不叫芝士」这一位：这条消息点了谁的名，
+// 由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要叫它，
+// 就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
+export interface ChatMessageBody {
   content: string
-  // No `author`: the backend takes it from the socket's ?token=. Sending one
-  // was never authoritative — it was the forgeable field that let an expired
-  // session post as 匿名者 — so the client no longer names itself at all.
+  // No `author`: the backend takes it from the request's token.
+  // 这一次发送的 id（UUID）。重发带同一个 id，落库的还是那一条；后端把它原样戳回
+  // 块的 meta.client_id 上，乐观显示的那一条靠它对上账——靠文本对账是不行的，落库
+  // 那一步会把 @名字 改写成 <@handle>。
+  request_id: string
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
-  // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
-  // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
-  client_id?: string
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----
@@ -685,23 +684,7 @@ export interface FileContent {
   editable?: boolean
 }
 
-// GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
-// topic's current preview. Null when 芝士 hasn't set one.
-export interface PreviewInfo {
-  /** Content fingerprint for refreshing an updated static preview. */
-  version?: string | null
-  // File and app previews share an isolated topic content origin.
-  kind?: 'file' | 'app'
-  path: string
-  mime: string | null
-  // Isolated content URL for files and live apps; null when the app is offline. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
-  // "通道在，但应用没在跑" — without it both look like an empty white frame.
-  url?: string | null
-  tunnel_up?: boolean
-  // Which artifact this is, so a client can tell "芝士 pointed at something new"
-  // from "the same preview, re-fetched".
-  artifact_id?: string
-}
+export type { PreviewInfo } from './types/preview'
 
 // GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
 // answered without opening any of it. The 工作面板 offers a tab only where the
@@ -892,7 +875,7 @@ export interface MilestoneFull {
 
 // ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
 
-// 总览是五块：①「项目是什么」写在文档正文里，②~⑤ 由平台现拼。这一份是 ②~⑤
+// 总览是四块：①「项目是什么」写在文档正文里，②~④ 由平台现拼。这一份是 ②~④
 // 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
 // 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
 // `domain/topic/overview.py`），所以两边不会各说各的。
@@ -911,16 +894,6 @@ export interface OverviewTopicItem {
   conclusion: string | null
 }
 
-export interface OverviewDecisionItem {
-  kind: 'decision'
-  /** 去处：这条决策卡所在的房间。 */
-  block_id: string | null
-  text: string
-  /** 全文在哪个话题里（点它跳过去）。 */
-  topic_id: string | null
-  topic_title: string | null
-}
-
 export interface OverviewMilestoneItem {
   kind: 'milestone'
   /** 去处：日历上的这一条。 */
@@ -932,10 +905,10 @@ export interface OverviewMilestoneItem {
   status: string | null
 }
 
-export type OverviewAutoItem = OverviewTopicItem | OverviewDecisionItem | OverviewMilestoneItem
+export type OverviewAutoItem = OverviewTopicItem | OverviewMilestoneItem
 
 export interface OverviewAutoBlock {
-  /** `active_topics` / `decisions` / `milestones` / `closed_topics`。 */
+  /** `active_topics` / `milestones` / `closed_topics`。 */
   key: string
   title: string
   items: OverviewAutoItem[]
@@ -1120,7 +1093,7 @@ export interface EnvironmentStatus {
 }
 
 export interface ComputeChoice {
-  name: string
+  name: string | null
   profile: 'cloud' | 'device'
   device_id: string | null
   cores: number | null
@@ -1161,7 +1134,7 @@ export interface DeviceSession {
 
 export interface ComputeDistribution {
   cloud: number
-  devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]
+  devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)

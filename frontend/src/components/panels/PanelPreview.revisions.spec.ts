@@ -17,7 +17,7 @@ const requestPreviewSession = vi.fn()
 const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
 const previewFileBytes = vi.fn()
-const previewDocumentPdf = vi.fn()
+const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
 
@@ -32,7 +32,7 @@ vi.mock('../../api', () => ({
   downloadFile: (...args: unknown[]) => downloadFile(...args),
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
-  previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  previewDocumentPdfSnapshot: (...args: unknown[]) => previewDocumentPdfSnapshot(...args),
   documentRevisions: (...args: unknown[]) => documentRevisions(...args),
   decideDocumentRevisions: (...args: unknown[]) => decideDocumentRevisions(...args),
   PreviewRendererUnavailable,
@@ -94,7 +94,7 @@ beforeEach(() => {
   getPreview.mockResolvedValue(artifact(PATH, DOCX))
   readPreviewFile.mockResolvedValue(fileContent(PATH))
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
-  previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
+  previewDocumentPdfSnapshot.mockResolvedValue({ bytes: new ArrayBuffer(4096), sourceVersion: null })
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
   documentRevisions.mockResolvedValue({ path: PATH, version: 'doc-1', revisions: [] })
   decideDocumentRevisions.mockResolvedValue({ path: PATH, version: 'doc-2', revisions: [] })
@@ -155,10 +155,10 @@ it('处理完之后重新取一次 PDF，页面上看到的才是处理过的那
 
   mount()
 
-  await waitFor(() => expect(previewDocumentPdf).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
   await fireEvent.click(screen.getByText('拒绝'))
 
-  await waitFor(() => expect(previewDocumentPdf).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
 })
 
 it('全部接受把每一条的序号都带上', async () => {

@@ -8,8 +8,7 @@ existed yet, and conversely `gh-token` was implemented but documented nowhere.
 SKILL.md's tools section has two tables, one per way of calling:
 
 - the MCP table writes each tool's signature — `| \\`cheese_note(thread, content)\\`
-  | … |` — and must name exactly the session-side table (`PLATFORM_TOOLS`) plus
-  the transport's `platform_request`;
+  | … |` — and must name exactly the session-side table (`PLATFORM_TOOLS`);
 - the CLI table writes the command line itself — `| \\`cheese sync [--task …]\\` |`
   — and must name exactly the CLI's subcommands.
 
@@ -68,7 +67,7 @@ def _implemented_commands() -> set[str]:
 
 
 def test_the_mcp_table_is_the_session_side_tool_table():
-    served = {*_load_cli().PLATFORM_TOOLS.names(), "platform_request"}
+    served = set(_load_cli().PLATFORM_TOOLS.names())
     documented = _documented_tools()
     assert documented - served == set(), (
         f"SKILL.md promises tools nobody serves: {sorted(documented - served)}"

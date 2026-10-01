@@ -129,7 +129,7 @@ class Column(enum.StrEnum):
 class Building(enum.StrEnum):
     """还没递出交付。"""
 
-    running = "运行中"
+    running = "running"
     #: 活才有：这条活上有人动过手，但此刻没有人在做它，也还没递出交付 —— 做了一半
     #: 停在原地。和「待开工」分开，是因为「有人碰过、停下来了」和「从来没人碰过」
     #: 对看的人是两件事：前者的下一步多半是接着做，后者是决定要不要开。
@@ -137,56 +137,59 @@ class Building(enum.StrEnum):
     #: 判据只有 `TaskFacts.has_progress` 一条，而它读的是**平台看得见的痕迹**（草稿
     #: PR / 工作树），所以这一格不是「有人在上面干活」的证据 —— 那是「运行中」的
     #: 活。主 agent 自己动手的那条路，平台今天看不见过程，只看得见留下的东西。
-    started = "已动工"
+    started = "started"
     #: 活才有：没有人在做它，而且它上面一点痕迹都没有。还没派出去、排着队等空位，
     #: 都是这一格：下一步是有人动手。
-    not_started = "待开工"
+    not_started = "not_started"
     #: 活才有：做它的分身已经交回了结论，在等房间把卡递出去。和「待开工」分开，
     #: 是因为东西已经做出来了，看的人不该以为还没人碰过它。
-    returned = "已交回"
+    returned = "returned"
     #: 房间才有：这一轮说完了，在等下一句话。活不用这个词：它放在「施工中」这一列
     #: 里读起来像自相矛盾。
-    idle = "空闲"
+    idle = "idle"
     #: 房间才有：还没开工。活没有草稿态。
-    draft = "草稿"
+    draft = "draft"
     #: 说在跑，但没有任何东西最近确认过。和「空闲」分开，是因为一条隧道断掉的活
     #: 和一条真的没人找它的活，对看的人意味着完全相反的下一步。
-    lost = "失联"
+    lost = "lost"
 
 
 class Delivering(enum.StrEnum):
     """下一步在平台/芝士手上，人不用动。"""
 
-    gate_running = "检查运行中"
-    awaiting_checks = "等待检查"
-    fixing_checks = "修复检查"
+    gate_running = "gate_running"
+    awaiting_checks = "awaiting_checks"
+    fixing_checks = "fixing_checks"
     #: 撞了合并冲突，芝士已经被派去解 —— `NoteCode.merge_conflict` 在写，
     #: 合并态 DIRTY 也落在这里，所以这一格是点得亮的，不是空契约。
-    resolving_conflict = "解决冲突"
+    resolving_conflict = "resolving_conflict"
     #: 合并态 BEHIND（strict）：平台自己在 update-branch，人不用动。
-    updating_branch = "平台更新分支"
+    updating_branch = "updating_branch"
 
 
 class NeedsYou(enum.StrEnum):
     """下一步在人手上。"""
 
-    checks_failed = "检查未通过"
-    awaiting_review = "待审阅"
-    bounced = "已退回"
+    checks_failed = "checks_failed"
+    awaiting_review = "awaiting_review"
+    bounced = "bounced"
     #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
     #: 其余几格都是一轮结束之后的状态。
-    awaiting_answer = "待回答"
+    awaiting_answer = "awaiting_answer"
 
 
 class Done(enum.StrEnum):
-    accepted = "已采纳"
-    closed = "已关闭"
+    accepted = "accepted"
+    closed = "closed"
 
 
 class Archived(enum.StrEnum):
-    archived = "已归档"
+    archived = "archived"
 
 
+#: 短语的值是码，不是字：卡面上那句话由读者的屏幕按他选的语言画
+#: （前端词条 `work.board.phrase.<码>`）。一个看板同时被说不同语言的人看，所以
+#: 后端说「是哪一句」，不替任何人挑语言。
 Phrase = Building | Delivering | NeedsYou | Done | Archived
 
 #: 短语 → 它属于哪一列。**唯一**一处把两者关联起来的地方。
@@ -207,18 +210,18 @@ COLUMN_PHRASES: dict[Column, frozenset[str]] = {
 
 @dataclass(frozen=True, slots=True)
 class Presentation:
-    """可以直接画出来的一格：哪一列，卡面写什么。"""
+    """可以直接画出来的一格：哪一列，卡面写哪一句（短语的码）。"""
 
     column: Column
-    display_status: str
+    phrase: str
 
     def as_dict(self) -> dict[str, str]:
-        return {"column": str(self.column), "display_status": self.display_status}
+        return {"column": str(self.column), "phrase": self.phrase}
 
 
 def _show(phrase: Phrase) -> Presentation:
     """列不是挑出来的，是从短语查出来的 —— 见模块开头。"""
-    return Presentation(column=_COLUMN_OF[type(phrase)], display_status=phrase.value)
+    return Presentation(column=_COLUMN_OF[type(phrase)], phrase=phrase.value)
 
 
 # —— 事实 ——————————————————————————————————————————————————————

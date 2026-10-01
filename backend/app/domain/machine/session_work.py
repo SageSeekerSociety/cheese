@@ -18,6 +18,7 @@ from app.core.sandbox_auth import bind_resource_token
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
+    choice_label,
     room_choice,
 )
 from app.domain.agent.device_hub import DeviceCallError, device_hub
@@ -47,7 +48,7 @@ from app.domain.machine.models import (
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import MachineService, left_unpushed_on
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
@@ -164,7 +165,14 @@ async def project_distribution(db, project_id) -> dict:
             cloud += 1
             continue
         entry = on_devices.setdefault(
-            device_id, {"device_id": device_id, "name": choice["name"], "agents": 0}
+            device_id,
+            # Only a device's own name is shown; a label stored on "any online
+            # device" is one language's words and is not handed out.
+            {
+                "device_id": device_id,
+                "name": choice.get("name") if device_id else None,
+                "agents": 0,
+            },
         )
         entry["agents"] += 1
     devices = sql_device_service(db)
@@ -176,7 +184,7 @@ async def project_distribution(db, project_id) -> dict:
                 entry["name"] = device.name
         visibility = await _visibility_of(devices, entry["device_id"])
         listed.append({**entry, "machine_access": visibility is Visibility.host})
-    listed.sort(key=lambda entry: (-entry["agents"], entry["name"]))
+    listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
     return {"cloud": cloud, "devices": listed}
 
 
@@ -481,10 +489,10 @@ async def push_before_switch(
     except (RuntimeError, TimeoutError) as exc:
         raise WorkComputerUnreachable(f"{PUSH_UNREACHABLE}：{exc}") from exc
     if "error" in result:
-        raise ConflictError(f"推送失败，没有更换：{result['error']}")
+        raise ConflictError(say("switchPushFailed", error=result["error"]))
     output = result["value"]
     if output.get("backgroundTaskId"):
-        raise ConflictError("推送两分钟内没有完成，没有更换；稍后重试")
+        raise ConflictError(say("switchPushTimedOut"))
     said = output.get("stdout") or ""
     if not said.startswith("Exit code "):
         return []
@@ -493,7 +501,7 @@ async def push_before_switch(
     if failed and keeps_files and all(closed for closed, _ in failed):
         return [say("workLeftClosedTask", line=line) for _, line in failed]
     detail = "\n".join(line for _, line in failed) or printed.strip()[-600:] or said
-    raise ConflictError(f"推送失败，没有更换：{detail}")
+    raise ConflictError(say("switchPushFailed", error=detail))
 
 
 # The line ``cheese sync --all`` ends each task it could not sync with.
@@ -773,7 +781,7 @@ async def _move_session(
             await db.commit()
         return []
     if _still_preparing(old):
-        raise ConflictError("机器分配仍在进行，请稍后再换机")
+        raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
         raise SessionWorking(WORKING)
     if old and await sql_device_service(db).get_device(old["device_id"]) is None:
@@ -804,9 +812,9 @@ async def _move_session(
         request = row.execution_request or {}
         old = row.work_lease
         if request.get("generation") != generation or not old:
-            raise ConflictError("工作电脑刚被更换过，刷新后重试")
+            raise ConflictError(say("workComputerJustSwitched"))
         if _still_preparing(old):
-            raise ConflictError("机器分配仍在进行，请稍后再换机")
+            raise ConflictError(say("machineAllocationInProgress"))
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     left = None
     if on_cloud:
@@ -827,29 +835,11 @@ async def _move_session(
     }
     row.work_lease = None
     await db.commit()
-    if release is not None and not await _left_unpushed_on(
+    if release is not None and not await left_unpushed_on(
         db, topic_id, release.device_id
     ):
         await MachineService(db).release_left_machine(release.id)
     return warnings
-
-
-async def _left_unpushed_on(db, topic_id, device_id) -> bool:
-    """Another session of the room left this machine without pushing: its work
-    is only there, so the machine waits for the room's cleanup."""
-    if device_id is None:
-        return False
-    requests = await db.scalars(
-        select(AgentSession.execution_request).where(
-            AgentSession.topic_id == topic_id,
-            AgentSession.execution_request.is_not(None),
-        )
-    )
-    return any(
-        lease.get("device_id") == device_id
-        for request in requests
-        for lease in request.get("retained_leases", [])
-    )
 
 
 # The room names a machine whose owner has since unbound it. It cannot come back
@@ -1040,7 +1030,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
     call = gate.Call(
         resource=gate.Resource.machine,
         subject=selected.device_id if selected is not None else choice.profile,
-        label=selected.name if selected is not None else choice.name,
+        label=selected.name if selected is not None else choice_label(choice),
         tier=COMPUTE_TIERS[choice.profile],
         approver=approver,
     )

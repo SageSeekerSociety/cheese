@@ -18,7 +18,12 @@ from app.domain.memory.models import MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore, memory_store
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _own_agent(client, topic_id: str) -> str:
@@ -80,7 +85,7 @@ def _turn(client, topic_id: str, content: str = "hi") -> list[dict]:
     """
     addressed = content if "<@" in content else f"@芝士 {content}"
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": addressed})
+        post_message(client, topic_id, "alice", {"content": addressed})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -236,7 +241,7 @@ def test_a_memory_without_a_seat_is_the_projects_own_cheese(client):
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
     """Post a human message that notifies but starts no turn."""
     with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
-        ws.send_json({"type": "message", "content": content})
+        post_message(client, topic_id, author, {"content": content})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

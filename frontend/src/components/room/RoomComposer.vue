@@ -26,11 +26,13 @@ import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
+import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import MentionMenu from './MentionMenu.vue'
 import OutsideMentionNotice from './OutsideMentionNotice.vue'
+import ReminderDialog from './ReminderDialog.vue'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
@@ -50,7 +52,11 @@ const props = defineProps<{
   attsUploading: boolean
   /** 这条消息回复的是哪一条，读出来的样子（「回复 谁：说了什么」）。不回复时是 null。 */
   replyLabel?: string | null
+  /** 发一张自己的清单；不给就没有这个入口。 */
+  postChecklist?: (steps: string[]) => Promise<boolean>
 }>()
+
+const checklistOpen = ref(false)
 
 const emit = defineEmits<{
   /** 发这一条。附件由房间补上——它才知道此刻待发条里有什么。 */
@@ -283,6 +289,19 @@ function sendDraft(opts?: { summon?: boolean }) {
   outsidePrompt.noteSent(content)
 }
 
+// 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
+const reminderOpen = ref(false)
+const reminderSetFor = ref<string | null>(null)
+function onReminderSet(at: Date) {
+  const when = new Intl.DateTimeFormat(i18n.global.locale.value, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(at)
+  reminderSetFor.value = t('work.room.reminder.set', { when })
+}
+
 // 发送键亮不亮：有字，或者有东西跟着走。
 const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0)
 
@@ -365,13 +384,22 @@ defineExpose({
         :summon-on="summonOn"
         :summon-ready="summonReady"
         :agent-name="agentName"
+        :can-checklist="!!postChecklist"
+        :can-remind="!!topic"
         @files="emit('files', $event)"
+        @checklist="checklistOpen = true"
         @toggle-summon="toggleSummon"
+        @remind="reminderOpen = true"
         @send="sendDraft()"
       >
         <template #chips><slot name="composer-chips" /></template>
       </ComposerActions>
+      <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
     </div>
+    <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
+    <v-snackbar :model-value="reminderSetFor !== null" :timeout="4000" @update:model-value="reminderSetFor = null">
+      {{ reminderSetFor }}
+    </v-snackbar>
   </div>
 </template>
 

@@ -22,7 +22,12 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _user_id(client, handle: str) -> int:
@@ -244,7 +249,7 @@ def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") 
     那一位，所以不 @ 就没有人被叫起来，闸门也就轮不到撞。
     """
     with client.websocket_connect(chat_ws_url(topic_id, who)) as ws:
-        ws.send_json({"type": "message", "content": f"@芝士 {text}"})
+        post_message(client, topic_id, who, {"content": f"@芝士 {text}"})
         frames = []
         while True:
             frames.append(ws.receive_json())

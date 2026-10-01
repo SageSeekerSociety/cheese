@@ -81,7 +81,7 @@ function work(roomId: string, id: string, title: string, createdAt: string, extr
     created_at: createdAt,
     updated_at: createdAt,
     // 落哪一列、写哪句话，全由后端给。这一份用例不关心是哪一列，但字段必须在。
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
     ...extra,
   }
 }

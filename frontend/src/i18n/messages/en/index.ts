@@ -1,7 +1,8 @@
 import account from './account.json'
 import admin from './admin.json'
-import aiChat from './aiChat.json'
+import apiError from './apiError.json'
 import compute from './compute.json'
+import design from './design.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
 import feedback from './feedback.json'
@@ -21,6 +22,7 @@ import ratchet from './ratchet.json'
 import roomNotice from './roomNotice.json'
 import routines from './routines.json'
 import shell from './shell.json'
+import slides from './slides.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
@@ -34,7 +36,6 @@ import work from './work.json'
 // `frontend/src/i18n/catalog.spec.ts` — do not add an empty namespace to silence
 // that check; write the translation and delete the keys from that list instead.
 export default {
-  aiChat,
   global,
   home,
   integrations,
@@ -55,13 +56,16 @@ export default {
   spaces,
   notifications,
   roomNotice,
+  apiError,
   toolLabels,
   work,
   admin,
   compute,
+  design,
   files,
   project,
   routines,
   shell,
+  slides,
   topic,
 }

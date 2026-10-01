@@ -4,7 +4,8 @@
     "readFailed": "无法读取这份资料（HTTP {status}）"
   },
   "preview": {
-    "cannotShow": "无法显示这个文件"
+    "cannotShow": "无法显示这个文件",
+    "generateFailed": "无法生成预览（HTTP {status}）"
   },
   "downloadFailed": "下载失败"
 }

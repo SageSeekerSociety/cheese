@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 
 class ToolScreen(StubChannel):
@@ -45,7 +45,7 @@ def _display(meta: dict) -> dict:
 
 def _chat(client, topic_id: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 hi"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

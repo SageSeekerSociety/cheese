@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
     EVENT_ROUTINE_RESULT,
     EVENT_ROUTINE_RUN,
+    EVENT_ROUTINE_STOPPED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
@@ -94,7 +95,7 @@ def now() -> datetime:
 def _clean_dir(raw: str) -> str:
     path = (raw or "").strip().strip("/")
     if any(part in ("", ".", "..") for part in path.split("/")) and path:
-        raise ValidationError("结果目录要写成房间里的相对路径，例如 周报/")
+        raise ValidationError(say("routineOutputDirInvalid"))
     return path
 
 
@@ -128,7 +129,7 @@ class RoutineService:
     async def get(self, routine_id: uuid.UUID) -> Routine:
         row = await self._session.get(Routine, routine_id)
         if row is None:
-            raise NotFoundError("没有这条周期任务")
+            raise NotFoundError(say("routineNotFound"))
         return row
 
     async def list(
@@ -153,10 +154,10 @@ class RoutineService:
         seats = await TopicMemberService(self._session).agent_handles(topic_id)
         if requested:
             if requested not in seats:
-                raise ValidationError("执行者必须是这个房间里的 AI 队友")
+                raise ValidationError(say("routineAgentNotInRoom"))
             return requested
         if not seats:
-            raise ValidationError("这个房间里没有 AI 队友，周期任务没有人执行")
+            raise ValidationError(say("routineNoAgentInRoom"))
         return seats[0]
 
     async def create(
@@ -176,7 +177,7 @@ class RoutineService:
         agent_handle: str | None,
     ) -> Routine:
         if not title.strip() or not instructions.strip():
-            raise ValidationError("周期任务要有名称和工作内容")
+            raise ValidationError(say("routineFieldsRequired"))
         spec = _validate(trigger, spec, tz)
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
@@ -273,14 +274,14 @@ class RoutineService:
 
     async def confirm(self, row: Routine, *, by: str) -> Routine:
         if row.state != RoutineState.draft.value:
-            raise ValidationError("这条已经确认过了")
+            raise ValidationError(say("routineAlreadyConfirmed"))
         self._activate(row, confirmed_by=by)
         await self._session.flush()
         return row
 
     async def pause(self, row: Routine) -> Routine:
         if row.state != RoutineState.active.value:
-            raise ValidationError("只有执行中的规则能暂停")
+            raise ValidationError(say("routinePauseActiveOnly"))
         row.state = RoutineState.paused.value
         row.next_run_at = None
         await self._session.flush()
@@ -289,7 +290,7 @@ class RoutineService:
     async def resume(self, row: Routine) -> Routine:
         """Continue from the next future moment; what was missed is not replayed."""
         if row.state != RoutineState.paused.value:
-            raise ValidationError("只有暂停中的规则能恢复")
+            raise ValidationError(say("routineResumePausedOnly"))
         self._activate(row)
         await self._session.flush()
         return row
@@ -303,7 +304,7 @@ class RoutineService:
             if key in changes and changes[key] is not None:
                 setattr(row, key, str(changes[key]).strip())
         if not row.title or not row.instructions:
-            raise ValidationError("周期任务要有名称和工作内容")
+            raise ValidationError(say("routineFieldsRequired"))
         if changes.get("output_dir") is not None:
             row.output_dir = _clean_dir(changes["output_dir"])
         if changes.get("agent_handle"):
@@ -324,7 +325,7 @@ class RoutineService:
 
     async def run_now(self, row: Routine, *, by: str) -> RoutineRun:
         if row.state == RoutineState.draft.value:
-            raise ValidationError("还没确认的规则不能执行")
+            raise ValidationError(say("routineRunUnconfirmed"))
         run = await _fire(
             self._session,
             row,
@@ -339,6 +340,118 @@ class RoutineService:
     async def delete(self, row: Routine) -> None:
         await self._session.delete(row)
         await self._session.flush()
+
+    async def announce_archived_rooms(self) -> int:
+        """归档是别处做的动作：每次对账扫一遍，哪个房间的话还没说就补上。
+
+        认房间的状态，不认是谁归档的 —— 手工归档、整个项目一起归档、脚本归档
+        走的是同一个答案，话题那一域也就不用认识周期任务。
+
+        规则自己那一行**不动**（结论：取消归档后从下一个时刻继续，
+        ``_fire_schedules`` 一直是按房间状态挑的）。要说的是每个归档了、又还有
+        在跑的规则的房间：房间里落一行「N 条规则已随归档停止」，加上给每条规则
+        主人的一条通知。
+
+        Idempotent per archive episode：房间自己的 ``archived_at`` 印在那行上，
+        已经带着本轮印子的房间跳过 —— 所以取消归档后再归档会再说一次，而手工
+        归档过的房间被项目归档又捎带一遍时不会再被说一次。
+
+        Returns how many rules were announced as stopped.
+        """
+        rooms = list(
+            await self._session.scalars(
+                select(Topic)
+                .where(Topic.status == TopicStatus.archived)
+                .where(
+                    Topic.id.in_(
+                        select(Routine.topic_id).where(
+                            Routine.state == RoutineState.active.value
+                        )
+                    )
+                )
+                # 和这一串里别的几步一样：两个后端进程同时扫，锁住的那间这次跳过，
+                # 下一轮（30 秒后）再补 —— 不然同一段归档会被说两遍。
+                .with_for_update(skip_locked=True)
+            )
+        )
+        from app.domain.notification.services import ProjectNotificationService
+
+        stopped = 0
+        for room in rooms:
+            rules = list(
+                await self._session.scalars(
+                    select(Routine).where(
+                        Routine.topic_id == room.id,
+                        Routine.state == RoutineState.active.value,
+                    )
+                )
+            )
+            if not rules:
+                continue
+            stamp = (room.archived_at or now()).isoformat()
+            already = await self._session.scalar(
+                select(Block.id)
+                .where(
+                    Block.topic_id == room.id,
+                    Block.meta["event_type"].as_string() == EVENT_ROUTINE_STOPPED,
+                    Block.meta["archived_at"].as_string() == stamp,
+                )
+                .limit(1)
+            )
+            if already is not None:
+                continue
+            self._session.add(
+                Block(
+                    id=uuid.uuid4(),
+                    project_id=room.project_id,
+                    topic_id=room.id,
+                    author="system",
+                    author_type=AuthorType.platform,
+                    kind=BlockKind.event,
+                    content=f"{len(rules)} 条规则已随归档停止",
+                    meta={
+                        **notice(
+                            EVENT_ROUTINE_STOPPED,
+                            severity=SEVERITY_INFO,
+                            who=WHO_PLATFORM,
+                            detail="\n".join(f"「{r.title}」" for r in rules),
+                            detail_label="规则",
+                        ),
+                        "routine_ids": [str(r.id) for r in rules],
+                        "archived_at": stamp,
+                    },
+                )
+            )
+            for rule in rules:
+                await ProjectNotificationService(self._session).create(
+                    project_id=rule.project_id,
+                    level=NotificationLevel.light,
+                    kind=NotificationType.CHANGE_ALERT,
+                    title=f"周期任务「{rule.title}」已随话题归档停止",
+                    body=(
+                        f"房间「{room.title}」归档了，这条规则随之停下。"
+                        "取消归档后它会从下一个时刻继续，不用重新设置。"
+                    ),
+                    target_handle=rule.owner_handle,
+                    topic_id=room.id,
+                    payload={"routine_id": str(rule.id)},
+                )
+            stopped += len(rules)
+        await self._session.flush()
+        return stopped
+
+    async def archived_room_ids(self, topic_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """这些房间里哪些归档了，一次查询问完。
+
+        规则的自己那一行不记「房间没了」（归档不写规则），所以列表上的
+        「已随话题归档停止」只能问房间 —— 一条一条问就是每行一次往返。
+        """
+        if not topic_ids:
+            return set()
+        stmt = select(Topic.id).where(
+            Topic.id.in_(topic_ids), Topic.status == TopicStatus.archived
+        )
+        return set((await self._session.scalars(stmt)).all())
 
     async def report(
         self,
@@ -388,9 +501,8 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         f"结果保存到：{folder}（用 cheese show 放进房间，文件名带上日期）",
         "",
         "做完后必须交回结果，成功失败都要交：",
-        f'platform_request(method="POST", path="/routine-runs/{run.id}/report", '
-        'body={"status": "succeeded" 或 "failed", "summary": "一两句结果或失败原因",'
-        ' "outputs": ["房间里的结果文件路径"]})',
+        f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
+        'summary="一两句结果或失败原因", outputs=["房间里的结果文件路径"])',
         "没有交回结果的一次执行会被记为失败。",
     ]
     return "\n".join(lines)
@@ -476,6 +588,10 @@ async def _fire(
                 "topicId": str(routine.topic_id),
                 "eventType": EVENT_ROUTINE_RUN,
                 "severity": SEVERITY_INFO,
+                # 这一轮跑的是主人交代的活，所以它读主人的 private 记忆（组装那一
+                # 轮的时候从这一笔投递上认出来）。写在这里而不是规则表上：读的那
+                # 一侧（agent）不认识周期任务这个域，而这一笔它本来就在读。
+                "routineOwner": routine.owner_handle,
             },
             occurred_at=stamp,
         ),
@@ -815,10 +931,18 @@ async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
         triggered = await _fire_events(session)
         await session.commit()
     async with sessions() as session:
+        # 归档是别处做的动作，所以这里每次都问一遍「哪个房间的话还没说」，而不是
+        # 让归档那几条路各自记得来敲这扇门（`announce_archived_rooms`）。
+        stopped = await RoutineService(session).announce_archived_rooms()
         await _settle_open_runs(session)
         await _announce_finished(session)
         await session.commit()
     dispatched = 0
     if scheduled or triggered:
         dispatched = await dispatch_pending(sessions, chat=chat, runner=runner)
-    return {"scheduled": scheduled, "triggered": triggered, "dispatched": dispatched}
+    return {
+        "scheduled": scheduled,
+        "triggered": triggered,
+        "stopped": stopped,
+        "dispatched": dispatched,
+    }

@@ -25,6 +25,7 @@ of its own instead.
 
 import json
 import re
+from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 
 from app.domain.agent.harness import CLAUDE_CODE
@@ -114,13 +115,18 @@ def _authored(
 def _retrying(record: dict, label: str | None) -> AgentRetrying:
     """``system/api_retry``, as the pinned build writes it: ``attempt``,
     ``max_retries``, ``retry_delay_ms``, ``error_status`` (null for a
-    connection error) and ``error``, the kind of failure."""
+    connection error), ``error``, the kind of failure, and — only when the
+    request got no response at all — ``no_response.waited_ms``."""
+    no_response = record.get("no_response")
     return AgentRetrying(
         error=str(record.get("error") or ""),
         attempt=_count(record.get("attempt")),
         max_attempts=_count(record.get("max_retries")),
         delay_ms=_count(record.get("retry_delay_ms")),
         status=_count(record.get("error_status")),
+        no_response_ms=_count(no_response.get("waited_ms"))
+        if isinstance(no_response, dict)
+        else None,
         thread_label=label,
     )
 
@@ -153,7 +159,7 @@ def _message(record: dict) -> tuple[dict, str | None]:
     return record, f"call:{parent}" if parent else None
 
 
-def bind(record: dict, facts: dict[str, str]) -> dict[str, str]:
+def bind(record: dict, facts: Mapping[str, str]) -> dict[str, str]:
     """The facts this record establishes, given the ones already known.
 
     ``facts`` maps ``spawned:<call id>`` and ``agent:<agent id>`` to the label of
@@ -219,7 +225,7 @@ def bind(record: dict, facts: dict[str, str]) -> dict[str, str]:
 class Assembler:
     """Records in, room events out."""
 
-    def __init__(self, facts: dict[str, str], session_id: str | None = None):
+    def __init__(self, facts: MutableMapping[str, str], session_id: str | None = None):
         self.facts = facts
         self.session_id = session_id
 

@@ -2,7 +2,8 @@
 
 The backend stores a room line as Chinese text plus the key and parameters of
 the sentence (`app/domain/block/notice_text.py`); a screen renders the key in its
-reader's language from the frontend catalog `roomNotice`. Two things can go
+reader's language from the frontend catalog `roomNotice` (an error's sentence
+from `apiError`). Two things can go
 wrong without anything failing at the moment they happen:
 
 - the two copies of the Chinese templates drift, and the room stores one
@@ -23,8 +24,12 @@ from pathlib import Path
 import pytest
 
 from app.domain.block.notice_text import (
+    ERROR_MESSAGES,
+    HISTORICAL_NOTICE_KEYS,
     I18N_META_KEY,
     MESSAGES,
+    NOTICE_MESSAGES,
+    from_descriptor,
     notice_message,
     say,
     with_keys,
@@ -35,25 +40,31 @@ APP = ROOT / "backend/app"
 CATALOG = ROOT / "frontend/src/i18n/messages"
 
 
-def _catalog(locale: str) -> dict[str, str]:
-    return json.loads((CATALOG / locale / "roomNotice.json").read_text("utf-8"))
+#: Each backend catalog and the frontend namespace that mirrors it.
+CATALOGS = [("roomNotice", NOTICE_MESSAGES), ("apiError", ERROR_MESSAGES)]
+
+
+def _catalog(locale: str, namespace: str) -> dict[str, str]:
+    return json.loads((CATALOG / locale / f"{namespace}.json").read_text("utf-8"))
 
 
 def _placeholders(template: str) -> set[str]:
     return set(re.findall(r"\{(\w+)\}", template))
 
 
-def test_the_backend_templates_are_the_frontend_chinese_catalog():
-    assert _catalog("zh-CN") == MESSAGES
+@pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
+def test_the_backend_templates_are_the_frontend_chinese_catalog(namespace, templates):
+    assert _catalog("zh-CN", namespace) == templates
 
 
-def test_every_sentence_has_english_with_the_same_placeholders():
-    english = _catalog("en")
-    assert set(english) == set(MESSAGES)
+@pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
+def test_every_sentence_has_english_with_the_same_placeholders(namespace, templates):
+    english = _catalog("en", namespace)
+    assert set(english) == set(templates)
     assert {
-        key: (_placeholders(MESSAGES[key]), _placeholders(english[key]))
-        for key in MESSAGES
-        if _placeholders(MESSAGES[key]) != _placeholders(english[key])
+        key: (_placeholders(templates[key]), _placeholders(english[key]))
+        for key in templates
+        if _placeholders(templates[key]) != _placeholders(english[key])
     } == {}
 
 
@@ -104,16 +115,65 @@ def test_every_say_names_a_sentence_and_fills_exactly_its_placeholders():
     assert wrong == []
 
 
-def test_every_sentence_in_the_catalog_is_said_somewhere():
-    """A key some table hands to ``say`` counts: it is named in the app as a
-    string literal all the same. One named nowhere is a sentence nobody says."""
+def _unnamed_current_sentences():
+    # The catalog/retirement declaration is not a generating call site.
     named = {
         node.value
         for path in APP.rglob("*.py")
+        if path != APP / "domain/block/notice_text.py"
         for node in ast.walk(ast.parse(path.read_text("utf-8")))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
-    assert sorted(set(MESSAGES) - named) == []
+    return sorted(set(MESSAGES) - HISTORICAL_NOTICE_KEYS - named)
+
+
+def test_every_sentence_in_the_catalog_is_said_somewhere():
+    """Current keys must be named in the app; only explicit historical keys
+    survive without a generator so stored descriptors can still be replayed."""
+    assert _unnamed_current_sentences() == []
+
+
+def test_an_unknown_orphan_is_not_exempted(monkeypatch):
+    monkeypatch.setitem(MESSAGES, "unregisteredHistoricalSentence", "旧消息")
+    assert _unnamed_current_sentences() == ["unregisteredHistoricalSentence"]
+    with pytest.raises(AssertionError, match="unregisteredHistoricalSentence"):
+        test_every_sentence_in_the_catalog_is_said_somewhere()
+
+
+def test_only_the_retired_comment_and_decision_notices_are_historical():
+    assert HISTORICAL_NOTICE_KEYS == {
+        "docCommented",
+        "docCommentedHandedTo",
+        "actionDecision",
+    }
+    assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
+    assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()
+    assert not {key for _, _, key, _ in _say_calls()} & HISTORICAL_NOTICE_KEYS
+
+
+@pytest.mark.parametrize(
+    ("key", "params", "stored"),
+    [
+        ("docCommented", {"actor": "ana😀"}, "ana😀 评论了文档"),
+        (
+            "docCommentedHandedTo",
+            {"actor": "ana😀", "seat": "<@cheese-test>"},
+            "ana😀 评论了文档，已交给 <@cheese-test>",
+        ),
+        ("actionDecision", {"actor": "<@cheese-test>"}, "<@cheese-test> 记录了决策"),
+    ],
+)
+def test_historical_descriptor_replays_without_allowing_generation(key, params, stored):
+    descriptor = json.loads(json.dumps({"key": key, "params": params}))
+    line = from_descriptor(descriptor)
+    assert line == stored
+    assert line.descriptor() == descriptor
+    meta = {"i18n": {"content": descriptor}}
+    assert with_keys(meta, content=stored) == meta
+    assert notice_message(meta) == {"message": descriptor}
+    assert from_descriptor({"key": key, "params": {}}) is None
+    with pytest.raises(ValueError, match="historical notice cannot be generated"):
+        say(key, **params)
 
 
 def test_a_sentence_is_its_chinese_text_and_carries_its_key():

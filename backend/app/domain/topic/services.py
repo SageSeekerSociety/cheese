@@ -9,8 +9,6 @@ topic children at all. What used to be a third level is a `tasks` row — see
 `app.domain.room_task.place` for how one id still addresses either.
 """
 
-import difflib
-import html
 import logging
 import uuid
 from dataclasses import dataclass
@@ -29,9 +27,8 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
+from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import (
-    AGENT_NOTICE_META_KEY,
     AuthorType,
     Block,
     BlockKind,
@@ -55,6 +52,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -66,11 +64,8 @@ from app.domain.topic.overview import (
     ACTIVE_TOPICS_LIMIT,
     CLOSED_TOPICS_KEY,
     CLOSED_TOPICS_LIMIT,
-    DECISIONS_KEY,
-    DECISIONS_LIMIT,
     MILESTONES_KEY,
     MILESTONES_LIMIT,
-    decision_summary,
     first_sentence,
     overview_auto_blocks,
     topic_status,
@@ -82,11 +77,6 @@ from app.domain.topic.repositories import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-
-# Titles are AI-generated (the agent names a topic via `cheese_title`), never
-# deterministically derived from text — see CLAUDE.md. An upgraded block starts
-# untitled and 芝士 names it on its first turn (same as a + new topic).
-PLACEHOLDER_TITLE = "新话题"
 
 
 @overload
@@ -120,25 +110,6 @@ def _require_room(parent: Topic) -> None:
 
 
 logger = logging.getLogger("cheesex.topic")
-
-
-def _doc_edit_lines(content: str) -> list[str]:
-    # Empty editor paragraphs are layout, not a contribution. Keep the saved
-    # document intact; omit only empty prose nodes from conversation evidence.
-    return "\n\n".join(
-        node.content
-        for node in markdown_to_nodes(content)
-        if node.node_type != PARAGRAPH or html.unescape(node.content).strip()
-    ).splitlines()
-
-
-def _doc_conflict(current_version: int) -> ConflictError:
-    """The living doc moved under a writer. The current version rides along so
-    the caller can re-read and rebase without a second round trip."""
-    return ConflictError(
-        "实况文档已经被改过了，你手上这份是旧的",
-        data={"doc_version": current_version},
-    )
 
 
 def _brief_doc(
@@ -254,7 +225,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.status == TopicStatus.archived:
-            raise ConflictError("房间已归档，请先取消归档再继续工作")
+            raise ConflictError(say("roomArchivedUnarchiveFirst"))
         return topic
 
     async def _starting_agent_handle(self, topic: Topic) -> str:
@@ -289,10 +260,11 @@ class TopicService:
         self,
         *,
         project_id: uuid.UUID,
-        title: str,
+        title: str | None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
+        """``title=None`` opens an unnamed room (see `TopicRepository.add`)."""
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -641,7 +613,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.kind == TopicKind.root:
-            raise ValidationError("项目本体不能归档")
+            raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
             return topic
         await self._archive_one(topic, by=by)
@@ -776,7 +748,7 @@ class TopicService:
         )
         if operation is not None:
             if operation.state == "preparing":
-                raise ConflictError("会话正在停止并保存记录，确认完成后即可取消归档")
+                raise ConflictError(say("unarchiveWhileSessionStopping"))
             if operation.state == "pending":
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "retained", "complete"}:
@@ -890,7 +862,7 @@ class TopicService:
             raise NotFoundError("Parent topic not found")
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
         if parent.status == TopicStatus.archived:
-            raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+            raise ValidationError(say("topicArchivedFrozen"))
 
         project = await self._projects.get(block.project_id)
 
@@ -901,9 +873,7 @@ class TopicService:
                 branch_protection_of(project).default_reviewer or None
             )
             if reviewer_handle is None:
-                raise ValidationError(
-                    "需要指定由谁审阅，或在项目设置中设置默认审阅的人"
-                )
+                raise ValidationError(say("reviewerRequired"))
             task = await tasks.open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
@@ -937,9 +907,12 @@ class TopicService:
             source_block=block.content,
         )
         root_id = project.root_topic_id if project else None
+        # Titles are AI-generated (the agent names a topic via `cheese_title`),
+        # never derived from text — see CLAUDE.md. An upgraded block starts
+        # unnamed and 芝士 names it on its first turn, like a + new topic.
         new_room = await self._repo.add(
             project_id=block.project_id,
-            title=PLACEHOLDER_TITLE,
+            title=None,
             parent_id=root_id,
             kind=TopicKind.topic,
             created_by=created_by,
@@ -977,15 +950,9 @@ class TopicService:
         dispatch and stayed there while the work moved on. A brief belongs on
         the card (`Task.brief`), where being unchangeable is the point.
         """
-        doc = await self._blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
-            author="system",
-            author_type=AuthorType.platform,
-            content=content,
-            kind=BlockKind.doc,
+        await DocumentWriter(self._session, summarize_doc_change).seed(
+            room_id=topic.id, project_id=topic.project_id, content=content
         )
-        await self._sync_doc_nodes(doc, content)
 
     async def _card_block(self, room: Topic, task: Task) -> Block:
         """那张卡 —— the room's timeline says a piece of work went out from here.
@@ -1206,7 +1173,7 @@ class TopicService:
         return await self.doc_of_room(place.room_id)
 
     async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
-        """总览房间（项目根话题）的 ②~⑤，结构化（#1889）。
+        """总览房间（项目根话题）的 ②~④，结构化（#1889）。
 
         总览只属于根话题：别的房间读得到的是它们自己的实况文档，没有人从那里看
         项目全局。非根话题给的是一句 404 —— 它名下确实没有这么一件东西，这和
@@ -1226,7 +1193,7 @@ class TopicService:
         all_topics: list[Topic] | None = None,
         roster: list[dict] | None = None,
     ) -> dict[str, list[dict]]:
-        """②~⑤ 的每一行：活跃话题、最近决策卡、里程碑、已结束话题的结论。
+        """②~④ 的每一行：活跃话题、里程碑、已结束话题的结论。
 
         全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次就是
         新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
@@ -1283,13 +1250,9 @@ class TopicService:
             doc = docs.get(topic.id)
             return topic_status(doc.content) if doc is not None else None
 
-        decisions = (
-            await self._blocks.list_by_kind_for_project(project_id, BlockKind.decision)
-        )[:DECISIONS_LIMIT]
         milestones, _ = await MilestoneService(self._session).list_for_project(
             project_id
         )
-        title_of = {t.id: t.title for t in all_topics}
         return {
             ACTIVE_TOPICS_KEY: [
                 {
@@ -1304,15 +1267,6 @@ class TopicService:
                     "conclusion": conclusion(t, prefer_card=False),
                 }
                 for t in live
-            ],
-            DECISIONS_KEY: [
-                {
-                    "id": str(block.id),
-                    "text": decision_summary(block.content),
-                    "topic_id": str(block.topic_id),
-                    "topic": title_of.get(block.topic_id),
-                }
-                for block in decisions
             ],
             MILESTONES_KEY: [
                 {
@@ -1358,177 +1312,22 @@ class TopicService:
         author: str,
         expected_version: int,
         author_type: AuthorType = AuthorType.participant,
+        operation_id: uuid.UUID | None = None,
     ) -> tuple[Block, Block | None]:
-        """改文档即指令 (eval B2): upsert the topic's living doc and drop a
-        '编辑了文档' event into the conversation. The agent reads the latest doc
-        on its next turn, so the edit acts as an instruction.
-
-        ``expected_version`` is the ``doc_version`` the writer read; ``0`` says
-        it expects no doc to exist yet. A write based on any other version is
-        refused, because this doc is only ever written whole — 芝士 setting back
-        a document it assembled from a ten-minute-old copy erases whatever a
-        person typed in between, with nothing left to recover it from.
-
-        The refusal comes BEFORE any of the write's effects: no node tree, no
-        '编辑了文档' event. A rejected write that still announced itself would
-        put a change in the room that is not in the document.
-        """
         place = await self.place_or_404(topic_id)
-        topic = place.room
-        # 归档后文档定格 (spec §6.3).
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("话题已归档，文档已定格，不能再编辑")
-        doc = await self._blocks.doc_root(place.room_id)
-        previous_content = doc.content if doc is not None else ""
-        if doc is not None:
-            updated = await self._blocks.set_doc_content(
-                doc, content, expected_version=expected_version
-            )
-            if updated is None:
-                raise _doc_conflict(doc.doc_version)
-            doc = updated
-        else:
-            if expected_version != 0:
-                raise _doc_conflict(0)
-            doc = await self._blocks.add(
-                project_id=topic.project_id,
-                topic_id=place.room_id,
-                author=author,
-                author_type=author_type,
-                content=content,
-                kind=BlockKind.doc,
-            )
-        # The root records the latest editor; unchanged nodes keep their author,
-        # and _sync_doc_nodes attributes only newly written nodes to this editor.
-        doc.author = author
-        doc.author_type = author_type
-        # B1: also sync the structured node tree (struct_parent children) so the
-        # doc's blocks get stable ids for cross-view highlight / comments later.
-        await self._sync_doc_nodes(doc, content)
-        # Append-only conversation event (spec H1): the doc edit is visible.
-        before_lines = _doc_edit_lines(previous_content)
-        after_lines = _doc_edit_lines(content)
-        if before_lines == after_lines:
-            return doc, None
-        # A human actor is emitted as the structured <@handle> token so the
-        # client renders it as a clickable mention chip (resolving handle→name
-        # via the roster) — NOT prose we later pattern-match. 芝士 is one familiar
-        # name whichever 分身 wrote it: each authors under its own
-        # ``cheese-<topic hex>`` handle, which is not what a reader should see.
-        by_agent = looks_like_agent_handle(author)
-        actor = say("actorCheese") if by_agent else f"<@{author}>"
-        # What the same event says to 芝士, written here because this is the code
-        # that moved the document. It locates the change and does NOT carry it:
-        # a document pushed into a running turn displaces the work instead of
-        # informing it, and the doc is one call away.
-        #
-        # 芝士's own edit is not news to 芝士 — it wrote the version it is holding.
-        for_agent = (
-            None
-            if by_agent
-            else (
-                f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
-                f"{summarize_doc_change(previous_content, content)}。"
-                "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
-            )
-        )
-        landed = landing(
-            EventAbout.room,
-            project_id=topic.project_id,
+        if place.room.status == TopicStatus.archived:
+            raise ValidationError(say("topicArchivedDocFrozen"))
+        return await DocumentWriter(self._session, summarize_doc_change).edit_doc(
             room_id=place.room_id,
-        )
-        notice = await self._blocks.add(
-            project_id=landed.project_id,
-            topic_id=landed.topic_id,
-            task_id=landed.task_id,
+            project_id=place.project_id,
+            content=content,
             author=author,
-            author_type=AuthorType.platform,
-            content=say("docEdited", actor=actor),
-            kind=BlockKind.event,
-            refs=[str(doc.id)],
-            # action:"doc" → the client renders the 看文档 link on this SAME
-            # line — one event vocabulary for humans and 芝士 alike.
-            meta={
-                "platform": True,
-                "action": "doc",
-                "doc_version": doc.doc_version,
-                AGENT_NOTICE_META_KEY: for_agent,
-                "detail_label": say("labelDocEditDiff"),
-                "detail": "\n".join(
-                    difflib.unified_diff(
-                        before_lines,
-                        after_lines,
-                        fromfile="修改前",
-                        tofile="修改后",
-                        lineterm="",
-                    )
-                ),
-            },
+            expected_version=expected_version,
+            author_type=author_type,
+            operation_id=operation_id,
         )
-        return doc, notice
 
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
-        """Reconcile the living doc's node tree (B1) with `content` via a
-        block-level diff so unchanged nodes keep their ids (anchors survive an
-        edit). Re-setting the same markdown is a no-op."""
-        new_nodes = markdown_to_nodes(content)
-        existing = await self._blocks.list_doc_nodes(root.topic_id)
-        matcher = difflib.SequenceMatcher(
-            a=[b.content for b in existing],
-            b=[n.content for n in new_nodes],
-            autojunk=False,
-        )
-        # Reuse existing block ids wherever content is unchanged (equal runs).
-        reuse: dict[int, Block] = {}
-        for tag, i1, i2, j1, _j2 in matcher.get_opcodes():
-            if tag == "equal":
-                for off in range(i2 - i1):
-                    reuse[j1 + off] = existing[i1 + off]
-        kept_ids = {b.id for b in reuse.values()}
-        for b in existing:
-            if b.id not in kept_ids:
-                await self._blocks.delete(b)
-        for idx, node in enumerate(new_nodes):
-            order = float(idx)
-            block = reuse.get(idx)
-            if block is not None:
-                if block.struct_order != order or block.node_type != node.node_type:
-                    await self._blocks.update_node(
-                        block, node_type=node.node_type, struct_order=order
-                    )
-            else:
-                await self._blocks.add(
-                    project_id=root.project_id,
-                    topic_id=root.topic_id,
-                    author=root.author,
-                    author_type=root.author_type,
-                    content=node.content,
-                    kind=BlockKind.doc_node,
-                    struct_parent=root.id,
-                    node_type=node.node_type,
-                    struct_order=order,
-                )
-
-    async def add_relay_block(
-        self, *, target: Task, sender: Place, label: str, text: str
-    ) -> Block:
-        """母子传话's message block (see `app.domain.topic.relay`).
-
-        Lives here, not in `relay.py`, for one reason: writing a Block from
-        another domain's repository is the debt `tests/unit/test_domain_import_
-        guard.py` ratchets down, and this service already carries that exemption.
-        The ROOM's 芝士 is the author: a message from someone who is not on the
-        roster reads as a ghost. `refs` links back to the sender.
-        """
-        author = await self._members.resolve_agent_handle(target.room_id)
-        return await self._blocks.add(
-            project_id=target.project_id,
-            topic_id=target.room_id,
-            task_id=target.id,
-            author=author,
-            author_type=AuthorType.participant,
-            content=f"【{label}｜{sender.title}】\n{text}",
-            kind=BlockKind.message,
-            refs=[str(sender.room_id)],
+        await DocumentWriter(self._session, summarize_doc_change)._sync_doc_nodes(
+            root, content
         )

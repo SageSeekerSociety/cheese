@@ -6,6 +6,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const detailByHandle = vi.fn()
@@ -44,7 +45,7 @@ function team(overrides: Partial<Team> = {}): Team {
 function mount() {
   return render(Detail as unknown as Component, {
     global: {
-      plugins: [createVuetify({ components, directives })],
+      plugins: [createVuetify({ components, directives }), createPinia()],
       stubs: {
         NavLink: { template: '<a><slot /></a>' },
         RouterView: { template: '<div>成员工作区内容</div>' },

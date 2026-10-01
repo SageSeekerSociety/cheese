@@ -240,7 +240,7 @@ jobs:
 
       - name: Ensure required test tools
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof tmux zsh
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof ripgrep tmux zsh
           # Tests that launch a room's session need its namespace.
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
 
@@ -311,6 +311,7 @@ jobs:
           tools="$RUNNER_TEMP/harness-tools/node_modules/.bin"
           echo "$tools" >> "$GITHUB_PATH"
           echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
           "$tools/claude" --version
           "$tools/codex" --version
           # pi is not an npm package here: the build a room runs is the

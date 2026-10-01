@@ -19,7 +19,7 @@ import {
   updateTopicMemberRole,
 } from '../api'
 import { t } from '../i18n'
-import { choiceKey } from '../lib/computeConfig'
+import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
@@ -31,6 +31,7 @@ import TopicComputePicker from './TopicComputePicker.vue'
 
 const props = defineProps<{
   topicId: string
+  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
@@ -145,9 +146,8 @@ function onFaceError(handle: string): void {
   if (broken.value.has(handle)) return
   broken.value = new Set(broken.value).add(handle)
 }
-// AI 队友的底色按名字取，和它在别处的头像（CheeseAvatar）一个颜色。
 function faceColor(m: TopicMemberRow): string {
-  return avatarColor(m.agent ? m.name || m.member_handle : m.member_handle)
+  return avatarColor(m.member_handle)
 }
 function initial(name: string): string {
   return avatarInitial(name)
@@ -198,22 +198,25 @@ async function onSetRole(handle: string, role: string) {
       >
         <span class="members-mini__stack">
           <template v-for="(m, i) in stackFaces" :key="m.id">
+            <CheeseAvatar
+              v-if="m.agent"
+              class="members-mini__ai"
+              :size="22"
+              :name="m.name || m.member_handle"
+              :handle="m.member_handle"
+              :style="{ zIndex: MAX_FACES - i }"
+            />
             <img
-              v-if="faceSrc(m)"
+              v-else-if="faceSrc(m)"
               class="members-mini__face members-mini__face--photo"
-              :class="{ 'members-mini__face--ai': m.agent }"
               :src="faceSrc(m)!"
               :alt="m.name || m.member_handle"
               :style="{ zIndex: MAX_FACES - i }"
               @error="onFaceError(m.member_handle)"
             />
-            <span
-              v-else
-              class="members-mini__face"
-              :class="{ 'members-mini__face--ai': m.agent }"
-              :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }"
-              >{{ initial(m.name || m.member_handle) }}</span
-            >
+            <span v-else class="members-mini__face" :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }">{{
+              initial(m.name || m.member_handle)
+            }}</span>
           </template>
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
             >+{{ overflow }}</span
@@ -233,7 +236,7 @@ async function onSetRole(handle: string, role: string) {
       <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <CheeseAvatar v-if="m.agent" :size="26" :name="m.name || m.member_handle" />
+          <CheeseAvatar v-if="m.agent" :size="26" :name="m.name || m.member_handle" :handle="m.member_handle" />
           <img
             v-else-if="faceSrc(m)"
             class="roster__avatar roster__avatar--photo"
@@ -292,12 +295,14 @@ async function onSetRole(handle: string, role: string) {
       </ul>
 
       <div v-if="machines" class="roster__future" data-testid="future-machine">
-        <span class="roster__machine-text">{{ t('work.roomMachine.here', { name: machines.choice.name }) }}</span>
+        <span class="roster__machine-text">{{
+          t('work.roomMachine.here', { name: choiceName(machines.choice) })
+        }}</span>
         <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
         <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
         </span>
-        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+        <TopicComputePicker :topic-id="topicId" :project-id="projectId" :profile="machines" @changed="loadMachines" />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
         {{ t('work.roomMachine.loadFailed') }}
@@ -322,7 +327,7 @@ async function onSetRole(handle: string, role: string) {
           <template #item="{ props: ip, item }">
             <v-list-item v-bind="ip" :title="undefined" class="roster__option">
               <template #prepend>
-                <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" />
+                <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" :handle="item.raw.value" />
                 <img
                   v-else-if="item.raw.face"
                   class="roster__avatar roster__avatar--photo"
@@ -423,10 +428,17 @@ async function onSetRole(handle: string, role: string) {
   color: var(--muted);
   font-size: 0.6rem;
 }
-/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：按名字取色的圆角方块，圆角是
-   边长的四分之一（22px → 6px，见 squareRadius）。人是圆的。 */
-.members-mini__face--ai {
-  border-radius: var(--radius-sm);
+/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）。叠在一起时和人的头像一样
+   描一圈底色，前后两张脸才分得开：描边压在超椭圆的边上，约 1.5px。 */
+.members-mini__ai {
+  margin-left: -7px;
+}
+.members-mini__ai:first-child {
+  margin-left: 0;
+}
+.members-mini__ai :deep(.cheese-avatar__tile) {
+  stroke: var(--surface);
+  stroke-width: 14px;
 }
 
 .roster {

@@ -243,7 +243,7 @@ watch(
         class="demo-seat"
         :class="{ 'demo-seat-busy': frame.runningWho.includes(s.who) }"
       >
-        <CheeseAvatar :size="22" :name="names[s.who] ?? s.who" />
+        <CheeseAvatar :size="22" :name="names[s.who] ?? s.who" :handle="s.who" />
         <div class="demo-seat-body">
           <div class="demo-seat-name">
             {{ names[s.who] ?? s.who }}
@@ -273,7 +273,11 @@ watch(
               :block="row.block"
               :notice="row.notice"
               :run="row.run"
-              :name="row.block.author === 'system' ? null : names[row.block.author] ?? null"
+              :agent="
+                row.block.author === 'system' || !names[row.block.author]
+                  ? null
+                  : { name: names[row.block.author]!, handle: row.block.author }
+              "
               :time="row.line.time"
               :agent-name="names[defaultAgent] ?? '芝士'"
               :refs="refs"

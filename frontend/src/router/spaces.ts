@@ -68,12 +68,6 @@ export default {
               component: () => import('@/views/tasks/detail/Brief.vue'),
             },
             {
-              path: 'ai-advice',
-              name: 'TasksAIAdvice',
-              component: () => import('@/views/tasks/detail/AIAdvice.vue'),
-              meta: { titleKey: 'navigation.pages.taskAdvice' },
-            },
-            {
               path: 'submissions',
               name: 'TasksSubmissions',
               component: () => import('@/views/tasks/detail/Submissions.vue'),

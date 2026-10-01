@@ -186,7 +186,7 @@ async def _model_kwargs(
     # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
     #
     # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
-    # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
+    # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、项目小结，
     # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
     async with sessions() as session:
         proposed = await service._pass_policy_gate(

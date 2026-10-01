@@ -8,6 +8,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatus } from '../../lib/siteStatus'
+import { siteStatusLabel } from '../../lib/siteStatusLabel'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
@@ -41,28 +42,7 @@ onBeforeUnmount(() => clearInterval(timer))
 
 const status = computed(() => siteStatus(props.blocks, props.working, props.turns))
 
-// 键名写全，不拼：拼出来的键谁也搜不到，目录那道闸门会把它们当成没人用的。
-const PLAIN: Record<Exclude<SiteState, 'acting' | 'retrying'>, string> = {
-  thinking: 'work.room.site.status.thinking',
-  compacting: 'work.room.site.status.compacting',
-  waiting: 'work.room.site.status.waiting',
-  stopped: 'work.room.site.status.stopped',
-  idle: 'work.room.site.status.idle',
-}
-
-const label = computed(() => {
-  const s = status.value
-  switch (s.state) {
-    case 'acting':
-      return t('work.room.site.status.acting', { verb: s.verb ?? '' })
-    case 'retrying':
-      return s.attempt
-        ? t('work.room.site.status.retryingCount', { attempt: s.attempt })
-        : t('work.room.site.status.retrying')
-    default:
-      return t(PLAIN[s.state])
-  }
-})
+const label = computed(() => siteStatusLabel(status.value))
 
 const TONE: Record<SiteState, string> = {
   thinking: 'ok',

@@ -123,18 +123,10 @@ def get_llm_gateway() -> LlmGateway | None:
 
 
 @lru_cache
-def _pool_with_owns_sessions(cloud: CloudChannel) -> ComputePool:
-    """The chat service's pool, with every harness's attach checking the
-    work runner's ``owns_sessions`` flag (FB-56)."""
-    pool = build_compute_pool(cloud_channel=cloud)
-    runner = get_work_runner()
-    for runtime in pool._runtimes():
-        runtime.bind_owns_sessions(lambda: runner)
-    return pool
-
-
-def get_chat_service() -> ChatService:
-    gateway = get_llm_gateway()
+def get_compute_pool() -> ComputePool:
+    """The harness runtimes this process reads sessions with: the chat service's,
+    and the one a runner's ring wakes. Every runtime's attach checks the work
+    runner's ``owns_sessions`` flag inside its seat lock first (FB-56)."""
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
@@ -142,13 +134,22 @@ def get_chat_service() -> ChatService:
         ensure_topic_cloud=_ensure_topic_cloud,
         read_topic_cloud=_read_topic_cloud,
     )
+    pool = build_compute_pool(cloud_channel=cloud)
+    runner = get_work_runner()
+    for runtime in pool._runtimes():
+        runtime.bind_owns_sessions(lambda: runner)
+    return pool
+
+
+@lru_cache
+def get_chat_service() -> ChatService:
     return ChatService(
         session_factory=async_session_factory,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
-        compute=_pool_with_owns_sessions(cloud),
-        gateway=gateway,
+        compute=get_compute_pool(),
+        gateway=get_llm_gateway(),
     )
 
 
@@ -252,6 +253,7 @@ def get_work_runner() -> AgentWorkRunner:
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
     # the device hub's live screen state (in-memory, cheap); a topic on the local
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
+    from app.domain.agent.admission import HostMemory
     from app.domain.agent.device_provider import topic_credential_expiry
 
     runner = AgentWorkRunner(
@@ -259,6 +261,7 @@ def get_work_runner() -> AgentWorkRunner:
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
+        host_has_room=HostMemory().has_room,
     )
     runner.subscribe_messages()
     return runner

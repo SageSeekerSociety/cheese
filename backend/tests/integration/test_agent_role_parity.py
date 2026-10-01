@@ -93,7 +93,7 @@ def test_cross_room_access_requires_membership_and_preserves_identity(client):
     assert written.status_code == 200, written.text
     assert written.json()["data"]["author"] == handle
     for action, body in (
-        ("decision", {"decision": "Discussion in another joined room"}),
+        ("weekly", {"body": "Discussion in another joined room"}),
         ("ask", {"question": "Choose a day", "options": ["Monday", "Tuesday"]}),
     ):
         response = client.post(f"/topics/{other}/{action}", json=body, headers=auth)
@@ -217,11 +217,9 @@ def _promote(client, pid: str, handle: str) -> None:
 def test_revoked_room_membership_also_closes_agent_write_gate(client):
     project, origin, _ = _rooms(client)
     auth = _agent(client, project, origin)
-    endpoint = f"/topics/{origin}/decision"
+    endpoint = f"/topics/{origin}/weekly"
     assert (
-        client.post(
-            endpoint, json={"decision": "Before removal"}, headers=auth
-        ).status_code
+        client.post(endpoint, json={"body": "Before removal"}, headers=auth).status_code
         == 200
     )
     handle = _seated_agent(client, origin)
@@ -233,9 +231,7 @@ def test_revoked_room_membership_also_closes_agent_write_gate(client):
         == 200
     )
     assert (
-        client.post(
-            endpoint, json={"decision": "After removal"}, headers=auth
-        ).status_code
+        client.post(endpoint, json={"body": "After removal"}, headers=auth).status_code
         == 403
     )
 
@@ -301,7 +297,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
     assert client.get(f"/topics/{private}/blocks", headers=auth).status_code == 403
     assert (
         client.post(
-            f"/topics/{private}/decision", json={"decision": "Denied"}, headers=auth
+            f"/topics/{private}/weekly", json={"body": "Denied"}, headers=auth
         ).status_code
         == 403
     )
@@ -394,7 +390,7 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
     assert client.delete(machine, headers=auth).status_code == 403
 
 
-def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(client):
+def test_people_and_agents_can_ask_and_record_weeklies_with_their_own_identity(client):
     project, origin, _ = _rooms(client)
     client.headers.pop("X-Cheese-Token", None)
     for handle, auth in (
@@ -403,7 +399,7 @@ def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(
     ):
         for action, body in (
             ("ask", {"question": "Which?", "options": ["A", "B"]}),
-            ("decision", {"decision": "A shared decision"}),
+            ("weekly", {"body": "A shared weekly"}),
         ):
             response = client.post(
                 f"/topics/{origin}/{action}", json=body, headers=auth
@@ -442,37 +438,28 @@ def test_review_actions_check_the_credentials_project_and_room(client):
 
 
 def test_agent_reads_the_projects_record_through_the_room_it_works_in(client):
-    """写决策的那条路一直通，读回来的一直没有 —— 读写要成对。
+    """写周报的那条路一直通，读回来的也要通 —— 读写要成对。
 
-    ``cheese decision`` 走 ``POST /topics/{id}/decision``，周报同理。而读只有
-    ``GET /projects/{id}/decisions`` 一条，它过去要求 ``authorize_project``：
-    一轮里铸出来的凭据过不了那道门（见 ``_artifact_keeper``），于是同一个调用者
-    写下决策、却一条也读不回来。``topic`` 就是产物清单和资料库早就接上的那个
-    「点名自己的位置」参数，这里补上同一条。
+    周报走 ``POST /topics/{id}/weekly``。而读只有 ``GET /projects/{id}/weeklies``
+    一条，要是它要求 ``authorize_project``：一轮里铸出来的凭据过不了那道门（见
+    ``_artifact_keeper``），于是同一个调用者写下周报、却一条也读不回来。``topic``
+    就是产物清单和资料库早就接上的那个「点名自己的位置」参数，这里用的是同一条。
 
     每条断言都是浏览器/CLI 会收到的状态码。
     """
     project, origin, _ = _rooms(client)
     auth = _agent(client, project, origin)
     pid = project["id"]
-    written = {
-        "decisions": ("decision", {"decision": "Ship on Friday"}),
-        "weeklies": ("weekly", {"body": "Week 38 went out"}),
-    }
-    for collection, (action, body) in written.items():
-        assert (
-            client.post(
-                f"/topics/{origin}/{action}", json=body, headers=auth
-            ).status_code
-            == 200
-        )
-        listed = client.get(
-            f"/projects/{pid}/{collection}", params={"topic": origin}, headers=auth
-        )
-        assert listed.status_code == 200, listed.text
-        assert [b["content"] for b in listed.json()["data"]["data"]] == [
-            body.get("decision") or body["body"]
-        ]
+    body = {"body": "Week 38 went out"}
+    assert (
+        client.post(f"/topics/{origin}/weekly", json=body, headers=auth).status_code
+        == 200
+    )
+    listed = client.get(
+        f"/projects/{pid}/weeklies", params={"topic": origin}, headers=auth
+    )
+    assert listed.status_code == 200, listed.text
+    assert [b["content"] for b in listed.json()["data"]["data"]] == [body["body"]]
 
 
 def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
@@ -484,12 +471,12 @@ def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
     pid = project["id"]
     auth = _agent(client, project, origin)
     # 不点名位置：一轮的凭据本来就不是项目级凭据，照旧 403。
-    assert client.get(f"/projects/{pid}/decisions", headers=auth).status_code == 403
+    assert client.get(f"/projects/{pid}/weeklies", headers=auth).status_code == 403
     # 点一个不属于这个项目的房间：``authorized_place`` 挡掉。
     foreign, _, foreign_room = _rooms(client)
     assert (
         client.get(
-            f"/projects/{pid}/decisions",
+            f"/projects/{pid}/weeklies",
             params={"topic": foreign_room},
             headers=auth,
         ).status_code
@@ -500,13 +487,13 @@ def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
     only_here = _agent(client, project, origin, as_handle=handle)
     assert (
         client.get(
-            f"/projects/{pid}/decisions", params={"topic": other}, headers=only_here
+            f"/projects/{pid}/weeklies", params={"topic": other}, headers=only_here
         ).status_code
         == 403
     )
     assert (
         client.get(
-            f"/projects/{pid}/decisions", params={"topic": origin}, headers=only_here
+            f"/projects/{pid}/weeklies", params={"topic": origin}, headers=only_here
         ).status_code
         == 200
     )

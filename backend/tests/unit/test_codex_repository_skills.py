@@ -31,7 +31,7 @@ from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.codex.bundle import build
 from app.domain.agent.harness.codex.host import configure
 from app.domain.agent.harness.driven.runner import socket_path
-from tests.pinned_claude import claude_binary
+from tests.pinned_claude import claude_binary, codex_binary
 from tests.support import executor_release
 
 #: Printed only by a command that ran on the machine holding the project.
@@ -207,7 +207,7 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
             "execution_target": target,
             "opening": {"system_prompt": "ROOM"},
             "mcp_servers": [],
-            "binary": shutil.which("codex"),
+            "binary": codex_binary(),
             "skills": PLATFORM,
         },
         "codex_config": (

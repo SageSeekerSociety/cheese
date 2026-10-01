@@ -87,22 +87,24 @@ class TopicRepository:
         self,
         *,
         project_id: uuid.UUID,
-        title: str,
+        title: str | None,
         parent_id: uuid.UUID | None = None,
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
     ) -> Topic:
+        """``title=None`` is a room nobody has named: it is stored under the
+        placeholder, and ``title_source`` — not the text — is what says so.
+        A room created with a name was named by whoever created it, even when
+        that name happens to read like the placeholder."""
         project = await self._session.get(Project, project_id)
+        title = (title or "").strip() or None
         topic = Topic(
             project_id=project_id,
             environment=project_environment(project.settings if project else None),
-            title=title,
-            # A room created with a name was named by whoever created it.
+            title=title or PLACEHOLDER_TITLE,
             title_source=(
-                TitleSource.placeholder
-                if title == PLACEHOLDER_TITLE
-                else TitleSource.human
+                TitleSource.placeholder if title is None else TitleSource.human
             ),
             parent_id=parent_id,
             kind=kind,
@@ -351,7 +353,7 @@ class TopicRepository:
 
         Unread = message blocks authored by OTHERS on the room's OWN line,
         created after the user's read cursor (no cursor = all of them). Only
-        kind=message counts — doc edits / events / decisions have their own
+        kind=message counts — doc edits / events / weeklies have their own
         surfaces. Other people's private chats are excluded.
 
         Threads are excluded (`task_id IS NULL`), and that is the opposite call

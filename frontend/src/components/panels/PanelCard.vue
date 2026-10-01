@@ -12,7 +12,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { ApiError, editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
-import { columnDotStyle } from '../../lib/board'
+import { columnDotStyle, phraseLabel } from '../../lib/board'
 import { noticeText } from '../../lib/noticeText'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
@@ -201,7 +201,6 @@ const cardSocket = useRoomSocket({
     }
   },
   onOpen: () => {},
-  onDrop: () => {},
   // 断线期间可能漏掉了几次改动：重读一次，再连回去。
   reconnect(id) {
     void loadChecklist()
@@ -378,7 +377,7 @@ async function send() {
       </div>
       <TopicAcceptCard :topic-id="card.room_id" :task-id="card.id" topic-status="active" @review="emit('review')" />
       <div class="panel-card__meta t-meta">
-        <span data-testid="card-status">{{ card.presentation.display_status }}</span>
+        <span data-testid="card-status">{{ phraseLabel(card.presentation.phrase) }}</span>
         <span class="panel-card__sep">·</span>
         <UserRef v-if="card.owner_handle" :handle="card.owner_handle" />
         <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
@@ -466,7 +465,7 @@ async function send() {
             :block="e.block"
             :notice="e.notice"
             :run="[e.block]"
-            :name="null"
+            :agent="null"
             :time="relTime(e.block.created_at)"
             :agent-name="t('work.room.card.subagent')"
             :refs="refs"

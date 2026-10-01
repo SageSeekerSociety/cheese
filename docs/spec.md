@@ -278,7 +278,7 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 │   ├ 话题 A         │                   │                    ▶🌿🔬⌨🗂│ ║预览/施 ║
 │   │  └ 活 A1       │                   │ （右上角图标=打开工具）      │ ║工现场  ║
 │   └ 项目文档:      │                   │                            │ ║可钉住  ║
-│     章程/决策记录   │ ──────────────────┴──────────────────────────── │ ╚════════╝
+│     章程/周报集     │ ──────────────────┴──────────────────────────── │ ╚════════╝
 │                    │ 输入栏（对话+文档区域底部）        [@芝士][发送] │
 └────────────────────┴─────────────────────────────────────────────────┘
 ```
@@ -287,8 +287,8 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 - 输入栏在对话栏底部，发的就是这个话题的聊天消息——不做发送目标切换。"插入正在运行的 AI 会话"是平台自己判断的（消息落进正在跑的会话，人不用选），文档评论在文档那边写（§14.3）。默认不 @（人与人对话为主）；叫 AI 就是正文里 @ 它，输入栏的「交给芝士」按钮和 ⌘/Ctrl+Enter 只是替你把那个 @ 写进正文——召唤与否的唯一依据是正文，不是另一个自己存着状态的开关。忘了 @ 就回复那条消息并 @ 它：被回复的原文会跟着这次回复一起给它。
 - 打开工具的入口有三个：点消息流里的卡片（执行卡→施工现场，验收卡→成果/diff）、点文档右上角的工具图标、点验收卡上的"看成果"。临时打开用完关掉，钉住才常驻。
 - 各工具的内容：施工现场 = 这个地点 AI 会话的完整记录（只读，房间里能看到它每条支线的，根话题的施工现场就是 AI 的定期巡检日志）；预览 = 芝士**显式指定为当前预览**的那个 artifact 的实时展示（AI 用工具调用点名要展示哪个，平台不去猜哪个文件），可能是网页、运行结果、或数据可视化（可以分享链接，AI 和人看到同一个画面，点选批注对零基础用户特别好用）；Git = 提交历史和完整 diff，可以行级评论；文件 = 文件树浏览器；资源 = 容器和 token 用量，可以重建环境/调配置/看排队情况。任何一列都可以最大化。
-- 项目级文档（章程、决策记录、周报集）独立打开成全宽页面，不挂在某个话题下面。章程 = 项目的根文档（建项目时通过访谈生成，改了就等于改指令）；决策记录可以编辑纠错，每条来源可以跳回原始话题。
-- 文档评论：对整篇评论 = 发给文档维护者；划词评论 = 发给那段内容的作者和维护者，评论挂在对应的块下面，可以接着讨论或升级成话题。
+- 项目级文档（章程、周报集）独立打开成全宽页面，不挂在某个话题下面。章程 = 项目的根文档（建项目时通过访谈生成，改了就等于改指令）。决定就是对话里说出来的话，不单独记成一类记录。
+- 文档评论：普通评论只保存，不唤醒 AI、不改正文。对整篇评论不指定锚点；划词评论挂在当前话题文档根下的正文块，并保存引用文字。询问 AI、请求 AI 修改是独立的显式动作，不能由普通评论代替。
 - 文件上传：所有文件都进 git repo，和代码一样有版本、可 diff、话题采纳时一起 merge。拖到输入栏 = 放到话题对应的分支里，AI 自动解析建索引；拖到项目级"资源"区 = 放到项目根目录下（文献/需求/设计稿，所有话题都能引用）。文件就是文件，不区分"附件"和"代码"。
 - 细节：每个话题的每列记住滚动位置；升级事件可以点进它变成的那个地点（那边也能点回房间）；AI 主动发的消息带 👍/👎 反馈按钮。
 
@@ -441,7 +441,7 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 - 事件循环：事件（消息/文档变更/webhook/定期巡检/活的结果回传）→ 每个地点维护一个串行队列 → 恢复会话（注入发言者标签 + 记忆）→ AI 调用工具（回复/编辑块/记忆/派出一件活/GitHub/搜索）→ 会话结束时自动提取记忆。
 - Project environment: project settings hold an initialization script, a workspace startup script, and ordinary variables visible to project members and the agent. Cloud and Hosted Machine use the same runner; Hosted Sandbox remains unavailable. Work rooms pin configuration at creation. Saving affects new rooms; applying to an idle room stops its agent, preserves its task checkouts, and prepares tools on its next start. Initialization runs in the room directory once per successful revision in that environment. Each `cheese task` or `cheese worktree` prepares a task checkout, then runs startup in that checkout before returning its path. Reopening a task reruns startup against its current files. Both scripts run in Bash with the room's HOME and execution identity. Task installation failures return a nonzero exit code and a log location while retaining the checkout and the running room agent. Overview uses the base environment without project scripts or variables so it can diagnose setup failures. A failed work room sends a recovery event to overview, whose scoped API can inspect logs, repair that room's configuration, and restart once while retaining pending messages. A second failure or unavailable repair requires assistance; project defaults and other rooms remain unchanged. Room preparation status and logs appear in the room and settings; task startup logs are stored under `$HOME/.cheese-environment/tasks/<task-id>`. The implementation retains initialization receipts and package caches, without filesystem snapshots or secret storage.
 - 算力调度（平台代码，不是 AI 决定的）：资源池 = 自有 PVE 节点 + 机构/实验室自带的节点；根据环境配置匹配节点，按项目额度限制并发，超额排队。三级可见性：话题里看这个话题的用量 → 项目总览里看整个项目的用量 → 机构看板里看所有项目的用量和节点状态。
-- 中途介入：所有入口（@ 某人、改文档、在施工现场插话、给文档段落评论）= 往这个话题的 AI 会话里注入一条消息。现阶段在会话间歇注入，未来用 Agent SDK 的 streaming input 实时注入。
+- 中途介入：正文中 @ AI、文档变更通知和施工现场插话按各自的路由合同进入 AI 会话。普通文档段落评论只保存，不注入 AI 会话。询问 AI、请求 AI 修改须由独立显式动作授权。现阶段在会话间歇注入，未来用 Agent SDK 的 streaming input 实时注入。
 - 调度分两层：确定性的（消息路由/定时任务/生命周期管理）= 平台代码做，不让 AI 当消息总线；需要判断的（该催谁/该拆什么/有什么风险）= 根话题的芝士来判断。
 - 平台感知 AI 行为的唯一方式是结构化的工具调用——AI 要创建话题、编辑文档、分配任务、发通知，都必须调用平台提供的工具（内置工具、Agent SDK 自定义工具、MCP server 都行）。平台通过工具的输入输出来记录、控制、审计。绝不靠 regex 解析 AI 的自然语言输出——太脆弱，模型换一个版本就可能全坏。
 - 渲染由 AI 显式指定、平台按 type 渲染（不猜）：芝士要"给人看一个东西"——网页 / 图表 / SVG / 幻灯——通过结构化工具调用 `cheese show <文件> --as html|svg|slides` 建一个带 mimeType 的 artifact 块，指向工作区文件；平台按 type 选渲染器（html/svg→独立内容域名的 sandboxed iframe）。这和 Claude Artifacts（带 type 的保留标签）、MCP-UI（`ui://` resource + mimeType）是同一条机制：模型发结构化载荷、宿主按 type 渲染，绝不从话术里解析"它想展示什么"。artifact 是"渲染什么"的唯一原语，摆放位有两个——无锚点 = 设为项目当前预览（进预览窗口这个主 / 放大位，替代原先"抓工作区第一个 `*.html`"的隐式猜法）；带 `--anchor <节点>` = 挂在文档该节点旁的内联卡片。内联卡片可"在预览窗口打开"提升到主位；html 渲染器只写一份，两处共用。

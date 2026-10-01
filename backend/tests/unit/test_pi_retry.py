@@ -29,6 +29,7 @@ from app.domain.agent.service import (
     AgentRetrying,
     AgentUserEntry,
 )
+from tests.support.room_machine import NO_MACHINE
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 NONCE = "⟪w:00000000000000000000f002⟫"
@@ -66,6 +67,7 @@ async def replay(tmp_path: Path, recording: str) -> list[dict]:
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=[],
+        target=NO_MACHINE,
     )
     try:
         await call(

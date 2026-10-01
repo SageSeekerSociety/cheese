@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import NotFoundError, PreconditionFailedError
 from app.domain.block.models import Block
+from app.domain.block.notice_text import say
 from app.domain.feedback.models import FeedbackProposalDismissal
 from app.domain.feedback.schemas import FeedbackProposalIn
 
@@ -386,10 +387,10 @@ def mark_accepted(block: Block, feedback_id: uuid.UUID, *, handle: str) -> None:
 
 def proposal_block_or_404(block: Block | None) -> dict[str, Any]:
     if block is None:
-        raise NotFoundError("提案不存在")
+        raise NotFoundError(say("feedbackProposalNotFound"))
     payload = proposal_from_meta(block.meta or {})
     if payload is None:
         # A real block id that is not a proposal: 404 rather than 400 — the
         # caller asked for a proposal and there is none at this id.
-        raise NotFoundError("提案不存在")
+        raise NotFoundError(say("feedbackProposalNotFound"))
     return payload

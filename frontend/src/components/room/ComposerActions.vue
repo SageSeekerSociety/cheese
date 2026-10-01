@@ -28,13 +28,19 @@ const props = defineProps<{
   /** 这个房间的芝士是谁，现在知道了吗。名册还没到时这颗按钮关着。 */
   summonReady: boolean
   agentName: string
+  /** 能不能在这儿发一张清单（房间给了发清单的路才有这一颗）。 */
+  canChecklist?: boolean
+  /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
+  canRemind?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'files', files: File[]): void
   (e: 'pick-files'): void
   (e: 'pick-images'): void
+  (e: 'checklist'): void
   (e: 'toggle-summon'): void
+  (e: 'remind'): void
   (e: 'send'): void
 }>()
 
@@ -98,6 +104,31 @@ const summonText = computed(() => ({
       color="medium-emphasis"
       title="发送照片"
       @click="pickImages"
+    />
+    <!-- 发一张自己的清单：也是「这条消息本身」，所以和附件站在左边。 -->
+    <v-btn
+      v-if="canChecklist"
+      class="composer-icon"
+      icon="mdi-format-list-checks"
+      variant="text"
+      size="small"
+      color="medium-emphasis"
+      :title="t('work.room.checklist.compose')"
+      :aria-label="t('work.room.checklist.compose')"
+      @click="emit('checklist')"
+    />
+    <!-- 「提醒我」：到点给自己发一条通知。它说的是这个房间里的一件事，不是这条
+         消息本身，但和附件一样是安静的图标，不跟右边「怎么发出去」那几样并列。 -->
+    <v-btn
+      v-if="canRemind"
+      class="composer-icon"
+      icon="mdi-bell-outline"
+      variant="text"
+      size="small"
+      color="medium-emphasis"
+      :title="t('work.room.reminder.open')"
+      :aria-label="t('work.room.reminder.open')"
+      @click="emit('remind')"
     />
     <v-spacer />
     <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个

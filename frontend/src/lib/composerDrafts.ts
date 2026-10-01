@@ -63,9 +63,9 @@ export interface Outgoing {
   content: string
   replyTo?: string
   atts?: ChatAttachment[]
-  /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
+  /** queued = 还没送出去（排在前一条后面，或连不上在等重试）; sending = 请求在路上; failed = 后端拒了 */
   state: 'queued' | 'sending' | 'failed'
-  /** 服务端明确拒了这一条时它说的话。没有这一句的 failed 是「等超了」。 */
+  /** 服务端拒了这一条时它说的话。 */
   error?: string
 }
 

@@ -55,6 +55,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.block.notice_text import say
 from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.documents import check_current
@@ -299,7 +300,7 @@ async def _issue_2fa_pending_token(
         await reserve(_PENDING_2FA_SCOPE, minted.jti, ttl_s=ttl_s)
     except SingleUseUnavailableError:
         logger.exception("2fa: cannot reserve pending ticket uid=%s", user_id)
-        raise InternalServerError("暂时无法完成两步验证，请稍后重试") from None
+        raise InternalServerError(say("twoFactorUnavailable")) from None
     return minted.token
 
 
@@ -494,7 +495,7 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
         await reserve(_SUDO_TICKET_SCOPE, minted.jti, ttl_s=SUDO_TICKET_TTL_S)
     except SingleUseUnavailableError:
         logger.exception("sudo: cannot reserve ticket uid=%s", user_id)
-        raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
+        raise InternalServerError(say("securityCheckUnavailable")) from None
     return minted.token
 
 
@@ -539,13 +540,11 @@ def _signup_consent(documents: dict[str, str] | None, method: str | None) -> str
     was published is sent back to be reread rather than recorded against
     text the person never saw."""
     if not documents or method not in CONSENT_METHODS:
-        return "请阅读并同意《用户协议》和《隐私政策》"
+        return say("consentRequired")
     try:
         check_current(documents)
     except ValueError as exc:
-        if str(exc) == "CONSENT_STALE":
-            return "协议已更新，请刷新页面后重新阅读并同意"
-        return "请阅读并同意《用户协议》和《隐私政策》"
+        return say("consentStale" if str(exc) == "CONSENT_STALE" else "consentRequired")
     return None
 
 
@@ -1011,7 +1010,7 @@ async def register_user(
     # were never allowed to have. The service keeps its own check as a backstop
     # for callers that don't come through here.
     if is_reserved_username(username):
-        raise UnprocessableEntityError("该用户名是平台保留字，请换一个")
+        raise UnprocessableEntityError(say("usernameReserved"))
 
     nickname = normalize_nickname(nickname)
 
@@ -1051,7 +1050,7 @@ async def register_user(
             # Deliberately says WHY rather than reusing "already registered":
             # nobody holds this name, and telling the user it is taken would be
             # a lie they cannot act on (#345).
-            raise UnprocessableEntityError("该用户名是平台保留字，请换一个") from exc
+            raise UnprocessableEntityError(say("usernameReserved")) from exc
         if msg == "EMAIL_TAKEN":
             raise ConflictError("Email already registered") from exc
         raise
@@ -1595,7 +1594,7 @@ async def verify_2fa_login(
         first_use = await claim(_PENDING_2FA_SCOPE, claims.jti)
     except SingleUseUnavailableError:
         logger.exception("2fa: cannot claim pending ticket uid=%s", user_id)
-        raise InternalServerError("暂时无法完成两步验证，请稍后重试") from None
+        raise InternalServerError(say("twoFactorUnavailable")) from None
     if not first_use:
         raise AuthenticationRequiredError(
             "Invalid or expired 2FA session token", {"reason": "session_expired"}

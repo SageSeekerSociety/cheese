@@ -164,6 +164,17 @@
   --inverse-ink: #fff;
   --inverse-fill: rgba(255, 255, 255, 0.14);
 
+  /* ---- AI teammate avatar ----
+     CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
+     handle (agentTone); tone 0 is the warm black of the app icon. Never amber:
+     amber is kept for the primary action. */
+  --agent-ink: #fff7ea;
+  --agent-tone-0: #221e1a;
+  --agent-tone-1: #22324f;
+  --agent-tone-2: #1e3a33;
+  --agent-tone-3: #36294a;
+  --agent-tone-4: #46292a;
+
   /* ---- Radius ladder ----
      Theme-independent (a corner does not change shape in the dark), so these
      live only here and are NOT repeated in the dark block below.
@@ -367,6 +378,14 @@
   --inverse-surface: #3a3d44;
   --inverse-ink: #f3f4f6; /* 9.9:1 on --inverse-surface */
   --inverse-fill: rgba(255, 255, 255, 0.1);
+
+  /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
+  --agent-ink: #f6efe4;
+  --agent-tone-0: #4a443d;
+  --agent-tone-1: #34466a;
+  --agent-tone-2: #2e5047;
+  --agent-tone-3: #4a3c61;
+  --agent-tone-4: #5e3a36;
 }
 
 /* Paint the root element itself, so the gap between "HTML parsed" and "Vue has

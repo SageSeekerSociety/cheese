@@ -59,11 +59,10 @@ const {
   alt?: string
   size?: string | number
   /**
-   * 画的是谁。形状照 GitHub 的规则：人是圆；AI 队友、团队、空间、项目这些不是人的
-   * 是圆角方块。AI 队友没有上传的头像时用 CheeseAvatar；这里的 'agent' 给带照片的
-   * AI 账号（比如后台成员表里的那一行）。
+   * 画的是谁。形状照 GitHub 的规则：人是圆；团队、空间、项目这些是圆角方块。AI 队友
+   * 不走这里，一律画 CheeseAvatar。
    */
-  kind?: 'person' | 'agent' | 'org'
+  kind?: 'person' | 'org'
 }>()
 
 // 已知取不到的 URL 直接当「没有图」，不再造 `v-img` 去问一次。

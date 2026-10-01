@@ -31,8 +31,8 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.block.notice_text import exception_text, say
 from app.domain.block.queries import (
-    decisions_for_project,
     tasks_awaiting_an_answer,
     weeklies_for_project,
 )
@@ -135,11 +135,11 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
     是「点名一个自己不在的团队」，以及按构造不在任何团队里的匿名调用方。
     """
     if not who.authenticated:
-        raise AuthenticationRequiredError("登录后才能把项目建在团队里")
+        raise AuthenticationRequiredError(say("teamProjectSignIn"))
     if who.user_id is None or not await team_service(db).is_team_member(
         team_id, who.user_id
     ):
-        raise ForbiddenError("你不是这个团队的成员，不能把项目建在这个团队里")
+        raise ForbiddenError(say("teamProjectNotMember"))
 
 
 async def _require_claim(
@@ -151,11 +151,11 @@ async def _require_claim(
     也算领了（领题那一刻就给它开了项目）；被拒绝或退出的不算。
     """
     if not who.authenticated or who.user_id is None:
-        raise AuthenticationRequiredError("登录后才能用题目新建项目")
+        raise AuthenticationRequiredError(say("challengeProjectSignIn"))
     if not await claim_backs_project(
         db, task_id=task_id, user_id=who.user_id, team_id=team_id
     ):
-        raise ForbiddenError("领取这道题之后才能用它新建项目")
+        raise ForbiddenError(say("challengeProjectClaimFirst"))
 
 
 @router.get("/resource-limits")
@@ -249,7 +249,7 @@ async def list_projects(
         return ok(page(await _project_payloads(db, projects), len(projects)))
     if team_id is not None:
         # A team's project list is not a directory: every row carries the
-        # project's `id`, and that id opens its roster, decisions and usage. So
+        # project's `id`, and that id opens its roster, documents and usage. So
         # this answered "which projects does that team have, and what are their
         # ids" to anyone who asked — including callers with no credential at
         # all, while the SAME route without `team_id` was strict.
@@ -357,32 +357,6 @@ async def get_project(
     return ok(payload)
 
 
-@router.get("/{project_id}/decisions")
-async def list_decisions(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    topic: str = "",
-) -> dict:
-    """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
-    source topic via topic_id.
-
-    These are the project's own words, not metadata about it — the same content
-    ``/topics`` has always guarded.
-
-    ``topic`` is the caller naming its place, and it is how 芝士 reads this at
-    all (``project_reader``): a per-turn credential is minted for one turn in
-    one room, so a bare ``authorize_project`` refuses it — which left the one
-    caller that WRITES decisions (``POST /topics/{id}/decision``, the
-    ``cheese decision`` CLI) unable to read a single one back. Its own room's
-    blocks were reachable; the project's record was not."""
-    await project_reader(db, resolver, project_id, topic)
-    await ProjectService(db).get_or_404(project_id)
-    blocks = await decisions_for_project(db, project_id)
-    items = [b.model_dump(mode="json") for b in blocks]
-    return ok(page(items, len(items)))
-
-
 @router.get("/{project_id}/weeklies")
 async def list_weeklies(
     project_id: uuid.UUID,
@@ -396,10 +370,11 @@ async def list_weeklies(
     report says what happened over a piece of time rather than what the project
     looks like right now, so that window is what tells two of them apart.
 
-    Same shape as /decisions and for the same reason: these are the project's
-    own words, and each is traceable to the room it was written in via
-    `topic_id` — including the same ``topic`` place, so the caller that writes
-    a weekly (``POST /topics/{id}/weekly``) can read the set back."""
+    These are the project's own words, and each is traceable to the room it was
+    written in via `topic_id`. ``topic`` is the caller naming its place, so the
+    caller that writes a weekly (``POST /topics/{id}/weekly``) can read the set
+    back: a per-turn credential is minted for one turn in one room, and a bare
+    ``authorize_project`` refuses it."""
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await weeklies_for_project(db, project_id)
@@ -692,7 +667,7 @@ async def _project_owner(
     if actor.authenticated and await may_read_project(
         db, project_id=project_id, handle=actor.handle
     ):
-        raise ForbiddenError("只有项目所有者能归档或取消归档项目")
+        raise ForbiddenError(say("archiveOwnerOnly"))
     raise NotFoundError("Project not found")
 
 
@@ -777,10 +752,7 @@ async def set_project_owner(
             # Not on the project's team. Only a personal project of the
             # transferor's can leave it — see the docstring.
             if not await _project_is_personal_to_its_owner(db, project):
-                raise ValidationError(
-                    f"{handle} 不是这个项目所属团队的成员——项目归团队所有，"
-                    "只能转给团队里的人"
-                )
+                raise ValidationError(say("transferOutsideTeam", handle=handle))
             team = await team_service(db).ensure_personal_team(user.id)
             team_changed_from = project.team_id
             project.team_id = team.id
@@ -942,7 +914,7 @@ async def set_branch_protection(
                 new_settings.get(BRANCH_PROTECTION_KEY), body
             )
         except ValueError as e:
-            raise ValidationError(str(e)) from None
+            raise ValidationError(exception_text(e)) from None
         if updated:
             new_settings[BRANCH_PROTECTION_KEY] = updated
         else:
@@ -984,13 +956,13 @@ async def set_project_upstream(
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)
     if await binding_for_project(project_id, db) is not None:
-        raise ConflictError("项目已连接代码仓库，暂不支持更换")
+        raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":
-        raise ConflictError("这个项目由平台托管，暂不支持切换到 GitHub")
+        raise ConflictError(say("hostedNoGithubSwitch"))
     raw = str(body.get("url") or "").strip()
     parsed = parse_github_repo(raw) if raw else None
     if raw and parsed is None:
-        raise ValidationError("请输入 GitHub 仓库地址")
+        raise ValidationError(say("githubRepoUrlRequired"))
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
     project.settings = {**(project.settings or {}), "github_repository_url": url}
     await db.flush()

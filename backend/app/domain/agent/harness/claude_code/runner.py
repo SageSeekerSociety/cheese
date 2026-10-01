@@ -5,8 +5,8 @@ process holds the pipes for the whole life of the session: a user message, a
 message said mid-turn and a control are all a line written to its stdin, and
 everything it reports is a line read from its stdout. Closing stdin ends the
 session and kills whatever it had running in the background, so stdin is closed
-exactly once, on purpose — when the session has been idle and unread for
-``IDLE_EXIT_S``, or when the screen that supervises this runner goes away.
+exactly once, on purpose — when the session has sat idle (``driven.runner``),
+or when the screen that supervises this runner goes away.
 
 Every line read is recorded in the journal under a stable sequence, stamped with
 the room's work it belongs to. The stamp is decided here because only this side
@@ -55,17 +55,12 @@ from app.domain.memory.tree import (
 # 30,000 characters) or an image the session was handed. A line over the limit
 # kills the reader, so the limit is a ceiling nothing legitimate reaches.
 LINE_LIMIT = 64 * 1024 * 1024
-# Idle with nothing running and nobody asking for the journal: the backend that
-# read this session is gone, and a session nobody reads is one no room is using.
-IDLE_EXIT_S = 600.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
 # How long a new turn waits to see the project's context as it is now before it
 # starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
 TAIL_POLL_S = 0.5
-# How often the runner checks whether it has been idle long enough to let go.
-IDLE_CHECK_S = 5.0
 # How long the runner keeps what it recorded, and how often it looks.
 RETENTION_S = 7 * 24 * 3600
 RETENTION_EVERY_S = 3600
@@ -348,12 +343,11 @@ class Runner(runner.Runner[Journal]):
         self,
         state: Path,
         *,
-        idle_exit_s: float = IDLE_EXIT_S,
+        idle_exit_s: float = runner.IDLE_EXIT_S,
         launch: str = "",
     ):
-        super().__init__(state, Journal, "records.sqlite")
+        super().__init__(state, Journal, "records.sqlite", idle_exit_s=idle_exit_s)
         self.launch = launch
-        self.idle_exit_s = idle_exit_s
         self.write_lock = asyncio.Lock()
         self.controls: dict[str, asyncio.Future] = {}
         self.commands: dict[str, asyncio.Future] = {}
@@ -370,7 +364,6 @@ class Runner(runner.Runner[Journal]):
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
         self.tailing: dict[str, str] = {}
-        self.read_at = time.monotonic()
         self.session_id: str | None = None
         self.config_dir: Path | None = None
         # Where the session's execution target is, when it runs against an
@@ -443,7 +436,7 @@ class Runner(runner.Runner[Journal]):
         self.listener = asyncio.create_task(self._read())
         self.helpers = [
             asyncio.create_task(self._tail()),
-            asyncio.create_task(self._watch()),
+            asyncio.create_task(self._expire()),
         ]
         await self.listen(LINE_LIMIT)
         return self.session_id
@@ -800,27 +793,17 @@ class Runner(runner.Runner[Journal]):
             # agent 的那条路径一模一样，它照着那句话就能 Read 到。
             _write_memory(root, f"{path[:-3]}.conflict.md", content)
 
-    async def _watch(self) -> None:
-        expired_at = 0.0
+    async def _expire(self) -> None:
         while True:
-            if time.monotonic() - expired_at >= RETENTION_EVERY_S:
-                expired_at = time.monotonic()
-                self.journal.expire(
-                    (datetime.now(UTC) - timedelta(seconds=RETENTION_S)).isoformat()
-                )
-            await asyncio.sleep(IDLE_CHECK_S)
-            if (
-                self.idle_exit_s
-                and not self.working
-                and not self.tasks
-                and not self.sent
-                and not self.controls
-                and not self.commands
-                and not self.inputs
-                and time.monotonic() - self.read_at >= self.idle_exit_s
-            ):
-                await self.release()
-                return
+            self.journal.expire(
+                (datetime.now(UTC) - timedelta(seconds=RETENTION_S)).isoformat()
+            )
+            await asyncio.sleep(RETENTION_EVERY_S)
+
+    def busy(self) -> bool:
+        return bool(
+            self.working or self.tasks or self.sent or self.controls or self.commands
+        )
 
     async def yield_foreground(self) -> None:
         """Ctrl+B, as the build takes it on stdin: every foreground Bash and
@@ -988,9 +971,8 @@ class Runner(runner.Runner[Journal]):
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
-        self.read_at = time.monotonic()
         if method == "events":
-            return {"events": self.journal.read(int(params.get("after", 0)))}
+            return {"events": self.records(int(params.get("after", 0)))}
         if method in ("send", "steer"):
             return await self.send(
                 params["input_id"],
