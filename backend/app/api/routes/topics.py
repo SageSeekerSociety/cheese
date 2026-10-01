@@ -59,7 +59,6 @@ from app.domain.room_task.services import (
 from app.domain.topic import naming
 from app.domain.topic.doc_checks import living_doc_warnings
 from app.domain.topic.models import Topic, TopicKind
-from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -70,7 +69,6 @@ from app.domain.topic.schemas import (
     CheckResultIn,
     DocEditIn,
     LockIn,
-    RelayIn,
     SplitIn,
     TopicCreate,
     TopicOut,
@@ -1716,45 +1714,3 @@ async def clone_topic_from(
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
-
-
-@router.post("/{topic_id}/tell")
-async def tell_topic(
-    topic_id: uuid.UUID,
-    body: RelayIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """留话给一条活: write one message onto a thread this room dispatched
-    (`cheese_tell`). See `app.domain.topic.relay` for why the comments endpoint
-    could not be this channel, and why nothing is woken.
-
-    `topic_id` is the SENDER — the place whose turn is speaking, which is what
-    the per-turn token in `_CHEESE_WRITE_PATHS` is scoped to. The receiver rides
-    in the body and is resolved against the threads that sender dispatched: an
-    id in the URL says "who is talking", never "which resource is this".
-    """
-    sender = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, sender)
-    service = TopicRelayService(db)
-    target = await service.resolve_target(sender=sender, target=body.target)
-    # Friendly "@名字 / @话题名" → structured tokens BEFORE the message lands on
-    # the thread, so chips render and @mentions notify over there.
-    content = await canonicalize_refs(
-        db, sender.project_id, body.content, exclude_topic_id=target.id
-    )
-    block = await service.relay(sender=sender, target=target, content=content)
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    await db.commit()
-    # The room is where a person is watching; a thread's message shows up there
-    # too, under its thread.
-    await get_broker().publish(
-        str(target.room_id), {"type": "assistant_block", "block": out}
-    )
-    return ok(
-        {
-            "block": out,
-            "target_topic_id": str(target.id),
-            "target_title": target.title,
-        }
-    )
