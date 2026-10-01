@@ -4,7 +4,7 @@ import type { Block } from '../../../cx_types'
 
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createVuetify } from 'vuetify'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePanelDoc } from '../../../composables/usePanelDoc'
@@ -12,7 +12,7 @@ import { commentMarkKey } from '../../../lib/docDecorations'
 
 import DocSurface from './DocSurface.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 
@@ -162,6 +162,9 @@ async function select(ed: Editor, quote: string, occurrence = 0) {
   await nextTick()
   return selected
 }
+function commentAction() {
+  return screen.getByRole('button', { name: t('work.room.doc.commentOnSelection') })
+}
 function marks(ed: Editor) {
   return commentMarkKey
     .getState(ed.state)
@@ -180,7 +183,7 @@ describe('production surface comment selections', () => {
   ])('restores the actual descendant PM span: %s', async (html) => {
     const f = await mountDoc(html)
     const selected = await select(f.ed, '😀目标')
-    const button = document.querySelector('.doc-comment-cta')!
+    const button = commentAction()
     const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
     button.dispatchEvent(down)
     expect(down.defaultPrevented).toBe(true)
@@ -209,7 +212,7 @@ describe('production surface comment selections', () => {
     const f = await mountDoc('<p>前 目标 中 目标 尾</p>')
     const second = await select(f.ed, '目标', 1)
     expect(second.from).toBeGreaterThan(span(f.ed, '目标', 0).from)
-    await fireEvent.click(document.querySelector('.doc-comment-cta')!)
+    await fireEvent.click(commentAction())
     await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '目标' }]))
     f.data.comments.value = [{ id: 'repeat', reply_to: 'server-node-0', anchor_quote: '目标' }] as Block[]
     await nextTick()
@@ -220,7 +223,7 @@ describe('production surface comment selections', () => {
   it('keeps the page-comment fallback when server nodes do not align', async () => {
     const f = await mountDoc('<p>前 目标 后</p>', async () => [{ id: 'a' }, { id: 'b' }] as Block[])
     await select(f.ed, '目标')
-    await fireEvent.click(document.querySelector('.doc-comment-cta')!)
+    await fireEvent.click(commentAction())
     await waitFor(() => expect(f.captured).toEqual([{ anchorId: null, quote: '目标' }]))
     expect(marks(f.ed)).toEqual([])
   })
@@ -229,7 +232,7 @@ describe('production surface comment selections', () => {
     const pending = deferred<Block[]>()
     const f = await mountDoc('<p>第一段 第二段</p>', () => pending.promise)
     await select(f.ed, '第一段')
-    await fireEvent.click(document.querySelector('.doc-comment-cta')!)
+    await fireEvent.click(commentAction())
     f.ed.commands.setTextSelection(span(f.ed, '第二段'))
     pending.resolve(f.nodes)
     await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '第一段' }]))
@@ -239,7 +242,7 @@ describe('production surface comment selections', () => {
     const pending = deferred<Block[]>()
     const f = await mountDoc('<p>原文</p>', () => pending.promise)
     await select(f.ed, '原文')
-    await fireEvent.click(document.querySelector('.doc-comment-cta')!)
+    await fireEvent.click(commentAction())
     if (change === 'topic') f.topicId.value += '-next'
     else if (change === 'document') f.ed.view.dispatch(f.ed.state.tr.insertText('变更', 1))
     else f.unmount()

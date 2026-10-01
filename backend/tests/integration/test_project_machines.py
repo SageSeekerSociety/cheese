@@ -151,7 +151,7 @@ def test_message_arriving_during_suspend_resumes_after_sweep(client):
     async def run():
         async with client.test_request_factory() as session:
             service = MachineService(session, cloud)
-            await service.refresh_unsettled()
+            await service.refresh_due()
             machine = await ProjectMachineRepository(session).get(machine_id)
             assert machine.status == MachineStatus.resuming
             assert not cloud.created and not cloud.deleted
@@ -197,11 +197,60 @@ def test_a_machine_gone_at_the_provider_is_not_left_leased_by_the_sweep(
 
     async def run():
         async with client.test_request_factory() as session:
-            await MachineService(session, cloud).refresh_unsettled()
+            await MachineService(session, cloud).refresh_due()
             await session.commit()
         async with client.test_request_factory() as session:
             machine = await ProjectMachineRepository(session).get(machine_id)
             assert machine is None or machine.released_at is not None
+
+    client.portal.call(run)
+
+
+def test_the_sweep_rechecks_a_settled_machine_once_it_is_due(client):
+    """A settled machine is asked about again only after the reconcile
+    interval: the one checked two hours ago is learned gone, the one checked a
+    moment ago is left as it was even though the provider no longer has it."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.machine.models import AiStatus
+
+    async def seed():
+        async with client.test_factory() as session:
+            project = await ProjectRepository(session).add(
+                name="Settled", team_id=await a_team(session)
+            )
+            ids = {}
+            ages = ((81, timedelta(hours=2)), (82, timedelta(seconds=5)))
+            for machine_id, seen in ages:
+                topic = await TopicRepository(session).add(
+                    project_id=project.id, title=f"Room {machine_id}"
+                )
+                machine = await _add_topic_machine(
+                    session,
+                    project_id=project.id,
+                    topic_id=topic.id,
+                    machine_id=machine_id,
+                    status=MachineStatus.running,
+                )
+                machine.ai_status = AiStatus.ready
+                machine.last_seen_at = datetime.now(UTC) - seen
+                ids[machine_id] = machine.id
+            await session.commit()
+            return ids
+
+    ids = asyncio.run(seed())
+    cloud = FakeMicroCloud()  # knows neither machine
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).refresh_due()
+            await session.commit()
+        async with client.test_request_factory() as session:
+            repo = ProjectMachineRepository(session)
+            overdue = await repo.get(ids[81])
+            recent = await repo.get(ids[82])
+            assert overdue is None or overdue.released_at is not None
+            assert recent is not None and recent.status == MachineStatus.running
 
     client.portal.call(run)
 

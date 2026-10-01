@@ -194,38 +194,16 @@ def test_a_room_carries_its_own_board_cell(client):
     assert rooms[ids["room"]] == header["presentation"]
 
 
-def test_a_room_is_running_while_a_thread_under_it_runs(client, stub_hooks):
-    """侧栏的绿点：房间自己那一轮早结束了，但它派出去的一条活还在跑 —— 那这个
-    房间就是有人在干活。只看房间自己那一轮的话，主 agent 一收尾绿点就灭了。
-
-    房间在看板上那一格不跟着变：活在看板上有自己的一格。"""
+def test_a_rooms_board_cell_does_not_follow_a_thread_running_under_it(
+    client, stub_hooks
+):
+    """A thread under the room is running; the room's own cell on the board is
+    still the room's: the thread has a cell of its own."""
     ids = _seeded(client, stub_hooks)
 
     listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
     row = next(t for t in listed if t["id"] == ids["room"])
-    assert row["running"] is True
-    assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is True
     assert row["presentation"]["phrase"] == Building.idle
-
-
-def test_a_room_is_not_running_once_its_threads_have_stopped(client, stub_hooks):
-    """同一个房间，在跑的那两条活交回了结论 —— 剩下的是失联的、等验收的、做了
-    一半的，没有一条在跑，绿点就该灭。"""
-    ids = _seeded(client, stub_hooks)
-
-    async def _conclude() -> None:
-        async with client.test_factory() as s:
-            for key in ("running", "talking"):
-                task = await s.get(Task, uuid.UUID(ids[key]))
-                assert task is not None
-                task.conclusion = "做完了"
-            await s.commit()
-
-    asyncio.run(_conclude())
-    listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
-    row = next(t for t in listed if t["id"] == ids["room"])
-    assert row["running"] is False
-    assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is False
 
 
 def test_a_rooms_own_card_reaches_the_room(client):

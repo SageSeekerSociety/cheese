@@ -259,8 +259,8 @@ async def _seed_blocks(session, *, topics: int = 40, blocks: int = 4000) -> None
     await session.execute(
         text(
             "INSERT INTO projects (name,owner_handle,team_id,ai_mode,settings,id,"
-            "created_at,updated_at,summary) VALUES ('p','o',:team,'collaborative',"
-            "'{}',:pid,now(),now(),'')"
+            "created_at,updated_at) VALUES ('p','o',:team,'collaborative',"
+            "'{}',:pid,now(),now())"
         ),
         {"pid": PROJECT, "team": await a_team(session)},
     )

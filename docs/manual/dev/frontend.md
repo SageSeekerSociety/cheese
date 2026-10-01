@@ -118,7 +118,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 固定页签是五格：`chat`（对话）、`overview`（总览）、`site`（现场）、`changes`（改动）、`preview`（预览）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进总览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
-页签的内容在 `components/panels/` 下：`PanelDoc`（总览）、`PanelSite`（现场，`SiteStepOutput`、`SiteStatusBar`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelProgress`（任务进度）、`PanelCard`（共用外壳）。
+页签的内容在 `components/panels/` 下：`PanelDoc`（总览）、`PanelSite`（现场，`SiteStepOutput`；顶上那一行是和输入框下面同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelProgress`（任务进度）、`PanelCard`（共用外壳）。
 
 ## 空间页 {#space}
 
@@ -126,7 +126,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 角色只有一处来源：`stores/space.ts` 的 `myRole` / `isManager` / `isOwner`，拿登录的人跟 `space.admins` 对出来。界面按它决定露不露管理入口，真正把关的是接口。
 
-看板列是怎么推出来的见[看板与里程碑](/dev/boards#board)，待处理清单见[任务与工作目录](/dev/tasks#awaiting)。
+看板列是怎么推出来的见[看板](/dev/boards#board)，待处理清单见[任务与工作目录](/dev/tasks#awaiting)。
 
 ## 状态与请求：并存的两套栈 {#state-network}
 

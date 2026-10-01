@@ -38,7 +38,7 @@ defineProps<{
 <style scoped>
 .aph {
   flex: 0 0 auto;
-  padding: 12px 24px;
+  padding: 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -93,7 +93,12 @@ defineProps<{
     padding: 12px 16px;
   }
 
+  .aph__row {
+    flex-wrap: wrap;
+  }
+
   .aph__title {
+    flex-basis: 100%;
     font-size: 19px;
     line-height: 28px;
   }

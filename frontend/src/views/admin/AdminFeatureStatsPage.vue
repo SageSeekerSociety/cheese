@@ -141,7 +141,8 @@ onMounted(load)
   grid-template-columns: 160px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: baseline;
-  padding: 14px 16px;
+  padding: 20px 24px;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   color: inherit;
@@ -150,8 +151,8 @@ onMounted(load)
 
 /* 可点的那一行：指针、hover 底色、Tab 顺序三样都有（`<a>` 自带的 Tab 与指针）。 */
 @media (hover: hover) and (pointer: fine) {
-  .afs__link:hover {
-    background: var(--surface);
+  .afs__link:not(.afs__link--dim):hover {
+    background: var(--fill);
   }
 }
 

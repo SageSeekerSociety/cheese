@@ -134,6 +134,11 @@ class RemoteDeviceHub:
                     OWNER_CALL_DEFAULT_TIMEOUT_S + OWNER_CALL_TIMEOUT_SLACK_S,
                     connect=OWNER_CONNECT_TIMEOUT_S,
                 ),
+                # Every seat this backend reads keeps a read waiting at its
+                # runner (``harness/driven/runner.py``), each on a connection of
+                # its own; httpx's default of 100 would queue every other call
+                # behind them once a hundred seats are open.
+                limits=httpx.Limits(max_connections=None),
                 transport=self._transport,
             )
         await self.refresh()

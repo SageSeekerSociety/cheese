@@ -315,11 +315,16 @@ class ComputePool:
         consumer: "EventConsumer",
         activity: "ActivityConsumer | None" = None,
     ) -> None:
-        """Give every runtime the room-side persistence and activity owners."""
+        """Give every runtime the room-side persistence and activity owners,
+        and the room's ear for what an agent is in the middle of writing."""
+        from app.domain.agent.live_frames import publish_live
+
         for runtime in self._runtimes():
             runtime.bind_events(consumer)
             if activity is not None:
                 runtime.bind_activity(activity)
+            if (bind_live := getattr(runtime, "bind_live", None)) is not None:
+                bind_live(publish_live)
 
     def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
         """Give every runtime the owner of prompt receipts — the consumed-stamp
@@ -399,16 +404,6 @@ class ComputePool:
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
         )
 
-    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
-        """Read this seat's journal now: its runner wrote records nobody has
-        read. False when no backend in this process reads that seat."""
-        woken = False
-        for runtime in self._runtimes():
-            wake = getattr(runtime, "wake", None)
-            if wake is not None and wake(topic_id, agent_handle):
-                woken = True
-        return woken
-
     async def recover_sessions(
         self, device_id: str | None = None
     ) -> list["SessionRef"]:
@@ -433,11 +428,11 @@ class ComputePool:
             await runtime.replay(session, known_texts=known_texts)
 
     def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
-        """The backend for work the PLATFORM starts — the activity digest and
-        the project summary.
+        """The backend for work the PLATFORM starts — the memory
+        consolidation (dream).
 
-        No agent type stands behind these, so there is no harness to honour and
-        nothing to refuse: they run on whatever the machine runs. Never None,
+        No agent type stands behind it, so there is no harness to honour and
+        nothing to refuse: it runs on whatever the machine runs. Never None,
         unlike ``select`` — a caller with no type to satisfy always has an
         answer, and falling back to the default machine is a better one than
         crashing on a wiring gap.

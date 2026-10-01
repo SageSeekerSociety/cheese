@@ -201,27 +201,29 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     expect(row.querySelector('.unread-badge')?.textContent?.trim()).toBe('7')
   })
 
-  // 收起来的父话题原先会把子话题的呼吸点整个藏掉：只有未读会聚合，"芝士在跑"
-  // 和"等你处理"不会。合槽之后由折叠开关自己带聚合色补上。
-  it('收着的时候里面那条活在跑，冒到折叠开关上', async () => {
-    const running = { ...topic('a1x', 'a1'), running: true } as Topic
+  // 收起来的父话题会把子话题里成员的动静整个藏掉，由折叠开关自己带聚合色补上。
+  it('收着的时候里面有队友在干活，冒到折叠开关上', async () => {
+    const running = {
+      ...topic('a1x', 'a1'),
+      activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }],
+    } as Topic
     const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? running : t)) })
     // 默认收着 —— 底下有东西在跑，只能靠开关上的颜色说
     expect(visibleTitles(container)).toEqual(['a', 'b'])
-    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--running')).toBe(true)
+    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(true)
     // 底下什么都没有的那一支不能跟着亮
     expect(rowFor(container, 'b').querySelector('.subtree-toggle')).toBeNull()
 
     // 一路展开到它自己那一行，动静就回到那一行上，开关不再替它说
     await fireEvent.click(toggleFor(container, 'a'))
     await fireEvent.click(toggleFor(container, 'a1'))
-    expect(rowFor(container, 'a1x').querySelector('.running-dot')).not.toBeNull()
-    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--running')).toBe(false)
+    expect(rowFor(container, 'a1x').querySelector('[data-state="working"]')).not.toBeNull()
+    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(false)
   })
 
-  it('收着的时候"等你处理"也冒上来，并且压过"在跑"', () => {
+  it('收着的时候"等你处理"也冒上来，并且压过"有队友在干活"', () => {
     const patched = topics.map((t) => {
-      if (t.id === 'a1x') return { ...t, running: true } as Topic
+      if (t.id === 'a1x') return { ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic
       if (t.id === 'a2') return { ...t, awaits_me: true } as Topic
       return t
     })
@@ -229,17 +231,19 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     const toggle = toggleFor(container, 'a')
     expect(toggle.classList.contains('subtree-toggle--awaits')).toBe(true)
     // 两种状态同时存在时只显示一种，否则一个槽要上两个颜色
-    expect(toggle.classList.contains('subtree-toggle--running')).toBe(false)
+    expect(toggle.classList.contains('subtree-toggle--working')).toBe(false)
     expect(toggle.getAttribute('title')).toBe('展开：里面有待处理的事项')
   })
 
   // 选中 + 收起是最需要看见聚合状态的组合（人正站在这个话题里，子话题在替他跑）。
   it('选中的房间收着时，聚合状态仍然挂在开关上', () => {
-    const patched = topics.map((t) => (t.id === 'a2' ? ({ ...t, running: true } as Topic) : t))
+    const patched = topics.map((t) =>
+      t.id === 'a2' ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic) : t
+    )
     const { container } = mount({ topics: patched, selectedTopicId: 'a' })
     const row = rowFor(container, 'a')
     expect(row.classList.contains('is-active')).toBe(true)
-    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--running')).toBe(true)
+    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(true)
   })
 
   it('「已归档」分组不受影响', async () => {

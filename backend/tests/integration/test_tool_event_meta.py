@@ -4,6 +4,7 @@ including tools missing from today's verb table, and subagent-nested calls
 (which arrive through the same AgentToolUse path with the same field shapes)."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -149,3 +150,25 @@ def test_transcript_rejects_a_cursor_from_another_topic(client):
         client.get(f"/topics/{b['id']}/transcript?limit=5&before={other}").status_code
         == 404
     )
+
+
+def test_transcript_says_when_each_turn_started(client):
+    """A turn's first step comes after its preparation and the model's first
+    answer, so 现场 cannot count a turn from its steps alone."""
+    p = post_project(client, json={"name": "P"}).json()["data"]
+    t = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+    ).json()["data"]
+    asked = datetime.now(UTC)
+    _chat(client, t["id"])
+
+    page = client.get(f"/topics/{t['id']}/transcript?limit=50").json()["data"]
+    steps = [b for b in page["data"] if b.get("turn_id")]
+    assert steps, "需要这一轮留下的步骤"
+    turn = steps[0]["turn_id"]
+    started = datetime.fromisoformat(page["turn_starts"][turn])
+    first_step = min(
+        datetime.fromisoformat(b["created_at"]) for b in steps if b["turn_id"] == turn
+    )
+    assert asked <= started <= first_step

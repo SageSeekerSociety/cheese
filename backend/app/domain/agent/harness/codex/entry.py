@@ -30,7 +30,7 @@ async def serve(state: Path, config: dict) -> None:
         loop.add_signal_handler(sig, stopped.set)
     waits = []
     try:
-        schemas = await tools.discover(config["mcp_servers"])
+        schemas = await tools.discover()
         tools.main_thread = await runner.start(
             Opening(**config["opening"]),
             binary=config["binary"],

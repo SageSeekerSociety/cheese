@@ -212,7 +212,7 @@ def harness(request, client, room, tmp_path, monkeypatch):
         # The executor lists no native tools here; what app-server is handed is
         # then exactly the platform's table.
         tools.client.call = lambda method, params: {"tools": []}
-        listed = asyncio.run(tools.discover([]))
+        listed = asyncio.run(tools.discover())
         assert {"todo_write", "chat_send", "chat_edit"} <= {
             tool["name"] for tool in listed
         }

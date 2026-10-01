@@ -58,6 +58,7 @@ from app.api.routes.topics import (
 )
 from app.core.errors import NotFoundError
 from app.domain.agent.step_output import without_output
+from app.domain.agent.turn_times import turn_starts
 from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 
@@ -132,11 +133,17 @@ async def topic_transcript(
     items = [
         without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
     ]
+    # A turn's first step comes after its preparation and the model's first
+    # answer; the 现场 counts the turn from when it started.
+    starts = await turn_starts(db, place.room_id, (b.turn_id for b in site))
     return ok(
         {
             **page(items, len(items)),
             "has_more": has_more,
             "oldest_id": str(site[0].id) if site else None,
+            "turn_starts": {
+                str(turn_id): started.isoformat() for turn_id, started in starts.items()
+            },
         }
     )
 

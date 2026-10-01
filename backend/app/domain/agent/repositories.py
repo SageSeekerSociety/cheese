@@ -300,6 +300,21 @@ class AgentTurnRepository:
         # UPDATE returns a CursorResult, which has rowcount at runtime.
         return result.rowcount or 0  # type: ignore[attr-defined]
 
+    async def started_at_of(
+        self, topic_id: uuid.UUID, turn_ids: Iterable[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """When each of these turns in `topic_id` started; a turn with no
+        interval here is left out."""
+        ids = set(turn_ids)
+        if not ids:
+            return {}
+        rows = await self._session.execute(
+            select(AgentTurn.id, AgentTurn.started_at).where(
+                AgentTurn.topic_id == topic_id, AgentTurn.id.in_(ids)
+            )
+        )
+        return {turn_id: _aware(started) for turn_id, started in rows}
+
     async def open_turns(self) -> list[TurnRecord]:
         """Every interval still open, oldest first."""
         rows = (

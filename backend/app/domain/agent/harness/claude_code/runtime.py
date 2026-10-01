@@ -11,7 +11,7 @@ control request written to its stdin.
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
@@ -52,6 +52,12 @@ class Handle:
     session_id: str
     agent_handle: str
     mirror: Path
+    #: What its runner said it can do when it was greeted (``driven.runner``).
+    capabilities: frozenset[str] = frozenset()
+    #: The screen its runner was started in, when this process ensured it: a
+    #: send that finds that screen still current reuses this handle without
+    #: greeting the runner again. Not part of which session this is.
+    screen: str = field(default="", compare=False)
 
 
 class ClaudeCodeRuntime(DrivenRuntime[Handle]):

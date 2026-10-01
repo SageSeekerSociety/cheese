@@ -344,7 +344,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 200px;
   min-height: 0;
-  padding: 0 8px 8px;
+  padding: 8px 12px 12px;
   background: var(--surface);
   border-right: 1px solid var(--line);
   transition: width 0.2s ease;
@@ -354,7 +354,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  height: 56px;
+  height: 64px;
   padding: 0 12px;
   color: var(--muted);
   white-space: nowrap;
@@ -375,8 +375,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
-  height: 36px;
-  padding: 0 8px;
+  height: 40px;
+  padding: 0 12px;
   border-top-left-radius: var(--radius-md);
   border-top-right-radius: var(--radius-md);
   border-bottom-right-radius: var(--radius-md);
@@ -399,7 +399,7 @@ onBeforeUnmount(() => {
 
 .admin-shell__item--on,
 .admin-shell__item--on:hover {
-  background: var(--fill);
+  background: var(--accent-wash);
   color: var(--ink);
 }
 

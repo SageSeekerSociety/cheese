@@ -96,6 +96,40 @@ it('displayed reload resets readiness and rejects the previous document session'
   expect(shown?.runtime).toBe('ready')
 })
 
+it('a bridge loaded after navigation can request the current handshake without replacing the frame', async () => {
+  const { host, frame, hello, send } = await setup()
+  const shown = host.displayed.value
+  const request = { channel: 'cheese-preview-runtime', version: 1, type: 'hello-request' }
+  for (const invalid of [
+    { origin: 'https://wrong.example', source: frame.contentWindow, data: request },
+    { origin: 'https://preview-fixed.example', source: window, data: request },
+    { origin: 'https://preview-fixed.example', source: frame.contentWindow, data: { ...request, version: 2 } },
+  ])
+    window.dispatchEvent(new MessageEvent('message', invalid))
+  expect(send.mock.calls).toHaveLength(1)
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      origin: 'https://preview-fixed.example',
+      source: frame.contentWindow,
+      data: request,
+    })
+  )
+  expect(send.mock.calls).toHaveLength(2)
+  const renewed = send.mock.calls[1]![0]
+  expect(renewed.sessionId).toBe(hello.sessionId)
+  expect(host.displayed.value?.runtime).toBe('unconfirmed')
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      origin: 'https://preview-fixed.example',
+      source: frame.contentWindow,
+      data: { ...renewed, type: 'ready' },
+    })
+  )
+  expect(host.displayed.value?.runtime).toBe('ready')
+  expect(host.displayed.value).toBe(shown)
+  expect(document.querySelector(`iframe[name="${shown!.name}"]`)).toBe(frame)
+})
+
 it('disconnect and same-instance recovery preserve browsing context; replacement stays gone', async () => {
   const { host, frame } = await setup()
   const displayed = host.displayed.value

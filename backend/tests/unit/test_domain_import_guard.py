@@ -64,7 +64,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
-        ("app.domain.agent.chat", "app.domain.milestone.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
         ("app.domain.agent.chat", "app.domain.review.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
@@ -131,18 +130,16 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         #     正是 block.repositories.tasks_awaiting_an_answer 的那个读，
         #     走不了「调对方的 service」。等 block 长出 service 就把这行删掉。
         ("app.domain.platform_stats.pipeline", "app.domain.block.repositories"),
-        ("app.domain.dashboard.services", "app.domain.milestone.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
         ("app.domain.dashboard.services", "app.domain.space.repositories"),
         ("app.domain.dashboard.services", "app.domain.topic.repositories"),
         ("app.domain.dashboard.services", "app.domain.user.repositories"),
-        # --- identity / knowledge / machine / membership / milestone / oauth ---
+        # --- identity / knowledge / machine / membership / oauth ---
         ("app.domain.identity.services", "app.domain.user.repositories"),
         ("app.domain.knowledge.services", "app.domain.team.repositories"),
         ("app.domain.knowledge.services", "app.domain.user.repositories"),
         ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
-        ("app.domain.milestone.services", "app.domain.project.repositories"),
         # --- notification（项目收件箱：写入前核项目在不在，拍板时把决定发回房间。
         #     这两条是 alert/ 并进来时原样带过来的） ---
         ("app.domain.notification.services", "app.domain.block.repositories"),

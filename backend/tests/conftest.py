@@ -306,6 +306,24 @@ class ScriptedSession(Runner):
                 }
             )
 
+    def alive(self) -> bool:
+        return self.channel.alive
+
+    def ended(self) -> bool:
+        return not self.channel.alive
+
+    # A runner whose host the test took away (``StubChannel.drop_session``) is
+    # going as far as a read it holds is concerned: that read is answered.
+    @property
+    def closing(self) -> bool:
+        if self._closing or not hasattr(self, "channel"):
+            return self._closing
+        return self not in self.channel.sessions.values()
+
+    @closing.setter
+    def closing(self, value: bool) -> None:
+        self._closing = value
+
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "ping":
             return {
@@ -314,6 +332,7 @@ class ScriptedSession(Runner):
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
                 "alive": self.channel.alive,
+                "capabilities": list(self.capabilities),
             }
         return await super().dispatch(method, params)
 
@@ -362,12 +381,26 @@ class StubChannel:
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
         self.reply = "Hello world"
-        self.alive = True
+        self._alive = True
         # Fired the moment the transport actually writes, so a test can assert
         # what did (and did not) happen before the session was reached.
         self.on_start: Callable[[], None] | None = None
         self.calls: dict[str, str] = {}
         _CHANNELS.add(self)
+
+    @property
+    def alive(self) -> bool:
+        """Whether the scripted sessions' agent processes are still there."""
+        return self._alive
+
+    @alive.setter
+    def alive(self, value: bool) -> None:
+        # The agent process ending is something a runner hears at once
+        # (``Runner._announce_exit``): a read it holds is answered.
+        self._alive = value
+        if not value:
+            for session in self.sessions.values():
+                session.announce()
 
     # --- the channel -------------------------------------------------------
 
@@ -377,7 +410,9 @@ class StubChannel:
     async def prepare_topic(self, **_: object) -> tuple[bool, str]:
         return True, ""
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         self.last_system_prompt = opening.system_prompt
         self.last_resume_session_id = opening.resume_token
         agent = opening.agent_handle or session.agent_handle or "cheese"
@@ -402,6 +437,7 @@ class StubChannel:
             runner.session_id,
             agent,
             self.root / str(session.topic_id) / agent / "mirror.sqlite",
+            frozenset(runner.capabilities),
         )
 
     def _session_for(
@@ -426,9 +462,15 @@ class StubChannel:
     def drop_session(
         self, topic_id: uuid.UUID, agent: str | None = None
     ) -> "ScriptedSession":
-        """Remove a seat's runner (a host that vanished) and hand it back."""
+        """Remove a seat's runner (a host that vanished) and hand it back.
+
+        A read the backend holds there is answered, as a runner going away
+        answers it; every call after that finds nothing there.
+        """
         session = self._session_for(topic_id, agent)
-        return self.sessions.pop((topic_id, session.actor))
+        dropped = self.sessions.pop((topic_id, session.actor))
+        dropped.announce()  # ``ScriptedSession.closing``
+        return dropped
 
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
         runner = self.sessions.get((handle.session.topic_id, handle.agent_handle))
@@ -465,6 +507,7 @@ class StubChannel:
                 session.session_id,
                 session.actor,
                 self.root / str(topic_id) / session.actor / "mirror.sqlite",
+                frozenset(session.capabilities),
             )
             for (topic_id, _), session in self.sessions.items()
             if self.alive
@@ -545,8 +588,8 @@ class StubChannel:
 
         Played on the runner's own loop, whichever thread the test scripts it
         from — the runner's journal belongs to that loop's thread, and the
-        reader waiting there is woken the way a runner's ring wakes it, so it
-        lands without being asked.
+        read the backend holds there is answered with it, so it lands without
+        being asked.
         """
         session = self._session_for(topic_id, agent)
         record.setdefault("uuid", str(uuid.uuid4()))
@@ -554,7 +597,6 @@ class StubChannel:
 
         def play() -> None:
             session.observe(dict(record))
-            self.runtime.wake(topic_id, session.session_agent)
 
         if threading.get_ident() == session.thread:
             play()
@@ -1073,6 +1115,28 @@ def stub_project_forge(monkeypatch, tmp_path):
                     }
                 )
             return {"tree": tree, "truncated": False}
+        if route.startswith("/contents/"):
+            # No ref named: the default branch, as GitHub and Forgejo answer.
+            name = route.removeprefix("/contents/")
+            listed = git_store.git(repo, "ls-tree", "-l", "main", "--", name)
+            if not listed.strip():
+                return None
+            metadata, _ = listed.rstrip("\n").split("\t", 1)
+            mode, kind, oid, size = metadata.split()
+            if kind == "tree":
+                return []
+            if mode == "120000":
+                return {"type": "symlink", "path": name}
+            data = subprocess.check_output(
+                ["git", "-C", str(repo), "cat-file", "blob", oid]
+            )
+            return {
+                "type": "file",
+                "path": name,
+                "size": int(size),
+                "encoding": "base64",
+                "content": base64.b64encode(data).decode(),
+            }
         if route.startswith("/git/blobs/"):
             oid = route.removeprefix("/git/blobs/")
             data = subprocess.check_output(
@@ -1109,6 +1173,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
+    monkeypatch.setattr(forge, "repository_data", repository_data)
     monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
     monkeypatch.setattr(forge_files, "status_client", status_client)
 

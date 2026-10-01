@@ -11,5 +11,23 @@
     "macIntel": "Mac (Intel)",
     "windows": "Windows"
   },
-  "save": "Save"
+  "save": "Save",
+  "request": {
+    "timeout": "The request timed out. Please try again",
+    "canceled": "Request canceled",
+    "failed": "Request failed (HTTP {status})",
+    "versionReadFailed": "Couldn't read this version (HTTP {status})",
+    "addFailed": "Couldn't add it (HTTP {status})",
+    "uploadFailed": "Upload failed (HTTP {status})",
+    "imageFailed": "Couldn't load the image (HTTP {status})",
+    "fileReadFailed": "Couldn't read the file (HTTP {status})",
+    "downloadFailed": "Download failed (HTTP {status})",
+    "revisionFileName": "{name} (version {seq}){ext}"
+  },
+  "dialog": {
+    "alertTitle": "Notice",
+    "promptTitle": "Enter a value"
+  },
+  "unknownError": "Unknown error",
+  "confirm": "Confirm"
 }

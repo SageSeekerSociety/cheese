@@ -33,7 +33,7 @@ class PrivateScreen(StubChannel):
         self.prompts = []
         self.openings = []
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         # What the channel is started with, and the scoped credential it hands
         # the session's `cheese` CLI: the room's place, signed for the agent
         # acting in it (`claude_code/channel.py` mints the same shape).
@@ -49,7 +49,7 @@ class PrivateScreen(StubChannel):
                 ),
             }
         )
-        return await super().ensure(session, opening)
+        return await super().ensure(session, opening, live)
 
     def emit_turn(
         self,

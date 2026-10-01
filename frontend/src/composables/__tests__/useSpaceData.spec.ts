@@ -45,6 +45,7 @@ import { toast } from 'vuetify-sonner'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
+import { setLocale } from '@/i18n'
 import { useSpaceStore } from '@/stores/space'
 
 const SPACE_ID = 647
@@ -94,6 +95,9 @@ beforeEach(() => {
   removeAdmin.mockReset().mockResolvedValue({ data: {} })
   vi.mocked(toast.error).mockClear()
   vi.mocked(toast.success).mockClear()
+  // The toasts below are asserted in Chinese; the test environment's browser
+  // language would otherwise pick English.
+  setLocale('zh-CN')
 })
 
 afterEach(() => {

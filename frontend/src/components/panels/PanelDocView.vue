@@ -7,7 +7,9 @@
 // （「换了个值」直接落回组合式函数的 ref，「做了个动作」原样再往上发）。
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
+import type { DocSelectionSnapshot } from '../../lib/docAiSelection'
 import type { DocSaveStatus } from '../../lib/docEditState'
+import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -51,6 +53,8 @@ const props = withDefaults(
     // ---- 评论区 ----
     comments: Block[]
     commentAuthor?: string
+    threadState?: DocThreadState
+    threadActions?: DocThreadActions
     sendComment?: SendDocComment
     anchorNodes: Block[]
     // ---- 装饰的原料（原样递给正文那一半） ----
@@ -85,10 +89,9 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  // 总览自动区里的一条决策 / 里程碑：去向不在话题里，交给拿着路由的那一层。
-  (e: 'open-resource', resource: 'milestone'): void
   /** 有人在正文里改了东西（装配服务端那一版时不算）。 */
   (e: 'edited'): void
+  (e: 'open-ai', snapshot: DocSelectionSnapshot | null): void
   /** 这个确认框里「取消」/ 点外面关掉：状态那一半归组合式函数管。 */
   (e: 'close-lossy-confirm'): void
 }>()
@@ -145,12 +148,9 @@ function openComment(payload: { anchorId: string | null; quote: string }) {
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
-watch(
-  () => [props.topic?.id, props.commentAuthor],
-  () => {
-    openId.value = null
-  }
-)
+watch([() => props.topic?.id, () => props.commentAuthor], () => {
+  openId.value = null
+})
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
 }
@@ -266,6 +266,14 @@ defineExpose({
               :aria-expanded="commentsRef?.opened ?? false"
               @click="commentsRef?.toggle()"
             />
+            <v-btn
+              v-if="!sourceMode"
+              size="small"
+              variant="text"
+              @mousedown.prevent
+              @click="emit('open-ai', surfaceRef?.captureSelection() ?? null)"
+              >{{ t('work.room.docAi.title') }}</v-btn
+            >
             <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
               <template #activator="{ props: menuProps }">
                 <v-btn
@@ -298,6 +306,7 @@ defineExpose({
             </v-menu>
           </div>
         </div>
+        <slot name="ai" />
         <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
            column) — this is the file itself, not the document view. -->
         <div v-if="sourceMode" class="doc-source" @keydown="handleDocKeydown">
@@ -317,6 +326,8 @@ defineExpose({
           :topic-id="topic?.id ?? null"
           :author="commentAuthor"
           :send-comment="sendComment"
+          :thread-state="threadState"
+          :thread-actions="threadActions"
           :comments="comments"
           :anchor-nodes="anchorNodes"
           :quote-state="quoteState"
@@ -364,18 +375,18 @@ defineExpose({
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
+                @open-ai="emit('open-ai', $event)"
                 @locate-comment="locateComment"
                 @error="setError"
               />
 
-              <!-- 总览房间的其余三块（#1889 ②~④）紧跟正文。评论在独立侧栏。只有根话题
+              <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
                  有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
               <OverviewAuto
                 v-if="topic?.kind === 'root'"
                 :topic="topic"
                 :activity-tick="activityTick"
                 @open-topic="emit('open-topic', $event)"
-                @open-resource="emit('open-resource', $event)"
               />
             </div>
           </div>

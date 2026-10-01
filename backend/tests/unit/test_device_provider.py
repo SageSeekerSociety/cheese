@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import device_provider, machine_launcher
+from app.domain.agent import device_provider, machine_launcher, screen_identity
 from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -1663,7 +1663,7 @@ async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
     room = _room(hub, env={"CHEESE_AGENT_CONFIG": "unchanged"})
 
     first = await room.ensure()
-    monkeypatch.setattr(device_provider, "footprint_root", lambda: ".somewhere-else")
+    monkeypatch.setattr(screen_identity, "footprint_root", lambda: ".somewhere-else")
 
     assert (await room.ensure()).sid != first.sid
     assert hub.closed == [first.sid]

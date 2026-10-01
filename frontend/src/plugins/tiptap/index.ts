@@ -35,6 +35,8 @@ import HardBreak from '@tiptap/extension-hard-break'
 
 import { AttachmentImage } from './extensions/image'
 
+import { t } from '@/i18n'
+
 // The mirror image of the bridge in TipTapViewer.vue: this list is
 // vuetify-pro-tiptap's (tiptap v2), and HardBreak / AttachmentImage are the two
 // entries built against the app's tiptap v3. Same duplicate-package cause, same
@@ -52,7 +54,9 @@ const vuetifyProTipTap = createVuetifyProTipTap({
   extensions: [
     BaseKit.configure({
       placeholder: {
-        placeholder: '输入内容...',
+        // A function, so an empty editor reads in the current language, not the
+        // one the app started in.
+        placeholder: () => t('editor.placeholder'),
       },
     }),
     asVptExtension(HardBreak),

@@ -27,7 +27,7 @@ picks up a different secret and every socket is refused `auth_expired`.
 
 Scenarios:
   A. Seed a topic with a few human messages; add reactions via the API
-     (multiple authors + 芝士's ✅) → chips render with counts, own reactions
+     (another person's, under their own token) → chips render with counts, own reactions
      highlighted amber.
   B. Hover a message → action bar shows the emoji button; open the picker,
      click 👍 → chip appears (mine), click the chip → toggles off.
@@ -159,14 +159,12 @@ async def main() -> None:
         m2 = await seed("我觉得可以，芝士记一下结论", tok2)
         await pg.wait_for_timeout(400)
 
-        # ---- A: reactions from other authors + 芝士's ✅ (via API) — the page
-        #      must update LIVE from the `reaction` WS frames, no reload. ----
-        _req("POST", f"/api/blocks/{m2}/reactions",
-             {"emoji": "✅", "author": "cheese"})
-        _req("POST", f"/api/blocks/{m1}/reactions",
-             {"emoji": "👀", "author": "user-2"})
-        _req("POST", f"/api/blocks/{m1}/reactions",
-             {"emoji": "👍", "author": "user-3"})
+        # ---- A: reactions from the other person (via API) — the page must
+        #      update LIVE from the `reaction` WS frames, no reload. A reaction
+        #      lands under whoever the token names, so it is user-2's token. ----
+        _req("POST", f"/api/blocks/{m2}/reactions", {"emoji": "✅"}, token=tok2)
+        _req("POST", f"/api/blocks/{m1}/reactions", {"emoji": "👀"}, token=tok2)
+        _req("POST", f"/api/blocks/{m1}/reactions", {"emoji": "👍"}, token=tok2)
         await pg.wait_for_timeout(600)
         chips = await pg.locator(".rx-chip").all_text_contents()
         print("[A] live chips:", chips)

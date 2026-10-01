@@ -19,8 +19,11 @@ import type { Topic } from '../../cx_types'
 
 import { ref } from 'vue'
 
+import { useDocAi } from '../../composables/useDocAi'
+import { useDocThreads } from '../../composables/useDocThreads'
 import { usePanelDoc } from '../../composables/usePanelDoc'
 
+import DocAiPanel from './doc/DocAiPanel.vue'
 import PanelDocView from './PanelDocView.vue'
 
 import { t } from '@/i18n'
@@ -47,8 +50,6 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  // 总览自动区里的一条决策 / 里程碑：去向不在话题里，交给拿着路由的那一层。
-  (e: 'open-resource', resource: 'milestone'): void
 }>()
 
 // 展示组件也是组合式函数要的那两个口子：读编辑器里现在这一版、把服务端那一版装进去。
@@ -69,6 +70,10 @@ const {
   lossyConfirmOpen,
   sourceMode,
   sourceDraft,
+  rawDoc,
+  titlePrefix,
+  docVersion,
+  reloadFromActivity,
   pendingEdits,
   hasPendingEdits,
   externalDoc,
@@ -99,6 +104,24 @@ const {
 } = usePanelDoc(props, {
   serializeVisual: () => viewRef.value?.serializeVisual() ?? null,
   installMarkdown: (body) => viewRef.value?.installMarkdown(body),
+})
+
+const threads = useDocThreads(() => props.topic?.id ?? null)
+const aiBlocked = () =>
+  loading.value ||
+  dirty.value ||
+  lossy.value ||
+  externalDoc.value !== null ||
+  hasPendingEdits.value ||
+  sourceMode.value ||
+  editingBlocked.value
+const ai = useDocAi({
+  topic: () => props.topic?.id ?? null,
+  raw: () => rawDoc.value,
+  prefix: () => titlePrefix.value,
+  version: () => docVersion.value,
+  blocked: aiBlocked,
+  reload: reloadFromActivity,
 })
 
 // Dev-only probe hook: lets Playwright inspect serialization/dirty state
@@ -153,6 +176,8 @@ defineExpose({ pulse, highlightTurn })
     :comments="comments"
     :comment-author="commentAuthor"
     :send-comment="sendComment"
+    :thread-state="threads.state"
+    :thread-actions="threads.actions"
     :anchor-nodes="anchorNodes"
     :live-ref-index="liveRefIndex"
     :comment-mark-index="commentMarkIndex"
@@ -175,8 +200,29 @@ defineExpose({ pulse, highlightTurn })
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
-    @open-resource="emit('open-resource', $event)"
     @edited="markEdited"
     @close-lossy-confirm="lossyConfirmOpen = false"
-  />
+    @open-ai="ai.prepare($event)"
+  >
+    <template #ai>
+      <DocAiPanel
+        v-if="ai.opened.value"
+        :cards="ai.cards.value"
+        :question="ai.question.value"
+        :busy="ai.busy.value"
+        :error="ai.error.value"
+        :selection-status="ai.selectionStatus.value"
+        :has-selection="!!ai.selection.value"
+        :blocked="aiBlocked()"
+        :unknown="!!ai.unknown.value"
+        :version="docVersion"
+        @update:question="ai.question.value = $event"
+        @submit="ai.submit"
+        @accept="ai.accept"
+        @cancel="ai.cancel"
+        @recover="ai.recover"
+        @close="ai.opened.value = false"
+      />
+    </template>
+  </PanelDocView>
 </template>

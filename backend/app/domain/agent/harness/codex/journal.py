@@ -28,6 +28,7 @@ class Journal(journal.Journal):
                 "INSERT INTO events(recorded_at, record) VALUES (?, ?)",
                 (datetime.now(UTC).isoformat(), json.dumps(record, ensure_ascii=False)),
             )
+        self.grew()
 
     def import_events(self, entries: list[dict]) -> None:
         """Commit a remote page before advancing the local receive cursor."""

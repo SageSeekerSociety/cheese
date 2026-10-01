@@ -16,7 +16,7 @@ import json
 import os
 import sys
 import time
-import urllib.request
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -43,31 +43,29 @@ IDLE_EXIT_S = 600.0
 IDLE_CHECK_S = 5.0
 
 
-# --- telling a backend there is something to read ------------------------------
+# --- a read that waits for news ------------------------------------------------
 #
-# A backend reads a session's journal at its floor while a turn is open and
-# backs off far once none is; what a session writes on its own between turns (a
-# background task finishing, a turn it opened itself) would wait out that
-# back-off. So a record nobody has read yet rings the backend, which reads at
-# once. The ring carries nothing: the read is still what moves records, from its
-# own cursor, so a ring that is lost costs only the wait it would have saved.
+# A backend reads a session by asking for the journal past its cursor. Asked to
+# wait, the runner holds the question until there is something to answer it
+# with — a record past that cursor, or a change in what the agent is in the
+# middle of writing — or the wait is up, so a backend spends one read per wait
+# on a quiet session and hears a record the moment it is written. Once there is
+# news the answer waits ``READ_BATCH_S`` more, so a stream of tokens arrives a
+# few times a second rather than once per token.
+#
+# What the agent is in the middle of writing is the block it is generating now
+# — text, or a tool call with its arguments as far as they have streamed — and
+# it lives only here: it is never journaled, and the record of the finished
+# block replaces it (each harness says when). Reasoning is not shown.
 
-#: How often the runner looks for records nobody has read.
-DOORBELL_CHECK_S = 0.2
-#: A backend that read this recently is reading at its floor and needs no ring.
-READING_S = 0.5
-DOORBELL_TIMEOUT_S = 2.0
-
-
-def ring(api: str, token: str) -> None:
-    """Tell the backend this session has records for it; never raises."""
-    request = urllib.request.Request(
-        api.rstrip("/") + "/sandbox/journal-written",
-        method="POST",
-        headers={"X-Cheese-Token": token},
-    )
-    with contextlib.suppress(Exception):
-        urllib.request.urlopen(request, timeout=DOORBELL_TIMEOUT_S).close()
+#: The longest a read may be held, whatever the backend asked.
+READ_WAIT_MAX_S = 60.0
+#: How long an answer that has news waits for more of it.
+READ_BATCH_S = 0.05
+#: What a runner of this build can do that one started by an older deployment
+#: cannot. The backend reads them from ``ping`` when it greets the runner.
+LONG_POLL = "long_poll"
+LIVE = "live"
 
 
 def socket_path(state: Path) -> str:
@@ -186,7 +184,17 @@ class Runner(Generic[J]):  # noqa: UP046
         self.read_through = 0
         self.read_at = time.monotonic()
         self.idler: asyncio.Task | None = None
-        self.ringer: asyncio.Task | None = None
+        self.ender: asyncio.Task | None = None
+        # Set, and replaced, whenever there is news for a waiting read.
+        self.news = asyncio.Event()
+        self.journal.on_grow = self.announce
+        self.closing = False
+        # What the agent is writing right now, and the work it is for; the
+        # mark changes with every change of it, and from one runner to the next.
+        self.live_blocks: list[dict] = []
+        self.live_work: str | None = None
+        self.live_epoch = uuid.uuid4().hex[:12]
+        self.live_count = 0
 
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
@@ -275,21 +283,102 @@ class Runner(Generic[J]):  # noqa: UP046
         os.chmod(socket_path(self.state), 0o600)
         if self.idle_exit_s:
             self.idler = asyncio.create_task(self._idle())
-        api, token = os.environ.get("CHEESE_API"), os.environ.get("CHEESE_TOKEN")
-        if api and token:
-            self.ringer = asyncio.create_task(self._ring_for_unread(api, token))
+        if self.process is not None:
+            self.ender = asyncio.create_task(self._announce_exit(self.process))
 
-    async def _ring_for_unread(self, api: str, token: str) -> None:
-        rung = self.journal.last()
+    async def _announce_exit(self, process: asyncio.subprocess.Process) -> None:
+        """The agent process ended: a read held now is answered at once, saying
+        so (``alive``), whether or not the process wrote anything first."""
+        await process.wait()
+        self.announce()
+
+    # --- a read that waits for news ------------------------------------------
+
+    #: What ``ping`` tells the backend this runner can do; a harness that
+    #: reports what its agent is writing adds ``LIVE``.
+    capabilities: tuple[str, ...] = (LONG_POLL,)
+
+    def announce(self) -> None:
+        """Wake every read waiting for news."""
+        news, self.news = self.news, asyncio.Event()
+        news.set()
+
+    def shown(self) -> None:
+        """What the agent is writing changed (the harness changed
+        ``live_blocks`` in place, or replaced them)."""
+        self.live_count += 1
+        self.announce()
+
+    def show(self, blocks: list[dict], work: str | None) -> None:
+        """Replace what the agent is shown writing; [] when it writes nothing."""
+        changed = bool(blocks or self.live_blocks)
+        self.live_blocks, self.live_work = blocks, work
+        if changed:
+            self.shown()
+
+    def live_mark(self) -> str:
+        return f"{self.live_epoch}.{self.live_count}"
+
+    def alive(self) -> bool:
+        return self.process is not None and self.process.returncode is None
+
+    def ended(self) -> bool:
+        """The agent process was started and has exited since."""
+        return self.process is not None and self.process.returncode is not None
+
+    async def news_for(self, after: int, params: dict) -> dict:
+        """Hold a read that asked to wait until there is news past ``after``,
+        then add what else the reader keeps track of: what the agent is
+        writing, when it changed since the mark the reader last saw, and
+        whether the agent process is still there. A read that did not ask to
+        wait is answered at once, with records only.
+
+        Waiting is not activity (``_idle``): an idle session is let go with a
+        read still waiting on it, and that read is answered as the runner
+        closes. A closing runner answers that its agent is gone, though the
+        process may not have ended yet: the backend reuses a seat whose runner
+        said it is alive (``DrivenRuntime.answering``), and one that is going
+        will refuse the next send.
+        """
+        if "wait" not in params:
+            return {}
+        seen = params.get("live")
+        wait = min(max(float(params["wait"] or 0), 0.0), READ_WAIT_MAX_S)
+        deadline = time.monotonic() + wait
+        waited = False
         while True:
-            await asyncio.sleep(DOORBELL_CHECK_S)
-            last = self.journal.last()
-            if last <= rung:
-                continue
-            rung = last
-            reading = time.monotonic() - self.read_at < READING_S
-            if last > self.read_through and not reading:
-                await asyncio.to_thread(ring, api, token)
+            news = self.news
+            if (
+                self.closing
+                or self.ended()
+                or self.journal.last() > after
+                or self.live_mark() != seen
+            ):
+                break
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            waited = True
+            # ``asyncio.wait`` rather than ``wait_for``: it raises nothing on
+            # timeout, on whichever Python the session host runs.
+            waiting = asyncio.ensure_future(news.wait())
+            try:
+                done, _ = await asyncio.wait({waiting}, timeout=left)
+            finally:
+                waiting.cancel()
+            if not done:
+                break
+        if waited and not self.closing:
+            await asyncio.sleep(READ_BATCH_S)
+        answer: dict = {"alive": self.alive() and not self.closing}
+        if self.live_mark() != seen:
+            answer["live"] = {
+                "mark": self.live_mark(),
+                "work_id": self.live_work,
+                # As they stand now: the harness goes on changing them in place.
+                "blocks": [dict(block) for block in self.live_blocks],
+            }
+        return answer
 
     # --- letting an idle session go ------------------------------------------
 
@@ -454,7 +543,11 @@ class Runner(Generic[J]):  # noqa: UP046
             await self.listener
 
     async def close(self) -> None:
-        for task in (self.idler, self.ringer):
+        # A read still waiting is answered first: the server does not finish
+        # closing while a connection is being handled.
+        self.closing = True
+        self.announce()
+        for task in (self.idler, self.ender):
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

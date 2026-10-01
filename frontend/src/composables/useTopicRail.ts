@@ -1,5 +1,5 @@
 // 项目侧栏（`TopicSidebar`）那一半「状态」：拍平的树、两组话题、谁收着、收起来的
-// 那些行把未读和状态交给谁、以及那只让红灯自己亮起来的慢钟。
+// 那些行把未读和成员的动静交给谁、以及那只让红标自己亮起来的慢钟。
 //
 // 和画的那一半分家的理由，和 #2158 拆 PanelPreview 是同一条：这些东西原先长在
 // 那个 1887 行的组件里，于是「折叠记不记得住」「红灯会不会自己亮」只能连着整条
@@ -7,13 +7,15 @@
 //
 // **这一半不认识路由**：跳转、「我在哪」、行的 ⋯ 里那几项（要 router 才算得出链接）
 // 在 `useTopicRailRoutes.ts`。分开是为了让这一半能在一个没有路由的宿主里跑起来。
-import type { Ref } from 'vue'
 import type { Topic } from '../cx_types'
+import type { RailMemberMark } from '../lib/memberActivity'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { replyStalled } from '../lib/replyWait'
+import { agentNames } from '../lib/agentNames'
+import { isAgentHandle } from '../lib/authorship'
+import { waitStalled, waitText } from '../lib/replyWait'
 import {
   ancestorPathIds,
   inferTopicKind,
@@ -143,23 +145,23 @@ export function useTopicRail(source: TopicRailSource) {
   const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
 
   // ---- 状态查表 ----
-  // 折叠聚合要按 id 问「这个话题在跑吗 / 在等人吗」，而拍平树里只留了 id。走一遍
+  // 折叠聚合要按 id 问「这里有队友在干活吗 / 在等人吗」，而拍平树里只留了 id。走一遍
   // props.topics 建索引，别在每一行上做线性查找。
+  //
+  // 房间自己没有状态：问的都是房间里的成员。侧栏只画在干活的队友，不画打字的人——
+  // 这份列表隔一阵才读一次，而打字几秒就过去了，画出来多半已经不是真的了。
   const topicById = computed(() => new Map(source.topics.map((t) => [t.id, t])))
-  function mergingOf(id: string): boolean {
-    return topicById.value.get(id)?.merging === true
+  function workersOf(topic: Topic | undefined) {
+    return (topic?.activity ?? []).filter((a) => a.kind === 'working')
   }
-  function runningOf(id: string): boolean {
-    return topicById.value.get(id)?.running === true
+  function workingOf(id: string): boolean {
+    return workersOf(topicById.value.get(id)).length > 0
   }
   function awaitsOf(id: string): boolean {
     return topicById.value.get(id)?.awaits_me === true
   }
-  function failedOf(id: string): boolean {
-    return Boolean(topicById.value.get(id)?.turn_failed_at)
-  }
 
-  // 红灯要跟着钟亮：列表三十分钟才刷一次，而「等满五分钟」是时间自己走到的，不是
+  // 红标要跟着钟亮：列表三十秒才刷一次，而「等满五分钟」是时间自己走到的，不是
   // 数据变出来的。所以这里自己有一只慢钟，每 10 秒拨一下让判断重算。
   const clock = ref(Date.now())
   let clockTimer: number | undefined
@@ -170,10 +172,39 @@ export function useTopicRail(source: TopicRailSource) {
     if (clockTimer !== undefined) window.clearInterval(clockTimer)
   })
 
-  // 红灯两个来源：最近一轮报错了（立刻亮），或有人 @ 了 AI 等满五分钟没回话。
+  // 房间在等的成员里，此刻算卡住了的那几位：它那一轮报错了（立刻算），或等满了阈值。
+  function stalledWaits(topic: Topic | undefined) {
+    return (topic?.waits ?? []).filter((w) => waitStalled(w, clock.value))
+  }
   function stalledOf(id: string): boolean {
-    const topic = topicById.value.get(id)
-    return failedOf(id) || replyStalled(topic?.awaiting_reply_since, clock.value, topic?.reply_wait_reason)
+    return stalledWaits(topicById.value.get(id)).length > 0
+  }
+
+  // 一位成员叫什么、是不是 AI 队友：项目名册说了算（队友的座位和它自己的 handle 都认）。
+  const agentNameMap = computed(() => agentNames([], store.members))
+  function memberOf(handle: string | null): { handle: string; name: string; agent: boolean } {
+    if (!handle) return { handle: '', name: agentName.value, agent: true }
+    const agent = agentNameMap.value.get(handle)
+    if (agent) return { handle, name: agent, agent: true }
+    if (isAgentHandle(handle)) return { handle, name: agentName.value, agent: true }
+    const person = store.members.find((m) => m.user_handle === handle)
+    return { handle, name: person?.name || handle, agent: false }
+  }
+
+  /** 这一行上画的那几位成员：卡住了的在前（红），在干活的在后（绿）。同一位只画一次。 */
+  function memberMarks(topic: Topic): RailMemberMark[] {
+    const marks: RailMemberMark[] = []
+    for (const wait of stalledWaits(topic)) {
+      const who = memberOf(wait.member)
+      if (marks.some((m) => m.handle === who.handle)) continue
+      marks.push({ ...who, state: 'stalled', title: waitText(wait, who.name, clock.value) })
+    }
+    for (const work of workersOf(topic)) {
+      if (marks.some((m) => m.handle === work.member)) continue
+      const who = memberOf(work.member)
+      marks.push({ ...who, state: 'working', title: t('work.sidebar.workingTip', { name: who.name }) })
+    }
+    return marks
   }
 
   // ---- 折叠 ----
@@ -240,8 +271,7 @@ export function useTopicRail(source: TopicRailSource) {
       collapsed: collapsedIds.value,
       reveal: selectedPath.value,
       unreadOf,
-      runningOf,
-      mergingOf,
+      workingOf,
       awaitsOf,
       stalledOf,
     })
@@ -299,8 +329,7 @@ export function useTopicRail(source: TopicRailSource) {
     if (!row.collapsed) return t('work.sidebar.collapse')
     if (row.hiddenStalled) return t('work.sidebar.expandStalled')
     if (row.hiddenAwaits) return t('work.sidebar.expandAwaits')
-    if (row.hiddenRunning) return t('work.sidebar.expandRunning', { agent: agentName.value })
-    if (row.hiddenMerging) return t('work.sidebar.expandMerging')
+    if (row.hiddenWorking) return t('work.sidebar.expandWorking')
     return t('work.sidebar.expand')
   }
 
@@ -327,11 +356,8 @@ export function useTopicRail(source: TopicRailSource) {
     archivedUnread,
     stalledOf,
     awaitsOf,
-    runningOf,
-    mergingOf,
+    workingOf,
+    memberMarks,
     toggleTitle,
-    agentName,
-    /** 这只钟每 10 秒拨一下；行把它收成 prop，自己算「等了多久」。 */
-    clock: clock as Ref<number>,
   }
 }

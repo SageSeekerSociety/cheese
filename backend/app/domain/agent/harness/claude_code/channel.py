@@ -79,7 +79,9 @@ class ClaudeCodeChannel:
             / "records.sqlite"
         )
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, Placement)
         # WHO acts with it. The caller pins a teammate when a message named one;
@@ -117,7 +119,17 @@ class ClaudeCodeChannel:
             ),
             precheck=precheck,
             runtime_factory=runtime,
+            runner_alive=live is not None,
         )
+        if (
+            live is not None
+            and live.screen == screen.sid
+            and (live.device_id, live.state) == (screen.device_id, placed["state"])
+        ):
+            # The runner that answered the last read is the one this screen
+            # still runs, so greeting it would say what the handle already
+            # holds.
+            return live
         status = await self._greet(screen.device_id, placed["state"], launch)
         return Handle(
             session,
@@ -126,6 +138,8 @@ class ClaudeCodeChannel:
             status["session_id"],
             agent,
             self._mirror(session, placed["resource"] + agent),
+            frozenset(status.get("capabilities") or ()),
+            screen=screen.sid,
         )
 
     async def _greet(self, device_id: str, state: str, launch: str) -> dict:
@@ -277,6 +291,7 @@ class ClaudeCodeChannel:
                     status["session_id"],
                     agent,
                     self._mirror(ref, place.resource_id + agent),
+                    frozenset(status.get("capabilities") or ()),
                 )
             )
         return handles

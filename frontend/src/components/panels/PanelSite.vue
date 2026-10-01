@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 现场 tab: 芝士 干活的实况 —— 会话的控制条，加上重建出来的 transcript 时间线。
 import type { AgentControlState, Block, Topic } from '../../cx_types'
+import type { MemberActivityLine } from '../../lib/memberActivity'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -23,9 +24,9 @@ import {
 import { isPlatformEvent } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import MemberActivity from '../room/MemberActivity.vue'
 import SessionInspector from '../SessionInspector.vue'
 
-import SiteStatusBar from './SiteStatusBar.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
 
 import { t } from '@/i18n'
@@ -44,13 +45,14 @@ const props = withDefaults(
     working?: boolean
     // 房间 socket 上最近一帧会话状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
-    // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」、
-    // 状态条上「已用多久」都读它。
+    // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」读它。
     runningTurns?: Record<string, number>
     // 一轮结束时加一：趁这时把这一段安静地重读一遍，补上 socket 断开时漏掉的行。
     refreshTick?: number
     /** 名册里查不到名字的 AI 发言按这个名字称呼（项目 AI 队友的名字）。 */
     agentName?: string
+    /** 此刻谁在这个房间里忙（`MemberActivity` 那一份）。 */
+    activity?: MemberActivityLine[]
   }>(),
   {
     active: false,
@@ -58,6 +60,7 @@ const props = withDefaults(
     working: false,
     agentControl: null,
     agentName: () => t('work.room.defaultAgentName'),
+    activity: () => [],
   }
 )
 
@@ -77,6 +80,15 @@ const transcript = ref<Block[]>([])
 // 更早的现场还在库里没拉。和对话栏一样，只在读的人自己往上翻时才拉。
 const hasOlder = ref(false)
 const loadingOlder = ref(false)
+// 每一轮从什么时候开始（毫秒），读到的每一页都带着它那几轮的。组头的用时从这里算起。
+const turnStarts = ref<Record<string, number>>({})
+
+function noteStarts(starts: Record<string, string> | undefined): void {
+  const parsed = Object.entries(starts ?? {}).map(([id, at]) => [id, Date.parse(at)] as const)
+  const fresh = parsed.filter(([id, at]) => Number.isFinite(at) && turnStarts.value[id] !== at)
+  if (fresh.length) turnStarts.value = { ...turnStarts.value, ...Object.fromEntries(fresh) }
+}
+
 // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
 // 不是一回事了，重读时不能再和它合。
 let loadedFor: string | null = null
@@ -99,6 +111,7 @@ async function loadOlder() {
     // 这个人的时间线。
     if (props.topic?.id !== tid || viewing.value !== author) return
     noteAgents(page.data)
+    noteStarts(page.turn_starts)
     transcript.value = [...page.data, ...transcript.value]
     hasOlder.value = page.has_more === true
     // Prepending grows the content ABOVE the viewport; without this the reader
@@ -190,6 +203,7 @@ async function load() {
     if (props.topic?.id !== tid || viewing.value !== author) return
     loadedFor = author
     noteAgents(tx.data)
+    noteStarts(tx.turn_starts)
     transcript.value = mergeSite(tx.data, transcript.value, switched)
     if (switched || !quiet) hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
@@ -303,28 +317,11 @@ function agentLabel(handle: string): string {
   return props.memberNames[handle] || (isAgentHandle(handle) ? props.agentName : handle)
 }
 
-// 在跑的轮次里，最近一行是谁做的：「全部」下状态条说的是这个队友。
-const activeAgent = computed(() => {
-  const running = props.runningTurns ?? {}
-  let last: Block | undefined
-  for (const b of transcript.value) {
-    if (b.turn_id && b.turn_id in running && agents.value.includes(b.author)) last = b
-  }
-  return last?.author ?? null
-})
-// 选中的队友在不在干活：房间在干活，而且在跑的轮次里有它的行。在跑的轮次还一
-// 行都没有时说不出是谁的，就不替任何一个说「没在干」。
-const viewingWorking = computed(() => {
-  if (!props.working || viewing.value === null) return props.working
-  const running = props.runningTurns ?? {}
-  const rows = transcript.value.filter((b) => b.turn_id && b.turn_id in running)
-  return rows.length === 0 || rows.some((b) => b.author === viewing.value)
-})
-const statusAgentHandle = computed(() => {
-  if (agents.value.length < 2) return null
-  return viewing.value ?? activeAgent.value ?? null
-})
-const statusAgent = computed(() => (statusAgentHandle.value ? agentLabel(statusAgentHandle.value) : ''))
+// 此刻在干活的队友（对话栏从 socket 上学来，和输入框下面那一行是同一份）：只看
+// 一个队友时只说它。
+const workingLines = computed(() =>
+  props.activity.filter((l) => l.kind === 'working' && (viewing.value === null || l.handle === viewing.value))
+)
 
 // Opening the tab loads it, exactly like opening the drawer used to. 它读的是
 // 「现在看的是谁」，所以要等在 `viewing` 之后 —— immediate 的那一次是当场跑的。
@@ -402,7 +399,17 @@ function onSayClick(event: MouseEvent, b: Block): void {
   else if (chip.dataset.file) emit('open-file', chip.dataset.file, b.task_id ?? null)
 }
 
-const turns = computed(() => groupByTurn(visible.value))
+// 在跑的那一轮，这一页读回来时可能还没登记：对话栏从 socket 上知道它从什么时候开始。
+// 记下来，这一轮停了、重读还没回来的那一会儿，用时也不缩回去。
+watch(
+  () => props.runningTurns,
+  (running) => {
+    const unseen = Object.entries(running ?? {}).filter(([id]) => !(id in turnStarts.value))
+    if (unseen.length) turnStarts.value = { ...Object.fromEntries(unseen), ...turnStarts.value }
+  },
+  { immediate: true }
+)
+const turns = computed(() => groupByTurn(visible.value, turnStarts.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
 // 新一轮还没落下第一行时，上一轮的那一组会被说成进行中。
@@ -445,13 +452,7 @@ function isLive(index: number): boolean {
           {{ agentLabel(a) }}
         </button>
       </div>
-      <SiteStatusBar
-        :blocks="visible"
-        :working="viewingWorking"
-        :turns="runningTurns ?? {}"
-        :agent="statusAgent"
-        :agent-handle="statusAgentHandle"
-      />
+      <MemberActivity :lines="workingLines" class="site-activity" />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">
         {{ t('work.room.site.empty') }}
       </div>
@@ -566,6 +567,15 @@ function isLive(index: number): boolean {
 </template>
 
 <style scoped>
+/* 谁在干活，贴在这一栏的顶上：往上翻旧的记录时，它仍然说着此刻的事。 */
+.site-activity {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
 /* 按队友看：一排文字按钮，选中的那个换底色和墨色，不用琥珀——这里不是主操作。 */
 /* 钉在滚动层顶上：现场一长，切队友不该先滚回去。 */
 .site-agents {

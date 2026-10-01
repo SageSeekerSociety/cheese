@@ -106,12 +106,13 @@ class Journal(journal.Journal):
                 put("owner", owner)
             if cursor is not None:
                 put(*cursor)
-                return
-            # The cursor pi is asked from names pi's own entries only: the
-            # runner's records (``RETRYING``, ``GAVE_UP``) are ids pi never saw.
-            ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]
-            if ours:
-                put("received", ours[-1]["id"])
+            else:
+                # Only native entries can be used as pi's received cursor.
+                ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]
+                if ours:
+                    put("received", ours[-1]["id"])
+        if entries:
+            self.grew()
 
     def generation(self) -> str:
         """The mirror's own id, stable across resumes, new on a rebuild (FB-56).

@@ -7,7 +7,7 @@
 
   <v-dialog v-model="dialogVisible" persistent max-width="300">
     <v-card>
-      <v-card-title>图片上传中</v-card-title>
+      <v-card-title>{{ t('editor.image.uploading') }}</v-card-title>
       <v-card-text>
         <v-progress-linear indeterminate color="primary"></v-progress-linear>
       </v-card-text>

@@ -1,7 +1,7 @@
-/** 总览的其余三块（#1889 ②~④）：正文下面那一栏。
+/** 总览的其余两块（#1889 ②③）：正文下面那一栏。
  *
  * 它在这之前只进 AI 队友的提示词，人翻开总览文档只看得到正文那一块。这一份钉的是
- * 界面这一头：三块都画出来、每块标着「平台自动生成」，而且每一条都点得动——去哪
+ * 界面这一头：两块都画出来、每块标着「平台自动生成」，而且每一条都点得动——去哪
  * 看是它自己的那一头，不是一段死文字。
  */
 import type { Component } from 'vue'
@@ -44,14 +44,6 @@ const BLOCKS: OverviewAutoBlock[] = [
     ],
   },
   {
-    key: 'milestones',
-    title: '里程碑',
-    items: [
-      { kind: 'milestone', milestone_id: 'm-1', title: '中期答辩', due: '2026-10-01', status: 'upcoming' },
-      { kind: 'milestone', milestone_id: 'm-2', title: '第一次内测', due: null, status: 'missed' },
-    ],
-  },
-  {
     key: 'closed_topics',
     title: '已结束的话题',
     items: [{ kind: 'topic', topic_id: 't-2', title: '选型', owner: null, status: null, conclusion: '用 Postgres。' }],
@@ -72,14 +64,14 @@ beforeEach(() => {
 })
 
 describe('总览的自动区', () => {
-  it('三块都画出来，每块都标着它不由人维护', async () => {
+  it('两块都画出来，每块都标着它不由人维护', async () => {
     const { container, findAllByText } = mount()
 
     await findAllByText('现在在做什么')
-    for (const title of ['现在在做什么', '里程碑', '已结束的话题']) {
+    for (const title of ['现在在做什么', '已结束的话题']) {
       expect(container.textContent).toContain(title)
     }
-    // 每块一份：读的人在一屏里连着看到三块，说明只写一次就够不着第二块。
+    // 每块一份：读的人在一屏里连着看到两块，说明只写一次就够不着第二块。
     expect(container.querySelectorAll('.auto-block__badge')).toHaveLength(BLOCKS.length)
     expect(container.querySelectorAll('.auto-block__badge')[0].textContent).toContain('平台自动生成，不可编辑')
   })
@@ -94,14 +86,6 @@ describe('总览的自动区', () => {
     expect(container.textContent).toContain('用 Postgres。')
   })
 
-  it('里程碑说人话：状态翻译过来，没定日期就说没定', async () => {
-    const { container, findAllByText } = mount()
-    await findAllByText('中期答辩')
-
-    expect(container.textContent).toContain('进行中 · 截止 2026-10-01')
-    expect(container.textContent).toContain('已逾期 · 日期待定')
-  })
-
   it('点一条话题进那个房间', async () => {
     const { findAllByText, emitted } = mount()
     const title = (await findAllByText('分页接口'))[0]
@@ -111,15 +95,7 @@ describe('总览的自动区', () => {
     expect(emitted()['open-topic']).toEqual([['t-1']])
   })
 
-  it('里程碑去项目里的那一页 —— 面板自己不导航', async () => {
-    const { findAllByText, emitted } = mount()
-
-    await fireEvent.click((await findAllByText('中期答辩'))[0].closest('button') as HTMLElement)
-
-    expect(emitted()['open-resource']).toEqual([['milestone']])
-  })
-
-  it('三块都没有就整段不画 —— 不补一排「暂无」', async () => {
+  it('两块都没有就整段不画 —— 不补一排「暂无」', async () => {
     getOverviewAuto.mockResolvedValue({ root_topic_id: 'root-1', blocks: [] })
     const { container } = mount()
 

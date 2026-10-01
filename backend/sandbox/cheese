@@ -408,12 +408,6 @@ PLATFORM_TOOLS = ToolTable(
             ["target", "message"],
         ),
         _tool(
-            "cheese_milestone",
-            "把以后会被回头对照的关键节点钉成里程碑，不是待办清单。",
-            {"title": _text("里程碑标题"), "due": _text("ISO 日期，如 2026-06-20")},
-            ["title"],
-        ),
-        _tool(
             "cheese_title",
             "有人明确要你给本话题改名时才用，≤12 字；平台会自己给话题起名、"
             "方向变了再改，这样改出的名字按人定的处理，之后不再自动改。"
@@ -673,7 +667,6 @@ PLATFORM_TOOLS = ToolTable(
 _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {"cheese_fetch", "platform_request"}
 _NEEDS_PROJECT = frozenset(
     {
-        "cheese_milestone",
         "cheese_notify",
         "cheese_library_ls",
         "cheese_routine_list",
@@ -968,18 +961,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "topic_id": topic or None,
                 "payload": {"options": options} if options else {},
             },
-        }
-    if tool == "cheese_milestone":
-        # The room it came from: a room's token authenticates only with its room
-        # named, and a re-sent milestone is deduplicated against that room's turn.
-        body = {"title": args["title"], "source_topic_id": topic}
-        if args.get("due"):
-            due = args["due"]
-            body["due_date"] = due if "T" in due else f"{due}T00:00:00Z"
-        return {
-            "method": "POST",
-            "path": f"/projects/{project}/milestones",
-            "body": body,
         }
     if tool == "cheese_feedback_propose":
         # 话题级:配额、指纹去重、拒绝的记忆全挂在话题上,而「这个人能不能在这个
@@ -1811,7 +1792,6 @@ _SAY = {
     "cheese_unlock": lambda a, d, e: (
         "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
-    "cheese_milestone": lambda a, d, e: f"已钉里程碑：{a['title']}",
     "cheese_title": lambda a, d, e: (
         f"这条活现在叫「{(d or {}).get('title') or a['text']}」。"
         if a.get("task")

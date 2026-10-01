@@ -14,7 +14,6 @@
 // nobody watches them. Now they load once, when the popover is opened.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
-import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -28,15 +27,11 @@ import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
-import { topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
+import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 
 const props = defineProps<{
   topic: Topic
-  /** 话题此刻处在哪一段 — 施工中 / 待验收 / 交付中 / 已采纳, computed above this
-   * component because it folds together the topic's status, its live turn and
-   * its accept card. Absent (私聊 / 项目本体) falls back to the status alone. */
-  phase?: TopicPhase
   members: ProjectMemberRow[]
   me: string
   /** ChatPanel's live socket state — the dot that says 已连接 / 未连接. */
@@ -54,11 +49,12 @@ const emit = defineEmits<{
 
 const { mdAndUp } = useDisplay()
 
-// 头部常驻状态条 (规则 4): where this topic stands, always on screen. It used to
-// read the topic row's `status` alone, which knows only 归档 —— 「待验收」 and
-// 「交付中」 were visible solely by scrolling the conversation to the accept box,
-// so a reviewer could sit in a topic that was waiting on them and see 「进行中」.
-const state = computed(() => (props.phase ? topicPhaseBadge(props.phase) : topicStateBadge(props.topic.status)))
+// 房间自己的生命周期只在不寻常时说一句（已归档 / 草稿），和侧栏那一行同一个规矩。
+// 房间没有「在干活 / 待审阅」这种状态：干活的是成员（输入框下面那一行），待审阅
+// 的是卡（卡上、看板上）。
+const state = computed(() =>
+  props.topic.status === 'archived' || props.topic.status === 'draft' ? topicStateBadge(props.topic.status) : null
+)
 const shortId = computed(() => topicShortId(props.topic.id))
 const title = computed(() => topicTitle(props.topic))
 // 项目本体 is not a work topic — it has no id badge and no roster.
@@ -158,7 +154,7 @@ useCommands(roomCommands)
         <span class="topic-header__title t-title" :title="title">{{ title }}</span>
         <span class="topic-header__meta">
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
-          <span v-if="isWorkTopic" class="pr-state" :class="state.cls">{{ state.label }}</span>
+          <span v-if="isWorkTopic && state" class="pr-state" :class="state.cls">{{ state.label }}</span>
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
             <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
           </span>
@@ -353,23 +349,7 @@ useCommands(roomCommands)
   padding: 1px 8px;
   border-radius: 6px;
 }
-.pr-state--open {
-  color: var(--muted);
-  background: var(--fill);
-}
 .pr-state--merged {
-  color: var(--muted);
-  background: var(--fill);
-}
-/* 待验收 = 有人在等你。--warn 的三件套里文字用 -ink、底用 -wash：把 mark 色
-   (--warn) 拿来当文字在浅色主题下只有 2.34:1，读不动。 */
-.pr-state--reviewing {
-  color: var(--warn-ink);
-  background: var(--warn-wash);
-}
-/* 施工中 / 交付中 = 机器在忙，不需要你做什么，所以是中性的陈述而不是招手。 */
-.pr-state--working,
-.pr-state--delivering {
   color: var(--muted);
   background: var(--fill);
 }

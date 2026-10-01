@@ -189,7 +189,10 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
 /* delta 中性呈现（不用红绿）：方向语义由 `deltaTitle` 那句话承担 —— 「待分诊 +12%」
    是好事还是坏事取决于指标本身。 */
 .akpi__delta {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
   color: var(--muted);
 }
 

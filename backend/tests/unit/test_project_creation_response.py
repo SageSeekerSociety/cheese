@@ -42,7 +42,6 @@ async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
         team_id=1,
         external_task_id=None,
         ai_mode="collaborative",
-        summary="",
         root_topic_id=uuid.uuid4(),
         created_at=datetime.now(UTC),
     )

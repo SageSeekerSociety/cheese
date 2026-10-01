@@ -41,12 +41,35 @@ export function usePreviewFrames(frameName: string) {
   let runtimeWindow: Window | null = null
   let runtimeSession = ''
 
+  function sendRuntimeHello(frame: PreviewFrame) {
+    try {
+      runtimeWindow?.postMessage(
+        {
+          channel: 'cheese-preview-runtime',
+          version: 1,
+          type: 'hello',
+          sessionId: runtimeSession,
+          resourceId: frame.resourceId ?? null,
+        },
+        new URL(frame.url).origin
+      )
+    } catch {
+      // A replaced or opaque document cannot acknowledge; remain unconfirmed.
+      runtimeWindow = null
+    }
+  }
+
   function runtimeMessage(event: MessageEvent) {
     const frame = displayed.value
     if (!frame || !runtimeWindow || event.source !== runtimeWindow || event.origin !== new URL(frame.url).origin) return
     const data = event.data
-    if (!data || data.channel !== 'cheese-preview-runtime' || data.version !== 1 || data.sessionId !== runtimeSession)
+    if (!data || data.channel !== 'cheese-preview-runtime' || data.version !== 1) return
+    if (data.type === 'hello-request') {
+      // An app may install its bridge after iframe load's first hello was sent.
+      sendRuntimeHello(frame)
       return
+    }
+    if (data.sessionId !== runtimeSession) return
     if (data.type === 'ready') {
       frame.runtime = 'ready'
       frame.runtimeError = ''
@@ -164,21 +187,7 @@ export function usePreviewFrames(frameName: string) {
     frame.runtimeError = ''
     runtimeWindow = event.target.contentWindow
     runtimeSession = crypto.randomUUID()
-    try {
-      runtimeWindow?.postMessage(
-        {
-          channel: 'cheese-preview-runtime',
-          version: 1,
-          type: 'hello',
-          sessionId: runtimeSession,
-          resourceId: frame.resourceId ?? null,
-        },
-        new URL(frame.url).origin
-      )
-    } catch {
-      // A replaced or opaque document cannot acknowledge; remain unconfirmed.
-      runtimeWindow = null
-    }
+    sendRuntimeHello(frame)
   }
 
   function failed(id: number, event: Event) {

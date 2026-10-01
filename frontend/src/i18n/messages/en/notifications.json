@@ -12,7 +12,8 @@
     "reason": "Reason",
     "member": "Member",
     "unknownProject": "Unknown project",
-    "unreachable": "Can’t open this page. It may not exist, or you may not have access"
+    "unreachable": "Can’t open this page. It may not exist, or you may not have access",
+    "yesterday": "Yesterday {time}"
   },
   "default": {
     "title": "Unknown notification type: {type}",

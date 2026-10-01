@@ -1,30 +1,32 @@
 <script setup lang="ts">
 // 话题列表里的一行 —— 只凭 props 画，凭事件往回说。**它不认识路由，也不取数。**
 //
-// 行左边只有一个 16px 槽，按优先级换租客：有子话题 → 折叠开关；否则「出故障了」→
-// 红点；否则「等你处理」→ 琥珀点；否则「芝士在跑」→ 绿呼吸点；否则「在等合并」→
-// 空心绿圈；都没有就空着（空槽仍占 16px，否则同层级的标题左缘会参差）。
+// 行左边只有一个 16px 槽：有子话题 → 折叠开关；否则「等你处理」→ 琥珀点（等的是
+// 读这一行的人自己）；都没有就空着（空槽仍占 16px，否则同层级的标题左缘会参差）。
 //
-// 有子话题的行，开关顶掉了状态点，所以它自己带状态色——而且是「自己的 + 收起来的
-// 后代的」并成一个信号。收起来的父话题会把子话题的呼吸点整个藏掉是原先的一个 bug
-//（只有未读会聚合，「在跑」不聚合），合槽顺手修掉它：扫侧栏时要的本来就是「这里面
-// 有动静」。
+// 房间自己没有「在跑」「卡住了」这种状态。行右边画的是成员：此刻在这里干活的队友，
+// 和房间在等、等太久了的那一位（`TopicRailMembers`），悬停说出是谁、为什么。
 //
-// 「哪些行看得见、收起来的行替谁背着未读和状态、这一行红不红」都是
-// `composables/useTopicRail.ts` 的事（`row` / `stalled` / `toggleTitle` 三个 props
+// 有子话题的行，开关自己带颜色——「自己的 + 收起来的后代的」并成一个信号：红 = 里面
+// 有成员卡住了，黄 = 里面有事等你，绿 = 里面有队友在干活。扫侧栏时要的是「这里面
+// 有动静」，收起来不能把它藏掉。
+//
+// 「哪些行看得见、收起来的行替谁背着未读和动静、这一行画哪几位成员」都是
+// `composables/useTopicRail.ts` 的事（`row` / `stalled` / `marks` / `toggleTitle`
 // 就是它的答案）。这一份只管那一段模板和它自己的 CSS。
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
+import type { RailMemberMark } from '@/lib/memberActivity'
 import type { VisibleRow } from '@/lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
+import TopicRailMembers from './TopicRailMembers.vue'
 
 import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
-import { stallReasonText } from '@/lib/replyWait'
 import { topicTitle } from '@/lib/topicState'
 import { TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { countLabel } from '@/lib/topicTree'
@@ -39,14 +41,12 @@ const props = defineProps<{
   renaming: boolean
   /** 这一行的 ⋯ 菜单开着——开着的时候那颗按钮必须留屏幕上，它是菜单的根。 */
   menuOpen: boolean
-  /** 父级带钟算出来的：这一行该不该亮红灯（它自己出故障，或收起来的里面有）。 */
+  /** 父级带钟算出来的：这一行里有没有成员卡住了（自己的，不含收起来的后代）。 */
   stalled: boolean
+  /** 这一行右边画的那几位成员（在干活的、卡住了的），父级带钟算好。 */
+  marks?: RailMemberMark[]
   /** 折叠开关 hover 时说的那句话（里面有什么，父级知道）。 */
   toggleTitle: string
-  /** 当下的钟，每 10 秒拨一下：等了多久是时间自己走到的，不是数据变出来的。 */
-  now: number
-  /** 项目里那个 AI 队友的名字，不写死「芝士」。 */
-  agentName: string
   /** 这一行的 ⋯ 里有哪几项（要 router 才算得出链接，所以由父级给）。 */
   actions: (topic: Topic) => MenuCommand[]
 }>()
@@ -65,19 +65,7 @@ const emit = defineEmits<{
 // 折叠开关的颜色：自己的状态 + 收起来的后代的，并成一个信号（红光最亮，压过其余）。
 const rowStalled = computed(() => props.stalled || props.row.hiddenStalled)
 const rowAwaits = computed(() => props.row.topic.awaits_me === true || props.row.hiddenAwaits)
-const rowRunning = computed(() => props.row.topic.running === true || props.row.hiddenRunning)
-const rowMerging = computed(() => props.row.topic.merging === true || props.row.hiddenMerging)
-
-// 红灯 hover 那一句：最近一轮报错了就直说报错，不然说的是「多半为什么还没回话」。
-const stalledTitle = computed(() => {
-  const topic = props.row.topic
-  if (topic.turn_failed_at) return t('work.sidebar.turnFailed', { agent: props.agentName })
-  return stallReasonText(
-    { reason: topic.reply_wait_reason, since: topic.awaiting_reply_since, pr: topic.reply_wait_pr },
-    props.agentName,
-    props.now
-  )
-})
+const rowWorking = computed(() => (props.marks ?? []).some((m) => m.state === 'working') || props.row.hiddenWorking)
 
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
 // small neutral dot + text, never a colored chip.
@@ -148,7 +136,7 @@ function onMenuToggle(open: boolean) {
           'tap-target': page,
           'subtree-toggle--stalled': rowStalled,
           'subtree-toggle--awaits': !rowStalled && rowAwaits,
-          'subtree-toggle--running': !rowStalled && !rowAwaits && (rowRunning || rowMerging),
+          'subtree-toggle--working': !rowStalled && !rowAwaits && rowWorking,
         }"
         :title="toggleTitle"
         :aria-expanded="!row.collapsed"
@@ -158,28 +146,11 @@ function onMenuToggle(open: boolean) {
           {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
         </v-icon>
       </button>
-      <!-- 红灯：最近一轮报错了，或有人 @ 了芝士等了 5 分钟还没有一句回话——多半是
-           卡住、排队太久或掉线了。排在最前面：它说的是「出故障了」，比等你拍板更
-           该先看见。 -->
-      <span v-else-if="stalled" class="row-slot">
-        <span class="stalled-dot" :title="stalledTitle" />
-      </span>
       <!-- 等你处理：有点名给你的验收卡、没答的决策请求，或芝士停在一道只有你能
            回答的问题上。未读的 @ 不点这颗灯——芝士汇报、递卡都 @人，算进来几乎
-           每行都亮，灯就没意义了；未读有右边的数字。排在「在跑」前面——芝士在忙
-           是它的事，等你做事才是你的事。 -->
+           每行都亮，灯就没意义了；未读有右边的数字。 -->
       <span v-else-if="row.topic.awaits_me" class="row-slot">
         <span class="await-dot" :title="t('work.sidebar.awaitsTip')" />
-      </span>
-      <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个任务——
-           和归档/采纳状态无关，只是这会儿有没有跑完。 -->
-      <span v-else-if="row.topic.running" class="row-slot">
-        <span class="running-dot" :title="t('work.sidebar.runningTip', { agent: agentName })" />
-      </span>
-      <!-- 绿灯常亮：已采纳，在等检查 / 合并队列走完，此刻没有 AI 在干活。合并完就
-           灭。空心圈：关掉动效时呼吸点也不动，靠形状分开。 -->
-      <span v-else-if="row.topic.merging" class="row-slot">
-        <span class="merging-dot" :title="t('work.sidebar.mergingTip')" />
       </span>
       <span v-else class="row-slot" />
     </template>
@@ -220,6 +191,7 @@ function onMenuToggle(open: boolean) {
       </template>
     </v-list-item-title>
     <template #append>
+      <TopicRailMembers v-if="marks?.length" :marks="marks" class="me-1" />
       <!-- 折叠不能把「有新消息」吞掉：收起来的后代的未读加到本行上。 -->
       <TopicRailBadge
         v-if="row.unreadTotal > 0"
@@ -372,10 +344,9 @@ function onMenuToggle(open: boolean) {
 .subtree-toggle:hover :deep(.v-icon) {
   color: var(--text);
 }
-/* 收起来的父话题会把子话题的状态整个藏掉（未读会聚合，「在跑」和「等你」原先
-   不会）——开关自己带聚合色补上：红 = 里面出了故障，黄 = 里面有事等你，绿 = 里面
-   芝士在跑。展开着的行则表示本行自己的状态，因为槽被开关占了。hover 不改这三个
-   颜色，状态优先于反馈。 */
+/* 收起来的父话题会把子话题里成员的动静整个藏掉——开关自己带聚合色补上：红 = 里面
+   有成员卡住了，黄 = 里面有事等你，绿 = 里面有队友在干活。hover 不改这三个颜色，
+   状态优先于反馈。 */
 /* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
    压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
    的状态色刷成 --muted——正好是「这一行收起来了、里面有事等你」最该看见的时候。 */
@@ -387,23 +358,13 @@ function onMenuToggle(open: boolean) {
 .subtree-toggle--awaits:hover :deep(.v-icon) {
   color: var(--signal-yellow) !important;
 }
-.subtree-toggle--running :deep(.v-icon),
-.subtree-toggle--running:hover :deep(.v-icon) {
+.subtree-toggle--working :deep(.v-icon),
+.subtree-toggle--working:hover :deep(.v-icon) {
   color: var(--ok) !important;
 }
 
-/* 侧栏是一组红黄绿灯：红 = 有人等芝士回话太久（或最近一轮报错了），黄 = 有事等
-   你拍板，绿呼吸 = 芝士在干活。黄不用琥珀/橙：右边的未读数字就是琥珀色，同色会
-   让人把「有新消息」和「等你拍板」读成一回事。只靠颜色分不开的，靠形状补：红灯
-   外面多一圈淡红晕，黄灯是实心点，绿灯更小且会呼吸——红绿、红黄色觉障碍下也分
-   得开。 */
-.stalled-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-wash);
-}
+/* 等你拍板：黄点。黄不用琥珀/橙：右边的未读数字就是琥珀色，同色会让人把「有新消息」
+   和「等你拍板」读成一回事。 */
 .await-dot {
   width: 8px;
   height: 8px;
@@ -419,41 +380,6 @@ function onMenuToggle(open: boolean) {
   border-radius: 8px;
   padding: 1px 6px;
   font-variant-numeric: tabular-nums;
-}
-/* 呼吸点：芝士还在这一轮里工作，跟归档/采纳状态无关。原先它绝对定位挂在装饰图标
-   的右下角，所以需要一圈底色描边把自己从图标上抠出来。现在它独占那个槽、周围没有
-   东西可压，描边就只剩害处了——行底色有三档，固定取 --canvas 的描边在 hover 和
-   选中的行上会露出一圈错色的边。 */
-.running-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-  animation: running-dot-pulse 1.6s ease-in-out infinite;
-}
-@keyframes running-dot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.7);
-  }
-}
-/* 在等合并：常亮的空心绿圈。和呼吸点靠「动不动」「实心还是空心」两样分开。 */
-.merging-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 2px solid var(--ok);
-}
-/* 关掉动效时是一颗常亮的绿点：和「等你」那颗靠颜色、大小两样还分得开。 */
-@media (prefers-reduced-motion: reduce) {
-  .running-dot {
-    animation: none;
-  }
 }
 /* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。
    这是结构线，不是强调条——左条纹禁令不管它。 */

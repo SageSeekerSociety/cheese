@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.api.doc_ai_runtime import authorize_work, reconcile_usage
 from app.core.config import settings
 from app.domain.doc_ai.completion import complete
+from app.domain.doc_ai.models import DocAiAttempt
 from app.domain.doc_ai.routing import project_binding
 from app.domain.doc_ai.services import DocAiService
 from app.domain.doc_ai.worker import run_one
@@ -105,6 +106,73 @@ async def test_worker_uses_real_binding_and_http_no_tools_before_persisting_answ
     async with factory() as session:
         row = await DocAiService(session).get(room, request_id)
         assert row.state == "succeeded" and row.answer == "解释结果"
+        assert (await TopicService(session).get_doc(room)).doc_version == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "cost_present,stage", [(False, "cost_header"), (True, "result_schema")]
+)
+async def test_contract_failure_persists_safe_stage_and_available_usage_once(
+    business_db_factory, cost_present, stage
+):
+    factory = business_db_factory
+    room, request_id, bound = await pending(factory)
+    sent = []
+    metered = []
+
+    def gateway(request):
+        sent.append(request)
+        return httpx.Response(
+            200,
+            headers={"x-litellm-response-cost": "0.01"} if cost_present else {},
+            json={
+                "id": "contract-receipt",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"answer":"private","extra":"private"}',
+                        },
+                    }
+                ],
+            },
+        )
+
+    async def invoke(lease):
+        return await complete(
+            lease,
+            base="https://gateway.example",
+            key="project-key",
+            transport=httpx.MockTransport(gateway),
+        )
+
+    async def meter(lease):
+        metered.append(lease.request_id)
+
+    assert await run_one(factory, invoke, meter, authorize_work)
+    assert not await run_one(factory, invoke, meter, authorize_work)
+    assert len(sent) == 1 and metered == [request_id]
+    async with factory() as session:
+        row = await DocAiService(session).get(room, request_id)
+        attempt = await session.scalar(
+            select(DocAiAttempt).where(DocAiAttempt.request_id == request_id)
+        )
+        assert row.state == "failed" and row.answer is None
+        assert row.binding == bound
+        assert row.error == attempt.error
+        assert row.error == f"模型返回的文档结果不符合无工具数据合同 [doc_ai:{stage}]"
+        assert (attempt.usage is not None) == cost_present
+        if cost_present:
+            assert attempt.usage == {
+                "model": bound["wire_model"],
+                "input_tokens": 10,
+                "output_tokens": 4,
+                "cost_usd": 0.01,
+                "upstream_id": "contract-receipt",
+            }
         assert (await TopicService(session).get_doc(room)).doc_version == 1
 
 

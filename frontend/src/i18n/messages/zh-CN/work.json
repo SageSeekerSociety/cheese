@@ -186,6 +186,45 @@
     "loading": "正在加载资源限制…"
   },
   "room": {
+    "docAi": {
+      "title": "文档 AI",
+      "selectionToolbar": "选区操作",
+      "failed": "请求失败，输入已保留",
+      "signIn": "请登录后使用文档 AI",
+      "unverified": "选区未通过当前已保存原文核验。请先保存、处理冲突，或重新选择受支持的正文。",
+      "refresh": "刷新记录",
+      "close": "关闭 AI 面板，保留草稿",
+      "unknown": "请求结果未知。按原操作恢复，避免重复发送。",
+      "recover": "恢复原操作",
+      "question": "问题或修改要求",
+      "ask": "问 AI",
+      "propose": "生成修改提案",
+      "aiProposal": "AI 请求与提案",
+      "replacement": "建议替换原文",
+      "baseVersion": "基于文档第 {version} 版",
+      "humanAccept": "由我采纳并保存",
+      "accepted": "{actor} 已采纳，保存为第 {version} 版",
+      "cancel": "取消请求",
+      "state": {
+        "pending": "等待执行",
+        "running": "生成中",
+        "succeeded": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
+      }
+    },
+    "docLink": {
+      "title": "链接操作",
+      "close": "关闭链接操作",
+      "url": "链接地址",
+      "save": "保存链接",
+      "cancel": "取消",
+      "edit": "编辑",
+      "remove": "移除链接",
+      "stale": "原文或链接已变化，请重新打开",
+      "invalid": "链接格式不受支持",
+      "readonly": "当前文档只读"
+    },
     "noTasks": "暂无任务",
     "site": {
       "agents": {
@@ -205,10 +244,7 @@
         "retryingCount": "重试中（第 {attempt} 次）",
         "compacting": "整理上下文中",
         "waiting": "等待机器",
-        "stopped": "已停止",
-        "idle": "空闲",
-        "elapsed": "已用 {span}",
-        "quiet": "最近活动 {span}前"
+        "elapsed": "已用 {span}"
       },
       "frontendError": "前端报错",
       "span": {
@@ -282,13 +318,6 @@
     },
     "overviewAuto": {
       "badge": "平台自动生成，不可编辑",
-      "milestone": {
-        "upcoming": "进行中",
-        "done": "已完成",
-        "missed": "已逾期",
-        "due": "截止 {date}",
-        "noDue": "日期待定"
-      },
       "failed": "无法加载这部分内容"
     },
     "accept": {
@@ -376,7 +405,6 @@
         "doc": "查看文档",
         "split": "查看任务",
         "undo": "撤销",
-        "milestone": "查看日历",
         "accept": "审阅"
       },
       "filesChanged": "改动了 {n} 个文件",
@@ -423,7 +451,10 @@
       "keysHint": "Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给{name}，可直接粘贴图片",
       "pasteHint": "可直接粘贴图片",
       "placeholderDm": "给{name}发消息",
-      "placeholder": "输入消息，{'@'}{name} 交给它处理"
+      "placeholder": "输入消息，{'@'}{name} 交给它处理",
+      "attachFiles": "上传文件（每个最大 10MB）",
+      "sendPhotos": "发送照片",
+      "send": "发送"
     },
     "dispatched": {
       "created": "新建任务",
@@ -664,10 +695,8 @@
       "file": "文件"
     },
     "panel": {
-      "nameSeparator": "、",
       "tabDetail": "{label}（{detail}）",
       "detailPair": "{first}，{second}",
-      "working": "{names}正在工作",
       "taskCount": "{count} 件任务",
       "inProgress": "{count} 件进行中",
       "newContent": "有新内容",
@@ -822,6 +851,7 @@
       "undoFailed": "撤销失败",
       "downloadFailed": "下载失败",
       "sending": "发送中…",
+      "typing": "正在输入…",
       "waitingConnection": "等待连接",
       "today": "今天",
       "yesterday": "昨天",
@@ -916,6 +946,30 @@
       "inPast": "这个时间已经过去",
       "failed": "设置提醒失败",
       "set": "将在 {when} 提醒你"
+    },
+    "docThread": {
+      "title": "评论线程",
+      "open": "未解决",
+      "resolved": "已解决",
+      "resolve": "解决",
+      "reopen": "重开",
+      "refresh": "刷新线程",
+      "historicalAnchor": "引用来自保存的历史文档，不是当前可改写选区",
+      "reply": "回复",
+      "placeholder": "回复此线程（Ctrl/Cmd+Enter 发送）",
+      "send": "发送回复",
+      "reopenToReply": "重开此线程后才能回复",
+      "load": "加载线程",
+      "unknown": "结果未知。先恢复原操作，再继续发送。",
+      "recover": "恢复原操作",
+      "storage": "无法保存草稿，请保留此面板"
+    },
+    "activity": {
+      "working": "{name}正在工作…",
+      "typingOne": "{name}正在输入…",
+      "typingTwo": "{first}和{second}正在输入…",
+      "typingMany": "多人正在输入…",
+      "separator": " · "
     }
   },
   "board": {
@@ -995,10 +1049,7 @@
     "accepted": "已采纳",
     "draft": "草稿",
     "done": "已完成",
-    "open": "进行中",
-    "working": "施工中",
-    "delivering": "交付中",
-    "reviewing": "待审阅"
+    "open": "进行中"
   },
   "sidebar": {
     "wait": {
@@ -1028,18 +1079,26 @@
     "others": "其他话题",
     "collapse": "收起",
     "expand": "展开",
-    "expandStalled": "展开：里面有话题出了故障",
+    "expandStalled": "展开：里面有成员卡住了",
     "expandAwaits": "展开：里面有待处理的事项",
-    "expandRunning": "展开：{agent}正在里面工作",
-    "expandMerging": "展开：里面有已采纳的改动在等合并",
     "turnFailed": "{agent}最近一轮报错了",
     "awaitsTip": "有待处理的事项",
-    "runningTip": "{agent}正在这个话题里工作",
-    "mergingTip": "已采纳，在等合并",
     "autoTitle": "标题由平台自动命名，话题方向变了会更新",
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子话题 {count} 条新消息",
-    "moreActions": "更多操作"
+    "moreActions": "更多操作",
+    "chooseProject": "选择项目",
+    "switchProject": "切换项目",
+    "chooseProjectFirst": "先选择一个项目",
+    "topics": "话题",
+    "newTopic": "新建话题",
+    "creatingTopic": "正在创建话题",
+    "noneMine": "暂无与你相关的话题",
+    "othersUnread": "其他话题里有新消息",
+    "empty": "暂无话题",
+    "workingTip": "{name}正在这里工作",
+    "expandWorking": "展开：里面有队友在工作",
+    "moreMembers": "+{count}"
   },
   "members": {
     "leave": "退出项目",
@@ -1592,5 +1651,17 @@
   "liveView": {
     "connecting": "连接现场中…",
     "closed": "现场已断开"
+  },
+  "labels": {
+    "notifKind": {
+      "decisionRequest": "决策请求",
+      "changeAlert": "变更提醒",
+      "acceptRequest": "审阅"
+    },
+    "topicStatus": {
+      "active": "进行中",
+      "archived": "已归档",
+      "draft": "草稿"
+    }
   }
 }

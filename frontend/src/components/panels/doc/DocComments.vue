@@ -3,6 +3,7 @@
 // The host fetches comments once for this list and the editor's underline decorations.
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { Block } from '../../../cx_types'
+import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
 
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -11,11 +12,15 @@ import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
+import DocThreadView from './DocThreadView.vue'
+
 import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string | null
   author?: string
+  threadState?: DocThreadState
+  threadActions?: DocThreadActions
   sendComment?: SendDocComment
   comments: Block[]
   /** The doc's paragraphs, so an anchored comment can name the one it points at. */
@@ -352,6 +357,14 @@ defineExpose({ open, locate })
           >
             {{ t(expanded.has(c.id) ? 'work.room.comments.showLess' : 'work.room.comments.showMore') }}
           </button>
+          <DocThreadView
+            v-if="activeId() === c.id && threadState && threadActions"
+            :id="c.id"
+            :topic="topicId"
+            :actor="author ?? ''"
+            :state="threadState"
+            :actions="threadActions"
+          />
         </div>
       </article>
     </template>

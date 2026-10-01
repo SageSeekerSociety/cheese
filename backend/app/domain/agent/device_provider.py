@@ -33,7 +33,7 @@ from app.core.sandbox_auth import (
     scoped_token_claims,
     token_agent_handle,
 )
-from app.domain.agent import machine_launcher, provider_env
+from app.domain.agent import machine_launcher, provider_env, screen_identity
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceHub,
@@ -277,43 +277,6 @@ def connect_transport(*, session_token: str, via_tunnel: bool) -> str | None:
 _DEVICE_PROXY_CA_PATH = "$HOME/.claude/proxy-ca.pem"
 
 
-def _launch_identity(
-    *,
-    agent_configuration: str,
-    harness_contract: str,
-    execution_target: dict | None,
-) -> str:
-    """What a live session is compared against to decide it still matches what
-    the backend would start today.
-
-    Everything a running process cannot adopt without being restarted, in one
-    value: the model and role it was born with, the harness's whole launch
-    (``MachineLaunch.contract``), the platform's half of the launcher, the
-    executor it was handed, and the directory the platform installed itself
-    into. Anything left out is a change that lands in the code and never
-    reaches the rooms already running — a pinned harness version once moved
-    while every reused screen kept the one it started with, and later a new
-    shell prefix reached no room that was already open.
-    """
-    return hashlib.sha256(
-        json.dumps(
-            {
-                "agent": agent_configuration,
-                "harness": harness_contract,
-                # The platform half has no per-room content of its own: that
-                # arrives as environment, so with empty holes it is the same
-                # script for every room.
-                "launcher": hashlib.sha256(
-                    machine_launcher.launch_script(command="").encode()
-                ).hexdigest(),
-                "target": execution_target,
-                "root": footprint_root(),
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
-
-
 def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
     # HTTPS_PROXY is the machine's CONNECT route to the metering proxy, and the
     # only way its traffic reaches a model at all. Pointing it at a box-local
@@ -554,6 +517,9 @@ class DeviceChannel(Channel):
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
+        # sid → what a turn here brought that screen up to date with
+        # (``settled_with``), and when the credential it wrote expires.
+        self._settled: dict[str, tuple[str, int]] = {}
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -742,6 +708,7 @@ class DeviceChannel(Channel):
             screen.sid,
             reason,
         )
+        self._settled.pop(screen.sid, None)
         await self._hub.close_screen(screen.device_id, screen.sid)
 
     def _existing_screen(
@@ -1159,6 +1126,7 @@ class DeviceChannel(Channel):
         env: dict[str, str] | None,
         launch: MachinePlan,
         environment_before: dict | None = None,
+        runner_alive: bool = False,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         the harness's runner (the device-side launcher creates its home/work
@@ -1178,7 +1146,12 @@ class DeviceChannel(Channel):
         because the connector still holds the sid and merely hot-reloads into the
         dead pane. So a reused screen's runner is asked first (``_runner``); one
         that is not there is closed and reopened under a fresh sid the connector
-        must Spawn, rather than reasserted into a corpse."""
+        must Spawn, rather than reasserted into a corpse.
+
+        None of that is asked of a screen a turn here already brought up to
+        date with the same inputs while its runner has answered every read
+        since (``runner_alive``): that runner is the process the checks
+        protect. A configured tunnel is still probed; its helper can die alone."""
         started = time.monotonic()
 
         def mark(phase: str) -> None:
@@ -1338,6 +1311,19 @@ class DeviceChannel(Channel):
             execution_target=execution_target,
             ca_pem=ca_pem,
         )
+        settled_with = screen_identity.settled_with(
+            agent_configuration=agent_configuration, place=place, token=token
+        )
+        if (
+            runner_alive
+            and existing is not None
+            and self._settled.get(existing.sid, ("", 0))[0] == settled_with
+            and self._settled[existing.sid][1]
+            > int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
+            and not await self._tunnel_helper_is_down(existing, home_dir)
+        ):
+            mark("screen_settled")
+            return existing
         holes = launch.on(place)
         command, screen_env = machine_launcher.screen_launch(place, holes, token=token)
         screen_env.update(model_env)
@@ -1351,7 +1337,7 @@ class DeviceChannel(Channel):
                 "CHEESE_PREVIEW_UP",
             ):
                 screen_env.pop(name, None)
-        configuration = _launch_identity(
+        configuration = screen_identity.launch_identity(
             agent_configuration=agent_configuration,
             harness_contract=holes.contract,
             execution_target=execution_target,
@@ -1362,6 +1348,11 @@ class DeviceChannel(Channel):
         # restart is re-read from here, and one that came back without it read
         # as a configuration change on its next turn, every turn.
         screen_env["CHEESE_AGENT_CONFIG"] = configuration
+        # Whether this turn leaves the screen running what it would be started
+        # with today, so the next send to it may skip all of this
+        # (``_settled``). A relaunch or a release put off for running work
+        # leaves it behind.
+        settled = True
         if existing is not None and existing.agent_configuration != configuration:
             # Asked only now: what a session was started with is not fully
             # known until the harness has been asked. Closing the session ends
@@ -1383,6 +1374,7 @@ class DeviceChannel(Channel):
                 )
                 # Still what the running process was started with.
                 screen_env["CHEESE_AGENT_CONFIG"] = existing.agent_configuration
+                settled = False
             else:
                 await self._retire_screen(
                     existing, topic_id=topic_id, reason="agent_configuration_changed"
@@ -1441,7 +1433,7 @@ class DeviceChannel(Channel):
                 if "unknown" in status:
                     retire_reason = "resident_release_unreachable"
                 elif status.get("working") or status.get("tasks"):
-                    pass
+                    settled = False
                 else:
                     try:
                         await self._refresh_resident(
@@ -1497,6 +1489,8 @@ class DeviceChannel(Channel):
             )
             if inspect.isawaitable(updated):
                 existing = await updated
+            if settled:
+                self._settle(existing.sid, settled_with, token)
             return existing
         screen = await self._hub.open_screen(
             device_id,
@@ -1524,7 +1518,12 @@ class DeviceChannel(Channel):
         )
         if inspect.isawaitable(updated):
             screen = await updated
+        self._settle(screen.sid, settled_with, token)
         return screen
+
+    def _settle(self, sid: str, settled_with: str, token: str) -> None:
+        claims = scoped_token_claims(token) or {}
+        self._settled[sid] = (settled_with, int(claims.get("exp") or 0))
 
     # --- turn --------------------------------------------------------------
 

@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
+from app.core.forge_http import forge_client
 from app.domain.agent.forgejo_tokens import (
     ForgejoTokens,
     forge_password,
@@ -147,7 +148,7 @@ async def ensure_author_email(
         raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
     endpoint = binding.api_url.rstrip("/") + "/user/emails"
     auth = (binding.repo.split("/", 1)[0], forge_password(binding))
-    async with httpx.AsyncClient(transport=transport, timeout=30, auth=auth) as client:
+    async with forge_client(transport=transport, timeout=30, auth=auth) as client:
         response = await client.get(endpoint)
         if response.status_code != 200:
             raise GatewayUnavailableError("无法读取代码托管账号的作者邮箱")
@@ -206,7 +207,7 @@ async def repository_data(
         await release_read_session(session)
     token, _ = await tokens.installation_token()
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with forge_client(timeout=30) as client:
             response = await client.get(
                 f"{binding.api_url.rstrip('/')}/repos/{binding.repo}{path}",
                 headers={
@@ -356,7 +357,7 @@ async def _provision_repository(
         ).hexdigest()
         + "aA1!"
     )
-    async with httpx.AsyncClient(transport=transport, timeout=30) as client:
+    async with forge_client(transport=transport, timeout=30) as client:
         response = await client.post(
             api + "/admin/users",
             headers={"Authorization": "token " + settings.forgejo_admin_token},
@@ -429,9 +430,7 @@ async def sweep_orphan_accounts(
     ).rstrip("/")
     headers = {"Authorization": "token " + settings.forgejo_admin_token}
     cutoff = datetime.now(UTC) - _ORPHAN_GRACE
-    async with httpx.AsyncClient(
-        transport=transport, timeout=30, headers=headers
-    ) as client:
+    async with forge_client(transport=transport, timeout=30, headers=headers) as client:
         candidates: dict[uuid.UUID, str] = {}
         page = 1
         while True:
@@ -508,7 +507,7 @@ async def ensure_repository_webhook(
     if binding.account_password is None:
         raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
     auth = (binding.repo.split("/", 1)[0], forge_password(binding))
-    async with httpx.AsyncClient(transport=transport, timeout=30, auth=auth) as client:
+    async with forge_client(transport=transport, timeout=30, auth=auth) as client:
         matching = []
         page = 1
         while True:

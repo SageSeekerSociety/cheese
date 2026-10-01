@@ -309,10 +309,15 @@ async def lifespan(_: FastAPI):
         name="gateway model catalogue",
     )
 
+    from app.core.forge_http import reuse_forge_connections
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
 
-    async with reuse_connections(), reuse_s3_connections():
+    async with (
+        reuse_connections(),
+        reuse_s3_connections(),
+        reuse_forge_connections(),
+    ):
         try:
             yield
         finally:
@@ -497,7 +502,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
-    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/milestones$")),
 ]
 
 

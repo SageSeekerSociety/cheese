@@ -502,12 +502,12 @@ def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
 
 @pytest.mark.parametrize(
     "path",
-    ["/projects/{pid}/tasks", "/projects/{pid}/milestones", "/topics?project_id={pid}"],
+    ["/projects/{pid}/tasks", "/topics?project_id={pid}"],
 )
 def test_agent_finds_the_projects_rooms_and_work_through_its_place(client, path):
-    """同一个项目里别的房间、别的活、里程碑，芝士点名自己的位置就读得到。
+    """同一个项目里别的房间、别的活，芝士点名自己的位置就读得到。
 
-    这是「不必让用户把项目里已有的东西逐条贴进来」的前提：房间、任务、里程碑这三份
+    这是「不必让用户把项目里已有的东西逐条贴进来」的前提：房间、任务这两份
     清单过去只认项目级凭据，一轮的凭据点了位置也是 403。不点位置、点别的项目的房间，
     仍然读不到。
     """

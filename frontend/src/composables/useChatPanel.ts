@@ -38,16 +38,20 @@ import { useChatRowActions } from '../components/chat/composables/useChatRowActi
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
+import { useRoomActivity } from '../components/room/composables/useRoomActivity'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useTimeline } from '../components/room/composables/useTimeline'
+import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
+import { activityLines as memberActivityLines } from '../lib/memberActivity'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
+import { siteStatusLabel } from '../lib/siteStatusLabel'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
@@ -132,12 +136,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const loadingHistory = ref(false)
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
-  // 往上报（working / site-turns / working-agents）是这里的事。
+  // 往上报（working / site-turns）是这里的事。
   const turns = useRoomTurns({ messages, agentName, agentNameOf })
   const { awaitingReply, turnAgentName, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
-  watch(turns.workingAgentNames, (v) => emit('working-agents', v))
   // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
   function toSite(b: Block) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
@@ -189,7 +192,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     try {
       // The response carries the fresh aggregate; the `reaction` WS frame the
       // backend broadcasts is idempotent with this local apply.
-      const out = await apiToggleReaction(m.id, emoji, AUTHOR)
+      const out = await apiToggleReaction(m.id, emoji)
       applyReactions(m.id, out.reactions)
     } catch (e) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')
@@ -246,6 +249,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     connectRefused,
     open: openSocket,
     close: closeSocket,
+    send: sendOnSocket,
     isConnectRefusal,
     retryLater,
   } = useRoomSocket({
@@ -266,6 +270,23 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
     errorMsg,
   })
+
+  // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity。
+  // 名字从名册来，干活的那一步从它在动的头像来，和现场顶上说的是同一句。
+  const activity = useRoomActivity({ me: AUTHOR, send: sendOnSocket })
+  const activityLines = computed(() =>
+    memberActivityLines(
+      activity.others.value,
+      (handle) =>
+        agentNameOf(handle) ??
+        (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
+      (handle) => {
+        const status = turns.faces.value[handle]?.status
+        return status ? siteStatusLabel(status) : null
+      }
+    )
+  )
+  watch(activityLines, (v) => emit('activity', v))
 
   // 每次连上，broker 都会把一轮进行中的帧一次性重放出来——先进追赶模式，这一阵里
   // 不逐帧滚动。
@@ -333,7 +354,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         emit('state-changed', frame.resource)
         break
       case 'event_block':
-        // A persisted, clickable action card (milestone/doc/...) for this turn.
+        // A persisted, clickable action card (doc/topics/...) for this turn.
         pushBlock(frame.block)
         toSite(frame.block)
         autoScroll()
@@ -382,6 +403,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'turn_active':
         turns.active(frame.turn_ids ?? [], frame.since, frame.agents)
         break
+      case 'activity':
+        activity.apply(frame)
+        break
+      case 'activity_snapshot':
+        activity.snapshot(frame.members)
+        break
       case 'turn_started':
         turns.started(frame.turn_id, frame.agent)
         break
@@ -392,6 +419,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       }
     }
+    typing.follow(frame, !awaitingReply.value)
   }
 
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
@@ -422,6 +450,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg.value = null
     connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
     turns.reset()
+    typing.clear()
+    activity.reset()
     reactionPickerFor.value = null
     rowActions.resetBar()
     unreadAnchorId.value = null
@@ -688,6 +718,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   })
   // The composer hands back its whole surface (see the return below): the
   // panel reads a few of those refs itself, the view destructures the rest.
+  // 我在输入框里打字，房间里的人看得见（`useRoomActivity`）。
+  watch(composer.draft, (text) => activity.composing(text))
 
   const rowActions = useChatRowActions({
     timeline,
@@ -822,6 +854,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       })
     )
   )
+  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, splitMarkers, arrived, delivered }) // 队友正在写的那条
   function outboxEdge(index: number): RunEdge {
     if (index > 0) return 'cont'
     const last = visible.value.at(-1)
@@ -888,6 +921,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     refMaps,
     awaitingReply,
     agentFaces: turns.faces,
+    activityLines,
     timeline,
     hasMore,
     hasNewer,
@@ -910,6 +944,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     outgoingState,
     retrySend,
     outbox,
+    typingRows: typing.rows,
     noticeAgent,
     parentOf,
     showReplyCue,

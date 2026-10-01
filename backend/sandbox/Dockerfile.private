@@ -16,6 +16,9 @@ RUN mkdir -p /etc/ssl/certs \
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py /opt/cheese/runtime.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py /opt/cheese/mcp_process.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/private.py /opt/cheese/private.py
+# The egress proxy private chats reach the network through (see private.py).
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/private_egress.py /opt/cheese/private_egress.py
+COPY backend/app/domain/fetch/addresses.py /opt/cheese/addresses.py
 COPY --chmod=0555 backend/sandbox/cheese /usr/local/bin/cheese
 ENV HOME=/work/.home TMPDIR=/work/.tmp PYTHONDONTWRITEBYTECODE=1
 USER 1000:1000

@@ -26,13 +26,20 @@ gateway's call success rate, labelled as exactly that.
 
 Reachable gateway: the numbers are the gateway's own. Unreachable: they are
 ``None`` and the page draws a dash, never 0 (same discipline as ``pricing``).
+
+A gateway that answers but carries **no naming key** is a third state, and it is
+not zero either: nothing was booked under a key that does not exist, so there is
+nothing to report about its spend. ``GatewayRead.source`` says which of the three
+it was, so the page can say 「密钥不存在」 rather than 「读不到网关」 — and never
+prints 0 for either.
 """
 
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from sqlalchemy import select
@@ -57,7 +64,10 @@ KEY_ALIAS = "topic-naming"
 # The three stages a title can be written at (``naming.Stage``), in the order a
 # room meets them. The reason column of an automatic row holds one of these.
 STAGES = ("name", "calibrate", "follow")
-# A person's two reasons (``topics_title.set_title``, ``naming.undo``).
+# A person's two reasons (``topics_title.set_title``, ``naming.undo``) — the two
+# cells of 「人动了什么」. 「退回」换过一次写法，见 ``_person_bucket``：
+RENAME_REASONS = ("rename",)
+UNDO_REASONS = ("undo", "restore")
 PERSON_REASONS = ("rename", "undo")
 
 # The naming key never changes, and the window only moves at midnight, so a
@@ -76,10 +86,32 @@ _ZERO = ModelUsage(
     total_tokens=0,
 )
 
-# ``(monotonic, start, end, usage, key)`` for a whole answered window, and
+
+@dataclass(frozen=True)
+class GatewayRead:
+    """What the gateway said about the naming key, in one of three states.
+
+    ``source`` is what the page branches on:
+
+    * ``gateway`` — the key is there and ``usage`` is its numbers for the window.
+      Zero calls then really is zero: the gateway booked nothing on this key.
+    * ``no-key`` — the gateway answered and has no key with this alias. Naming
+      was never minted one, or the alias changed. **``usage`` is None**: there is
+      no key to have booked anything under, so a 0 here would be a claim we
+      cannot make.
+    * ``unavailable`` — we could not ask at all (not configured, or the call
+      failed). ``usage`` is None for the same reason.
+    """
+
+    source: str
+    usage: ModelUsage | None
+    key: AdminKey | None
+
+
+# ``(monotonic, start, end, read)`` for a whole answered window, and
 # ``(monotonic, key-or-None)`` for the key lookup on its own (it is asked before
 # the usage, and outlives it: the key's identity never changes).
-_usage_cache: tuple[float, str, str, ModelUsage, AdminKey | None] | None = None
+_usage_cache: tuple[float, str, str, GatewayRead] | None = None
 _key_cache: tuple[float, AdminKey | None] | None = None
 
 
@@ -103,22 +135,22 @@ async def _naming_key(admin: GatewayAdmin) -> AdminKey | None:
 
 async def _gateway_usage(
     start: date, end: date, transport: httpx.AsyncBaseTransport | None = None
-) -> tuple[ModelUsage | None, AdminKey | None] | None:
+) -> GatewayRead:
     """The naming key's usage over the window, from the gateway.
 
-    ``None`` means the gateway could not be asked at all — not configured, or
-    unreachable — and every number it feeds is then ``None``. An answer of zero
-    (``_ZERO``) is a different statement: the gateway answered and naming spent
-    nothing in this window.
+    See ``GatewayRead`` for the three states. The one that matters here: a
+    gateway that answered without this key on it yields ``no-key`` with no
+    usage, **not** ``_ZERO`` — 「这把密钥不存在」 and 「这把密钥这个窗口没花钱」
+    are different sentences, and only the second one is a zero the page can show.
 
-    A key with no traffic in the window is absent from ``by_key`` rather than
-    present as zero; both mean zero here. The lookup trusts that the gateway's
-    per-key breakdown covers platform keys too — it is built the same way as the
-    project keys the model ledger reads.
+    A key that exists but had no traffic in the window is absent from ``by_key``
+    rather than present as zero; both mean zero here. The lookup trusts that the
+    gateway's per-key breakdown covers platform keys too — it is built the same
+    way as the project keys the model ledger reads.
     """
     global _usage_cache
     if not (settings.llm_gateway_admin_base and settings.llm_gateway_admin_key):
-        return None
+        return GatewayRead("unavailable", None, None)
     start_iso, end_iso = start.isoformat(), end.isoformat()
     if (
         _usage_cache is not None
@@ -126,7 +158,7 @@ async def _gateway_usage(
         and _usage_cache[2] == end_iso
         and time.monotonic() - _usage_cache[0] < _USAGE_TTL_S
     ):
-        return _usage_cache[3], _usage_cache[4]
+        return _usage_cache[3]
     admin = GatewayAdmin(
         settings.llm_gateway_admin_base,
         settings.llm_gateway_admin_key,
@@ -134,17 +166,38 @@ async def _gateway_usage(
     )
     try:
         key = await _naming_key(admin)
-        usage = _ZERO
-        if key is not None:
+        if key is None:
+            # 没铸过这把 key，就没有它的用量可问：连 usage 那次请求都不发，
+            # 也不能报零。
+            read = GatewayRead("no-key", None, None)
+        else:
             window = await admin.usage(start_iso, end_iso)
-            usage = window.by_key.get(key.key_hash, _ZERO)
+            read = GatewayRead("gateway", window.by_key.get(key.key_hash, _ZERO), key)
     except Exception:  # noqa: BLE001 — an unreachable gateway is unknown, not zero
         logger.warning(
             "reading topic naming usage from the gateway failed", exc_info=True
         )
-        return None
-    _usage_cache = (time.monotonic(), start_iso, end_iso, usage, key)
-    return usage, key
+        return GatewayRead("unavailable", None, None)
+    _usage_cache = (time.monotonic(), start_iso, end_iso, read)
+    return read
+
+
+def _person_bucket(reason: str | None) -> Literal["rename", "undo"] | None:
+    """Which of the two cells a person's row goes in, or None when it is neither.
+
+    人的改动只有这两件事，写入路径也只有两条（``topics_title.set_title`` 写
+    `rename`，``naming.undo`` 写 `undo`）。「退回」换过一次写法：`restore`
+    （3ce29a4d，2026-09-27）后来改成 `undo`（ce08b7ca，09-28），库里两种行都在，
+    所以这一格按名字列表认这两种。
+
+    认不出来的写法返回 ``None``：一个我们不认识的原因不能被说成「人撤销了 N 次」，
+    也不能为了凑齐总数塞进某一格。``_titles`` 让它既不进两格、也不进总数。
+    """
+    if reason in RENAME_REASONS:
+        return "rename"
+    if reason in UNDO_REASONS:
+        return "undo"
+    return None
 
 
 async def _titles(session: AsyncSession, since: datetime, until: datetime) -> dict:
@@ -154,6 +207,9 @@ async def _titles(session: AsyncSession, since: datetime, until: datetime) -> di
     holds a handful of rows even on a busy deployment, and the 「人后来改掉了」
     count needs the rows in order per room — which is what a window function
     would say and six lines of Python say without one.
+
+    「人动了什么」只数这一页认得的两种原因（改名，和撤销——含它的旧写法）。总数
+    就是这两格的和：明细列不出来的行也不进总数，这样「共 N 次」下面永远列得出 N。
     """
     rows = (
         await session.execute(
@@ -187,9 +243,14 @@ async def _titles(session: AsyncSession, since: datetime, until: datetime) -> di
             auto_by_day[day] = auto_by_day.get(day, 0) + 1
             first_auto.setdefault(room, position)
         elif source == TitleSource.human:
+            bucket = _person_bucket(reason)
+            if bucket is None:
+                # 认不出来的写法：不进两格，也不进总数。总数说的是「这两格加起来」
+                # ——页面上「共 N 次人的改动」下面永远列得出 N，塞进某一格的代价是
+                # 把一个我们不理解的数字说成「人撤销了 N 次」。
+                continue
             person_total += 1
-            if reason in by_reason:
-                by_reason[reason] += 1
+            by_reason[bucket] += 1
             person_by_day[day] = person_by_day.get(day, 0) + 1
             first_person.setdefault(room, position)
         # Any other source is neither: 「人改掉」和「平台命名」是这一页仅有的两件事，
@@ -234,15 +295,8 @@ async def load(
     """The whole page for one window. See the module docstring for the shape."""
     since, until, buckets = utc_day_window(days)
     titles = await _titles(session, since, until)
-    gateway = await _gateway_usage(buckets[0], buckets[-1], transport)
-
-    if gateway is None:
-        usage: ModelUsage | None = None
-        key = None
-        source = "unavailable"
-    else:
-        usage, key = gateway
-        source = "gateway"
+    read = await _gateway_usage(buckets[0], buckets[-1], transport)
+    usage, key = read.usage, read.key
 
     calls = usage.requests if usage else None
     failed = usage.failed_requests if usage else None
@@ -272,12 +326,20 @@ async def load(
             },
             "cost": {
                 "usd": usage.spend_usd if usage else None,
-                "source": source,
+                # 「gateway」= 网关自己记的账；「no-key」= 网关答了话但上面没有这把
+                # key；「unavailable」= 读不到网关。后两种上面的数都是 None：页面
+                # 分开说这两句话，都不画 0。
+                "source": read.source,
                 # The key's budget is the thing that would silently stop naming
                 # (the gateway refuses once it is spent), so it belongs next to
                 # the spend rather than in a config file nobody reads.
                 "budget_usd": key.max_budget if key else None,
                 "budget_duration": key.budget_duration if key else None,
+                # 网关自己给这把 key 记的花费，**不是上面那个窗口的**。平台铸这把
+                # key 时给的额度周期是固定的 30 天（``service_keys`` 写死
+                # ``budget_duration: "30d"``），所以页面把它连同 ``budget_duration``
+                # 一起画，不写成「累计」——那读起来像是这一页选的窗口，而 2026-10-01
+                # 在 dev 上它（$0.0151）离 7 天窗口（$0.2638）差了整整一个量级。
                 "key_spend_usd": key.spend if key else None,
             },
             "renames": {

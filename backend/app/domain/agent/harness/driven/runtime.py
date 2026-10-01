@@ -42,6 +42,7 @@ from app.domain.agent.harness import (
     SessionRef,
     UnreadProbe,
 )
+from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.driven.subscription import (
     OUTPUT,
     PROGRESS,
@@ -59,13 +60,18 @@ from app.domain.agent.platform_failures import (
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.block.notice_text import say
 
-# Every read of a room's journal is a call to its device, and an idle room
-# answers it with nothing. Read at the floor while there is anything to read;
-# let the wait grow towards the ceiling once the journal has gone quiet. The
-# ceiling is a safety net, not how a quiet room hears its session: a runner
-# rings for records nobody has read (``driven.runner``), which wakes the read.
-READ_FLOOR_S = 0.1
-READ_CEILING_S = 30.0
+# Every read of a room's journal is a call to its device. A runner holds a read
+# until it has something to answer it with (``driven.runner``), so the poller
+# asks again as soon as it is answered: a quiet seat costs one read per
+# ``READ_WAIT_S``, and a record or a token the session writes is read the
+# moment it is written. Far below every timeout on the way: the call's own
+# (660 s), the connection owner's, and the connector's.
+READ_WAIT_S = 25.0
+# A runner started before runners could hold a read answers at once; it is read
+# at a fixed rate instead, faster while a turn is open. Such runners exit once
+# idle, and a runner started since can hold a read (``Handle.capabilities``).
+OLD_RUNNER_TURN_READ_S = 0.1
+OLD_RUNNER_IDLE_READ_S = 5.0
 # How long a runner may go unanswered while a turn is open before the turn is
 # called dead. Longer than the connection owner takes to come back after a
 # release, and than a device takes to reconnect after a network blip: those
@@ -79,6 +85,12 @@ IDLE_GONE_READ_S = 60.0
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
 TALKING_S = 300.0
+
+
+#: What the agent of a seat is in the middle of writing, handed on as it changes:
+#: (room, the work it is for if the runner knows, the agent writing, the blocks
+#: — ``driven.runner``; [] once it wrote nothing more or the record landed).
+LiveConsumer = Callable[[uuid.UUID, uuid.UUID | None, str, list[dict]], Awaitable[None]]
 
 
 @dataclass
@@ -124,6 +136,9 @@ class Handle(Protocol):
     @property
     def mirror(self) -> Path: ...
 
+    @property
+    def capabilities(self) -> frozenset[str]: ...
+
 
 class SessionChannel[H: Handle](Protocol):
     name: str
@@ -135,7 +150,18 @@ class SessionChannel[H: Handle](Protocol):
 
     async def prepare_topic(self, **kwargs) -> tuple[bool, str]: ...
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> H: ...
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: H | None = None
+    ) -> H:
+        """The seat's session, started if it has to be.
+
+        ``live`` is the seat's handle when this process started or confirmed it
+        and its runner has answered alive on every read since. The channel
+        hands it back without asking the machine again when nothing the
+        session was started with has changed, and otherwise ensures it as if
+        it were not given.
+        """
+        ...
 
     async def call(self, handle: H, method: str, params: dict) -> dict: ...
 
@@ -206,6 +232,11 @@ class DrivenRuntime[H: Handle]:
         self.found_conversations: set[tuple[Seat, str]] = set()
         self.terminal_conversations: set[tuple[Seat, str]] = set()
         self._owns_sessions_provider = None
+        # Seats whose handle this process ensured and whose runner has answered
+        # alive on every read since: what a send hands the channel as ``live``.
+        # A read that fails or says the agent process is gone takes the seat
+        # out, and only the next ensure puts it back.
+        self.answering: set[Seat] = set()
         self.subscriptions: dict[Seat, Subscription] = {}
         self.tasks: dict[Seat, asyncio.Task] = {}
         self.work: dict[Seat, uuid.UUID] = {}
@@ -220,6 +251,7 @@ class DrivenRuntime[H: Handle]:
         # `runtime_checkable` 的 Protocol，`isinstance` 拿不到方法就答否——
         # 于是每一个 runtime 都「跑不了 harness」。别的消费者没这个问题。
         self._memory: MemoryConsumer | None = None
+        self.live_consumer: LiveConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -283,6 +315,9 @@ class DrivenRuntime[H: Handle]:
 
     def bind_memory(self, consumer: MemoryConsumer) -> None:
         self._memory = consumer
+
+    def bind_live(self, consumer: "LiveConsumer") -> None:
+        self.live_consumer = consumer
 
     def _memory_hook(self, topic: uuid.UUID) -> Callable[[], Awaitable[None]]:
         """`reconcile_memory` 绑到这一间房，给订阅那一侧的一轮结束用（它不带参数）。
@@ -489,6 +524,7 @@ class DrivenRuntime[H: Handle]:
         # its id under the seat's lock, so an ownership mutation is either
         # whole-before or whole-after this swap, never interleaved with it.
         subscription = self.subscribe(handle, call)
+        subscription.waits = LONG_POLL in handle.capabilities
         subscription.attachment_id = uuid.uuid4().hex
         async with attachments.lock(seat):
             # The flag is checked HERE, under the lock — not once at some
@@ -519,13 +555,26 @@ class DrivenRuntime[H: Handle]:
         if event := self.woken.get(seat):
             event.set()
 
-    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
-        """Read this seat now, if this runtime reads it at all."""
-        seat = (topic_id, agent_handle)
-        if seat not in self.subscriptions:
-            return False
-        self._wake(seat)
-        return True
+    def _wait_s(self, seat: Seat) -> float:
+        """How long a read may be held: never so long that a turn's own
+        clocks (``verdict``) are read late by more than a fraction of them."""
+        if seat not in self.work:
+            return READ_WAIT_S
+        clocks = [s / 4 for s in (self.no_progress_s, self.unread_grace_s) if s > 0]
+        return min([READ_WAIT_S, *clocks])
+
+    async def _show(self, seat: Seat, live: dict) -> None:
+        """Hand on what the seat's agent is in the middle of writing."""
+        handle = self.live.get(seat)
+        if self.live_consumer is None or handle is None:
+            return
+        work = live.get("work_id")
+        await self.live_consumer(
+            seat[0],
+            uuid.UUID(work) if work else self.work.get(seat),
+            handle.agent_handle,
+            list(live.get("blocks") or []),
+        )
 
     async def _wait(self, seat: Seat, delay: float) -> None:
         event = self.woken.setdefault(seat, asyncio.Event())
@@ -542,14 +591,26 @@ class DrivenRuntime[H: Handle]:
         # it, so the wait is said once and the return is said once. Per-task
         # state: one of these runs per seat.
         waiting = False
-        delay = READ_FLOOR_S
         while seat in self.subscriptions:
+            subscription = self.subscriptions[seat]
             try:
-                delivered = await self.subscriptions[seat].drain()
+                delivered = await subscription.drain(wait=self._wait_s(seat))
+                if not subscription.heard.get("alive", True):
+                    self.answering.discard(seat)
                 self.unreachable.pop(seat, None)
-                if seat in self.work and time.monotonic() - checked_at >= 1:
+                if live := subscription.heard.get("live"):
+                    await self._show(seat, live)
+                # A runner that held the read says with its answer whether its
+                # agent is still there; an old one is asked, once a second.
+                if seat in self.work and (
+                    subscription.waits or time.monotonic() - checked_at >= 1
+                ):
                     handle = self.live[seat]
-                    status = await self.channel.call(handle, "ping", {})
+                    status = (
+                        subscription.heard
+                        if subscription.waits
+                        else await self.channel.call(handle, "ping", {})
+                    )
                     checked_at = time.monotonic()
                     if not status.get("alive", True):
                         await self._died(handle)
@@ -557,6 +618,7 @@ class DrivenRuntime[H: Handle]:
                     if verdict := self.verdict(seat):
                         await self._end_by_verdict(handle, verdict)
             except DeviceOffline:
+                self.answering.discard(seat)
                 # A room whose machine is switched off is the ordinary state of
                 # a platform nobody is using this minute, and this loop exists
                 # to wait it out. Logged as an exception it was two ERROR lines
@@ -573,6 +635,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except DeviceCallError as exc:
+                self.answering.discard(seat)
                 # The machine is there and said no — the runner's socket is not
                 # up yet (a cold one can take about a minute) or its home is gone.
                 # Either way the next read is what tells, and the machine's
@@ -602,6 +665,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except httpx.TransportError as exc:
+                self.answering.discard(seat)
                 # The connection owner is being replaced, or the socket to it
                 # went while this read was in flight. Retrying is what this loop
                 # is for, and the owner is back within seconds — but at ERROR
@@ -620,6 +684,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except Exception:
+                self.answering.discard(seat)
                 # The runner outlives a backend or connector outage. Re-reading
                 # is safe because the landing cursor only moves after the
                 # persistence callback returned.
@@ -630,18 +695,17 @@ class DrivenRuntime[H: Handle]:
                     waiting = False
                     self.logger.info("%s resumed topic=%s", self.records, topic)
                     await self._say_resumed(seat)
-                # A room being worked reads at the floor, and so does one whose
-                # journal just gave us something — the next record of a stream
-                # is due immediately. A room nobody is talking to costs a call
-                # every 100ms for an empty page, and the cost is per room:
-                # eleven of them idling held a core between them. Sending wakes
-                # the wait, and so does the runner's ring, so neither a person
-                # nor the session is served at the backed-off rate.
-                if delivered or seat in self.work:
-                    delay = READ_FLOOR_S
-                else:
-                    delay = min(delay * 2, READ_CEILING_S)
-                await self._wait(seat, delay)
+                if subscription.waits and not subscription.heard.get("alive", True):
+                    # Its agent process is gone with no turn open: the runner
+                    # goes with it, and the next message starts it again.
+                    await self._wait(seat, IDLE_GONE_READ_S)
+                elif not subscription.waits:
+                    await self._wait(
+                        seat,
+                        OLD_RUNNER_TURN_READ_S
+                        if delivered or seat in self.work
+                        else OLD_RUNNER_IDLE_READ_S,
+                    )
 
     async def _say_waiting(self, seat: Seat, reason: str) -> None:
         """Tell the room this seat's open turn is waiting on the machine — once
@@ -729,6 +793,7 @@ class DrivenRuntime[H: Handle]:
             # being out of reach is not — a machine still being prepared
             # looks exactly the same, and that one stays "unknown".
             self.dead.add((seat, self.conversation(handle)))
+        self.answering.discard(seat)
 
     async def ensure(self, session, opening, *, work_id=None) -> H:
         seat = self._seat_of(session)
@@ -741,8 +806,18 @@ class DrivenRuntime[H: Handle]:
             with contextlib.suppress(DeviceCallError):
                 await self.interrupt(session)
             await self.close(session)
-        handle = await self.channel.ensure(session, opening)
+        task = self.tasks.get(seat)
+        live = (
+            self.live.get(seat)
+            if seat in self.answering and task is not None and not task.done()
+            else None
+        )
+        handle = await self.channel.ensure(session, opening, live)
         await self._attach(handle)
+        # Only a runner that says when it has news is heard from between sends;
+        # an old one is pinged instead, so nothing here vouches for it.
+        if LONG_POLL in handle.capabilities:
+            self.answering.add(seat)
         return handle
 
     async def send(
@@ -893,6 +968,7 @@ class DrivenRuntime[H: Handle]:
             async with attachments.lock(seat):
                 attachments.note(seat, None)
         self.live.pop(seat, None)
+        self.answering.discard(seat)
         self.work.pop(seat, None)
         self.woken.pop(seat, None)
         self.clocks.pop(seat, None)
@@ -937,6 +1013,7 @@ class DrivenRuntime[H: Handle]:
                     attachments.note(seat, None)
                     self.subscriptions.pop(seat, None)
                     self.tasks.pop(seat, None)
+                    self.answering.discard(seat)
                     for held in (
                         self.live,
                         self.work,
@@ -947,6 +1024,7 @@ class DrivenRuntime[H: Handle]:
                     ):
                         held.pop(seat, None)
             self._wake(seat)
+            subscription.unpark()
         pending = [
             poll for _, _, poll in targets if poll is not None and not poll.done()
         ]
