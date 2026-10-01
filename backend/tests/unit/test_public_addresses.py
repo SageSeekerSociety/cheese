@@ -1,11 +1,10 @@
 """One definition of "public" for every egress check.
 
-`/fetch` and the network gate in front of a private chat's container refuse the
-same addresses. The gate turns the definition into firewall rules inside the
-executor image, under that image's Python, so the IPv4 ranges are written out;
-these hold them to what the standard library calls globally routable, so the
-two cannot drift apart: an address the backend would refuse to fetch is one a
-private chat cannot reach either.
+`/fetch` and the egress proxy private chats reach the network through refuse
+the same addresses. The proxy runs from the executor image, under that image's
+Python, so the IPv4 ranges are written out; these hold them to what the
+standard library calls globally routable on the backend's Python: an address
+the backend would refuse to fetch is one a private chat cannot reach either.
 """
 
 import ipaddress
