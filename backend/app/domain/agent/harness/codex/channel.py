@@ -62,7 +62,9 @@ class CodexChannel:
             / "events.sqlite"
         )
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, Placement)
         agent = precheck.agent_handle

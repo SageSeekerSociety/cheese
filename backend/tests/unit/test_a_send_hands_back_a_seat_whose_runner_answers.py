@@ -1,0 +1,137 @@
+"""A send hands the channel the seat's session only while its runner answers.
+
+The real runtime, runner and reads against a scripted session
+(``StubChannel``). A runner that holds reads says on every answer whether its
+agent process is still there, so a send that follows one can skip asking the
+machine again — and must not, once a read has said otherwise or failed, or for
+a runner that never says.
+"""
+
+import asyncio
+import dataclasses
+import time
+import uuid
+
+from app.domain.agent.harness import Opening
+from tests.unit.test_driven_liveness import Room, Scripted, _until
+
+_REAL_SLEEP = asyncio.sleep
+
+
+def _answers(channel: Scripted, topic: uuid.UUID, prompt: str) -> None:
+    channel.starts(topic)
+    channel.acknowledges(topic, prompt)
+    channel.says(topic, "done")
+    channel.stops(topic, "done")
+
+
+class Remembering(Scripted):
+    """Remembers the live handle each ensure was given."""
+
+    def __init__(self) -> None:
+        super().__init__(_answers)
+        self.given: list[object] = []
+
+    async def ensure(self, session, opening, live=None):
+        self.given.append(live)
+        return await super().ensure(session, opening, live)
+
+
+class OldRunners(Remembering):
+    """Runners started before runners could hold a read."""
+
+    async def ensure(self, session, opening, live=None):
+        handle = await super().ensure(session, opening, live)
+        return dataclasses.replace(handle, capabilities=frozenset())
+
+
+async def _send(room: Room, text: str) -> None:
+    """What a room sends: its own work, from the teammate the seat is for."""
+    room.work = uuid.uuid4()
+    room.unread[text] = time.monotonic()
+    await room.runtime.send(
+        room.session,
+        text,
+        Opening(system_prompt="", agent_handle="cheese"),
+        work_id=room.work,
+        on_mark=lambda _: None,
+    )
+
+
+async def _first_turn(room: Room) -> None:
+    await _send(room, "fix the login page")
+    await _until(lambda: room.results())
+    # The next read is being held at the runner.
+    await _REAL_SLEEP(0.3)
+
+
+async def test_a_second_send_to_a_seat_whose_runner_answers_hands_its_session_back():
+    channel = Remembering()
+    room = Room(channel)
+    try:
+        await _first_turn(room)
+        await _send(room, "and the signup page")
+        first, second = channel.given
+        assert first is None
+        assert second is not None
+        assert second == room.runtime.live[(room.topic, "cheese")]
+    finally:
+        await room.close()
+
+
+async def test_a_seat_whose_agent_process_ended_is_ensured_again():
+    channel = Remembering()
+    room = Room(channel)
+    try:
+        await _first_turn(room)
+        channel.alive = False
+        await _REAL_SLEEP(0.3)
+        channel.alive = True
+        await _send(room, "and the signup page")
+        assert channel.given == [None, None]
+    finally:
+        await room.close()
+
+
+async def test_a_seat_whose_runner_is_gone_is_ensured_again():
+    channel = Remembering()
+    room = Room(channel)
+    try:
+        await _first_turn(room)
+        channel.drop_session(room.topic)
+        await _REAL_SLEEP(0.3)
+        await _send(room, "and the signup page")
+        assert channel.given == [None, None]
+    finally:
+        await room.close()
+
+
+async def test_a_runner_that_cannot_hold_a_read_is_ensured_on_every_send():
+    channel = OldRunners()
+    room = Room(channel)
+    try:
+        await _first_turn(room)
+        await _send(room, "and the signup page")
+        assert channel.given == [None, None]
+    finally:
+        await room.close()
+
+
+async def test_a_seat_whose_runner_is_closing_is_ensured_again():
+    """The runner answers the read it holds as it starts to close, while its
+    agent process is still up and its socket still answers. The next send
+    starts the session again rather than being handed a runner on its way out."""
+    channel = Remembering()
+    room = Room(channel)
+    try:
+        await _first_turn(room)
+        runner = channel._session_for(room.topic)
+        runner.closing = True
+        runner.announce()
+        await _REAL_SLEEP(0.3)
+        # Its replacement, for the send that follows.
+        runner.closing = False
+        await _send(room, "and the signup page")
+        assert channel.given == [None, None]
+    finally:
+        await room.close()

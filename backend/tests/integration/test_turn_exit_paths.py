@@ -309,7 +309,7 @@ class _SilentScreen(StubChannel):
     """A session that never comes up — the one case where there genuinely is
     no session to point at."""
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         raise RuntimeError("the session never started")
 
 

@@ -404,7 +404,9 @@ class StubChannel:
     async def prepare_topic(self, **_: object) -> tuple[bool, str]:
         return True, ""
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         self.last_system_prompt = opening.system_prompt
         self.last_resume_session_id = opening.resume_token
         agent = opening.agent_handle or session.agent_handle or "cheese"

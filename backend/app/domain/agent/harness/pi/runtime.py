@@ -14,7 +14,7 @@ again.
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.domain.agent.harness import SessionRef
@@ -37,6 +37,10 @@ class Handle:
     mirror: Path
     #: What its runner said it can do when it was greeted (``driven.runner``).
     capabilities: frozenset[str] = frozenset()
+    #: The launch (``launch.script``'s contract) this process last ensured
+    #: the runner with: a send whose launch is the same reuses this handle
+    #: without asking the host. Not part of which session this is.
+    contract: str = field(default="", compare=False)
 
 
 class PiRuntime(DrivenRuntime[Handle]):

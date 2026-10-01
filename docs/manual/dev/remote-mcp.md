@@ -38,7 +38,7 @@ covers:
 | `needs_reconnect` | 授权被拒过，或 `.mcp.json` 现在指的 URL 与当初发 token 的那个不一样 |
 | `connected` | 其余 |
 
-能用的只有 `connected` 和 `ready`（`USABLE`）。`session_servers()` 按它分成 `usable` / `unusable` 两份名单，`session_target()` 把能用的写进会话的执行目标（`central_provider.py`）：`{"path": "/topics/{id}/mcp", "servers": [...]}`，一个能用的都没有时这个键不出现。**这个键属于启动身份（`_launch_identity`）**，所以有人连上一个服务，空转的会话会被重启带进来；没连上的那批不进执行目标，进的是提示里的一句话（见「没连接时」一节）。
+能用的只有 `connected` 和 `ready`（`USABLE`）。`session_servers()` 按它分成 `usable` / `unusable` 两份名单，`session_target()` 把能用的写进会话的执行目标（`central_provider.py`）：`{"path": "/topics/{id}/mcp", "servers": [...]}`，一个能用的都没有时这个键不出现。**这个键属于启动身份（`screen_identity.launch_identity`）**，所以有人连上一个服务，空转的会话会被重启带进来；没连上的那批不进执行目标，进的是提示里的一句话（见「没连接时」一节）。
 
 ## 连接：平台当 OAuth 客户端 {#connect}
 

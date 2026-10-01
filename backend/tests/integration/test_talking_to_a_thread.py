@@ -47,9 +47,9 @@ def _record_screens(stub_hooks) -> list[str]:
     seen: list[str] = []
     original = stub_hooks.ensure
 
-    async def _spy(session, opening):
+    async def _spy(session, opening, live=None):
         seen.append(str(session.topic_id))
-        return await original(session, opening)
+        return await original(session, opening, live)
 
     stub_hooks.ensure = _spy
     return seen

@@ -840,7 +840,7 @@ class FailingScreen(StubChannel):
         self._text = text
         self._code = failure_code
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         del session, opening
         raise ScreenSetupError(self._text, failure_code=self._code)
 
@@ -913,7 +913,7 @@ class StorageFullScreen(StubChannel):
         super().__init__()
         self.attempts = 0
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         del session, opening
         self.attempts += 1
         raise ScreenSetupError(

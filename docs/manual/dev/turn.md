@@ -135,7 +135,7 @@ steps:
 
 留在房间层的是工作目录、环境运行器的状态（`$HOME/.cheese-environment/status.json`）、store 和会话记录（`$HOME/.claude/projects/`）。每个座位的 `.claude/projects` 指向这份记录，续跑、迁机和发布前的忙闲扫描仍能找到原会话。辅助程序按座位更新；一个座位的更新不会覆盖另一位正在使用的文件。
 
-旧屏幕仍读房间层的文件。launch contract 变更后，平台等它空闲再退休，并按座位目录重开（`_launch_identity`）；新座位的开屏不改写旧屏幕依赖的文件。
+旧屏幕仍读房间层的文件。launch contract 变更后，平台等它空闲再退休，并按座位目录重开（`screen_identity.launch_identity`）；新座位的开屏不改写旧屏幕依赖的文件。
 
 ### 串行只在座位内 {#seats-serial}
 

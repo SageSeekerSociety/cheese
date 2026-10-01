@@ -335,7 +335,10 @@ class Runner(Generic[J]):  # noqa: UP046
 
         Waiting is not activity (``_idle``): an idle session is let go with a
         read still waiting on it, and that read is answered as the runner
-        closes.
+        closes. A closing runner answers that its agent is gone, though the
+        process may not have ended yet: the backend reuses a seat whose runner
+        said it is alive (``DrivenRuntime.answering``), and one that is going
+        will refuse the next send.
         """
         if "wait" not in params:
             return {}
@@ -367,7 +370,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 break
         if waited and not self.closing:
             await asyncio.sleep(READ_BATCH_S)
-        answer: dict = {"alive": self.alive()}
+        answer: dict = {"alive": self.alive() and not self.closing}
         if self.live_mark() != seen:
             answer["live"] = {
                 "mark": self.live_mark(),
