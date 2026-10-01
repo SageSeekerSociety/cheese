@@ -239,7 +239,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          :title="t(displayedFrame?.live ? 'work.room.preview.openCurrentApp' : 'work.room.preview.openInNewTab')"
+          :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <v-btn
@@ -292,7 +292,7 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            :title="t(displayedFrame?.live ? 'work.room.preview.openCurrentApp' : 'work.room.preview.openInNewTab')"
+            :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
           <v-btn

@@ -519,7 +519,7 @@
       "locateMessage": "In {path} at {address} (“{quote}”): {note}",
       "publishSite": "Publish site",
       "openInNewTab": "Open in a new tab",
-      "openCurrentApp": "Open the currently connected app in a new tab",
+      "openLatestPreview": "Open the latest preview in a new tab",
       "exitFullscreen": "Exit full screen",
       "fullscreen": "Full-screen preview",
       "refresh": "Refresh",
