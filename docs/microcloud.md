@@ -73,7 +73,11 @@ interrupted creation and claims, retires unused machines after
 them. Claimed machines never return to the pool. After five failed cleanup attempts,
 the record is kept and never retried, since its machine may still be billed. It does
 not take a place in the pool, but once three such records exist the pool stops
-replacing machines and logs an error until they are resolved at the provider.
+replacing machines and logs an error until they are resolved at the provider. The
+worker reads each such record back from the provider and closes it once the provider
+no longer has the machine, so removing it at the provider is all a person has to do.
+A record whose error starts with `Quarantined` was set aside by a person and is never
+closed on its own.
 
 This first version prepares the deployment's default offering with `aiMode: none`.
 It does not prepare every cloud specification. Configure a small pool only after the

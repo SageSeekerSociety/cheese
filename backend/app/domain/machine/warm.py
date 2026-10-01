@@ -41,6 +41,9 @@ UNRESOLVED_CLEANUP_LIMIT = 3
 # is still there after it is not being deleted: it waits with the cleanups that
 # failed, which hold no place in the pool and stop replacement once they pile up.
 DELETION_CONFIRM_S = 15 * 60
+# A failed cleanup whose error starts with this was set aside by a person
+# (ownership unverified); the sweep never settles it on its own.
+QUARANTINED_PREFIX = "Quarantined"
 # One provider claim per reservation per process; a second claimer waits here,
 # holding no database lock. One lock per machine ever claimed, so this stays small.
 _claim_locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -397,13 +400,7 @@ class WarmPoolService:
         ).all()
         if len(active) >= settings.microcloud_warm_pool_size:
             return
-        unresolved = len(
-            (
-                await self.session.scalars(
-                    select(WarmMachine.id).where(WarmMachine.state == "cleanup_failed")
-                )
-            ).all()
-        )
+        unresolved = await self._settle_vanished_cleanups()
         if unresolved >= UNRESOLVED_CLEANUP_LIMIT:
             logger.error(
                 "warm pool not replenished: %d machines failed cleanup and may "
@@ -541,6 +538,9 @@ class WarmPoolService:
                 )
             await self.session.commit()
             return
+        await self._forget(row)
+
+    async def _forget(self, row: WarmMachine) -> None:
         if row.device_id:
             device = await self.session.get(DeviceRow, row.device_id)
             if device is not None:
@@ -550,3 +550,38 @@ class WarmPoolService:
         row.state = "deleted"
         row.bootstrap_key = None
         await self.session.commit()
+
+    async def _settle_vanished_cleanups(self) -> int:
+        """Close the failed cleanups the provider has since dropped; count the rest.
+
+        A failed cleanup is kept because the machine may still be billed. Once
+        MicroCloud no longer knows the machine there is nothing left to bill, and
+        keeping the row would stop the pool for good, because nothing else ever
+        looks at it again. The check only reads: no deletion is retried here.
+        A row a person set aside is left exactly as it is.
+        """
+        rows = (
+            await self.session.scalars(
+                select(WarmMachine).where(WarmMachine.state == "cleanup_failed")
+            )
+        ).all()
+        unresolved = 0
+        for row in rows:
+            if row.machine_id is None or (row.error or "").startswith(
+                QUARANTINED_PREFIX
+            ):
+                unresolved += 1
+                continue
+            try:
+                vanished = await self.client.get_machine(row.machine_id) is None
+            except MicroCloudError:
+                vanished = False
+            if vanished:
+                logger.info(
+                    "warm cleanup settled: provider no longer has machine=%s",
+                    row.machine_id,
+                )
+                await self._forget(row)
+            else:
+                unresolved += 1
+        return unresolved
