@@ -210,6 +210,14 @@ class Subscription[B: Backlog]:
     def completion(self, record: dict) -> WorkCompletion | None:
         return None
 
+    async def settle_completion(self, record: dict) -> WorkCompletion | None:
+        completion = self.completion(record)
+        if completion is not None:
+            if self.completions is None:
+                raise RuntimeError("Completion consumer is not bound")
+            await self.completions(completion)
+        return completion
+
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         """What this record says about the turn. The events answer most of it;
         a harness adds what its records say and the vocabulary does not (a tool
@@ -239,13 +247,9 @@ class Subscription[B: Backlog]:
                             if self.receipts is None:
                                 raise RuntimeError("Receipt consumer is not bound")
                             await self.receipts(receipt)
-                        completion = self.completion(entry.record)
-                        if completion is not None:
-                            if self.completions is None:
-                                raise RuntimeError("Completion consumer is not bound")
-                            # Commit durable effects even if the start was landed
-                            # by an earlier process and the runner is now idle.
-                            await self.completions(completion)
+                        # Settlement precedes age/poison handling even when the
+                        # runner is idle and this process never saw the start.
+                        completion = await self.settle_completion(entry.record)
                         if entry.age_s >= STALE_S:
                             stale += 1
                         else:

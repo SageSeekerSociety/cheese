@@ -125,6 +125,7 @@ class ClaudeCodeChannel:
             status["session_id"],
             agent,
             self._mirror(session, placed["resource"] + agent),
+            status.get("input_protocol"),
         )
 
     async def _greet(self, device_id: str, state: str, launch: str) -> dict:
@@ -259,6 +260,7 @@ class ClaudeCodeChannel:
                     status["session_id"],
                     agent,
                     self._mirror(ref, place.resource_id + agent),
+                    status.get("input_protocol"),
                 )
             )
         return handles

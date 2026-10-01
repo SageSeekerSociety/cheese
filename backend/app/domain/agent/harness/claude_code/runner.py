@@ -37,6 +37,7 @@ from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.driven import runner
 from app.domain.memory.files import (
     INDEX_NAME,
@@ -1074,6 +1075,7 @@ class Runner(runner.Runner[Journal]):
         if method == "ping":
             return {
                 "pid": os.getpid(),
+                "input_protocol": INPUT_PROTOCOL,
                 "session_id": self.session_id,
                 "working": self.working,
                 "work_id": self.work if self.working else None,

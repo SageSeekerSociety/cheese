@@ -662,6 +662,9 @@ class DrivenRuntime[H: Handle]:
         await self._attach(handle)
         return handle
 
+    async def check_input_protocol(self, handle: H) -> None:
+        """A harness may refuse registration before any external input attempt."""
+
     async def send(
         self,
         session: SessionRef,
@@ -675,6 +678,7 @@ class DrivenRuntime[H: Handle]:
         owes_reply: bool = False,
     ) -> bool:
         handle = await self.ensure(session, opening, work_id=work_id)
+        await self.check_input_protocol(handle)
         payload = await self.channel.images(handle, images or [])
         on_mark(work_id)
         await self._consume(
@@ -753,6 +757,7 @@ class DrivenRuntime[H: Handle]:
             return False
         if self.live.get(seat) is not handle or self.work.get(seat) != work:
             return False
+        await self.check_input_protocol(handle)
         identity = InputIdentity(
             handle.session.project_id,
             topic_id,

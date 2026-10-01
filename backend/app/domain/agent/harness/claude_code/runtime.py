@@ -20,6 +20,10 @@ from app.domain.agent.harness.claude_code.backlog import (
     ClaudeCodeBacklog,
     control_state,
 )
+from app.domain.agent.harness.claude_code.protocol import (
+    InputProtocolUnavailable,
+    accepts_inputs,
+)
 from app.domain.agent.harness.claude_code.remote_execution.client import (
     REMOTE_CONTROLS,
 )
@@ -53,6 +57,7 @@ class Handle:
     session_id: str
     agent_handle: str
     mirror: Path
+    input_protocol: int | None = None
 
 
 class ClaudeCodeRuntime(DrivenRuntime[Handle]):
@@ -104,9 +109,15 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             announce=announce,
             receipts=receipt,
             completions=completion,
+            input_protocol=handle.input_protocol,
             pulse=self.pulse,
             memory=self._memory_hook(handle.session.topic_id),
         )
+
+    async def check_input_protocol(self, handle: Handle) -> None:
+        status = await self.channel.call(handle, "ping", {})
+        if not accepts_inputs(status):
+            raise InputProtocolUnavailable()
 
     async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
         """One memory reconciliation, over the runner that owns this session.

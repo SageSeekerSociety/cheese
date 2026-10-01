@@ -18,6 +18,8 @@ from app.domain.agent.harness import (
     SessionRef,
 )
 from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog, receive
+from app.domain.agent.harness.claude_code.legacy import completion_inputs
+from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.driven import subscription
 from app.domain.agent.service import AgentEvent
 from app.domain.delivery.input_identity import (
@@ -44,6 +46,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         completions: CompletionConsumer | None = None,
         pulse: subscription.Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
+        input_protocol: int | None = INPUT_PROTOCOL,
     ):
         super().__init__(
             session,
@@ -59,6 +62,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         self.session_id = session_id
         self.recipient_handle = recipient_handle
         self.announce = announce
+        self.input_protocol = input_protocol
 
     async def receive(self) -> None:
         if await receive(self.path, self.call, self.on_disk):
@@ -100,6 +104,46 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             if stamp.get("receipt_execution_work_id")
             else None,
         )
+
+    async def settle_completion(self, record: dict) -> WorkCompletion | None:
+        stamp = record.get("cheese") or {}
+        legacy = (
+            record.get("type") == "result"
+            and stamp.get("work_id")
+            and not record.get("is_error")
+            and not stamp.get("interrupted")
+            and not stamp.get("completion_input_ids")
+            and (stamp.get("work_completed") or self.input_protocol != INPUT_PROTOCOL)
+        )
+        if not legacy:
+            return await super().settle_completion(record)
+        echoes = await self.on_disk(
+            completion_inputs,
+            self.path,
+            work_id=stamp["work_id"],
+            session_id=self.session_id,
+            recipient_handle=self.recipient_handle,
+            result=record,
+        )
+        if not echoes:
+            return None
+        if self.receipts is None or self.completions is None:
+            raise RuntimeError("Legacy settlement consumers are not bound")
+        for echo in echoes:
+            receipt = self.receipt(echo)
+            assert receipt is not None
+            await self.receipts(receipt)
+        completion = WorkCompletion(
+            self.session.project_id,
+            self.session.topic_id,
+            self.recipient_handle,
+            self.session.harness,
+            self.session_id,
+            uuid.UUID(stamp["work_id"]),
+            tuple(uuid.UUID(echo["uuid"]) for echo in echoes),
+        )
+        await self.completions(completion)
+        return completion
 
     def completion(self, record: dict) -> WorkCompletion | None:
         stamp = record.get("cheese") or {}
