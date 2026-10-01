@@ -150,12 +150,9 @@ function openComment(payload: { anchorId: string | null; quote: string }) {
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
-watch(
-  () => [props.topic?.id, props.commentAuthor],
-  () => {
-    openId.value = null
-  }
-)
+watch([() => props.topic?.id, () => props.commentAuthor], () => {
+  openId.value = null
+})
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
 }

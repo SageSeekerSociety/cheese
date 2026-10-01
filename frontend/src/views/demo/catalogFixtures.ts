@@ -819,6 +819,8 @@ const DOC_BASE = {
 }
 
 /** 文档那一格的整串 props（正文本身由容器在取到之后装进去，不由 props 进）。 */
+export function docPanelProps(): typeof DOC_BASE
+export function docPanelProps<T extends Record<string, unknown>>(over: T): Omit<typeof DOC_BASE, keyof T> & T
 export function docPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return { ...DOC_BASE, ...over }
 }
