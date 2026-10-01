@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _topic(client) -> str:
@@ -212,18 +212,18 @@ def test_reactions_are_only_queried_for_the_current_page(client, monkeypatch):
 def test_reactions_on_the_page_still_ride_the_payload(client):
     tid = _topic(client)
     ids = [_say(client, tid, f"m{i}") for i in range(6)]
-    r = client.post(
-        f"/blocks/{ids[-1]}/reactions", json={"emoji": "👍", "author": "u1"}
-    )
+    # `post_project` makes `owner` the project's owner, so it can react here.
+    owner = session_auth_headers("owner")
+    r = client.post(f"/blocks/{ids[-1]}/reactions", json={"emoji": "👍"}, headers=owner)
     assert r.status_code == 200, r.text
     # …and one on a block that the page will NOT contain.
-    client.post(f"/blocks/{ids[0]}/reactions", json={"emoji": "🎉", "author": "u1"})
+    client.post(f"/blocks/{ids[0]}/reactions", json={"emoji": "🎉"}, headers=owner)
 
     payload = _blocks(client, tid, limit=2)
 
     assert _texts(payload) == ["m4", "m5"]
     assert payload["data"][-1]["reactions"] == [
-        {"emoji": "👍", "count": 1, "authors": ["u1"]}
+        {"emoji": "👍", "count": 1, "authors": ["owner"]}
     ]
     assert all("🎉" not in str(b.get("reactions", "")) for b in payload["data"])
 

@@ -189,7 +189,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     try {
       // The response carries the fresh aggregate; the `reaction` WS frame the
       // backend broadcasts is idempotent with this local apply.
-      const out = await apiToggleReaction(m.id, emoji, AUTHOR)
+      const out = await apiToggleReaction(m.id, emoji)
       applyReactions(m.id, out.reactions)
     } catch (e) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')

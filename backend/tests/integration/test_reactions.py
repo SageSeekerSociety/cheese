@@ -13,15 +13,19 @@ from app.domain.agent.chat import ChatService
 from tests.conftest import finish_turn, stub_compute
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
     post_message,
     post_project,
     registered,
     room_agent_seat,
+    session_auth_headers,
 )
 
 
 def _create_topic(client, owner: str = "alice") -> str:
     p = post_project(client, json={"name": "P"}).json()["data"]
+    for teammate in ("bob", "carol"):
+        join_project_team(client, p["id"], teammate)
     t = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": owner},
@@ -45,8 +49,12 @@ def _post_message(client, topic_id: str, content: str, author: str) -> str:
 
 
 def _toggle(client, block_id: str, emoji: str, author: str) -> dict:
+    """``author`` reacts, signed in as themselves — the reaction is theirs
+    because their session says so, not because the body names them."""
     r = client.post(
-        f"/blocks/{block_id}/reactions", json={"emoji": emoji, "author": author}
+        f"/blocks/{block_id}/reactions",
+        json={"emoji": emoji},
+        headers=session_auth_headers(author),
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -162,7 +170,8 @@ def test_a_reaction_fired_while_the_socket_is_still_authorising_is_not_lost(
 def test_reaction_on_missing_block_is_404(client):
     r = client.post(
         f"/blocks/{uuid.uuid4()}/reactions",
-        json={"emoji": "👍", "author": "bob"},
+        json={"emoji": "👍"},
+        headers=session_auth_headers("bob"),
     )
     assert r.status_code == 404
 

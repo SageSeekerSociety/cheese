@@ -61,7 +61,7 @@ def test_upgrade_block_to_topic(client):
 
     r = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"created_by": "user-1", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
     )
     assert r.status_code == 200
     _wait_work_idle()
@@ -142,7 +142,7 @@ def test_upgrading_a_message_leaves_an_event_and_starts_no_turn(client, stub_hoo
     screens = _record_screens(stub_hooks)
     r = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"created_by": "user-1", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
     )
     assert r.status_code == 200
     thread = r.json()["data"]
@@ -181,7 +181,7 @@ def test_a_room_names_its_own_thread(client):
     block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
     thread = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"created_by": "user-1", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
     ).json()["data"]
     _wait_work_idle()
     assert thread["title"] == "新话题"
@@ -245,7 +245,7 @@ def test_upgrade_doc_node_to_subtopic(client):
 
     r = client.post(
         f"/blocks/{target['id']}/upgrade",
-        json={"created_by": "user-1", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
     )
     assert r.status_code == 200
     _wait_work_idle()
@@ -314,7 +314,7 @@ def test_upgrade_on_archived_topic_rejected(client):
     )
     r = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"created_by": "alice", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
     )
     assert r.status_code == 422
 
@@ -331,7 +331,7 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     )
     topic = client.post(
         f"/blocks/{block_id}/upgrade",
-        json={"created_by": "user-1", "reviewer_handle": "alice"},
+        json={"reviewer_handle": "alice"},
     ).json()["data"]
     _wait_work_idle()
     assert topic["parent_id"] == p["root_topic_id"]
