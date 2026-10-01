@@ -433,8 +433,8 @@ def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_hos
 
 
 def test_resolve_compute_id_uses_room_then_explicit_project_default():
-    from app.domain.agent.chat import _resolve_compute_id
     from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs
+    from app.domain.agent.work_policy import resolve_compute_id
 
     configs = ProjectComputeConfigs(
         default=ComputeChoice(name="Lab", profile="device", device_id="lab")
@@ -443,6 +443,6 @@ def test_resolve_compute_id_uses_room_then_explicit_project_default():
     cloud = ComputeChoice(name="Cloud", profile="cloud")
     room = SimpleNamespace(compute_config=cloud.model_dump())
     fresh = SimpleNamespace(compute_config=None)
-    assert _resolve_compute_id(values, room) == "cloud"
-    assert _resolve_compute_id(values, fresh) == "device"
-    assert _resolve_compute_id(values) == "device"
+    assert resolve_compute_id(values, room) == "cloud"
+    assert resolve_compute_id(values, fresh) == "device"
+    assert resolve_compute_id(values) == "device"

@@ -27,6 +27,12 @@ from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
 from app.domain.agent import dispatch_log
+from app.domain.agent.admission import (
+    HOST_BUSY_META,
+    QUEUED_META,
+    queued_text,
+    wait_for_host,
+)
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
@@ -468,8 +474,10 @@ class AgentWorkRunner:
         first_output_timeout_s: float = 300.0,
         credential_expiry_of: Callable[[uuid.UUID], int | None] | None = None,
         credential_expired_fuse_s: float = 15.0,
+        host_has_room: Callable[[uuid.UUID], Awaitable[bool]] | None = None,
     ) -> None:
         self._broker = broker
+        self._host_has_room = host_has_room
         self._message_locks: dict[tuple[uuid.UUID, str | None], asyncio.Lock] = {}
         self._timeout = turn_timeout_s
         # 冷启动看门狗: how long a turn may produce NOTHING before it is called
@@ -1858,13 +1866,6 @@ class AgentWorkRunner:
         )
         logger.info("scheduled orphan re-send for topic %s in %.0fs", topic_id, after_s)
 
-    # Platform copy for the queue event — structured, never 芝士's own words.
-    @staticmethod
-    def _queued_text(ahead: int) -> str:
-        if ahead <= 0:
-            return say("turnQueued")
-        return say("turnQueuedBehind", ahead=ahead)
-
     #: 工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。
     _TOOLS_RECOVERED_META = notice(
         EVENT_TOOLS_RECOVERED,
@@ -1872,15 +1873,6 @@ class AgentWorkRunner:
         who=WHO_PLATFORM,
         detail=say("toolsRecoveredDetail"),
         detail_label=say("labelNote"),
-    )
-
-    #: 排队不是故障：平台自己会往前推，没人需要动手。
-    _QUEUED_META = notice(
-        EVENT_TURN_QUEUED,
-        severity=SEVERITY_INFO,
-        who=WHO_PLATFORM,
-        detail=say("turnQueuedDetail"),
-        detail_label=say("labelWhatHappensNext"),
     )
 
     #: How long a turn waits for its room's replay before the room is told.
@@ -1950,6 +1942,7 @@ class AgentWorkRunner:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
         - credits exhausted → ("reject", None): the caller refuses the turn.
+        - its session starts on a session host with no memory for it → wait.
         - project concurrency full → queue on the project semaphore (FIFO),
           after posting a visible "排队中" system event. Returns ("ok", sem)
           with the ACQUIRED semaphore (caller must release).
@@ -1966,6 +1959,13 @@ class AgentWorkRunner:
         if policy["credits_exhausted"]:
             logger.info("turn %s rejected: credits exhausted", turn_id)
             return "reject", None
+        await wait_for_host(
+            self._host_has_room if policy.get("on_session_host") else None,
+            topic_id,
+            lambda text: self._post_event(
+                chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
+            ),
+        )
         key = policy["project_id"]
         sem = self._project_sems.get(key)
         if sem is None:
@@ -1977,8 +1977,8 @@ class AgentWorkRunner:
                 chat_service,
                 topic_id,
                 turn_id,
-                self._queued_text(ahead),
-                meta=self._QUEUED_META,
+                queued_text(ahead),
+                meta=QUEUED_META,
             )
             logger.info("turn %s queued (project=%s ahead=%s)", turn_id, key, ahead)
         self._project_waiting[key] = self._project_waiting.get(key, 0) + 1

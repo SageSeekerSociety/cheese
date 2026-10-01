@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.domain.agent import execution, private_chat
+from app.domain.agent.admission import SESSION_MEMORY_ENV, session_memory_max
 from app.domain.agent.device_provider import (
     DeviceChannel,
 )
@@ -244,6 +245,10 @@ class CentralChannel(DeviceChannel):
             raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
+        # Every room's session shares this machine's kernel: each runs under a
+        # cap, so one cannot take the others down with it (#1544).
+        if memory_max := session_memory_max(center):
+            values[SESSION_MEMORY_ENV] = memory_max
         # The machine this session already holds, once its lease is ready.
         lease = (place.lease if place else None) if precheck.deferred else None
         leased = (
