@@ -49,8 +49,8 @@ def shim(tmp_path) -> str:
     return str(path)
 
 
-async def running(tmp_path, resume=None):
-    runner = Runner(tmp_path / "state")
+async def running(tmp_path, resume=None, **options):
+    runner = Runner(tmp_path / "state", **options)
     session_id = await runner.start(
         Opening("system prompt", resume, agent_handle="teammate"),
         binary=shim(tmp_path),
@@ -78,6 +78,38 @@ async def test_the_platform_names_the_session_and_can_ask_for_it_again(tmp_path)
         await again.close()
     with pytest.raises(ValueError):
         await running(tmp_path, resume=str(uuid.uuid4()))
+
+
+@pytest.mark.anyio
+async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(tmp_path):
+    """A backend reads every session about once a second whether anyone talks
+    to it or not, so being read is not being used. The session goes, and its
+    directory starts the same one again."""
+    runner, session_id = await running(tmp_path, idle_exit_s=0.5)
+
+    async def backend():
+        while True:
+            await call(runner.state, "entries")
+            await asyncio.sleep(0.1)
+
+    reading = asyncio.create_task(backend())
+    try:
+        await call(
+            runner.state,
+            "send",
+            {"input_id": str(uuid.uuid4()), "text": "开始", "work_id": "w"},
+        )
+        assert runner.process is not None
+        await asyncio.wait_for(runner.process.wait(), 30)
+    finally:
+        reading.cancel()
+        await runner.close()
+
+    again, resumed = await running(tmp_path, resume=session_id)
+    try:
+        assert resumed == session_id
+    finally:
+        await again.close()
 
 
 @pytest.mark.anyio

@@ -4,7 +4,8 @@ A runner owns one agent process and outlives every backend that reads from it.
 What it does the same way for any harness: hold the state directory's lock,
 answer one JSON line per connection on the socket the connector relays to,
 accept each input at most once however many times a reconnecting backend asks,
-and hold a session to answering a person before it does anything else.
+hold a session to answering a person before it does anything else, and let a
+session go once it has sat idle.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -22,6 +24,22 @@ from app.domain.agent.harness.driven.journal import Journal
 
 # Not PEP 695 syntax: this module runs on the session machine's interpreter.
 J = TypeVar("J", bound=Journal)
+
+
+# --- letting an idle session go ------------------------------------------------
+#
+# A session nobody is talking to holds a process on the session machine all the
+# same, and a backend reads every one of them about once a second whether anyone
+# talks to it or not. So reading is not what keeps a session: what it is doing
+# is. With no turn open, nothing of its own still running, no input on its way
+# in and no record written either way for ``IDLE_EXIT_S``, and nothing left that
+# a backend still reading has yet to take, the runner lets it go. Its
+# conversation stays on disk, and the next message starts it again on it
+# (each harness's ``ensure`` resumes what the state directory recorded).
+
+IDLE_EXIT_S = 600.0
+#: How often the runner looks.
+IDLE_CHECK_S = 5.0
 
 
 def socket_path(state: Path) -> str:
@@ -112,7 +130,14 @@ def reply_owed(path: str | Path | None) -> dict | None:
 
 
 class Runner(Generic[J]):  # noqa: UP046
-    def __init__(self, state: Path, journal: type[J], name: str):
+    def __init__(
+        self,
+        state: Path,
+        journal: type[J],
+        name: str,
+        *,
+        idle_exit_s: float = IDLE_EXIT_S,
+    ):
         state.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state = state
         self.journal = journal(state / name)
@@ -126,6 +151,13 @@ class Runner(Generic[J]):  # noqa: UP046
         self.owed: str | None = None
         # Debts the session has already been held to once at a turn's end.
         self.insisted: set[str] = set()
+        # 0 keeps the session however long it sits idle.
+        self.idle_exit_s = idle_exit_s
+        self.active_at = time.monotonic()
+        # How far a backend has read the journal, and when it last did.
+        self.read_through = 0
+        self.read_at = time.monotonic()
+        self.idler: asyncio.Task | None = None
 
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
@@ -212,6 +244,54 @@ class Runner(Generic[J]):  # noqa: UP046
             self.handle, path=socket_path(self.state), limit=limit
         )
         os.chmod(socket_path(self.state), 0o600)
+        if self.idle_exit_s:
+            self.idler = asyncio.create_task(self._idle())
+
+    # --- letting an idle session go ------------------------------------------
+
+    def records(self, after: int) -> list[dict]:
+        """The journal past ``after``, as a backend reads it.
+
+        What it has taken is what an idle session waits for before it goes: a
+        backend still reading would otherwise find the rest only when the room
+        next speaks.
+        """
+        rows = self.journal.read(after)
+        self.read_through = max(
+            self.read_through, rows[-1]["sequence"] if rows else after
+        )
+        self.read_at = time.monotonic()
+        return rows
+
+    def busy(self) -> bool:
+        """Whether the session has something going besides an input on its way
+        in: a turn, or work of its own still running. Each harness knows its
+        own."""
+        raise NotImplementedError
+
+    async def release(self) -> None:
+        """Let the session go. Its process exiting is what ends the runner."""
+        if self.process is not None and self.process.returncode is None:
+            self.process.terminate()
+
+    async def _idle(self) -> None:
+        seen = self.journal.last()
+        while True:
+            await asyncio.sleep(min(IDLE_CHECK_S, self.idle_exit_s))
+            now = time.monotonic()
+            last = self.journal.last()
+            if last != seen or self.inputs or self.busy():
+                seen, self.active_at = last, now
+                continue
+            if now - self.active_at < self.idle_exit_s:
+                continue
+            # A backend that has not asked for an idle window is gone; what it
+            # left unread is read from this journal when the session is next
+            # started.
+            if last > self.read_through and now - self.read_at < self.idle_exit_s:
+                continue
+            await self.release()
+            return
 
     async def accept(
         self,
@@ -235,6 +315,7 @@ class Runner(Generic[J]):  # noqa: UP046
         the message still unread behind it, and refusing that tool is also what
         puts the message in front of the model at once.
         """
+        self.active_at = time.monotonic()
         payload = json.dumps(content, sort_keys=True)
         previous = self.journal.input(identifier)
         if previous is not None:
@@ -329,6 +410,9 @@ class Runner(Generic[J]):  # noqa: UP046
             await self.listener
 
     async def close(self) -> None:
+        if self.idler is not None:
+            self.idler.cancel()
+            await asyncio.gather(self.idler, return_exceptions=True)
         if self.server is not None:
             self.server.close()
             await self.server.wait_closed()
