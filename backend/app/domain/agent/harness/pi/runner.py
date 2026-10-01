@@ -26,6 +26,7 @@ import os
 import signal
 import sys
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 from app.domain.agent.harness import Opening
@@ -51,8 +52,8 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
 
 class Runner(runner.Runner[Journal]):
-    def __init__(self, state: Path):
-        super().__init__(state, Journal, "entries.sqlite")
+    def __init__(self, state: Path, *, idle_exit_s: float = runner.IDLE_EXIT_S):
+        super().__init__(state, Journal, "entries.sqlite", idle_exit_s=idle_exit_s)
         self.client: Connection | None = None
         self.refreshing = asyncio.Lock()
         self.doorbell = asyncio.Event()
@@ -650,6 +651,14 @@ class Runner(runner.Runner[Journal]):
         extension's `bash` (`platform.ts`), which watches the file the debt was
         just written to and lets go of its command as soon as it changes."""
 
+    def busy(self) -> bool:
+        return bool(
+            self.working
+            or (self.continuing is not None and not self.continuing.done())
+            or any(not agent.ended.done() for agent in self.children.started.values())
+            or any(True for _ in self._running_jobs())
+        )
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
@@ -657,7 +666,7 @@ class Runner(runner.Runner[Journal]):
             await self.refresh()
             since = params.get("since")
             after = self.journal.sequence_of(since) if since else 0
-            return {"entries": [row["record"] for row in self.journal.read(after)]}
+            return {"entries": [row["record"] for row in self.records(after)]}
         if method == "send":
             return await self.send(
                 params["input_id"],
@@ -744,6 +753,12 @@ class Runner(runner.Runner[Journal]):
         supervisor sees its child go, drains what it printed on the way out and
         records the exit, which is also what a reader needs afterwards.
         """
+        for child in self._running_jobs():
+            with contextlib.suppress(OSError):
+                os.killpg(os.getpgid(child), signal.SIGTERM)
+
+    def _running_jobs(self) -> Iterator[int]:
+        """The process of each backgrounded command that has not exited."""
         jobs = self.state / "bg"
         if not jobs.is_dir():
             return
@@ -751,11 +766,12 @@ class Runner(runner.Runner[Journal]):
             if (job / "exit").exists():
                 continue
             try:
-                meta = json.loads((job / "meta.json").read_text())
-                os.killpg(os.getpgid(meta["child"]), signal.SIGTERM)
+                child = json.loads((job / "meta.json").read_text())["child"]
+                os.kill(child, 0)
             except (OSError, ValueError, KeyError):
                 # Already gone, never written, or ours no longer to signal.
                 continue
+            yield child
 
     async def stopped(self) -> None:
         with contextlib.suppress(Exception):
