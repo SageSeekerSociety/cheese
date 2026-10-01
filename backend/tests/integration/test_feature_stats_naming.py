@@ -10,6 +10,9 @@
   0——0 读作「这个窗口没花钱」，是另一个意思。
 * **答了、但这一窗口没有命名流量**才是 0，而那时成功率仍然是「没有值」：一个请求
   都没有，成功率没有分母。
+* **答了、上面却没有那把 key** 也是「没有数」，不是 0。没有这把密钥，它花了多少
+  就无从谈起；0 说的是「有这把密钥、这一窗口没花钱」。这两句在页面上读起来必须
+  不一样。
 * **分母**。「人后来改掉了多少」的分母是**有自动标题的房间**；人自己起名的房间不算
   平台被改掉，没被自动命名过的房间也不该出现在分母里。
 * **窗口**。折线恒有 `days` 个点、缺的那天补 0；7 天看不见 40 天前那一行。
@@ -145,10 +148,13 @@ def _install_gateway(
 
     class Switch:
         unreachable = False
+        #: 打过的路径，用来钉「没问过的就别编」。见没有命名 key 那条用例。
+        paths: list[str] = []
 
     switch = Switch()
 
     def handler(request: httpx.Request) -> httpx.Response:
+        switch.paths.append(request.url.path)
         if switch.unreachable:
             raise httpx.ConnectError("no route to the gateway")
         if request.url.path == "/key/list":
@@ -390,7 +396,11 @@ def test_a_gateway_that_errors_is_also_unknown_not_zero(client, as_admin, gatewa
 def test_a_gateway_that_answered_with_no_naming_traffic_is_zero(
     client, as_admin, monkeypatch
 ):
-    """网关答了话、这一窗口命名一个请求都没有：是 0，而成功率没有分母。"""
+    """网关答了话、key 在、这一窗口命名一个请求都没有：**这才是 0**。
+
+    和上一条配对：这条能报 0，判据不是「数字看着像零」，而是那把 key 确实存在
+    （额度那一行画得出来）。成功率仍然是「没有值」——一个请求都没有，没有分母。
+    """
     _install_gateway(
         monkeypatch,
         [_key_row()],
@@ -401,21 +411,39 @@ def test_a_gateway_that_answered_with_no_naming_traffic_is_zero(
     numbers = _report(client, as_admin, days=30)["numbers"]
 
     assert numbers["cost"]["source"] == "gateway"
+    assert numbers["cost"]["budget_usd"] == pytest.approx(10.0)
     assert numbers["calls"]["value"] == 0
     assert numbers["calls"]["success_rate"] is None
     assert numbers["tokens"]["value"] == 0
     assert numbers["cost"]["usd"] == pytest.approx(0.0)
 
 
-def test_a_gateway_without_the_naming_key_at_all_is_zero(client, as_admin, monkeypatch):
-    """网关从没铸过那把 key（命名还没跑过）：也是 0，不是「读不到」。"""
-    _install_gateway(monkeypatch, [_key_row(alias="project-x", token=OTHER_HASH)], [])
+def test_a_gateway_without_the_naming_key_is_unknown_not_zero(
+    client, as_admin, monkeypatch
+):
+    """网关答了话、上面却没有那把 key（命名从没被铸过，或者别名变了）。
+
+    **这是「没有数」，不是 0**：0 说的是「这把密钥在网关那儿有账、这个窗口一次
+    没花」，而这里根本没有这把密钥 —— 它花了多少无从谈起。两者在页面上必须读起
+    来不一样，否则读到的是「命名一分钱没花」。
+    """
+    switch = _install_gateway(
+        monkeypatch, [_key_row(alias="project-x", token=OTHER_HASH)], []
+    )
+    (room,) = _rooms(client, 1)
+    _seed_titles(client, _auto(room))
 
     numbers = _report(client, as_admin, days=30)["numbers"]
 
-    assert numbers["cost"]["source"] == "gateway"
-    assert numbers["calls"]["value"] == 0
+    assert numbers["cost"]["source"] == "no-key"
+    assert numbers["calls"] == {"value": None, "failed": None, "success_rate": None}
+    assert numbers["tokens"]["value"] is None
+    assert numbers["cost"]["usd"] is None
     assert numbers["cost"]["budget_usd"] is None
+    # 没有这把 key 就没有它的用量可问：连那次请求都不该发出去。
+    assert "/user/daily/activity/aggregated" not in switch.paths
+    # 库里那一半照常：网关读不到什么，不影响「写了多少、被改掉多少」。
+    assert numbers["renames"]["value"] == 1
 
 
 # ---------- 动作：标题落在哪几个阶段、被谁改掉 ----------
@@ -451,6 +479,63 @@ def test_titles_are_counted_by_stage_and_by_who_wrote_them(
 
     assert numbers["renames"] == {"value": 5, "name": 3, "calibrate": 1, "follow": 1}
     assert numbers["person_edits"] == {"value": 3, "rename": 2, "undo": 1}
+    # 明细的和就是总数：两个格子要么各装一半，要么有一个空着，不该有第三种。
+    assert (
+        numbers["person_edits"]["rename"] + numbers["person_edits"]["undo"]
+        == numbers["person_edits"]["value"]
+    )
+
+
+def test_a_row_with_the_old_word_for_undo_still_lands_in_a_cell(
+    client, as_admin, monkeypatch
+):
+    """旧的 `restore` 行也算撤销，明细的和必须等于总数。
+
+    「退回」这件事换过一次写法：`restore`（3ce29a4d，2026-09-27）后来改叫
+    `undo`（ce08b7ca，09-28），库里两种行都在。只认新写法的后果是可数的：2026-10-01
+    在 dev 上，两个格子加起来 18，总数写 23 —— 那 5 次改动在页面上没有任何一处能
+    对上，而看的人只会以为自己看漏了。
+    """
+    _no_gateway(monkeypatch)
+    one, two = _rooms(client, 2)
+    _seed_titles(
+        client,
+        _human(one, reason="rename", days=2),
+        _human(one, reason="rename", days=1),
+        _human(two, reason="restore", days=1),
+        _human(two, reason="undo", days=0),
+    )
+
+    edits = _report(client, as_admin, days=30)["numbers"]["person_edits"]
+
+    assert edits == {"value": 4, "rename": 2, "undo": 2}
+    assert edits["rename"] + edits["undo"] == edits["value"]
+
+
+def test_a_row_whose_reason_we_do_not_know_is_in_no_cell(client, as_admin, monkeypatch):
+    """总数只含改名和撤销；未知原因不能计作撤销，日趋势采用同一范围。"""
+    _no_gateway(monkeypatch)
+    one, two = _rooms(client, 2)
+    _seed_titles(
+        client,
+        _auto(one, stage="name", days=2),
+        _human(one, reason="rename", days=1),
+        _auto(two, stage="name", days=2),
+        _human(two, reason="banana", days=0),
+    )
+
+    report = _report(client, as_admin, days=30)
+
+    assert report["numbers"]["person_edits"] == {"value": 1, "rename": 1, "undo": 0}
+    assert (
+        report["numbers"]["person_edits"]["rename"]
+        + report["numbers"]["person_edits"]["undo"]
+        == report["numbers"]["person_edits"]["value"]
+    )
+    # 折线的人那条也同一条判据：认不出就不画。
+    assert sum(point["person"] for point in report["trend"]) == 1
+    # 自动命名那一半照常：两行都数得到，认不出的那行不影响它。
+    assert report["numbers"]["renames"]["value"] == 2
 
 
 def test_the_override_share_counts_rooms_a_person_touched_after_the_platform(

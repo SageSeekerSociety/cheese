@@ -110,16 +110,21 @@ export interface TopicNamingNumbers {
   }
   cost: {
     usd: number | null
-    /** `gateway` = 网关自己记的账；`unavailable` = 读不到网关，上面那几个数是 null。 */
-    source: 'gateway' | 'unavailable'
-    /** 那把密钥的额度与累计花费：额度用完网关就会拒，命名会静默停下。 */
+    /** `gateway` = 网关自己记的账；`no-key` = 网关答了话、上面没有那把命名密钥；
+     *  `unavailable` = 读不到网关。后两种上面那几个数都是 null：一个是「密钥不
+     *  存在」，一个是「没读到」，两句得分开说，都不能画成 0。 */
+    source: 'gateway' | 'no-key' | 'unavailable'
+    /** 那把密钥的额度与它自己记的花费：额度用完网关就会拒，命名会静默停下。
+     *  `key_spend_usd` 跟的是**网关的额度周期（`budget_duration`），不是这一页选
+     *  的窗口**，所以它和周期一起画 —— dev 上它比 7 天窗口的花费小一个量级。 */
     budget_usd: number | null
     budget_duration: string | null
     key_spend_usd: number | null
   }
   /** 平台自动写的标题，按阶段分（首次 / 校准 / 跟随）。 */
   renames: { value: number; name: number; calibrate: number; follow: number }
-  /** 人写的标题，按原因分（改标题 / 撤销自动改名）。 */
+  /** 人写的标题，按原因分（改标题 / 撤销自动改名）。`value` 就是这两个格子的和：
+   *  认不出的原因不进任何一格，也不进总数。 */
   person_edits: { value: number; rename: number; undo: number }
   /** `named` = 窗口里被自动命名过的房间数（比例的分母）；没有分母时 `share` 是 null。 */
   overridden: { value: number; named: number; share: number | null }

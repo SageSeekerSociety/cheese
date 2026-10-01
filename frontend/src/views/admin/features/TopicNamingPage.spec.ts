@@ -7,6 +7,8 @@
  *   是两句不同的话，少一句就读不出来命名到底好不好用。
  * * **读不到网关不是零**：花费是长破折号加一句「读不到」，不是 $0（0 读作「不花钱」），
  *   同一次读不到也让调用数与成功率一起变成破折号。
+ * * **网关答了话、上面没有那把密钥是第三种**：说的是「没有这把密钥」，和「读不到」
+ *   分开画，同样不报 0 —— 没有密钥就没有它的账，报零读起来是「命名一分钱没花」。
  * * **调用成功率不是命名成功率**：这一格的标签和口径注必须说的是网关那个口径，免得读
  *   的人把它当成模型质量。
  * * **窗口是服务端的问法**：切页签要**重新取数**（带 `days`），不是在本地筛已到的行。
@@ -101,9 +103,10 @@ describe('智能命名的功能数据页', () => {
     // token 用量与拆分（问进去的 / 写回来的 / 缓存里读的）。
     expect(text).toContain('456,789')
     expect(text).toContain('featureStats.naming.kpi.tokenSplit {"prompt":"300,000","completion":"156,789","cache":"0"}')
-    // 花费是网关自己记的账（不是估算），额度和累计挨着它。
+    // 花费是网关自己记的账（不是估算）；额度那一行把它自己的花费和**周期**一起画 ——
+    // 密钥记的花费跟的是网关的额度周期，不是这一页选的窗口。
     expect(text).toContain('$1.23')
-    expect(text).toContain('featureStats.naming.kpi.budget {"spend":"$1.25","budget":"$10.00"}')
+    expect(text).toContain('featureStats.naming.kpi.budget {"spend":"$1.25","budget":"$10.00","duration":"30d"}')
     // 写过的标题：总数 + 三个阶段。
     expect(text).toContain('96')
     expect(text).toContain('featureStats.naming.kpi.stages {"name":"60","calibrate":"30","follow":"6"}')
@@ -167,6 +170,63 @@ describe('智能命名的功能数据页', () => {
     expect(text).not.toContain('featureStats.naming.kpi.budget')
     // 库里那一半照常画：读不到网关不影响「写了多少、被改掉多少」。
     expect(text).toContain('featureStats.naming.kpi.overriddenOf {"value":"12","named":"48"}')
+  })
+
+  it('网关答了话、上面没有那把密钥时，说的是「没有这把密钥」，不是 $0', async () => {
+    report.mockResolvedValue(
+      fixture({
+        numbers: {
+          ...fixture().numbers,
+          calls: { value: null, failed: null, success_rate: null },
+          tokens: { value: null, prompt: null, completion: null, cache_read: null },
+          cost: {
+            usd: null,
+            source: 'no-key',
+            budget_usd: null,
+            budget_duration: null,
+            key_spend_usd: null,
+          },
+        },
+      })
+    )
+    const { findByText, container } = mountPage()
+    await findByText('featureStats.naming.kpi.costNoKey')
+
+    const text = container.textContent ?? ''
+    // 和「读不到网关」是两句话：这句说的不是「没读到」，是「上面没有这把密钥」。
+    expect(text).toContain('featureStats.naming.kpi.costNoKeyNote')
+    expect(text).not.toContain('featureStats.naming.kpi.costUnavailable')
+    expect(text).not.toContain('featureStats.naming.kpi.costUnknownNote')
+    expect(text).not.toContain('$0')
+    // 网关那四格仍是长破折号，不是 0。
+    const nums = Array.from(container.querySelectorAll('.akpi__num')).map((el) => el.textContent?.trim())
+    expect(nums.filter((num) => num === '—').length).toBe(4)
+    expect(text).toContain('featureStats.naming.kpi.overriddenOf {"value":"12","named":"48"}')
+  })
+
+  it('网关没报额度周期时，只画花费与额度，不替它编一个周期', async () => {
+    report.mockResolvedValue(
+      fixture({
+        numbers: {
+          ...fixture().numbers,
+          cost: {
+            usd: 1.2345,
+            source: 'gateway',
+            budget_usd: 10.0,
+            budget_duration: null,
+            key_spend_usd: 1.25,
+          },
+        },
+      })
+    )
+    const { findByText, container } = mountPage()
+    await findByText('$1.23')
+
+    const text = container.textContent ?? ''
+    // 不画成「周期 null」，也不退回去说「今日」——周期是网关说的，它没说就不说。
+    expect(text).toContain('featureStats.naming.kpi.budgetNoPeriod {"spend":"$1.25","budget":"$10.00"}')
+    expect(text).not.toContain('featureStats.naming.kpi.budget ')
+    expect(text).not.toContain('null')
   })
 
   it('切窗口是重新取数（带 days），不是在本地筛', async () => {
