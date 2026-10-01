@@ -511,7 +511,8 @@
       "overview": "总览",
       "site": "现场",
       "changes": "改动",
-      "preview": "预览"
+      "preview": "预览",
+      "routines": "定时与触发"
     },
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",

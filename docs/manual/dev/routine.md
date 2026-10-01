@@ -84,7 +84,7 @@ covers:
 - **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，落一行 `skipped`，理由写「平台当时没有运行，这一次不补跑」。补跑一条几小时前的定时任务，通常比不跑更糟。
 - **不重复**：唯一约束那一步返回空就说明这个时刻已经响过了，`_fire` 直接返回。
 - **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；另外由周期任务自己跑出来的活（`task.execution_turn_id` 在那条规则自己的 `turn_id` 里）不会被再算成一次触发 —— 否则「任务完成触发工作、工作又开任务」就是个正反馈环。
-- **扫描是并发的**：`_fire_schedules` / `_fire_events` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
+- **扫描是并发的**：`_fire_schedules` / `_fire_events` / `announce_archived_rooms` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
 
 ## 平台自己的钟：PeriodicRunner {#sweep}
 
@@ -92,7 +92,9 @@ covers:
 
 `PeriodicRunner` 把每条常驻任务都会踩的四个坑一次收掉：强引用（`spawn`）、**interval ≤ 0 表示这台机器不跑它**（部署和测试共用的那个开关）、一次崩掉只算一次而不是让循环死掉、以及只在**这一轮真的做了点什么**的时候打日志（每分钟「扫了 0 条」的日志没人看，`_worth_reporting` 于是让 `{"failed": 0}` 闭嘴）。
 
-周期任务那一口钟叫 `sweep`：一轮里跑完 `_fire_schedules` → `_fire_events` → `_settle_open_runs` → `_announce_finished`，有东西被触发才 `dispatch_pending` 去派活。
+周期任务那一口钟叫 `sweep`：一轮里跑完 `_fire_schedules` → `_fire_events` → `announce_archived_rooms` → `_settle_open_runs` → `_announce_finished`，有东西被触发才 `dispatch_pending` 去派活。
+
+`announce_archived_rooms` 是这一串里唯一不碰规则的：归档**不写规则**那一行（带走的是执行，取消归档之后规则从下一个时刻继续），所以它只把归档**说出来** —— 哪间归档了的房间还有启用中的规则、又还没被说过，就在那间房里落一行「N 条规则已随归档停止」，并通知每条规则的主人。说话的是这一口钟而不是归档那个接口，因为归档是别处做的动作：手工归档、整个项目一起归档、脚本归档走的是同一个答案（认得它的只有房间的状态，话题那一域不必认识周期任务）。同一段归档只说一次，房间自己的 `archived_at` 就印在那行上；取消归档后再归档是新的一段，会再说一次。
 
 「一页纸总结」（`ChatService.summarize_project`）**今天是停着的**：`api/routes/activities.py` 是一个**不挂任何路由**的模块，那里的 docstring 写着原因和「没有新设计之前不要重新挂上」。实现还在 `ChatService` 里（标着 parked），但没有触发路径。所以今天真正在跑的例行只有周期任务和上面那张巡检清单。
 

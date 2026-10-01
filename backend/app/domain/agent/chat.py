@@ -215,6 +215,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.turn_speakers import turn_speakers
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -3751,6 +3752,7 @@ class ChatService:
         user_block_id: uuid.UUID | None,
         provision_actor: Actor | None,
         platform_turn: bool = False,
+        delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> "_TurnContext | _TurnBail":
         """Everything a turn needs before anything runs it, read in one
@@ -3871,19 +3873,11 @@ class ChatService:
             # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
             # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
             #
-            # 只算**人**：private 是「人 × 项目」的那一份，队友手里的句柄在这
-            # 里不是一个作用域，问了也只会问到一棵不存在的树。本轮说话的这几位
-            # 同时也是这一轮对账要点名的那几个（`_remember_memory_turn`）。
-            speakers = tuple(
-                dict.fromkeys(
-                    handle
-                    for handle in (
-                        *(b.author for b in pending),
-                        *((private_owner,) if private_owner else ()),
-                    )
-                    if names_a_person(handle)
-                )
-            )
+            # 只算**人**（`names_a_person`）：private 是「人 × 项目」的那一份，
+            # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
+            # 要点名的那几个（`_remember_memory_turn`），周期任务那一轮的主人也
+            # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
+            speakers = await turn_speakers(session, delivery_id, pending, private_owner)
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )
@@ -4349,6 +4343,8 @@ class ChatService:
             user_block_id=user_block_id,
             provision_actor=provision_actor,
             platform_turn=platform_turn,
+            # 周期任务那一轮从这一笔投递上认主人（`turn_speakers`）。
+            delivery_id=delivery_id,
             recipient_instance_id=recipient_instance_id,
         )
         logger.info(

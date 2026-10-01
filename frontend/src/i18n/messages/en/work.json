@@ -511,7 +511,8 @@
       "overview": "Overview",
       "site": "Activity",
       "changes": "Changes",
-      "preview": "Preview"
+      "preview": "Preview",
+      "routines": "Routines"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",

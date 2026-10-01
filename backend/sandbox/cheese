@@ -44,8 +44,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if sys.platform != "win32":
     import fcntl
@@ -191,6 +192,20 @@ _CHAT_PAGE = {
     "kind": _text("按类型筛选：message、attachment、event、comment、doc_node"),
     "author": _text("按作者 handle 精确筛选"),
 }
+#: 规则的触发方式。后端 `routine/models.py` 那两个枚举的副本：这个文件单独发到机器上，
+#: 读不到后端，而写在 schema 的 `enum` 里，模型在调用之前就看得到能填什么。
+#: tests/contract/test_platform_tools.py 会在它和后端对不上时红。
+ROUTINE_TRIGGERS = ("schedule", "library_file_added", "task_closed", "card_accepted")
+ROUTINE_FREQS = ("hourly", "daily", "weekly", "monthly")
+
+_ROUTINE = _text("规则 id")
+_ROUTINE_SPEC = (
+    "定时写 {\"freq\": \"weekly\", \"weekdays\": [0], \"time\": \"09:00\"}（0=周一）；"
+    "也可以是 daily + time、monthly + day + time、hourly + minute；"
+    "事件触发写 {\"scope\": \"room\"} 或 {\"scope\": \"project\"}"
+)
+_ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
+
 #: `todo_write` 的上限。拒收的是后端 `PUT /topics/{id}/progress`（同样的两个数）；
 #: 这里写进工具说明，模型在调用之前就看得到。schema 只用表上别的工具已经在用的
 #: 关键字，同一份 schema 要过三个 harness 的工具机制。
@@ -556,6 +571,83 @@ PLATFORM_TOOLS = ToolTable(
             },
             ["at", "content"],
         ),
+        _tool(
+            "cheese_routine_draft",
+            "为当前房间起草一条定时与触发规则（到点让这个房间的队友开工一轮）。"
+            "起草出来的是**草稿，不会执行**：只有房间里的人点「确认启用」它才开始跑。"
+            "所以起草完要把配置用一两句话说给用户听，请他在「定时与触发」里确认，"
+            "不要说得像已经设好了。",
+            {
+                "title": _text("规则名字，一句话"),
+                "instructions": _text("到点要做的事，写清做什么、交出什么"),
+                "context_scope": _text("可以用哪些资料；不写就是按需要自取"),
+                "output_dir": _text("结果放房间哪个目录；不写就是房间根目录"),
+                "trigger": {
+                    "type": "string",
+                    "enum": list(ROUTINE_TRIGGERS),
+                    "description": "什么时候跑：定时 schedule，或某件事发生",
+                },
+                "spec": {"type": "object", "description": _ROUTINE_SPEC},
+                "timezone": _ROUTINE_TIMEZONE,
+                "owner_handle": _text("替谁设的；结果通知给他，不写就是你自己"),
+                "agent_handle": _text("由哪个队友执行；不写就是这个房间的队友"),
+            },
+            ["title", "instructions"],
+        ),
+        _tool(
+            "cheese_routine_list",
+            "列出这个房间的定时与触发规则：名字、id、状态（草稿/启用中/已暂停）、"
+            "什么时候跑、下次什么时候跑。",
+        ),
+        _tool(
+            "cheese_routine_update",
+            "改一条规则，只发要改的那几项。**人设的规则被你改过会退回草稿**，"
+            "要人再确认一次才继续跑；改完把改动说给用户听。",
+            {
+                "routine": _ROUTINE,
+                "title": _text("新名字"),
+                "instructions": _text("新的工作内容"),
+                "context_scope": _text("新的资料范围"),
+                "output_dir": _text("新的结果目录"),
+                "trigger": {
+                    "type": "string",
+                    "enum": list(ROUTINE_TRIGGERS),
+                    "description": "换成另一种触发方式",
+                },
+                "spec": {"type": "object", "description": _ROUTINE_SPEC},
+                "timezone": _ROUTINE_TIMEZONE,
+                "agent_handle": _text("换成另一个队友执行"),
+            },
+            ["routine"],
+        ),
+        _tool(
+            "cheese_routine_pause",
+            "暂停一条规则。停的是执行，不是这条规则本身：它还在，恢复执行要由人来点"
+            "（你没有恢复的权限）。",
+            {"routine": _ROUTINE},
+            ["routine"],
+        ),
+        _tool(
+            "cheese_routine_report",
+            "交回一次执行的结果（执行 id 在唤起你的那段工作说明里）：做成什么、结果文件"
+            "在哪、没成是为什么。**成功失败都要交**，没交回结果的那一轮会被记成失败。"
+            "返回这一轮现在记着的状态、结果和产出。",
+            {
+                "run": _text("这次执行的 id"),
+                "status": {
+                    "type": "string",
+                    "enum": ["succeeded", "failed"],
+                    "description": "做成了 succeeded，没做成 failed",
+                },
+                "summary": _text("一两句结果；失败时写清原因（必写）"),
+                "outputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "结果文件在房间里的路径",
+                },
+            },
+            ["run", "status"],
+        ),
     )
 )
 
@@ -566,6 +658,7 @@ _NEEDS_PROJECT = frozenset(
         "cheese_milestone",
         "cheese_notify",
         "cheese_library_ls",
+        "cheese_routine_list",
     }
 )
 
@@ -581,6 +674,100 @@ def _given(args: dict, *keys: str) -> dict:
         if args.get(name) not in (None, "", []):
             body[field or name] = args[name]
     return body
+
+
+def routine_spec_checked(
+    *, trigger: str | None = None, spec: dict | None = None, timezone: str | None = None
+) -> None:
+    """拒在发出之前。
+
+    这几样后端也会拒（`routine/schedule.py` 的 `normalize`，话是同一套），但那时
+    agent 已经等了一个来回、还是不知道自己错在哪。这里只做**不用问平台就知道**的
+    那部分：取值在不在枚举里、定时有没有说清什么时候跑（freq、HH:MM、星期几和几号）、
+    事件触发的 scope 认不认识。
+
+    时区是唯一一处「本机判不了」的：会话容器里可能没装 tzdata，那时每一个名字都
+    查不到——查不到就是不知道，不知道就不该拒，交给后端。
+    """
+    if trigger is not None and trigger not in ROUTINE_TRIGGERS:
+        raise ValueError("trigger 只能是 " + "、".join(ROUTINE_TRIGGERS) + " 之一")
+    if timezone and not _zone_is_known(timezone):
+        raise ValueError(f"不认识的时区：{timezone}")
+    if spec is None:
+        return
+    if not isinstance(spec, dict):
+        raise ValueError("spec 是一个对象，不是一个字符串")
+    event = trigger is not None and trigger != "schedule"
+    if "freq" not in spec:
+        if event or trigger is None:
+            # 事件触发（或改规则时没说触发方式）：spec 只说从哪儿算起。
+            if spec.get("scope") not in (None, "room", "project"):
+                raise ValueError("事件的 scope 只有 room 和 project 两个值")
+            return
+        # 起草时的默认触发方式就是定时：不说清什么时候跑，后端也只会拒。
+        raise ValueError(
+            "定时规则要写 freq（hourly、daily、weekly、monthly），"
+            '例如 {"freq": "weekly", "weekdays": [0], "time": "09:00"}'
+        )
+    if event:
+        raise ValueError(f"{trigger} 触发不用给 freq，spec 只写 scope")
+    freq = spec["freq"]
+    if freq not in ROUTINE_FREQS:
+        raise ValueError("频率只能是 hourly、daily、weekly、monthly 之一")
+    if freq == "hourly":
+        if not _is_int(spec.get("minute"), 0, 59):
+            raise ValueError("每小时执行要给出第几分钟（0–59）")
+        return
+    raw = str(spec.get("time") or "")
+    try:
+        # 24 小时制、当天以内的那一刻：`time()` 自己会拒 25:00 这种。
+        hour, minute = (int(part) for part in raw.split(":"))
+        time(hour, minute)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("执行时间要写成 HH:MM，例如 09:00") from exc
+    if freq == "weekly":
+        days = spec.get("weekdays")
+        if (
+            not isinstance(days, list)
+            or not days
+            or any(not _is_int(day, 0, 6) for day in days)
+        ):
+            raise ValueError("每周执行要给出星期几（0=周一 … 6=周日）")
+    if freq == "monthly" and not _is_int(spec.get("day"), 1, 31):
+        raise ValueError("每月执行要给出几号（1–31）")
+
+
+def _is_int(value, low: int, high: int) -> bool:
+    # bool 是 int 的子类：`True` 当第 1 分钟收下就成了另一种意思。
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and low <= value <= high
+    )
+
+
+def _zone_is_known(name: str) -> bool:
+    """这个名字是个时区吗——**判不出来时算它是**。
+
+    会话容器里可能没装 tzdata，那时每个名字都查不到，而「查不到」是这台机器不知
+    道，不是这个名字错了。这样的名字交给后端判；后端那台有 tzdata。
+    """
+    try:
+        ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return not _has_tz_database()
+    except ValueError:
+        return False
+    return True
+
+
+def _has_tz_database() -> bool:
+    """这台机器上有 tzdata 吗——没有的话「查不到」说明不了任何事。"""
+    try:
+        ZoneInfo("UTC")
+    except Exception:  # noqa: BLE001 — 判不出来就是判不出来
+        return False
+    return True
 
 
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
@@ -819,6 +1006,71 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": f"/topics/{topic}/deliveries",
             "body": {"at": args["at"], "content": args["content"]},
+        }
+    if tool == "cheese_routine_draft":
+        body = {
+            "title": args["title"],
+            "instructions": args["instructions"],
+            "trigger": args.get("trigger") or "schedule",
+            "spec": args.get("spec") or {},
+            "timezone": args.get("timezone") or "Asia/Shanghai",
+            **_given(
+                args,
+                "context_scope",
+                "output_dir",
+                "owner_handle",
+                "agent_handle",
+            ),
+        }
+        routine_spec_checked(
+            trigger=body["trigger"], spec=body["spec"], timezone=body["timezone"]
+        )
+        return {"method": "POST", "path": f"/topics/{topic}/routines", "body": body}
+    if tool == "cheese_routine_list":
+        # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
+        where = urllib.parse.quote(topic)
+        return {
+            "method": "GET",
+            "path": f"/projects/{project}/routines?topic={where}",
+        }
+    if tool == "cheese_routine_update":
+        body = _given(
+            args,
+            "title",
+            "instructions",
+            "context_scope",
+            "output_dir",
+            "trigger",
+            "spec",
+            "timezone",
+            "agent_handle",
+        )
+        if not body:
+            raise ValueError("没有要改的字段：至少给一项")
+        routine_spec_checked(
+            trigger=body.get("trigger"),
+            spec=body.get("spec"),
+            timezone=body.get("timezone"),
+        )
+        return {
+            "method": "PATCH",
+            "path": "/routines/" + urllib.parse.quote(args["routine"], safe=""),
+            "body": body,
+        }
+    if tool == "cheese_routine_pause":
+        return {
+            "method": "POST",
+            "path": f"/routines/{urllib.parse.quote(args['routine'], safe='')}/pause",
+        }
+    if tool == "cheese_routine_report":
+        return {
+            "method": "POST",
+            "path": f"/routine-runs/{urllib.parse.quote(args['run'], safe='')}/report",
+            "body": {
+                "status": args["status"],
+                "summary": args.get("summary") or "",
+                "outputs": args.get("outputs") or [],
+            },
         }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
@@ -1244,6 +1496,72 @@ def _say_todo(args, data, env) -> str:
     return f"已改清单消息（id {data['message_id']}）：{counts}。"
 
 
+def _say_routine_draft(args, data, env) -> str:
+    data = data or {}
+    return (
+        f"已为这个房间起草「{data.get('title')}」(id={data.get('id')})，"
+        "它现在是**草稿，不会执行**。\n"
+        f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}\n"
+        "把配置用一两句话说给用户听，请他在这个房间右侧的「定时与触发」里点"
+        "「确认启用」。确认之前一个字都不会跑，所以别告诉他规则已经设好了。"
+    )
+
+
+def _say_routine_list(args, data, env) -> str:
+    rows = (data or {}).get("data") or []
+    if not rows:
+        return "这个房间还没有定时与触发规则。"
+    state = {"draft": "草稿（等人确认）", "active": "启用中", "paused": "已暂停"}
+    lines = []
+    for row in rows:
+        line = (
+            f"- 「{row.get('title')}」(id={row.get('id')}) "
+            f"{state.get(row.get('state'), row.get('state'))}；"
+            f"{row.get('trigger_text') or row.get('trigger')}"
+        )
+        if row.get("room_archived"):
+            # 规则自己没变，是房间归档了：取消归档后从下一个时刻继续。
+            line += "（已随话题归档停止，取消归档后继续）"
+        elif row.get("next_run_at"):
+            line += f"；下次 {row['next_run_at']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _say_routine_update(args, data, env) -> str:
+    data = data or {}
+    state = data.get("state")
+    tail = (
+        "它退回了草稿：人设的规则被你改过，要人再确认一次才继续跑，"
+        "把改动说给他听。"
+        if state == "draft"
+        else f"它现在 {state}。"
+    )
+    return f"已改「{data.get('title') or args.get('routine')}」，{tail}"
+
+
+def _say_routine_pause(args, data, env) -> str:
+    data = data or {}
+    name = data.get("title") or args.get("routine")
+    return f"「{name}」已暂停：它还在，只是不再到点开工。恢复执行要由人来点。"
+
+
+def _say_routine_report(args, data, env) -> str:
+    data = data or {}
+    verdict = {"succeeded": "已完成", "failed": "失败"}.get(
+        data.get("status"), data.get("status")
+    )
+    parts = [f"这次执行记成「{verdict}」"]
+    if data.get("summary"):
+        parts.append(data["summary"])
+    if data.get("outputs"):
+        parts.append("结果文件：" + "、".join(data["outputs"]))
+    if data.get("error"):
+        parts.append(f"失败原因：{data['error']}")
+    parts.append("规则主人已经收到这条结果。")
+    return "\n".join(parts)
+
+
 _SAY = {
     "chat_send": _say_chat_send,
     "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -1298,6 +1616,11 @@ _SAY = {
         else "那条线程这会儿没有在跑的轮次,便条没人接住。"
     ),
     "cheese_deliver_at": lambda a, d, e: f"到 {(d or {}).get('at')} 会把它递给你。",
+    "cheese_routine_draft": _say_routine_draft,
+    "cheese_routine_list": _say_routine_list,
+    "cheese_routine_update": _say_routine_update,
+    "cheese_routine_pause": _say_routine_pause,
+    "cheese_routine_report": _say_routine_report,
 }
 
 
