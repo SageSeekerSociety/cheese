@@ -36,7 +36,8 @@
       <template #activator />
     </AdaptiveMenu>
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
-    <v-tooltip activator="parent" location="end" content-class="rail-flyout">
+    <!-- 右键菜单开着时让开：两个浮层都贴在这一格右边，提示会压住菜单的上沿。 -->
+    <v-tooltip activator="parent" location="end" content-class="rail-flyout" :disabled="menuOpen">
       <div class="rail-flyout__inner">
         <span class="rail-flyout__name">{{ item.title }}</span>
         <template v-if="item.shortcut">
