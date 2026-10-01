@@ -111,11 +111,12 @@
       "tokenSplit": "问 {prompt} · 答 {completion} · 缓存 {cache}",
       "cost": "花费",
       "costUnavailable": "花费（读不到）",
-      "costNote": "网关自己记的账，不是估算。",
+      "costNote": "网关自己记的账，不是估算。上面那个金额是本页所选窗口的；密钥那一行是网关给那把密钥记的，跟它自己的额度周期走，不是同一个窗口。",
       "costUnknownNote": "读不到网关，这一格没有数 —— 这里不画 0，0 读起来是「不花钱」。",
       "costNoKey": "花费（没有这把密钥）",
       "costNoKeyNote": "网关答了话，但上面没有命名专用密钥 —— 命名还没铸过它，或者它的别名变了。这一格没有数：不画 0，0 说的是「有这把密钥、这个窗口没花钱」。",
-      "budget": "密钥今日花费 {spend}／额度 {budget}",
+      "budget": "密钥花费 {spend}／额度 {budget}（周期 {duration}）",
+      "budgetNoPeriod": "密钥花费 {spend}／额度 {budget}",
       "renames": "写过的标题",
       "renamesNote": "只有标题真的被改时才写一行，所以这是「改了多少次」，不是「看了多少次」。",
       "stages": "首次 {name} · 校准 {calibrate} · 跟随 {follow}",
@@ -140,7 +141,7 @@
     "person": {
       "title": "人动了什么",
       "note": "改标题是人自己起的名字（含让芝士起）；撤销是把自动改名退回上一版。两种都会让平台从此不再动这个名字。",
-      "caption": "共 {n} 次人的改动",
+      "caption": "共 {n} 次改名或撤销",
       "rename": "改标题",
       "undo": "撤销"
     }

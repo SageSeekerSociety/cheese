@@ -111,11 +111,12 @@
       "tokenSplit": "in {prompt} · out {completion} · cached {cache}",
       "cost": "Spend",
       "costUnavailable": "Spend (cannot read)",
-      "costNote": "The gateway's own books, not an estimate.",
+      "costNote": "The gateway's own books, not an estimate. The figure above is this window's; the key line is what the gateway keeps for that key, over its own budget period — not the same window.",
       "costUnknownNote": "The gateway could not be read, so this figure is unknown — it is not drawn as 0, because 0 reads as \"costs nothing\".",
       "costNoKey": "Spend (no such key)",
       "costNoKeyNote": "The gateway answered, but has no dedicated naming key — naming never minted one, or its alias changed. This figure is unknown: it is not drawn as 0, because 0 says \"the key is there and spent nothing this window\".",
-      "budget": "Key spend today {spend} / budget {budget}",
+      "budget": "Key spend {spend} / budget {budget} ({duration})",
+      "budgetNoPeriod": "Key spend {spend} / budget {budget}",
       "renames": "Titles written",
       "renamesNote": "A row is written only when the title actually changes, so this counts renames, not looks.",
       "stages": "first {name} · calibrate {calibrate} · follow {follow}",
@@ -140,7 +141,7 @@
     "person": {
       "title": "What people changed",
       "note": "Renaming is a person choosing the title (including asking Cheese for one); undo puts back the title an automatic rename replaced. Both stop the platform from touching that name again.",
-      "caption": "{n} changes by people",
+      "caption": "{n} renames or undos by people",
       "rename": "Renamed",
       "undo": "Undone"
     }

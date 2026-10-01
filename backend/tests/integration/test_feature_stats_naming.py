@@ -512,6 +512,32 @@ def test_a_row_with_the_old_word_for_undo_still_lands_in_a_cell(
     assert edits["rename"] + edits["undo"] == edits["value"]
 
 
+def test_a_row_whose_reason_we_do_not_know_is_in_no_cell(client, as_admin, monkeypatch):
+    """总数只含改名和撤销；未知原因不能计作撤销，日趋势采用同一范围。"""
+    _no_gateway(monkeypatch)
+    one, two = _rooms(client, 2)
+    _seed_titles(
+        client,
+        _auto(one, stage="name", days=2),
+        _human(one, reason="rename", days=1),
+        _auto(two, stage="name", days=2),
+        _human(two, reason="banana", days=0),
+    )
+
+    report = _report(client, as_admin, days=30)
+
+    assert report["numbers"]["person_edits"] == {"value": 1, "rename": 1, "undo": 0}
+    assert (
+        report["numbers"]["person_edits"]["rename"]
+        + report["numbers"]["person_edits"]["undo"]
+        == report["numbers"]["person_edits"]["value"]
+    )
+    # 折线的人那条也同一条判据：认不出就不画。
+    assert sum(point["person"] for point in report["trend"]) == 1
+    # 自动命名那一半照常：两行都数得到，认不出的那行不影响它。
+    assert report["numbers"]["renames"]["value"] == 2
+
+
 def test_the_override_share_counts_rooms_a_person_touched_after_the_platform(
     client, as_admin, monkeypatch
 ):

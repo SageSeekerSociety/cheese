@@ -115,15 +115,16 @@ export interface TopicNamingNumbers {
      *  存在」，一个是「没读到」，两句得分开说，都不能画成 0。 */
     source: 'gateway' | 'no-key' | 'unavailable'
     /** 那把密钥的额度与它自己记的花费：额度用完网关就会拒，命名会静默停下。
-     *  `key_spend_usd` 跟的是**网关的额度周期，不是这一页选的窗口**（dev 上实测
-     *  它正好等于当天的花费），所以贴纸写「密钥今日花费」。 */
+     *  `key_spend_usd` 跟的是**网关的额度周期（`budget_duration`），不是这一页选
+     *  的窗口**，所以它和周期一起画 —— dev 上它比 7 天窗口的花费小一个量级。 */
     budget_usd: number | null
     budget_duration: string | null
     key_spend_usd: number | null
   }
   /** 平台自动写的标题，按阶段分（首次 / 校准 / 跟随）。 */
   renames: { value: number; name: number; calibrate: number; follow: number }
-  /** 人写的标题，按原因分（改标题 / 撤销自动改名）。 */
+  /** 人写的标题，按原因分（改标题 / 撤销自动改名）。`value` 就是这两个格子的和：
+   *  认不出的原因不进任何一格，也不进总数。 */
   person_edits: { value: number; rename: number; undo: number }
   /** `named` = 窗口里被自动命名过的房间数（比例的分母）；没有分母时 `share` 是 null。 */
   overridden: { value: number; named: number; share: number | null }

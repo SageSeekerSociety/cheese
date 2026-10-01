@@ -103,9 +103,10 @@ describe('智能命名的功能数据页', () => {
     // token 用量与拆分（问进去的 / 写回来的 / 缓存里读的）。
     expect(text).toContain('456,789')
     expect(text).toContain('featureStats.naming.kpi.tokenSplit {"prompt":"300,000","completion":"156,789","cache":"0"}')
-    // 花费是网关自己记的账（不是估算），额度和累计挨着它。
+    // 花费是网关自己记的账（不是估算）；额度那一行把它自己的花费和**周期**一起画 ——
+    // 密钥记的花费跟的是网关的额度周期，不是这一页选的窗口。
     expect(text).toContain('$1.23')
-    expect(text).toContain('featureStats.naming.kpi.budget {"spend":"$1.25","budget":"$10.00"}')
+    expect(text).toContain('featureStats.naming.kpi.budget {"spend":"$1.25","budget":"$10.00","duration":"30d"}')
     // 写过的标题：总数 + 三个阶段。
     expect(text).toContain('96')
     expect(text).toContain('featureStats.naming.kpi.stages {"name":"60","calibrate":"30","follow":"6"}')
@@ -201,6 +202,31 @@ describe('智能命名的功能数据页', () => {
     const nums = Array.from(container.querySelectorAll('.akpi__num')).map((el) => el.textContent?.trim())
     expect(nums.filter((num) => num === '—').length).toBe(4)
     expect(text).toContain('featureStats.naming.kpi.overriddenOf {"value":"12","named":"48"}')
+  })
+
+  it('网关没报额度周期时，只画花费与额度，不替它编一个周期', async () => {
+    report.mockResolvedValue(
+      fixture({
+        numbers: {
+          ...fixture().numbers,
+          cost: {
+            usd: 1.2345,
+            source: 'gateway',
+            budget_usd: 10.0,
+            budget_duration: null,
+            key_spend_usd: 1.25,
+          },
+        },
+      })
+    )
+    const { findByText, container } = mountPage()
+    await findByText('$1.23')
+
+    const text = container.textContent ?? ''
+    // 不画成「周期 null」，也不退回去说「今日」——周期是网关说的，它没说就不说。
+    expect(text).toContain('featureStats.naming.kpi.budgetNoPeriod {"spend":"$1.25","budget":"$10.00"}')
+    expect(text).not.toContain('featureStats.naming.kpi.budget ')
+    expect(text).not.toContain('null')
   })
 
   it('切窗口是重新取数（带 days），不是在本地筛', async () => {

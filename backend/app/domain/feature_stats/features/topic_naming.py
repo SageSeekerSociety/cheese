@@ -64,8 +64,10 @@ KEY_ALIAS = "topic-naming"
 # The three stages a title can be written at (``naming.Stage``), in the order a
 # room meets them. The reason column of an automatic row holds one of these.
 STAGES = ("name", "calibrate", "follow")
-# A person's two reasons (``topics_title.set_title``, ``naming.undo``). 「退回」
-# 这件事换过一次写法，所以两格是按「是不是改名」分的，见 ``_person_bucket``。
+# A person's two reasons (``topics_title.set_title``, ``naming.undo``) — the two
+# cells of 「人动了什么」. 「退回」换过一次写法，见 ``_person_bucket``：
+RENAME_REASONS = ("rename",)
+UNDO_REASONS = ("undo", "restore")
 PERSON_REASONS = ("rename", "undo")
 
 # The naming key never changes, and the window only moves at midnight, so a
@@ -180,16 +182,22 @@ async def _gateway_usage(
     return read
 
 
-def _person_bucket(reason: str | None) -> Literal["rename", "undo"]:
-    """Which of the two cells a person's row goes in.
+def _person_bucket(reason: str | None) -> Literal["rename", "undo"] | None:
+    """Which of the two cells a person's row goes in, or None when it is neither.
 
-    人的改动只有两件事：自己起名字，和把自动改名退回去。退回换过一次写法
-    ——`restore`（3ce29a4d，2026-09-27）后来改成 `undo`（ce08b7ca，09-28），
-    库里两种行都在，所以按「是不是改名」分而不是列名单。这样两格的和永远等于
-    总数；列名单的后果是旧行两边都不落，页面上出现 23 配 18+0（2026-10-01 在
-    dev 上就是这样），而那个差没有人解释得清。
+    人的改动只有这两件事，写入路径也只有两条（``topics_title.set_title`` 写
+    `rename`，``naming.undo`` 写 `undo`）。「退回」换过一次写法：`restore`
+    （3ce29a4d，2026-09-27）后来改成 `undo`（ce08b7ca，09-28），库里两种行都在，
+    所以这一格按名字列表认这两种。
+
+    认不出来的写法返回 ``None``：一个我们不认识的原因不能被说成「人撤销了 N 次」，
+    也不能为了凑齐总数塞进某一格。``_titles`` 让它既不进两格、也不进总数。
     """
-    return "rename" if reason == "rename" else "undo"
+    if reason in RENAME_REASONS:
+        return "rename"
+    if reason in UNDO_REASONS:
+        return "undo"
+    return None
 
 
 async def _titles(session: AsyncSession, since: datetime, until: datetime) -> dict:
@@ -199,6 +207,9 @@ async def _titles(session: AsyncSession, since: datetime, until: datetime) -> di
     holds a handful of rows even on a busy deployment, and the 「人后来改掉了」
     count needs the rows in order per room — which is what a window function
     would say and six lines of Python say without one.
+
+    「人动了什么」只数这一页认得的两种原因（改名，和撤销——含它的旧写法）。总数
+    就是这两格的和：明细列不出来的行也不进总数，这样「共 N 次」下面永远列得出 N。
     """
     rows = (
         await session.execute(
@@ -232,8 +243,14 @@ async def _titles(session: AsyncSession, since: datetime, until: datetime) -> di
             auto_by_day[day] = auto_by_day.get(day, 0) + 1
             first_auto.setdefault(room, position)
         elif source == TitleSource.human:
+            bucket = _person_bucket(reason)
+            if bucket is None:
+                # 认不出来的写法：不进两格，也不进总数。总数说的是「这两格加起来」
+                # ——页面上「共 N 次人的改动」下面永远列得出 N，塞进某一格的代价是
+                # 把一个我们不理解的数字说成「人撤销了 N 次」。
+                continue
             person_total += 1
-            by_reason[_person_bucket(reason)] += 1
+            by_reason[bucket] += 1
             person_by_day[day] = person_by_day.get(day, 0) + 1
             first_person.setdefault(room, position)
         # Any other source is neither: 「人改掉」和「平台命名」是这一页仅有的两件事，
@@ -318,10 +335,11 @@ async def load(
                 # the spend rather than in a config file nobody reads.
                 "budget_usd": key.max_budget if key else None,
                 "budget_duration": key.budget_duration if key else None,
-                # 网关自己给这把 key 记的花费，**不是上面那个窗口的**：它跟着网
-                # 关的额度周期走（2026-10-01 在 dev 上实测正好等于当天的花费
-                # $0.015144，而 7 天窗口是 $0.2638），所以页面的贴纸写「密钥今日
-                # 花费」，不写成「密钥累计」——后者读起来像是这一页选的窗口。
+                # 网关自己给这把 key 记的花费，**不是上面那个窗口的**。平台铸这把
+                # key 时给的额度周期是固定的 30 天（``service_keys`` 写死
+                # ``budget_duration: "30d"``），所以页面把它连同 ``budget_duration``
+                # 一起画，不写成「累计」——那读起来像是这一页选的窗口，而 2026-10-01
+                # 在 dev 上它（$0.0151）离 7 天窗口（$0.2638）差了整整一个量级。
                 "key_spend_usd": key.spend if key else None,
             },
             "renames": {

@@ -128,15 +128,24 @@ const tokenSplit = computed(() => {
   })
 })
 
-/** 额度那一句：读不到网关时没有它（没有值的那一行不画），读到了就说清累计花了多少、
- *  上限是多少 —— 这是那个会让命名静默停下的数。 */
+/** 额度那一句：读不到网关时没有它（没有值的那一行不画），读到了就说清这把密钥花了
+ *  多少、上限是多少 —— 这是那个会让命名静默停下的数。
+ *
+ *  画的是**网关给这把密钥记的花费**，跟它自己的额度周期走，不是上面那个窗口的数。
+ *  两个数在同一张卡上，不写清周期就会被读成同一个窗口的，所以周期照抄网关给的
+ *  `budget_duration`；网关没给就不画周期，不替它编一个。 */
 const budget = computed(() => {
   const cost = numbers.value?.cost
   if (!cost || cost.budget_usd === null || cost.budget_usd === undefined) return ''
-  return t('featureStats.naming.kpi.budget', {
-    spend: fmtCost(cost.key_spend_usd ?? 0),
-    budget: fmtCost(cost.budget_usd),
-  })
+  const spend = fmtCost(cost.key_spend_usd ?? 0)
+  const limit = fmtCost(cost.budget_usd)
+  return cost.budget_duration
+    ? t('featureStats.naming.kpi.budget', {
+        spend,
+        budget: limit,
+        duration: cost.budget_duration,
+      })
+    : t('featureStats.naming.kpi.budgetNoPeriod', { spend, budget: limit })
 })
 
 const stages = computed(() => {
