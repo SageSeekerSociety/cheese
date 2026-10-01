@@ -340,6 +340,8 @@ _SPAWN_MISSING = re.compile(
     r"FileNotFoundError: \[Errno 2\] No such file or directory: '" + _PROGRAM + r"'"
 )
 _PLATFORM_HTTP = re.compile(r"Platform HTTP (\d{3})\b")
+#: How `remote_execution/private.py` reports the network or image check failing.
+_DOCKER_FAILED = re.compile(r"\bdocker (network|image) \S.* exited with status")
 
 
 def _program_name(path: str | None) -> str | None:
@@ -419,7 +421,12 @@ def _classify_session_start(log: str, *, timed_out: bool) -> PlatformFailure:
             "permission denied" in lowered and "docker daemon socket" in lowered
         ):
             return SESSION_START_DOCKER_UNAVAILABLE
-        if "calledprocesserror" in lowered or "docker run" in lowered:
+        # `docker run`, and the network and egress proxy it runs behind.
+        if (
+            "calledprocesserror" in lowered
+            or "docker run" in lowered
+            or _DOCKER_FAILED.search(lowered)
+        ):
             return SESSION_START_EXECUTOR_FAILED
     if (
         "run /login" in text

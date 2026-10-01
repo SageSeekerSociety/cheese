@@ -16,7 +16,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "backend/app/domain/agent/harness/claude_code/remote_execution"
 sys.path.insert(0, str(SOURCE))
 from client import RemoteClient  # noqa: E402
-from private import ensure, gate_name, inspect, release, target  # noqa: E402
+from private import (  # noqa: E402
+    EGRESS,
+    EGRESS_PORT,
+    ensure,
+    inspect,
+    release,
+    target,
+)
 
 sys.path.append(str(ROOT / "backend/app/domain/fetch"))
 from addresses import is_public  # noqa: E402
@@ -58,16 +65,38 @@ def host_lan_address():
         return probe.getsockname()[0]
 
 
-#: Run in the container: one line per address, "open" or why it is not.
+#: Run in the container, one line out per probe in: what came of it.
+#:   http <url>          through the proxy the environment names: status or error
+#:   socks <host> <port> SOCKS5 with the name sent to the proxy: reply code
+#:   direct <host> <port> a plain connection, past the proxy: open or error
+#:   resolve <name>      the container's own DNS: addresses or error
 REACH = r"""
-import socket, sys
-for target in sys.argv[1:]:
-    host, port = target.rsplit(":", 1)
+import os, socket, struct, sys, urllib.error, urllib.parse, urllib.request
+for probe in sys.argv[1:]:
+    kind, *args = probe.split("|")
     try:
-        socket.create_connection((host, int(port)), timeout=5).close()
-        print(target, "open")
-    except OSError as error:
-        print(target, type(error).__name__)
+        if kind == "http":
+            with urllib.request.urlopen(args[0], timeout=15) as response:
+                result = f"{response.status} {response.read(64)!r}"
+        elif kind == "socks":
+            proxy = urllib.parse.urlsplit(os.environ["ALL_PROXY"])
+            with socket.create_connection((proxy.hostname, proxy.port), 15) as s:
+                s.sendall(b"\x05\x01\x00")
+                assert s.recv(2) == b"\x05\x00"
+                name = args[0].encode()
+                s.sendall(b"\x05\x01\x00\x03" + bytes([len(name)]) + name
+                          + struct.pack(">H", int(args[1])))
+                result = f"reply {s.recv(10)[1]}"
+        elif kind == "direct":
+            socket.create_connection((args[0], int(args[1])), timeout=5).close()
+            result = "open"
+        else:
+            result = " ".join(sorted({a[4][0] for a in socket.getaddrinfo(args[0], 443)}))
+    except urllib.error.HTTPError as error:
+        result = f"{error.code}"
+    except Exception as error:
+        result = type(error).__name__
+    print(probe, result)
 """
 
 
@@ -246,64 +275,65 @@ def main():
 
         record("isolation", isolation)
 
-        def reach(*targets):
-            command = "python3 - " + " ".join(targets) + " <<'PY'\n" + REACH + "PY"
+        def reach(*probes):
+            command = "python3 - '" + "' '".join(probes) + "' <<'PY'\n" + REACH + "PY"
             lines = shell(command)["stdout"].split("\n")
             return dict(line.split(" ", 1) for line in lines if line.strip())
 
+        platform = f"http://{gateway}:{platform_port}/"
+        public = "https://pypi.org/simple/"
+
         def network():
-            # Internal addresses are refused; the platform and the internet are not.
-            refused = [
-                f"{gateway}:{neighbour_port}",
-                "169.254.169.254:80",
-                f"{gateway}:22",
-            ]
             lan = host_lan_address()
+            internal = [
+                f"http://{gateway}:{neighbour_port}/",  # the host's other services
+                f"http://{gateway}:22/",
+                "http://169.254.169.254/latest/meta-data/",
+                f"http://{EGRESS}:{EGRESS_PORT}/",  # a name that resolves inward
+            ]
             if not is_public(lan):
-                refused.append(f"{lan}:{platform_port}")
-            seen = reach(f"{gateway}:{platform_port}", *refused)
-            assert seen[f"{gateway}:{platform_port}"] == "open", seen
-            for address in refused:
-                assert seen[address] != "open", seen
-            platform = shell(
-                'python3 -c "import os, urllib.request; print(urllib.request'
-                ".urlopen(os.environ['CHEESE_API'], timeout=5).read().decode())\""
+                internal.append(f"http://{lan}:{platform_port}/")
+            seen = reach(
+                f"http|{platform}",
+                f"http|{public}",
+                "socks|pypi.org|443",
+                f"socks|{gateway}|{neighbour_port}",
+                "socks|169.254.169.254|80",
+                *(f"http|{url}" for url in internal),
+                # Past the proxy, nothing answers at all.
+                "direct|151.101.0.223|443",
+                f"direct|{gateway}|{platform_port}",
+                "resolve|pypi.org",
             )
-            assert platform["stdout"].strip() == "ok", platform
-            # A public name resolves to public addresses, and they answer.
-            names = shell(
-                "python3 -c \"import socket; print(' '.join(sorted({a[4][0] for a in "
-                "socket.getaddrinfo('pypi.org', 443, socket.AF_INET)})))\""
-            )["stdout"].split()
-            assert names and all(is_public(a) for a in names), names
-            assert reach(f"{names[0]}:443")[f"{names[0]}:443"] == "open"
-            # Nothing the container runs can lift the rules.
-            lifted = shell("iptables -F OUTPUT 2>&1; echo status=$?")["stdout"]
-            assert "status=0" not in lifted, lifted
-            assert (
-                reach(f"{gateway}:{neighbour_port}")[f"{gateway}:{neighbour_port}"]
-                != "open"
-            )
-            return {"public": names, "lan": lan, **seen}
+            assert seen[f"http|{platform}"] == "200 b'ok'", seen
+            assert seen[f"http|{public}"].startswith("200 "), seen
+            assert seen["socks|pypi.org|443"] == "reply 0", seen
+            assert seen[f"socks|{gateway}|{neighbour_port}"] == "reply 2", seen
+            assert seen["socks|169.254.169.254|80"] == "reply 2", seen
+            for url in internal:
+                assert seen[f"http|{url}"] == "403", seen
+            assert seen["direct|151.101.0.223|443"] != "open", seen
+            assert seen[f"direct|{gateway}|{platform_port}"] != "open", seen
+            assert not seen["resolve|pypi.org"][0].isdigit(), seen
+            return {"lan": lan, **seen}
 
         record("network", network)
 
-        def gate_lost():
-            # Without its gate the container has no rules; it is not reused.
+        def proxy_lost():
+            # Without the proxy the container has no way out; the next start
+            # brings it back, and the container's scratch with it.
             subprocess.run(
-                ["docker", "rm", "--force", gate_name(config["topic"])],
-                check=True,
-                capture_output=True,
+                ["docker", "rm", "--force", EGRESS], check=True, capture_output=True
             )
+            gone = reach(f"http|{platform}", f"http|{public}")
+            assert not any(v.startswith("200") for v in gone.values()), gone
             ensure(config, args.output, env)
-            result = shell("test ! -e /work/draft.md && printf 'replaced'")
-            assert "replaced" in result["stdout"], result
-            seen = reach(f"{gateway}:{platform_port}", "169.254.169.254:80")
-            assert seen[f"{gateway}:{platform_port}"] == "open", seen
-            assert seen["169.254.169.254:80"] != "open", seen
-            return seen
+            assert "Second draft" in shell("cat draft.md")["stdout"]
+            back = reach(f"http|{platform}", f"http|{public}")
+            assert all(v.startswith("200") for v in back.values()), back
+            return {"gone": gone, "back": back}
 
-        record("gate-lost", gate_lost)
+        record("proxy-lost", proxy_lost)
 
         def quota():
             result = shell(

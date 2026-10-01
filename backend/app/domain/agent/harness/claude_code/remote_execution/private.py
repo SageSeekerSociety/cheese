@@ -1,14 +1,24 @@
 """A bounded, disposable execution container for one private chat.
 
 Shipped with client.py; only the central process can reach the Docker daemon.
+
+The container runs on a Docker network with no route out (``NETWORK``): it is
+internal, and the host has no address on it. The one thing it reaches there is
+the egress proxy (``private_egress.py``), one per session host, which is also
+attached to the default bridge and decides every connection: the public
+internet, and the platform endpoint in ``CHEESE_API``, nothing else internal.
+The container is told about the proxy (``HTTP_PROXY`` and the rest) so ordinary
+tools use it, but nothing depends on them using it: there is no other exit.
 """
 
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
 import urllib.parse
 import uuid
@@ -16,21 +26,22 @@ from pathlib import Path
 
 IMAGE = "cheese-private-executor:2.1.282"
 LABEL = "com.cheese.private-chat"
-GATE_LABEL = "com.cheese.private-chat-network"
-#: Where the gate asks for a name's real addresses (settings.fetch_dns_over_https).
-RESOLVER = "https://223.5.5.5/resolve"
 SCRATCH_BYTES = 64 * 1024 * 1024
 RUNTIME = "/opt/cheese/runtime.py"
 STATE = "/work/.runtime"
 
+NETWORK = "cheese-private-chats"
+EGRESS = "cheese-private-egress"
+EGRESS_LABEL = "com.cheese.private-egress"
+EGRESS_PORT = 3128
+#: Where the proxy asks for a name's real addresses (settings.fetch_dns_over_https).
+RESOLVER = "https://223.5.5.5/resolve"
+#: The network the proxy leaves by, where the platform endpoint is reachable.
+OUTSIDE = "bridge"
+
 
 def container_name(topic):
     return "cheese-private-" + uuid.UUID(str(topic)).hex
-
-
-def gate_name(topic):
-    """The container that owns the executor's network (private_network.py)."""
-    return "cheese-private-net-" + uuid.UUID(str(topic)).hex
 
 
 def target(topic, image=IMAGE, resolver=RESOLVER):
@@ -77,7 +88,7 @@ def run_command(config):
         "--log-driver",
         "none",
         "--network",
-        f"container:{gate_name(config['topic'])}",
+        NETWORK,
         "--tmpfs",
         f"/work:rw,nosuid,nodev,size={SCRATCH_BYTES},uid=1000,gid=1000,mode=0700",
         "--workdir",
@@ -86,65 +97,199 @@ def run_command(config):
     ]
 
 
-def gate_command(config, environ):
-    """The gate: allowed ``NET_ADMIN`` to write its namespace's rules, and told
-    the platform endpoint the container is sent to (``CHEESE_API``), the one
-    internal address those rules let through."""
+def proxy_env():
+    """What tells the container's tools to go through the proxy."""
+    http = f"http://{EGRESS}:{EGRESS_PORT}"
+    socks = f"socks5h://{EGRESS}:{EGRESS_PORT}"
+    env = {}
+    for name, value in (
+        ("HTTP_PROXY", http),
+        ("HTTPS_PROXY", http),
+        ("ALL_PROXY", socks),
+        ("NO_PROXY", "localhost,127.0.0.1,::1"),
+    ):
+        env[name] = env[name.lower()] = value
+    return env
+
+
+def _docker(*args, timeout=30):
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, timeout=timeout
+    )
+
+
+def _failed(what, result):
+    # Docker's stderr is the only place the reason is (a missing image, a name
+    # still taken, no daemon): it goes into the failure, which is what the
+    # session's startup log records.
+    return RuntimeError(
+        f"docker {what} exited with status {result.returncode}: {result.stderr.strip()}"
+    )
+
+
+def ensure_network():
+    """The private chats' network, created once per host; its subnets."""
+    found = _docker("network", "inspect", NETWORK)
+    if found.returncode:
+        created = _docker(
+            "network",
+            "create",
+            "--internal",
+            "--driver",
+            "bridge",
+            # No address of the host's on the bridge, so nothing it listens on
+            # is reachable from the network either.
+            "--opt",
+            "com.docker.network.bridge.inhibit_ipv4=true",
+            "--label",
+            f"{EGRESS_LABEL}=network",
+            NETWORK,
+        )
+        if created.returncode and "already exists" not in created.stderr:
+            raise _failed(f"network create {NETWORK}", created)
+        found = _docker("network", "inspect", NETWORK)
+        if found.returncode:
+            raise _failed(f"network inspect {NETWORK}", found)
+    info = json.loads(found.stdout)[0]
+    options = info.get("Options") or {}
+    if (
+        not info.get("Internal")
+        or options.get("com.docker.network.bridge.inhibit_ipv4") != "true"
+    ):
+        raise RuntimeError(
+            f"Docker network {NETWORK} has a route out or an address of the "
+            "host; private chats do not start on it"
+        )
+    return [entry["Subnet"] for entry in (info.get("IPAM") or {}).get("Config") or []]
+
+
+def _platform(environ):
+    api = urllib.parse.urlsplit(environ.get("CHEESE_API", ""))
+    if not api.hostname:
+        return None
+    port = api.port or (443 if api.scheme == "https" else 80)
+    host = f"[{api.hostname}]" if ":" in api.hostname else api.hostname
+    return f"{host}:{port}"
+
+
+def egress_command(config, environ, subnets, identity):
     command = [
-        "docker",
         "run",
         "--detach",
         "--init",
+        "--restart",
+        "unless-stopped",
         "--name",
-        gate_name(config["topic"]),
+        EGRESS,
         "--label",
-        f"{GATE_LABEL}={config['topic']}",
+        f"{EGRESS_LABEL}={identity}",
+        "--network",
+        NETWORK,
         "--read-only",
         "--user",
-        "0:0",
+        "1000:1000",
         "--cap-drop",
         "ALL",
-        "--cap-add",
-        "NET_ADMIN",
-        "--cap-add",
-        "SETUID",
-        "--cap-add",
-        "SETGID",
         "--security-opt",
         "no-new-privileges",
         "--memory",
-        "128m",
+        "256m",
         "--memory-swap",
-        "128m",
+        "256m",
         "--cpus",
-        "0.25",
+        "1",
         "--pids-limit",
-        "64",
+        "512",
         "--ipc",
         "none",
         "--log-driver",
         "json-file",
         "--log-opt",
         "max-size=1m",
-        "--tmpfs",
-        "/run:rw,nosuid,nodev,noexec,size=1m",
         "--entrypoint",
         "python3",
         config["image"],
-        "/opt/cheese/private_network.py",
+        "/opt/cheese/private_egress.py",
         "--resolver",
         config.get("resolver", RESOLVER),
     ]
-    api = urllib.parse.urlsplit(environ.get("CHEESE_API", ""))
-    if api.hostname:
-        port = api.port or (443 if api.scheme == "https" else 80)
-        command += ["--api-host", api.hostname, "--api-port", str(port)]
+    platform = _platform(environ)
+    if platform:
+        command += ["--platform", platform]
+    for subnet in subnets:
+        command += ["--client", subnet]
     return command
 
 
-def _inspect(name, label, topic):
+def _egress_ready():
+    probe = (
+        "import socket; "
+        f"socket.create_connection(('127.0.0.1', {EGRESS_PORT}), timeout=2).close()"
+    )
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if _docker("exec", EGRESS, "python3", "-c", probe).returncode == 0:
+            return True
+        state = _docker(
+            "container", "inspect", "--format", "{{.State.Running}}", EGRESS
+        )
+        if state.stdout.strip() != "true":
+            return False
+        time.sleep(0.2)
+    return False
+
+
+def ensure_egress(config, environ):
+    """The host's egress proxy, running with this configuration.
+
+    Adopted when one is already running with the same image and settings;
+    otherwise (absent, stopped, or started for another image or platform
+    endpoint) replaced. Every private chat on the host shares it.
+    """
+    subnets = ensure_network()
+    image = _docker("image", "inspect", "--format", "{{.Id}}", config["image"])
+    if image.returncode:
+        raise _failed(f"image inspect {config['image']}", image)
+    identity = hashlib.sha256(
+        json.dumps(
+            [
+                image.stdout.strip(),
+                config.get("resolver", RESOLVER),
+                _platform(environ),
+                subnets,
+            ]
+        ).encode()
+    ).hexdigest()[:16]
+    lock_path = Path(tempfile.gettempdir()) / "cheese-private-egress.lock"
+    with lock_path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        found = _docker(
+            "container",
+            "inspect",
+            "--format",
+            '{{.State.Running}} {{index .Config.Labels "' + EGRESS_LABEL + '"}}',
+            EGRESS,
+        )
+        if found.returncode == 0 and found.stdout.split() == ["true", identity]:
+            return
+        _docker("rm", "--force", EGRESS)
+        created = _docker(*egress_command(config, environ, subnets, identity))
+        if created.returncode:
+            raise _failed(f"run {config['image']}", created)
+        connected = _docker("network", "connect", OUTSIDE, EGRESS)
+        if connected.returncode:
+            raise _failed(f"network connect {OUTSIDE} {EGRESS}", connected)
+        if not _egress_ready():
+            logs = _docker("logs", "--tail", "20", EGRESS)
+            raise RuntimeError(
+                "Private chat egress proxy did not start: "
+                + (logs.stderr + logs.stdout).strip()
+            )
+
+
+def inspect(config):
     result = subprocess.run(
-        ["docker", "container", "inspect", name],
+        ["docker", "container", "inspect", container_name(config["topic"])],
         text=True,
         capture_output=True,
         timeout=15,
@@ -154,62 +299,9 @@ def _inspect(name, label, topic):
             return None
         raise RuntimeError(result.stderr.strip())
     info = json.loads(result.stdout)[0]
-    if info["Config"].get("Labels", {}).get(label) != topic:
+    if info["Config"].get("Labels", {}).get(LABEL) != config["topic"]:
         raise RuntimeError("Refusing a container not owned by this private chat")
     return info
-
-
-def inspect(config):
-    return _inspect(container_name(config["topic"]), LABEL, config["topic"])
-
-
-def inspect_gate(config):
-    return _inspect(gate_name(config["topic"]), GATE_LABEL, config["topic"])
-
-
-def _remove(name):
-    subprocess.run(
-        ["docker", "rm", "--force", name], capture_output=True, text=True, timeout=30
-    )
-
-
-def start_gate(config, environ):
-    """A fresh gate, returned only once its rules are in place."""
-    name = gate_name(config["topic"])
-    if inspect_gate(config) is not None:
-        _remove(name)
-    created = subprocess.run(
-        gate_command(config, environ), capture_output=True, text=True, timeout=60
-    )
-    if created.returncode:
-        raise RuntimeError(
-            f"docker run {config['image']} exited with status "
-            f"{created.returncode}: {created.stderr.strip()}"
-        )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        ready = subprocess.run(
-            ["docker", "exec", name, "test", "-e", "/run/cheese-network-ready"],
-            capture_output=True,
-            timeout=15,
-        )
-        if ready.returncode == 0:
-            return
-        info = inspect_gate(config)
-        if info is None or not info["State"]["Running"]:
-            break
-        time.sleep(0.2)
-    logs = subprocess.run(
-        ["docker", "logs", "--tail", "20", name],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    _remove(name)
-    raise RuntimeError(
-        "Private executor network gate did not start: "
-        + (logs.stderr + logs.stdout).strip()
-    )
 
 
 def ensure(config, directory, environ):
@@ -218,27 +310,22 @@ def ensure(config, directory, environ):
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / "private-executor.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        ensure_egress(config, environ)
         info = inspect(config)
-        if info is not None and info["State"]["Running"]:
-            gate = inspect_gate(config)
-            if gate is None or not gate["State"]["Running"]:
-                # Its network went with the gate, and with it the rules that
-                # keep it off internal addresses: no command runs there again.
-                _remove(container_name(config["topic"]))
-                info = None
+        if (
+            info is not None
+            and info["State"]["Running"]
+            and info["HostConfig"]["NetworkMode"] != NETWORK
+        ):
+            # Started with a way out: no command runs there again.
+            _docker("rm", "--force", container_name(config["topic"]))
+            info = None
         if info is None:
-            start_gate(config, environ)
             created = subprocess.run(
                 run_command(config), capture_output=True, text=True, timeout=60
             )
             if created.returncode:
-                # Docker's stderr is the only place the reason is (a missing
-                # image, a name still taken, no daemon): it goes into the
-                # failure, which is what the session's startup log records.
-                raise RuntimeError(
-                    f"docker run {config['image']} exited with status "
-                    f"{created.returncode}: {created.stderr.strip()}"
-                )
+                raise _failed(f"run {config['image']}", created)
         elif not info["State"]["Running"]:
             raise RuntimeError(
                 "Private executor stopped; release it before recreating scratch"
@@ -256,7 +343,10 @@ def ensure(config, directory, environ):
             if key in environ
         }
         env.update(
-            HOME="/work/.home", TMPDIR="/work/.tmp", CHEESE_WORKTREE_ROOT="/work"
+            HOME="/work/.home",
+            TMPDIR="/work/.tmp",
+            CHEESE_WORKTREE_ROOT="/work",
+            **proxy_env(),
         )
         configuration = {
             "workspace": "/work",
@@ -288,18 +378,13 @@ def ensure(config, directory, environ):
 def release(config):
     if config.get("kind") != "private":
         return
-    # The executor first: the gate owns the network namespace it runs in.
-    for name, found in (
-        (container_name(config["topic"]), inspect),
-        (gate_name(config["topic"]), inspect_gate),
-    ):
-        if found(config) is not None:
-            subprocess.run(
-                ["docker", "rm", "--force", name],
-                check=True,
-                capture_output=True,
-                timeout=30,
-            )
+    if inspect(config) is not None:
+        subprocess.run(
+            ["docker", "rm", "--force", container_name(config["topic"])],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
 
 
 def entrypoint():
