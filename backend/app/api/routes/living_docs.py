@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
+from app.api.doc_identity import operation_actor
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import announce_stale
 from app.domain.block.documents import persisted_notice
 from app.domain.block.schemas import BlockOut
+from app.domain.living_doc.delivery import dispatch_pending
 from app.domain.living_doc.schemas import RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
@@ -59,11 +60,12 @@ async def edit_topic_doc(
     journal = DocumentJournal(db)
     operation = None
     if body.operation_id is not None:
-        if not actor.authenticated:
-            raise AuthenticationRequiredError("操作回执需要已认证的写入者")
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        )
         operation = await journal.claim(
             room_id=place.room_id,
-            actor=actor.handle,
+            actor=await operation_actor(db, actor),
             action="replace",
             operation_id=body.operation_id,
             payload={
@@ -107,7 +109,7 @@ async def _finish_write(
                 "block": BlockOut.model_validate(notice).model_dump(mode="json"),
             },
         )
-    await announce_stale(place.room_id, "doc")
+    await dispatch_pending(db, get_broker().publish, place.room_id)
     if topic_id == place.room_id:
         naming.nudge(place.room_id, "signal")
     if notice is not None and (line := persisted_notice(notice)):
@@ -128,6 +130,19 @@ async def document_history(
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
 
 
+@router.get("/{topic_id}/doc/refreshes")
+async def document_refreshes(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    after: int = Query(default=0, ge=0),
+) -> dict:
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    rows = await DocumentJournal(db).refreshes(place.room_id, after=after)
+    return ok({"refreshes": rows, "cursor": rows[-1]["cursor"] if rows else after})
+
+
 @router.get("/{topic_id}/doc/operations/{operation_id}")
 async def document_receipt(
     topic_id: uuid.UUID,
@@ -140,9 +155,12 @@ async def document_receipt(
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("操作回执需要已认证的写入者")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
     receipt = await DocumentJournal(db).receipt(
         room_id=place.room_id,
-        actor=actor.handle,
+        actor=await operation_actor(db, actor),
         action=action,
         operation_id=operation_id,
     )
@@ -164,10 +182,13 @@ async def restore_document(
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("恢复文档需要已认证的写入者")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
     journal = DocumentJournal(db)
     operation = await journal.claim(
         room_id=place.room_id,
-        actor=actor.handle,
+        actor=await operation_actor(db, actor),
         action="restore",
         operation_id=body.operation_id,
         payload={"version": body.version, "expected_version": body.expected_version},

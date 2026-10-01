@@ -17,6 +17,7 @@ from app.core.errors import ConflictError
 from app.domain.living_doc.models import (
     DocumentLock,
     DocumentOperation,
+    DocumentRefresh,
     DocumentVersion,
 )
 
@@ -27,6 +28,18 @@ def content_hash(content: str) -> str:
 
 def payload_fingerprint(payload: dict) -> str:
     return content_hash(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def refresh_hint(row: DocumentRefresh) -> dict:
+    return {
+        "type": "state",
+        "resource": "doc",
+        "document_id": str(row.document_id),
+        "version": row.version,
+        "cursor": row.version,
+        "content_hash": row.content_hash,
+        "event_id": str(row.event_id) if row.event_id else None,
+    }
 
 
 class DocumentJournal:
@@ -67,6 +80,8 @@ class DocumentJournal:
         if row is not None:
             if row.fingerprint != fingerprint:
                 raise ConflictError("同一 operation_id 已用于不同的文档请求")
+            if row.receipt is None:
+                raise ConflictError("文档操作没有完整回执，不能重新应用")
             return row
         row = DocumentOperation(
             room_id=room_id,
@@ -90,6 +105,7 @@ class DocumentJournal:
         base_version: int | None,
         operation_id: uuid.UUID | None = None,
         event_id: uuid.UUID | None = None,
+        refresh: bool = True,
     ) -> None:
         self.session.add(
             DocumentVersion(
@@ -105,7 +121,26 @@ class DocumentJournal:
                 event_id=event_id,
             )
         )
+        if refresh:
+            self.session.add(
+                DocumentRefresh(
+                    room_id=room_id,
+                    document_id=document_id,
+                    version=version,
+                    content_hash=content_hash(content),
+                    event_id=event_id,
+                )
+            )
         await self.session.flush()
+
+    async def refreshes(self, room_id: uuid.UUID, *, after: int = 0) -> list[dict]:
+        rows = await self.session.scalars(
+            select(DocumentRefresh)
+            .where(DocumentRefresh.room_id == room_id, DocumentRefresh.version > after)
+            .order_by(DocumentRefresh.version)
+            .limit(100)
+        )
+        return [refresh_hint(row) for row in rows]
 
     async def seed_existing(
         self,
@@ -131,6 +166,7 @@ class DocumentJournal:
                 content=content,
                 actor=actor,
                 base_version=None,
+                refresh=False,
             )
 
     async def finish(self, operation: DocumentOperation, receipt: dict) -> None:

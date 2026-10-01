@@ -45,11 +45,32 @@ class DocumentVersion(UuidPk, Base):
     base_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     actor: Mapped[str] = mapped_column(String(128))
     operation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    event_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("blocks.id", ondelete="SET NULL"), nullable=True
-    )
+    event_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class DocumentRefresh(UuidPk, Base):
+    __tablename__ = "living_doc_refreshes"
+    __table_args__ = (
+        UniqueConstraint("room_id", "version", name="uq_living_doc_refresh"),
+    )
+
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE")
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("blocks.id", ondelete="CASCADE")
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    event_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
 
 

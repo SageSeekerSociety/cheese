@@ -246,6 +246,16 @@ async def lifespan(_: FastAPI):
             ),
             sessions=async_session_factory,
         )
+        from app.domain.agent.runtime import get_broker
+        from app.domain.living_doc.delivery import drain_refreshes
+
+        jobs.append(
+            background.PeriodicRunner(
+                "document refresh delivery",
+                5,
+                lambda: drain_refreshes(async_session_factory, get_broker().publish),
+            )
+        )
         runs = JobRuns(async_session_factory)
         try:
             last_runs = await runs.load(
