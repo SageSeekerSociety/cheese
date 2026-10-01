@@ -590,7 +590,7 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
   return request<ListPayload<Project>>(`/projects/by-task/${taskId}`)
 }
 
-// Single project card (includes `summary`, the 一页纸总结).
+// Single project card.
 export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
@@ -634,11 +634,6 @@ export function requestSiteSession(projectId: string): Promise<{ url: string; gr
     method: 'POST',
   })
 }
-
-// NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
-// called is parked (see `backend/app/api/routes/activities.py`), so keeping the
-// wrapper would only leave a 404 waiting for its first caller. `summary` still
-// arrives on the project card above — it just has no trigger in the UI.
 
 // A 1:1 private chat as a normal Topic (open the chat WS on its id). `peerHandle`
 // is a person-to-person DM between the two humans (shared by both); `agentHandle`

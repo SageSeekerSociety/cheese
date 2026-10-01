@@ -64,7 +64,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
-        ("app.domain.agent.chat", "app.domain.milestone.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
         ("app.domain.agent.chat", "app.domain.review.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),

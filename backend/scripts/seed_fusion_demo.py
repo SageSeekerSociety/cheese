@@ -28,24 +28,21 @@ OWNER = "alice"  # username == handle (fusion A2)
 CHEESE = "cheese"
 
 # A few demo projects so the rail shows multiple Discord-style tiles (⌘2/⌘3/…),
-# each linked to a real 知是 Team (P4). (name, team_id, summary, first_topic)
+# each linked to a real 知是 Team (P4). (name, team_id, first_topic)
 DEMO_PROJECTS = [
     (
         "知是 2.0 融合演示",
         1,  # 深度学习研究组
-        "演示：把原版知是（空间/小队/任务）与芝士的话题/群聊/文档合到一处。",
         "搭建第一个原型",
     ),
     (
         "AI 系统实验室",
         2,  # 全栈开发小队
-        "AI 系统方向的课题工作台：推理服务、评测、Agent 编排。",
         "设计推理服务架构",
     ),
     (
         "数据分析平台",
         3,  # 数据分析兴趣组
-        "数据分析课题：数据管线、可视化看板、指标体系。",
         "梳理数据管线",
     ),
 ]
@@ -53,7 +50,7 @@ DEMO_PROJECTS = [
 
 async def seed() -> None:
     async with async_session_factory() as s:
-        for name, team_id, summary, first_topic in DEMO_PROJECTS:
+        for name, team_id, first_topic in DEMO_PROJECTS:
             # Idempotent: drop any prior instance (cascades to topics/members).
             existing = (
                 (await s.execute(select(Project).where(Project.name == name)))
@@ -73,7 +70,6 @@ async def seed() -> None:
                 owner_handle=OWNER,
                 team_id=team_id,
                 ai_mode=AiMode.collaborative,
-                summary=summary,
             )
             s.add(project)
             await s.flush()

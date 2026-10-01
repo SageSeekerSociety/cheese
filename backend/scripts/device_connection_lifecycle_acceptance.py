@@ -507,9 +507,9 @@ INSERT INTO team_user_relation (id,team_id,user_id,role,created_at,updated_at)
 SELECT nextval('team_user_relation_seq'),id,42,0,now(),now()
 FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO projects
- (id,name,owner_handle,team_id,ai_mode,summary,settings,created_at,updated_at)
+ (id,name,owner_handle,team_id,ai_mode,settings,created_at,updated_at)
 SELECT '11111111-1111-1111-1111-111111111111','Acceptance','acceptance',id,
-       'off','','{}',now(),now()
+       'off','{}',now(),now()
 FROM team WHERE personal_owner_user_id = 42;
 INSERT INTO topics (id,project_id,title,kind,status,is_private,created_at,updated_at)
 VALUES ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111',
