@@ -48,7 +48,7 @@ from app.domain.machine.models import (
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import MachineService, left_unpushed_on
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
@@ -835,29 +835,11 @@ async def _move_session(
     }
     row.work_lease = None
     await db.commit()
-    if release is not None and not await _left_unpushed_on(
+    if release is not None and not await left_unpushed_on(
         db, topic_id, release.device_id
     ):
         await MachineService(db).release_left_machine(release.id)
     return warnings
-
-
-async def _left_unpushed_on(db, topic_id, device_id) -> bool:
-    """Another session of the room left this machine without pushing: its work
-    is only there, so the machine waits for the room's cleanup."""
-    if device_id is None:
-        return False
-    requests = await db.scalars(
-        select(AgentSession.execution_request).where(
-            AgentSession.topic_id == topic_id,
-            AgentSession.execution_request.is_not(None),
-        )
-    )
-    return any(
-        lease.get("device_id") == device_id
-        for request in requests
-        for lease in request.get("retained_leases", [])
-    )
 
 
 # The room names a machine whose owner has since unbound it. It cannot come back
