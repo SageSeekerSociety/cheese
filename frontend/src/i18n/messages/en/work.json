@@ -877,7 +877,17 @@
       "uploadFailed": "Couldn't upload the file",
       "addFailed": "Couldn't add the file"
     },
-    "defaultAgentName": "Cheese"
+    "defaultAgentName": "Cheese",
+    "reminder": {
+      "open": "Remind me",
+      "title": "Remind me",
+      "when": "When",
+      "content": "Reminder",
+      "submit": "Set reminder",
+      "inPast": "This time has already passed",
+      "failed": "Could not set the reminder",
+      "set": "You will be reminded at {when}"
+    }
   },
   "board": {
     "column": {

@@ -264,6 +264,7 @@
   "promptUndeliveredDetail": "这不是 AI 服务的问题，请求没有到达模型。消息发往工作电脑上的 claude 会话，但会话没有接收：常见原因是会话停在一个等待回答的界面上，或者它所在的终端已经关闭。工作区里的文件和已完成的改动都没有受到影响。重试会重新打开会话；如果连续几次都这样，把这条提示转给管理员。",
   "promptUndeliveredTitle": "消息未送达",
   "reasonUnstated": "未说明原因",
+  "reminder": "提醒：{text}",
   "resendAfterDeploy": "上一轮被平台部署中断，消息未送达，已重新发送",
   "resendAfterToolsLost": "上一轮平台工具连接中断，回复没有发到房间，已恢复并重新发送",
   "resendInterrupted": "上一次重发被平台重启打断，消息未送达",

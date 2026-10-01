@@ -264,6 +264,7 @@
   "promptUndeliveredDetail": "This is not an AI service problem; the request never reached the model. The message was sent to the claude session on the work machine, but the session did not take it. Usually the session is stuck on a screen waiting for an answer, or its terminal has closed. Files in the workspace and finished changes are unaffected. Retrying reopens the session; if it happens several times in a row, forward this notice to an admin.",
   "promptUndeliveredTitle": "Message not delivered",
   "reasonUnstated": "No reason given",
+  "reminder": "Reminder: {text}",
   "resendAfterDeploy": "A platform deploy interrupted the last turn before the message arrived; it has been sent again",
   "resendAfterToolsLost": "The platform tools disconnected during the last turn and its reply never reached the room; reconnected and sent again",
   "resendInterrupted": "A platform restart interrupted the last resend; the message was not delivered",
