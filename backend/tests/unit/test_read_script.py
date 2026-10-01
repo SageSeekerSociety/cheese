@@ -87,9 +87,10 @@ def samples(tmp_path_factory):
     return where
 
 
-def _read(samples, *files):
+def _read(samples, *files, pymupdf=True, extra=()):
+    withs = WITH + (["--with", "pymupdf"] if pymupdf else [])
     result = subprocess.run(
-        ["uv", "run", "-q", *WITH, "python3", str(READ), *files],
+        ["uv", "run", "-q", *withs, "python3", str(READ), *files, *extra],
         cwd=samples,
         capture_output=True,
         text=True,
@@ -120,6 +121,42 @@ def test_what_was_not_read_is_listed(samples):
     unread = out.split("# 《report.docx》")[0].split("没有读到的部分")[-1]
     assert "第 2 页" in unread and "扫描" in unread
     assert "图片" in out.split("# 《report.docx》")[1].split("没有读到的部分")[-1]
+
+
+def test_a_scanned_page_is_rendered_to_an_image(samples):
+    code, out = _read(samples, "review.pdf")
+    assert code == 0, out
+    rendered = samples / "review-pages" / "page-2.png"
+    assert rendered.is_file() and rendered.read_bytes().startswith(b"\x89PNG")
+    assert "page-2.png" in out and "视觉识别" in out
+    # 有文字层的第 1 页不多渲染
+    assert not (samples / "review-pages" / "page-1.png").exists()
+
+
+def test_a_scanned_page_without_pymupdf_is_reported_unread(samples):
+    _code, out = _read(
+        samples, "review.pdf", pymupdf=False, extra=("--render-dir", "nopdfium-check")
+    )
+    unread = out.split("没有读到的部分")[-1]
+    assert "第 2 页" in unread and "扫描" in unread and "没有读到" in unread
+    assert "pymupdf" in unread
+    assert not (samples / "nopdfium-check").exists()
+
+
+def test_no_render_keeps_the_honest_unread_report(samples):
+    _code, out = _read(
+        samples, "review.pdf", extra=("--no-render", "--render-dir", "norender-check")
+    )
+    unread = out.split("没有读到的部分")[-1]
+    assert "第 2 页" in unread and "扫描" in unread and "没有读到" in unread
+    assert not (samples / "norender-check").exists()
+
+
+def test_ocr_runs_tesseract_or_says_it_is_missing(samples):
+    _code, out = _read(samples, "review.pdf", extra=("--ocr",))
+    # 有 tesseract：输出 OCR 对照文字；没有：如实说没有，渲染图仍在
+    assert "tesseract" in out
+    assert (samples / "review-pages" / "page-2.png").is_file()
 
 
 def test_a_file_that_cannot_be_read_is_reported_and_fails_the_run(samples):

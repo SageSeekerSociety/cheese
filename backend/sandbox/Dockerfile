@@ -28,7 +28,15 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
       build-essential pkg-config ripgrep jq less unzip \
       postgresql-client libpq-dev \
       procps openssh-client \
-      fonts-noto-cjk
+      fonts-noto-cjk \
+      tesseract-ocr tesseract-ocr-chi-sim
+
+# tesseract (+ chi_sim) is the bulk/fallback reader for scanned PDF pages:
+# read.py renders such pages to images for the model to look at, and `read.py
+# --ocr` runs tesseract over them when a whole scanned document needs cheap
+# text. Two small debs — the heavy neural OCR stacks (easyocr/PaddleOCR drag
+# in PyTorch) were considered and rejected: the vision path already covers
+# hard pages.
 
 # Fonts are here rather than beside the document tooling below because the way
 # they go missing is silent: typst exits 0 and pandoc exits 0 on a machine with

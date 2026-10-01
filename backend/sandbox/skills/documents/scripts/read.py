@@ -1,15 +1,22 @@
 """Read office files into text that says where every piece came from.
 
-    uv run --with pdfplumber --with python-docx --with python-pptx --with openpyxl \
+    uv run --with pdfplumber --with pymupdf --with python-docx --with python-pptx \
+        --with openpyxl \
         python3 read.py 材料.pdf 方案.docx 汇报.pptx 预算.xlsx \
-        [--pages 3-7] [--media 目录]
+        [--pages 3-7] [--media 目录] [--ocr]
 
 Each file comes back as markdown with its positions spelled out — PDF pages,
 Word paragraph numbers and heading path, table cells, slide numbers, sheet
 cells with the formula and the computed value kept apart — so a sentence in a
 report can cite exactly where it came from. Every file ends with what was NOT
-read: a scanned page, a chart, SmartArt, a formula with no computed value, a
-part cut off by the size limit. Nothing is left out silently.
+read: a chart, SmartArt, a formula with no computed value, a part cut off by
+the size limit. Nothing is left out silently.
+
+A PDF page with no text layer (a scan) is rendered to a PNG under
+<文件名>-pages/ so the agent can open the image and read it visually — the
+output says exactly which file to open. With pymupdf missing the page is
+reported unread instead. --ocr additionally runs tesseract (when the machine
+has it) over rendered pages for bulk text; the image stays authoritative.
 
 Exit code: 0 when every file was opened, 1 when any could not be opened at all.
 """
@@ -84,8 +91,105 @@ def page_range(spec: str | None, total: int) -> list[int]:
 # ── PDF ─────────────────────────────────────────────────────────────────────
 
 
+def _open_renderer(path: Path):
+    """A pymupdf handle for rendering scanned pages, or (None, 原因)."""
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        try:
+            import fitz  # pymupdf 的旧名字
+        except ImportError:
+            return None, "缺 pymupdf（uv run --with pymupdf 重新运行即可渲染）"
+    try:
+        return fitz.open(str(path)), None
+    except Exception as exc:  # noqa: BLE001 — say so, don't crash the read
+        return None, f"渲染库打不开这份文件（{type(exc).__name__}: {exc}）"
+
+
+def _ocr_page(image: Path, number: int, out: Out) -> None:
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["tesseract", str(image), "stdout", "-l", "chi_sim+eng"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        text = result.stdout.strip()
+    except Exception as exc:  # noqa: BLE001 — OCR is a bonus, not a blocker
+        out.miss(f"第 {number} 页：tesseract 识别失败（{type(exc).__name__}: {exc}）")
+        return
+    if text:
+        out.add(
+            f"\n[第 {number} 页 OCR 文字（tesseract 识别，可能认错字，"
+            f"仅供对照，以渲染图为准）]\n{text}"
+        )
+    else:
+        out.miss(f"第 {number} 页：tesseract 没有识别出文字（渲染图仍可阅读）")
+
+
 def read_pdf(path: Path, out: Out, args) -> None:
     import pdfplumber
+
+    if args.no_render:
+        renderer, renderer_err = None, "--no-render"
+    else:
+        renderer, renderer_err = _open_renderer(path)
+    if args.render_dir:
+        render_dir = Path(args.render_dir)
+    else:
+        render_dir = Path(f"{path.stem}-pages")
+    rendered = 0
+    skipped = 0
+
+    want_ocr = args.ocr
+    if want_ocr:
+        import shutil
+
+        if shutil.which("tesseract") is None:
+            out.miss(
+                "加了 --ocr，但这台机器上没有 tesseract；"
+                "扫描页仍会渲染成图片，请用读图方式阅读"
+            )
+            want_ocr = False
+
+    def scan_page(number: int, images: int) -> None:
+        nonlocal rendered, skipped
+        if renderer is None:
+            hint = f"（{renderer_err}）" if not args.no_render else ""
+            out.miss(
+                f"第 {number} 页：几乎没有文字层、有 {images} 张图片，"
+                f"是扫描/图片页，内容没有读到{hint}"
+            )
+            return
+        if rendered >= args.max_render:
+            skipped += 1
+            return
+        try:
+            render_dir.mkdir(parents=True, exist_ok=True)
+            target = render_dir / f"page-{number}.png"
+            pix = renderer[number - 1].get_pixmap(dpi=150)
+            pix.save(str(target))
+        except Exception as exc:  # noqa: BLE001 — one bad page must not kill the read
+            out.miss(
+                f"第 {number} 页：扫描/图片页，渲染成图片失败"
+                f"（{type(exc).__name__}: {exc}），内容没有读到"
+            )
+            return
+        rendered += 1
+        out.add(
+            f"（本页是扫描/图片页，文字层为空。整页已渲染成图片：{target} —— "
+            "请打开这张图阅读；引用上面的内容时标"
+            f"「第 {number} 页（扫描件，视觉识别）」，"
+            "认不出的地方明说认不出，不要猜）"
+        )
+        out.miss(
+            f"第 {number} 页是扫描/图片页：没有文字层，文字要打开渲染图阅读"
+            f"（{target}；视觉识别可能认错，认不出的部分不能写成已读）"
+        )
+        if want_ocr:
+            _ocr_page(target, number, out)
 
     with pdfplumber.open(path) as pdf:
         total = len(pdf.pages)
@@ -97,13 +201,11 @@ def read_pdf(path: Path, out: Out, args) -> None:
             page = pdf.pages[number - 1]
             text = (page.extract_text() or "").strip()
             images = len(page.images)
+            has_graphics = bool(page.images or page.rects or page.lines or page.curves)
             if not out.add(f"\n## 第 {number} 页\n", f"第 {number} 页"):
                 break
-            if len(text) < 20 and images:
-                out.miss(
-                    f"第 {number} 页：几乎没有文字层、有 {images} 张图片，"
-                    "可能是扫描页，里面的内容没有读到"
-                )
+            if len(text) < 20 and has_graphics:
+                scan_page(number, images)
             elif not text:
                 out.miss(f"第 {number} 页：没有抽出任何文字")
             if text and not out.add(text, f"第 {number} 页"):
@@ -117,6 +219,15 @@ def read_pdf(path: Path, out: Out, args) -> None:
             if images and len(text) >= 20:
                 out.add(f"（本页另有 {images} 张图片，图片里的内容没有识别）")
                 out.miss(f"第 {number} 页的 {images} 张图片：图里的文字和数据没有识别")
+
+    if skipped:
+        out.miss(
+            f"还有 {skipped} 页扫描/图片页没有渲染（每份文件最多渲染 "
+            f"{args.max_render} 页，加 --max-render 调大，或用 --pages 分段读），"
+            "这些页的内容没有读到"
+        )
+    if renderer is not None:
+        renderer.close()
 
 
 # ── Word ────────────────────────────────────────────────────────────────────
@@ -402,6 +513,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--max-cells", type=int, default=2000, help="每个工作表最多列多少格"
+    )
+    parser.add_argument(
+        "--no-render", action="store_true", help="不要把扫描页渲染成图片"
+    )
+    parser.add_argument(
+        "--render-dir", help="扫描页渲染图放这个目录（默认 <文件名>-pages/）"
+    )
+    parser.add_argument(
+        "--max-render",
+        type=int,
+        default=30,
+        help="每份 PDF 最多渲染多少页扫描页",
+    )
+    parser.add_argument(
+        "--ocr",
+        action="store_true",
+        help="扫描页渲染后同时用 tesseract 识别文字（需要机器上有 tesseract）",
     )
     args = parser.parse_args(argv)
 
