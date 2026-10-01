@@ -162,6 +162,11 @@ async def test_what_the_agent_is_writing_reaches_the_room_as_it_grows_and_goes_w
                 "content_block": {"type": "text", "text": ""},
             }
         )
+
+        def texts() -> list[str]:
+            return [blocks[0]["text"] for _, _, blocks, _ in shown if blocks]
+
+        written = ""
         for piece in ("Hel", "lo, ", "world"):
             stream(
                 {
@@ -170,12 +175,14 @@ async def test_what_the_agent_is_writing_reaches_the_room_as_it_grows_and_goes_w
                     "delta": {"type": "text_delta", "text": piece},
                 }
             )
-            await _REAL_SLEEP(0.3)
-        texts = [blocks[0]["text"] for _, _, blocks, _ in shown if blocks]
-        assert texts and texts[-1] == "Hello, world"
-        assert len(texts) >= 2 and all(
+            written += piece
+            # Each piece reaches the room before the next is written: shown as
+            # it grows, not only once it is whole. How soon is the poller's
+            # round trip, which a loaded machine stretches past any fixed wait.
+            await _until(lambda written=written: texts()[-1:] == [written])
+        assert all(
             later.startswith(earlier)
-            for earlier, later in zip(texts, texts[1:], strict=False)
+            for earlier, later in zip(texts(), texts()[1:], strict=False)
         )
         assert {work for work, _, _, _ in shown} == {room.work}
 
