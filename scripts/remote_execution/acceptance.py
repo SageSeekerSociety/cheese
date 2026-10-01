@@ -208,13 +208,13 @@ def case(folder, options):
         # the SEAT that owns this session (`place.seat_dir`, `runner_fixture`),
         # and the config dir the room shares.
         home = folder / ("device-home" if options.launcher == "device" else "home")
-        session = runner_fixture.session_dir(home)
-        center = session / "remote-session/forwarded-project"
+        session_path = runner_fixture.session_dir(home)
+        center = session_path / "remote-session/forwarded-project"
         center.mkdir(parents=True)
         # Held open from before the mount, so the directory beneath it can be
         # checked for writes that went there instead of to the executor.
         center_fd = os.open(center, os.O_RDONLY | os.O_DIRECTORY)
-        execution_file = session / "remote-session/execution.json"
+        execution_file = session_path / "remote-session/execution.json"
         # Where the session sees the project: at the executor's own path
         # (`client.py enter`); `center` is this host's view of it.
         seen = Path(executor.call("ping")["workspace"])
