@@ -33,6 +33,10 @@ Eight WS direction cases completed with exit 0, recording legacy degradation rat
 
 The repository live suite is under tests/unit and receives its pure layer marker from tests/conftest.py because its fixture closure has no DB fixtures. The existing test workflow runs tests/ with the selected TEST_LAYER, including pure; no workflow execution is claimed for this unpublished follow-up.
 
+## Resource-bound verification
+
+Four test_preview_transport_bounds.py cases passed against independent raw TCP app peers. Sixteen pending HTTP streams reject the seventeenth and admit a replacement after cancel; sixteen WS streams separately reject the seventeenth while an HTTP sibling succeeds, then admit a WS replacement after cancel. Canceled app peers observe EOF and owned workers/writers join. A non-reading app WS peer receives a bounded outbox flood while an HTTP sibling still completes; after release the app observes EOF and reader/writer exit. A non-reading shared tunnel with a reduced socket send buffer forces a physical blocked send; its shortened test deadline closes the actual tunnel and app sockets and joins the helper session/worker. The tests shorten only the deadline, not the send/shutdown implementation. They do not prove real WAN timing or all admission races.
+
 ## Still required
 
-This checkpoint is not complete transport acceptance. Content-host authorization integration, quota/slow-writer sibling controls, early-connect/request-write cancellation races and shared tunnel stall teardown remain to verify. Cancellation-task draining, metadata/frame limits and post-cancel DATA races need further hardening. No fixed-instance routing, immutable resource snapshot or controlled runtime-ready protocol is introduced.
+This checkpoint is not complete transport acceptance. Content-host authorization integration and early-connect/request-write cancellation races remain to verify. Cancellation-task draining, metadata/frame limits and post-cancel DATA races need further hardening. No fixed-instance routing, immutable resource snapshot or controlled runtime-ready protocol is introduced.
