@@ -25,6 +25,7 @@ from app.domain.agent.skills import (
     SKILL_FILE_SUFFIXES,
     native_skill_files,
 )
+from app.domain.block.notice_text import say
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
@@ -45,7 +46,7 @@ def _validate_files(files: dict) -> dict[str, str]:
     if not isinstance(files, dict):
         raise ValidationError("配套文件要是「路径 → 内容」")
     if len(files) > MAX_FILES:
-        raise ValidationError(f"配套文件最多 {MAX_FILES} 个")
+        raise ValidationError(say("skillFilesTooMany", max=MAX_FILES))
     out: dict[str, str] = {}
     for raw, content in files.items():
         path = PurePosixPath(str(raw))
@@ -55,14 +56,16 @@ def _validate_files(files: dict) -> dict[str, str]:
             or not path.parts
             or path.name == "SKILL.md"
         ):
-            raise ValidationError(f"配套文件路径不合法：{raw}")
+            raise ValidationError(say("skillFilePathInvalid", path=raw))
         if path.suffix not in SKILL_FILE_SUFFIXES:
             allowed = "、".join(SKILL_FILE_SUFFIXES)
-            raise ValidationError(f"{raw}：只能是文本文件（{allowed}）")
+            raise ValidationError(say("skillFileNotText", path=raw, allowed=allowed))
         if not isinstance(content, str):
             raise ValidationError(f"{raw}：内容要是文本")
         if len(content.encode()) > MAX_FILE_BYTES:
-            raise ValidationError(f"{raw} 超过 {MAX_FILE_BYTES // 1000} KB")
+            raise ValidationError(
+                say("skillFileTooLarge", path=raw, kb=MAX_FILE_BYTES // 1000)
+            )
         out[path.as_posix()] = content
     return out
 
@@ -117,7 +120,7 @@ class ProjectSkillService:
     async def get(self, skill_id: uuid.UUID) -> ProjectSkill:
         row = await self._session.get(ProjectSkill, skill_id)
         if row is None:
-            raise NotFoundError("没有这个工作方法")
+            raise NotFoundError(say("skillNotFound"))
         return row
 
     async def list(self, project_id: uuid.UUID) -> list[ProjectSkill]:
@@ -145,7 +148,7 @@ class ProjectSkillService:
         if changes.get("files") is not None:
             row.files = _validate_files(changes["files"])
         if not row.title or not row.description or not row.steps:
-            raise ValidationError("工作方法要有名称、用途和步骤")
+            raise ValidationError(say("skillFieldsRequired"))
 
     async def create(
         self,
@@ -159,18 +162,16 @@ class ProjectSkillService:
     ) -> ProjectSkill:
         name = (name or "").strip().lower()
         if not NAME.match(name):
-            raise ValidationError(
-                "名字只能用小写字母、数字和连字符，2–48 个字符，例如 weekly-report"
-            )
+            raise ValidationError(say("skillNameInvalid"))
         if name in RESERVED_SKILL_NAMES:
-            raise ValidationError(f"「{name}」是平台内置技能的名字，换一个")
+            raise ValidationError(say("skillNameReserved", name=name))
         taken = await self._session.scalar(
             select(ProjectSkill.id).where(
                 ProjectSkill.project_id == project_id, ProjectSkill.name == name
             )
         )
         if taken is not None:
-            raise ValidationError(f"这个项目里已经有叫「{name}」的工作方法")
+            raise ValidationError(say("skillNameTaken", name=name))
         row = ProjectSkill(
             id=uuid.uuid4(),
             project_id=project_id,
@@ -244,7 +245,7 @@ class ProjectSkillService:
             )
         )
         if old is None:
-            raise NotFoundError("没有这一版")
+            raise NotFoundError(say("versionNotFound"))
         for key in FIELDS:
             setattr(row, key, old.content[key])
         return await self.confirm(row, by=by, note=f"恢复到第 {revision} 版")

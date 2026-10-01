@@ -237,10 +237,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
         ("app.api.routes.project_environment", "app.domain.machine.repositories"),
         ("app.api.routes.project_environment", "app.domain.user.repositories"),
-        ("app.api.routes.projects", "app.domain.block.repositories"),
         ("app.api.routes.projects", "app.domain.project.repositories"),
-        ("app.api.routes.projects", "app.domain.review.repositories"),
-        ("app.api.routes.projects", "app.domain.room_task.repositories"),
         ("app.api.routes.questions", "app.domain.answers.repositories"),
         ("app.api.routes.questions", "app.domain.discussion.repositories"),
         ("app.api.routes.questions", "app.domain.questions.repositories"),
@@ -276,7 +273,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # topics.py 的 import 里读；`ProjectMachineRepository` 只在
         # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
         # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
-        ("app.api.routes.topics_compute", "app.domain.machine.repositories"),
         # topics_messages 是从 routes/topics.py 里拆出来的那一块（房间往外说的话：
         # 发布消息、在聊天里问一道选项题、给同 handle 的另一条线程留便条，以及消息
         # @ 到队友后叫醒它的那一步）。它摸的 repository 是 `AgentTurnRepository`，

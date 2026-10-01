@@ -31,7 +31,7 @@ SECRET = "test-sandbox-token"
 def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
     calls = []
 
-    def admit(url, bearer, timeout, *, subagent=False, requested_model=""):
+    def admit(url, bearer, timeout, *, subagent=False, requested_model="", **_):
         calls.append(subagent)
         return core.Verdict(
             True,
@@ -53,7 +53,7 @@ def test_native_child_admission_does_not_reuse_its_parents_cached_supply():
 def test_two_child_model_choices_do_not_share_an_admission_cache_entry():
     calls = []
 
-    def admit(url, bearer, timeout, *, subagent=False, child_model=""):
+    def admit(url, bearer, timeout, *, subagent=False, child_model="", **_):
         calls.append(child_model)
         return core.Verdict(True, "", model=child_model)
 
@@ -218,7 +218,7 @@ def test_meter_records_and_caps_over_the_window(tmp_path):
 def test_admission_verdict_carries_the_supply_decision():
     """The same answer says both 'may it run' and 'where does it go' (#243)."""
 
-    def gateway_post(url, bearer, timeout_s):
+    def gateway_post(url, bearer, timeout_s, **_):
         return core.Verdict(True, "ok", pool=core.GATEWAY, key="sk-virt-1")
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=gateway_post)
@@ -264,7 +264,7 @@ def test_unknown_or_absent_supply_falls_back_to_the_subscription():
 def test_admission_gate_caches_and_fails_open():
     calls: list[str] = []
 
-    def fake_post(url, bearer, timeout_s):
+    def fake_post(url, bearer, timeout_s, **_):
         calls.append(bearer)
         return core.Verdict(False, "budget spent: 5.0000 of 5.0000")
 
@@ -274,7 +274,7 @@ def test_admission_gate_caches_and_fails_open():
     assert gate.check("p1", "t1", "tok").allow is False
     assert len(calls) == 1  # second answer came from the cache
 
-    def broken_post(url, bearer, timeout_s):
+    def broken_post(url, bearer, timeout_s, **_):
         raise OSError("backend down")
 
     open_gate = core.AdmissionGate("http://backend/llm/admission", post=broken_post)
@@ -288,7 +288,7 @@ def test_admission_gate_caches_and_fails_open():
 
 
 def test_relaunched_agent_does_not_reuse_its_previous_model_supply():
-    def post(url, bearer, timeout_s):
+    def post(url, bearer, timeout_s, **_):
         return core.Verdict(
             True,
             "ok",
@@ -312,7 +312,7 @@ def test_one_topics_bound_model_is_never_served_to_another():
     answers = iter(["claude-opus-5", "glm-4.6"])
     asked: list[str] = []
 
-    def post(url, bearer, timeout_s):
+    def post(url, bearer, timeout_s, **_):
         asked.append(bearer)
         return core.Verdict(True, "ok", model=next(answers))
 
@@ -336,7 +336,7 @@ def test_the_verdict_cache_does_not_grow_for_every_topic_ever_served():
         "http://backend/llm/admission",
         cache_s=0.01,
         stale_s=0.01,
-        post=lambda url, bearer, timeout_s: core.Verdict(True, "ok"),
+        post=lambda url, bearer, timeout_s, **_: core.Verdict(True, "ok"),
     )
     for i in range(50):
         gate.check("p1", f"t{i}", "tok")
@@ -355,7 +355,7 @@ def test_an_unreachable_backend_keeps_the_last_answers_route():
     clock = [1000.0]
     up = [True]
 
-    def post(url, bearer, timeout_s):
+    def post(url, bearer, timeout_s, **_):
         if not up[0]:
             raise OSError("backend down")
         return core.Verdict(
@@ -428,7 +428,7 @@ def test_two_requested_models_do_not_share_a_cached_verdict():
     谁也不许拿到上一个的绑定。"""
     calls = []
 
-    def admit(url, bearer, timeout, *, subagent=False, requested_model=""):
+    def admit(url, bearer, timeout, *, subagent=False, requested_model="", **_):
         calls.append(requested_model)
         return core.Verdict(True, "", model=requested_model)
 
@@ -1189,7 +1189,7 @@ def _codex(*chunks: bytes) -> bytes:
 _TRANSLATED = (
     b'{"input":[{"role":"user","content":[{"type":"input_text",'
     b'"text":"a } b ] c , d \\" e \\\\ \\"max_output_tokens\\": 9"}]}],'
-    b' "max_output_tokens" : 64,"model":"gpt-6-astra",'
+    b' "max_output_tokens" : 64,"model":"gpt-6-astra","user":"user_abc",'
     b'"tools":[{"name":"t","parameters":{"store":true,"max_output_tokens":1}}],'
     b'"stream":true}'
 )
@@ -1199,6 +1199,7 @@ def test_a_translated_body_goes_out_the_way_codex_takes_it():
     sent = json.loads(_codex(_TRANSLATED))
     original = json.loads(_TRANSLATED)
     del original["max_output_tokens"]
+    del original["user"]
     assert sent == {"store": False, **original}
 
 

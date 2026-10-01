@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from app.domain.agent_type.library import (
     load_type_library,
     parse_list_value,
@@ -49,7 +51,7 @@ def test_list_values_are_comma_separated_with_blanks_dropped():
 def test_load_type_library_from_dir(tmp_path: Path):
     (tmp_path / "alpha.md").write_text(
         "---\nname: alpha\ntitle: A\ndescription: d\n"
-        "skills: research, writing\nmcp_servers: grafana\n---\npersona A",
+        "skills: research, writing\n---\npersona A",
         encoding="utf-8",
     )
     # No frontmatter name → filename stem is the type name.
@@ -62,7 +64,7 @@ def test_load_type_library_from_dir(tmp_path: Path):
     assert types["alpha"].title == "A"
     assert types["alpha"].body == "persona A"
     assert types["alpha"].skills == ["research", "writing"]
-    assert types["alpha"].mcp_servers == ["grafana"]
+    assert types["alpha"].mcp_servers == []
     assert types["beta"].title == "beta"
 
 
@@ -81,6 +83,77 @@ def test_a_type_says_nothing_about_how_it_runs(tmp_path: Path):
     assert plain.body == "正文"
     assert plain.skills == []
     assert plain.mcp_servers == []
+
+
+# The frontmatter a Claude Code user writes for a subagent's MCP servers
+# (code.claude.com/docs/en/sub-agents, "mcpServers"): inline definitions keyed
+# by name, and names of servers the session already has.
+SUBAGENT_STYLE = """---
+name: browser-tester
+description: Tests features in a real browser
+mcpServers:
+  # Inline definition: scoped to this agent only
+  - playwright:
+      type: stdio
+      command: npx
+      args: ["-y", "@playwright/mcp@latest"]
+  - tracker:
+      type: http
+      url: https://mcp.example.test/mcp
+  # Reference by name: a server the session already has
+  - github
+---
+You test features in a browser.
+"""
+
+
+def test_a_type_declares_mcp_servers_as_a_claude_code_subagent_does(tmp_path: Path):
+    (tmp_path / "browser-tester.md").write_text(SUBAGENT_STYLE, encoding="utf-8")
+    tester = load_type_library(tmp_path)["browser-tester"]
+    assert tester.mcp_servers == [
+        {
+            "playwright": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest"],
+            }
+        },
+        {"tracker": {"type": "http", "url": "https://mcp.example.test/mcp"}},
+        "github",
+    ]
+    assert set(tester.inline_servers()) == {"playwright", "tracker"}
+
+
+@pytest.mark.parametrize(
+    ("entry", "problem"),
+    [
+        ("  - live:\n      type: ws\n      url: wss://x.test/mcp\n", "uses ws"),
+        ("  - broken:\n      type: stdio\n", "has no command"),
+        ("  - native:\n      command: x\n", "reserved"),
+        ("  - one: {command: a}\n    two: {command: b}\n", "a name or"),
+    ],
+)
+def test_a_server_a_room_cannot_run_is_refused_when_the_library_loads(
+    tmp_path: Path, entry: str, problem: str
+):
+    (tmp_path / "t.md").write_text(
+        f"---\nname: t\nmcpServers:\n{entry}---\nbody", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match=problem):
+        load_type_library(tmp_path)
+
+
+def test_one_server_name_is_one_server_across_the_library(tmp_path: Path):
+    """A project connects a remote server once, by name, for every teammate
+    whose type declares it, so two types cannot mean two hosts by one name."""
+    for name, url in (("a", "https://one.test/mcp"), ("b", "https://two.test/mcp")):
+        (tmp_path / f"{name}.md").write_text(
+            f"---\nname: {name}\nmcpServers:\n  - tracker:\n      url: {url}\n"
+            "---\nbody",
+            encoding="utf-8",
+        )
+    with pytest.raises(ValueError, match="defined differently"):
+        load_type_library(tmp_path)
 
 
 def test_load_type_library_missing_dir(tmp_path: Path):

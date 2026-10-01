@@ -10,6 +10,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
 let socket: {
@@ -22,6 +24,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.useFakeTimers()
   vi.stubGlobal(
     'WebSocket',
@@ -59,7 +63,7 @@ afterEach(() => {
 async function openRoom() {
   const view = render(Panel, {
     props: { topic: { id: 't1', project_id: 'p1', title: 't1', kind: 'topic' } as Topic, showComposer: true },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await vi.advanceTimersByTimeAsync(50)
   return view

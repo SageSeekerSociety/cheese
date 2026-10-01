@@ -99,6 +99,89 @@ body,
 }
 
 
+/* 侧栏里的一行：首页、空间、个人设置三处的目录都挂这个类，项目侧栏的 .nav-row
+ * （topic-sidebar/TopicRailPinnedRows.vue）是同一套数。四处侧栏长得一样，从一处切
+ * 到另一处，行高、图标、选中态都不跳。
+ *
+ * 三态：静默透明（露出侧栏的 --canvas）/ 悬停 --fill-2 / 选中 --line-2 加粗。选中
+ * 不用琥珀：琥珀在导航里只留给左栏那一格「当前在哪」和未读。 */
+.side-nav {
+  .v-list-item {
+    transition: background-color var(--dur-quick) var(--ease-standard);
+  }
+
+  /* 桌面上 36px，和项目侧栏的话题行一样高；手机上手指点的行至少 44px（§10.1）。 */
+  .v-list-item {
+    min-height: 44px;
+  }
+
+  @media (min-width: 960px) {
+    .v-list-item {
+      min-height: 36px;
+    }
+  }
+
+  .v-list-item:hover {
+    background: var(--fill-2);
+  }
+
+  .v-list-item--active,
+  .v-list-item--active:hover {
+    background: var(--line-2);
+  }
+
+  .v-list-item--active > .v-list-item__overlay {
+    opacity: 0 !important;
+  }
+
+  .v-list-item-title {
+    color: var(--text);
+    font-size: 14px;
+    line-height: var(--lh-14);
+  }
+
+  .v-list-item--active .v-list-item-title {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* 图标和字之间 8px：Vuetify 默认的 32px 把两列拉得太开。 */
+  .v-list-item__spacer {
+    width: 8px !important;
+  }
+
+  .v-list-item__prepend > .v-icon {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    color: var(--faint);
+    font-size: 16px;
+    opacity: 1;
+  }
+
+  .v-list-subheader {
+    min-height: 28px;
+    margin-top: 8px;
+    color: var(--faint);
+    font-size: 12px;
+    font-weight: 600;
+  }
+}
+
+/* 行尾的件数（待办、待审核）：属于「等你处理」那一族，所以是 --warn。 */
+.side-nav__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  color: var(--inverse-surface);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
 @property --s1 {
   syntax: '<percentage>';
   inherits: false;

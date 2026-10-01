@@ -6,6 +6,9 @@
 import type { TaskSubmissionReview } from '@/types'
 
 import { computed, toRefs } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   review: TaskSubmissionReview
@@ -22,15 +25,17 @@ const alertType = computed(() => {
 
 const alertTitle = computed(() => {
   if (!review.value || !review.value.reviewed) {
-    return '等待评审中'
+    return t('tasks.reviewStatus.pending')
   }
-  return review.value.detail.accepted ? `已通过 ${review.value.detail.score} 分` : '已驳回'
+  return review.value.detail.accepted
+    ? t('tasks.reviewStatus.passed', { score: review.value.detail.score })
+    : t('tasks.reviewStatus.rejected')
 })
 
 const alertText = computed(() => {
   if (!review.value || !review.value.reviewed) {
     return undefined
   }
-  return `评语: ${review.value.detail.comment}`
+  return t('tasks.reviewStatus.comment', { comment: review.value.detail.comment })
 })
 </script>

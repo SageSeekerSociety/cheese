@@ -199,6 +199,10 @@ const emit = defineEmits<{
 .row-glyph--unread {
   color: var(--accent);
 }
+/* 置顶行和下面的话题行、别处侧栏的行（common.scss 的 .side-nav）一样高。 */
+.nav-row.pinned-row {
+  min-height: 36px;
+}
 /* 整页形态：手指点的地方至少 44px 高。 */
 .topic-rail--page .nav-row {
   min-height: 44px;

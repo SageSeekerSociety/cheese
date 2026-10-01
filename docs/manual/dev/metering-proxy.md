@@ -47,7 +47,7 @@ covers:
 1. `tls_clienthello` 只在 regular 模式下做事：SNI 不在 `ANTHROPIC_HOSTS`（`api.anthropic.com`、`console.anthropic.com`、`platform.claude.com`）就不 MITM。
 2. `requestheaders`：按 SNI 定 host，正文流式转发不落盘；从 scoped token 的已验证 claims 认领 project/topic；`/v1/messages` 且带 `x-claude-code-agent-id` 或 `x-claude-code-request-class` ∈ {subagent, workflow} 的判为分身请求，取走 `x-cheese-child-model`。
 3. 分身请求如果没带子模型、且 `Content-Length` 不超过 `DEFER_BODY_LIMIT`（8 MiB），这一步先不转发，把正文整个缓冲下来，等 `request` 钩子里读到顶层 `model` 再决定——缓冲意味着正文整份占代理的 RAM，所以有上限，不然这就是个调用方可控的 OOM 旋钮。主对话从不缓冲。
-4. 每个 `/v1/messages` 都先调一次 `POST /llm/admission`（`AdmissionGate`：进程内缓存 30 秒，超时 3 秒，缓存键含 project/topic/bearer 的 sha256/分身/请求模型）。
+4. 每个 `/v1/messages` 都先调一次 `POST /llm/admission`，带会话的 scoped token 和代理自己的凭据 `CHEESE_SCOPED_SECRET`（作 `X-Cheese-Token`；不带就拿不到网关 key）（`AdmissionGate`：进程内缓存 30 秒，超时 3 秒，缓存键含 project/topic/bearer 的 sha256/分身/请求模型）。
 5. 按判定走三条路：订阅路（默认，换完凭证与模型名之后转发给 Anthropic）、网关路（`_route_to_gateway`：换 host/scheme/port、清掉 `flow.server_conn.via`、`Authorization: Bearer <项目虚拟 key>`、删掉 `x-api-key`）、拒。
 
 ## 拒谁、怎么拒 {#refuse}

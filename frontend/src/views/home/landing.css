@@ -17,6 +17,11 @@
   text-decoration: none;
 }
 
+/* An anchor lands below the sticky bar, not under it. */
+.landing [id] {
+  scroll-margin-top: var(--bar-h);
+}
+
 .landing h1,
 .landing h2,
 .landing h3,
@@ -45,32 +50,6 @@
   display: inline-flex;
   flex: none;
   color: var(--ink);
-  white-space: nowrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.brand-mark {
-  width: 26px;
-  height: 26px;
-  background: var(--ink);
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-}
-
-.brand-word {
-  font-family: var(--font-display);
-  font-size: 23px;
-  font-weight: 700;
-  line-height: var(--lh-23);
-  letter-spacing: -0.02em;
-}
-
-.brand-cn {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
 }
 
 .site-nav {
@@ -161,10 +140,54 @@
 }
 
 .hero-position {
+  max-width: 24em;
   font-size: clamp(23px, 2.8vw, 44px);
   font-weight: 500;
   line-height: 1.3;
   color: var(--ink);
+  text-wrap: balance;
+}
+
+/* English display type. The sizes above are tuned for four to six Chinese
+   characters, each a full em wide and set with open tracking; the same sizes
+   turn an English line of twenty letters into two lines spanning the page. Latin
+   display type is set smaller, tracked tighter and held to a measure in `ch`, so
+   it reads as a headline rather than a wall. */
+.landing:lang(en) .hero-title {
+  max-width: 14ch;
+  font-size: clamp(48px, 7.5vw, 120px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .hero-position {
+  max-width: 44ch;
+  font-size: clamp(18px, 1.8vw, 26px);
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .people-title,
+.landing:lang(en) .solutions-title {
+  max-width: 18ch;
+  font-size: clamp(40px, 5vw, 72px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .vision-quote p {
+  font-size: clamp(36px, 4.4vw, 64px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing:lang(en) .cta-title {
+  max-width: 20ch;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
 }
 
 .hero-actions {
@@ -825,13 +848,9 @@
 }
 
 /* A phone is too narrow for the lockup and both buttons at their full padding.
-   The lockup keeps its shape (`.brand` never shrinks, so 知是 never stacks into a
-   column); the buttons and gaps give up the room instead. */
+   The lockup keeps its shape (`.brand` never shrinks); the buttons and gaps give
+   up the room instead. */
 @media (width <= 420px) {
-  .brand {
-    gap: 6px;
-  }
-
   .site-actions {
     gap: 8px;
   }
@@ -846,14 +865,8 @@
 }
 
 @media (width <= 374px) {
-  .brand-mark {
-    width: 22px;
-    height: 22px;
-  }
-
-  .brand-word {
-    font-size: 18px;
-    line-height: var(--lh-18);
+  .brand {
+    --brand-h: 22px;
   }
 }
 

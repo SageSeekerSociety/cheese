@@ -214,8 +214,8 @@ export interface ListPayload<T> {
 
 /** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。
  *
- *  `displayStatus` 就是看板卡面上那一句，后端算好的 —— 前端不做第二张映射表，理由
- *  和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
+ *  `phrase` 就是看板卡面上那一句的码，后端算好的 —— 前端不推状态，理由和
+ *  `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
  *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
  *  待回答的问题上 (`asked`)。 */
 export interface WaitingItem {
@@ -225,7 +225,7 @@ export interface WaitingItem {
   topicTitle: string
   taskId: string | null
   taskTitle: string | null
-  displayStatus: string
+  phrase: BoardPhrase
   reason: 'reviewer' | 'reporter' | 'asked'
   at: string
 }
@@ -312,15 +312,15 @@ export interface RoomTask {
  */
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-/** 后端算好的呈现，前端照抄。
- *
- *  `display_status` 已经是可以直接显示的中文，**前端不再做第二张映射表**——这正是
- *  这个字段存在的理由。同一个客观事实（比如快检红了）在不同的列里是不同的话：平台
- *  自己在修时是「修复检查」，等人拍板时是「检查未通过」，所以短语属于列，一列只会
- *  产出属于它自己的那几个词。前端再映射一次，两边就会各说各的。 */
+type BuildingPhrase = 'running' | 'started' | 'not_started' | 'returned' | 'idle' | 'draft' | 'lost'
+type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
+type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
+export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | 'accepted' | 'closed' | 'archived'
+
+/** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {
   column: BoardColumn
-  display_status: string
+  phrase: BoardPhrase
 }
 
 /** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
@@ -1120,7 +1120,7 @@ export interface EnvironmentStatus {
 }
 
 export interface ComputeChoice {
-  name: string
+  name: string | null
   profile: 'cloud' | 'device'
   device_id: string | null
   cores: number | null
@@ -1161,7 +1161,7 @@ export interface DeviceSession {
 
 export interface ComputeDistribution {
   cloud: number
-  devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]
+  devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)
@@ -1304,7 +1304,8 @@ export interface AgentType {
   // The system prompt this type runs under (角色设定).
   body: string
   skills: string[]
-  mcp_servers: string[]
+  // Claude Code's subagent `mcpServers`: a server name, or { name: definition }.
+  mcp_servers: (string | Record<string, Record<string, unknown>>)[]
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1317,7 +1318,6 @@ export interface AgentType {
 export interface AgentConfiguration {
   body: string
   skills: string[]
-  mcp_servers: string[]
   model?: string | null
 }
 
@@ -1354,7 +1354,7 @@ export interface ProjectAgent {
 //     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
 export type FeedbackKind = 'bug' | 'suggestion' | 'other'
 /** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
-export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed'
+export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed' | 'declined'
 export type FeedbackVisibility = 'public' | 'private'
 export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
 
@@ -1503,14 +1503,14 @@ export interface FeedbackMeta {
   /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
    *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
    *  分、一个支持几天打对折、不够线时至少补几条。
-   *
    *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
    *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
    *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
   hot_score: number
   hot_half_life_days: number
   hot_min_items: number
-  is_admin: boolean
+  is_admin: boolean // 反馈管理员（队列、私密反馈）
+  is_platform_admin: boolean // 平台管理员（管理台其余各块）；两份名单互不包含
 }
 
 export interface FeedbackSupportResult {

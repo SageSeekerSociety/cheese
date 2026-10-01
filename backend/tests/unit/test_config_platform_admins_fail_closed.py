@@ -6,23 +6,16 @@ settings list (env name ``PLATFORM_ADMIN_HANDLES``; it was
 alias tests at the bottom). There is no role behind it (nothing in the product
 assigns ``SystemRole.SUPER_ADMIN``), no default member set, and no way to promote
 yourself from the UI. So an empty list on a deployment is not "we have not
-appointed an admin yet" — it is a feedback queue that accepts submissions and
-can never be worked, and nothing inside the running system can tell that apart
-from "nobody has picked this up yet":
-
-- a submitter watches their report sit at 已收录 with no way to know it is not
-  going to move;
-- the operator opens the admin page and reads "你的账号不在管理员名单里", a
-  sentence that names the wrong problem;
-- the agent proposal path keeps spending its daily quota on proposals nobody
-  can act on.
+appointed an admin yet" — it is a deployment whose admin screens nobody can
+ever open, including the one screen that adds the next admin, and nothing
+inside the running system can tell that apart from a working setup.
 
 The fix is the same shape as #338/#439's JWT guard: make the silently-degrading
 case a loud, boot-time event, and decide "is this a deployment" from the same
 two signals (``deployed_via_compose`` first, then ``environment``).
 
 Local dev and the test suite set neither signal, so they keep the empty default
-and the whole feedback feature stays usable there — only the admin console is
+and everything else stays usable there — only the admin console is
 unreachable, which is the correct local state.
 """
 
@@ -54,7 +47,7 @@ def test_deployment_rejects_an_empty_admin_list(environment: str) -> None:
         _build(environment=environment, jwt_secret=_REAL_SECRET)
     message = str(excinfo.value)
     assert "PLATFORM_ADMIN_HANDLES" in message
-    assert "/admin/feedback" in message
+    assert "admin screens" in message
 
 
 def test_compose_deployment_rejects_it_even_when_environment_says_development() -> None:

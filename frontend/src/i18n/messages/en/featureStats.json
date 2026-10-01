@@ -4,7 +4,7 @@
     "subtitle": "Each feature's own data page: one screen that says how it is doing",
     "noNumbers": "This page lists features and carries no numbers at all — the numbers live on their own pages, so there is only one place to keep right.",
     "empty": "No feature has a data page yet.",
-    "loadFailed": "Could not read the feature list.",
+    "loadFailed": "Feature data failed to load",
     "retry": "Retry",
     "notBuilt": "Not built yet",
     "unknown": "This feature has no data page yet",

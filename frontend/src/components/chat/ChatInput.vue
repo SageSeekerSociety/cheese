@@ -25,7 +25,7 @@
         density="compact"
         variant="plain"
         class="chat-input-field"
-        placeholder="输入您的问题..."
+        :placeholder="t('aiChat.inputPlaceholder')"
         @keydown.enter="onKeyDown"
       ></v-textarea>
     </div>
@@ -40,7 +40,7 @@
             prepend-icon="mdi-brain"
             @click="toggleModelType"
           >
-            <span>深度思考</span>
+            <span>{{ t('aiChat.deepThinking') }}</span>
           </v-chip>
         </div>
       </div>
@@ -56,7 +56,7 @@
         @click="onSubmit"
       >
         <v-icon>mdi-send</v-icon>
-        <v-tooltip activator="parent" location="top">发送</v-tooltip>
+        <v-tooltip activator="parent" location="top">{{ t('aiChat.send') }}</v-tooltip>
       </v-btn>
     </div>
   </div>
@@ -66,6 +66,8 @@
 import { computed } from 'vue'
 
 import { ContextChip } from './types'
+
+import { t } from '@/i18n'
 
 // 直接使用导入的接口定义
 const props = defineProps<{

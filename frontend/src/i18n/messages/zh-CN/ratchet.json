@@ -1,0 +1,111 @@
+{
+  "page": {
+    "title": "棘轮",
+    "subtitle": "架构还债进度：每道检查现在是多少、冻结了多少、比起点好了还是差了"
+  },
+  "action": {
+    "refresh": "刷新",
+    "refreshing": "拉取中…"
+  },
+  "prov": {
+    "collected": "采集提交",
+    "commitTime": "采集时间",
+    "archived": "已归档 {count} 次采集",
+    "deployed": "部署提交",
+    "run": "这次采集的 CI run",
+    "collectionFailed": "最近一次采集失败了：{reason}。下面各行画的就是这一次的答案——空着的意思是没量到，不是 0。",
+    "collectionFailedNoReason": "最近一次采集失败了，快照里没写原因。下面各行画的就是这一次的答案——空着的意思是没量到，不是 0。"
+  },
+  "note": {
+    "singlePoint": "归档从这次开始：现在只有一次采集，走势要等第二次才有。"
+  },
+  "legend": {
+    "actual": "「现在」是检查器自己报的数",
+    "notCollected": "没跑到：这次采集里没有这道检查，不写成 0",
+    "frozen": "「冻结」是基线文件里登记的豁免数，和实际欠多少是两件事",
+    "ruleChanged": "规则变更：判定文件变了，前后不比",
+    "newExemptions": "新增豁免：冻结数比上次多，是一次决定不是一次发现",
+    "stale": "失效豁免：登记了，树上已经没有对应物",
+    "failed": "采集失败：那次 run 没采到数"
+  },
+  "table": {
+    "check": "检查",
+    "actual": "现在",
+    "frozen": "冻结",
+    "stale": "失效豁免",
+    "change": "较同口径起点",
+    "verdict": "判断"
+  },
+  "value": {
+    "notCollected": "没跑到",
+    "staleCount": "{count} 条",
+    "noSecondPoint": "只有一个点",
+    "noSecondPointHint": "归档里只有一个同口径的点，比不出变化",
+    "holeBlocksCompare": "隔着一次没跑到",
+    "holeBlocksCompareHint": "中间有一次没采到数，不跨过它和更早的点比 —— 那样减出来的变化没人量过"
+  },
+  "direction": {
+    "improving": "在还债",
+    "worse": "在变差",
+    "flat": "没动",
+    "unknown": "还比不出来"
+  },
+  "mark": {
+    "ruleChanged": "规则变更",
+    "ruleStarted": "新口径起点",
+    "newExemptions": "新增豁免 {count}",
+    "collectionFailed": "采集失败"
+  },
+  "detail": {
+    "fingerprint": "规则指纹",
+    "reason": "数据从哪来",
+    "stale": "失效豁免（登记了，树上已经没有对应物）",
+    "timeline": "采集时间线",
+    "details": "明细",
+    "noDetails": "这道检查没有逐条明细"
+  },
+  "timeline": {
+    "when": "时间",
+    "commit": "提交",
+    "marks": "标记"
+  },
+  "area": {
+    "scenes": "能独立运行的前端场景",
+    "boundaries": "前后端依赖边界",
+    "size": "文件规模",
+    "types": "类型与样式",
+    "count": "{count} 道检查",
+    "passed": "{passed} 道通过"
+  },
+  "check": {
+    "sceneRatchet": "能独立运行的前端场景",
+    "feBoundary": "前端边界",
+    "beContracts": "后端契约",
+    "domainImportGuard": "领域导入守卫",
+    "harnessBoundary": "测试骨架边界",
+    "isPrivateReadPoints": "私有读取点",
+    "fileSizes": "文件规模",
+    "vueTsc": "Vue 类型检查",
+    "stylelintTokens": "样式令牌",
+    "palette": "调色板"
+  },
+  "pull": {
+    "done": "CI 上有 {listed} 份工件，新存了 {stored} 次，{already} 次已经存过",
+    "failed": "这次没拉到：{error}",
+    "unreachable": "没拉到：请求本身失败了，先看看服务端。"
+  },
+  "state": {
+    "empty": "还没有一次采集",
+    "emptyDesc": "归档里一条记录都没有。点一下从 CI 拉；拉不到会说清原因，不会画成「一切正常」。",
+    "emptyAction": "去拉一次",
+    "loadFailed": "归档读不出来",
+    "loadFailedDesc": "这是读取失败，不是「还没有采集」——两件事，两句话。",
+    "retry": "重试",
+    "noMeasurements": "这次没有可用的测量",
+    "noMeasurementsFailed": "最近一次采集失败了：{reason}。最近 {count} 次采集里没有一次留下可用的测量——空着的意思是「没量到」，不是 0。",
+    "noMeasurementsPlain": "最近 {count} 次采集里没有一次留下可用的测量——空着的意思是「没量到」，不是 0。"
+  },
+  "foot": {
+    "source": "检查清单与判定都在仓库里（{repo}）；这一页只画它们自己报的数。"
+  }
+}

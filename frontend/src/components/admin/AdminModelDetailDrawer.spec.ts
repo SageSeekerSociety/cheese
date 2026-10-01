@@ -22,11 +22,17 @@ const getGatewayModel = vi.fn()
 vi.mock('@/api', () => ({
   getGatewayModel: (...a: unknown[]) => getGatewayModel(...a),
 }))
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key),
-  }),
-}))
+// Keep the real module (the catalog in `@/i18n` is built with its `createI18n`);
+// only the component's own `useI18n` is swapped for a key echo.
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return {
+    ...actual,
+    useI18n: () => ({
+      t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key),
+    }),
+  }
+})
 
 import AdminModelDetailDrawer from './AdminModelDetailDrawer.vue'
 

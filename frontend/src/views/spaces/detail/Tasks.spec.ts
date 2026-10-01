@@ -5,6 +5,8 @@
 // 3. 「我发布的」要看得到还没过审的题：通用列表只给已通过的，所以这一格读的是
 //    「我发布的题目」接口，那里的待审核题目得出现在屏幕上。
 // 4. 「只看待处理」只留有报名待审核或提交待评审的题，也写在地址里。
+//
+// 另有两条筛选：话题可以多选，列表要的是「带其中任一个」；搜索按回车才查。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -14,7 +16,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const taskList = vi.fn()
 const myPublished = vi.fn()
@@ -25,7 +27,14 @@ vi.mock('@/network/api/tasks', () => ({
 
 vi.mock('@/network/api/spaces', () => ({
   SpacesApi: {
-    getSpaceTopics: async () => ({ data: { topics: [] } }),
+    getSpaceTopics: async () => ({
+      data: {
+        topics: [
+          { id: 3, name: '深度学习' },
+          { id: 4, name: '计算机视觉' },
+        ],
+      },
+    }),
     listCategories: async () => ({
       data: { categories: [{ id: 7, name: '第 1 章', displayOrder: 0, archivedAt: null }] },
     }),
@@ -34,18 +43,6 @@ vi.mock('@/network/api/spaces', () => ({
 }))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
-
-// 卡片本身不是这里要测的：只画题目名。
-vi.mock('@/components/TaskCard.vue', async () => {
-  const { defineComponent, h } = await import('vue')
-  return {
-    __esModule: true,
-    default: defineComponent({
-      props: { task: { type: Object, required: true } },
-      setup: (props) => () => h('div', (props.task as { name: string }).name),
-    }),
-  }
-})
 
 import Tasks from './Tasks.vue'
 
@@ -56,7 +53,19 @@ const SPACE_ID = 11
 const Blank = defineComponent({ render: () => h('div') })
 
 function task(id: number, name: string) {
-  return { id, name, topics: [], joined: false }
+  return {
+    id,
+    name,
+    intro: '',
+    topics: [],
+    joined: false,
+    approved: 'APPROVED',
+    deadline: null,
+    participantLimit: 0,
+    participants: { total: 0, examples: [] },
+    creator: { id: 1, username: 'alice', nickname: 'Alice' },
+    createdAt: 1,
+  }
 }
 
 function publishedTask(taskId: number, taskName: string, overrides: Record<string, unknown> = {}) {
@@ -174,5 +183,72 @@ describe('题目列表的范围', () => {
     await waitFor(() => expect(router.currentRoute.value.query).toMatchObject({ filter: 'publishing', pending: '1' }))
     await waitFor(() => expect(screen.queryByText('没有待处理的题')).toBeNull())
     expect(screen.getByText('有提交待评审的题')).toBeTruthy()
+  })
+
+  it('待评审的提交带出题人去「领取者」页签处理', async () => {
+    myPublished.mockImplementation(async () => ({
+      data: { tasks: [publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 2 })] },
+    }))
+    const router = await mount({ filter: 'publishing' })
+
+    await fireEvent.click(await screen.findByText(/2 个待评审/))
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('TasksParticipants'))
+    expect(router.currentRoute.value.params).toMatchObject({ taskId: '6' })
+  })
+})
+
+describe('题目列表的话题与搜索', () => {
+  // 话题下拉是一个 VOverlay，happy-dom 没有 visualViewport，不补上菜单打不开。
+  beforeAll(() => {
+    vi.stubGlobal('visualViewport', {
+      width: 1024,
+      height: 768,
+      offsetLeft: 0,
+      offsetTop: 0,
+      addEventListener() {},
+      removeEventListener() {},
+    })
+    vi.stubGlobal('devicePixelRatio', 1)
+  })
+  afterAll(() => vi.unstubAllGlobals())
+
+  beforeEach(() => {
+    setLocale('zh-CN')
+    taskList.mockImplementation(async () => ({
+      data: { tasks: [task(1, '一道题')], page: { hasMore: false, nextStart: null } },
+    }))
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('话题可以多选，取消全部选择后不再按话题筛', async () => {
+    await mount()
+    await waitFor(() => expect(screen.getByText('一道题')).toBeTruthy())
+
+    await fireEvent.click(screen.getByRole('button', { name: /全部话题/ }))
+    await fireEvent.click(await screen.findByText('深度学习'))
+    await fireEvent.click(screen.getByText('计算机视觉'))
+
+    await waitFor(() => expect(taskList).toHaveBeenLastCalledWith(expect.objectContaining({ topics: [3, 4] })))
+
+    await fireEvent.click(screen.getByText('清除选择'))
+    await waitFor(() => expect(taskList).toHaveBeenLastCalledWith(expect.objectContaining({ topics: undefined })))
+  })
+
+  it('搜索按回车才查', async () => {
+    await mount()
+    await waitFor(() => expect(taskList).toHaveBeenCalled())
+    const calls = taskList.mock.calls.length
+
+    const box = screen.getByRole('searchbox')
+    await fireEvent.update(box, '风格迁移')
+    expect(taskList.mock.calls.length).toBe(calls)
+
+    await fireEvent.submit(box.closest('form')!)
+    await waitFor(() => expect(taskList).toHaveBeenLastCalledWith(expect.objectContaining({ keywords: '风格迁移' })))
   })
 })

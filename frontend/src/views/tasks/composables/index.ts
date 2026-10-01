@@ -1,4 +1,5 @@
 export { useAIChat } from './useAIChat'
+export { useTaskAttachments } from './useTaskAttachments'
 export { useTaskData } from './useTaskData'
 export { useTaskManagement } from './useTaskManagement'
 export { useTaskParticipation } from './useTaskParticipation'

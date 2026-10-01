@@ -50,6 +50,7 @@ const NEXT: Record<FeedbackStatus, FeedbackStatus | null> = {
   in_progress: 'resolved',
   resolved: 'deployed',
   deployed: null,
+  declined: null,
 }
 
 /** 按钮文案。按**目标**状态取，不按当前状态：按钮说出口的是它要做的那件事。 */
@@ -58,6 +59,7 @@ const ADVANCE_LABEL: Record<FeedbackStatus, string> = {
   resolved: 'feedback.queue.advance.resolved',
   deployed: 'feedback.queue.advance.deployed',
   received: '',
+  declined: '',
 }
 
 const rowId = computed(() => `fbrow-${props.item.id}`)

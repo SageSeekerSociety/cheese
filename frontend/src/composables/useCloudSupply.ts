@@ -6,6 +6,7 @@
 import { ref } from 'vue'
 
 import { request } from '@/api'
+import { t } from '@/i18n'
 
 export interface SupplyBound {
   min: number
@@ -45,7 +46,10 @@ export function useCloudSupply(projectId: () => string) {
       try {
         supply.value = await getCloudSupply(projectId())
       } catch (e) {
-        supply.value = { available: false, reason: e instanceof Error ? e.message : '请求失败' }
+        supply.value = {
+          available: false,
+          reason: e instanceof Error ? e.message : t('work.cloudSupply.requestFailed'),
+        }
       } finally {
         loading.value = false
         inflight = null

@@ -7,9 +7,9 @@
             <v-icon color="primary" size="28">mdi-upload</v-icon>
           </div>
         </template>
-        <v-card-title class="text-h6 ps-0">提交表单</v-card-title>
+        <v-card-title class="text-h6 ps-0">{{ t('tasks.submit.formTitle') }}</v-card-title>
         <template #append>
-          <CountdownTimer v-if="userDeadline" :deadline="userDeadline" label="提交剩余时间" />
+          <CountdownTimer v-if="userDeadline" :deadline="userDeadline" :label="t('tasks.submit.timeLeft')" />
         </template>
       </v-card-item>
 
@@ -17,26 +17,26 @@
 
       <v-card-text class="py-6">
         <v-alert v-if="!taskData?.submittable" type="warning" class="mb-6" variant="tonal">
-          当前不可提交，请联系题目发布者获取提交权限。
+          {{ t('tasks.submit.notSubmittable') }}
         </v-alert>
 
         <v-alert v-else-if="!hasValidIdentity" type="warning" class="mb-6" variant="tonal">
-          <template #title>无可用身份</template>
+          <template #title>{{ t('tasks.submit.noIdentityTitle') }}</template>
           <template #text>
-            <p>您没有可用于提交的身份。可能是因为您尚未加入该题目或者您的身份尚未获得批准。</p>
+            <p>{{ t('tasks.submit.noIdentityText') }}</p>
           </template>
         </v-alert>
 
         <v-alert v-else-if="reachedSubmissionLimit" type="warning" class="mb-6" variant="tonal">
-          <template #title>已达到提交次数上限</template>
+          <template #title>{{ t('tasks.submit.limitTitle') }}</template>
           <template #text>
-            <p>该题目不允许重复提交，您已经提交过作品。</p>
+            <p>{{ t('tasks.submit.limitText') }}</p>
             <div class="mt-2">
               <v-btn
                 color="primary"
                 variant="text"
                 :to="{ name: routeNames.submissions, params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
-                >查看我的提交记录</v-btn
+                >{{ t('tasks.submit.viewMine') }}</v-btn
               >
             </div>
           </template>
@@ -46,13 +46,19 @@
           <!-- 如果有多个可提交身份，显示选择器 -->
           <v-card class="mb-6" variant="outlined">
             <v-card-text>
-              <div class="text-subtitle-1 font-weight-medium mb-3">请选择您要使用的提交身份：</div>
+              <div class="text-subtitle-1 font-weight-medium mb-3">{{ t('tasks.submit.chooseIdentity') }}</div>
               <v-radio-group v-model="selectedIdentityId" class="mt-2">
                 <v-radio
                   v-for="identity in submissionIdentities"
                   :key="identity.id"
                   :value="identity.id"
-                  :label="identity.type === 'TEAM' ? `队伍: ${identity.teamName || '未命名队伍'}` : '个人身份'"
+                  :label="
+                    identity.type === 'TEAM'
+                      ? t('tasks.submissions.teamIdentity', {
+                          name: identity.teamName || t('tasks.submissions.unnamedTeam'),
+                        })
+                      : t('tasks.submit.individualIdentity')
+                  "
                 ></v-radio>
               </v-radio-group>
             </v-card-text>
@@ -79,9 +85,9 @@
                         v-model="submissionContent[index].contentText"
                         autocomplete="off"
                         :label="entry.prompt"
-                        :placeholder="`请输入${entry.prompt}`"
+                        :placeholder="t('tasks.submit.enterPlaceholder', { prompt: entry.prompt })"
                         variant="outlined"
-                        :rules="[(v) => !!v || '此项为必填项']"
+                        :rules="[(v) => !!v || t('tasks.submit.required')]"
                         hide-details="auto"
                         class="submission-input"
                       ></v-textarea>
@@ -91,9 +97,9 @@
                       <v-file-input
                         v-model="submissionContent[index].contentAttachment"
                         :label="entry.prompt"
-                        :placeholder="`请上传${entry.prompt}`"
+                        :placeholder="t('tasks.submit.uploadPlaceholder', { prompt: entry.prompt })"
                         variant="outlined"
-                        :rules="[(v) => !!v || '此项为必填项']"
+                        :rules="[(v) => !!v || t('tasks.submit.required')]"
                         hide-details="auto"
                         prepend-icon=""
                         class="submission-input"
@@ -126,7 +132,7 @@
                 class="px-8"
               >
                 <v-icon start>mdi-check</v-icon>
-                提交
+                {{ t('tasks.submit.submit') }}
               </v-btn>
             </div>
           </div>
@@ -141,24 +147,22 @@
             <v-icon color="info" size="28">mdi-information-outline</v-icon>
           </div>
         </template>
-        <v-card-title class="text-h6 ps-0">提交须知</v-card-title>
+        <v-card-title class="text-h6 ps-0">{{ t('tasks.submit.guideTitle') }}</v-card-title>
       </v-card-item>
 
       <v-card-text>
         <v-list>
           <v-list-item prepend-icon="mdi-check-circle-outline" class="ps-2">
-            <v-list-item-title>确保您的提交内容符合题目要求，并且所有必填项均已填写完整</v-list-item-title>
+            <v-list-item-title>{{ t('tasks.submit.guideRequirements') }}</v-list-item-title>
           </v-list-item>
           <v-list-item prepend-icon="mdi-file-upload-outline" class="ps-2">
-            <v-list-item-title>上传的文件大小不得超过50MB，支持常见文档和压缩包格式</v-list-item-title>
+            <v-list-item-title>{{ t('tasks.submit.guideFileSize') }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="taskData?.resubmittable" prepend-icon="mdi-refresh" class="ps-2">
-            <v-list-item-title>该题目允许多次提交，您可以在截止日期前多次更新您的作品</v-list-item-title>
+            <v-list-item-title>{{ t('tasks.submit.guideMultiple') }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-else prepend-icon="mdi-alert-circle-outline" class="ps-2">
-            <v-list-item-title class="text-warning"
-              >该题目仅允许提交一次，提交后将无法修改，请谨慎操作</v-list-item-title
-            >
+            <v-list-item-title class="text-warning">{{ t('tasks.submit.guideOnce') }}</v-list-item-title>
           </v-list-item>
         </v-list>
       </v-card-text>
@@ -169,7 +173,7 @@
       <v-card rounded="lg" class="pa-6">
         <v-card-title class="text-h6 d-flex align-center pb-3">
           <v-icon color="primary" class="mr-3">mdi-cloud-upload</v-icon>
-          正在上传提交内容
+          {{ t('tasks.submit.uploadingTitle') }}
         </v-card-title>
 
         <v-card-text class="pt-3">
@@ -201,12 +205,12 @@
               </div>
               <div class="d-flex align-center">
                 <v-icon size="small" class="mr-1">mdi-clock-outline</v-icon>
-                剩余 {{ timeRemaining }}
+                {{ t('tasks.submit.remaining', { time: timeRemaining }) }}
               </div>
             </div>
           </div>
 
-          <div class="text-body-2 text-medium-emphasis text-center">上传完成后将自动进行下一步</div>
+          <div class="text-body-2 text-medium-emphasis text-center">{{ t('tasks.submit.uploadNext') }}</div>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -218,6 +222,7 @@ import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network
 import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
@@ -225,6 +230,8 @@ import { throttle } from 'lodash-es'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
+
+const { t } = useI18n()
 
 const CountdownTimer = defineAsyncComponent(() => import('@/components/common/CountdownTimer.vue'))
 
@@ -322,11 +329,14 @@ const updateProgress = throttle((progressEvent: any) => {
   // 计算剩余时间
   const remaining = (total - loaded) / speed
   if (remaining < 60) {
-    timeRemaining.value = `${Math.ceil(remaining)}秒`
+    timeRemaining.value = t('tasks.submit.seconds', { n: Math.ceil(remaining) })
   } else if (remaining < 3600) {
-    timeRemaining.value = `${Math.ceil(remaining / 60)}分钟`
+    timeRemaining.value = t('tasks.submit.minutes', { n: Math.ceil(remaining / 60) })
   } else {
-    timeRemaining.value = `${Math.floor(remaining / 3600)}小时${Math.ceil((remaining % 3600) / 60)}分钟`
+    timeRemaining.value = t('tasks.submit.hoursMinutes', {
+      h: Math.floor(remaining / 3600),
+      m: Math.ceil((remaining % 3600) / 60),
+    })
   }
 }, 200)
 
@@ -361,9 +371,9 @@ watch(
 const getTypeText = (type: string) => {
   switch (type) {
     case 'TEXT':
-      return '文本输入'
+      return t('tasks.submit.typeText')
     case 'FILE':
-      return '文件上传'
+      return t('tasks.submit.typeFile')
     default:
       return type
   }
@@ -397,7 +407,7 @@ const submitTask = async () => {
   })
 
   if (!isFormValid) {
-    toast.error('请填写完整所有必填项')
+    toast.error(t('tasks.submit.fillRequired'))
     return
   }
 
@@ -425,7 +435,7 @@ const submitTask = async () => {
           currentFileName.value = entry.contentAttachment.name
           uploadProgress.value = 0
           uploadSpeed.value = '0 KB/s'
-          timeRemaining.value = '计算中...'
+          timeRemaining.value = t('tasks.submit.calculating')
 
           const { data } = await AttachmentsApi.upload(
             {
@@ -438,7 +448,11 @@ const submitTask = async () => {
           finalSubmissionContent[index].attachmentId = data.id
           uploadedFiles++
         } catch (error) {
-          toast.error(`上传附件失败: ${error instanceof Error ? error.message : '未知错误'}`)
+          toast.error(
+            t('tasks.submit.uploadFailed', {
+              error: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
+            })
+          )
           progressDialog.value = false
           submitting.value = false
           return
@@ -448,7 +462,7 @@ const submitTask = async () => {
 
     // 使用参与者ID而不是成员ID进行提交
     await TasksApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
-    toast.success('提交成功')
+    toast.success(t('tasks.submit.submitted'))
 
     // 跳转到提交记录页面
     router.push({
@@ -456,7 +470,9 @@ const submitTask = async () => {
       params: { spaceId: props.taskData.space?.id, taskId: props.taskData.id },
     })
   } catch (error) {
-    toast.error(`提交失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    toast.error(
+      t('tasks.submit.submitFailed', { error: error instanceof Error ? error.message : t('tasks.submit.unknownError') })
+    )
   } finally {
     progressDialog.value = false
     submitting.value = false

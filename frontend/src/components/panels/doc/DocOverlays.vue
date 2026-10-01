@@ -21,6 +21,8 @@ import { CellSelection } from '@tiptap/pm/tables'
 import { contentBlocks } from './docBlocks'
 import DocSlashMenu from './DocSlashMenu.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     editor?: CoreEditor | null
@@ -84,8 +86,8 @@ function updateCommentCta(ed: CoreEditor) {
       // and the paragraph anchor = the table's own top-level node index.
       const parts: string[] = []
       sel.forEachCell((cell) => {
-        const t = cell.textContent.trim()
-        if (t) parts.push(t)
+        const text = cell.textContent.trim()
+        if (text) parts.push(text)
       })
       quote = parts.join(' ')
       const a = ed.view.coordsAtPos(sel.$anchorCell.pos + 1)
@@ -232,7 +234,7 @@ watch(
 )
 
 function currentCodeLang(): string {
-  return codeCopyPre?.getAttribute('data-language') || '语言'
+  return codeCopyPre?.getAttribute('data-language') || t('work.room.doc.language')
 }
 
 function setCodeBlockLang(lang: string) {
@@ -269,7 +271,7 @@ async function copyCodeBlock() {
       if (codeCopy.value) codeCopy.value = { ...codeCopy.value, done: false }
     }, 1200)
   } catch {
-    emit('error', '复制失败')
+    emit('error', t('work.room.doc.copyFailed'))
   }
 }
 
@@ -330,12 +332,12 @@ defineExpose({ onHover, onEdited })
     type="button"
     class="doc-comment-cta"
     :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-    title="评论选中内容"
+    :title="t('work.room.doc.commentOnSelection')"
     @mousedown.prevent
     @click="commentOnSelection"
   >
     <v-icon size="14">mdi-comment-plus-outline</v-icon>
-    评论
+    {{ t('work.room.comments.comment') }}
   </button>
   <!-- Notion-style slash menu: anchored to the caret (suggestion
      clientRect), wrap-relative like the other overlays. Keyboard
@@ -369,7 +371,7 @@ defineExpose({ onHover, onEdited })
       type="button"
       class="doc-codecopy"
       :class="{ 'doc-codecopy--done': codeCopy.done }"
-      :title="codeCopy.done ? '已复制' : '复制代码'"
+      :title="codeCopy.done ? t('work.room.doc.copied') : t('work.room.doc.copyCode')"
       @mousedown.prevent
       @click="copyCodeBlock"
     >
@@ -391,14 +393,14 @@ defineExpose({ onHover, onEdited })
     <button
       type="button"
       class="doc-handle__btn doc-handle__add"
-      title="在下方插入块"
+      :title="t('work.room.doc.insertBelow')"
       draggable="false"
       @dragstart.stop.prevent
       @click="addBlockBelow"
     >
       <v-icon size="15">mdi-plus</v-icon>
     </button>
-    <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
+    <span class="doc-handle__btn doc-handle__grip" :title="t('work.room.doc.dragToReorder')">
       <v-icon size="15">mdi-drag-vertical</v-icon>
     </span>
   </DragHandle>

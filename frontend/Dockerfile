@@ -26,6 +26,9 @@ ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__
 ENV VITE_CONNECTOR_WS_BASE=__VITE_CONNECTOR_WS_BASE__
+# The commit this build is made from, shown in the desktop app's 关于 dialog.
+ARG GIT_SHA=
+ENV VITE_WEB_BUILD=$GIT_SHA
 # The fusion bundle outgrew Node's default ~2 GB heap — `vite build` OOM-killed
 # the CI runner (exit 134, "Reached heap limit"). Raise the old-space cap.
 ENV NODE_OPTIONS=--max-old-space-size=4096

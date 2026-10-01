@@ -12,7 +12,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { ApiError, editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
-import { columnDotStyle } from '../../lib/board'
+import { columnDotStyle, phraseLabel } from '../../lib/board'
+import { noticeText } from '../../lib/noticeText'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
 import { editableText, type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
@@ -46,7 +47,13 @@ const props = withDefaults(
     /** 名册上查不到的 AI 座位叫什么（做这条活的分身不一定坐在名册上）。 */
     agentName?: string
   }>(),
-  { active: false, focusBlock: null, refreshTick: 0, memberNames: () => ({}), agentName: '芝士' }
+  {
+    active: false,
+    focusBlock: null,
+    refreshTick: 0,
+    memberNames: () => ({}),
+    agentName: () => t('work.room.defaultAgentName'),
+  }
 )
 
 const emit = defineEmits<{
@@ -97,7 +104,7 @@ async function load(silent = false) {
     if (followNewest) scrollToBottom()
   } catch {
     if (props.roomId !== room || props.cardId !== id) return
-    errorMsg.value = '无法加载这个任务'
+    errorMsg.value = t('work.room.card.loadFailed')
     card.value = null
   } finally {
     if (props.roomId === room && props.cardId === id) loading.value = false
@@ -339,7 +346,7 @@ async function send() {
     draft.value = ''
     await load(true)
   } catch {
-    sendError.value = '留言未发送，稍后重试'
+    sendError.value = t('work.room.card.sendFailed')
   } finally {
     sending.value = false
   }
@@ -351,15 +358,17 @@ async function send() {
     <header class="panel-card__head">
       <button type="button" class="panel-card__back t-meta" @click="emit('back')">
         <v-icon size="14">mdi-chevron-left</v-icon>
-        <span>看板</span>
+        <span>{{ t('work.room.taskProgress.title') }}</span>
       </button>
     </header>
 
     <LoadingSkeleton v-if="loading && !card" variant="brief" />
 
     <div v-else-if="!card" class="px-3 py-4 t-body c-muted">
-      {{ errorMsg ?? '这个房间里没有这个任务' }}
-      <v-btn v-if="errorMsg" size="small" variant="text" class="ms-1" @click="load()">重试</v-btn>
+      {{ errorMsg ?? t('work.room.card.notFound') }}
+      <v-btn v-if="errorMsg" size="small" variant="text" class="ms-1" @click="load()">{{
+        t('work.room.card.retry')
+      }}</v-btn>
     </div>
 
     <template v-else>
@@ -369,10 +378,10 @@ async function send() {
       </div>
       <TopicAcceptCard :topic-id="card.room_id" :task-id="card.id" topic-status="active" @review="emit('review')" />
       <div class="panel-card__meta t-meta">
-        <span data-testid="card-status">{{ card.presentation.display_status }}</span>
+        <span data-testid="card-status">{{ phraseLabel(card.presentation.phrase) }}</span>
         <span class="panel-card__sep">·</span>
         <UserRef v-if="card.owner_handle" :handle="card.owner_handle" />
-        <span v-else class="c-faint">暂无负责人</span>
+        <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
         <span class="panel-card__sep">·</span>
         <span>{{ relTime(card.updated_at) }}</span>
         <a
@@ -389,11 +398,11 @@ async function send() {
            和它交回来的那句话。放在对话上面，因为读一张卡的顺序就是「要它做什么 →
            它说做完了什么 → 过程」。 -->
       <div v-if="card.brief" class="panel-card__block">
-        <div class="panel-card__block-head t-meta">简报</div>
+        <div class="panel-card__block-head t-meta">{{ t('work.room.card.brief') }}</div>
         <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.brief)" />
       </div>
       <div v-if="card.conclusion" class="panel-card__block" data-testid="card-conclusion">
-        <div class="panel-card__block-head t-meta">结论</div>
+        <div class="panel-card__block-head t-meta">{{ t('work.room.card.conclusion') }}</div>
         <div class="panel-card__block-body card-markdown t-body" v-html="renderMarkdown(card.conclusion)" />
       </div>
       <!-- 分身的步骤清单，排在过程上面：先看它打算怎么做、做到了哪一步，再往下翻
@@ -409,7 +418,7 @@ async function send() {
       </div>
 
       <div ref="timelineRef" class="panel-card__timeline">
-        <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">暂无消息</div>
+        <div v-if="!entries.length" class="px-1 py-2 t-meta c-muted">{{ t('work.room.card.noMessages') }}</div>
         <template v-for="e in entries" :key="e.kind === 'steps' ? e.key : e.block.id">
           <div
             v-if="e.kind === 'say'"
@@ -440,7 +449,11 @@ async function send() {
               class="card-msg__text card-markdown t-body"
               v-html="renderMarkdown(e.block.content)"
             />
-            <span v-else class="card-msg__text t-body" v-html="renderPlain(e.block.content, refs)" />
+            <span
+              v-else
+              class="card-msg__text t-body"
+              v-html="renderPlain(e.block.kind === 'event' ? noticeText(e.block) : e.block.content, refs)"
+            />
             <span v-if="e.block.meta?.edited_at && editingId !== e.block.id" class="card-msg__edited">{{
               t('work.room.message.edited')
             }}</span>
@@ -455,7 +468,7 @@ async function send() {
             :run="[e.block]"
             :name="null"
             :time="relTime(e.block.created_at)"
-            agent-name="分身"
+            :agent-name="t('work.room.card.subagent')"
             :refs="refs"
           />
           <div v-else class="card-steps">
@@ -466,8 +479,10 @@ async function send() {
               @click="toggleSteps(e.key)"
             >
               <v-icon size="14">{{ openSteps.has(e.key) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-              <span>{{ e.blocks.length }} 步操作</span>
-              <span v-if="e.blocks.some(eventFailed)" class="card-steps__failed">有步骤失败</span>
+              <span>{{ t('work.room.card.steps', { count: e.blocks.length }) }}</span>
+              <span v-if="e.blocks.some(eventFailed)" class="card-steps__failed">{{
+                t('work.room.card.stepFailed')
+              }}</span>
             </button>
             <ol v-if="openSteps.has(e.key)" class="card-steps__list">
               <li v-for="b in e.blocks" :key="b.id" class="card-step" :class="{ 'card-step--failed': eventFailed(b) }">
@@ -487,10 +502,12 @@ async function send() {
           autocomplete="off"
           class="panel-card__input t-body"
           type="text"
-          placeholder="给分身留言"
+          :placeholder="t('work.room.card.sayPlaceholder')"
           :disabled="sending"
         />
-        <button type="submit" class="panel-card__send t-meta" :disabled="sending || !draft.trim()">发送</button>
+        <button type="submit" class="panel-card__send t-meta" :disabled="sending || !draft.trim()">
+          {{ t('work.room.card.send') }}
+        </button>
       </form>
       <p v-if="sendError" class="panel-card__say-error t-meta" role="alert">{{ sendError }}</p>
     </template>

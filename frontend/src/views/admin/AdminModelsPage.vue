@@ -102,8 +102,8 @@ const {
 </script>
 
 <template>
-  <div class="amd">
-    <div class="amd__inner">
+  <div class="amd admin-page">
+    <div class="amd__inner admin-page__col page-container--admin">
       <AdminModelsHeader
         :sub="subLine"
         :health="health"
@@ -242,16 +242,11 @@ const {
   background: var(--canvas);
 }
 
-/* 宽度和队列页一样锁 `--page-w-admin` 并居中：这一页的右边没有东西，靠左会让不同
-   视口下的列宽差出一截（同 `.qpage__inner` 那条注）。`flex: 0 0 auto` 是给滚动
-   容器的：内容短时它不拉伸，长时它按内容长、由 `.amd` 滚。 */
+/* 只剩 `flex: 0 0 auto`：内容短时这一列不拉伸，长时它按内容长、由 `.amd` 滚。
+   宽度、居中、1440 上限和断点现在都来自共享骨架（`.admin-page__col` +
+   `.page-container--admin`），这里不再写第二份 —— 两份迟早分叉。 */
 .amd__inner {
-  display: flex;
   flex: 0 0 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  margin: 0 auto;
 }
 
 /* 内容区的内边距在这里，不在 `.amd` 上 —— 页头（`AdminPageHeader`）自带 24px

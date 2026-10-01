@@ -31,23 +31,14 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.models import AgentInstance
-from app.domain.agent_instance.schemas import (
-    AgentInstanceCreate,
-    AgentInstanceOut,
-    AgentInstanceUpdate,
-    ProjectDefaultAgentIn,
+from app.domain.block.notice_text import exception_text, say
+from app.domain.block.queries import (
+    decisions_for_project,
+    tasks_awaiting_an_answer,
+    weeklies_for_project,
 )
-from app.domain.agent_instance.services import (
-    AgentInstanceService,
-    ResolvedAgent,
-)
-from app.domain.block.models import BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
+from app.domain.identity.handles import ANONYMOUS_HANDLE
 from app.domain.machine.limits import get_machine_limit
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
@@ -69,13 +60,14 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import presentation
-from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
+from app.domain.task.services import claim_backs_project
 from app.domain.team.services import team_service
 from app.domain.topic import naming
 from app.domain.topic.schemas import TopicOut
@@ -144,11 +136,27 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
     是「点名一个自己不在的团队」，以及按构造不在任何团队里的匿名调用方。
     """
     if not who.authenticated:
-        raise AuthenticationRequiredError("登录后才能把项目建在团队里")
+        raise AuthenticationRequiredError(say("teamProjectSignIn"))
     if who.user_id is None or not await team_service(db).is_team_member(
         team_id, who.user_id
     ):
-        raise ForbiddenError("你不是这个团队的成员，不能把项目建在这个团队里")
+        raise ForbiddenError(say("teamProjectNotMember"))
+
+
+async def _require_claim(
+    db: DbSession, who: Actor, task_id: int, team_id: int | None
+) -> None:
+    """用一道题建项目的，得先领了这道题。
+
+    个人题看建项目的这个人有没有领，团队题看项目要挂的那个团队有没有领。等批的申请
+    也算领了（领题那一刻就给它开了项目）；被拒绝或退出的不算。
+    """
+    if not who.authenticated or who.user_id is None:
+        raise AuthenticationRequiredError(say("challengeProjectSignIn"))
+    if not await claim_backs_project(
+        db, task_id=task_id, user_id=who.user_id, team_id=team_id
+    ):
+        raise ForbiddenError(say("challengeProjectClaimFirst"))
 
 
 @router.get("/resource-limits")
@@ -174,6 +182,9 @@ async def create_project(
     # 过一道：问的不是「这个团队在不在」，是「你是不是这个团队的人」。
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
+    # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
+    if body.external_task_id is not None:
+        await _require_claim(db, who, body.external_task_id, body.team_id)
     # An unidentified caller resolves to the literal `anonymous` (auth.py), and
     # storing that as the owner is worse than storing nothing: it reads like a
     # person everywhere downstream, and it blocks the ownerless-room escape
@@ -347,163 +358,6 @@ async def get_project(
     return ok(payload)
 
 
-def _holds_the_default(project: Project, row: AgentInstance) -> bool:
-    """Whether this row is what a new topic in the project gets.
-
-    One way to be it: the project points at it. A project is created with its
-    芝士 and pointed at it right there, so there is no longer a second way — an
-    agent that holds the default before anything points at it.
-    """
-    return row.id == project.default_agent_instance_id
-
-
-def _agent_out(
-    project_id: uuid.UUID,
-    agent: ResolvedAgent,
-    *,
-    is_default: bool,
-    is_active: bool = True,
-) -> dict:
-    return AgentInstanceOut(
-        id=agent.instance_id,
-        project_id=project_id,
-        handle=agent.handle,
-        seat_handle=agent_instance_handle(agent.instance_id),
-        type_name=agent.type_name,
-        display_name=agent.display_name,
-        configuration=AgentConfiguration.model_validate(agent.configuration),
-        is_default=is_default,
-        is_active=is_active,
-    ).model_dump(mode="json")
-
-
-@router.get("/{project_id}/agents")
-async def list_project_agents(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """The project's saved agents, including its default for new rooms."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    await service.for_project(project)
-    rows = await service.list_for_project(project_id)
-    items = [
-        _agent_out(
-            project_id,
-            AgentInstanceService.resolved(row),
-            is_default=_holds_the_default(project, row),
-            is_active=row.is_active,
-        )
-        for row in rows
-    ]
-    return ok(page(items, len(items)))
-
-
-@router.post("/{project_id}/agents")
-async def create_project_agent(
-    project_id: uuid.UUID,
-    body: AgentInstanceCreate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Add an agent to this project. It starts with an empty memory pool."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.create(
-        project_id=project_id,
-        handle=body.handle or f"agent-{uuid.uuid4().hex[:8]}",
-        type_name=body.type_name,
-        display_name=body.display_name,
-        configuration=body.configuration,
-    )
-    await db.flush()
-    return ok(
-        _agent_out(
-            project_id, AgentInstanceService.resolved(instance), is_default=False
-        )
-    )
-
-
-@router.put("/{project_id}/agents/{agent_id}")
-async def update_project_agent(
-    project_id: uuid.UUID,
-    agent_id: uuid.UUID,
-    body: AgentInstanceUpdate,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Edit one agent's name and saved configuration.
-
-    ``handle`` is not editable and is not accepted here: it keys the memory
-    pool, so changing it would hand the agent an empty one and orphan
-    everything it had learned in this project.
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
-    fields = body.model_fields_set
-    if "display_name" in fields and body.display_name is not None:
-        await service.rename(instance, body.display_name)
-    if body.configuration is not None:
-        await service.configure(instance, body.configuration)
-    await db.flush()
-    return ok(
-        _agent_out(
-            project_id,
-            AgentInstanceService.resolved(instance),
-            is_default=_holds_the_default(project, instance),
-            is_active=instance.is_active,
-        )
-    )
-
-
-@router.delete("/{project_id}/agents/{agent_id}")
-async def deactivate_project_agent(
-    project_id: uuid.UUID,
-    agent_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Retire an agent — not a delete.
-
-    The rooms already working with it carry on and its memory is kept; it just
-    stops being offered for new work. The response says ``deleted`` because
-    that is the shape a DELETE returns everywhere here, not because a row went
-    away.
-    """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
-    await service.deactivate(project, instance)
-    return ok({"deleted": True})
-
-
-@router.put("/{project_id}/default-agent")
-async def set_project_default_agent(
-    project_id: uuid.UUID,
-    body: ProjectDefaultAgentIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Select the existing agent that new rooms start with."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    service = AgentInstanceService(db)
-    instance = await service.get_in_project(
-        project_id=project_id, instance_id=body.instance_id
-    )
-    agent = await service.set_project_default(project, instance)
-    return ok(_agent_out(project_id, agent, is_default=True))
-
-
 @router.get("/{project_id}/decisions")
 async def list_decisions(
     project_id: uuid.UUID,
@@ -525,10 +379,8 @@ async def list_decisions(
     blocks were reachable; the project's record was not."""
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
-    blocks = await BlockRepository(db).list_by_kind_for_project(
-        project_id, BlockKind.decision
-    )
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    blocks = await decisions_for_project(db, project_id)
+    items = [b.model_dump(mode="json") for b in blocks]
     return ok(page(items, len(items)))
 
 
@@ -551,10 +403,8 @@ async def list_weeklies(
     a weekly (``POST /topics/{id}/weekly``) can read the set back."""
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
-    blocks = await BlockRepository(db).list_by_kind_for_project(
-        project_id, BlockKind.weekly
-    )
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    blocks = await weeklies_for_project(db, project_id)
+    items = [b.model_dump(mode="json") for b in blocks]
     return ok(page(items, len(items)))
 
 
@@ -585,15 +435,20 @@ async def list_project_tasks(
     """
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
-    tasks = await TaskRepository(db).list_for_project(project_id)
+    # 四次批查询，各问一个领域。这条路由是拼装的人，所以它把三次窄读和一次服务
+    # 调用按固定顺序摆在一起；每一次都走对方领域自己的公开读出口，不去碰别人的
+    # repository —— `block` 那边问的是「这个项目的决策/周报」和「哪几条停在提问
+    # 上」，`review` 那边问的是「这些活的卡」，`room_task` 那边问的是「这些活」和
+    # 「它们各自最后一次说话」。
+    tasks = await TaskService(db).list_in_project(project_id)
     task_ids = [t.id for t in tasks]
-    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
+    cards = await latest_cards_by_task(db, task_ids)
     # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
     # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
-    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
+    beats = await TaskService(db).last_block_at_for_tasks(task_ids)
     # 哪几条停在一个未回答的提问上 —— 第四次批查询，同一条 (task_id, created_at)
     # 索引。这是唯一会中断「运行中」的一格，所以不能留给调用方各自去问。
-    asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
+    asked = await tasks_awaiting_an_answer(db, task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
@@ -838,7 +693,7 @@ async def _project_owner(
     if actor.authenticated and await may_read_project(
         db, project_id=project_id, handle=actor.handle
     ):
-        raise ForbiddenError("只有项目所有者能归档或取消归档项目")
+        raise ForbiddenError(say("archiveOwnerOnly"))
     raise NotFoundError("Project not found")
 
 
@@ -923,10 +778,7 @@ async def set_project_owner(
             # Not on the project's team. Only a personal project of the
             # transferor's can leave it — see the docstring.
             if not await _project_is_personal_to_its_owner(db, project):
-                raise ValidationError(
-                    f"{handle} 不是这个项目所属团队的成员——项目归团队所有，"
-                    "只能转给团队里的人"
-                )
+                raise ValidationError(say("transferOutsideTeam", handle=handle))
             team = await team_service(db).ensure_personal_team(user.id)
             team_changed_from = project.team_id
             project.team_id = team.id
@@ -1088,7 +940,7 @@ async def set_branch_protection(
                 new_settings.get(BRANCH_PROTECTION_KEY), body
             )
         except ValueError as e:
-            raise ValidationError(str(e)) from None
+            raise ValidationError(exception_text(e)) from None
         if updated:
             new_settings[BRANCH_PROTECTION_KEY] = updated
         else:
@@ -1130,13 +982,13 @@ async def set_project_upstream(
     await MemberService(db).require_manager(project_id, actor)
     project = await ProjectService(db).get_or_404(project_id)
     if await binding_for_project(project_id, db) is not None:
-        raise ConflictError("项目已连接代码仓库，暂不支持更换")
+        raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":
-        raise ConflictError("这个项目由芝士托管，暂不支持切换到 GitHub")
+        raise ConflictError(say("hostedNoGithubSwitch"))
     raw = str(body.get("url") or "").strip()
     parsed = parse_github_repo(raw) if raw else None
     if raw and parsed is None:
-        raise ValidationError("请输入 GitHub 仓库地址")
+        raise ValidationError(say("githubRepoUrlRequired"))
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
     project.settings = {**(project.settings or {}), "github_repository_url": url}
     await db.flush()

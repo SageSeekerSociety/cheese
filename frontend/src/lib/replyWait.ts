@@ -5,6 +5,8 @@
 // / `reply_wait_reason`），多久算太久在这里判：列表是某一刻读出来的，而这盏灯要
 // 跟着当下的钟亮起来，不能等下一次刷新。
 
+import { t } from '@/i18n'
+
 /** 等多久算太久。 */
 export const REPLY_STALL_MS = 5 * 60_000
 /** 机器在创建、环境在重建时平台正在处理，本来就要一阵子，放宽到这么久。 */
@@ -34,10 +36,10 @@ export function waitedFor(since: string | null | undefined, now: number): string
   const at = since ? Date.parse(since) : NaN
   if (Number.isNaN(at)) return ''
   const minutes = Math.max(0, Math.floor((now - at) / 60_000))
-  if (minutes < 60) return `${Math.max(1, minutes)} 分钟`
+  if (minutes < 60) return t('work.sidebar.wait.minutes', { count: Math.max(1, minutes) })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时`
-  return `${Math.floor(hours / 24)} 天`
+  if (hours < 24) return t('work.sidebar.wait.hours', { count: hours })
+  return t('work.sidebar.wait.days', { count: Math.floor(hours / 24) })
 }
 
 export interface StallInfo {
@@ -49,25 +51,25 @@ export interface StallInfo {
 /** 红灯悬停那一句：哪件事、哪个 PR、已经等了多久、该谁去动。 */
 export function stallReasonText(info: StallInfo, agent: string, now: number): string {
   const waited = waitedFor(info.since, now)
-  const long = waited ? `已等 ${waited}` : '等了很久'
-  const pr = info.pr ? `PR #${info.pr} ` : ''
+  const long = waited ? t('work.sidebar.stall.waited', { waited }) : t('work.sidebar.stall.waitedLong')
+  const pr = info.pr ? t('work.sidebar.stall.pr', { pr: info.pr }) : ''
   switch (info.reason) {
     case 'device_waiting':
-      return `${agent}的机器够不着，${long}——多半要有人去把那台设备开机或连上网`
+      return t('work.sidebar.stall.device', { agent, long })
     case 'machine_provisioning':
-      return `${agent}的机器还没创建好，${long}`
+      return t('work.sidebar.stall.provisioning', { agent, long })
     case 'sandbox_rebuilt':
     case 'environment_repaired':
-      return `${agent}的运行环境还没恢复，${long}`
+      return t('work.sidebar.stall.environment', { agent, long })
     case 'check':
-      return `${pr}检查没通过，${long}，没有${agent}在处理`
+      return t('work.sidebar.stall.check', { pr, agent, long })
     case 'conflict':
-      return `${pr}有合并冲突，${long}，没有${agent}在处理`
+      return t('work.sidebar.stall.conflict', { pr, agent, long })
     case 'rejected':
-      return `${pr}被退回了，${long}，没有${agent}去改`
+      return t('work.sidebar.stall.rejected', { pr, agent, long })
     case 'gate':
-      return `${pr}质量闸门没过，${long}，没有${agent}去改`
+      return t('work.sidebar.stall.gate', { pr, agent, long })
     default:
-      return `有人 @ 了${agent}，${long}还没有回话`
+      return t('work.sidebar.stall.mention', { agent, long })
   }
 }

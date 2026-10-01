@@ -31,7 +31,7 @@ export default {
       component: () => import('@/layouts/spaces/SpacesTasks.vue'),
       redirect: { name: 'SpacesDetailTasksList' },
       meta: {
-        title: '题目',
+        titleKey: 'navigation.pages.spaceTasks',
       },
       children: [
         {
@@ -53,70 +53,58 @@ export default {
           },
         },
         {
-          // 题目详情：页面本身画题目、领取与出题人的领取者名单，下面四格是子页。
+          // 题目详情：页面本身画题目名、主操作与页签，页签内容是下面这几条子路由，
+          // 地址各自不变。浏览器标题里的题目名挂在 `dynamicTitleKey` 上（这一层没有名字）。
           path: ':taskId',
-          name: 'TasksDetail',
           component: () => import('@/views/tasks/Detail.vue'),
           meta: {
-            title: '题目',
+            dynamicTitleKey: 'TaskShell',
             backTo: 'SpacesDetailTasksList',
           },
           children: [
             {
-              path: 'submissions',
-              name: 'TasksSubmissions',
-              component: () => import('@/views/tasks/detail/Submissions.vue'),
-              meta: {
-                title: '提交记录',
-                disableBreadcrumbLink: true,
-              },
-            },
-            {
-              path: 'participants',
-              name: 'TasksParticipants',
-              component: () => import('@/views/tasks/detail/Participants.vue'),
-              meta: {
-                title: '参与者管理',
-                disableBreadcrumbLink: true,
-              },
-            },
-            {
-              path: 'submit',
-              name: 'TasksSubmit',
-              component: () => import('@/views/tasks/detail/Submit.vue'),
-              meta: {
-                title: '提交',
-                backTo: 'TasksDetail',
-                disableBreadcrumbLink: true,
-              },
+              path: '',
+              name: 'TasksDetail',
+              component: () => import('@/views/tasks/detail/Brief.vue'),
             },
             {
               path: 'ai-advice',
               name: 'TasksAIAdvice',
               component: () => import('@/views/tasks/detail/AIAdvice.vue'),
-              meta: {
-                title: '启星研导',
-                disableBreadcrumbLink: true,
-              },
+              meta: { titleKey: 'navigation.pages.taskAdvice' },
+            },
+            {
+              path: 'submissions',
+              name: 'TasksSubmissions',
+              component: () => import('@/views/tasks/detail/Submissions.vue'),
+              meta: { titleKey: 'navigation.pages.taskSubmissions' },
+            },
+            {
+              path: 'submit',
+              name: 'TasksSubmit',
+              component: () => import('@/views/tasks/detail/Submit.vue'),
+              meta: { titleKey: 'navigation.pages.taskSubmit', backTo: 'TasksDetail' },
+            },
+            {
+              path: 'participants',
+              name: 'TasksParticipants',
+              component: () => import('@/views/tasks/detail/Roster.vue'),
+              meta: { titleKey: 'navigation.pages.taskParticipants' },
+            },
+            {
+              path: 'insights',
+              name: 'TasksInsights',
+              component: () => import('@/views/tasks/detail/Insights.vue'),
+              meta: { titleKey: 'navigation.pages.taskData' },
             },
           ],
-        },
-        {
-          // 单题分析：出题人和管理员看这道题的领取、提交与走势。
-          path: ':taskId/insights',
-          name: 'TasksInsights',
-          component: () => import('@/views/tasks/Insights.vue'),
-          meta: {
-            title: '单题分析',
-            backTo: 'TasksDetail',
-          },
         },
         {
           path: ':taskId/edit',
           name: 'TasksEdit',
           component: () => import('@/views/tasks/Edit.vue'),
           meta: {
-            title: '编辑题目',
+            titleKey: 'navigation.pages.taskEdit',
             backTo: 'TasksDetail',
           },
         },
@@ -139,7 +127,7 @@ export default {
       component: () => import('@/views/spaces/detail/analytics/Index.vue'),
       redirect: { name: 'SpacesDetailAnalyticsOverview' },
       meta: {
-        title: '数据分析',
+        titleKey: 'navigation.pages.spaceAnalytics',
       },
       children: [
         {
@@ -177,15 +165,15 @@ export default {
       ],
     },
     {
-      // 设置：一页分栏，每一栏是一条子路由，可以单独链接。
+      // 设置：盖在整个窗口上的一层，每一栏是一条子路由，可以单独链接。这一条自己的
+      // 地址在桌面上落到「基本信息」，手机上是目录（settings/Index.vue）。
       path: 'manage/settings',
       name: 'SpacesDetailSettings',
       component: () => import('@/views/spaces/detail/settings/Index.vue'),
-      redirect: { name: 'SpacesDetailSettingsBasic' },
-      meta: { titleKey: 'spaces.settings.title' },
+      meta: { titleKey: 'spaces.settings.title', settingsOverlay: true, hideTabs: true },
       children: [
         {
-          path: '',
+          path: 'basic',
           name: 'SpacesDetailSettingsBasic',
           component: () => import('@/views/spaces/detail/settings/BasicInfo.vue'),
         },
@@ -213,19 +201,20 @@ export default {
           name: 'SpacesDetailSettingsDomainGroups',
           component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
         },
+        {
+          // 模板的新建和编辑是「题目模板」下一级的整页表单，画在同一层里。
+          path: 'templates/create',
+          name: 'SpacesDetailCreateTemplate',
+          meta: { backTo: 'SpacesDetailSettingsTemplates' },
+          component: () => import('@/views/spaces/detail/TemplateForm.vue'),
+        },
+        {
+          path: 'templates/:templateIndex/edit',
+          name: 'SpacesDetailEditTemplate',
+          meta: { backTo: 'SpacesDetailSettingsTemplates' },
+          component: () => import('@/views/spaces/detail/TemplateForm.vue'),
+        },
       ],
-    },
-    {
-      path: 'manage/settings/templates/create',
-      name: 'SpacesDetailCreateTemplate',
-      meta: { backTo: 'SpacesDetailSettingsTemplates' },
-      component: () => import('@/views/spaces/detail/TemplateForm.vue'),
-    },
-    {
-      path: 'manage/settings/templates/:templateIndex/edit',
-      name: 'SpacesDetailEditTemplate',
-      meta: { backTo: 'SpacesDetailSettingsTemplates' },
-      component: () => import('@/views/spaces/detail/TemplateForm.vue'),
     },
     {
       path: 'select-template',

@@ -47,9 +47,13 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
+import { ROOM_ENTRIES } from './catalogRoom'
+import { SETTINGS_ENTRIES } from './catalogSettings'
+import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
@@ -192,7 +196,7 @@ export const CATALOG: CatalogEntry[] = [
     about: '对话栏里的一条消息：人说的、芝士说的、步骤清单、自己发的。',
     file: 'src/components/room/RoomMessage.vue',
     component: RoomMessage,
-    needs: UI,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '留言（没有交给芝士）',
@@ -269,7 +273,7 @@ export const CATALOG: CatalogEntry[] = [
     file: 'src/components/TopicAcceptCard.vue',
     component: TopicAcceptCard,
     // 这张卡自己去接口取数（`getAcceptCards` / `getPrChecks`），也读工作区 store。
-    needs: ['vuetify', 'pinia', 'router'],
+    needs: ['vuetify', 'pinia', 'router', 'i18n'],
     states: [
       {
         name: '贴在输入框上方',
@@ -618,6 +622,18 @@ export const CATALOG: CatalogEntry[] = [
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
+  // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件）在自己的文件里：
+  // `catalogRoom.ts`（数据就在那份里，它们要的都是几行字）。
+  ...ROOM_ENTRIES,
+  // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
+  // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
+  ...KNOWLEDGE_ENTRIES,
+  // 发题表单那一组（从 1089 行的 TaskForm 拆出来的七张卡加两个弹窗，夹具在自己
+  // 那一份里）在自己的文件里：`catalogTaskForm.ts`。
+  ...TASK_FORM_ENTRIES,
+  // 项目设置那一组（从 1041 行的 ProjectSettingsView 拆出来的六块）在自己的文件里：
+  // `catalogSettings.ts`（数据在 `catalogSettingsFixtures.ts`）。
+  ...SETTINGS_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',

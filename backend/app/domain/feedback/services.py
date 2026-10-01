@@ -12,14 +12,10 @@ Everything a route must not be trusted to remember lives here:
 Three product decisions the user had not ruled on are taken here as defaults,
 each in one place, each revertible without touching a route:
 
-1. **Who is an admin** — **not decided here.** The judge is
-   `AdminService.is_admin` in `app/domain/admin/services.py`: 根 ∪ 页面上加的,
-   i.e. `settings.platform_admin_handles` (deploy-required, not removable from
-   the page) and the `platform_admins` table (`/admin/admins`, the 成员管理
-   screen). This module only *asks* — `FeedbackService.admins` and the three thin
-   delegates below exist so a feedback route does not have to know where the
-   answer lives, not because the answer is feedback's. It never was: the same
-   list is what opens every other admin screen.
+1. **Who is an admin** — `settings.feedback_triage_handles`, a roster of its
+   own from deployment config. Not the platform admins (`app/domain/admin/`):
+   they run the admin screens for other jobs, and private feedback is not
+   theirs to read by virtue of that.
 2. **`security` is a subtype of `private`, not a second axis.** A security report
    is invisible to non-admins exactly as a private one is; the flag only routes
    it into the admin's security tab. So `security=True` narrows visibility, and
@@ -49,7 +45,7 @@ from app.core.errors import (
     NotFoundError,
     PreconditionFailedError,
 )
-from app.domain.admin.services import AdminService
+from app.domain.block.notice_text import say
 from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
@@ -86,7 +82,8 @@ SORTS: tuple[str, ...] = ("new", "supports")
 #: are reachable from any state, and a reopen (resolved → in_progress) is
 #: allowed: reports do get re-opened, and a status set that forbids it gets
 #: worked around by filing a duplicate instead — which loses the history that
-#: makes the report useful.
+#: makes the report useful. `declined` (不修复) is not on it: it is the other way
+#: out, not a fifth rung, and the reporter's ladder ends there instead.
 STATUS_LADDER: tuple[FeedbackStatus, ...] = (
     FeedbackStatus.received,
     FeedbackStatus.in_progress,
@@ -99,31 +96,24 @@ class FeedbackService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = repo.FeedbackRepository(session)
-        #: 平台管理员那份名单与判据 —— 一个请求一个实例，两边共用同一个 memo。
-        self._admins = AdminService(session)
 
     # --- 权限 ---------------------------------------------------------------
     #
-    # 「谁算平台管理员」不在这个域里：它是平台级的事实（`app/domain/admin/`），
-    # 反馈只是**用**它 —— 私密条目谁能看见、评论能不能删，问的都是同一个答案。
-    # 这里留一层薄委托，是因为反馈自己的可见性判断（`may_see` / `visible_row` /
-    # `detail`）每一步都要问它，而让每个调用点各自去构造一个 `AdminService` 等于
-    # 把同一个请求拆成几份各读一遍库。
-
-    @property
-    def admins(self) -> AdminService:
-        """平台管理员那一半（名单、判据、页面上加删）—— 路由过的是它那道门。"""
-        return self._admins
-
-    async def admin_handles(self) -> frozenset[str]:
-        """谁算平台管理员：**根 ∪ 页面上加的**。见 `AdminService.admin_handles`。"""
-        return await self._admins.admin_handles()
+    # 「谁管反馈」是反馈自己的名单（`settings.feedback_triage_handles`），**不是**
+    # 平台管理员（`app/domain/admin/`）。私密反馈是提交者选择不给所有人看的东西，
+    # 而平台管理员是一群要用管理台做别的事的人 —— 当上平台管理员不等于能读每一条
+    # 私密反馈。名单只在部署配置里，产品里没有能往里加人的页面。
 
     async def is_admin(self, handle: str | None) -> bool:
-        return await self._admins.is_admin(handle)
+        return bool(handle) and handle in settings.feedback_triage_handles
 
     async def require_admin(self, handle: str | None) -> str:
-        return await self._admins.require_admin(handle)
+        if not handle:
+            raise ForbiddenError("需要登录")
+        if not await self.is_admin(handle):
+            # 403, not 404: /admin/feedback is documented as existing.
+            raise ForbiddenError("需要反馈管理员")
+        return handle
 
     async def may_see(
         self, row: Feedback, *, handle: str | None, is_admin: bool
@@ -195,7 +185,7 @@ class FeedbackService:
         """
         row = await self._repo.get(feedback_id)
         if row is None or not await self.may_see(row, handle=handle, is_admin=is_admin):
-            raise NotFoundError("反馈不存在")
+            raise NotFoundError(say("feedbackNotFound"))
         return row
 
     def may_delete_comment(
@@ -264,8 +254,8 @@ class FeedbackService:
         的 `statuses` / `kinds`），所以走到这里的一定是客户端版本落后了，而不是有人
         手打了什么。
         """
-        # 「办完了」那一栏装的是两级（修复 + 上线），而状态筛选是**单级**的。两者
-        # 不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
+        # 「办完了」那一栏装的是几种结局（修复、上线、不修复），状态筛选是**单级**的。
+        # 两者不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
         # `_tab_where` 合并，只保证两边都成立。
         if status is not None and status not in {s.value for s in FeedbackStatus}:
             raise BadRequestError(f"未知的状态：{status}")
@@ -365,7 +355,7 @@ class FeedbackService:
         rows they cannot open. It rides on `/admin/feedback` and nowhere else.
 
         `deployed` rides along from `public_counts` — a separate number beside
-        `resolved`, which keeps meaning 修复 + 上线 as a pair. See `_tab_where`.
+        `resolved`, which keeps meaning every closed status. See `_tab_where`.
         """
         counts = await self._repo.public_counts()
         if is_admin:
@@ -495,7 +485,7 @@ class FeedbackService:
         """
         parent = await self._repo.get_comment(parent_id)
         if parent is None or parent.feedback_id != feedback_id:
-            raise NotFoundError("评论不存在")
+            raise NotFoundError(say("commentNotFound"))
         return await self._repo.page_replies(parent_id, after=after, limit=limit)
 
     async def comments_out(
@@ -703,8 +693,7 @@ class FeedbackService:
         cap = settings.feedback_reports_per_author_per_day
         if recent >= cap:
             raise PreconditionFailedError(
-                f"你 24 小时内提了 {recent} 条反馈，达到上限（{cap} 条 / 24 小时）。"
-                "这是防刷的上限，不是对你的评价——过几个小时再提。"
+                say("feedbackDailyLimit", recent=recent, cap=cap)
             )
         visibility = body.visibility
         row = await self._repo.add(
@@ -848,7 +837,7 @@ class FeedbackService:
             # The message names the action, not a status: the reader may be
             # looking at either closed rung, and 「已解决的不再接受支持」 would be
             # wrong on a 已上线 row (it never said 已解决).
-            raise PreconditionFailedError("这条反馈已经办完了，不再接受支持")
+            raise PreconditionFailedError(say("feedbackClosedNoSupport"))
         await self._repo.add_support(row.id, handle)
         return await self._repo.supports_count(row.id), True
 
@@ -884,7 +873,7 @@ class FeedbackService:
             if parent is None or parent.feedback_id != row.id:
                 # A parent that belongs to another report, or to none: 400, not
                 # 404 — the id the client sent is the problem, not a secret.
-                raise BadRequestError("回复的评论不属于这条反馈")
+                raise BadRequestError(say("feedbackReplyParentMismatch"))
             # The target, captured here because the very next line overwrites
             # the thing that points at it. Only when the comment being answered
             # is itself a reply: a reply to the 楼主 already renders directly
@@ -969,7 +958,7 @@ class FeedbackService:
         row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
         comment = await self._repo.get_comment(comment_id)
         if comment is None or comment.feedback_id != row.id:
-            raise NotFoundError("评论不存在")
+            raise NotFoundError(say("commentNotFound"))
         return comment
 
     async def delete_comment(
@@ -986,7 +975,7 @@ class FeedbackService:
         # The same predicate the read path fills `CommentOut.can_delete` with,
         # so the affordance and the permission cannot disagree.
         if not self.may_delete_comment(comment, handle=handle, is_admin=is_admin):
-            raise ForbiddenError("只能删除自己的评论")
+            raise ForbiddenError(say("commentDeleteOwnOnly"))
         await self._repo.soft_delete_comment(comment)
 
     async def delete_feedback(
@@ -1004,7 +993,7 @@ class FeedbackService:
         """
         row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
         if not self.may_delete_feedback(row, handle=handle, is_admin=is_admin):
-            raise ForbiddenError("只能删除自己提交的反馈")
+            raise ForbiddenError(say("feedbackDeleteOwnOnly"))
         await self._repo.soft_delete_feedback(row)
 
     async def note(

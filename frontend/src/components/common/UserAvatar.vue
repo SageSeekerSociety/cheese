@@ -1,7 +1,8 @@
 <template>
   <v-avatar
     :size="size"
-    :style="hasAvatar ? undefined : { backgroundColor: fallbackColor }"
+    :rounded="kind === 'person' ? 'circle' : false"
+    :style="{ ...(hasAvatar ? {} : { backgroundColor: fallbackColor }), ...shapeStyle }"
     :aria-hidden="isDecorative ? 'true' : undefined"
     :role="isDecorative ? undefined : 'img'"
     :aria-label="isDecorative ? undefined : alt"
@@ -37,7 +38,7 @@
 // `alt` 是同一个开关，就是为了让调用方拿主意，而不是组件替所有人决定。
 import { computed } from 'vue'
 
-import { avatarColor, avatarInitial } from '@/utils/avatar'
+import { avatarColor, avatarInitial, squareRadius } from '@/utils/avatar'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '@/utils/avatarFailures'
 
 const {
@@ -45,6 +46,7 @@ const {
   name = '',
   alt = '',
   size = 48,
+  kind = 'person',
 } = defineProps<{
   /** URL of an uploaded avatar image. Empty → colored-initial fallback. */
   avatar?: string
@@ -56,6 +58,12 @@ const {
    */
   alt?: string
   size?: string | number
+  /**
+   * 画的是谁。形状照 GitHub 的规则：人是圆；AI 队友、团队、空间、项目这些不是人的
+   * 是圆角方块。AI 队友没有上传的头像时用 CheeseAvatar；这里的 'agent' 给带照片的
+   * AI 账号（比如后台成员表里的那一行）。
+   */
+  kind?: 'person' | 'agent' | 'org'
 }>()
 
 // 已知取不到的 URL 直接当「没有图」，不再造 `v-img` 去问一次。
@@ -63,6 +71,8 @@ const hasAvatar = computed(() => !!avatar && !isAvatarKnownFailed(avatar))
 const initial = computed(() => avatarInitial(name))
 const fallbackColor = computed(() => avatarColor(name))
 const isDecorative = computed(() => !alt)
+// 圆角方块的圆角跟着边长走（约四分之一），小头像和大头像看着是同一个形状。
+const shapeStyle = computed(() => (kind === 'person' ? {} : { borderRadius: squareRadius(size) }))
 
 function onAvatarError() {
   rememberAvatarFailure(avatar)

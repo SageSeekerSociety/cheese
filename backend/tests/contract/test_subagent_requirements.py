@@ -25,7 +25,6 @@ from app.domain.agent.harness import (
     CLAUDE_CODE,
     CODEX,
     HARNESSES,
-    PI,
     Harness,
     Opening,
     SessionRef,
@@ -161,15 +160,13 @@ def test_a_difference_code_is_not_an_answer() -> None:
 def test_a_harness_that_is_not_registered_still_has_its_code() -> None:
     """摘掉的是注册，不是代码（结论 43）。
 
-    两个方向都断言，但只断言这两个骨架：Codex 与 pi 是要支持的骨架，今天还答不
-    出四条（#1607），所以代码在、注册不在；哪天谁把适配层也删了，这里红，因为那
-    等于放弃支持它们。它们答出四条、回到注册表的时候，这一条跟着改写。把整张注册表
-    钉成等号是另一回事——将来多一个答得出四条的骨架，那是这条回路走通了，不是回归。
+    两个方向都断言，但只断言 Codex：它是要支持的骨架，今天还答不出四条，所以代码
+    在、注册不在；哪天谁把适配层也删了，这里红，因为那等于放弃支持它。它答出四
+    条、回到注册表的时候，这一条跟着删掉。把整张注册表钉成等号是另一回事——将来
+    多一个答得出四条的骨架，那是这条回路走通了，不是回归。
     """
     assert CODEX not in HARNESSES
-    assert PI not in HARNESSES
-    for name in (CODEX, PI):
-        assert (HARNESS_PACKAGE / name.replace("-", "_") / "behaviour.py").exists()
+    assert (HARNESS_PACKAGE / "codex" / "behaviour.py").exists()
 
 
 # --- 四条动作各自长什么样 ----------------------------------------------------

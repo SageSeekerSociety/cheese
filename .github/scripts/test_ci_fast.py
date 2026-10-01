@@ -140,6 +140,7 @@ class CiFastTest(unittest.TestCase):
         proc = self.run_ci_fast()
         self.assertEqual(proc.returncode, 3, proc.stdout)
         self.assertIn("task be:deps:sync", proc.stdout)
+        self.assertIn("cd backend && uv sync", proc.stdout)  # task-free equivalent
         self.assertEqual(self.report()["status"], "blocked")
         self.assertEqual(self.ran_hooks(), set())
 

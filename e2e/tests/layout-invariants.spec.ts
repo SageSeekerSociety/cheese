@@ -455,7 +455,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 // 侧栏顶上项目名那一条，和右边内容区的页头是同一条线：一样高、顶在同一处，两条底
 // 线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
 // 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
-// 查都看不见。
+// 查都看不见。项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
 test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
@@ -463,7 +463,7 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
 
-  for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library', 'settings', 'calendar']) {
+  for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library', 'calendar']) {
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();

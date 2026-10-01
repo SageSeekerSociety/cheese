@@ -103,7 +103,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
   // 是一次「我试了但做不了」，而人只会记得是它没做成。
   const composerHint = computed(() =>
-    alwaysSummon() ? `给${agentName.value}发消息` : `输入消息，@${agentName.value} 交给它处理`
+    alwaysSummon()
+      ? t('work.room.composer.placeholderDm', { name: agentName.value })
+      : t('work.room.composer.placeholder', { name: agentName.value })
   )
 
   // Keep the module-level handle→name map in sync with the roster, so
@@ -115,8 +117,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
       for (const row of pool) mentionNames[row.handle] = row.label
       // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
       // not the raw literal — they are reserved handles, not roster members.
-      mentionNames.all = '所有人'
-      mentionNames.here = '在线成员'
+      mentionNames.all = t('work.room.mention.all')
+      mentionNames.here = t('work.room.mention.here')
     },
     { immediate: true, deep: true }
   )
@@ -151,7 +153,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         historyChanges?.set(updated.id, updated)
       }
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '选择失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.pickFailed')
     } finally {
       askBusy.value = null
     }
@@ -176,7 +178,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       const out = await apiToggleReaction(m.id, emoji, AUTHOR)
       applyReactions(m.id, out.reactions)
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '表情更新失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.reactionFailed')
     }
   }
 
@@ -184,7 +186,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
 
   // @mention chips are rendered via v-html; delegate clicks so the parent can
-  // resolve the name (person → member page, topic/doc → open it).
+  // resolve the name (person → member page, topic/doc → open it). A message's
+  // avatar and name (.im-person) go the same way as a chip for its author.
   function onMessagesClick(e: MouseEvent) {
     const target = e.target as HTMLElement | null
     // Click-away closes the emoji picker (clicks inside it are handled there).
@@ -192,7 +195,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       reactionPickerFor.value = null
     }
     if (touchOnly.value && target) rowActions.toggleTime(target)
-    const el = target?.closest('.mention') as HTMLElement | null
+    const el = target?.closest('.mention, .im-person') as HTMLElement | null
     if (!el) return
     if (el.dataset.handle) emit('mention-click', el.dataset.handle)
     else if (el.dataset.topic) {
@@ -398,7 +401,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       await undoTopicTitle(room.id, blockId)
       emit('state-changed', 'topics')
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '撤销失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.undoFailed')
     }
   }
 
@@ -544,7 +547,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     try {
       await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '下载失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.downloadFailed')
     }
   }
   function scrollToMessage(id: string, behavior: 'smooth' | 'auto' = 'smooth') {
@@ -748,7 +751,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
   function outgoingState(item: Outgoing): string {
     if (item.state === 'failed') return ''
-    return connected.value ? '发送中…' : '等待连接'
+    return connected.value ? t('work.room.chat.sending') : t('work.room.chat.waitingConnection')
   }
 
   function fmtTime(iso: string): string {
@@ -843,6 +846,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     // timeline
     rows,
     refMaps,
+    awaitingReply,
     timeline,
     hasMore,
     hasNewer,

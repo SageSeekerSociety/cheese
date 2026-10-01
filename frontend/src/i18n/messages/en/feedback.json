@@ -46,7 +46,6 @@
     },
     "error": {
       "title": "Couldn't load the queue",
-      "desc": "Check your connection and try again.",
       "retry": "Retry"
     },
     "filtered": {
@@ -128,7 +127,6 @@
     },
     "error": {
       "title": "Couldn't load the table",
-      "desc": "Check your connection and try again.",
       "retry": "Retry"
     },
     "filtered": {
@@ -263,7 +261,8 @@
       "received": "Received",
       "inProgress": "In progress",
       "resolved": "Resolved",
-      "deployed": "Deployed"
+      "deployed": "Deployed",
+      "declined": "Won't fix"
     },
     "health": {
       "title": "Platform health",
@@ -524,14 +523,15 @@
       "title": "You haven't filed any feedback, and none is assigned to you",
       "action": "File one"
     },
-    "foot": "Finished feedback (fixed, shipped) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the room where it was filed."
+    "foot": "Finished feedback (fixed, shipped, won't fix) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the room where it was filed."
   },
   "status": {
     "received": "Received",
     "in_progress": "In progress",
     "resolved": "Resolved",
     "deployed": "Deployed",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "declined": "Won't fix"
   },
   "timeline": {
     "notStarted": "Not started"
@@ -540,6 +540,12 @@
     "bug": "Bug",
     "suggestion": "Suggestion",
     "other": "Other"
+  },
+  "priority": {
+    "low": "Low",
+    "normal": "Normal",
+    "high": "High",
+    "urgent": "Urgent"
   },
   "source": {
     "user": "From a user",
@@ -726,5 +732,19 @@
       "restored": "Restored your unfinished draft",
       "discard": "Discard draft"
     }
+  },
+  "errors": {
+    "listLoadFailed": "Couldn’t load feedback",
+    "loadMoreFailed": "Couldn’t load more",
+    "mineLoadFailed": "Couldn’t load My feedback",
+    "openFailed": "Couldn’t open this feedback",
+    "actionFailed": "Something went wrong",
+    "commentSendFailed": "Couldn’t send the comment",
+    "commentsLoadFailed": "Couldn’t load comments",
+    "repliesLoadFailed": "Couldn’t load replies",
+    "deleteFailed": "Couldn’t delete",
+    "submitFailed": "Couldn’t submit",
+    "queueLoadFailed": "Couldn’t load the queue",
+    "dashboardLoadFailed": "Couldn’t load the dashboard"
   }
 }

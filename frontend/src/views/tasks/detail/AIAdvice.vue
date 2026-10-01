@@ -1,26 +1,11 @@
 <template>
   <div>
-    <v-card flat rounded="lg" class="mb-4 ai-advice-header-card">
-      <v-card-text class="pa-6">
-        <div class="d-flex align-center flex-wrap gap-4">
-          <v-avatar color="primary-lighten-4" size="56" class="elevation-0">
-            <v-icon color="primary" size="32">mdi-robot</v-icon>
-          </v-avatar>
-
-          <div class="flex-grow-1">
-            <div class="text-h5 font-weight-bold d-flex flex-wrap align-center">
-              启星研导 <span class="text-primary ml-2">Navigator AI</span>
-            </div>
-            <div class="text-medium-emphasis">为您解析题目核心，推荐学习路径，助力科研探索</div>
-          </div>
-
-          <v-chip color="primary" variant="outlined" class="powered-by">
-            <v-icon start>mdi-brain</v-icon>
-            <div class="text-caption">Powered by 知启星 AI & DeepSeek-R1</div>
-          </v-chip>
-        </div>
-      </v-card-text>
-    </v-card>
+    <!-- 这一页的建议是 AI 生成的；对话入口放在这一页里，它追问的就是下面这几段。 -->
+    <div class="aa__head">
+      <v-btn variant="outlined" size="small" prepend-icon="mdi-creation" @click="aiChat?.openGeneralChat()">
+        {{ t('tasks.advice.chat') }}
+      </v-btn>
+    </div>
 
     <!-- 使用AIAdvicePanel组件，添加视觉容器 -->
     <AIAdvicePanel
@@ -38,7 +23,8 @@
 import type { TaskAIAdvice } from '@/network/api/tasks/types'
 import type { Task } from '@/types'
 
-import { defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
+import { defineAsyncComponent, inject, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { TasksApi } from '@/network/api/tasks'
 
@@ -47,6 +33,11 @@ const AIAdvicePanel = defineAsyncComponent(() => import('@/components/tasks/AIAd
 const props = defineProps<{
   taskData: Task | null
 }>()
+
+const { t } = useI18n()
+
+/** 题目详情那一层 `provide('aiChat')` 的对话入口（`useAIChat`）。 */
+const aiChat = inject<{ openGeneralChat: () => void } | null>('aiChat', null)
 
 // 状态
 const aiAdvice = ref<TaskAIAdvice | null>(null)
@@ -72,12 +63,12 @@ const startPolling = () => {
         stopPolling()
       } else if (statusData.status === 'FAILED') {
         // 生成失败
-        error.value = '生成建议失败，请重试'
+        error.value = t('tasks.advice.generateFailed')
         loading.value = false
         stopPolling()
       }
     } catch (err: any) {
-      error.value = err instanceof Error ? err.message : '获取建议失败'
+      error.value = err instanceof Error ? err.message : t('tasks.advice.loadFailed')
       loading.value = false
       stopPolling()
     }
@@ -114,7 +105,7 @@ const fetchAIAdvice = async () => {
     const { data: requestData } = await TasksApi.requestAIAdvice(props.taskData.id)
 
     if (requestData.status === 'FAILED') {
-      error.value = '生成建议失败，请重试'
+      error.value = t('tasks.advice.generateFailed')
       loading.value = false
     } else if (requestData.status === 'COMPLETED') {
       // 如果已经生成完成，直接获取结果
@@ -126,7 +117,7 @@ const fetchAIAdvice = async () => {
       startPolling()
     }
   } catch (err: any) {
-    error.value = err instanceof Error ? err.message : '获取建议失败'
+    error.value = err instanceof Error ? err.message : t('tasks.advice.loadFailed')
     loading.value = false
   }
 }
@@ -142,31 +133,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.ai-advice-header-card {
-  background: linear-gradient(135deg, rgba(var(--v-theme-primary), 0.04) 0%, rgba(var(--v-theme-primary), 0.12) 100%);
-  border: 1px solid rgba(var(--v-theme-primary), 0.1);
-  transition: all 0.3s ease;
-}
-
-.ai-advice-header-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(var(--v-theme-primary), 0.2);
-  box-shadow: 0 4px 12px rgba(var(--v-theme-primary), 0.08) !important;
-}
-
-.advice-content-card {
-  background-color: var(--v-theme-surface);
-  border: 1px solid rgba(var(--v-border-color), 0.1);
-  transition: all 0.3s ease;
-}
-
-.powered-by {
-  height: 28px;
-}
-
-@media (max-width: 600px) {
-  .ai-advice-header-card .text-h4 {
-    font-size: 1.5rem !important;
-  }
+.aa__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 16px;
 }
 </style>

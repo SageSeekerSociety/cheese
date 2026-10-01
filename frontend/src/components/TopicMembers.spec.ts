@@ -97,14 +97,14 @@ async function openRoster() {
 }
 
 const CLOUD: ComputeChoice = {
-  name: '云端 · 标准配置',
+  name: null,
   profile: 'cloud',
   device_id: null,
   cores: null,
   memory_mb: null,
   disk_gb: null,
 }
-const LAB: ComputeChoice = { ...CLOUD, name: '自有设备 · 自动选择', profile: 'device', device_id: null }
+const LAB: ComputeChoice = { ...CLOUD, profile: 'device', device_id: null }
 
 function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProfile {
   return {

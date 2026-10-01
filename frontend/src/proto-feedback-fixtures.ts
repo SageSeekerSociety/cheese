@@ -32,6 +32,8 @@ import type {
   FeedbackVisibility,
 } from '@/cx_types'
 
+import { adminRoutes } from './proto-admin-fixtures'
+
 /** 预览里「我」是谁。管理端入口和「我的」那一栏都看它。 */
 const ME = 'andy'
 /** 「热门」的三个数与后端那三个常量（`repositories.HOT_SCORE` 等）取同一个值 ——
@@ -57,9 +59,7 @@ const CHOSEN_AVATARS: Record<string, number> = {
   chiruotong: 4,
 }
 
-function avatarOf(handle: string): number | null {
-  return CHOSEN_AVATARS[handle] ?? null
-}
+const avatarOf = (handle: string): number | null => CHOSEN_AVATARS[handle] ?? null
 
 /** 相对时间按**打开页面的那一刻**算：预览是拿来看「长什么样」的，把一个日期写死，
  *  过几天再打开就全是「8 天前」，而那不是任何人的真实体验。 */
@@ -80,6 +80,7 @@ const META: FeedbackMeta = {
   hot_half_life_days: HOT_HALF_LIFE_DAYS,
   hot_min_items: HOT_MIN_ITEMS,
   is_admin: IS_ADMIN,
+  is_platform_admin: IS_ADMIN,
 }
 
 /** 造一条反馈。卡片字段和详情字段放在一份数据里 —— 详情页要的就是卡片 + 正文，
@@ -1152,8 +1153,8 @@ function inPublicList(item: FeedbackCard): boolean {
   return item.visibility === 'public' && !item.security
 }
 
-/** 「办完了」= 已修复 **和** 已上线，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
-const CLOSED: FeedbackStatus[] = ['resolved', 'deployed']
+/** 「办完了」= 已修复、已上线、不修复，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
+const CLOSED: FeedbackStatus[] = ['resolved', 'deployed', 'declined']
 
 /** 栏位谓词。这是 `repositories._tab_where` 的镜像，**形状也照抄**：
  *  `sunk` 一处定义、三个栏位共用，免得这里写着写着就和后端分了叉 —— 预览存在的
@@ -1906,22 +1907,53 @@ function isAdminHandle(handle: string): boolean {
  *  并进 `refused` 的 412 —— 412 对客户端说的是「这件事现在不能做，别重试」，而这两条
  *  说的是「你请求里那个名字有问题」，改个名字就能成。并进去的话，预览里给根管理员
  *  按删除会得到一句「别重试」，人就会去查一个不存在的重试开关。 */
-type MockReply =
+export type MockReply =
   | { data: unknown }
   | { missing: true }
   | { refused: string }
   | { forbidden: string }
   | { invalid: string }
   | { conflict: string }
+  | { failed: string }
   | undefined
 
+// `?fail=1`：布局预览用的开关，判定写在 `routes()` 里、紧挨着用它的地方。
+const PREVIEW_FAIL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('fail') === '1'
+
+/** 飞书应用（样例）。App ID 是编的，不对应任何真实应用。 */
+const FEISHU_APP = {
+  configured: true,
+  app_id: 'cli_a7f3c2e9d4b10018',
+  domain: 'feishu',
+  updated_by: 'andy',
+  updated_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
+}
+
 /** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
- *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。 */
-function routes(url: URL, method: string, body: unknown): MockReply {
+ *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。
+ *
+ *  导出给 `proto-preview-transport.ts` 调 —— 那一层管出口，这里只管「这条路由回什么」。 */
+export function routes(url: URL, method: string, body: unknown): MockReply {
   const path = url.pathname.replace(/^\/api/, '')
   const payload = (body ?? {}) as Record<string, never> & Record<string, unknown>
 
   if (path === '/feedback/meta' && method === 'GET') return { data: META }
+  // 布局预览用：`?fail=1` 让后台各页的读接口一律失败，用来并排看「出错态」长什么样。
+  // 权限（meta）和未读数（counts）不跟着失败，不然外壳直接落到「不是管理员」那一档。
+  if (PREVIEW_FAIL && method === 'GET' && path !== '/feedback/counts') return { failed: '服务暂时不可用（样例错误）' }
+  const admin = adminRoutes(path, method, url, payload)
+  if (admin) return admin
+  if (path === '/admin/integrations/feishu' && method === 'GET') return { data: FEISHU_APP }
+  if (path === '/admin/integrations/feishu' && method === 'PUT') {
+    Object.assign(FEISHU_APP, {
+      configured: true,
+      app_id: payload.app_id,
+      domain: payload.domain,
+      updated_by: 'andy',
+      updated_at: new Date().toISOString(),
+    })
+    return { data: FEISHU_APP }
+  }
   if (path === '/feedback/counts' && method === 'GET') return { data: counts() }
   if (path === '/feedback/read' && method === 'POST') {
     // 游标推到**此刻**，不是「这一条」：`markRead` 的语义是「我全看过了」，所以之后
@@ -2605,44 +2637,4 @@ function create(body: FeedbackCreateBody): FeedbackDetail {
   nextId += 1
   ROWS.unshift(created)
   return created
-}
-
-/** 把 `/api/*` 上反馈的那几条路由接到假数据上。**只拦 `/api/`**：图标、字体那些
- *  请求照旧走真正的网络栈。 */
-export function installPreviewFetch(): void {
-  const real = window.fetch.bind(window)
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-    const url = new URL(raw, window.location.origin)
-    if (!url.pathname.startsWith('/api/')) return real(input as RequestInfo, init)
-    const method = (init?.method ?? 'GET').toUpperCase()
-    let body: unknown = null
-    if (typeof init?.body === 'string' && init.body) {
-      try {
-        body = JSON.parse(init.body)
-      } catch {
-        body = null
-      }
-    }
-    const hit = routes(url, method, body)
-    if (hit === undefined) {
-      // 走到这里说明页面调了一个这里没写的接口。预览里它不该发生；真发生了，
-      // 报出来比在界面上留一个没有原因的空列表好。
-      console.warn('[preview] 没有假数据的请求', method, url.pathname)
-      return envelope(null)
-    }
-    if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
-    if ('refused' in hit) return envelope(null, 412, hit.refused)
-    if ('forbidden' in hit) return envelope(null, 403, hit.forbidden)
-    if ('invalid' in hit) return envelope(null, 400, hit.invalid)
-    if ('conflict' in hit) return envelope(null, 409, hit.conflict)
-    return envelope(hit.data)
-  }
-}
-
-function envelope(data: unknown, code = 200, message = 'ok'): Response {
-  return new Response(JSON.stringify({ code, message, data }), {
-    status: code === 200 ? 200 : code,
-    headers: { 'content-type': 'application/json' },
-  })
 }

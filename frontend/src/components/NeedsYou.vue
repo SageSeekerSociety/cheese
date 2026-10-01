@@ -26,6 +26,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { getInbox, markRead, resolveAlert, sendFeedback } from '@/api'
+import { t } from '@/i18n'
 import { label, NOTIF_KIND } from '@/labels'
 import { myHandle } from '@/me'
 
@@ -60,7 +61,9 @@ const deck = computed(() => {
  *
  *  变更提醒没有要你答的东西，摆它的时候写「等你回答」是假话：人读到的是「有个
  *  决定在等我」，翻开来却只是一句「这轮改了什么」。 */
-const heading = computed(() => (deck.value[0]?.kind === 'change_alert' ? '变更提醒' : '等你回答'))
+const heading = computed(() =>
+  deck.value[0]?.kind === 'change_alert' ? t('work.needsYou.changeAlert') : t('work.needsYou.waiting')
+)
 
 /** 这一条要「点进去看」的地方 —— 它的房间。
  *
@@ -130,15 +133,15 @@ async function act(row: InboxItem, run: () => Promise<unknown>, failed: string) 
 
 /** 拍板。答复之后这一条不再等人，于是整条从这里消失。 */
 async function decide(row: InboxItem, chosen: string) {
-  await act(row, () => resolveAlert(row.id, chosen), '未能答复')
+  await act(row, () => resolveAlert(row.id, chosen), t('work.needsYou.answerFailed'))
 }
 
 async function dismiss(row: InboxItem) {
-  await act(row, () => markRead(row.id), '未能收起')
+  await act(row, () => markRead(row.id), t('work.needsYou.dismissFailed'))
 }
 
 async function rate(row: InboxItem, feedback: 'up' | 'down') {
-  await act(row, () => sendFeedback(row.id, feedback), '未能提交反馈')
+  await act(row, () => sendFeedback(row.id, feedback), t('work.needsYou.feedbackFailed'))
 }
 
 watch(
@@ -166,7 +169,7 @@ watch(
                「这张卡有三个选项」。只有一条的时候不写——那时候位置不是信息。 -->
           <span v-if="rows.length > 1" class="asked__count t-meta c-faint">{{ cursor + 1 }}/{{ rows.length }}</span>
           <button v-if="rows.length > 1" type="button" class="asked__next t-meta" @click="next">
-            下一条
+            {{ t('work.needsYou.next') }}
             <v-icon size="14" aria-hidden="true">mdi-chevron-right</v-icon>
           </button>
         </header>
@@ -206,7 +209,7 @@ watch(
                   {{ option }}
                 </v-btn>
                 <v-btn v-if="canOpen(row)" size="small" variant="outlined" color="primary" @click="open(row)">
-                  去话题
+                  {{ t('work.needsYou.open') }}
                 </v-btn>
                 <v-btn
                   v-if="!optionsOf(row).length"
@@ -216,7 +219,7 @@ watch(
                   :loading="busy === row.id"
                   @click="dismiss(row)"
                 >
-                  收起
+                  {{ t('work.needsYou.dismiss') }}
                 </v-btn>
                 <v-spacer />
                 <v-btn
@@ -224,7 +227,7 @@ watch(
                   size="x-small"
                   variant="text"
                   :color="row.feedback === 'up' ? 'primary' : 'on-surface-variant'"
-                  aria-label="有帮助"
+                  :aria-label="t('work.needsYou.helpful')"
                   @click="rate(row, 'up')"
                 />
                 <v-btn
@@ -232,7 +235,7 @@ watch(
                   size="x-small"
                   variant="text"
                   :color="row.feedback === 'down' ? 'primary' : 'on-surface-variant'"
-                  aria-label="没帮助"
+                  :aria-label="t('work.needsYou.notHelpful')"
                   @click="rate(row, 'down')"
                 />
               </div>

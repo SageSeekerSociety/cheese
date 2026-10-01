@@ -20,7 +20,7 @@ from app.domain.agent.harness import (
 from app.domain.agent.harness.driven import subscription
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.pi.backlog import PiBacklog
-from app.domain.agent.harness.pi.events import CONTINUES, FAILED
+from app.domain.agent.harness.pi.events import CONTINUES, FAILED, thread_of
 from app.domain.agent.harness.pi.journal import GAVE_UP, Journal
 
 
@@ -68,9 +68,15 @@ class Subscription(subscription.Subscription[PiBacklog]):
         return PiBacklog(self.path, self.session_id)
 
     def starts_turn(self, record: dict, reader: PiBacklog) -> bool:
+        # A subagent's prompt, or its closing message, is its own run and not
+        # the session's turn (`subagents.py`).
+        if thread_of(record):
+            return False
         return (record.get("message") or {}).get("role") == "user"
 
     def ends_turn(self, record: dict, reader: PiBacklog) -> bool:
+        if thread_of(record):
+            return False
         if record.get("type") == GAVE_UP:
             return True
         message = record.get("message") or {}

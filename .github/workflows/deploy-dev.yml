@@ -161,11 +161,19 @@ jobs:
       # when both exist. The env file is written with the new name and the old
       # spelling is swept out — the backend reads both, so a leftover old line
       # would be configuration that does nothing.
-      - name: Configure platform administrators
+      #
+      # The feedback roster is the other list this step writes, and it is NOT
+      # merged: it is who may read private feedback on this box, so the value
+      # here is the whole truth and a hand edit to the box does not survive a
+      # deploy. It lives in this file rather than a repo variable so that
+      # widening it is a reviewed change. See `feedback_triage_handles` in
+      # backend/app/core/config.py.
+      - name: Configure platform and feedback administrators
         if: steps.release.outputs.skip != 'true'
         env:
           NEW_PLATFORM_ADMIN_HANDLES: ${{ vars.PLATFORM_ADMIN_HANDLES }}
           OLD_FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
+          FEEDBACK_TRIAGE_HANDLES: '["andy"]'
         run: |
           python3 - <<'PY'
           import json
@@ -217,15 +225,18 @@ jobs:
           handles = list(existing)
           handles += [handle for handle in from_variable if handle not in handles]
 
-          # Nothing anywhere: leave the file alone. Writing an empty list would
-          # be a box that cannot boot, which is worse than a box with no roster.
+          # One write, both keys in a fixed order, so a deploy that changes
+          # nothing rewrites nothing. No platform names anywhere: leave that key
+          # alone. Writing an empty list would be a box that cannot boot, which
+          # is worse than a box with no roster.
+          updates = {}
           if handles:
-              save = runpy.run_path("deploy/bootstrap-forgejo.py")["save_environment"]
-              save(
-                  path,
-                  {"PLATFORM_ADMIN_HANDLES": json.dumps(handles)},
-                  remove=["FEEDBACK_ADMIN_HANDLES"],
-              )
+              updates["PLATFORM_ADMIN_HANDLES"] = json.dumps(handles)
+          updates["FEEDBACK_TRIAGE_HANDLES"] = json.dumps(
+              handle_list(os.environ["FEEDBACK_TRIAGE_HANDLES"], "FEEDBACK_TRIAGE_HANDLES")
+          )
+          save = runpy.run_path("deploy/bootstrap-forgejo.py")["save_environment"]
+          save(path, updates, remove=["FEEDBACK_ADMIN_HANDLES"] if handles else [])
           PY
 
       # Which release this one replaces, read before it is replaced: the last

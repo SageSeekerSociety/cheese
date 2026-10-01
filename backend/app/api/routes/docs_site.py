@@ -9,6 +9,7 @@ import logging
 import re
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -32,7 +33,9 @@ from app.core.redis import get_redis_client
 from app.domain.admin.services import AdminService
 from app.domain.docs_site import access, assistant, library, retrieval, tools
 from app.domain.docs_site.limits import AskLimits
+from app.domain.feature_stats import pricing
 from app.domain.topic.services import TopicService
+from app.domain.usage.personal import PersonalCredits, Rates
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -145,6 +148,20 @@ async def ask(
         await limits.release(auth.user_id)
         return _refuse(503, "问芝士暂时读不到文档，稍后再试。", 30)
 
+    # The question is the asker's, so its cost comes out of their credits.
+    rates = Rates.of(settings.docs_assistant_model, await pricing.model_rates())
+    if rates is None:
+        await limits.release(auth.user_id)
+        return _refuse(503, "问芝士暂未开放，稍后再试。", 60)
+    balance = await PersonalCredits(db).balance(auth.user_id)
+    await db.commit()
+    if balance.credits_remaining <= 0:
+        await limits.release(auth.user_id)
+        wait = balance.resets_at - datetime.now(UTC)
+        return _refuse(
+            429, balance.exhausted_message(), max(60, int(wait.total_seconds()))
+        )
+
     if settings.docs_assistant_agentic:
         result = assistant.Outcome()
         docs = tools.Docs(index)
@@ -171,7 +188,7 @@ async def ask(
             finally:
                 limits.free_slot()
                 # The reader may have gone; the bookkeeping must not go with them.
-                _bookkeep(auth.user_id, body, result, started)
+                _bookkeep(auth.user_id, body, result, started, rates)
 
         return _stream(agent_events())
 
@@ -209,7 +226,7 @@ async def ask(
         finally:
             if hits:
                 limits.free_slot()
-            _bookkeep(auth.user_id, body, result, started)
+            _bookkeep(auth.user_id, body, result, started, rates)
 
     return _stream(events())
 
@@ -224,24 +241,32 @@ def _stream(events) -> StreamingResponse:
 
 
 def _bookkeep(
-    user_id: int, body: AskRequest, result: assistant.Outcome, started: float
+    user_id: int,
+    body: AskRequest,
+    result: assistant.Outcome,
+    started: float,
+    rates: Rates,
 ) -> None:
-    """Record the question without holding up the response: the reader may have
-    gone, and the bookkeeping must not go with them."""
+    """Record and charge the question without holding up the response: the
+    reader may have gone, and the bookkeeping must not go with them."""
     task = asyncio.get_running_loop().create_task(
-        _settle(user_id, body, result, started)
+        _settle(user_id, body, result, started, rates)
     )
     _background.add(task)
     task.add_done_callback(_background.discard)
 
 
 async def _settle(
-    user_id: int, body: AskRequest, result: assistant.Outcome, started: float
+    user_id: int,
+    body: AskRequest,
+    result: assistant.Outcome,
+    started: float,
+    rates: Rates,
 ) -> None:
     await ask_limits().release(user_id)
     try:
         async with async_session_factory() as session:
-            await assistant.record(
+            assistant.record(
                 session,
                 user_id=user_id,
                 question=body.question,
@@ -249,8 +274,22 @@ async def _settle(
                 result=result,
                 started=started,
             )
-    except Exception:  # noqa: BLE001 — a lost analytics row must not surface to anyone
-        logger.warning("recording a docs question failed", exc_info=True)
+            # Every round the answer took is one charge; a question that never
+            # reached the model costs nothing.
+            if result.prompt_tokens is not None:
+                await PersonalCredits(session).charge(
+                    user_id,
+                    model=settings.docs_assistant_model,
+                    rates=rates,
+                    input_tokens=result.prompt_tokens,
+                    output_tokens=result.completion_tokens or 0,
+                    cache_read_tokens=result.cache_read_tokens,
+                    cache_write_tokens=result.cache_write_tokens,
+                    kind="docs_ask",
+                )
+            await session.commit()
+    except Exception:  # noqa: BLE001 — the reader has their answer either way
+        logger.warning("settling a docs question failed", exc_info=True)
 
 
 # ---------- the docs, for AI teammates: cheese_docs_search / cheese_docs_read ----

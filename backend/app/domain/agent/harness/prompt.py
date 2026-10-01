@@ -537,10 +537,31 @@ def strip_platform_notice(text: str) -> str:
     return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
+def is_inline_image(mime: str | None) -> bool:
+    """Only native raster formats belong in the model's image input.
+
+    Unknown types and SVG stay files, readable on demand rather than encoded
+    into every turn. Keep initial, live and textual routing on this rule.
+    """
+    return mime in {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
 def attachment_prompt_line(
-    author: str, path: str, *, embeds_images: bool, mime: str = "image/png"
+    author: str,
+    path: str,
+    *,
+    embeds_images: bool,
+    mime: str = "",
+    gone: bool = False,
 ) -> str:
-    if not mime.startswith("image/"):
+    if gone:
+        # The file was deleted after the message (see `offered_attachments`).
+        return (
+            f"[{author}] 发过一个文件 {path}，但这份文件已经不在了"
+            f"（多半是从资料库里删掉了），这一轮读不到它的内容。"
+            f"需要它的话，请对方重新发一份。"
+        )
+    if not is_inline_image(mime):
         return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
     if embeds_images:
         return (
@@ -583,7 +604,12 @@ def reply_quote(parent, *, recipient: str | None) -> str:
 
 
 def prompt_line(
-    b, *, embeds_images: bool, replied=None, recipient: str | None = None
+    b,
+    *,
+    embeds_images: bool,
+    replied=None,
+    recipient: str | None = None,
+    gone: bool = False,
 ) -> str:
     """One speaker-labelled prompt line per pending human block.
 
@@ -604,10 +630,15 @@ def prompt_line(
     not read the path.
 
     ``replied`` is the block this one answers, when it is a reply: its quote
-    follows the line (`reply_quote`)."""
+    follows the line (`reply_quote`). ``gone`` says the attachment's file no
+    longer exists."""
     if b.kind == BlockKind.attachment:
         line = attachment_prompt_line(
-            b.author, b.content, embeds_images=embeds_images, mime=b.mime_type or ""
+            b.author,
+            b.content,
+            embeds_images=embeds_images,
+            mime=b.mime_type or "",
+            gone=gone,
         )
     else:
         line = f"[{b.author}]: {strip_platform_notice(b.content)}"

@@ -16,6 +16,8 @@
   "webFetch": "读取网页",
   "agent": "派出分身",
   "task": "派出分身",
+  "sendMessage": "给分身补充要求",
+  "taskStop": "停下后台任务",
   "notebookEdit": "修改笔记本",
   "todoWrite": "更新任务清单",
   "bashOutput": "查看命令输出",

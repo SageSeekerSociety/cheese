@@ -10,7 +10,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -35,6 +35,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   sent.length = 0
   vi.stubGlobal(
     'WebSocket',
@@ -70,7 +72,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 async function replyThenSend(text: string, cancel: boolean) {
   const view = render(Panel, {
     props: { topic: { id: 't1', project_id: 'p1', title: 't1', kind: 'topic' } as Topic, showComposer: true },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await settle()
   await fireEvent.mouseOver(view.container.querySelector('[data-mid="m1"] .im-text')!)

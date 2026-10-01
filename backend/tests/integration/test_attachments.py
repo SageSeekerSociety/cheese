@@ -5,6 +5,7 @@ POST /attachments 把字节收进项目的资料库，并在这个房间的文�
 里的 Read 能看图）。资料库本身见 test_library.py。
 """
 
+import threading
 import uuid
 from urllib.parse import quote
 
@@ -119,11 +120,26 @@ def test_upload_and_download_documents(client, filename, content, mime):
     assert workspace.status_code == 404
 
 
-def test_document_reaches_agent_as_file(client, stub_hooks):
+@pytest.mark.parametrize(
+    ("filename", "content", "mime"),
+    [
+        ("paper.pdf", b"%PDF-1.7 test", "application/pdf"),
+        ("source.zip", b"PK\x03\x04source", "application/zip"),
+        ("notes.txt", b"read this on demand", "text/plain"),
+        ("unknown.bin", b"unknown", "application/octet-stream"),
+        ("drawing.svg", b"<svg/>", "image/svg+xml"),
+        (
+            "report.docx",
+            b"PK\x03\x04docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+    ],
+)
+def test_document_reaches_agent_as_file(client, stub_hooks, filename, content, mime):
     _, topic_id = _create_project_and_topic(client)
     att = client.post(
         f"/topics/{topic_id}/attachments",
-        files={"file": ("paper.pdf", b"%PDF-1.7 test", "application/pdf")},
+        files={"file": (filename, content, mime)},
     ).json()["data"]
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         # 正文只有一个 @：点名写在正文里（I13），一份没点名的文件只是落在房间
@@ -142,10 +158,20 @@ def test_document_reaches_agent_as_file(client, stub_hooks):
         if f["type"] == "user_block" and f["block"]["kind"] == "attachment"
     )
     assert block["kind"] == "attachment"
-    assert block["mime_type"] == "application/pdf"
+    assert block["mime_type"] == att["mime"]
     assert att["path"] in (stub_hooks.last_prompt or "")
     assert "发来一个文件" in stub_hooks.last_prompt
     assert "发来一张图片" not in stub_hooks.last_prompt
+    session = stub_hooks._session_for(uuid.UUID(topic_id))
+    handed = [m for m in session.written if m.get("type") == "user"][-1]["message"]
+    assert isinstance(handed["content"], str) or not any(
+        item.get("type") == "image" for item in handed["content"]
+    )
+    raw = client.get(
+        f"/topics/{topic_id}/attachments/raw",
+        params={"path": att["path"], "download": "true"},
+    )
+    assert raw.content == content
 
 
 # The Office types, whose MIME strings are the long ones: .docx is 71
@@ -328,6 +354,79 @@ def test_image_only_message_allowed(client, stub_hooks):
     assert assistant["reply_to"] == user_frames[0]["id"]
 
 
+@pytest.mark.parametrize("midturn", [False, True])
+def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
+    """The actual session input carries one image, not ZIP/PDF/unknown bytes."""
+    _, topic_id = _create_project_and_topic(client)
+    image = _upload(client, topic_id)
+    files = [
+        client.post(
+            f"/topics/{topic_id}/attachments",
+            files={"file": (name, data, mime)},
+        ).json()["data"]
+        for name, data, mime in (
+            ("source.zip", b"PK\x03\x04source", "application/zip"),
+            ("paper.pdf", b"%PDF-1.7 test", "application/pdf"),
+            ("unknown.bin", b"unknown", "application/octet-stream"),
+        )
+    ]
+    # Legacy records can have no MIME; never guess image/png from their path.
+    files[-1]["mime"] = ""
+
+    class HeldScreen(StubChannel):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.injected = threading.Event()
+            self.inputs = []
+
+        def emit_turn(self, tid, prompt, reply, *, agent=None):
+            self.inputs.append(prompt)
+            self.starts(tid, agent=agent)
+            self.acknowledges(tid, prompt, agent=agent)
+            if not midturn:
+                self.stops(tid, reply, agent=agent)
+            elif len(self.inputs) == 1:
+                self.started.set()
+            else:
+                self.injected.set()
+
+    screen = HeldScreen()
+    service = ChatService(
+        session_factory=client.test_request_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([screen.runtime], screen.name),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        if midturn:
+            ws.send_json({"type": "message", "content": "@芝士 等待"})
+            assert screen.started.wait(5)
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "@芝士 看附件",
+                "attachments": [image, *files],
+            }
+        )
+        if midturn:
+            try:
+                assert screen.injected.wait(5)
+            finally:
+                screen.stops(uuid.UUID(topic_id), "完成")
+        _drain_until_done(ws)
+
+    session = screen._session_for(uuid.UUID(topic_id))
+    handed = [m for m in session.written if m.get("type") == "user"][-1]["message"]
+    image_blocks = [b for b in handed["content"] if b.get("type") == "image"]
+    assert [b["source"]["path"] for b in image_blocks] == [image["path"]]
+    prompt = screen.inputs[-1]
+    assert "已附在本条消息里" in prompt
+    for file in files:
+        assert f"发来一个文件：{file['path']}" in prompt
+
+
 # --- 图片输入 on a backend that does NOT embed images -----------------------
 # A backend that silently drops the image while the prompt insists it is
 # attached is the worst shape available — 芝士 doesn't error, it writes a
@@ -399,3 +498,45 @@ def test_embedding_backend_still_says_the_image_is_attached(client, stub_hooks):
     prompt = stub_hooks.last_prompt or ""
     assert "已附在本条消息里" in prompt
     assert "没有附在本条消息里" not in prompt
+
+
+def test_a_deleted_library_file_does_not_wedge_the_room(client, stub_hooks):
+    """A message whose attachment has since left the library still gets its
+    turn: the turn finishes, 芝士 is told the file is gone instead of being
+    handed an image, and the next message is not held behind it."""
+    project_id, topic_id = _create_project_and_topic(client)
+    att = _upload(client, topic_id)
+    gone = client.delete(
+        f"/projects/{project_id}/library", params={"path": "screenshot.png"}
+    )
+    assert gone.status_code == 200, gone.text
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "@芝士 看看这张截图",
+                "attachments": [att],
+            }
+        )
+        frames = _drain_until_done(ws)
+
+    assert frames[-1]["type"] == "done", frames[-1]
+    prompt = stub_hooks.last_prompt or ""
+    assert att["path"] in prompt
+    assert "已经不在了" in prompt
+    assert "已附在本条消息里" not in prompt
+    session = stub_hooks._session_for(uuid.UUID(topic_id))
+    handed = [m for m in session.written if m.get("type") == "user"][-1]["message"]
+    assert isinstance(handed["content"], str) or not any(
+        block.get("type") == "image" for block in handed["content"]
+    )
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 那就先不看图了"})
+        frames = _drain_until_done(ws)
+
+    assert frames[-1]["type"] == "done", frames[-1]
+    prompt = stub_hooks.last_prompt or ""
+    assert "那就先不看图了" in prompt
+    assert att["path"] not in prompt

@@ -31,16 +31,15 @@ export function shell(ctx, { title, description, section, bodyClass = '', main, 
 <script>document.documentElement.classList.add('js');try{if(localStorage.getItem('docs-dark')==='1'||(localStorage.getItem('docs-dark')===null&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
 </head>
 <body class="${bodyClass}" data-sec="${esc(section)}">
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>${ctx.grads}</defs></svg>
 <a class="skip" href="#main">跳到正文</a>
 <div class="progress" id="progress"></div>
 <div class="ambient" aria-hidden="true"><i class="glow"></i><i class="grid"></i><i class="stars"></i><i class="grain"></i></div>
 <header class="hdr" id="hdr">
   <div class="hdr-row">
     <button class="icon-btn menu-btn" id="menuBtn" aria-label="打开导航">${ic('list')}</button>
-    <a class="brand" href="/docs/" aria-label="知是 · Cheese 文档首页">
+    <a class="brand" href="/docs/" aria-label="知是文档首页">
       <span class="brand-mark"><img src="${assets.logo}" alt=""></span>
-      <span class="brand-word">知是<i class="dot">·</i>Cheese</span><span class="sep"></span><span class="sub">文档</span>
+      <span class="brand-word">${ctx.wordmark}</span><span class="sep"></span><span class="sub">文档</span>
     </a>
     <nav class="tabs" id="tabs" aria-label="文档分区"><span class="tab-ind" id="tabInd"></span>${tabs}</nav>
     <div class="hdr-actions">
@@ -84,7 +83,7 @@ ${footer(ctx)}
 export function footer(ctx) {
   const { site, assets } = ctx
   return `<footer class="foot"><div class="foot-row">
- <div><a class="brand" href="/docs/"><span class="brand-mark sm"><img src="${assets.logo}" alt=""></span><span class="brand-word">知是<i class="dot">·</i>Cheese</span></a><div class="fine">和 AI 队友一起做项目的地方。<br>© 2026 SageSeekerSociety</div></div>
+ <div><a class="brand" href="/docs/" aria-label="知是文档首页"><span class="brand-mark sm"><img src="${assets.logo}" alt=""></span><span class="brand-word">${ctx.wordmark}</span></a><div class="fine">和 AI 队友一起做项目的地方。<br>© 2026 SageSeekerSociety</div></div>
  <div><h6>文档</h6>${site.userSections.map((s) => `<a href="${s.href}">${esc(s.label)}</a>`).join('')}<a href="/docs/dev/overview">开发文档</a><a href="/docs/changelog">更新日志</a></div>
  <div><h6>产品</h6><a href="/">进入知是</a><a href="/docs/download">桌面端与连接器</a><a href="/legal/terms">服务条款</a><a href="/legal/privacy">隐私政策</a><a href="/feedback">帮助与反馈</a></div>
  <div><h6>给 AI 与开发者</h6><a href="/docs/llms.txt">llms.txt</a><a href="/docs/manual.zip">下载全部文档（Markdown）</a><a href="/docs/changelog.xml">更新日志 RSS</a><a href="${REPO}" rel="noopener">GitHub</a></div>

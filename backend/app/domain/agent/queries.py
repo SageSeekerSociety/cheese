@@ -29,6 +29,7 @@ from app.domain.agent.platform_notices import memory_changed_notice
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import agent_instance_handle
@@ -306,7 +307,11 @@ async def _say_memory_change(
         if room is None:
             continue
         content, meta = memory_changed_notice(
-            where="项目共享" if scope is MemoryFileScope.team else "你的私人",
+            where=(
+                say("memoryScopeTeam")
+                if scope is MemoryFileScope.team
+                else say("memoryScopePrivate")
+            ),
             summary=part.summary(),
             diff=part.diff,
             refused=tuple(sorted(part.refused)),

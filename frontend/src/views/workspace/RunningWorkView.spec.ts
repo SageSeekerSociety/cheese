@@ -45,6 +45,11 @@ vi.mock('@/stores/workspace', () => ({
 
 import RunningWorkView from './RunningWorkView.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const Board = RunningWorkView as unknown as Component
 
 function task(over: Partial<RoomTask> = {}): RoomTask {
@@ -57,7 +62,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
     ...over,
   }
 }
@@ -95,9 +100,9 @@ describe('列按「该谁动」分', () => {
   it('三件同样在等的活，按后端给的列各就各位', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'building', display_status: '运行中' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'delivering', display_status: '等待检查' } }),
-        task({ id: 'c', title: '丙', presentation: { column: 'needs_you', display_status: '待审阅' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'building', phrase: 'running' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'delivering', phrase: 'awaiting_checks' } }),
+        task({ id: 'c', title: '丙', presentation: { column: 'needs_you', phrase: 'awaiting_review' } }),
       ],
       total: 3,
     })
@@ -112,8 +117,8 @@ describe('列按「该谁动」分', () => {
     // 张映射表的话，这个区别当场就没了。
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'delivering', display_status: '修复检查' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'needs_you', display_status: '检查未通过' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'delivering', phrase: 'fixing_checks' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'needs_you', phrase: 'checks_failed' } }),
       ],
       total: 2,
     })
@@ -125,7 +130,7 @@ describe('列按「该谁动」分', () => {
   it('后端造出一个前端没见过的短语，照样原样显示', async () => {
     // 「失联」这类词是后端加的。前端有一张自己的表的话，新词只会变成一个空白。
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'building', display_status: '失联' } })],
+      data: [task({ presentation: { column: 'building', phrase: 'lost' } })],
       total: 1,
     })
     const { findByText } = mount()
@@ -136,7 +141,7 @@ describe('列按「该谁动」分', () => {
 describe('空列不消失', () => {
   it('一件活都没有的列仍然留着列头和 0', async () => {
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'needs_you', display_status: '待审阅' } })],
+      data: [task({ presentation: { column: 'needs_you', phrase: 'awaiting_review' } })],
       total: 1,
     })
     const { container } = mount()
@@ -151,8 +156,8 @@ describe('已完成不占板面', () => {
   it('收进底部那条折叠行，件数写在按钮上', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已采纳' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'done', phrase: 'accepted' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', phrase: 'closed' } }),
       ],
       total: 2,
     })
@@ -172,11 +177,11 @@ describe('已完成不占板面', () => {
 
 describe('这一页原来的两个用处都还在', () => {
   it('房间四个位置占满时，还没开始的任务标「排队中」，在跑的不标', async () => {
-    const running = { column: 'building', display_status: '运行中' } as const
+    const running = { column: 'building', phrase: 'running' } as const
     listProjectTasks.mockResolvedValue({
       data: [
         ...['a', 'b', 'c', 'd'].map((id) => task({ id, title: `跑-${id}`, presentation: { ...running } })),
-        task({ id: 'e', title: '排队的', presentation: { column: 'building', display_status: '待开工' } }),
+        task({ id: 'e', title: '排队的', presentation: { column: 'building', phrase: 'not_started' } }),
       ],
       total: 5,
     })
@@ -187,7 +192,7 @@ describe('这一页原来的两个用处都还在', () => {
   })
 
   it('四条在跑分在两个房间，就没有一个房间是满的', async () => {
-    const running = { column: 'building', display_status: '运行中' } as const
+    const running = { column: 'building', phrase: 'running' } as const
     listProjectTasks.mockResolvedValue({
       data: [
         ...['a', 'b'].map((id) => task({ id, room_id: 'room-1', presentation: { ...running } })),
@@ -203,9 +208,9 @@ describe('这一页原来的两个用处都还在', () => {
   it('顶上那行统计仍然在，用的是板自己的词', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', presentation: { column: 'building', display_status: '运行中' } }),
-        task({ id: 'b', presentation: { column: 'needs_you', display_status: '待审阅' } }),
-        task({ id: 'c', presentation: { column: 'done', display_status: '已采纳' } }),
+        task({ id: 'a', presentation: { column: 'building', phrase: 'running' } }),
+        task({ id: 'b', presentation: { column: 'needs_you', phrase: 'awaiting_review' } }),
+        task({ id: 'c', presentation: { column: 'done', phrase: 'accepted' } }),
       ],
       total: 3,
     })
@@ -294,7 +299,7 @@ describe('一件活都没有', () => {
 
   it('活全在「已完成」里的时候，每一列自己说它空', async () => {
     listProjectTasks.mockResolvedValue({
-      data: [task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已收工' } })],
+      data: [task({ id: 'a', title: '甲', presentation: { column: 'done', phrase: 'closed' } })],
       total: 1,
     })
     const { findByText } = mount()
@@ -306,8 +311,8 @@ describe('一件活都没有', () => {
   it('活全在「已完成」里的时候，顶上照样数得出交付过多少', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已关闭' } }),
-        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'a', title: '甲', presentation: { column: 'done', phrase: 'closed' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', phrase: 'closed' } }),
       ],
       total: 2,
     })

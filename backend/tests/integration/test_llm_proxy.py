@@ -5,6 +5,7 @@ so this route must authenticate that token, swap in the project's virtual
 gateway key, and pass the upstream answer through untouched.
 """
 
+import json
 import uuid
 
 import httpx
@@ -12,7 +13,7 @@ import pytest
 
 from app.api.routes import llm_proxy
 from app.core.db import pool_status
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
 from tests.integration.conftest import post_project
 
 
@@ -39,11 +40,48 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
     token = mint_scoped_token(project_id=project_id)
     response = client.post(
-        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+        "/llm/admission",
+        headers={"Authorization": f"Bearer {token}", "X-Cheese-Token": SANDBOX_TOKEN},
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["supply"]["key"] == "project-key"
     assert checked_out == [0]
+
+
+def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
+    """A session holds the same scoped token the proxy admits it with, so that
+    token alone gets the decision and never the project's gateway key. The key
+    goes to a caller that also presents the proxy's own credential."""
+    from app.domain.agent.chat import ChatService
+
+    async def gateway_key(self, project_id):
+        return "project-key"
+
+    monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
+    project_id = _make_project(client)
+    token = mint_scoped_token(project_id=project_id)
+    bearer = {"Authorization": f"Bearer {token}"}
+    # The test client sends the platform's secret on every request; a session
+    # has no such thing.
+    monkeypatch.delitem(client.headers, "X-Cheese-Token")
+
+    for headers in (
+        bearer,
+        # What a session could add on its own: its scoped token again, or a guess.
+        {**bearer, "X-Cheese-Token": token},
+        {**bearer, "X-Cheese-Token": "not-the-secret"},
+    ):
+        body = client.post("/llm/admission", headers=headers).json()["data"]
+        assert body["allow"] is True
+        assert body["supply"]["pool"] == "gateway"
+        assert body["supply"]["model"]
+        assert "key" not in body["supply"]
+        assert "project-key" not in json.dumps(body)
+
+    proxy = client.post(
+        "/llm/admission", headers={**bearer, "X-Cheese-Token": SANDBOX_TOKEN}
+    ).json()["data"]
+    assert proxy["supply"]["key"] == "project-key"
 
 
 class _FakeResponse:

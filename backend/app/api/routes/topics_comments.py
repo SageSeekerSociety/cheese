@@ -67,6 +67,7 @@ from app.api.routes.topics import (
 from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -127,7 +128,7 @@ async def add_comment(
         # `task_id` too: a card's blocks sit under the same `topic_id`, so
         # checking only the room would let a comment anchor onto one of them.
         if node is None or node.topic_id != place.room_id or node.task_id is not None:
-            raise ValidationError("锚点不是本话题的文档块")
+            raise ValidationError(say("commentAnchorNotInDoc"))
         reply_to = node.id
     # B4 Feishu-style: the exact selected span, kept for display next to the
     # comment. Bounded so a runaway selection can't bloat the row.
@@ -174,9 +175,9 @@ async def add_comment(
             ),
             addressed=addressed_to_agent(seat),
             nudge_event=(
-                f"{author} 评论了文档，已交给 <@{seat}>"
+                say("docCommentedHandedTo", actor=author, seat=f"<@{seat}>")
                 if seat
-                else f"{author} 评论了文档"
+                else say("docCommented", actor=author)
             ),
             provision_actor=actor,
         )

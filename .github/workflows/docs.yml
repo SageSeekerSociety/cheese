@@ -16,7 +16,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # A merge-queue run takes this job on the cheese-ci pool, so it does not
+    # wait behind pull-request runs for one of the hosted runners.
+    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

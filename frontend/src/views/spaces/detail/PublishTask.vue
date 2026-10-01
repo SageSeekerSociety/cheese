@@ -177,7 +177,7 @@ async function submitTask(taskData: TaskFormSubmitData) {
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时候发出去就会静默地
   // 少一份用户明明已经选好的文件。
   if (attachmentUploading.value) {
-    toast.error('附件还在上传，请稍候再发布')
+    toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return false
   }
 
@@ -248,11 +248,11 @@ async function previewFromPdf() {
     return
   }
   if (!file) {
-    toast.error('请先选择要上传的 PDF 文件')
+    toast.error(t('spaces.detail.publishTask.quick.noFile'))
     return
   }
   if (file.size > MAX_PDF_BYTES) {
-    toast.error('PDF 文件不能超过 15MB')
+    toast.error(t('spaces.detail.publishTask.quick.tooLarge'))
     return
   }
 
@@ -267,7 +267,7 @@ async function previewFromPdf() {
     })
 
     if (!data.drafts || data.drafts.length === 0) {
-      toast.error('未识别到可发布的题目草稿')
+      toast.error(t('spaces.detail.publishTask.quick.noDrafts'))
       quickDrafts.value = []
       quickTokens.value = data.tokenUsed ?? null
       initialTaskData.value = {}
@@ -275,12 +275,12 @@ async function previewFromPdf() {
     }
 
     quickDrafts.value = data.drafts
-    initialTaskData.value = { name: data.drafts[0]?.name || 'PDF 批量发布参数' }
+    initialTaskData.value = { name: data.drafts[0]?.name || t('spaces.detail.publishTask.quick.parametersName') }
     quickTokens.value = data.tokenUsed ?? null
-    toast.success(`解析完成，共识别 ${data.drafts.length} 个题目草稿`)
+    toast.success(t('spaces.detail.publishTask.quick.parsed', { n: data.drafts.length }))
   } catch (error) {
     console.error('PDF 解析预览失败:', error)
-    toast.error('PDF 解析预览失败')
+    toast.error(t('spaces.detail.publishTask.quick.previewFailed'))
   } finally {
     quickLoading.value = false
   }
@@ -299,7 +299,7 @@ function buildTaskOptions(taskData: TaskFormSubmitData, id: number) {
     ...taskData,
     submissionSchema: TASK_SUBMISSION_SCHEMA,
     space: id,
-    name: taskData.name || 'PDF 批量发布参数',
+    name: taskData.name || t('spaces.detail.publishTask.quick.parametersName'),
     intro: '',
     description: '',
     requireRealName: taskData.requireRealName || false,
@@ -312,7 +312,7 @@ function buildTaskOptions(taskData: TaskFormSubmitData, id: number) {
 /** 确认并批量发布草稿（`POST /tasks/publish/from-pdf/confirm`），发完落到「我的」。 */
 async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
   if (quickDrafts.value.length === 0) {
-    toast.error('没有可发布的草稿，请先解析预览')
+    toast.error(t('spaces.detail.publishTask.quick.nothingToPublish'))
     return false
   }
 
@@ -322,7 +322,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
       drafts: quickDrafts.value,
       taskOptions: buildTaskOptions(taskData, id),
     })
-    toast.success(`已发布 ${data.count || data.tasks.length} 个题目`)
+    toast.success(t('spaces.detail.publishTask.quick.published', { n: data.count || data.tasks.length }))
     quickDrafts.value = []
     quickTokens.value = null
     initialTaskData.value = {}
@@ -330,7 +330,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
     return true
   } catch (error) {
     console.error('PDF 批量发布失败:', error)
-    toast.error('PDF 批量发布失败')
+    toast.error(t('spaces.detail.publishTask.quick.publishFailed'))
     return false
   } finally {
     quickConfirming.value = false
@@ -342,8 +342,12 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
   <PageHeader show-on-mobile>
     <template #actions>
       <v-btn-toggle v-model="mode" density="compact" variant="outlined" divided mandatory class="pub__mode">
-        <v-btn value="write" size="small" prepend-icon="mdi-pencil-outline">手写一道</v-btn>
-        <v-btn value="pdf" size="small" prepend-icon="mdi-file-pdf-box">从 PDF 生成</v-btn>
+        <v-btn value="write" size="small" prepend-icon="mdi-pencil-outline">{{
+          t('spaces.detail.publishTask.mode.write')
+        }}</v-btn>
+        <v-btn value="pdf" size="small" prepend-icon="mdi-file-pdf-box">{{
+          t('spaces.detail.publishTask.mode.pdf')
+        }}</v-btn>
       </v-btn-toggle>
     </template>
   </PageHeader>
@@ -354,11 +358,14 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
         <!-- 老页本来那张「PDF 快速发布」：先解析出草稿，再在下面那张表单里填参数、
              一次批量发出去。原型里没有这张卡（原型把 PDF 整条路放在另一个态里），
              所以形状照原型画：一张面板、标题加一句说明、按钮排在右下。 -->
-        <PanelCard title="PDF 快速发布" subtitle="上传题目 PDF 后系统会解析出草稿；发布参数在下面那张表单里统一填写">
+        <PanelCard
+          :title="t('spaces.detail.publishTask.quick.title')"
+          :subtitle="t('spaces.detail.publishTask.quick.subtitle')"
+        >
           <v-file-input
             v-model="quickFile"
             accept=".pdf,application/pdf"
-            label="上传题目 PDF"
+            :label="t('spaces.detail.publishTask.quick.uploadLabel')"
             variant="outlined"
             density="comfortable"
             clearable
@@ -372,11 +379,11 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
           </v-file-input>
 
           <p class="pdf__hint">
-            支持 PDF 文件，单文件大小不超过 15MB。地址栏带模板参数时优先用那份模板，否则用空白模板。
+            {{ t('spaces.detail.publishTask.quick.hint') }}
           </p>
 
           <div class="pdf__actions">
-            <span class="pdf__actions-note">解析是只读的：读一遍 PDF、生成草稿，不会直接发出去。</span>
+            <span class="pdf__actions-note">{{ t('spaces.detail.publishTask.quick.readOnlyNote') }}</span>
             <v-spacer />
             <v-btn
               color="primary"
@@ -386,7 +393,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
               @click="previewFromPdf"
             >
               <v-icon start>mdi-eye-outline</v-icon>
-              解析预览
+              {{ t('spaces.detail.publishTask.quick.preview') }}
             </v-btn>
           </div>
         </PanelCard>
@@ -396,28 +403,51 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
         <PanelCard
           v-if="quickDrafts.length"
           data-testid="quick-drafts"
-          title="解析预览结果"
-          :subtitle="`共识别 ${quickDrafts.length} 个题目草稿，提交下面那张表单时会批量应用发布参数${
-            quickTokens !== null ? `。本次约消耗 ${quickTokens} tokens` : ''
-          }`"
+          :title="t('spaces.detail.publishTask.quick.resultTitle')"
+          :subtitle="
+            quickTokens !== null
+              ? t('spaces.detail.publishTask.quick.resultSubtitleTokens', {
+                  n: quickDrafts.length,
+                  tokens: quickTokens,
+                })
+              : t('spaces.detail.publishTask.quick.resultSubtitle', { n: quickDrafts.length })
+          "
         >
           <ul class="quick__list">
             <li v-for="(draft, index) in quickDrafts" :key="`${index}-${draft.name || 'draft'}`" class="quick__row">
               <div class="quick__row-head">
-                <span class="quick__name">{{ index + 1 }}. {{ draft.name || '未命名题目' }}</span>
-                <v-chip size="x-small" label variant="tonal" color="info">PDF 草稿</v-chip>
+                <span class="quick__name"
+                  >{{ index + 1 }}. {{ draft.name || t('spaces.detail.publishTask.quick.untitled') }}</span
+                >
+                <v-chip size="x-small" label variant="tonal" color="info">{{
+                  t('spaces.detail.publishTask.quick.draftChip')
+                }}</v-chip>
               </div>
-              <p class="quick__intro">简介：{{ draft.intro || '—' }}</p>
-              <p class="quick__desc">内容预览：{{ previewDescription(draft.description) }}</p>
+              <p class="quick__intro">
+                {{ t('spaces.detail.publishTask.quick.intro', { intro: draft.intro || '—' }) }}
+              </p>
+              <p class="quick__desc">
+                {{ t('spaces.detail.publishTask.quick.description', { text: previewDescription(draft.description) }) }}
+              </p>
             </li>
           </ul>
 
           <div class="pdf__actions">
-            <span class="pdf__actions-note">
-              确认之后这 {{ quickDrafts.length }} 道会一起进<b>待审核</b>队列；参数在下面那张表单里填。
-            </span>
+            <i18n-t
+              scope="global"
+              keypath="spaces.detail.publishTask.quick.confirmNote"
+              tag="span"
+              class="pdf__actions-note"
+            >
+              <template #n>{{ quickDrafts.length }}</template>
+              <template #queue
+                ><b>{{ t('spaces.detail.publishTask.pendingQueue') }}</b></template
+              >
+            </i18n-t>
             <v-spacer />
-            <v-btn variant="text" :disabled="quickConfirming" @click="clearQuickDrafts">清空预览</v-btn>
+            <v-btn variant="text" :disabled="quickConfirming" @click="clearQuickDrafts">{{
+              t('spaces.detail.publishTask.quick.clear')
+            }}</v-btn>
           </div>
         </PanelCard>
 
@@ -443,29 +473,40 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
 
       <aside class="pub__side">
         <!-- 这道题发出去之后会经过哪几站。一句话是给谁看的，跟着身份变。 -->
-        <PanelCard title="发出去之后">
+        <PanelCard :title="t('spaces.detail.publishTask.lifecycle.title')">
           <ol class="pub__steps" data-testid="publish-lifecycle">
-            <li><b>待审核</b> —— 题目只有你自己和管理员看得到。</li>
-            <li data-testid="publish-audience">
-              <b>有人审了</b> ——
-              <template v-if="isManager">你可以直接通过（自己发的题自己审）。</template>
-              <template v-else>所有者或管理员通过后就上板。</template>
+            <li>
+              <b>{{ t('spaces.detail.publishTask.pendingQueue') }}</b> ——
+              {{ t('spaces.detail.publishTask.lifecycle.pending') }}
             </li>
-            <li><b>上板</b> —— 所有人可见可领，领取进度开始计。</li>
-            <li><b>你能看到</b> —— 「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。</li>
+            <li data-testid="publish-audience">
+              <b>{{ t('spaces.detail.publishTask.lifecycle.reviewedLabel') }}</b> ——
+              <template v-if="isManager">{{ t('spaces.detail.publishTask.lifecycle.reviewedManager') }}</template>
+              <template v-else>{{ t('spaces.detail.publishTask.lifecycle.reviewedMember') }}</template>
+            </li>
+            <li>
+              <b>{{ t('spaces.detail.publishTask.lifecycle.visibleLabel') }}</b> ——
+              {{ t('spaces.detail.publishTask.lifecycle.visible') }}
+            </li>
+            <li>
+              <b>{{ t('spaces.detail.publishTask.lifecycle.trackLabel') }}</b> ——
+              {{ t('spaces.detail.publishTask.lifecycle.track') }}
+            </li>
           </ol>
-          <p class="pub__side-note">被驳回会带原因退回，改完可以重新提交，不用重写一遍。</p>
+          <p class="pub__side-note">{{ t('spaces.detail.publishTask.lifecycle.rejectedNote') }}</p>
         </PanelCard>
 
         <!-- 现在提交得出去吗。清单里每一条都是底下那张表单**真会拦**的规则，
              由表单自己报上来（`lib/taskPublishChecks.ts`）。 -->
-        <PanelCard title="提交前">
+        <PanelCard :title="t('spaces.detail.publishTask.checks.title')">
           <ul v-if="formChecks?.length" class="pub__errors" data-testid="publish-checks">
             <li v-for="check in formChecks" :key="check.id">{{ check.text }}</li>
           </ul>
-          <p v-else-if="formChecks" class="pub__ok" data-testid="publish-ok">看起来没问题。</p>
+          <p v-else-if="formChecks" class="pub__ok" data-testid="publish-ok">
+            {{ t('spaces.detail.publishTask.checks.ok') }}
+          </p>
           <p v-else class="pub__wait" data-testid="publish-checks-waiting">
-            表单装好之后，这里会逐条列出它现在拦着你的规则。
+            {{ t('spaces.detail.publishTask.checks.waiting') }}
           </p>
           <v-btn
             block
@@ -474,7 +515,7 @@ async function confirmQuickFromPdf(taskData: TaskFormSubmitData, id: number) {
             :disabled="!formChecks || formChecks.length > 0"
             @click="submitFromChecklist"
           >
-            提交审核
+            {{ t('spaces.detail.publishTask.checks.submit') }}
           </v-btn>
         </PanelCard>
       </aside>

@@ -88,6 +88,14 @@ test.describe("Login", () => {
       ),
     });
     await expect(consentButton).toBeHidden();
+    // Signing in lands on the workspace at /projects/:projectId. This is the
+    // suite's first navigation into that lazy route, and each retry pays it
+    // again in a fresh browser context: the dev server is precompiled by the
+    // global setup, but fetching and evaluating ~500 modules still took ~15s
+    // on a loaded CI runner (run 36731903181), past the default 5s expect.
+    // Give the route transition its own bounded budget instead of widening
+    // the assertions around it.
+    await expect(page).toHaveURL(/\/projects\//, { timeout: 30_000 });
     await expect(
       page.locator(".app-rail-item:not(.app-rail-item--add)").first(),
     ).toBeVisible();

@@ -7,6 +7,9 @@ is reached where the other harnesses reach it:
   runs on the machine that holds the workspace, which is the machine Claude
   Code's and Codex's executors start the same processes on, with the same
   command, arguments, environment and working directory.
+- **the teammate's type's stdio servers** (``agent_mcp``, from the type's
+  ``mcpServers``) run here too, beside the checkout's. A name the checkout or a
+  remote server already uses stays that server's.
 - **remote servers** (an entry with a ``url``) are the platform's to call. The
   backend names the ones this session can use (``remote_mcp``, from the default
   branch's ``.mcp.json``), and every request goes to ``/topics/{id}/mcp/{name}``
@@ -208,8 +211,10 @@ class ProjectServers:
         workspace: str,
         env: dict[str, str],
         remote: dict | None = None,
+        agent: dict | None = None,
     ):
         self.state = state
+        self.agent = dict(agent or {})
         self.workspace = workspace
         self.env = env
         self.remote_names = list((remote or {}).get("servers", []))
@@ -271,6 +276,9 @@ class ProjectServers:
             for name, spec in declared.items()
             if name not in self.remote_names
         }
+        for name, spec in self.agent.items():
+            if name not in stdio and name not in self.remote_names:
+                stdio[name] = spec
         names = [*stdio, *self.remote_names]
         listings = await asyncio.gather(
             *(

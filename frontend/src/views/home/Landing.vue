@@ -55,13 +55,13 @@ onBeforeUnmount(() => observer?.disconnect())
         <h1 class="hero-title">{{ t('publicSite.slogan') }}</h1>
         <p class="hero-position">{{ t('publicSite.positioning') }}</p>
         <div class="hero-actions">
-          <v-btn :href="entryHref" color="primary" variant="flat" size="x-large" append-icon="mdi-arrow-top-right">
+          <v-btn :to="entryHref" color="primary" variant="flat" size="x-large" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}
           </v-btn>
-          <a class="text-link" href="/solutions">
+          <router-link class="text-link" to="/solutions">
             {{ t('publicSite.solutionsLink') }}
             <v-icon icon="mdi-arrow-right" size="16" />
-          </a>
+          </router-link>
         </div>
       </div>
     </section>
@@ -111,13 +111,13 @@ onBeforeUnmount(() => observer?.disconnect())
         <h2 class="cta-title">{{ t('publicSite.ctaTitle') }}</h2>
         <p class="cta-body">{{ t('publicSite.ctaBody') }}</p>
         <div class="hero-actions">
-          <v-btn :href="entryHref" color="primary" variant="flat" size="x-large" append-icon="mdi-arrow-top-right">
+          <v-btn :to="entryHref" color="primary" variant="flat" size="x-large" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}
           </v-btn>
-          <a class="text-link" href="/solutions">
+          <router-link class="text-link" to="/solutions">
             {{ t('publicSite.solutionsLink') }}
             <v-icon icon="mdi-arrow-right" size="16" />
-          </a>
+          </router-link>
         </div>
       </div>
     </section>

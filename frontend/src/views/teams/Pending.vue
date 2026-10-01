@@ -2,13 +2,13 @@
   <v-list class="pa-4">
     <!-- 我发起的申请副标题 -->
     <v-list-subheader>
-      我发起的申请 <span v-if="!loadingMyRequests">{{ myRequests.length }}</span>
+      {{ t('teams.pending.myRequests') }} <span v-if="!loadingMyRequests">{{ myRequests.length }}</span>
     </v-list-subheader>
 
     <!-- 我发起的申请 - 加载中 -->
     <div v-if="loadingMyRequests" class="d-flex flex-column align-center py-4">
       <v-progress-circular indeterminate color="primary" :size="40" :width="3" class="mb-3"></v-progress-circular>
-      <p class="text-body-2 text-medium-emphasis">加载中...</p>
+      <p class="text-body-2 text-medium-emphasis">{{ t('teams.pending.loading') }}</p>
     </div>
 
     <!-- 我发起的申请 - 空状态 -->
@@ -16,8 +16,8 @@
       <v-avatar size="48" class="bg-surface-light mb-3">
         <v-icon icon="mdi-account-arrow-right" size="large" color="on-surface-variant"></v-icon>
       </v-avatar>
-      <p class="text-subtitle-2 font-weight-medium text-center mb-1">暂无申请记录</p>
-      <p class="text-caption text-center text-medium-emphasis">您还没有申请加入任何团队</p>
+      <p class="text-subtitle-2 font-weight-medium text-center mb-1">{{ t('teams.pending.noRequests') }}</p>
+      <p class="text-caption text-center text-medium-emphasis">{{ t('teams.pending.noRequestsHint') }}</p>
     </div>
 
     <!-- 我发起的申请列表 -->
@@ -38,7 +38,9 @@
           {{ getStatusText(request.status) }}
         </v-chip>
       </v-list-item-title>
-      <v-list-item-subtitle class="text-caption"> 申请时间: {{ formatDate(request.createdAt) }} </v-list-item-subtitle>
+      <v-list-item-subtitle class="text-caption">
+        {{ t('teams.pending.requestedAt', { time: formatDate(request.createdAt) }) }}
+      </v-list-item-subtitle>
 
       <template #append>
         <v-btn
@@ -57,13 +59,13 @@
 
     <!-- 收到的邀请副标题 -->
     <v-list-subheader>
-      收到的邀请 <span v-if="!loadingMyInvitations">{{ myInvitations.length }}</span>
+      {{ t('teams.pending.myInvitations') }} <span v-if="!loadingMyInvitations">{{ myInvitations.length }}</span>
     </v-list-subheader>
 
     <!-- 收到的邀请 - 加载中 -->
     <div v-if="loadingMyInvitations" class="d-flex flex-column align-center py-4">
       <v-progress-circular indeterminate color="primary" :size="40" :width="3" class="mb-3"></v-progress-circular>
-      <p class="text-body-2 text-medium-emphasis">加载中...</p>
+      <p class="text-body-2 text-medium-emphasis">{{ t('teams.pending.loading') }}</p>
     </div>
 
     <!-- 收到的邀请 - 空状态 -->
@@ -71,8 +73,8 @@
       <v-avatar size="48" class="bg-surface-light mb-3">
         <v-icon icon="mdi-email-outline" size="large" color="on-surface-variant"></v-icon>
       </v-avatar>
-      <p class="text-subtitle-2 font-weight-medium text-center mb-1">暂无邀请</p>
-      <p class="text-caption text-center text-medium-emphasis">您暂时没有收到团队邀请</p>
+      <p class="text-subtitle-2 font-weight-medium text-center mb-1">{{ t('teams.pending.noInvitations') }}</p>
+      <p class="text-caption text-center text-medium-emphasis">{{ t('teams.pending.noInvitationsHint') }}</p>
     </div>
 
     <!-- 收到的邀请列表 -->
@@ -94,7 +96,7 @@
         </v-chip>
       </v-list-item-title>
       <v-list-item-subtitle class="text-caption">
-        邀请时间: {{ formatDate(invitation.createdAt) }}
+        {{ t('teams.pending.invitedAt', { time: formatDate(invitation.createdAt) }) }}
       </v-list-item-subtitle>
 
       <template #append>
@@ -104,7 +106,7 @@
             color="success"
             size="small"
             icon="mdi-check"
-            title="接受"
+            :title="t('teams.pending.accept')"
             class="mr-1"
             @click="acceptInvitation(invitation.id)"
           ></v-btn>
@@ -113,7 +115,7 @@
             color="error"
             size="small"
             icon="mdi-close"
-            title="拒绝"
+            :title="t('teams.pending.decline')"
             @click="declineInvitation(invitation.id)"
           ></v-btn>
         </div>
@@ -127,20 +129,21 @@
          后面而不是插在中间——那两段是一对（我发起的 / 我收到的），劈开读起来像是
          漏了一半。 -->
     <v-list-subheader>
-      收到的项目邀请 <span v-if="!loadingProjectInvitations">{{ projectInvitations.length }}</span>
+      {{ t('teams.pending.projectInvitations') }}
+      <span v-if="!loadingProjectInvitations">{{ projectInvitations.length }}</span>
     </v-list-subheader>
 
     <div v-if="loadingProjectInvitations" class="d-flex flex-column align-center py-4">
       <v-progress-circular indeterminate color="primary" :size="40" :width="3" class="mb-3"></v-progress-circular>
-      <p class="text-body-2 text-medium-emphasis">加载中...</p>
+      <p class="text-body-2 text-medium-emphasis">{{ t('teams.pending.loading') }}</p>
     </div>
 
     <div v-else-if="!projectInvitations.length" class="d-flex flex-column align-center py-4">
       <v-avatar size="48" class="bg-surface-light mb-3">
         <v-icon icon="mdi-folder-account-outline" size="large" color="on-surface-variant"></v-icon>
       </v-avatar>
-      <p class="text-subtitle-2 font-weight-medium text-center mb-1">暂无项目邀请</p>
-      <p class="text-caption text-center text-medium-emphasis">您暂时没有收到项目邀请</p>
+      <p class="text-subtitle-2 font-weight-medium text-center mb-1">{{ t('teams.pending.noProjectInvitations') }}</p>
+      <p class="text-caption text-center text-medium-emphasis">{{ t('teams.pending.noProjectInvitationsHint') }}</p>
     </div>
 
     <v-list-item
@@ -154,9 +157,11 @@
           <v-icon icon="mdi-folder-outline" color="on-surface-variant"></v-icon>
         </v-avatar>
       </template>
-      <v-list-item-title>{{ invitation.project_name || '一个项目' }}</v-list-item-title>
+      <v-list-item-title>{{ invitation.project_name || t('teams.pending.unnamedProject') }}</v-list-item-title>
       <v-list-item-subtitle class="text-caption">
-        <UserRef :handle="invitation.inviter_handle" :project-id="null" /> 邀请 · 接受之后你能看到这个项目的全部话题
+        <i18n-t scope="global" keypath="teams.pending.projectInvitedBy" tag="span">
+          <template #inviter><UserRef :handle="invitation.inviter_handle" :project-id="null" /></template>
+        </i18n-t>
       </v-list-item-subtitle>
 
       <template #append>
@@ -166,7 +171,7 @@
             color="success"
             size="small"
             icon="mdi-check"
-            title="接受"
+            :title="t('teams.pending.accept')"
             class="mr-1"
             :disabled="answering === invitation.id"
             @click="answerProjectInvitation(invitation, true)"
@@ -176,7 +181,7 @@
             color="error"
             size="small"
             icon="mdi-close"
-            title="拒绝"
+            :title="t('teams.pending.decline')"
             :disabled="answering === invitation.id"
             @click="answerProjectInvitation(invitation, false)"
           ></v-btn>
@@ -197,7 +202,10 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
 import UserRef from '@/components/common/UserRefLink.vue'
+import i18n, { t } from '@/i18n'
 import { TeamsApi } from '@/network/api/teams'
+
+const { locale } = i18n.global
 
 // 申请和邀请的状态
 const myRequests = ref<TeamMembershipApplication[]>([])
@@ -226,11 +234,11 @@ const answerProjectInvitation = async (invitation: ProjectInvitation, accept: bo
   answering.value = invitation.id
   try {
     await respondToInvitation(invitation.id, accept)
-    toast.success(accept ? '已加入项目' : '已拒绝邀请')
+    toast.success(accept ? t('teams.pending.joinedProject') : t('teams.pending.declineDone'))
     await fetchProjectInvitations()
   } catch (error) {
-    console.error('答复项目邀请失败', error)
-    toast.error('答复失败，请稍后再试')
+    console.error('Failed to answer the project invitation', error)
+    toast.error(t('teams.pending.answerFailed'))
   } finally {
     answering.value = null
   }
@@ -243,8 +251,8 @@ const fetchMyJoinRequests = async () => {
     const response = await TeamsApi.listMyJoinRequests()
     myRequests.value = response.data.requests
   } catch (error) {
-    console.error('获取申请列表失败', error)
-    toast.error('获取申请列表失败')
+    console.error('Failed to load join requests', error)
+    toast.error(t('teams.pending.loadRequestsFailed'))
   } finally {
     loadingMyRequests.value = false
   }
@@ -257,8 +265,8 @@ const fetchMyInvitations = async () => {
     const response = await TeamsApi.listMyInvitations()
     myInvitations.value = response.data.invitations
   } catch (error) {
-    console.error('获取邀请列表失败', error)
-    toast.error('获取邀请列表失败')
+    console.error('Failed to load invitations', error)
+    toast.error(t('teams.pending.loadInvitationsFailed'))
   } finally {
     loadingMyInvitations.value = false
   }
@@ -268,11 +276,11 @@ const fetchMyInvitations = async () => {
 const cancelRequest = async (requestId: number) => {
   try {
     await TeamsApi.cancelMyJoinRequest(requestId)
-    toast.success('申请已取消')
+    toast.success(t('teams.pending.cancelDone'))
     await fetchMyJoinRequests()
   } catch (error) {
-    console.error('取消申请失败', error)
-    toast.error('取消申请失败')
+    console.error('Failed to cancel the join request', error)
+    toast.error(t('teams.pending.cancelFailed'))
   }
 }
 
@@ -280,11 +288,11 @@ const cancelRequest = async (requestId: number) => {
 const acceptInvitation = async (invitationId: number) => {
   try {
     await TeamsApi.acceptInvitation(invitationId)
-    toast.success('已接受邀请')
+    toast.success(t('teams.pending.acceptDone'))
     await fetchMyInvitations()
   } catch (error) {
-    console.error('接受邀请失败', error)
-    toast.error('接受邀请失败')
+    console.error('Failed to accept the invitation', error)
+    toast.error(t('teams.pending.acceptFailed'))
   }
 }
 
@@ -292,17 +300,17 @@ const acceptInvitation = async (invitationId: number) => {
 const declineInvitation = async (invitationId: number) => {
   try {
     await TeamsApi.declineInvitation(invitationId)
-    toast.success('已拒绝邀请')
+    toast.success(t('teams.pending.declineDone'))
     await fetchMyInvitations()
   } catch (error) {
-    console.error('拒绝邀请失败', error)
-    toast.error('拒绝邀请失败')
+    console.error('Failed to decline the invitation', error)
+    toast.error(t('teams.pending.declineFailed'))
   }
 }
 
 // 格式化日期
 const formatDate = (timestamp: number) => {
-  return new Date(timestamp).toLocaleString('zh-CN', {
+  return new Date(timestamp).toLocaleString(locale.value, {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -332,19 +340,19 @@ const getStatusColor = (status: string) => {
 const getStatusText = (status: string) => {
   switch (status) {
     case 'PENDING':
-      return '待处理'
+      return t('teams.members.status.pending')
     case 'APPROVED':
-      return '已批准'
+      return t('teams.members.status.approved')
     case 'ACCEPTED':
-      return '已接受'
+      return t('teams.members.status.accepted')
     case 'REJECTED':
-      return '已拒绝'
+      return t('teams.members.status.rejected')
     case 'DECLINED':
-      return '已拒绝'
+      return t('teams.members.status.declined')
     case 'CANCELED':
-      return '已取消'
+      return t('teams.members.status.canceled')
     default:
-      return '未知'
+      return t('teams.members.status.unknown')
   }
 }
 

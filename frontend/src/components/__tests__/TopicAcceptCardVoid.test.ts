@@ -31,6 +31,8 @@ vi.mock('../../api', async () => {
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const STUCK_NOTE = 'PR #12 检查全绿，但 GitHub 拒绝合并：分支保护要求的审批还不够。'
 
 function stuckCard(over: Partial<AcceptCard> = {}): AcceptCard {
@@ -84,13 +86,15 @@ async function mountWith(cards: AcceptCard[]) {
   const vuetify = createVuetify({ components, directives })
   const utils = render(TopicAcceptCard, {
     props: { topicId: 't1', topicStatus: 'active' },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await flush()
   return utils
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   voidCard.mockReset()

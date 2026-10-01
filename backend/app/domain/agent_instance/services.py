@@ -10,7 +10,8 @@ from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
-from app.domain.agent_type.library import preset_types
+from app.domain.agent_type.library import AgentTypeDef, preset_types
+from app.domain.block.notice_text import say
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
@@ -57,8 +58,55 @@ def initial_configuration(type_name: str | None = None) -> AgentConfiguration:
     return AgentConfiguration(
         body=preset.body,
         skills=list(preset.skills),
-        mcp_servers=list(preset.mcp_servers),
     )
+
+
+async def type_of_seat(
+    db: AsyncSession, project_id: uuid.UUID, handle: str | None
+) -> AgentTypeDef | None:
+    """The type of the teammate acting as ``handle`` in this project, or None.
+
+    Where a session finds its MCP servers: they belong to the type, never to
+    the saved agent. ``handle`` is a session's ``agent_handle`` — a teammate's
+    seat, or the shared ``cheese`` seat, which the project's default answers.
+    Read without writing, since a session start asks it on every turn.
+    """
+    project = await db.get(Project, project_id)
+    if project is None or not handle:
+        return None
+    service = AgentInstanceService(db)
+    agent = await service.for_seat_handle(project, handle)
+    type_name = agent.type_name if agent is not None else None
+    if agent is None and handle == CHEESE_HANDLE and project.default_agent_instance_id:
+        instance = await db.get(AgentInstance, project.default_agent_instance_id)
+        type_name = instance.type_name if instance is not None else None
+    return preset_types().get(type_name) if type_name else None
+
+
+async def agent_stdio_servers(
+    db: AsyncSession, project_id: uuid.UUID, handle: str | None
+) -> dict[str, dict]:
+    """The stdio servers ``handle``'s type defines, by name. Its remote ones
+    are the platform's to call (`remote_mcp`)."""
+    agent_type = await type_of_seat(db, project_id, handle)
+    if agent_type is None:
+        return {}
+    return {
+        name: spec
+        for name, spec in agent_type.inline_servers().items()
+        if not isinstance(spec.get("url"), str)
+    }
+
+
+async def project_types(db: AsyncSession, project_id: uuid.UUID) -> list[AgentTypeDef]:
+    """The types of this project's active teammates, each once."""
+    names = {
+        instance.type_name
+        for instance in await AgentInstanceRepository(db).list_for_project(project_id)
+        if instance.is_active and instance.type_name
+    }
+    library = preset_types()
+    return [library[name] for name in sorted(names) if name in library]
 
 
 def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:
@@ -168,7 +216,7 @@ class AgentInstanceService:
             # 迁移窗口：旧镜像建的项目还没有芝士这一行。就地补种，走的是同一个
             # 播种函数，不是第二条读路径。
             return await self.materialize_default(project)
-        raise NotFoundError(f"这个项目里没有 handle 为 {handle!r} 的队友")
+        raise NotFoundError(say("teammateHandleNotFound", handle=repr(handle)))
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The role instructions saved on this agent."""
@@ -190,7 +238,7 @@ class AgentInstanceService:
         """
         instance = await self._repo.get(instance_id)
         if instance is None or instance.project_id != project_id:
-            raise NotFoundError("agent 不存在")
+            raise NotFoundError(say("agentNotFound"))
         return instance
 
     async def create(
@@ -208,11 +256,9 @@ class AgentInstanceService:
                 "agent handle 只能包含小写字母、数字和 .-_，且以字母或数字开头"
             )
         if handle == UNRESOLVED_AGENT_HANDLE:
-            raise ValidationError(
-                f"{handle!r} 是「认不出是谁」的占位身份，不能拿来命名 agent"
-            )
+            raise ValidationError(say("agentHandleReserved", handle=repr(handle)))
         if await self._repo.get_by_handle(project_id=project_id, handle=handle):
-            raise ValidationError(f"这个项目里已经有 handle 为 {handle!r} 的 agent")
+            raise ValidationError(say("agentHandleTaken", handle=repr(handle)))
         await self._require_known_type(type_name)
         config = configuration or initial_configuration(type_name)
         await self._validate_model(project_id, config)
@@ -269,7 +315,7 @@ class AgentInstanceService:
         if project is None:
             raise NotFoundError("Project not found")
         if config.model not in {item["id"] for item in model_choices(project.settings)}:
-            raise ValidationError("当前项目无法使用该模型，请选择可用模型")
+            raise ValidationError(say("modelUnavailable"))
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
         """What this agent is called. Its ``handle`` is deliberately untouched:
@@ -295,7 +341,7 @@ class AgentInstanceService:
         ]
         if not active:
             # New rooms require a saved agent, with no implicit fallback.
-            raise ValidationError("请先创建另一个队友，再停用这个队友")
+            raise ValidationError(say("deactivateLastTeammate"))
         instance.is_active = False
         if project.default_agent_instance_id == instance.id:
             project.default_agent_instance_id = active[0].id
@@ -305,7 +351,7 @@ class AgentInstanceService:
         self, project: Project, instance: AgentInstance
     ) -> ResolvedAgent:
         if not instance.is_active:
-            raise ValidationError("这个队友已停用，不能设为默认")
+            raise ValidationError(say("teammateInactiveNoDefault"))
         project.default_agent_instance_id = instance.id
         await self._session.flush()
         return await self.for_project(project)

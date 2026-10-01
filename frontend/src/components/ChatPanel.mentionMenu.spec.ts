@@ -7,20 +7,28 @@
  * 被外壳裁掉，且没有任何滚动条——输入框也跟着看不见。
  *
  * 这是 CSS，jsdom 量不到布局，照仓库的老办法用源码断言钉住（见
- * `panels/PanelCard.spec.ts` 末尾那两节）。规则和这个菜单一起住在
- * `room/RoomComposer.vue` 里。
+ * `panels/PanelCard.spec.ts` 末尾那两节）。菜单现在自己是一件（#2143 把
+ * `RoomComposer.vue` 拆开之后），这条规则跟着菜单走：它住在
+ * `room/MentionMenu.vue` 里，不跟着输入区走。
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
-const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'room/RoomComposer.vue'), 'utf8')
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
+
+const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'room/MentionMenu.vue'), 'utf8')
 
 function rule(selector: string): string {
   const start = src.indexOf(`\n${selector} {`)
-  if (start < 0) throw new Error(`RoomComposer.vue 里没有这条规则：${selector}`)
+  if (start < 0) throw new Error(`MentionMenu.vue 里没有这条规则：${selector}`)
   const body = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start))
   // 注释里也会出现 `overflow-y: auto` 这种词，先摘掉再断言，免得注释把测试骗绿。
   return body.replace(/\/\*[\s\S]*?\*\//g, '')

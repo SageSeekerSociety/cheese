@@ -33,6 +33,9 @@ AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
     "bash_start": ("Bash", {"label": "description"}, {"run_in_background": True}),
     "read": ("Read", {"path": "file_path"}, {}),
     "write": ("Write", {"path": "file_path"}, {}),
+    # The extension's subagent tool (`platform.ts`) takes Claude Code's `Agent`
+    # arguments under the name that build used to give it.
+    "Task": ("Agent", {}, {}),
 }
 
 

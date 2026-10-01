@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.domain.avatars.models import Avatar
+from app.domain.block.notice_text import say
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -416,7 +417,7 @@ class ProjectGitInstallationRepository:
             forge = ProjectForge(project_id=project_id)
             self._session.add(forge)
         elif forge.kind == "forgejo":
-            raise ConflictError("这个项目已有代码仓库；跨托管服务迁移尚未开放")
+            raise ConflictError(say("forgeMigrationUnavailable"))
         forge.kind = "github_app"
         forge.repo = repo
         forge.url = f"https://github.com/{repo}.git"

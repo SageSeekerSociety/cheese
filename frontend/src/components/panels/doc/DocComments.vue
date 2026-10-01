@@ -10,8 +10,11 @@ import type { Block } from '../../../cx_types'
 import { nextTick, ref } from 'vue'
 
 import { addComment } from '../../../api'
+import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
 import { myHandle } from '../../../me'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string | null
@@ -36,8 +39,8 @@ const folded = ref(false)
 // has no quoted span. The node's own content is either AI- or human-authored
 // text; we only ever truncate it for display (never to derive semantics).
 function nodeLabel(content: string): string {
-  const t = content.replace(/^#+\s*/, '').trim()
-  return t.length > 22 ? t.slice(0, 22) + '…' : t || '（空段落）'
+  const label = content.replace(/^#+\s*/, '').trim()
+  return label.length > 22 ? label.slice(0, 22) + '…' : label || t('work.room.comments.emptyParagraph')
 }
 /** The paragraph a comment points at (or null for a whole-doc comment). */
 function commentAnchor(c: Block): Block | null {
@@ -78,7 +81,7 @@ async function submit() {
     cancel()
     emit('posted')
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '评论失败'
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.comments.postFailed')
   } finally {
     sending.value = false
   }
@@ -117,14 +120,14 @@ defineExpose({ open, locate })
       <button
         type="button"
         class="doc-comments__fold"
-        :title="folded ? '展开评论' : '收起评论'"
+        :title="folded ? t('work.room.comments.expand') : t('work.room.comments.collapse')"
         @click="folded = !folded"
       >
         <v-icon size="15" class="c-faint">
           {{ folded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
         </v-icon>
         <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
-        评论
+        {{ t('work.room.comments.title') }}
         <span v-if="comments.length" class="doc-comments__count">
           {{ comments.length }}
         </span>
@@ -135,7 +138,7 @@ defineExpose({ open, locate })
         size="x-small"
         variant="text"
         color="on-surface-variant"
-        title="写评论"
+        :title="t('work.room.comments.write')"
         @click="open({ anchorId: null, quote: '' })"
       />
     </div>
@@ -159,13 +162,15 @@ defineExpose({ open, locate })
           density="compact"
           autofocus
           class="comment-draft__input"
-          placeholder="输入评论…"
-          title="Enter 发送，Shift+Enter 换行"
+          :placeholder="t('work.room.comments.placeholder')"
+          :title="t('work.room.comments.keyHint')"
           @keydown="onKey"
         />
         <div v-if="errorMsg" class="comment-draft__error">{{ errorMsg }}</div>
         <div class="d-flex align-center ga-2 justify-end">
-          <v-btn size="small" variant="text" :disabled="sending" @click="cancel"> 取消 </v-btn>
+          <v-btn size="small" variant="text" :disabled="sending" @click="cancel">
+            {{ t('work.room.comments.cancel') }}
+          </v-btn>
           <v-btn
             size="small"
             color="primary"
@@ -174,12 +179,12 @@ defineExpose({ open, locate })
             :disabled="!text.trim()"
             @click="submit"
           >
-            评论
+            {{ t('work.room.comments.comment') }}
           </v-btn>
         </div>
       </div>
       <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-        <span class="doc-comments__avatar">
+        <span class="doc-comments__avatar" :class="{ 'doc-comments__avatar--agent': isAgentHandle(c.author ?? '') }">
           {{ (c.author || '?').slice(0, 1).toUpperCase() }}
         </span>
         <div class="doc-comments__main">
@@ -195,12 +200,14 @@ defineExpose({ open, locate })
             v-if="c.reply_to && commentAnchor(c)"
             type="button"
             class="doc-comments__chip"
-            title="定位到该段"
+            :title="t('work.room.comments.locate')"
             @click="emit('locate-node', c.reply_to!)"
           >
             {{ c.anchor_quote || nodeLabel(commentAnchor(c)!.content) }}
           </button>
-          <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">原段落已改动</div>
+          <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">
+            {{ t('work.room.comments.anchorChanged') }}
+          </div>
           <div class="doc-comments__text">{{ c.content }}</div>
         </div>
       </div>
@@ -363,6 +370,10 @@ defineExpose({ open, locate })
   color: #fff;
   /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
   background: #8a94a3;
+}
+/* AI 队友写的评论：圆角方块（人是圆的，形状照 GitHub 的规则）。 */
+.doc-comments__avatar--agent {
+  border-radius: var(--radius-sm);
 }
 .doc-comments__main {
   flex: 1 1 auto;

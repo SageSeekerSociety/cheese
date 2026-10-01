@@ -1,15 +1,15 @@
 <template>
   <SettingsToolbar :title="t('spaces.settings.sections.categories')">
-    <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+    <v-btn variant="text" prepend-icon="mdi-plus" @click="openCreateDialog">
       {{ t('spaces.detail.manageCategories.addCategory') }}
     </v-btn>
   </SettingsToolbar>
-  <v-sheet flat rounded="lg">
+  <div class="settings-card">
     <div v-if="loadingCategories" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
     </div>
 
-    <v-list v-else-if="categories.length > 0" rounded="lg">
+    <v-list v-else-if="categories.length > 0" class="settings-list" bg-color="transparent">
       <v-list-item
         v-for="category in categories"
         :key="category.id"
@@ -20,9 +20,9 @@
         :subtitle="category.description || undefined"
       >
         <template #prepend>
-          <v-avatar color="primary-lighten-5" size="42" class="me-3">
-            <v-icon color="primary">{{ category.archivedAt ? 'mdi-archive' : 'mdi-shape' }}</v-icon>
-          </v-avatar>
+          <v-icon size="18" class="c-faint">{{
+            category.archivedAt ? 'mdi-archive-outline' : 'mdi-shape-outline'
+          }}</v-icon>
         </template>
         <template #append>
           <v-tooltip v-if="!category.archivedAt && currentSpace?.defaultCategoryId !== category.id" location="top">
@@ -31,56 +31,32 @@
                 v-bind="props"
                 icon="mdi-star-outline"
                 variant="text"
-                color="warning"
+                size="small"
                 @click="setAsDefault(category.id)"
               ></v-btn>
             </template>
             {{ t('spaces.detail.manageCategories.setAsDefault') }}
           </v-tooltip>
 
-          <v-btn v-if="!category.archivedAt" icon="mdi-pencil" variant="text" @click="openEditDialog(category)"></v-btn>
+          <v-btn
+            v-if="!category.archivedAt"
+            icon="mdi-pencil-outline"
+            variant="text"
+            size="small"
+            :aria-label="t('spaces.detail.manageCategories.updateCategory')"
+            @click="openEditDialog(category)"
+          ></v-btn>
 
-          <v-menu location="bottom end">
+          <AdaptiveMenu :actions="categoryActions(category)" :title="category.name">
             <template #activator="{ props }">
-              <v-btn icon="mdi-dots-vertical" variant="text" v-bind="props"></v-btn>
+              <v-btn icon="mdi-dots-horizontal" variant="text" size="small" v-bind="props"></v-btn>
             </template>
-            <v-list density="compact">
-              <v-list-item v-if="!category.archivedAt" @click="teachingCategory = category">
-                <template #prepend>
-                  <v-icon>mdi-school-outline</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.teaching.menu') }}</v-list-item-title>
-              </v-list-item>
-
-              <v-list-item v-if="category.archivedAt" @click="unarchiveCategory(category.id)">
-                <template #prepend>
-                  <v-icon color="success">mdi-archive-arrow-up</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.unarchiveCategory') }}</v-list-item-title>
-              </v-list-item>
-
-              <v-list-item v-else @click="archiveCategory(category.id)">
-                <template #prepend>
-                  <v-icon color="warning">mdi-archive-arrow-down</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.archiveCategory') }}</v-list-item-title>
-              </v-list-item>
-
-              <v-list-item @click="deleteCategory(category.id)">
-                <template #prepend>
-                  <v-icon color="error">mdi-delete</v-icon>
-                </template>
-                <v-list-item-title>{{ t('spaces.detail.manageCategories.deleteCategory') }}</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
+          </AdaptiveMenu>
         </template>
       </v-list-item>
     </v-list>
 
-    <v-sheet v-else class="pa-4 text-center">
-      <p class="text-medium-emphasis">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
-    </v-sheet>
+    <p v-else class="settings-empty">{{ t('spaces.detail.manageCategories.noCategories') }}</p>
 
     <CategoryTeachingDialog :category="teachingCategory" @close="teachingCategory = null" />
 
@@ -118,7 +94,7 @@
               :label="t('spaces.detail.manageCategories.displayOrder')"
               type="number"
               min="0"
-              hint="越小越靠前显示"
+              :hint="t('spaces.detail.manageCategories.displayOrderHint')"
               v-bind="displayOrderProps"
             ></v-text-field>
           </v-form>
@@ -132,10 +108,12 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-sheet>
+  </div>
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
+
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -149,6 +127,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import CategoryTeachingDialog from './CategoryTeachingDialog.vue'
 
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -165,6 +144,42 @@ const dialogOpen = ref(false)
 const editingCategory = ref<SpaceCategory | null>(null)
 /** 正在编辑「给芝士的指导」的那个分类。 */
 const teachingCategory = ref<SpaceCategory | null>(null)
+
+/** 一个分类那一行的 ⋯：归档了的只剩「恢复」和「删除」。 */
+function categoryActions(category: SpaceCategory): MenuAction[] {
+  return [
+    ...(category.archivedAt
+      ? [
+          {
+            key: 'unarchive',
+            label: t('spaces.detail.manageCategories.unarchiveCategory'),
+            icon: 'mdi-archive-arrow-up-outline',
+            onSelect: () => void unarchiveCategory(category.id),
+          },
+        ]
+      : [
+          {
+            key: 'teaching',
+            label: t('spaces.detail.manageCategories.teaching.menu'),
+            icon: 'mdi-school-outline',
+            onSelect: () => (teachingCategory.value = category),
+          },
+          {
+            key: 'archive',
+            label: t('spaces.detail.manageCategories.archiveCategory'),
+            icon: 'mdi-archive-arrow-down-outline',
+            onSelect: () => void archiveCategory(category.id),
+          },
+        ]),
+    {
+      key: 'delete',
+      label: t('spaces.detail.manageCategories.deleteCategory'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => void deleteCategory(category.id),
+    },
+  ]
+}
 
 // 表单校验
 const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
@@ -280,11 +295,4 @@ const setAsDefault = async (categoryId: number) => {
 }
 </script>
 
-<style scoped>
-.v-list-item {
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.1);
-}
-.v-list-item:last-child {
-  border-bottom: none;
-}
-</style>
+<style scoped src="@/styles/settings-card.css"></style>

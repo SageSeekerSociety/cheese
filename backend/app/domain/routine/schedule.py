@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 
 FREQS = ("hourly", "daily", "weekly", "monthly")
 WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -16,7 +17,7 @@ def zone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise ValidationError(f"不认识的时区：{name}") from exc
+        raise ValidationError(say("timezoneUnknown", name=name)) from exc
 
 
 def _clock(spec: dict) -> time:
@@ -25,7 +26,7 @@ def _clock(spec: dict) -> time:
         hour, minute = (int(p) for p in raw.split(":"))
         return time(hour, minute)
     except (ValueError, TypeError) as exc:
-        raise ValidationError("执行时间要写成 HH:MM，例如 09:00") from exc
+        raise ValidationError(say("scheduleTimeFormat")) from exc
 
 
 def normalize(spec: dict, tz: str) -> dict:
@@ -37,7 +38,7 @@ def normalize(spec: dict, tz: str) -> dict:
     if freq == "hourly":
         minute = spec.get("minute")
         if not isinstance(minute, int) or not 0 <= minute <= 59:
-            raise ValidationError("每小时执行要给出第几分钟（0–59）")
+            raise ValidationError(say("scheduleHourlyMinute"))
         return {"freq": freq, "minute": minute}
     clock = _clock(spec)
     out: dict = {"freq": freq, "time": clock.strftime("%H:%M")}
@@ -48,12 +49,12 @@ def normalize(spec: dict, tz: str) -> dict:
             or not days
             or any(not isinstance(d, int) or not 0 <= d <= 6 for d in days)
         ):
-            raise ValidationError("每周执行要给出星期几（0=周一 … 6=周日）")
+            raise ValidationError(say("scheduleWeeklyDays"))
         out["weekdays"] = sorted(set(days))
     if freq == "monthly":
         day = spec.get("day")
         if not isinstance(day, int) or not 1 <= day <= 31:
-            raise ValidationError("每月执行要给出几号（1–31）")
+            raise ValidationError(say("scheduleMonthlyDay"))
         out["day"] = day
     return out
 

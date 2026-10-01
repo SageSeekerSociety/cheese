@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { replyStalled, stallReasonText, waitedFor } from './replyWait'
+
+import { setLocale } from '@/i18n'
+
+beforeEach(() => setLocale('zh-CN'))
 
 describe('replyStalled', () => {
   const now = Date.parse('2026-09-27T08:00:00Z')

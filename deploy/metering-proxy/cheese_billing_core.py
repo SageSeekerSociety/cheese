@@ -9,7 +9,9 @@ path without dragging mitmproxy in. Three concerns:
   it here means billing attribution comes from claims the sandbox cannot forge,
   and an exposed proxy stops being spendable by anyone who can reach it.
 - admission: ask the backend whether the project can afford one more turn
-  (POST /llm/admission, the caller's own Bearer). Fail-OPEN on transport
+  (POST /llm/admission, the caller's own Bearer naming the room, and this
+  proxy's own credential, without which the answer carries no gateway key).
+  Fail-OPEN on transport
   errors — a broken brake must not be a broken platform — and cache verdicts
   briefly so a streaming session doesn't hammer the endpoint.
 - metering: the rolling token window (deployment-wide backstop cap) and the
@@ -336,12 +338,20 @@ def _post_admission(
     bearer: str,
     timeout_s: float,
     *,
+    credential: str = "",
     subagent: bool = False,
     requested_model: str = "",
     child_model: str = "",
 ) -> Verdict:
-    """One admission call. Raises on transport problems (caller decides policy)."""
+    """One admission call. Raises on transport problems (caller decides policy).
+
+    `bearer` is the session's scoped token: it names the room being admitted.
+    `credential` is this proxy's own (the backend's SANDBOX_TOKEN): the backend
+    hands a gateway project's key only to a caller presenting it, because a
+    session holds the same bearer and must never hold the key."""
     headers = {"Authorization": f"Bearer {bearer}"}
+    if credential:
+        headers["X-Cheese-Token"] = credential
     if subagent:
         headers["X-Cheese-Subagent"] = "1"
         if child_model:
@@ -404,8 +414,10 @@ class AdmissionGate:
         timeout_s: float = 3.0,
         post=_post_admission,
         stale_s: float = 3600.0,
+        credential: str = "",
     ) -> None:
         self._url = url
+        self._credential = credential
         self._cache_s = cache_s
         self._stale_s = stale_s
         self._timeout = timeout_s
@@ -441,24 +453,19 @@ class AdmissionGate:
             if hit and now - hit[0] < self._cache_s:
                 return hit[1]
         try:
-            verdict = (
-                self._post(
-                    self._url,
-                    bearer,
-                    self._timeout,
-                    subagent=True,
-                    child_model=child_model,
-                )
+            asked = (
+                {"subagent": True, "child_model": child_model}
                 if subagent and child_model
-                else self._post(
-                    self._url,
-                    bearer,
-                    self._timeout,
-                    subagent=True,
-                    requested_model=requested_model,
-                )
+                else {"subagent": True, "requested_model": requested_model}
                 if subagent
-                else self._post(self._url, bearer, self._timeout)
+                else {}
+            )
+            verdict = self._post(
+                self._url,
+                bearer,
+                self._timeout,
+                credential=self._credential,
+                **asked,
             )
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
             if hit and now - hit[0] < self._stale_s:
@@ -591,11 +598,13 @@ class CodexBody:
     """Reshape a streamed Responses body into what ChatGPT's Codex backend takes.
 
     The backend refuses a request that does not say ``store: false`` ("Store
-    must be set to false") and one that carries ``max_output_tokens``
-    ("Unsupported parameter"), and the gateway's translation from Anthropic's
-    Messages writes the second and never the first. So the body goes out
-    opening with ``"store":false``, and any top-level ``store`` or
-    ``max_output_tokens`` member of its own is left out.
+    must be set to false") and one that carries ``max_output_tokens`` or
+    ``user`` ("Unsupported parameter"). The gateway's translation from
+    Anthropic's Messages never writes the first, always writes
+    ``max_output_tokens``, and writes ``user`` whenever the caller sent
+    ``metadata.user_id``. So the body goes out opening with ``"store":false``,
+    and any top-level ``store``, ``max_output_tokens`` or ``user`` member of its
+    own is left out.
 
     Streamed, never buffered (see `_write_bound_model` for why that matters):
     only a member's key is held, while the member it opens is decided on; its
@@ -603,7 +612,7 @@ class CodexBody:
     start with an object passes untouched.
     """
 
-    DROPPED = frozenset({"store", "max_output_tokens"})
+    DROPPED = frozenset({"store", "max_output_tokens", "user"})
     _OPENING = b'{"store":false'
 
     def __init__(self) -> None:

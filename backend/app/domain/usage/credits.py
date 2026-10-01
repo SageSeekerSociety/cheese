@@ -15,16 +15,17 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import say
 
 # Posted into the topic 现场 when a turn is refused for lack of credits. The
 # room draws the severity from `meta`; the line itself just says what happened.
-CREDITS_EXHAUSTED_EVENT = "可用的 tokens 额度已用完，这轮没有执行"
+CREDITS_EXHAUSTED_EVENT = say("creditsExhausted")
 CREDITS_EXHAUSTED_META = notice(
     EVENT_TURN_FAILED,
     severity=SEVERITY_ERROR,
     who=WHO_HUMAN,
-    detail="联系团队管理员或额度发放方补充额度。",
-    detail_label="下一步",
+    detail=say("creditsExhaustedDetail"),
+    detail_label=say("labelNextStep"),
 )
 
 

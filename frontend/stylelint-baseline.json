@@ -7,14 +7,12 @@
     "src/components/chat/ConversationGroupList.vue": 2,
     "src/components/common/AvatarUploader.vue": 2,
     "src/components/common/Navigation/LeftAppRail.vue": 1,
-    "src/components/common/Navigation/RailItem.vue": 3,
+    "src/components/common/Navigation/RailItem.vue": 2,
     "src/components/common/OfflineBanner.vue": 1,
     "src/components/common/UserAvatar.vue": 1,
     "src/components/DeviceLiveViewer.vue": 3,
     "src/components/room/room-row.css": 1,
-    "src/components/room/RoomComposer.vue": 1,
     "src/components/TopicMembers.vue": 2,
-    "src/components/TopicSidebar.vue": 1,
-    "src/views/teams/detail/Knowledge.vue": 6
+    "src/components/TopicSidebar.vue": 1
   }
 }

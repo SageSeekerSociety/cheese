@@ -3,9 +3,16 @@
 // clickable, human newlines survive, HTML stays escaped.
 import type { Block } from '../cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { coalesceSplitFencedCodeBlocks, renderMarkdown, renderPlain } from './renderMessage'
+
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 const MAPS = {
   // `all`/`here` are the reserved 群播 tokens seeded by ChatPanel.

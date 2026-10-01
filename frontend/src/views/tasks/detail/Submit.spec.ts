@@ -2,7 +2,7 @@ import type { Task } from '@/types'
 
 import { createVuetify } from 'vuetify'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   getParticipants: vi.fn(),
@@ -16,6 +16,10 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import Submit from './Submit.vue'
+
+import i18n, { setLocale } from '@/i18n'
+
+beforeEach(() => setLocale('zh-CN'))
 
 describe('participant submission', () => {
   it('uses its own deadline without requesting the administrator roster and submits as that identity', async () => {
@@ -35,7 +39,7 @@ describe('participant submission', () => {
         },
       },
       global: {
-        plugins: [createVuetify()],
+        plugins: [createVuetify(), i18n],
         stubs: {
           VDialog: true,
           CountdownTimer: { props: ['deadline'], template: '<span data-testid="deadline">{{ deadline }}</span>' },
@@ -76,7 +80,7 @@ describe('participant submission', () => {
           ],
         },
       },
-      global: { plugins: [createVuetify()], stubs: { VDialog: true, CountdownTimer: true, RouterLink: true } },
+      global: { plugins: [createVuetify(), i18n], stubs: { VDialog: true, CountdownTimer: true, RouterLink: true } },
     })
     await waitFor(() => expect(view.getByText('已达到提交次数上限')).toBeTruthy())
     expect(mocks.listSubmissions).toHaveBeenCalledWith(13, 5, expect.objectContaining({ pageSize: 1 }))

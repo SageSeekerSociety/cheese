@@ -9,7 +9,7 @@ import { listArchivedProjects, unarchiveProject } from '../api'
 
 import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const store = useWorkspaceStore()
@@ -24,7 +24,7 @@ async function load() {
   try {
     projects.value = (await listArchivedProjects()).data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    error.value = e instanceof Error ? e.message : t('project.archived.loadFailed')
   } finally {
     loading.value = false
   }
@@ -39,20 +39,20 @@ async function restore(project: Project) {
     // 它回到项目清单里了；刷不成功不该把取消归档变成失败。
     await Promise.allSettled([store.refreshProjects()])
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '取消归档失败'
+    error.value = e instanceof Error ? e.message : t('project.archived.unarchiveFailed')
   } finally {
     restoring.value = ''
   }
 }
 
 function archivedOn(project: Project): string {
-  return project.archived_at ? new Date(project.archived_at).toLocaleDateString('zh-CN') : ''
+  return project.archived_at ? new Date(project.archived_at).toLocaleDateString(i18n.global.locale.value) : ''
 }
 
 useCommands(() => [
   {
     id: 'archived-projects.refresh',
-    title: '刷新',
+    title: t('project.archived.refresh'),
     icon: 'mdi-refresh',
     loading: loading.value,
     header: {},
@@ -66,14 +66,16 @@ onMounted(load)
 <template>
   <AppPage :title="t('navigation.userMenu.archivedProjects')">
     <p v-if="error" role="alert" class="t-body c-danger mb-4">{{ error }}</p>
-    <p v-if="!loading && !projects.length && !error" class="t-body c-muted">暂无已归档的项目</p>
+    <p v-if="!loading && !projects.length && !error" class="t-body c-muted">{{ t('project.archived.empty') }}</p>
     <ul class="archived__list">
       <li v-for="p in projects" :key="p.id" class="archived__row">
         <div class="archived__name">
           <div class="t-title text-truncate">{{ p.name }}</div>
-          <div class="t-meta">归档于 {{ archivedOn(p) }}</div>
+          <div class="t-meta">{{ t('project.archived.on', { date: archivedOn(p) }) }}</div>
         </div>
-        <v-btn variant="tonal" size="small" :loading="restoring === p.id" @click="restore(p)">取消归档</v-btn>
+        <v-btn variant="tonal" size="small" :loading="restoring === p.id" @click="restore(p)">{{
+          t('project.archived.unarchive')
+        }}</v-btn>
       </li>
     </ul>
   </AppPage>

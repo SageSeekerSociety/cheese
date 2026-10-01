@@ -7,7 +7,7 @@ page's button writes. This used to go through cheesex `task_templates` and a
 from the UI.
 """
 
-from tests.conftest import seed_task_with_protocol
+from tests.conftest import seed_claim, seed_task_with_protocol
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     add_external_member,
@@ -30,6 +30,7 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
     task_id = seed_task_with_protocol(
         client, conditions=[{"required_topic": "结题", "reviewer_role": "mentor"}]
     )
+    seed_claim(client, task_id, handle=OWNER)
     p = post_project(
         client,
         json={"name": "团队", "owner_handle": OWNER, "external_task_id": task_id},

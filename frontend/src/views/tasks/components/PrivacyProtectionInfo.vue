@@ -10,9 +10,9 @@
                 <v-icon icon="mdi-incognito" size="20" color="primary"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">匿名参与</div>
+                <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.anonymousTitle') }}</div>
                 <p class="text-body-2 text-medium-emphasis mb-0">
-                  平台上的日常活动保持匿名，其他用户无法看到您的真实身份信息
+                  {{ t('tasks.privacyInfo.anonymousBody') }}
                 </p>
               </div>
             </div>
@@ -24,9 +24,9 @@
                 <v-icon icon="mdi-key-variant" size="20" color="primary"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">加密存储</div>
+                <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.encryptionTitle') }}</div>
                 <p class="text-body-2 text-medium-emphasis mb-0">
-                  使用行业标准的加密技术保护您的个人资料，防止未授权访问
+                  {{ t('tasks.privacyInfo.encryptionBody') }}
                 </p>
               </div>
             </div>
@@ -38,9 +38,9 @@
                 <v-icon icon="mdi-file-document-outline" size="20" color="primary"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">用途限制</div>
+                <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.purposeTitle') }}</div>
                 <p class="text-body-2 text-medium-emphasis mb-0">
-                  您的实名信息仅在必要的题目报名环节使用，不用于其他目的
+                  {{ t('tasks.privacyInfo.purposeBody') }}
                 </p>
               </div>
             </div>
@@ -52,8 +52,8 @@
                 <v-icon icon="mdi-eye-off-outline" size="20" color="primary"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">身份隔离</div>
-                <p class="text-body-2 text-medium-emphasis mb-0">严格隔离您的实名信息与平台账号，确保两者无法被关联</p>
+                <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.isolationTitle') }}</div>
+                <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.privacyInfo.isolationBody') }}</p>
               </div>
             </div>
           </v-col>
@@ -63,7 +63,7 @@
 
     <!-- 使用场景 -->
     <div class="mb-4">
-      <div class="text-subtitle-2 font-weight-medium mb-3">实名信息使用场景</div>
+      <div class="text-subtitle-2 font-weight-medium mb-3">{{ t('tasks.privacyInfo.scenariosTitle') }}</div>
       <v-card variant="flat" rounded="lg" class="privacy-usage-card mb-3">
         <v-card-text class="pa-3">
           <div class="d-flex align-start">
@@ -71,8 +71,8 @@
               <v-icon icon="mdi-account-check" size="20" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <div class="text-subtitle-2 font-weight-medium mb-1">身份验证</div>
-              <p class="text-body-2 text-medium-emphasis mb-0">用于确认参与者身份，保证题目参与的真实性和有效性</p>
+              <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.verificationTitle') }}</div>
+              <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.privacyInfo.verificationBody') }}</p>
             </div>
           </div>
         </v-card-text>
@@ -85,9 +85,9 @@
               <v-icon icon="mdi-bell-outline" size="20" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <div class="text-subtitle-2 font-weight-medium mb-1">参与资格筛选</div>
+              <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.eligibilityTitle') }}</div>
               <p class="text-body-2 text-medium-emphasis mb-0">
-                用于根据您的学业信息判断是否符合参与特定题目的资格要求
+                {{ t('tasks.privacyInfo.eligibilityBody') }}
               </p>
             </div>
           </div>
@@ -101,8 +101,8 @@
               <v-icon icon="mdi-certificate-outline" size="20" color="primary"></v-icon>
             </v-avatar>
             <div>
-              <div class="text-subtitle-2 font-weight-medium mb-1">项目认证</div>
-              <p class="text-body-2 text-medium-emphasis mb-0">用于题目结题后的证书发放、学分认定和成果展示</p>
+              <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.certificationTitle') }}</div>
+              <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.privacyInfo.certificationBody') }}</p>
             </div>
           </div>
         </v-card-text>
@@ -111,16 +111,18 @@
 
     <!-- 用户权利 -->
     <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
-      <div class="text-subtitle-2 font-weight-medium mb-1">您的权利</div>
+      <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.privacyInfo.rightsTitle') }}</div>
       <p class="text-body-2 mb-0">
-        我们的系统采用多层保护机制，在满足少数题目对实名信息的需求的同时，确保您在平台上的隐私安全。
-        所有对您信息的访问都会被记录，您可以随时查看这些记录。
+        {{ t('tasks.privacyInfo.rightsBody') }}
       </p>
     </v-alert>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 // 无需额外逻辑
 </script>
 

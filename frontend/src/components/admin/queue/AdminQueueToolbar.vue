@@ -132,7 +132,10 @@ defineExpose({ focusSearch: () => searchEl.value?.focus() })
 <style scoped>
 /* 工具行。**让它能折行**（`min-height` 而不是 `height`）：宽屏上三组东西并排正好
    48px（32 的内容 + 上下 8 的 padding），窄到装不下时折成两行而不是把状态页签挤出
-   容器 —— 加栏位那一组之前，这一行只有两组，装得下是巧合，不是余量。 */
+   容器 —— 加栏位那一组之前，这一行只有两组，装得下是巧合，不是余量。
+
+   白底：它和上面的页头是**同一条白色带**（后台三层骨架的头一层），底下才是灰画布。
+   那条 `--line` 就是这条白带唯一的下边线。 */
 .qpage__tools {
   display: flex;
   flex: 0 0 auto;
@@ -141,6 +144,7 @@ defineExpose({ focusSearch: () => searchEl.value?.focus() })
   gap: 16px;
   min-height: 48px;
   padding: 8px 24px;
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 

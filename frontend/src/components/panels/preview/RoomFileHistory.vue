@@ -9,6 +9,7 @@ import type { RoomFileRevision } from '../../../api'
 import { onMounted, ref, watch } from 'vue'
 
 import { downloadRoomFileRevision, restoreRoomFileRevision, roomFileRevisions } from '../../../api'
+import i18n, { t } from '../../../i18n'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 
@@ -21,13 +22,9 @@ const error = ref('')
 const busy = ref<string | null>(null)
 const confirming = ref<RoomFileRevision | null>(null)
 
-const SOURCE_LABEL: Record<RoomFileRevision['source'], string> = {
-  baseline: '最初的样子',
-  upload: '上传',
-  ai: '芝士修改',
-  editor: '在线编辑保存',
-  restore: '恢复',
-  scheduled: '定时任务',
+const SOURCES = new Set<string>(['baseline', 'upload', 'ai', 'editor', 'restore', 'scheduled'])
+function sourceLabel(source: RoomFileRevision['source']): string {
+  return SOURCES.has(source) ? t(`work.room.fileHistory.source.${source}`) : source
 }
 
 async function load() {
@@ -36,7 +33,7 @@ async function load() {
   try {
     rows.value = (await roomFileRevisions(props.topicId, props.path)).data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '读不到历史'
+    error.value = e instanceof Error ? e.message : t('work.room.fileHistory.loadFailed')
   } finally {
     loading.value = false
   }
@@ -51,7 +48,7 @@ async function restore(row: RoomFileRevision) {
     emit('restored', made)
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '恢复失败'
+    error.value = e instanceof Error ? e.message : t('work.room.fileHistory.restoreFailed')
   } finally {
     busy.value = null
   }
@@ -61,12 +58,12 @@ async function download(row: RoomFileRevision) {
   try {
     await downloadRoomFileRevision(props.topicId, row)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '下载失败'
+    error.value = e instanceof Error ? e.message : t('work.room.fileHistory.downloadFailed')
   }
 }
 
 function when(iso: string) {
-  return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+  return new Date(iso).toLocaleString(i18n.global.locale.value, { hour12: false })
 }
 
 onMounted(load)
@@ -77,25 +74,31 @@ defineExpose({ reload: load })
 <template>
   <div class="rh" data-testid="room-file-history">
     <div class="rh__title">
-      保存历史
-      <span class="t-meta">每次保存留一版，可以取回任何一版</span>
+      {{ t('work.room.fileHistory.title') }}
+      <span class="t-meta">{{ t('work.room.fileHistory.hint') }}</span>
     </div>
     <v-alert v-if="error" type="warning" density="compact" class="my-2">{{ error }}</v-alert>
-    <div v-if="loading && !rows.length" class="t-meta py-4 text-center">正在读取…</div>
-    <div v-else-if="!rows.length" class="t-meta py-4 text-center">还没有保存记录。下一次保存起，这里会留下每一版。</div>
+    <div v-if="loading && !rows.length" class="t-meta py-4 text-center">{{ t('work.room.fileHistory.loading') }}</div>
+    <div v-else-if="!rows.length" class="t-meta py-4 text-center">
+      {{ t('work.room.fileHistory.empty') }}
+    </div>
     <ol v-else class="rh__list">
       <li v-for="(row, i) in rows" :key="row.id" class="rh__row" :data-seq="row.seq">
         <div class="rh__head">
-          <strong>第 {{ row.seq }} 版</strong>
-          <v-chip v-if="i === 0" size="x-small" color="primary" variant="tonal">当前</v-chip>
-          <span class="t-meta">{{ SOURCE_LABEL[row.source] ?? row.source }}</span>
+          <strong>{{ t('work.room.fileHistory.version', { seq: row.seq }) }}</strong>
+          <v-chip v-if="i === 0" size="x-small" color="primary" variant="tonal">{{
+            t('work.room.fileHistory.current')
+          }}</v-chip>
+          <span class="t-meta">{{ sourceLabel(row.source) }}</span>
           <span v-if="row.author" class="t-meta">· <UserRef :handle="row.author" /></span>
-          <span v-else-if="row.author_kind === 'agent'" class="t-meta">· 芝士</span>
+          <span v-else-if="row.author_kind === 'agent'" class="t-meta">· {{ t('work.room.defaultAgentName') }}</span>
         </div>
         <div class="t-meta">{{ when(row.created_at) }}</div>
         <div v-if="row.note" class="rh__note">{{ row.note }}</div>
         <div class="rh__actions">
-          <v-btn size="x-small" variant="text" prepend-icon="mdi-download" @click="download(row)">下载这一版</v-btn>
+          <v-btn size="x-small" variant="text" prepend-icon="mdi-download" @click="download(row)">{{
+            t('work.room.fileHistory.downloadVersion')
+          }}</v-btn>
           <v-btn
             v-if="i !== 0"
             size="x-small"
@@ -105,14 +108,18 @@ defineExpose({ reload: load })
             :loading="busy === row.id"
             @click="confirming = row"
           >
-            恢复到这一版
+            {{ t('work.room.fileHistory.restoreVersion') }}
           </v-btn>
         </div>
         <div v-if="confirming?.id === row.id" class="rh__confirm">
-          把文件恢复成第 {{ row.seq }} 版的内容？现在这一版不会丢，仍在历史里。
+          {{ t('work.room.fileHistory.restoreConfirm', { seq: row.seq }) }}
           <div class="mt-1">
-            <v-btn size="x-small" color="primary" variant="flat" @click="restore(row)">恢复</v-btn>
-            <v-btn size="x-small" variant="text" @click="confirming = null">取消</v-btn>
+            <v-btn size="x-small" color="primary" variant="flat" @click="restore(row)">{{
+              t('work.room.fileHistory.restore')
+            }}</v-btn>
+            <v-btn size="x-small" variant="text" @click="confirming = null">{{
+              t('work.room.fileHistory.cancel')
+            }}</v-btn>
           </div>
         </div>
       </li>

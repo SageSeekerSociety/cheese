@@ -22,6 +22,7 @@ const STATUS_KEY: Partial<Record<FeedbackStatus, string>> = {
   in_progress: 'feedback.status.in_progress',
   resolved: 'feedback.status.resolved',
   deployed: 'feedback.status.deployed',
+  declined: 'feedback.status.declined',
 }
 
 const KIND_KEY: Partial<Record<FeedbackKind, string>> = {

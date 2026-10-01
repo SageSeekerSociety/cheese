@@ -644,6 +644,10 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
             **who,
         )
     response.headers["X-Request-ID"] = rid
+    # 服务器自己花了多久：从进这个中间件到处理器交回响应（流式响应的正文不在内）。
+    # 浏览器开发者工具的 Timing 页会显示它，一个慢请求才分得清是慢在服务器还是
+    # 慢在路上；只有总耗时的话，两者看起来一模一样。
+    response.headers["Server-Timing"] = f"app;dur={ms}"
     return response
 
 

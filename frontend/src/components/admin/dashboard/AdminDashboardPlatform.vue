@@ -359,8 +359,8 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
 .ad__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 24px;
-  margin-top: 24px;
+  gap: 16px;
+  margin-top: 16px;
 }
 
 /* 两块并排要各到 ~300px 以上，图里的刻度才不互相压 —— 所以双栏从 720 容器宽开始。 */
@@ -378,7 +378,7 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
    筛选视角，不该和「四个各自独立的数」争同一档视觉重量。 */
 
 .ad__split {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .ad__split-grid {
@@ -427,7 +427,7 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
    只有一处有颜色的时候，那一处就是「需要看的地方」。 */
 
 .ad__health {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .ad__health-grid {

@@ -36,6 +36,7 @@ from app.domain.block.models import (
     Block,
     BlockKind,
 )
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import (
     CHEESE_NAME,
@@ -54,6 +55,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -81,11 +83,6 @@ from app.domain.topic.repositories import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-
-# Titles are AI-generated (the agent names a topic via `cheese_title`), never
-# deterministically derived from text — see CLAUDE.md. An upgraded block starts
-# untitled and 芝士 names it on its first turn (same as a + new topic).
-PLACEHOLDER_TITLE = "新话题"
 
 
 @overload
@@ -253,7 +250,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.status == TopicStatus.archived:
-            raise ConflictError("房间已归档，请先取消归档再继续工作")
+            raise ConflictError(say("roomArchivedUnarchiveFirst"))
         return topic
 
     async def _starting_agent_handle(self, topic: Topic) -> str:
@@ -288,10 +285,11 @@ class TopicService:
         self,
         *,
         project_id: uuid.UUID,
-        title: str,
+        title: str | None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
+        """``title=None`` opens an unnamed room (see `TopicRepository.add`)."""
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -640,7 +638,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.kind == TopicKind.root:
-            raise ValidationError("项目本体不能归档")
+            raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
             return topic
         await self._archive_one(topic, by=by)
@@ -681,7 +679,7 @@ class TopicService:
                 task_id=landed.task_id,
                 author=by,
                 author_type=AuthorType.platform,
-                content=f"随父话题「{topic.title}」一同归档",
+                content=say("threadArchivedWithRoom", room=topic.title),
                 kind=BlockKind.event,
                 meta={"platform": True},
             )
@@ -739,9 +737,9 @@ class TopicService:
             by=by,
         )
         note = (
-            f"房间「{topic.title}」随父话题「{cascaded_from}」一同归档"
+            say("roomArchivedWithParent", room=topic.title, parent=cascaded_from)
             if cascaded_from
-            else f"<@{by}> 归档了房间「{topic.title}」"
+            else say("roomArchived", actor=f"<@{by}>", room=topic.title)
         )
         # 房间归档是项目的事，不是这个房间的事（结论 14）：房间关掉之后没人再打开
         # 它的时间线，而「少了一个房间」恰恰是项目总览要记的一行。
@@ -775,7 +773,7 @@ class TopicService:
         )
         if operation is not None:
             if operation.state == "preparing":
-                raise ConflictError("会话正在停止并保存记录，确认完成后即可取消归档")
+                raise ConflictError(say("unarchiveWhileSessionStopping"))
             if operation.state == "pending":
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "retained", "complete"}:
@@ -801,7 +799,7 @@ class TopicService:
             task_id=landed.task_id,
             author=by,
             author_type=AuthorType.platform,
-            content=f"<@{by}> 取消归档，房间「{topic.title}」恢复活跃",
+            content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
             kind=BlockKind.event,
             meta={"platform": True},
         )
@@ -889,7 +887,7 @@ class TopicService:
             raise NotFoundError("Parent topic not found")
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
         if parent.status == TopicStatus.archived:
-            raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+            raise ValidationError(say("topicArchivedFrozen"))
 
         project = await self._projects.get(block.project_id)
 
@@ -900,9 +898,7 @@ class TopicService:
                 branch_protection_of(project).default_reviewer or None
             )
             if reviewer_handle is None:
-                raise ValidationError(
-                    "需要指定由谁审阅，或在项目设置中设置默认审阅的人"
-                )
+                raise ValidationError(say("reviewerRequired"))
             task = await tasks.open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
@@ -936,9 +932,12 @@ class TopicService:
             source_block=block.content,
         )
         root_id = project.root_topic_id if project else None
+        # Titles are AI-generated (the agent names a topic via `cheese_title`),
+        # never derived from text — see CLAUDE.md. An upgraded block starts
+        # unnamed and 芝士 names it on its first turn, like a + new topic.
         new_room = await self._repo.add(
             project_id=block.project_id,
-            title=PLACEHOLDER_TITLE,
+            title=None,
             parent_id=root_id,
             kind=TopicKind.topic,
             created_by=created_by,
@@ -1010,7 +1009,7 @@ class TopicService:
             task_id=landed.task_id,
             author="system",
             author_type=AuthorType.platform,
-            content=f"派出一条活：{task.title}",
+            content=say("taskDispatched", title=task.title),
             kind=BlockKind.event,
             meta={"platform": True, "action": "split", "task_id": str(task.id)},
         )
@@ -1376,7 +1375,7 @@ class TopicService:
         topic = place.room
         # 归档后文档定格 (spec §6.3).
         if topic.status == TopicStatus.archived:
-            raise ValidationError("话题已归档，文档已定格，不能再编辑")
+            raise ValidationError(say("topicArchivedDocFrozen"))
         doc = await self._blocks.doc_root(place.room_id)
         previous_content = doc.content if doc is not None else ""
         if doc is not None:
@@ -1411,12 +1410,11 @@ class TopicService:
             return doc, None
         # A human actor is emitted as the structured <@handle> token so the
         # client renders it as a clickable mention chip (resolving handle→name
-        # via the roster) — NOT prose we later pattern-match. 芝士 stays plain
-        # product copy: every topic's 分身 authors under its own
-        # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
-        # should see — one familiar name, whichever 分身 wrote it.
+        # via the roster) — NOT prose we later pattern-match. 芝士 is one familiar
+        # name whichever 分身 wrote it: each authors under its own
+        # ``cheese-<topic hex>`` handle, which is not what a reader should see.
         by_agent = looks_like_agent_handle(author)
-        actor = "芝士" if by_agent else f"<@{author}>"
+        actor = say("actorCheese") if by_agent else f"<@{author}>"
         # What the same event says to 芝士, written here because this is the code
         # that moved the document. It locates the change and does NOT carry it:
         # a document pushed into a running turn displaces the work instead of
@@ -1444,7 +1442,7 @@ class TopicService:
             task_id=landed.task_id,
             author=author,
             author_type=AuthorType.platform,
-            content=f"{actor} 编辑了文档",
+            content=say("docEdited", actor=actor),
             kind=BlockKind.event,
             refs=[str(doc.id)],
             # action:"doc" → the client renders the 看文档 link on this SAME
@@ -1454,7 +1452,7 @@ class TopicService:
                 "action": "doc",
                 "doc_version": doc.doc_version,
                 AGENT_NOTICE_META_KEY: for_agent,
-                "detail_label": "查看本次修改",
+                "detail_label": say("labelDocEditDiff"),
                 "detail": "\n".join(
                     difflib.unified_diff(
                         before_lines,

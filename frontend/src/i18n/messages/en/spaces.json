@@ -5,7 +5,7 @@
     "placeholder": "e.g. Programming exercises",
     "intro": "Introduction (optional)",
     "avatar": "Avatar (optional)",
-    "ownership": "A platform administrator will review your application. Once approved, you can publish and review problems in your space.",
+    "ownership": "A platform administrator will review your application. Once approved, you can publish and review challenges in your space.",
     "visibility": "The space will appear in the explore list after approval.",
     "cancel": "Cancel",
     "submit": "Submit for review",
@@ -19,44 +19,40 @@
     "APPROVED": "Approved",
     "REJECTED": "Rejected",
     "emptyMine": "No space applications",
-    "loadFailed": "Could not load applications. Please try again.",
+    "loadFailed": "Space applications failed to load",
     "retry": "Retry",
     "resubmit": "Edit and resubmit",
     "enter": "Open space",
     "previous": "Previous",
     "next": "Next",
-    "adminHelp": "Approval makes the space public and lets its owner publish problems. Include a reason when rejecting an application.",
+    "adminHelp": "Approval makes the space public and lets its owner publish challenges. Include a reason when rejecting an application.",
     "status": "Review status",
     "refresh": "Refresh",
     "empty": "No applications.",
     "approve": "Approve",
     "reject": "Reject",
     "reason": "Rejection reason",
-    "actionFailed": "Review could not be completed. Refresh to check the application status before retrying.",
+    "actionFailed": "Review did not finish. Refresh the page to confirm the application status.",
     "dismiss": "Dismiss this notice"
   },
   "detail": {
     "announcements": "Announcements",
-    "allContests": "All problems",
+    "allContests": "All challenges",
     "updateSuccess": "Updated",
     "updateFailed": "Couldn't update",
-    "dangerZone": "Danger zone",
     "deleteSpace": "Delete space",
     "deleteSpaceHint": "Deleting removes this space from everyone's lists for good. Only its owner can delete it.",
     "confirmDeleteSpace": "Delete the space \"{name}\"? It disappears for everyone and can't be undone.",
     "deleteSpaceSuccess": "Space deleted",
     "deleteSpaceFailed": "Couldn't delete the space",
     "auditTasks": {
-      "title": "Problems awaiting review",
-      "noTasks": "No problems awaiting review",
-      "pendingReview": "Awaiting review",
-      "published": "Published a problem",
-      "detailedInfo": "Details",
-      "description": "Problem description",
+      "title": "Challenges awaiting review",
+      "noTasks": "No challenges awaiting review",
+      "description": "Challenge description",
       "submissionRequirements": "Submission requirements",
       "noRequirements": "No submission requirements",
-      "teamContest": "Team problem",
-      "individualContest": "Individual problem",
+      "teamContest": "Team challenge",
+      "individualContest": "Individual challenge",
       "resubmittable": "Can be submitted more than once",
       "editableSubmission": "Submissions can be edited",
       "teamLockingPolicyNoLock": "Team can be changed freely",
@@ -67,12 +63,26 @@
       "operationFailed": "Couldn't complete the operation",
       "rejectReason": "Enter a reason for rejecting",
       "rejectReasonDialogTitle": "Reason for rejection",
-      "rejectReasonRequired": "Enter a reason for rejecting"
+      "rejectReasonRequired": "Enter a reason for rejecting",
+      "by": "By {name}",
+      "noDeadline": "No deadline",
+      "deadline": "Due {date}",
+      "requireRealName": "Real name required",
+      "entryType": {
+        "TEXT": "Text",
+        "FILE": "File"
+      },
+      "noDescription": "No description"
     },
     "manageTemplates": {
       "createTemplate": "Create template",
-      "noTemplates": "No problem templates yet",
-      "deleteConfirm": "Delete this template?"
+      "noTemplates": "No templates",
+      "deleteConfirm": "Delete this template?",
+      "edit": "Edit template",
+      "delete": "Delete template",
+      "defaultDeadline": "{n} days after claiming",
+      "realName": "Real name required",
+      "noRealName": "No real name needed"
     },
     "manageTopics": {
       "addTopics": "Add topics",
@@ -80,7 +90,8 @@
       "add": "Add",
       "cancel": "Cancel",
       "addSuccess": "Topic added",
-      "addFailed": "Couldn't add topic"
+      "addFailed": "Couldn't add topic",
+      "delete": "Remove topic"
     },
     "manageCategories": {
       "noCategories": "No categories yet",
@@ -92,7 +103,7 @@
       "unarchiveCategory": "Restore",
       "setAsDefault": "Make default",
       "confirmDelete": "Delete this category?",
-      "confirmArchive": "Archive this category? Problems in it keep their link to it.",
+      "confirmArchive": "Archive this category? Challenges in it keep their link to it.",
       "name": "Name",
       "description": "Description",
       "displayOrder": "Display order",
@@ -116,19 +127,70 @@
         "materialIds": "Material IDs",
         "knowledgeIds": "Knowledge entry IDs",
         "listHint": "Comma-separated"
-      }
+      },
+      "displayOrderHint": "Lower numbers show first"
     },
     "publishTask": {
-      "createSuccess": "Problem created",
-      "createSuccessAndWaitingAudit": "Problem created — awaiting review",
-      "createFailed": "Couldn't create problem",
+      "createSuccess": "Challenge created",
+      "createSuccessAndWaitingAudit": "Challenge created — awaiting review",
+      "createFailed": "Couldn't create challenge",
       "spaceIdNotFound": "Space ID not found",
-      "initializationFailed": "Couldn't start"
+      "initializationFailed": "Couldn't start",
+      "attachmentsUploading": "Attachments are still uploading. Publish once they finish.",
+      "pendingQueue": "Pending review",
+      "mode": {
+        "write": "Write one",
+        "pdf": "Generate from PDF"
+      },
+      "quick": {
+        "noFile": "Choose a PDF to upload first",
+        "tooLarge": "The PDF can't be larger than 15 MB",
+        "noDrafts": "No challenge drafts found in the PDF",
+        "parametersName": "PDF batch publish parameters",
+        "parsed": "Parsed: 1 challenge draft found | Parsed: {n} challenge drafts found",
+        "previewFailed": "Couldn't parse the PDF",
+        "nothingToPublish": "No drafts to publish. Parse a PDF first.",
+        "published": "Published 1 challenge | Published {n} challenges",
+        "publishFailed": "Couldn't publish the drafts",
+        "title": "Quick publish from PDF",
+        "subtitle": "Upload a PDF of challenges to get drafts; fill in the publish settings once in the form below",
+        "uploadLabel": "Upload a challenge PDF",
+        "hint": "PDF files up to 15 MB. If the address names a template, that template is used; otherwise a blank one.",
+        "readOnlyNote": "Parsing only reads the PDF and creates drafts. Nothing is published yet.",
+        "preview": "Parse and preview",
+        "resultTitle": "Parsed drafts",
+        "resultSubtitle": "Challenge drafts found: {n}. Submitting the form below applies these settings to all of them.",
+        "resultSubtitleTokens": "Challenge drafts found: {n}. Submitting the form below applies these settings to all of them. This used about {tokens} tokens.",
+        "untitled": "Untitled challenge",
+        "draftChip": "PDF draft",
+        "intro": "Summary: {intro}",
+        "description": "Preview: {text}",
+        "confirmNote": "Once confirmed, these {n} go into the {queue} queue together. Fill in the settings in the form below.",
+        "clear": "Clear preview"
+      },
+      "lifecycle": {
+        "title": "After you publish",
+        "pending": "Only you and the admins can see the challenge.",
+        "reviewedLabel": "Reviewed",
+        "reviewedManager": "You can approve it yourself.",
+        "reviewedMember": "It goes live once the owner or an admin approves it.",
+        "visibleLabel": "Live",
+        "visible": "Everyone can see and claim it, and claims start counting.",
+        "trackLabel": "What you see",
+        "track": "Mine → Published shows the challenge's claim trend, who claimed it and how they did.",
+        "rejectedNote": "A rejected challenge comes back with the reason. Edit it and resubmit; no need to start over."
+      },
+      "checks": {
+        "title": "Before you submit",
+        "ok": "Looks good.",
+        "waiting": "Once the form loads, anything blocking submission is listed here.",
+        "submit": "Submit for review"
+      }
     },
     "selectTemplate": {
-      "title": "Choose a problem template",
+      "title": "Choose a challenge template",
       "back": "Back",
-      "blankTemplate": "Start from a blank problem"
+      "blankTemplate": "Start from a blank challenge"
     },
     "tasks": {
       "searchPlaceholder": "Search this space",
@@ -137,8 +199,8 @@
         "latestUpdated": "Recently updated",
         "nearestDeadline": "Ending soon"
       },
-      "publishTask": "Publish problem",
-      "noTasks": "No problems yet",
+      "publishTask": "Publish challenge",
+      "noTasks": "No challenges yet",
       "topic": "Topic",
       "category": "Category",
       "allTopics": "All topics",
@@ -147,22 +209,132 @@
         "participating": "Joined",
         "publishing": "Published"
       },
-      "loadFailed": "Couldn't load problems",
-      "pendingOnly": "Needs action only"
+      "loadFailed": "Couldn't load challenges",
+      "pendingOnly": "Needs action only",
+      "scopeLabel": "Scope",
+      "topicCount": "{n} topics",
+      "clearTopics": "Clear selection",
+      "noTopics": "No topics",
+      "sort": "Sort",
+      "row": {
+        "mine": "Claimed",
+        "by": "By {name}",
+        "claimed": "{n} claimed",
+        "claimedOf": "{n} / {limit}",
+        "deadline": "Due {date}",
+        "noDeadline": "No deadline"
+      },
+      "published": {
+        "state": {
+          "PENDING_APPROVAL": "Pending review",
+          "REJECTED": "Rejected",
+          "APPROVED_HIDDEN": "Approved, not listed",
+          "APPROVED_VISIBLE": "Listed",
+          "ENDED": "Closed"
+        },
+        "publishedOn": "Published {date}",
+        "createdOn": "Created {date}",
+        "claimed": "Claimed {n}",
+        "approved": "Approved {n}",
+        "submitted": "Submitted {n}",
+        "passed": "Passed {n}",
+        "failed": "Failed {n}",
+        "submitRate": "Submit rate {rate}",
+        "passRate": "Pass rate {rate}",
+        "pendingClaims": "{n} claims to approve",
+        "pendingReviews": "{n} to review"
+      }
     },
     "templateForm": {
-      "editTitle": "Edit problem template",
-      "createTitle": "Create a problem template",
-      "back": "Back",
+      "editTitle": "Edit challenge template",
+      "createTitle": "Create a challenge template",
       "templateName": "Template name",
       "templateDescription": "Template description",
-      "contestTitle": "Problem title",
-      "contestDescription": "Problem description",
+      "contestTitle": "Challenge title",
+      "contestDescription": "Challenge description",
       "save": "Save",
       "loadTemplateFailed": "Couldn't load template",
       "updateSuccess": "Template updated",
       "createSuccess": "Template created",
-      "saveTemplateFailed": "Couldn't save template"
+      "saveTemplateFailed": "Couldn't save template",
+      "defaults": "Task defaults",
+      "defaultsHint": "Filled in when a task is published from this template, and can be changed then",
+      "unset": "Leave blank",
+      "teamSize": "Team size",
+      "minTeamSize": "Minimum team size",
+      "maxTeamSize": "Maximum team size",
+      "to": "to",
+      "deadlinePrefix": "After claiming,",
+      "deadlineSuffix": "days",
+      "realName": "Real name",
+      "requireRealName": "Real name required",
+      "noRealName": "No real name needed",
+      "realNameNote": "Participants must verify their real name to take part. It is stored encrypted and access is tightly controlled",
+      "cancel": "Cancel"
+    },
+    "pdfGenerate": {
+      "blankTemplate": "Blank template (this space has no challenge template)",
+      "noCategory": "No category (uses the space's default)",
+      "categoryFallback": "Category #{id}",
+      "unknownError": "Unknown error",
+      "error": {
+        "spaceNotReady": "The space is still loading. Try again in a moment.",
+        "noFile": "Choose a PDF first.",
+        "notPdf": "Only PDFs are accepted: this file is neither application/pdf nor named .pdf.",
+        "tooLarge": "A PDF can be at most 15 MB; this one is {size} MB.",
+        "noDrafts": "No drafts this time: the PDF was read, but no challenges were found ({tokens} tokens used).",
+        "parseFailed": "Couldn't parse: {reason}",
+        "publishFailed": "Couldn't publish: {reason}"
+      },
+      "receipt": {
+        "title": "Published",
+        "body": "The {count} challenges you just published are in the {queue} queue. Parsing doesn't skip review; someone still checks them before they go live.",
+        "hint": "Each challenge's summary carries a source marker {marker}, so reviewers can see which page it came from right in the queue.",
+        "again": "Parse another PDF",
+        "viewMine": "View my published challenges",
+        "toQueue": "Go to the review queue"
+      },
+      "upload": {
+        "title": "Upload a PDF",
+        "subtitle": "PDF only, up to 15 MB per file, at most {max} challenges per parse",
+        "hint": "Parsing only reads the PDF and drafts challenges from the template; {notPublished}. It runs a large model and takes from a few seconds to about a minute.",
+        "notPublished": "nothing is published yet"
+      },
+      "meta": {
+        "template": "Template: {name}",
+        "images": "Images extracted: {n}",
+        "tokens": "Tokens used: {n}",
+        "warn": "Drafts {notYet}; they enter the review queue once you confirm",
+        "notYet": "are not challenges yet"
+      },
+      "parse": "Parse into challenge drafts",
+      "parseNote": "The template comes from {param} in the address, or a blank template if there is none; at most {max} per parse.",
+      "drafts": {
+        "title": "Parsed drafts",
+        "subtitle": "{picked} / {total} selected to publish. Edit titles and descriptions in place.",
+        "pick": "Select {name}",
+        "name": "Title",
+        "description": "Description",
+        "intro": "Summary (published as is): {intro}",
+        "page": "PDF · page {page}",
+        "images": "1 image | {n} images",
+        "imagesNote": "The image count comes from the image links in each draft: extracted images are uploaded and linked from the description, so they are published with it."
+      },
+      "attach": {
+        "title": "Attach for participants",
+        "count": "These {n} files are attached to {every} generated challenge",
+        "every": "every",
+        "pdf": "Original PDF",
+        "images": "Extracted images ({n})",
+        "pdfFile": "Original PDF: {name}",
+        "imageFiles": "Images: {names}",
+        "separator": ", ",
+        "noPdf": "No \"Original PDF\" option: this preview didn't save the PDF as an attachable file.",
+        "noImages": "No \"Extracted images\" option: no images could be attached (none were extracted, or none ended up in a draft)."
+      },
+      "confirmNote": "Once confirmed, these {n} go into the {queue} queue. They still need review before going live.",
+      "cancel": "Cancel",
+      "confirm": "Publish {n}"
     }
   },
   "domainGroups": {
@@ -176,19 +348,70 @@
     "domainPlaceholder": "e.g. example.com",
     "confirmDelete": "Delete the domain group {name}?",
     "nameRequired": "Domain group name is required",
-    "invalidDomain": "Enter a valid domain"
+    "invalidDomain": "Enter a valid domain",
+    "deleteGroup": "Delete domain group"
   },
   "inviteCodes": {
     "copy": "Copy",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this space.",
-    "openSpace": "Open space"
+    "openSpace": "Open space",
+    "create": "New",
+    "current": "Code in use",
+    "noneUsable": "No usable code",
+    "newTitle": "New code",
+    "maxUses": "Uses allowed",
+    "expiresOn": "Valid until (blank = never expires)",
+    "expiresOnEdit": "Valid until (blank = never expires)",
+    "note": "Note (who it's for, optional)",
+    "noteEdit": "Note (blank clears it)",
+    "cancel": "Cancel",
+    "generate": "Generate",
+    "save": "Save",
+    "edit": "Adjust",
+    "revoke": "Revoke",
+    "confirmRevoke": "Confirm revoke",
+    "status": {
+      "usable": "Usable",
+      "expired": "Expired",
+      "exhausted": "Used up"
+    },
+    "usage": "{used} / {max} used",
+    "usageUnlimited": "{used} / unlimited used",
+    "expiresAt": "Valid until {date}",
+    "neverExpires": "Never expires",
+    "maker": "Created by",
+    "unknownMaker": "Unknown",
+    "noNote": "No note",
+    "empty": "No invite codes",
+    "toast": {
+      "loadFailed": "Couldn't load invite codes",
+      "maxUsesInvalid": "Uses allowed must be a positive whole number",
+      "maxUsesBelowUsed": "Uses allowed can't be below the {n} already used",
+      "updated": "Updated",
+      "updateFailed": "Couldn't update",
+      "revoked": "Revoked. This code no longer lets anyone join",
+      "revokeFailed": "Couldn't revoke",
+      "created": "Generated",
+      "createFailed": "Couldn't generate"
+    }
   },
   "index": {
     "sortOptions": {
       "newest": "Newest",
       "hot": "Hot"
-    }
+    },
+    "title": "Spaces",
+    "heroTitle": "Where ideas take off.",
+    "heroSubtitle": "Bring your curiosity and find a research problem worth working on.",
+    "firstRun": {
+      "title": "Start here",
+      "body": "Create a project and start working with Cheese: say what you want to do, and it looks things up, writes documents and breaks the work into tasks.",
+      "newProject": "New project",
+      "browse": "Or browse the spaces below to see what others are working on"
+    },
+    "explore": "Explore spaces",
+    "noSpaces": "No spaces"
   },
   "sidebar": {
     "back": "Back to home",
@@ -221,14 +444,15 @@
       "owner": "Owner",
       "admin": "Admin",
       "member": "Member"
-    }
+    },
+    "count": "{n} people"
   },
   "settings": {
     "title": "Settings",
     "tabs": {
       "basic": "Basics",
       "categories": "Categories and topics",
-      "templates": "Problem templates",
+      "templates": "Challenge templates",
       "inviteCodes": "Invite codes",
       "domainGroups": "Email domain groups"
     },
@@ -240,13 +464,20 @@
       "name": "Name",
       "intro": "Introduction",
       "save": "Save",
-      "visibleLimit": "Approved, open problems each publisher can show to members",
+      "visibleLimit": "Approved, open challenges each publisher can show to members",
       "visibleLimitUnlimited": "Unlimited",
       "visibleLimitLimited": "Limited",
       "visibleLimitInput": "Limit",
       "visibleLimitRequired": "Enter a limit",
-      "visibleLimitInvalid": "The limit must be a whole number of 0 or more"
-    }
+      "visibleLimitInvalid": "The limit must be a whole number of 0 or more",
+      "avatar": "Avatar",
+      "changeAvatar": "Change avatar",
+      "visibleLimitLabel": "Visible challenge limit"
+    },
+    "overlay": "Space settings",
+    "close": "Close space settings",
+    "closeHint": "Close space settings (Esc)",
+    "back": "Back to space settings"
   },
   "announcements": {
     "publish": "Post announcement",
@@ -287,5 +518,297 @@
       "unpinFailed": "Could not unpin"
     },
     "morePinned": "{count} more pinned"
+  },
+  "analytics": {
+    "title": "Data",
+    "tabs": {
+      "overview": "Overview",
+      "alerts": "Alerts",
+      "publishers": "Publishers",
+      "tasks": "Challenges",
+      "participants": "Participants",
+      "learning": "Learning"
+    },
+    "filter": {
+      "presetLabel": "Time range",
+      "preset": {
+        "30d": "Last 30 days",
+        "180d": "Last 6 months",
+        "all": "All"
+      },
+      "from": "From",
+      "to": "To",
+      "category": "Category",
+      "approval": "Review",
+      "allCategories": "All categories",
+      "approvalOption": {
+        "ALL": "All",
+        "NONE": "Pending",
+        "APPROVED": "Approved only",
+        "DISAPPROVED": "Rejected only"
+      },
+      "reset": "Reset",
+      "apply": "Apply"
+    },
+    "chart": {
+      "summary": "{total} / {points} points",
+      "noTrend": "No trend data",
+      "noDistribution": "No distribution data"
+    },
+    "distribution": {
+      "APPROVED": "Approved",
+      "DISAPPROVED": "Rejected",
+      "NONE": "Pending",
+      "NO_PARTICIPANTS": "No claims",
+      "NOT_STARTED": "Nothing submitted",
+      "IN_PROGRESS": "Submitted",
+      "PARTIAL_SUCCESS": "Some passed",
+      "ALL_SUCCESS": "All passed",
+      "NOT_SUBMITTED": "Not submitted",
+      "PENDING_REVIEW": "Awaiting review",
+      "REJECTED_RESUBMITTABLE": "Returned, can resubmit",
+      "FAILED": "Failed",
+      "SUCCESS": "Passed",
+      "WITH_REAL_NAME": "Verified",
+      "WITHOUT_REAL_NAME": "Not verified"
+    },
+    "sortBy": "Sort",
+    "sortOrder": {
+      "label": "Order",
+      "desc": "Descending",
+      "asc": "Ascending"
+    },
+    "groupBy": {
+      "label": "Interval",
+      "day": "Daily",
+      "week": "Weekly",
+      "month": "Monthly"
+    },
+    "publisher": {
+      "label": "Publisher",
+      "all": "All"
+    },
+    "export": {
+      "failed": "Export failed. Try again later"
+    },
+    "alerts": {
+      "empty": "No alerts",
+      "loadFailed": "Couldn't load alerts",
+      "pendingTasks": {
+        "label": "Challenges to review",
+        "hint": "Open the challenges awaiting review"
+      },
+      "pendingClaims": {
+        "label": "Claims to approve",
+        "hint": "Open challenges with claims to approve"
+      },
+      "pendingReviews": {
+        "label": "Submissions to review",
+        "hint": "Open challenges with submissions to review"
+      },
+      "stalledTasks": {
+        "label": "Stalled challenges",
+        "hint": "Claimed, but nothing submitted in 14 days"
+      },
+      "overdueReviews": {
+        "label": "Overdue reviews",
+        "hint": "Submitted over 7 days ago, not reviewed"
+      },
+      "inactivePublishers": {
+        "label": "Inactive publishers",
+        "hint": "No challenge published in 30 days"
+      }
+    },
+    "tasks": {
+      "pendingClaims": "Claims to approve",
+      "pendingReviews": "Submissions to review",
+      "export": "Export challenges",
+      "loadFailed": "Couldn't load challenge data",
+      "sort": {
+        "createdAt": "Created",
+        "participantCount": "Claims",
+        "successRate": "Success rate",
+        "pendingReviewCount": "To review"
+      },
+      "col": {
+        "taskName": "Challenge",
+        "publisher": "Publisher",
+        "category": "Category",
+        "approved": "Review",
+        "createdAt": "Created",
+        "deadline": "Deadline",
+        "participantCount": "Claims",
+        "pendingParticipantApprovalCount": "Claims to approve",
+        "pendingReviewCount": "To review",
+        "submissionConversionRate": "Submit rate",
+        "successRate": "Success rate"
+      }
+    },
+    "publishers": {
+      "export": "Export publisher data",
+      "loadFailed": "Couldn't load publisher data",
+      "col": {
+        "publisherName": "Publisher",
+        "taskCount": "Challenges",
+        "participantCount": "Claims",
+        "approvedParticipantCount": "Approved claims",
+        "submittedParticipantCount": "Submitted",
+        "successfulParticipantCount": "Succeeded",
+        "avgParticipantsPerTask": "Claims per challenge",
+        "submissionConversionRate": "Submit rate",
+        "successRate": "Success rate",
+        "lastTaskCreatedAt": "Last published"
+      },
+      "sort": {
+        "taskCount": "Challenges",
+        "participantCount": "Claims",
+        "successRate": "Success rate",
+        "lastTaskCreatedAt": "Last published"
+      },
+      "rank": {
+        "mostTasks": "Most challenges",
+        "tasks": "{n} challenges",
+        "bestRate": "Best success rate",
+        "mostClaims": "Most claims",
+        "claims": "{n} claims"
+      }
+    },
+    "participants": {
+      "approval": "Claim review",
+      "completion": "Completion",
+      "realName": "Real name",
+      "realNameOption": {
+        "all": "All",
+        "with": "Verified",
+        "without": "Not verified"
+      },
+      "export": "Export participants",
+      "loadFailed": "Couldn't load participant data",
+      "empty": "No participant data",
+      "metric": {
+        "claims": {
+          "label": "Claims",
+          "hint": "A person or a team counts once"
+        },
+        "approved": {
+          "label": "Approved claims",
+          "hint": "Claims that were approved"
+        },
+        "succeeded": {
+          "label": "Succeeded",
+          "hint": "Claims marked successful"
+        },
+        "realName": {
+          "label": "Verified members",
+          "hint": "Members with a verified real name"
+        }
+      },
+      "trend": {
+        "joined": "Claims",
+        "submitted": "Submissions",
+        "succeeded": "Successes"
+      },
+      "distribution": {
+        "approval": "Claim review",
+        "completion": "Completion",
+        "realName": "Real name",
+        "grade": "Grade",
+        "major": "Major",
+        "className": "Class"
+      }
+    },
+    "overview": {
+      "loadFailed": "Couldn't load the overview",
+      "empty": "No overview data",
+      "alerts": "Needs attention",
+      "trend": {
+        "joined": "Claims",
+        "succeeded": "Successes"
+      },
+      "distribution": {
+        "category": "Categories",
+        "approval": "Challenge review",
+        "completion": "Completion"
+      },
+      "metric": {
+        "tasks": {
+          "label": "Challenges",
+          "hint": "Challenges counted"
+        },
+        "publishers": {
+          "label": "Publishers",
+          "hint": "Published at least one counted challenge"
+        },
+        "claims": {
+          "label": "Claims",
+          "hint": "A person or a team counts once"
+        },
+        "submitted": {
+          "label": "Submitted",
+          "hint": "Submit rate {rate}"
+        },
+        "succeeded": {
+          "label": "Succeeded",
+          "hint": "Success rate {rate}"
+        },
+        "members": {
+          "label": "Members",
+          "hint": "Teams counted by member"
+        }
+      }
+    },
+    "learning": {
+      "lede": "Where members got stuck talking to the AI, to pick what the next lecture covers",
+      "student": "Member",
+      "knowledgePoint": "Topic",
+      "allStudents": "All",
+      "allKnowledgePoints": "All",
+      "summary": "{projects} member projects · {students} members · {questions} messages · {stuck} shared sticking points",
+      "noProjects": "No member projects visible",
+      "queue": {
+        "title": "To handle",
+        "hint": "Shared sticking points, ordered by how many members hit them",
+        "flagged": "Questions members marked as unanswerable",
+        "noFlagged": "No marked questions",
+        "unavailable": "Nothing to show",
+        "noStuck": "No shared sticking points"
+      },
+      "questions": {
+        "title": "Member messages",
+        "hint": "{n} in all. Tick the ones to include in the outline",
+        "empty": "No member messages"
+      },
+      "selected": "{n} messages selected",
+      "clear": "Clear",
+      "buildOutline": "Build lecture outline",
+      "outlineHint": "Sections follow the order you ticked",
+      "toast": {
+        "filtersFailed": "Couldn't load learning filters",
+        "queuesFailed": "Couldn't load the queue",
+        "questionsFailed": "Couldn't load member messages",
+        "outlineFailed": "Couldn't build the outline"
+      },
+      "unclassified": "Unclassified",
+      "noTime": "None",
+      "stuck": {
+        "pick": "Select sticking point {label}",
+        "latest": "Latest {time}",
+        "counts": "{students} members · {projects} projects · {questions} messages"
+      },
+      "quote": {
+        "pick": "Select this message from {name}",
+        "source": "View original"
+      },
+      "outline": {
+        "session": "Suggested lecture {n}",
+        "empty": "Nothing to cover yet",
+        "missing": "1 message could no longer be read and was left out of this outline | {n} messages could no longer be read and were left out of this outline"
+      }
+    },
+    "all": "All"
+  },
+  "barList": {
+    "hint": "{label}: {hint}",
+    "empty": "No data"
   }
 }

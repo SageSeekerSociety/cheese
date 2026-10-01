@@ -488,7 +488,9 @@ useCommands(() => [
               variant="text"
               color="on-surface-variant"
               size="small"
-              @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
+              @click="
+                router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'agents' } })
+              "
             >
               {{ t('work.members.agentSettings') }}
             </v-btn>

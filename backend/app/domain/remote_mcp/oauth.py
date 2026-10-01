@@ -23,6 +23,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 from app.domain.remote_mcp import http
 
 
@@ -131,7 +132,7 @@ async def discover(server_url: str, resource: str) -> Server:
                 headers={"Accept": "application/json, text/event-stream"},
             )
         except httpx.HTTPError as exc:
-            raise AuthorizationRefused(f"连不上这个 MCP 服务器：{exc}") from exc
+            raise AuthorizationRefused(say("mcpServerUnreachable", error=exc)) from exc
         if probe.status_code == 401:
             challenge = _challenge(probe.headers.get("www-authenticate", ""))
         origin, path = _origin(server_url), _path(server_url)
@@ -150,7 +151,7 @@ async def discover(server_url: str, resource: str) -> Server:
         metadata = await _authorization_metadata(client, issuer)
         if metadata is None:
             if protected is not None:
-                raise AuthorizationRefused("授权服务器没有提供元数据，无法连接")
+                raise AuthorizationRefused(say("mcpAuthNoMetadata"))
             # A server with neither document: the 2025-03-26 defaults.
             metadata = {
                 "issuer": issuer,
@@ -160,11 +161,11 @@ async def discover(server_url: str, resource: str) -> Server:
                 "code_challenge_methods_supported": ["S256"],
             }
         if "S256" not in (metadata.get("code_challenge_methods_supported") or []):
-            raise AuthorizationRefused("授权服务器不支持 PKCE（S256），按规范不能连接")
+            raise AuthorizationRefused(say("mcpAuthNoPkce"))
         if not metadata.get("authorization_endpoint") or not metadata.get(
             "token_endpoint"
         ):
-            raise AuthorizationRefused("授权服务器的元数据不完整，无法连接")
+            raise AuthorizationRefused(say("mcpAuthMetadataIncomplete"))
         scope = challenge.get("scope") or " ".join(
             (protected or {}).get("scopes_supported") or []
         )
@@ -218,9 +219,7 @@ async def register(server: Server) -> Registration:
     if server.cimd and settings.frontend_url.startswith("https://"):
         return Registration(client_metadata_url(), None, "none")
     if not server.registration_endpoint:
-        raise AuthorizationRefused(
-            "这个 MCP 服务器要求预先注册的客户端，需要平台管理员配置后才能连接"
-        )
+        raise AuthorizationRefused(say("mcpNeedsPreregisteredClient"))
     async with http.client() as client:
         try:
             response = await client.post(
@@ -234,10 +233,12 @@ async def register(server: Server) -> Registration:
                 },
             )
         except httpx.HTTPError as exc:
-            raise AuthorizationRefused(f"客户端注册失败：{exc}") from exc
+            raise AuthorizationRefused(
+                say("mcpClientRegistrationFailed", error=exc)
+            ) from exc
     if response.status_code not in (200, 201):
         raise AuthorizationRefused(
-            f"授权服务器拒绝了客户端注册（{response.status_code}）"
+            say("mcpClientRegistrationRefused", status=response.status_code)
         )
     data = response.json()
     return Registration(
@@ -291,15 +292,19 @@ async def _token_request(
         try:
             response = await client.post(token_endpoint, data=body, headers=headers)
         except httpx.HTTPError as exc:
-            raise AuthorizationRefused(f"连不上授权服务器：{exc}") from exc
+            raise AuthorizationRefused(
+                say("mcpAuthServerUnreachable", error=exc)
+            ) from exc
     try:
         data = response.json()
     except ValueError:
         data = {}
     if response.status_code != 200 or not data.get("access_token"):
         raise AuthorizationRefused(
-            "授权服务器拒绝了令牌请求："
-            + str(data.get("error") or response.status_code)
+            say(
+                "mcpTokenRequestRefused",
+                error=str(data.get("error") or response.status_code),
+            )
         )
     return Tokens(
         access_token=data["access_token"],

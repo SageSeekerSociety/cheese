@@ -1,26 +1,22 @@
-import { useI18n } from 'vue-i18n'
+import type { Task } from '@/types'
 
-import { Task } from '@/types'
+export type TaskStateKey = 'pending' | 'rejected' | 'closed' | 'notStarted' | 'full' | 'open'
 
-export const getTaskStatusText = (task?: Task | null) => {
-  if (!task) return ''
-  const { t } = useI18n()
-  // if (task.submitterType === 'USER' && task.joined) return t('tasks.status.joined')
-  // if (task.submitterType === 'TEAM' && task.joinedAsTeam?.length) return t('tasks.status.joined')
-  if (task.approved === 'DISAPPROVED') return t('tasks.status.rejected')
-  if (task.approved === 'NONE') return t('tasks.status.pending')
-  if (task.deadline != null && task.deadline < Date.now()) return t('tasks.status.ended')
-  if (task.registrationStartAt && task.registrationStartAt > Date.now()) return t('tasks.status.notStarted')
-  return t('tasks.status.ongoing')
-}
-
-export const getTaskStatusType = (task?: Task | null) => {
-  if (!task) return ''
-  // if (task.submitterType === 'USER' && task.joined) return 'success'
-  // if (task.submitterType === 'TEAM' && task.joinedAsTeam?.length) return 'success'
-  if (task.approved === 'DISAPPROVED') return 'error'
-  if (task.approved === 'NONE') return 'info'
-  if (task.deadline != null && task.deadline < Date.now()) return 'error'
-  if (task.registrationStartAt && task.registrationStartAt > Date.now()) return 'info'
-  return 'primary'
+/**
+ * 一道题此刻对所有人是什么状态（和我领没领无关）。题目页标题旁那一枚、列表每一行右边那一行
+ * 都读它，文案在 `tasks.page.state.<key>`。
+ *
+ * `participantLimit` 的 0 是「不限」，不是「一个人都不许」。
+ */
+export function taskState(
+  task: Pick<Task, 'approved' | 'deadline' | 'registrationStartAt' | 'participantLimit' | 'participants'>,
+  now = Date.now()
+): { key: TaskStateKey; tone: 'ok' | 'muted' | 'danger' } {
+  if (task.approved === 'NONE') return { key: 'pending', tone: 'muted' }
+  if (task.approved === 'DISAPPROVED') return { key: 'rejected', tone: 'danger' }
+  if (task.deadline != null && task.deadline < now) return { key: 'closed', tone: 'muted' }
+  if (task.registrationStartAt != null && task.registrationStartAt > now) return { key: 'notStarted', tone: 'muted' }
+  if (task.participantLimit > 0 && task.participants.total >= task.participantLimit)
+    return { key: 'full', tone: 'muted' }
+  return { key: 'open', tone: 'ok' }
 }

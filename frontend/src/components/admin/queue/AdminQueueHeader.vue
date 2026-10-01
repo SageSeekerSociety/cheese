@@ -38,7 +38,9 @@ const VIEWS: QueueView[] = ['list', 'table']
 </script>
 
 <template>
-  <AdminPageHeader :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
+  <!-- `aph--flush`：下面那条工具行和页头同住一条白色带（后台三层骨架的头一层），
+       一条白带只有一道最下面的线，所以页头自己那道不画。 -->
+  <AdminPageHeader class="aph--flush" :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
     <template #tools>
       <!-- 未读数。F-13 修的就是它：这个数以前没有人清零，也没有一处模板读它。 -->
       <span v-if="unread > 0" class="qpage__badge t-num" aria-live="polite">

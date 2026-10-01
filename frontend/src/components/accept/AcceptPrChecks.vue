@@ -9,6 +9,8 @@
 // 一个类型收窄，`pr_url` 是 null 的时候那张 chip 就不画，而不是画成 `PR #null`。
 import type { AcceptCard, PrChecks } from '@/cx_types'
 
+import { t } from '@/i18n'
+
 defineProps<{
   card: AcceptCard
   checks: PrChecks | null
@@ -33,7 +35,9 @@ defineProps<{
       <span v-if="sha" class="text-caption text-medium-emphasis">
         {{ sha.slice(0, 7) }}
       </span>
-      <span v-if="checks?.available && checks.mergeable === false" class="text-caption text-error">与主分支冲突</span>
+      <span v-if="checks?.available && checks.mergeable === false" class="text-caption text-error">{{
+        t('work.room.accept.conflictsWithMain')
+      }}</span>
     </div>
     <div
       v-for="chk in checks?.checks ?? []"
@@ -53,7 +57,7 @@ defineProps<{
         }}
       </v-icon>
       {{ chk.name }}
-      <span v-if="chk.status !== 'completed'">进行中</span>
+      <span v-if="chk.status !== 'completed'">{{ t('work.room.accept.checkRunning') }}</span>
     </div>
   </div>
 </template>

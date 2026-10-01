@@ -52,6 +52,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import archive, notes
 from app.domain.review.gate import GATE_TIMEOUT_S
@@ -70,21 +71,15 @@ _ABANDONED_OUTPUT = (
     "审阅已终止。这不是检查未通过：检查没有运行完，代码没有被判定有问题。"
 )
 
-_ABANDONED_NUDGE = (
-    f"{GATE_ABANDONED_PREFIX}：你之前递的验收卡卡在平台质量检查上，"
-    "平台没能拿到检查结果（后端重启或闸门任务丢失），已经把它判死，"
-    "它不会送到验收人手上。\n\n"
-    "**注意这不是「检查没通过」**——检查根本没跑完，没有任何证据说明你的代码有问题，"
-    "所以不用去修什么。确认工作区还是你交付时的状态，然后**重新递一次验收卡**即可。"
-)
+_ABANDONED_NUDGE = say("gateAbandonedNudge")
 
 #: 平台提示统一契约：房间里只留这一行，上面那段给芝士的说明收进 `meta.detail`。
 #: 「判死」和「没通过」在这里也必须分得开 —— 这正是本模块 docstring 里那一节讲的
 #: 事，只不过现在多了一个前端读得懂的码，不用再从正文里猜。
-_ABANDONED_EVENT = "检查结果丢失，审阅已终止"
-_ABANDONED_DETAIL_LABEL = "原因"
+_ABANDONED_EVENT = say("gateAbandoned")
+_ABANDONED_DETAIL_LABEL = say("labelReason")
 #: 卡自己那条线上的一行。和上面那句召唤分开写：房间里那句叫醒芝士，这句落在卡上。
-_CONDEMNED_LINE = "检查未完成，审阅已终止"
+_CONDEMNED_LINE = say("gateCondemned")
 
 
 def stale_before(now: datetime | None = None) -> datetime:
@@ -151,12 +146,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
                 EVENT_GATE_ABANDONED,
                 severity=SEVERITY_WARN,
                 who=WHO_CHEESE,
-                detail=(
-                    "平台未能取得这次检查的结果，通常是后端重启时检查任务"
-                    "随进程丢失。\n"
-                    "这不是检查未通过：检查没有运行完，没有证据表明代码"
-                    "有问题。重新提交审阅即可。"
-                ),
+                detail=say("gateCondemnedDetail"),
                 detail_label=_ABANDONED_DETAIL_LABEL,
             ),
         },

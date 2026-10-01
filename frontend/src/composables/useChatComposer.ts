@@ -141,11 +141,12 @@ export function useChatComposer(deps: ChatComposerDeps) {
   const draft = ref('')
   const composerRef = ref<{ focus: () => void } | null>(null)
 
-  const starterPrompts = [
-    { label: '查找资料', text: '帮我查找相关资料，注明来源，并整理成文档。我要了解的是：' },
-    { label: '起草文档', text: '帮我起草一份文档，先和我确认目标与读者。我想写的是：' },
-    { label: '拆解任务', text: '帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是：' },
-  ]
+  const starterPrompts = computed(() =>
+    (['research', 'draft', 'breakdown'] as const).map((key) => ({
+      label: t(`work.room.chat.starter.${key}`),
+      text: t(`work.room.chat.starter.${key}Text`),
+    }))
+  )
   // 起手区块什么时候退休：芝士在这个房间里说过第一句话之后。
   //
   // 退休判据**不是「房间里有东西」**。平台自己发的公告、赛题报名写进去的简报、
@@ -180,7 +181,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     // 起手草稿里那个 @ 和按钮写进去的是同一个名字（见 `agentSeat`）：写错了的话，
     // 人点完「起草文档」发出去，屋里会动的那位不动，而草稿上明明 @ 着「芝士」。
     const agent = agentSeat()
-    draft.value = `${alwaysSummon() ? '' : `@${agent?.label ?? '芝士'} `}${text}`
+    draft.value = `${alwaysSummon() ? '' : `@${agent?.label ?? t('work.room.defaultAgentName')} `}${text}`
     composerRef.value?.focus()
   }
 

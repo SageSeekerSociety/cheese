@@ -18,7 +18,7 @@
       </div>
     </div>
 
-    <v-empty-state v-else icon="mdi-chart-donut" title="暂无分布数据" text="当前筛选范围内暂无可展示的数据。" />
+    <p v-else class="chart-empty">{{ t('spaces.analytics.chart.noDistribution') }}</p>
   </v-card>
 </template>
 
@@ -26,11 +26,14 @@
 import type { AnalyticsDistribution } from '@/network/api/spaces/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   title: string
   distribution?: AnalyticsDistribution | null
 }>()
+
+const { t } = useI18n()
 
 const rows = computed(() => {
   const items = props.distribution?.items || []
@@ -56,12 +59,12 @@ const rows = computed(() => {
 })
 </script>
 
-<style scoped lang="scss">
+<style scoped>
 .distribution-card {
   height: 100%;
   padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .section-heading {
@@ -70,42 +73,53 @@ const rows = computed(() => {
 
 h3 {
   margin: 0;
-  font-size: 1rem;
+  color: var(--ink);
+  font-size: 14px;
   font-weight: 600;
+  line-height: var(--lh-14);
 }
 
 .distribution-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .distribution-row__meta {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  margin-bottom: 7px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 .distribution-row__label {
-  font-weight: 600;
+  color: var(--text);
 }
 
 .distribution-row__value {
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  font-size: 0.9rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .distribution-row__track {
   overflow: hidden;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-on-surface), 0.06);
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--fill-2);
 }
 
 .distribution-row__fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, rgba(var(--v-theme-primary), 0.45), rgba(var(--v-theme-primary), 0.95));
+  background: var(--muted);
+}
+
+.chart-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 </style>

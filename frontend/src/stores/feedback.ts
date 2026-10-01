@@ -65,6 +65,7 @@ import {
   unlikeFeedbackComment,
   unsupportFeedback,
 } from '@/api'
+import { t } from '@/i18n'
 import {
   clearLiveFeedbackDraft,
   forgetFeedbackDraft,
@@ -525,7 +526,7 @@ export const useFeedbackStore = defineStore('feedback', {
   }),
 
   getters: {
-    /** 我是不是平台管理员。**服务端说了算**；meta 没到之前一律按「不是」。 */
+    /** 我是不是反馈管理员（不是平台管理员，见 meta.is_platform_admin）。服务端说了算。 */
     isAdmin(state): boolean {
       return !!state.meta?.is_admin
     },
@@ -692,7 +693,7 @@ export const useFeedbackStore = defineStore('feedback', {
         this._commitCounts(page.counts, rev)
       } catch (error) {
         if (seq !== listSeq) return
-        this.error = message(error, '反馈列表加载失败')
+        this.error = message(error, t('feedback.errors.listLoadFailed'))
         // 失败回到「一条都没有 + 一句错」那一态，**和没有缓存时完全一样** ——
         // 页面只有那几种状态（加载中 / 有内容 / 一条都没有 / 拉失败），让旧内容
         // 和错误条同时挂着是第五种，没人设计过它，而「重试」那个按钮正好长在空
@@ -821,7 +822,7 @@ export const useFeedbackStore = defineStore('feedback', {
         // 翻页失败退回第一页，是拿「看不见任何东西」去换一个本来就没拿到的增量。
         // 两个页面都已经会画「列表非空时的失败」（error + 有内容 → 列表上方一条），
         // 所以这句话放出去有人接。
-        this.error = message(error, '加载更多失败')
+        this.error = message(error, t('feedback.errors.loadMoreFailed'))
       } finally {
         // 无条件还门：这个标志说的是「这一次调用在飞」，和 `seq` 是不是还是自己
         // 无关。挂在 seq 上的话，一次被栏位切换作废的翻页会把门永远锁上。
@@ -863,7 +864,7 @@ export const useFeedbackStore = defineStore('feedback', {
         mineCache = { items: page.data, total: page.total }
       } catch (error) {
         if (seq !== mineSeq) return
-        this.error = message(error, '「我的反馈」加载失败')
+        this.error = message(error, t('feedback.errors.mineLoadFailed'))
         // 同 `loadList`：失败就是失败那一态，和没有缓存时一模一样 —— 页面上
         // 「拉失败」和「你还没有提过反馈」是两句分开的话，但都得是**清空之后**
         // 才画得出来。
@@ -898,7 +899,7 @@ export const useFeedbackStore = defineStore('feedback', {
       } catch (error) {
         if (seq !== mineSeq) return
         // 同 `loadMoreList`：已经画出来的留着，失败只在列表上方说一句。
-        this.error = message(error, '加载更多失败')
+        this.error = message(error, t('feedback.errors.loadMoreFailed'))
       } finally {
         this.mineLoadingMore = false
       }
@@ -940,13 +941,11 @@ export const useFeedbackStore = defineStore('feedback', {
         // 失败回到「这条反馈打不开」那一态（见 `loadList` 那段：页面只有那几种
         // 画法，旧内容和错误条同时挂着是第五种）。
         this.detail = null
-        this.error = message(error, '这条反馈打不开')
+        this.error = message(error, t('feedback.errors.openFailed'))
         // 服务端说这条不该看见了（403/404）：缓存里那份现在是**错**的，留着它会在
         // 每一次进来时先画一条不该出现的内容。其余失败（网络抖了一下）**留着** —
         // 那一份仍然是这个人自己的、也仍然大概是对的，下次进来还能先画上。
-        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-          detailCache.delete(id)
-        }
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) detailCache.delete(id)
       } finally {
         if (this.detailId === id) this.detailLoading = false
       }
@@ -970,7 +969,7 @@ export const useFeedbackStore = defineStore('feedback', {
       } catch (error) {
         // 办完了的反馈会被拒（412）。那不是故障，是「别再点了」—— 如实显示服务端
         // 那句话，比一个静默失败好。
-        this.error = message(error, '操作失败')
+        this.error = message(error, t('feedback.errors.actionFailed'))
       }
     },
 
@@ -1028,7 +1027,7 @@ export const useFeedbackStore = defineStore('feedback', {
         }
         return true
       } catch (error) {
-        this.error = message(error, '评论发送失败')
+        this.error = message(error, t('feedback.errors.commentSendFailed'))
         return false
       }
     },
@@ -1050,7 +1049,7 @@ export const useFeedbackStore = defineStore('feedback', {
         current.thread = [...current.thread, ...page.items]
         current.thread_next_cursor = page.next_cursor
       } catch (error) {
-        this.error = message(error, '评论加载失败')
+        this.error = message(error, t('feedback.errors.commentsLoadFailed'))
       } finally {
         this.moreCommentsLoading = false
       }
@@ -1075,7 +1074,7 @@ export const useFeedbackStore = defineStore('feedback', {
         current.thread = [...current.thread, ...page.items]
         kept.replies_next_cursor = page.next_cursor
       } catch (error) {
-        this.error = message(error, '回复加载失败')
+        this.error = message(error, t('feedback.errors.repliesLoadFailed'))
       } finally {
         const next = { ...this.moreRepliesLoading }
         delete next[parentId]
@@ -1104,7 +1103,7 @@ export const useFeedbackStore = defineStore('feedback', {
         current.likes = result.count
         current.liked = result.liked
       } catch (error) {
-        this.error = message(error, '操作失败')
+        this.error = message(error, t('feedback.errors.actionFailed'))
       }
     },
 
@@ -1137,7 +1136,7 @@ export const useFeedbackStore = defineStore('feedback', {
         }
         detail.thread = kept
       } catch (error) {
-        this.error = message(error, '删除失败')
+        this.error = message(error, t('feedback.errors.deleteFailed'))
       }
     },
 
@@ -1152,7 +1151,7 @@ export const useFeedbackStore = defineStore('feedback', {
       try {
         await deleteFeedback(id)
       } catch (error) {
-        this.error = message(error, '删除失败')
+        this.error = message(error, t('feedback.errors.deleteFailed'))
         return false
       }
       // 三份列表都在内：`adminItems` 是管理端那条路（管理员从队列点进来删的，删完
@@ -1301,7 +1300,7 @@ export const useFeedbackStore = defineStore('feedback', {
         detailCache.set(detail.id, detail)
         return detail.id
       } catch (error) {
-        this.error = message(error, '提交失败')
+        this.error = message(error, t('feedback.errors.submitFailed'))
         // 失败时**盘上那份留着**，而且这里补一次收尾：提交是防抖窗口里最可能发生的
         // 「人停下来了」，而那一下不该让人在刷新后丢掉刚写完的东西。
         if (draftTimer) clearTimeout(draftTimer)
@@ -1344,7 +1343,7 @@ export const useFeedbackStore = defineStore('feedback', {
         this._commitCounts(page.counts, rev)
       } catch (error) {
         if (seq !== adminSeq) return
-        this.error = message(error, '管理队列加载失败')
+        this.error = message(error, t('feedback.errors.queueLoadFailed'))
         this.adminItems = []
       } finally {
         if (seq === adminSeq) this.adminLoading = false
@@ -1479,7 +1478,7 @@ export const useFeedbackStore = defineStore('feedback', {
         this.detail = detail
       } catch (error) {
         if (seq !== adminDetailSeq || this.detailId !== id) return
-        this.error = message(error, '这条反馈打不开')
+        this.error = message(error, t('feedback.errors.openFailed'))
       } finally {
         // 被作废时**不复位** `detailLoading`：那面旗现在归更晚的那一次（新的读，或者
         // 刚写完那一下），这里复位等于替它宣布「不拉了」。
@@ -1597,7 +1596,7 @@ export const useFeedbackStore = defineStore('feedback', {
         // 没有反馈」这个假状态，不切栏位、不刷新页面就回不来。
         await this.loadAdmin()
       } catch (error) {
-        this.error = message(error, '操作失败')
+        this.error = message(error, t('feedback.errors.actionFailed'))
       }
     },
 
@@ -1628,7 +1627,7 @@ export const useFeedbackStore = defineStore('feedback', {
         this.statsAt[wanted] = Date.now()
       } catch (error) {
         if (seq !== statsSeq[wanted]) return
-        this.error = message(error, '看板加载失败')
+        this.error = message(error, t('feedback.errors.dashboardLoadFailed'))
       } finally {
         if (seq === statsSeq[wanted]) this.statsBusy[wanted] = false
       }
@@ -1666,7 +1665,7 @@ export const useFeedbackStore = defineStore('feedback', {
       try {
         await dismissFeedbackProposal(topicId, blockId)
       } catch (error) {
-        this.error = message(error, '操作失败')
+        this.error = message(error, t('feedback.errors.actionFailed'))
       }
     },
 

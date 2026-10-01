@@ -62,7 +62,7 @@
     "dismiss": "Dismiss this notice"
   },
   "error": {
-    "loadFailed": "Failed to load the admin roster",
+    "loadFailed": "Members failed to load",
     "searchFailed": "Account search failed",
     "addFailed": "Could not add this person",
     "removeFailed": "Could not remove this person",

@@ -164,10 +164,10 @@ const trust = computed(() => [
           <v-btn :href="contactHref" color="primary" variant="flat" size="x-large" append-icon="mdi-email-outline">
             {{ t('publicSite.solutionsPage.contact') }}
           </v-btn>
-          <a class="text-link" :href="entryHref">
+          <router-link class="text-link" :to="entryHref">
             {{ t('publicSite.solutionsPage.tryProduct') }}
             <v-icon icon="mdi-arrow-right" size="16" />
-          </a>
+          </router-link>
         </div>
       </div>
     </section>

@@ -17,6 +17,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import PageHeader from '@/components/common/PageHeader.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { myHandle } from '@/me'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
@@ -139,8 +140,10 @@ async function transferOwner(row: Row) {
 </script>
 
 <template>
-  <PageHeader :title="t('spaces.members.title')" show-on-mobile>
-    <template #actions>
+  <PageHeader :title="t('spaces.members.title')" show-on-mobile />
+
+  <div class="mem">
+    <div class="mem__bar">
       <v-text-field
         v-model="keyword"
         autocomplete="off"
@@ -149,12 +152,11 @@ async function transferOwner(row: Row) {
         hide-details
         prepend-inner-icon="mdi-magnify"
         :placeholder="t('spaces.members.search')"
+        :aria-label="t('spaces.members.search')"
         class="mem__search"
       />
-    </template>
-  </PageHeader>
-
-  <div class="mem">
+      <span class="mem__count t-num">{{ t('spaces.members.count', { n: rows.length }) }}</span>
+    </div>
     <v-table v-if="filtered.length" density="comfortable" class="mem__table">
       <thead>
         <tr>
@@ -168,7 +170,7 @@ async function transferOwner(row: Row) {
         <tr v-for="row in filtered" :key="row.userId">
           <td>
             <div class="mem__who">
-              <v-avatar size="28" :image="getAvatarUrl(row.avatarId ?? undefined)" />
+              <UserAvatar :avatar="row.avatarId ? getAvatarUrl(row.avatarId) : undefined" :name="row.name" size="28" />
               <div>
                 <div class="mem__name">
                   {{ row.name }}
@@ -208,16 +210,34 @@ async function transferOwner(row: Row) {
 
 <style scoped>
 .mem {
-  padding: 16px;
+  max-width: 960px;
+  padding: 16px 16px 48px;
+}
+
+.mem__bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
 }
 
 .mem__search {
-  min-width: 200px;
-  max-width: 240px;
+  flex: 0 1 280px;
+}
+
+.mem__count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 .mem__table {
   background: transparent;
+}
+
+.mem__table th {
+  white-space: nowrap;
 }
 
 .mem__who {

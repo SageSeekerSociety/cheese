@@ -1,5 +1,9 @@
 import type { Block } from '../cx_types'
 
+import { noticeText } from './noticeText'
+
+import { t } from '@/i18n'
+
 export interface PlatformErrorPresentation {
   code: string
   title: string
@@ -13,21 +17,22 @@ export function platformErrorPresentation(block: Block): PlatformErrorPresentati
   if (!meta || meta.event_type !== 'platform_error') return null
 
   const code = typeof meta.code === 'string' && meta.code ? meta.code : 'platform_error'
-  const title = typeof meta.title === 'string' && meta.title ? meta.title : '工作电脑暂时不可用'
+  const title = noticeText(block, 'title') || t('work.room.notice.incident.title')
   const retryable = meta.retryable === true
 
   return {
     code,
     title,
-    body: block.content,
-    status:
+    body: noticeText(block),
+    status: t(
       code === 'storage_exhausted'
-        ? '正在自动清理'
+        ? 'work.room.notice.incident.cleaning'
         : code === 'runtime_image_missing'
-          ? '正在恢复'
+          ? 'work.room.notice.incident.recovering'
           : retryable
-            ? '可以重试'
-            : '需要管理员处理',
+            ? 'work.room.notice.incident.retryable'
+            : 'work.room.notice.incident.needsAdmin'
+    ),
     retryable,
   }
 }

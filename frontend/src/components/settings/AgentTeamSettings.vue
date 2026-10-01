@@ -27,6 +27,7 @@ import {
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import { t } from '@/i18n'
 import { memoryCountsByHandle, typeLabel } from '@/lib/projectAgents'
 import { relTime } from '@/lib/relTime'
 
@@ -61,7 +62,7 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       payload.agents = (await listProjectAgents(props.projectId)).data
     } catch (e) {
       if (isEndpointMissing(e)) payload.backendMissing = true
-      else payload.loadError = e instanceof Error ? e.message : '加载 AI 队友失败'
+      else payload.loadError = e instanceof Error ? e.message : t('work.projectSettings.agents.loadFailed')
       return payload
     }
     // 两个补充数据，谁失败谁空着。
@@ -131,10 +132,10 @@ async function makeDefault(agent: ProjectAgent) {
     await refresh()
   } catch (e) {
     actionError.value = isEndpointMissing(e)
-      ? '这个环境还没上线默认队友的设置'
+      ? t('work.projectSettings.agents.defaultUnsupported')
       : e instanceof Error
         ? e.message
-        : '设为默认失败'
+        : t('work.projectSettings.agents.setDefaultFailed')
   } finally {
     settingDefault.value = null
   }
@@ -151,10 +152,10 @@ async function confirmDeactivate() {
     await refresh()
   } catch (e) {
     actionError.value = isEndpointMissing(e)
-      ? '这个环境还没上线停用功能，队友没有变化'
+      ? t('work.projectSettings.agents.deactivateUnsupported')
       : e instanceof Error
         ? e.message
-        : '停用失败'
+        : t('work.projectSettings.agents.deactivateFailed')
     deactivateTarget.value = null
   } finally {
     deactivating.value = false
@@ -166,14 +167,14 @@ async function confirmDeactivate() {
   <section class="page-section agent-team">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-robot-outline</v-icon>
-      <span class="page-section-title">AI 队友</span>
+      <span class="page-section-title">{{ t('work.projectSettings.agents.title') }}</span>
       <v-spacer />
       <v-btn
         variant="text"
         icon="mdi-refresh"
         size="small"
         class="mr-1"
-        aria-label="刷新"
+        :aria-label="t('work.projectSettings.agents.refresh')"
         :loading="loading || refreshing"
         @click="refresh"
       />
@@ -186,16 +187,16 @@ async function confirmDeactivate() {
         :disabled="loading"
         @click="openCreate"
       >
-        新建队友
+        {{ t('work.projectSettings.agents.create') }}
       </v-btn>
     </div>
     <div class="page-section-body">
       <p class="t-body c-muted mb-6" style="max-width: 640px">
-        每个队友有自己的角色设定和自己的记忆。新开话题默认交给标了「默认」的那一个，也可以在话题里单独换
+        {{ t('work.projectSettings.agents.intro') }}
       </p>
 
       <v-alert v-if="backendMissing" type="info" density="comfortable" class="mb-4">
-        这个环境还没上线 AI 队友的管理功能，上线后这一页会列出项目里的所有队友
+        {{ t('work.projectSettings.agents.unsupported') }}
       </v-alert>
 
       <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="dismissError">
@@ -208,11 +209,10 @@ async function confirmDeactivate() {
 
       <div v-else-if="!backendMissing && agents.length === 0" class="empty-state text-center py-10">
         <v-icon size="34" class="mb-3 c-muted">mdi-robot-outline</v-icon>
-        <div class="t-body c-muted mb-1">暂无 AI 队友</div>
-        <div class="t-caption c-muted mb-5" style="max-width: 460px; margin: 0 auto">
-          AI 队友在话题里和你一起工作。给它一套角色设定，它在这个项目里学到的内容会一直保留，换个话题也记得
-        </div>
-        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">新建队友</v-btn>
+        <div class="t-body c-muted mb-4">{{ t('work.projectSettings.agents.empty') }}</div>
+        <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">
+          {{ t('work.projectSettings.agents.create') }}
+        </v-btn>
       </div>
 
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
@@ -222,8 +222,12 @@ async function confirmDeactivate() {
             <div class="min-w-0">
               <div class="d-flex align-center flex-wrap ga-2">
                 <span class="t-title agent-head__name">{{ a.display_name || a.handle }}</span>
-                <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">默认</v-chip>
-                <v-chip v-if="a.is_active === false" size="x-small" variant="tonal">已停用</v-chip>
+                <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">{{
+                  t('work.projectSettings.agents.default')
+                }}</v-chip>
+                <v-chip v-if="a.is_active === false" size="x-small" variant="tonal">{{
+                  t('work.projectSettings.agents.inactive')
+                }}</v-chip>
               </div>
               <div class="t-meta c-muted agent-head__name">@{{ a.handle }} · {{ typeLabel(types, a.type_name) }}</div>
             </div>
@@ -236,11 +240,11 @@ async function confirmDeactivate() {
               :loading="settingDefault === a.id"
               @click="makeDefault(a)"
             >
-              设为默认
+              {{ t('work.projectSettings.agents.setDefault') }}
             </v-btn>
-            <v-btn variant="text" size="small" @click="openEdit(a)">编辑</v-btn>
+            <v-btn variant="text" size="small" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</v-btn>
             <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
-              停用
+              {{ t('work.projectSettings.agents.deactivate') }}
             </v-btn>
           </div>
         </div>
@@ -253,13 +257,15 @@ async function confirmDeactivate() {
             @click="expanded = expanded === a.id ? null : a.id"
           >
             <v-icon size="14" class="mr-1">mdi-book-open-variant-outline</v-icon>
-            {{ memoryCounts[a.handle] ?? 0 }} 条记忆
+            {{ t('work.projectSettings.agents.memories', { n: memoryCounts[a.handle] ?? 0 }) }}
           </button>
         </div>
 
         <v-expand-transition>
           <div v-if="expanded === a.id" class="memory-list mt-3">
-            <div v-if="memoriesOf(a).length === 0" class="t-meta c-muted">暂无记忆</div>
+            <div v-if="memoriesOf(a).length === 0" class="t-meta c-muted">
+              {{ t('work.projectSettings.agents.noMemories') }}
+            </div>
             <div v-for="m in memoriesOf(a)" :key="m.id" class="memory-row">
               <span class="t-body">{{ m.content }}</span>
               <span class="t-meta c-muted ml-2">{{ relTime(m.created_at) }}</span>
@@ -275,16 +281,20 @@ async function confirmDeactivate() {
       <v-card v-if="deactivateTarget" class="pa-5">
         <div class="d-flex align-center mb-3">
           <v-icon color="error" class="mr-2">mdi-account-off-outline</v-icon>
-          <span class="t-title">停用队友</span>
+          <span class="t-title">{{
+            t('work.projectSettings.agents.deactivateTitle', {
+              name: deactivateTarget.display_name || deactivateTarget.handle,
+            })
+          }}</span>
         </div>
-        <div class="t-body mb-1">
-          确定停用「<strong>{{ deactivateTarget.display_name || deactivateTarget.handle }}</strong
-          >」吗？
-        </div>
-        <div class="t-caption c-muted mb-5">停用之后新话题选不到它，已经在用它的话题照常工作，它的记忆也都保留</div>
+        <div class="t-caption c-muted mb-5">{{ t('work.projectSettings.agents.deactivateHint') }}</div>
         <div class="d-flex justify-end">
-          <v-btn variant="text" class="mr-2" @click="deactivateTarget = null">取消</v-btn>
-          <v-btn color="error" variant="flat" :loading="deactivating" @click="confirmDeactivate">停用</v-btn>
+          <v-btn variant="text" class="mr-2" @click="deactivateTarget = null">{{
+            t('work.projectSettings.agents.cancel')
+          }}</v-btn>
+          <v-btn color="error" variant="flat" :loading="deactivating" @click="confirmDeactivate">{{
+            t('work.projectSettings.agents.deactivate')
+          }}</v-btn>
         </div>
       </v-card>
     </v-dialog>

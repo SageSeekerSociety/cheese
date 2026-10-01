@@ -20,9 +20,14 @@ defineProps<{
 <template>
   <v-card variant="outlined" class="merge-box">
     <div class="pa-3">
-      <div class="text-caption text-medium-emphasis mb-2">
-        <UserRef :handle="card.decided_by" /> 已采纳，但合并未完成，需要手动处理
-      </div>
+      <i18n-t
+        scope="global"
+        keypath="work.room.accept.deliveringBy"
+        tag="div"
+        class="text-caption text-medium-emphasis mb-2"
+      >
+        <template #who><UserRef :handle="card.decided_by" /></template>
+      </i18n-t>
       <AcceptNoteLine v-if="note" :text="note.text" :tone="note.tone" />
       <!-- PR + 实时 CI，复用待采纳卡那套 prChecks 轮询。 -->
       <AcceptPrChecks v-if="card.pr_url" :card="card" :checks="checks" :sha="card.pr_head_sha" />

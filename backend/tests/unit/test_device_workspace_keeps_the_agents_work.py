@@ -662,6 +662,43 @@ def test_a_checkout_behind_its_branch_has_nothing_to_push(device):
     assert not (home / "posted.jsonl").exists()
 
 
+def test_a_forge_out_of_reach_does_not_unsay_work_it_already_has(device):
+    """The branch already carries this checkout's commit; the forge then stops
+    answering for a while. Syncing the files still being edited backs them up
+    and tells the room nothing: none of the work is missing from the branch."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    branch = tasks[task]["branch"]
+    work = cli._task_worktree(task)
+    pushed = _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    (work / "draft.txt").write_text("still editing\n")
+    remote.rename(remote.with_name("unreachable.git"))
+
+    cli._sync_task(task)
+    cli._sync_task(task)
+
+    assert not (home / "posted.jsonl").exists()
+    assert (home / "backups" / task / "latest.json").exists()
+    remote.with_name("unreachable.git").rename(remote)
+    assert git(remote, "rev-parse", branch) == pushed
+
+
+def test_a_new_commit_the_forge_cannot_take_is_still_reported(device):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "first\n")
+    cli._sync_task(task)
+    _commit(work, "b.txt", "second\n")
+    remote.rename(remote.with_name("unreachable.git"))
+
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert tasks[task]["branch"] in (home / "posted.jsonl").read_text()
+
+
 def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device):
     """The forge locks a branch whose PR is in the merge queue. Commits made
     after that are backed up, and the room is told why they are not in the

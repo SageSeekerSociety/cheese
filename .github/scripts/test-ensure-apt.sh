@@ -71,17 +71,17 @@ printf 'tmux\n' > "$INSTALLED_LIST"
 : > "$APT_CALLS"
 "$ensure" tmux openssl > /dev/null
 grep -q "^flock " "$APT_CALLS" || fail "installed without taking the lock"
-grep -q "apt-get update" "$APT_CALLS" || fail "did not refresh the package lists"
-grep -q "apt-get install .*openssl" "$APT_CALLS" || fail "did not install the missing package"
-grep -q "apt-get install .*tmux" "$APT_CALLS" && fail "reinstalled a package that was already there"
+grep -q "apt-get .*update" "$APT_CALLS" || fail "did not refresh the package lists"
+grep -q "apt-get .*install .*openssl" "$APT_CALLS" || fail "did not install the missing package"
+grep -q "apt-get .*install .*tmux" "$APT_CALLS" && fail "reinstalled a package that was already there"
 
 # 3. Another apt holds the lists lock for a while → wait, then install.
 printf 'tmux\n' > "$INSTALLED_LIST"
 : > "$APT_CALLS"
 echo 2 > "$APT_LOCKED_CALLS"
 "$ensure" tmux openssl > /dev/null || fail "gave up while another apt held the lock"
-[ "$(grep -c 'apt-get update' "$APT_CALLS")" -eq 3 ] || fail "did not retry the update after a lock refusal"
-grep -q "apt-get install .*openssl" "$APT_CALLS" || fail "did not install after the lock was released"
+[ "$(grep -c 'apt-get .*update' "$APT_CALLS")" -eq 3 ] || fail "did not retry the update after a lock refusal"
+grep -q "apt-get .*install .*openssl" "$APT_CALLS" || fail "did not install after the lock was released"
 
 # 4. Any other apt failure → fail at once, no retry.
 : > "$APT_CALLS"

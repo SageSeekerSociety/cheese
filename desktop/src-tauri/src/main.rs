@@ -9,17 +9,16 @@ mod links;
 mod notices;
 mod platform;
 mod resident;
+mod updates;
 
 use serde::Serialize;
 use tauri::ipc::{CapabilityBuilder, Channel};
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
-use tauri::{Manager, State, Theme, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{Emitter, Manager, State, Theme, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::StateFlags;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 use url::Url;
 
 // Built against okcheese.com; CHEESE_ORIGIN at build time points a build elsewhere.
@@ -41,8 +40,14 @@ fn from_app(url: &Url) -> bool {
 }
 
 /// Whether a navigation stays in the window; anything else goes to the browser.
+/// The server's documentation is a site of its own, with no way back to the
+/// app from inside it, so it goes to the browser too.
 fn stays_in_app(url: &Url) -> bool {
-    from_server(url) || from_app(url)
+    (from_server(url) && !is_docs(url)) || from_app(url)
+}
+
+fn is_docs(url: &Url) -> bool {
+    url.path() == "/docs" || url.path().starts_with("/docs/")
 }
 
 #[derive(Clone, Serialize)]
@@ -117,53 +122,38 @@ fn stored_theme(app: &tauri::App) -> String {
         .unwrap_or_else(|| "system".into())
 }
 
-// Replaces this app with the newest release (.github/workflows/desktop.yml
-// publishes it with latest.json beside it) and starts that. The page is the
-// server's own and always current; this is for the app around it. The app runs
-// for days with its window closed, so it looks again every few hours, and it
-// restarts only while the window is out of sight and no connection is in
-// progress: never under someone's hands, never cutting a connection off halfway.
-// The restarted app stays out of sight too.
-async fn keep_updated(app: tauri::AppHandle) {
-    loop {
-        if let Err(e) = update(&app).await {
-            eprintln!("cheese: update failed: {e}");
-        }
-        tokio::time::sleep(UPDATE_EVERY).await;
+// The macOS app menu is the system's usual one with the two items people look
+// for first in it: "About Cheese", which shows the page's 关于 dialog (the app's
+// and the page's versions, and where the update stands), and "Check for
+// Updates…". The rest of the menu keeps its system wording, so these do too.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem};
+    let menu = Menu::default(app)?;
+    if let Some(first) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
+        // The system's own About panel shows the app's version only.
+        first.remove_at(0)?;
+        first.insert(&MenuItem::with_id(app, ABOUT, "About Cheese", true, None::<&str>)?, 0)?;
+        first.insert(&MenuItem::with_id(app, CHECK_FOR_UPDATES, "Check for Updates…", true, None::<&str>)?, 1)?;
     }
+    Ok(menu)
 }
 
-const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-const START_HIDDEN_FILE: &str = "start-hidden";
+const ABOUT: &str = "about";
+const CHECK_FOR_UPDATES: &str = "check-for-updates";
 
-async fn update(app: &tauri::AppHandle) -> tauri_plugin_updater::Result<()> {
-    let Some(update) = app.updater()?.check().await? else {
-        return Ok(());
-    };
-    let bytes = update.download(|_, _| {}, || {}).await?;
-    loop {
-        let connecting = app.state::<connect::Running>().0.lock().unwrap().is_some();
-        let in_sight = app
-            .get_webview_window("main")
-            .is_some_and(|w| w.is_visible().unwrap_or(false));
-        if !connecting && !in_sight {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(30)).await;
+/// Both menu items open the page's 关于 dialog; the second also looks for an
+/// update, whose progress the dialog shows.
+fn on_menu(app: &tauri::AppHandle, id: &str) {
+    if id != ABOUT && id != CHECK_FOR_UPDATES {
+        return;
     }
-    if let Ok(dir) = app.path().app_config_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(START_HIDDEN_FILE), "");
+    resident::bring_back(app);
+    let _ = app.emit_to("main", "show-about", ());
+    if id == CHECK_FOR_UPDATES {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { updates::check(&app).await });
     }
-    update.install(bytes)?;
-    app.restart();
-}
-
-/// Whether this launch is the restart after an update, which keeps the window out of sight.
-fn restarted_by_update(app: &tauri::App) -> bool {
-    app.path()
-        .app_config_dir()
-        .is_ok_and(|dir| std::fs::remove_file(dir.join(START_HIDDEN_FILE)).is_ok())
 }
 
 fn main() {
@@ -190,6 +180,7 @@ fn main() {
         .manage(connect::Running::default())
         .manage(resident::StartHidden::default())
         .manage(notices::Notices::default())
+        .manage(updates::Updates::default())
         .invoke_handler(tauri::generate_handler![
             connect_this_machine,
             cancel_connect,
@@ -199,10 +190,14 @@ fn main() {
             resident::opens_at_login,
             resident::set_opens_at_login,
             notices::listen_for_notices,
-            notices::stop_notices
+            notices::stop_notices,
+            updates::update_status,
+            updates::check_for_updates,
+            updates::restart_to_update
         ])
         // Closing the window keeps the app running (resident.rs); quitting is ⌘Q
         // on macOS and 退出 in the tray menu elsewhere.
+        .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -227,14 +222,19 @@ fn main() {
                     .permission("allow-listen-for-notices")
                     .permission("allow-stop-notices")
                     .permission("allow-opens-at-login")
-                    .permission("allow-set-opens-at-login"),
+                    .permission("allow-set-opens-at-login")
+                    .permission("allow-update-status")
+                    .permission("allow-check-for-updates")
+                    .permission("allow-restart-to-update"),
             )?;
-            if restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
+            if updates::restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
                 app.state::<resident::StartHidden>().0.store(true, Ordering::Relaxed);
             }
             #[cfg(not(target_os = "macos"))]
             resident::tray::install(app.handle())?;
-            tauri::async_runtime::spawn(keep_updated(app.handle().clone()));
+            #[cfg(target_os = "macos")]
+            app.set_menu(app_menu(app.handle())?)?;
+            tauri::async_runtime::spawn(updates::keep_updated(app.handle().clone()));
             notices::resume(app.handle());
             // The installer registers the scheme; registering again at each start
             // mends an install that lost it. macOS reads it from the bundle instead.
@@ -260,9 +260,11 @@ fn main() {
             let theme = stored_theme(app);
             // What the pages need to know about this window (frontend/src/lib/desktopApp.ts
             // and ../shell): where the server is, the theme last picked, whether
-            // the title bar lies over the page, and what else the app can do for it.
+            // the title bar lies over the page, the app's own version, and what else
+            // the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\"] }};",
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\"] }};",
+                version = app.package_info().version.to_string(),
                 start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -335,5 +337,13 @@ mod tests {
         assert!(!stays("https://github.com/login/oauth/authorize"));
         assert!(!stays("https://docs.okcheese.com/"));
         assert!(!stays("https://okcheese.com.evil.example/"));
+    }
+
+    #[test]
+    fn the_servers_documentation_goes_to_the_browser() {
+        assert!(!stays(&format!("{}/docs/", super::ORIGIN)));
+        assert!(!stays(&format!("{}/docs/guide/start.html", super::ORIGIN)));
+        assert!(!stays(&format!("{}/docs", super::ORIGIN)));
+        assert!(stays(&format!("{}/docsearch", super::ORIGIN)));
     }
 }

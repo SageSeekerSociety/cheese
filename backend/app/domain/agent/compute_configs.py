@@ -13,6 +13,7 @@ from app.domain.agent.market import (
     cloud_provisionable,
     compute_default_name,
 )
+from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
@@ -28,9 +29,18 @@ PLATFORM_BOUNDS: dict[str, tuple[int, int]] = {
 
 
 class ComputeChoice(BaseModel):
+    """Which machine a room works on: the profile, the device, the specs.
+
+    ``name`` is only ever a device's own name, a proper noun that reads the same
+    in every language. A choice the platform describes — the cloud, standard or
+    with specs, and 「any online device」 — carries no name: it is identified by
+    its fields, and each reader's screen renders its own label for it. A stored
+    name would be one language's words shown to every member of the project.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=60)
+    name: str | None = Field(default=None, max_length=60)
     profile: Literal["cloud", "device"]
     device_id: str | None = None
     cores: int | None = Field(
@@ -49,9 +59,9 @@ class ComputeChoice(BaseModel):
 
     @model_validator(mode="after")
     def resource_kind(self):
-        if not self.name.strip():
-            raise ValueError("配置名称不能为空")
-        self.name = self.name.strip()
+        # Only a named device keeps a name; see the class docstring.
+        named_device = self.profile == "device" and self.device_id
+        self.name = ((self.name or "").strip() or None) if named_device else None
         if self.profile == "cloud" and self.device_id:
             raise ValueError("云配置不能指定自有设备")
         if self.profile == "device" and any(
@@ -69,8 +79,20 @@ class ProjectComputeConfigs(BaseModel):
 def standard_choice(profile: str | None = None) -> ComputeChoice:
     profile = profile or compute_default_name()
     if profile == "device":
-        return ComputeChoice(name="自有设备 · 自动选择", profile="device")
-    return ComputeChoice(name="云端 · 标准配置", profile="cloud")
+        return ComputeChoice(profile="device")
+    return ComputeChoice(profile="cloud")
+
+
+def choice_label(choice: ComputeChoice) -> str:
+    """The choice as a room line names it: the device's own name, or the
+    platform's sentence for a choice that has none (rendered per reader)."""
+    if choice.name:
+        return choice.name
+    if choice.profile == "device":
+        return say("computeAnyDevice" if choice.device_id is None else "computeDevice")
+    if choice.cores or choice.memory_mb or choice.disk_gb:
+        return say("computeCloudCustom")
+    return say("computeCloudStandard")
 
 
 def project_configs(project_settings: dict | None) -> ProjectComputeConfigs:
@@ -102,14 +124,14 @@ def room_choice(topic, project_settings: dict | None) -> ComputeChoice:
 async def validate_choice(session: AsyncSession, project_id, choice: ComputeChoice):
     if choice.profile == "cloud":
         if not cloud_provisionable(settings):
-            raise ValidationError("云端尚未接入，暂不可用")
+            raise ValidationError(say("cloudNotAvailable"))
         return
     devices = await sql_device_service(session).list_devices_for_project(project_id)
     if choice.device_id:
         if choice.device_id not in {d.device_id for d in devices}:
-            raise ValidationError("设备不属于当前项目或团队")
+            raise ValidationError(say("deviceNotInProjectOrTeam"))
     elif not devices:
-        raise ValidationError("团队暂无自有设备")
+        raise ValidationError(say("teamHasNoDevices"))
 
 
 async def bind_room_device_choice(
@@ -158,7 +180,7 @@ async def machine_policy_call(
     return gate.Call(
         resource=gate.Resource.machine,
         subject=device.device_id if device is not None else choice.profile,
-        label=device.name if device is not None else choice.name,
+        label=device.name if device is not None else choice_label(choice),
         # `ComputeChoice.profile` 只有 `cloud` / `device` 两种，目录里两个都在。
         tier=COMPUTE_TIERS[choice.profile],
         approver=approver,

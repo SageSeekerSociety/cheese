@@ -23,7 +23,7 @@ import { listBlocks } from '../api'
 
 import ChatPanel from './ChatPanel.vue'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 const sockets: TestSocket[] = []
 class TestSocket {
@@ -90,7 +90,7 @@ async function mountRoom(focusBlock: string | null) {
         focusBlock: focus.value,
       }),
   })
-  const view = render(Host, { global: { plugins: [createVuetify({ components, directives })] } })
+  const view = render(Host, { global: { plugins: [createVuetify({ components, directives }), i18n] } })
   await flush()
   sockets[0].onopen?.()
   await vi.advanceTimersByTimeAsync(500)
@@ -98,6 +98,8 @@ async function mountRoom(focusBlock: string | null) {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.useFakeTimers()
   sockets.length = 0
   vi.stubGlobal('WebSocket', TestSocket)

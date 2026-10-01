@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue'
 import { ApiError, setTopicComputeChoice } from '../api'
 import { useCloudSupply } from '../composables/useCloudSupply'
 import { t } from '../i18n'
-import { choiceDetail, choiceKey, compactChoices } from '../lib/computeConfig'
+import { choiceDetail, choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
@@ -86,7 +86,7 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false) {
         }}</v-icon>
         <div class="cp-body">
           <div class="cp-label">
-            {{ choice.name }}
+            {{ choiceName(choice) }}
             <span v-if="choiceKey(choice) === choiceKey(profile.project_default)" class="cp-badge">{{
               t('work.roomMachine.projectDefault')
             }}</span>

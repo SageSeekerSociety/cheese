@@ -63,15 +63,17 @@ export default defineConfig({
       command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}`,
       // A model catalogue without a live inference provider.
       //
-      // PLATFORM_ADMIN_HANDLES: the admin surface (feedback-flows.spec.ts
-      // 的「管理员」那条) is gated on a platform-level handle allowlist that no
-      // deployment config sets, so without it every admin step is a 403 and the
-      // spec fails on the gate instead of on what it means to check. Value is a
-      // JSON list — pydantic-settings parses it, commas make the app refuse to
-      // boot (the "Comma-separated in env" comment in core/config.py is wrong).
+      // PLATFORM_ADMIN_HANDLES / FEEDBACK_TRIAGE_HANDLES: the admin surface
+      // (feedback-flows.spec.ts 的「管理员」那条) is gated on two handle
+      // allowlists — the admin shell on the platform one, the feedback queue on
+      // the feedback one — that no deployment config sets, so without them every
+      // admin step is a 403 and the spec fails on the gate instead of on what it
+      // means to check. Values are JSON lists — pydantic-settings parses them,
+      // commas make the app refuse to boot.
       env: {
         AGENT_HARNESS_MODELS: '{"codex": ["codex-ci-fixture"]}',
         PLATFORM_ADMIN_HANDLES: '["alice"]',
+        FEEDBACK_TRIAGE_HANDLES: '["alice"]',
         // Which models the platform pool offers is the gateway's answer, so a
         // run without one can only pick AGENT_MODEL — and a deployment with no
         // model at all cannot start a turn. stub-gateway.mjs answers that one

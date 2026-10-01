@@ -5,7 +5,9 @@
 // （HomeHub）——同一份目录，两端不各写一份。
 //
 // 团队在原地展开：一个团队只有四样东西（项目、成员、知识库、工作电脑），点哪样
-// 右边就打开哪样，侧栏不动。空间不展开：空间自己有一整套目录，点进去就是那个空间。
+// 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
+// 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Team } from '@/types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -17,6 +19,7 @@ import { awaitingCount } from '@/composables/useAwaitingCount'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { SpacesApi } from '@/network/api/spaces'
@@ -101,10 +104,35 @@ const TEAM_PAGES = [
   { name: 'TeamsDetailKnowledge', label: 'home.nav.teamKnowledge', exact: false },
   { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
 ] as const
+// 个人团队谁也加不进来（后端拒），「成员」一页就不列。
+const pagesOf = (team: Team) =>
+  team.personal ? TEAM_PAGES.filter((page) => page.name !== 'TeamsDetailMembers') : TEAM_PAGES
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
 const editing = ref<Team | null>(null)
+
+/** 管理员在一个团队那一行的 ⋯ 里能做的事。 */
+function teamActions(team: Team): MenuAction[] {
+  return [
+    ...(team.personal
+      ? []
+      : [
+          {
+            key: 'invite',
+            label: t('home.nav.inviteMembers'),
+            icon: 'mdi-account-plus-outline',
+            to: { name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } },
+          },
+        ]),
+    {
+      key: 'edit',
+      label: t('work.teamProfile.edit'),
+      icon: 'mdi-pencil-outline',
+      onSelect: () => (editing.value = team),
+    },
+  ]
+}
 const editOpen = computed({
   get: () => editing.value !== null,
   set: (value: boolean) => {
@@ -119,7 +147,7 @@ const joinOpen = ref(false)
 </script>
 
 <template>
-  <v-list nav :lines="false" class="home-nav" bg-color="transparent" density="compact">
+  <v-list nav :lines="false" class="home-nav side-nav" bg-color="transparent" density="compact">
     <v-list-item
       v-if="inbox"
       rounded="lg"
@@ -128,11 +156,11 @@ const joinOpen = ref(false)
       :title="t('navigation.inbox')"
     >
       <template v-if="awaiting" #append>
-        <span class="home-nav__count">{{ awaiting > 99 ? '99+' : awaiting }}</span>
+        <span class="side-nav__count">{{ awaiting > 99 ? '99+' : awaiting }}</span>
       </template>
     </v-list-item>
 
-    <v-list-subheader class="home-nav__section">{{ t('navigation.teams') }}</v-list-subheader>
+    <v-list-subheader>{{ t('navigation.teams') }}</v-list-subheader>
     <template v-for="team in teams" :key="team.id">
       <v-list-item
         rounded="lg"
@@ -146,14 +174,17 @@ const joinOpen = ref(false)
             isOpen(team) ? 'mdi-chevron-down' : 'mdi-chevron-right'
           }}</v-icon>
           <v-avatar size="22" rounded="md" class="home-nav__mark">
-            <v-img :src="getAvatarUrl(team.avatarId)">
+            <!-- avatarId 为空时不发请求：getAvatarUrl(null) 回的是 /avatars/default，
+                 后端在默认头像缺文件时按设计回 404，会把控制台刷出一条错误。 -->
+            <v-img v-if="team.avatarId" :src="getAvatarUrl(team.avatarId)">
               <template #error>{{ team.name.slice(0, 1) }}</template>
             </v-img>
+            <template v-else>{{ team.name.slice(0, 1) }}</template>
           </v-avatar>
         </template>
         <v-list-item-title class="home-nav__name">{{ team.name }}</v-list-item-title>
         <template #append>
-          <v-menu v-if="isAdmin(team)" location="bottom end">
+          <AdaptiveMenu v-if="isAdmin(team)" :actions="teamActions(team)" :title="team.name">
             <template #activator="{ props }">
               <v-btn
                 v-bind="props"
@@ -165,19 +196,12 @@ const joinOpen = ref(false)
                 @click.stop
               />
             </template>
-            <v-list density="compact">
-              <v-list-item
-                :to="{ name: 'TeamsDetailMembers', params: { handle: team.handle }, query: { invite: '1' } }"
-                :title="t('home.nav.inviteMembers')"
-              />
-              <v-list-item :title="t('work.teamProfile.edit')" @click="editing = team" />
-            </v-list>
-          </v-menu>
+          </AdaptiveMenu>
         </template>
       </v-list-item>
       <template v-if="isOpen(team)">
         <v-list-item
-          v-for="page in TEAM_PAGES"
+          v-for="page in pagesOf(team)"
           :key="page.name"
           rounded="lg"
           class="home-nav__leaf"
@@ -195,7 +219,7 @@ const joinOpen = ref(false)
       :title="t('home.nav.newTeam')"
     />
 
-    <v-list-subheader class="home-nav__section">{{ t('navigation.spaces') }}</v-list-subheader>
+    <v-list-subheader>{{ t('navigation.spaces') }}</v-list-subheader>
     <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceEntryRoute(space)">
       <template #prepend>
         <span class="home-nav__mark home-nav__mark--letter" aria-hidden="true">{{ space.name.slice(0, 1) }}</span>
@@ -227,33 +251,8 @@ const joinOpen = ref(false)
 </template>
 
 <style scoped>
-/* 选中与悬停都是中性色，同 TopicSidebar 的 .nav-row：这条侧栏坐在 --canvas 上，
-   --fill 在那上面几乎看不见，所以悬停取 --fill-2、选中取 --line-2。琥珀在导航里
-   只留给左栏那一格「当前在哪」和未读。 */
-.home-nav .v-list-item {
-  min-height: 34px;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.home-nav .v-list-item:hover {
-  background: var(--fill-2);
-}
-.home-nav .v-list-item--active,
-.home-nav .v-list-item--active:hover {
-  background: var(--line-2);
-}
-.home-nav .v-list-item--active :deep(.v-list-item__overlay) {
-  opacity: 0 !important;
-}
-.home-nav .v-list-item--active :deep(.v-list-item-title) {
-  color: var(--ink);
-  font-weight: 600;
-}
-.home-nav__section {
-  margin-top: 8px;
-  color: var(--faint);
-  font-size: 12px;
-  font-weight: 600;
-}
+/* 行高、悬停、选中、图标大小都是全站那套侧栏行（common.scss 的 .side-nav）。这里只
+   管首页这份目录自己多出来的东西：团队行的箭头和头像、展开出来的四样。 */
 /* 每一行的前缀占同样宽：团队行是「箭头 + 头像」，其余行把图标或首字放在头像那一格，
    所以所有名字从同一条竖线开始，展开出来的四样东西也和团队名对齐。 */
 .home-nav :deep(.v-list-item__prepend) {
@@ -262,15 +261,9 @@ const joinOpen = ref(false)
   gap: 6px;
   width: 44px;
 }
-.home-nav :deep(.v-list-item__spacer) {
-  width: 10px;
-}
+/* 图标占头像那一格（22px 宽）居中，名字才和团队名、空间名从同一条竖线开始。 */
 .home-nav :deep(.v-list-item__prepend > .v-icon) {
   width: 22px;
-  margin: 0;
-  font-size: 18px;
-  color: var(--muted);
-  opacity: 1;
 }
 .home-nav__mark {
   flex: none;
@@ -323,18 +316,5 @@ const joinOpen = ref(false)
 .home-nav__more {
   margin-inline-start: 4px;
   color: var(--muted);
-}
-/* 待办的件数：和左栏那一格同一颗角标，属于「未读」那一族，所以是琥珀。 */
-.home-nav__count {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-pill);
-  background: var(--warn);
-  color: var(--inverse-surface);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
 }
 </style>

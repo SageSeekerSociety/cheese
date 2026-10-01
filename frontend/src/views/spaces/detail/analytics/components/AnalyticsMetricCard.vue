@@ -1,59 +1,43 @@
 <template>
-  <v-card flat rounded="lg" class="metric-card">
-    <div class="metric-card__label">{{ label }}</div>
-    <div class="metric-card__value">{{ value }}</div>
-    <div class="metric-card__foot">
-      <span>{{ description }}</span>
-      <v-icon size="18" :color="tone">{{ icon }}</v-icon>
-    </div>
-  </v-card>
+  <!-- 一格指标：名字、数字、一句说明。几格并排由 AnalyticsStatStrip 排成一条，细线隔开。 -->
+  <div class="metric">
+    <div class="metric__label">{{ label }}</div>
+    <div class="metric__value t-num">{{ value }}</div>
+    <div class="metric__foot">{{ description }}</div>
+  </div>
 </template>
 
 <script setup lang="ts">
-withDefaults(
-  defineProps<{
-    label: string
-    value: string | number
-    description: string
-    icon?: string
-    tone?: 'primary' | 'success' | 'warning' | 'info'
-  }>(),
-  {
-    icon: 'mdi-arrow-top-right',
-    tone: 'primary',
-  }
-)
+defineProps<{
+  label: string
+  value: string | number
+  description: string
+}>()
 </script>
 
-<style scoped lang="scss">
-.metric-card {
-  height: 100%;
-  padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  background-color: rgba(var(--v-theme-surface), 1);
+<style scoped>
+.metric {
+  min-width: 0;
+  padding: 14px 16px;
 }
 
-.metric-card__label {
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  font-size: 0.82rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.metric__label {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
 }
 
-.metric-card__value {
-  margin-top: 8px;
-  font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.metric__value {
+  margin: 2px 0;
+  color: var(--ink);
+  font-size: 23px;
+  font-weight: 650;
+  line-height: var(--lh-23);
 }
 
-.metric-card__foot {
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  font-size: 0.84rem;
+.metric__foot {
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
 }
 </style>

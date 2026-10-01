@@ -21,15 +21,25 @@ touch "$test_repo/backend/app/main.py" "$test_repo/backend/sandbox/cheese" \
   "$test_repo/deploy/office-render/server.py" \
   "$test_repo/deploy/browser-render/server.py" "$test_repo/deploy/gateway/Dockerfile" \
   "$test_repo/backend/sandbox/Dockerfile.private" \
-  "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py"
+  "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py" \
+  "$test_repo/$executor_dir/mcp_process.py"
+# The legacy workflow builds six images; the two added later have no job yet.
+mkdir -p "$test_repo/.github/workflows"
+add_build_jobs() {
+  local image
+  for image in "$@"; do
+    printf '  build-%s:\n    runs-on: ubuntu-24.04\n' "$image" \
+      >> "$test_repo/.github/workflows/build.yml"
+  done
+}
+printf 'jobs:\n' > "$test_repo/.github/workflows/build.yml"
+add_build_jobs backend sandbox frontend office-render browser-render gateway
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm base
 legacy_sha="$(git -C "$test_repo" rev-parse HEAD)"
 mkdir -p "$test_repo/deploy/metering-proxy"
 touch "$test_repo/deploy/metering-proxy/Dockerfile"
-mkdir -p "$test_repo/.github/workflows"
-printf 'jobs:\n  build-private-executor:\n    runs-on: ubuntu-24.04\n' \
-  > "$test_repo/.github/workflows/build.yml"
+add_build_jobs metering-proxy private-executor
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm 'add metering image'
 base_sha="$(git -C "$test_repo" rev-parse HEAD)"
@@ -93,7 +103,7 @@ git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/Dockerfile.private
 assert_plan 'backend=true,sandbox=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 
-for executor_file in runtime.py private.py; do
+for executor_file in runtime.py private.py mcp_process.py; do
   git -C "$test_repo" switch -q --detach "$base_sha"
   commit_path "$executor_dir/$executor_file"
   assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
@@ -179,103 +189,120 @@ git -C "$tag_repo" commit -qam change
 [[ "$(plan_value base_tag "$tag_base")" == "$published" ]] \
   || { echo "FAIL: promotion does not start from the published $published" >&2; exit 1; }
 
-# Exercise the same GitHub lookup used by the workflow without network calls.
-gh() {
-  local endpoint="$2" filter="$4" page="${2##*&page=}"
-  if [[ "$1" != api || "$endpoint" != *'status=completed&per_page=100&page='* ]]; then
-    echo 'FAIL: query completed runs without a server-side conclusion filter' >&2
+# The baseline lookup asks the registry. This stands in for it: a reference
+# exists when it is listed in $REGISTRY_TEST_TAGS, and REGISTRY_TEST_DOWN
+# makes every request fail the way an unauthorised or unreachable registry
+# does.
+docker() {
+  if [[ "$*" != "buildx imagetools inspect "* ]]; then
+    echo "FAIL: unexpected docker call: $*" >&2
     return 1
   fi
-  if [[ "$endpoint" == *'event='* ]]; then
-    echo 'FAIL: a manual rebuild must count as a baseline, so the lookup cannot filter by event' >&2
+  local ref="$4"
+  if [[ -n "${REGISTRY_TEST_DOWN:-}" ]]; then
+    echo "ERROR: unexpected status from HEAD request to https://$ref: 403 Forbidden" >&2
     return 1
   fi
-  printf '%s\n' "$page" >> "$GH_TEST_CALLS"
-  if [[ "$GH_TEST_STATUS" != 0 ]]; then
-    printf '%s' "$GH_TEST_BASE"
-    return "$GH_TEST_STATUS"
+  if grep -qxF "$ref" "$REGISTRY_TEST_TAGS"; then
+    echo "Name: $ref"
+    return 0
   fi
-  case "$GH_TEST_MODE" in
-    mixed)
-      jq -n --arg sha "$GH_TEST_BASE" '{workflow_runs: [
-        {conclusion: "cancelled", head_sha: $sha},
-        {conclusion: "failure", head_sha: $sha},
-        {conclusion: "success", head_sha: $sha},
-        {conclusion: "success", head_sha: "0000000000000000000000000000000000000000"}]}' ;;
-    empty) printf '{"workflow_runs":[]}' ;;
-    failures) jq -n --arg sha "$GH_TEST_BASE" '{workflow_runs: [{conclusion:"failure",head_sha:$sha}]}' ;;
-    pages|page_failure|limit)
-      if [[ "$page" == 1 || "$GH_TEST_MODE" == limit ]]; then
-        jq -n --arg sha "$GH_TEST_BASE" '{workflow_runs: [range(100) | {conclusion:"failure",head_sha:$sha}]}'
-      elif [[ "$GH_TEST_MODE" == page_failure ]]; then
-        return 1
-      else
-        jq -n --arg sha "$GH_TEST_BASE" '{workflow_runs: [{conclusion:"success",head_sha:$sha}]}'
-      fi ;;
-    malformed) printf '{bad json' ;;
-    missing_runs) printf '{}' ;;
-    missing_record) printf '{"workflow_runs":[{}]}' ;;
-  esac | jq -r "$filter"
+  echo "ERROR: $ref: not found" >&2
+  return 1
 }
-export -f gh
-export GITHUB_REPOSITORY=example/project GITHUB_REF_NAME=main
-export GH_TEST_BASE="$base_sha" GH_TEST_STATUS=0 GH_TEST_MODE=mixed
-export GH_TEST_CALLS="$test_repo/query-pages"
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true,metering_proxy=false,private_executor=false' lookup
+export -f docker
+export IMAGE_ROOT=registry.test/project REGISTRY_RETRY_WAIT_SECONDS=0
+export REGISTRY_TEST_TAGS="$test_repo/registry-tags"
 
-export GH_TEST_MODE=pages
-: > "$GH_TEST_CALLS"
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true,metering_proxy=false,private_executor=false' lookup
-[[ "$(paste -sd, "$GH_TEST_CALLS")" == 1,2 ]] || { echo 'FAIL: did not search the second page'; exit 1; }
+# Publish a commit's images the way build.yml tags them.
+publish() {
+  local sha="$1" image
+  shift
+  for image in "$@"; do
+    if [[ "$image" == metering-proxy ]]; then
+      echo "$IMAGE_ROOT/$image:$sha"
+    else
+      echo "$IMAGE_ROOT/$image:${sha:0:7}"
+    fi >> "$REGISTRY_TEST_TAGS"
+  done
+}
+all_images=(backend sandbox frontend office-render browser-render gateway
+  metering-proxy private-executor)
 
-export GH_TEST_MODE=empty
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup
-export GH_TEST_MODE=failures
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup
+lookup_plan() {
+  (
+    cd "$test_repo"
+    unset BASE_SHA
+    CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
+      GITHUB_OUTPUT=/dev/stdout bash "$planner" 2>/dev/null
+  )
+}
 
-# The planner reports these failures as ::error:: workflow commands. Run under
-# Actions, that stderr would become error annotations on every build, green
-# ones included, and read as the real baseline lookup failing. The runs below
-# are expected to fail, so their stderr is discarded.
-# An API failure must never publish a plan, even if stdout contains a SHA.
-export GH_TEST_STATUS=1
-for GH_TEST_BASE in '' "$base_sha"; do
-  export GH_TEST_BASE
+assert_lookup() {
+  local expected_plan="$1" expected_base="$2" output actual
+  output="$(lookup_plan)"
+  actual="$(printf '%s\n' "$output" | grep -E '^(backend|sandbox|frontend|office_render|browser_render|gateway|metering_proxy|private_executor)=' | paste -sd, -)"
+  [[ "$actual" == "$expected_plan" ]] \
+    || { echo "FAIL: expected $expected_plan, got $actual" >&2; exit 1; }
+  [[ "$(printf '%s\n' "$output" | sed -n 's/^base_sha=//p')" == "$expected_base" ]] \
+    || { echo "FAIL: expected baseline ${expected_base:-none}" >&2; exit 1; }
+}
+
+assert_lookup_fails() {
   if (
     cd "$test_repo"
     unset BASE_SHA
     CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
       GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner" 2>/dev/null
   ); then
-    echo 'FAIL: a failed GitHub lookup must fail planning' >&2
+    echo "FAIL: $1 must fail planning" >&2
     exit 1
   fi
-  if [[ -s "$test_repo/failed-output" ]]; then
-    echo 'FAIL: a failed GitHub lookup published a build plan' >&2
-    exit 1
-  fi
-done
+  [[ ! -s "$test_repo/failed-output" ]] \
+    || { echo "FAIL: $1 published a build plan" >&2; exit 1; }
+}
 
-# A later page failure, malformed response, and the search limit all leave
-# the baseline unknown. None may publish a bootstrap plan.
-export GH_TEST_STATUS=0 GH_TEST_BASE="$base_sha"
-for GH_TEST_MODE in page_failure malformed missing_runs missing_record limit; do
-  export GH_TEST_MODE
-  if (
-    cd "$test_repo"
-    unset BASE_SHA
-    CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
-      GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner" 2>/dev/null
-  ); then
-    echo "FAIL: $GH_TEST_MODE must fail planning" >&2
-    exit 1
-  fi
-  [[ ! -s "$test_repo/failed-output" ]] || { echo 'FAIL: unknown baseline published a plan'; exit 1; }
-done
+git -C "$test_repo" switch -q --detach "$base_sha"
+commit_path backend/app/main.py
+backend_sha="$(git -C "$test_repo" rev-parse HEAD)"
+commit_path frontend/src/main.ts
+frontend_sha="$(git -C "$test_repo" rev-parse HEAD)"
+commit_path docs/readme.md
 
-# Explicit release requests remain usable while the API is unavailable.
-export GH_TEST_STATUS=1
+# The nearest commit with every image is the baseline. A later one whose build
+# published only part of its images, as a running or failed build leaves it,
+# is passed over.
+: > "$REGISTRY_TEST_TAGS"
+publish "$backend_sha" "${all_images[@]}"
+publish "$frontend_sha" backend sandbox office-render browser-render gateway \
+  metering-proxy private-executor
+assert_lookup 'backend=false,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$backend_sha"
+
+# Once that build finishes, it is the baseline.
+publish "$frontend_sha" frontend
+assert_lookup 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$frontend_sha"
+
+# A baseline whose workflow never built an image is complete without it, and
+# that image is built because there is nothing to promote.
+: > "$REGISTRY_TEST_TAGS"
+publish "$legacy_sha" backend sandbox frontend office-render browser-render gateway
+assert_lookup 'backend=true,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
+
+# Reaching the first commit without a complete set is a bootstrap.
+: > "$REGISTRY_TEST_TAGS"
+assert_lookup 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' ''
+
+# A search that stops short of a complete set leaves the baseline unknown.
+publish "$base_sha" "${all_images[@]}"
+BASELINE_SEARCH_LIMIT=2 assert_lookup_fails 'an exhausted search'
+
+# The registry not answering is not the tag being absent.
+REGISTRY_TEST_DOWN=1 assert_lookup_fails 'an unreachable registry'
+
+# Explicit release requests remain usable while the registry is unavailable.
+export REGISTRY_TEST_DOWN=1
 assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup workflow_dispatch branch
 assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup push tag
+unset REGISTRY_TEST_DOWN
 
 echo 'PASS: image build planning contracts'

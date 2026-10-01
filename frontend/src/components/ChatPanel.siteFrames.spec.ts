@@ -23,6 +23,8 @@ vi.mock('@/api', async () => {
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const topic = {
   id: 'site-frames-topic',
   project_id: 'p1',
@@ -78,7 +80,7 @@ async function flush() {
 
 async function open() {
   const vuetify = createVuetify({ components, directives })
-  const view = render(ChatPanel, { props: { topic, topicList: [topic] }, global: { plugins: [vuetify] } })
+  const view = render(ChatPanel, { props: { topic, topicList: [topic] }, global: { plugins: [vuetify, i18n] } })
   await flush()
   return { view, socket: FakeWebSocket.instances.at(-1)! }
 }
@@ -88,6 +90,8 @@ function siteBlocks(view: ReturnType<typeof render>): string[] {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.clearAllMocks()
   FakeWebSocket.instances = []
   vi.stubGlobal('WebSocket', FakeWebSocket)
