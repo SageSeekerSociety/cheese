@@ -5,8 +5,8 @@
  * 要碰消息列表、待办、轮次、发件箱、错误横幅十几样东西，搬进来只会把同一堆东西
  * 换个地方放，外加一层间接。所以这里收到帧就原样交出去。
  *
- * 它只收不发（心跳除外）：消息是 POST 出去的（`useOutbox`），这条 socket 只把房间
- * 里落下的东西推过来。外面拿不到那个 socket 对象，也就不会有第二处在它身上挂回调
+ * 它几乎只收不发：消息是 POST 出去的（`useOutbox`），这条 socket 只把房间里落下的
+ * 东西推过来。发的只有心跳，和「我在打字」（`send`，见 `useRoomActivity`）。外面拿不到那个 socket 对象，也就不会有第二处在它身上挂回调
  * ——「哪条 socket 是当前那条」的判断只存在于这个文件里。
  */
 
@@ -186,6 +186,11 @@ export function useRoomSocket(options: {
     }
   }
 
+  /** 往当前这条 socket 说一句。没连上就不发：打字这种事，过了就过了。 */
+  function send(message: WsClientMessage) {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+  }
+
   // 有网就自动转出来 (owner spec): the offline→online transition is our cue to
   // reconnect NOW rather than wait out the backoff, and to refetch history so
   // messages that landed during the outage are pulled in — `reconnect` re-runs the
@@ -212,5 +217,6 @@ export function useRoomSocket(options: {
     /** 每次连接都从这里进。旧的那条会先被干净地关掉。 */
     open: openSocket,
     close: closeSocket,
+    send,
   }
 }

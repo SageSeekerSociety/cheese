@@ -244,10 +244,7 @@
         "retryingCount": "重试中（第 {attempt} 次）",
         "compacting": "整理上下文中",
         "waiting": "等待机器",
-        "stopped": "已停止",
-        "idle": "空闲",
-        "elapsed": "已用 {span}",
-        "quiet": "最近活动 {span}前"
+        "elapsed": "已用 {span}"
       },
       "frontendError": "前端报错",
       "span": {
@@ -706,10 +703,8 @@
       "file": "文件"
     },
     "panel": {
-      "nameSeparator": "、",
       "tabDetail": "{label}（{detail}）",
       "detailPair": "{first}，{second}",
-      "working": "{names}正在工作",
       "taskCount": "{count} 件任务",
       "inProgress": "{count} 件进行中",
       "newContent": "有新内容",
@@ -976,6 +971,13 @@
       "unknown": "结果未知。先恢复原操作，再继续发送。",
       "recover": "恢复原操作",
       "storage": "无法保存草稿，请保留此面板"
+    },
+    "activity": {
+      "working": "{name}正在工作…",
+      "typingOne": "{name}正在输入…",
+      "typingTwo": "{first}和{second}正在输入…",
+      "typingMany": "多人正在输入…",
+      "separator": " · "
     }
   },
   "board": {
@@ -1055,10 +1057,7 @@
     "accepted": "已采纳",
     "draft": "草稿",
     "done": "已完成",
-    "open": "进行中",
-    "working": "施工中",
-    "delivering": "交付中",
-    "reviewing": "待审阅"
+    "open": "进行中"
   },
   "sidebar": {
     "wait": {
@@ -1088,14 +1087,10 @@
     "others": "其他话题",
     "collapse": "收起",
     "expand": "展开",
-    "expandStalled": "展开：里面有话题出了故障",
+    "expandStalled": "展开：里面有成员卡住了",
     "expandAwaits": "展开：里面有待处理的事项",
-    "expandRunning": "展开：{agent}正在里面工作",
-    "expandMerging": "展开：里面有已采纳的改动在等合并",
     "turnFailed": "{agent}最近一轮报错了",
     "awaitsTip": "有待处理的事项",
-    "runningTip": "{agent}正在这个话题里工作",
-    "mergingTip": "已采纳，在等合并",
     "autoTitle": "标题由平台自动命名，话题方向变了会更新",
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子话题 {count} 条新消息",
@@ -1108,7 +1103,10 @@
     "creatingTopic": "正在创建话题",
     "noneMine": "暂无与你相关的话题",
     "othersUnread": "其他话题里有新消息",
-    "empty": "暂无话题"
+    "empty": "暂无话题",
+    "workingTip": "{name}正在这里工作",
+    "expandWorking": "展开：里面有队友在工作",
+    "moreMembers": "+{count}"
   },
   "members": {
     "leave": "退出项目",

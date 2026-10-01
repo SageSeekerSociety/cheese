@@ -244,10 +244,7 @@
         "retryingCount": "Retrying (attempt {attempt})",
         "compacting": "Compacting context",
         "waiting": "Waiting for the machine",
-        "stopped": "Stopped",
-        "idle": "Idle",
-        "elapsed": "{span} so far",
-        "quiet": "last activity {span} ago"
+        "elapsed": "{span} so far"
       },
       "frontendError": "Frontend error",
       "span": {
@@ -706,10 +703,8 @@
       "file": "File"
     },
     "panel": {
-      "nameSeparator": ", ",
       "tabDetail": "{label} ({detail})",
       "detailPair": "{first}, {second}",
-      "working": "working: {names}",
       "taskCount": "no tasks | 1 task | {count} tasks",
       "inProgress": "none in progress | 1 in progress | {count} in progress",
       "newContent": "new content",
@@ -976,6 +971,13 @@
       "unknown": "Outcome unknown. Recover the original operation before sending again.",
       "recover": "Recover original operation",
       "storage": "Draft storage is unavailable; keep this panel open"
+    },
+    "activity": {
+      "working": "{name} is working…",
+      "typingOne": "{name} is typing…",
+      "typingTwo": "{first} and {second} are typing…",
+      "typingMany": "Several people are typing…",
+      "separator": " · "
     }
   },
   "board": {
@@ -1055,10 +1057,7 @@
     "accepted": "Accepted",
     "draft": "Draft",
     "done": "Done",
-    "open": "In progress",
-    "working": "Working",
-    "delivering": "Delivering",
-    "reviewing": "In review"
+    "open": "In progress"
   },
   "sidebar": {
     "wait": {
@@ -1088,14 +1087,10 @@
     "others": "Other topics",
     "collapse": "Collapse",
     "expand": "Expand",
-    "expandStalled": "Expand: a topic in here has a problem",
+    "expandStalled": "Expand: someone in here is stuck",
     "expandAwaits": "Expand: something in here needs you",
-    "expandRunning": "Expand: {agent} is working in here",
-    "expandMerging": "Expand: accepted changes in here are waiting to merge",
     "turnFailed": "{agent}'s last run failed",
     "awaitsTip": "Something needs you",
-    "runningTip": "{agent} is working in this topic",
-    "mergingTip": "Accepted, waiting to merge",
     "autoTitle": "Named automatically; the name updates if the topic changes direction",
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
@@ -1108,7 +1103,10 @@
     "creatingTopic": "Creating topic",
     "noneMine": "No topics involve you yet",
     "othersUnread": "New messages in other topics",
-    "empty": "No topics yet"
+    "empty": "No topics yet",
+    "workingTip": "{name} is working here",
+    "expandWorking": "Expand: a teammate is working in here",
+    "moreMembers": "+{count}"
   },
   "members": {
     "leave": "Leave project",

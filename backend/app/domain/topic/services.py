@@ -565,6 +565,7 @@ class TopicService:
         signal: dict = {
             "stalled": False,
             "reason": None,
+            "member": None,
             "threshold_s": round(threshold_s),
             "silent_for_s": silent_for_s,
             "last_block": _stall_block_summary(last),
@@ -577,6 +578,8 @@ class TopicService:
         if not _is_mid_turn_block(last):
             return signal
         signal["stalled"] = True
+        # Whose turn died: the member who wrote that last half-finished action.
+        signal["member"] = last.author
         # Which of the two ways it died, because they send whoever reads this to
         # different places: a process that is not running the turn at all versus
         # one holding a task that stopped producing.

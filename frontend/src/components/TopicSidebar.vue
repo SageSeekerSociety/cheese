@@ -96,9 +96,8 @@ const {
   archivedUnread,
   privateUnreadTotal,
   stalledOf,
+  memberMarks,
   toggleTitle,
-  agentName,
-  clock,
   topicById,
 } = useTopicRail(props)
 
@@ -499,9 +498,8 @@ const onDocs = computed(() => !!props.activeDocs)
                     :renaming="renamingTopicId === row.topic.id"
                     :menu-open="actionsMenuFor === row.topic.id"
                     :stalled="stalledOf(row.topic.id)"
+                    :marks="memberMarks(row.topic)"
                     :toggle-title="toggleTitle(row)"
-                    :now="clock"
-                    :agent-name="agentName"
                     :actions="actionsFor"
                     @select="emit('select-topic', $event)"
                     @hover="emit('hover-topic', $event)"

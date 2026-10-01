@@ -5,6 +5,8 @@ summary: 从有人在话题里点名 AI 队友，到结果回到房间。
 covers:
   - backend/app/domain/agent/chat.py
   - backend/app/domain/agent/runtime.py
+  - backend/app/domain/agent/activity.py
+  - backend/app/domain/block/waits.py
   - backend/app/domain/agent/compute.py
   - backend/app/domain/machine/session_work.py
   - backend/app/domain/agent/host_failure.py
@@ -163,7 +165,17 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 
 ### 在界面上分开看 {#seats-ui}
 
-`turn_started` / `turn_finished` 帧和重连快照都带着队友。施工现场顶上钉着一排「全部 + 每位队友」的切换，现场再长也不用滚回顶部；「全部」下每一轮的组头写出是哪位队友的。工作面板的标签列出此刻在干活的几位。成员名册底下只有一行「本话题运行在：…」，不再每位队友各写一台机器。
+`turn_started` / `turn_finished` 帧和重连快照都带着队友，对话里在动的头像认的是它。施工现场顶上钉着一排「全部 + 每位队友」的切换，现场再长也不用滚回顶部；「全部」下每一轮的组头写出是哪位队友的。谁此刻在干活由成员动态说（见下一节）。成员名册底下只有一行「本话题运行在：…」，不再每位队友各写一台机器。
+
+### 成员动态：谁在这个房间里忙 {#activity}
+
+房间自己没有「在跑」「卡住了」这种状态。有的是成员在做什么，而人和 AI 队友一样有：人在这个房间的输入框里打字，是 `typing`；队友在这个房间里有一轮在跑，是 `working`。两者都是某一位成员在某一个房间里的事，自动产生，过了就没（`agent/activity.py`，只在 broker 里，不落库）。
+
+- **房间的 socket**：一位成员开始或停下时发一帧 `activity`（`member`、`kind`、`active`、`since`；打字另带 `expires_in`）；连上时有人在忙，先发一帧 `activity_snapshot`。浏览器在输入框内容变了时至多每三秒发一次 `{"type": "typing"}`，清空时发 `{"type": "typing", "active": false}`；是谁由这条 socket 的凭据定，不看帧上写了什么。打字五秒没有新的一下就算停了，这个人的消息落进房间也算停了。
+- **干活从哪来**：broker 从轮次帧上认出「这一轮是哪位队友的」（`turn_started` 上的 `agent`），这位队友在这个房间里的第一轮开始时报 `working`，最后一轮结束时报停。同一位队友在别的房间里干活，这个房间听不到。
+- **界面**：和 Slack 一样贴在输入框正下方一行小字：「Alice 正在输入…」「Alice 和 Bob 正在输入…」「多人正在输入…」；队友是「Cedar 正在工作… · 此刻那一步 · 用了多久」。现场顶上是同一个组件，只说在干活的队友。
+- **侧栏**：`GET /topics` 每一行带 `activity`（和快照同一份条目），侧栏随列表一起刷新，画在干活的队友的小头像。打字不画：列表隔一阵才读一次，打字几秒就过去了。
+- **在等谁**：每一行还带 `waits`，房间在等的那几位成员（`block/waits.py`）：它那一轮报错了（`failed`，立刻算）、有人点了它的名还没回（`mention`）、卡停在要它修的地方（`check` / `conflict` / `rejected` / `gate`，等的是最后在这里干活的那位队友，从它最后一次动手算起），或期间机器出了状况。多久算太久由侧栏按当下的钟判，红点画在那位成员的头像上。此刻正在干活的成员不算在等。
 
 ## 7. 话题命名 {#naming}
 

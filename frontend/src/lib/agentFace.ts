@@ -1,6 +1,6 @@
 // AI 队友头像此刻是什么表情（docs/brand.md「AI 队友头像」）。
 //
-// 一轮在跑时，表情跟着现场顶上那一行走（lib/siteStatus）：在想、在干活、等机器一直
+// 一轮在跑时，表情跟着它此刻在做的那一步走（lib/siteStatus）：在想、在干活、等机器一直
 // 持续；重试是卡住了。一轮刚结束的那一下是一次性的：做完了，或者以失败收场就是卡住
 // 了，播完头像回到静止。
 //
@@ -20,7 +20,7 @@ export interface AgentFace {
   status: SiteStatus | null
 }
 
-const FACE: Record<Exclude<SiteState, 'stopped' | 'idle'>, FaceState> = {
+const FACE: Record<SiteState, FaceState> = {
   thinking: 'think',
   compacting: 'think',
   acting: 'work',
@@ -55,8 +55,7 @@ export function agentFaces(
     faces[handle] = { state: failed ? 'stuck' : 'done', status: null }
   }
   for (const [handle, id] of Object.entries(latest)) {
-    const status = siteStatus(blocks, true, { [id]: starts[id] })
-    if (status.state === 'stopped' || status.state === 'idle') continue
+    const status = siteStatus(blocks, { [id]: starts[id] })
     faces[handle] = { state: FACE[status.state], status }
   }
   return faces
