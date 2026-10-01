@@ -18,5 +18,7 @@
   "openFailed": "Cannot display slides",
   "pageFailed": "Cannot display page {page}: {error}",
   "noPageText": "This page has no extractable text",
-  "textFailed": "Cannot read this page's text"
+  "textFailed": "Cannot read this page's text",
+  "wholePage": "Whole-page PDF text context",
+  "pageMessage": "Question about <&{path}> page {page} (whole-page PDF text context).\nFile identity: topic={topicId} source={source} task={task} version={version}\nQuestion: {note}\n\nWhole-page text:\n{text}"
 }

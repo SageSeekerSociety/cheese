@@ -9,5 +9,6 @@
   "scale": "显示比例",
   "fit": "适合视口",
   "region": "选择图片区域",
-  "cancelRegion": "取消区域选择"
+  "cancelRegion": "取消区域选择",
+  "selectedRegion": "原图像素：x={x}，y={y}，宽={width}，高={height}"
 }
