@@ -43,7 +43,7 @@ it.each([false, true])('recovers a committed reply and preserves only later typi
     input.dispatchEvent(new Event('input', { bubbles: true }))
   }
   const button = (key: string) =>
-    [...mount.querySelectorAll('button')].find((el) => el.textContent?.trim() === `work.room.docThread.${key}`)!
+    Array.from(mount.querySelectorAll('button')).find((el) => el.textContent?.trim() === `work.room.docThread.${key}`)!
   type('submitted')
   await nextTick()
   button('send').click()
