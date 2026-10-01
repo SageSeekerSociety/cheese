@@ -8,14 +8,15 @@ import re
 import uuid
 from http.cookies import CookieError, SimpleCookie
 
+import anyio
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import Response
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from fastapi.responses import Response, StreamingResponse
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from app.api import proxy
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
-from app.domain.agent.preview_hub import PreviewStream, preview_hub
+from app.domain.agent.preview_hub import SEND_TIMEOUT_S, PreviewStream, preview_hub
 
 tunnel_router = APIRouter(prefix="/preview", tags=["preview"])
 
@@ -147,7 +148,13 @@ async def preview_tunnel(
             reason="a cheese token naming a topic and a teammate is required",
         )
         return
-    await websocket.accept()
+    offered = websocket.headers.get(wire.CAPS_HEADER, "").split(",")
+    capabilities = wire.CAPABILITIES.intersection(part.strip() for part in offered)
+    await websocket.accept(
+        headers=[(wire.CAPS_HEADER.encode(), ",".join(sorted(capabilities)).encode())]
+        if capabilities
+        else None
+    )
     transport = _WebSocketPreviewTransport(websocket)
     # A seat moves — a relaunched screen, a Cloud box replaced — and the helper
     # it left behind is still dialling. Hang up on the one being displaced: it
@@ -155,7 +162,11 @@ async def preview_tunnel(
     # on again, and the close code tells it not to dial back in.
     displaced = preview_hub.machine(topic_id, seat)
     machine = preview_hub.attach(
-        topic_id, seat, transport, issued=issued if isinstance(issued, int) else 0
+        topic_id,
+        seat,
+        transport,
+        issued=issued if isinstance(issued, int) else 0,
+        capabilities=capabilities,
     )
     if machine is None:
         await transport.hang_up()
@@ -164,54 +175,150 @@ async def preview_tunnel(
         displaced.transport, _WebSocketPreviewTransport
     ):
         await displaced.transport.hang_up()
+
+    async def close_failed_tunnel() -> None:
+        await machine.failed.wait()
+        try:
+            async with asyncio.timeout(SEND_TIMEOUT_S):
+                await websocket.close(code=1011, reason="preview tunnel write failed")
+        except (TimeoutError, OSError, WebSocketDisconnect, RuntimeError):
+            pass
+
+    failed = asyncio.create_task(close_failed_tunnel())
+    incoming = None
     try:
         while True:
-            message = await websocket.receive()
+            incoming = asyncio.create_task(websocket.receive())
+            done, _ = await asyncio.wait(
+                (incoming, failed), return_when=asyncio.FIRST_COMPLETED
+            )
+            if failed in done:
+                break
+            message = incoming.result()
             if message["type"] == "websocket.disconnect":
                 break
             data = message.get("bytes")
             if data is not None:
+                if len(data) > wire.MAX_WS_MESSAGE_BYTES + wire._HEAD.size:
+                    await websocket.close(code=1009, reason="preview frame too large")
+                    break
                 machine.on_frame(data)
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        preview_hub.detach(machine)
+        failed.cancel()
+        if incoming is not None:
+            incoming.cancel()
+        try:
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(
+                    failed,
+                    *([incoming] if incoming is not None else []),
+                    return_exceptions=True,
+                )
+        finally:
+            preview_hub.detach(machine)
+            await machine.drain()
 
 
 # --- the browser's end ---------------------------------------------------------
 
 
+class _PreviewStreamingResponse(StreamingResponse):
+    def __init__(self, upstream):
+        self.upstream = upstream
+        super().__init__(upstream.iter_bytes(), status_code=upstream.status)
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self.upstream.aclose()
+
+
+def _response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    dropped = {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "x-frame-options",
+    }
+    for name, value in headers:
+        if name.lower() == "connection":
+            dropped.update(part.strip().lower() for part in value.split(","))
+    return [(k, v) for k, v in headers if k.lower() not in dropped]
+
+
 async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Response:
     """Forward an already authorized content-host request without URL rewriting,
     to the app ``seat`` (the teammate who declared it) is serving."""
-    upstream = await preview_hub.request(
-        topic_id,
-        seat,
-        method=request.method,
-        path=_upstream_path(request),
-        headers=_app_headers(request),
-        body=await request.body(),
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > wire.MAX_REQUEST_BYTES:
+            return Response("preview request body too large", status_code=413)
+        body.extend(chunk)
+
+    async def disconnected():
+        while True:
+            if (await request.receive())["type"] == "http.disconnect":
+                return
+
+    waiting = asyncio.create_task(
+        preview_hub.request_stream(
+            topic_id,
+            seat,
+            method=request.method,
+            path=_upstream_path(request),
+            headers=_app_headers(request),
+            body=bytes(body),
+        )
     )
-    if upstream is None:
-        return Response(status_code=404, content=b"preview unavailable")
-    kept = [
-        (k, v)
-        for k, v in upstream.headers
-        if k.lower() not in proxy.DROP_HEADERS | {"x-frame-options"}
-    ]
-    media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
-    body = upstream.body
-    response = Response(content=body, status_code=upstream.status)
-    # Keep application sessions without allowing an app to replace preview auth.
-    for name, value in kept:
-        if name.lower() == "set-cookie":
-            for cookie in _app_cookies(value):
-                response.headers.append("set-cookie", cookie)
-        elif name.lower() != "content-type":
-            response.headers.append(name, value)
-    if media_type:
-        response.headers["content-type"] = media_type
-    return response
+    gone = asyncio.create_task(disconnected())
+    upstream = None
+    transferred = False
+    try:
+        try:
+            done, _ = await asyncio.wait(
+                {waiting, gone}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if gone in done:
+                return Response(status_code=404, content=b"preview unavailable")
+            upstream = await waiting
+        finally:
+            gone.cancel()
+            if not waiting.done():
+                waiting.cancel()
+            await asyncio.gather(waiting, gone, return_exceptions=True)
+        if upstream is None:
+            return Response(status_code=404, content=b"preview unavailable")
+        kept = _response_headers(upstream.headers)
+        media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
+        response = _PreviewStreamingResponse(upstream)
+        # Keep app sessions without allowing an app to replace preview auth.
+        for name, value in kept:
+            if name.lower() == "set-cookie":
+                for cookie in _app_cookies(value):
+                    response.headers.append("set-cookie", cookie)
+            elif name.lower() != "content-type":
+                response.headers.append(name, value)
+        if media_type:
+            response.headers["content-type"] = media_type
+        # No await between ownership transfer and returning the response owner.
+        transferred = True
+        return response
+    finally:
+        if not transferred:
+            if upstream is None and waiting.done() and not waiting.cancelled():
+                error = waiting.exception()
+                if error is None:
+                    upstream = waiting.result()
+            if upstream is not None:
+                await upstream.aclose()
 
 
 async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID, seat: str) -> None:
@@ -245,11 +352,12 @@ async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID, seat: str) -> None
     except (TimeoutError, ValueError, OSError, RuntimeError, WebSocketDisconnect):
         pass
     finally:
-        stream.close()
-        try:
-            await websocket.close()
-        except (RuntimeError, WebSocketDisconnect):
-            pass
+        await stream.aclose()
+        if websocket.application_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.close(code=1011, reason="preview connection ended")
+            except (OSError, RuntimeError, WebSocketDisconnect):
+                pass
 
 
 async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
@@ -260,16 +368,31 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
             while True:
                 message = await browser.receive()
                 if message["type"] == "websocket.disconnect":
+                    payload = b""
+                    if stream.close_metadata:
+                        payload = wire.close_payload(
+                            *wire.parse_close(
+                                wire.close_payload(
+                                    message.get("code", 1001), message.get("reason", "")
+                                )
+                            )
+                        )
+                    await stream.aclose(payload=payload)
                     return
                 data = message.get("bytes")
-                if data is not None:
-                    await stream.send(wire.OP_WS_MSG, bytes([wire.WS_BINARY]) + data)
-                    continue
                 text = message.get("text")
-                if text is not None:
-                    await stream.send(
-                        wire.OP_WS_MSG, bytes([wire.WS_TEXT]) + text.encode()
-                    )
+                payload = (
+                    bytes([wire.WS_BINARY]) + data
+                    if data is not None
+                    else bytes([wire.WS_TEXT]) + text.encode()
+                    if text is not None
+                    else b""
+                )
+                if len(payload) > wire.MAX_WS_MESSAGE_BYTES:
+                    await browser.close(code=1009, reason="preview message too large")
+                    return
+                if payload:
+                    await stream.send(wire.OP_WS_MSG, payload)
         except (WebSocketDisconnect, OSError, RuntimeError):
             return
 
@@ -282,7 +405,15 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
                 op, payload = await stream.receive(timeout=None)
             except (TimeoutError, RuntimeError):
                 return
+            if op == wire.OP_CLOSE:
+                if stream.close_metadata:
+                    code, reason = wire.parse_close(payload)
+                else:
+                    code, reason = 1011, "preview upstream disconnected"
+                await browser.close(code=code, reason=reason)
+                return
             if op != wire.OP_WS_MSG or not payload:
+                await browser.close(code=1011, reason="preview upstream failed")
                 return
             if payload[0] == wire.WS_TEXT:
                 await browser.send_text(payload[1:].decode(errors="replace"))
@@ -299,4 +430,4 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
         for task in (up, down):
             task.cancel()
         await asyncio.gather(up, down, return_exceptions=True)
-        await stream.send(wire.OP_CLOSE)
+        await stream.aclose()
