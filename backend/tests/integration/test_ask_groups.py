@@ -188,6 +188,21 @@ def test_second_submission_confirms_delta_and_preserves_effective_answers(
     assert read(client, data)["settlement"]["operation"] == settlement["operation"]
 
 
+def test_deferred_member_remains_in_waiting_list_with_exact_block(client, group):
+    data, _ = group
+    response = settle(client, data, submission(data))
+    assert response.status_code == 200, response.text
+    waiting = client.get("/awaiting-me", headers=session_auth_headers("user-1"))
+    assert waiting.status_code == 200, waiting.text
+    item = next(
+        row
+        for row in waiting.json()["data"]["data"]
+        if row["topicId"] == data["group"]["topic_id"]
+    )
+    assert item["reason"] == "asked"
+    assert item["blockId"] == data["group"]["members"][1]
+
+
 def test_human_cannot_create_group_or_append_members(client, group):
     data, body = group
     path = f"/topics/{data['group']['topic_id']}/ask"

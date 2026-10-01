@@ -8,6 +8,7 @@ import pytest
 
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import SessionRef
+from app.domain.delivery.input_identity import CompletionConsumer, InputRegistrar
 
 
 @pytest.mark.anyio
@@ -25,12 +26,16 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     await pool.activate(session, codex)
     assert calls == ["interrupt", "close"]
-    assert await pool.deliver(session.topic_id, "follow up")
+    register_input = AsyncMock()
+    assert await pool.deliver(
+        session.topic_id, "follow up", register_input=register_input
+    )
     native.deliver.assert_not_awaited()
     codex.deliver.assert_awaited_once_with(
         session.topic_id,
         "follow up",
         images=None,
+        register_input=register_input,
         expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
@@ -114,13 +119,25 @@ class _FakeBackend:
     async def ensure(self, session, opening, *, work_id=None):
         return None
 
-    async def send(self, session, message, opening, *, work_id, on_mark, **kwargs):
+    async def send(
+        self,
+        session,
+        message,
+        opening,
+        *,
+        work_id,
+        on_mark,
+        register_input: InputRegistrar,
+        **kwargs,
+    ):
         return True
 
     def backlog(self, session):
         return _EmptyBacklog()
 
-    async def deliver(self, topic_id, text, images=None, **kwargs):
+    async def deliver(
+        self, topic_id, text, images=None, *, register_input: InputRegistrar, **kwargs
+    ):
         return False
 
     async def interrupt(self, session):
@@ -141,6 +158,9 @@ class _FakeBackend:
     def bind_receipts(self, consumer) -> None:
         return None
 
+    def bind_completions(self, consumer: CompletionConsumer) -> None:
+        return None
+
     def bind_unread_probe(self, probe) -> None:
         self.unread_probe = probe
 
@@ -152,6 +172,10 @@ class _FakeBackend:
 
     async def memory(self, topic_id, request):
         # 这个 double 的会话不存记忆文件：「这里没有」而不是「失败了」。
+        return None
+
+    async def ask_origin(self, project_id, topic_id, agent_handle):
+        # Routing doubles have no native conversation to authenticate.
         return None
 
     def holds(self, topic_id: uuid.UUID, agent_handle=None) -> bool:

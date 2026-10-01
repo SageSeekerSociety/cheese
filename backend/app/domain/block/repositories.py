@@ -800,13 +800,22 @@ class BlockRepository:
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: at for topic_id, at in rows}
 
+    async def awaiting_answer_blocks(self, topic_ids, task_ids):
+        """Return addressed person and exact question for each waiting place."""
+        return (
+            await self._awaiting_an_answer(
+                Block.topic_id, topic_ids, Block.task_id.is_(None), with_blocks=True
+            ),
+            await self._awaiting_an_answer(Block.task_id, task_ids, with_blocks=True),
+        )
+
     async def _awaiting_an_answer(
-        self, place_column, place_ids: list[uuid.UUID], *extra
-    ) -> dict[uuid.UUID, str | None]:
+        self, place_column, place_ids: list[uuid.UUID], *extra, with_blocks=False
+    ):
         if not place_ids:
             return {}
         stmt = (
-            select(place_column, Block.meta, Block.created_at, Block.author)
+            select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
             .where(
                 place_column.in_(place_ids),
                 Block.kind == BlockKind.message,
@@ -820,11 +829,50 @@ class BlockRepository:
             .order_by(place_column, Block.created_at.desc())
             .distinct(place_column)
         )
-        rows = [
-            (place_id, meta or {}, at, asker)
-            for place_id, meta, at, asker in (await self._session.execute(stmt)).all()
-            if place_id is not None and not (meta or {}).get("answer_log")
-        ]
+        latest = (await self._session.execute(stmt)).all()
+        member_ids = {
+            uuid.UUID(member)
+            for _, meta, _, _, _ in latest
+            for member in (meta or {}).get("ask_group", {}).get("members", [])
+        }
+        members = (
+            {
+                str(block.id): block
+                for block in await self._session.scalars(
+                    select(Block).where(Block.id.in_(member_ids))
+                )
+            }
+            if member_ids
+            else {}
+        )
+        rows = []
+        selected = {}
+        for place_id, meta, at, asker, block_id in latest:
+            if place_id is None:
+                continue
+            meta = meta or {}
+            group = meta.get("ask_group")
+            if group:
+                # A wake or follow-up message must not erase deferred members.
+                pending = [
+                    members[key]
+                    for key in group["members"]
+                    if key in members
+                    and not (members[key].meta or {}).get("answer_log")
+                ]
+                if not pending:
+                    continue
+                block = pending[0]
+                meta, at, asker, block_id = (
+                    block.meta,
+                    block.created_at,
+                    block.author,
+                    block.id,
+                )
+            elif meta.get("answer_log"):
+                continue
+            rows.append((place_id, meta, at, asker))
+            selected[place_id] = block_id
         if not rows:
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
@@ -866,6 +914,9 @@ class BlockRepository:
         waiting: dict[uuid.UUID, str | None] = {}
         for place_id, meta, asked_at, asker in rows:
             asked = meta.get("asked")
+            if meta.get("ask_group"):
+                waiting[place_id] = asked
+                continue
             said = last_said.get(place_id, {})
             if asked:
                 times = [said[asked]] if asked in said else []
@@ -878,6 +929,8 @@ class BlockRepository:
                 if own is not None and own > asked_at:
                     continue
             waiting[place_id] = asked
+        if with_blocks:
+            return {place: (asked, selected[place]) for place, asked in waiting.items()}
         return waiting
 
     async def last_summoner(self, room_id: uuid.UUID) -> str | None:

@@ -17,6 +17,7 @@
 import re
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -248,7 +249,12 @@ async def test_everything_a_worker_says_carries_its_thread_label() -> None:
     runtime = await _session()
     worker = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
     await runtime.send(
-        SESSION, "我来看看", OPENING, work_id=uuid.uuid4(), on_mark=lambda _: None
+        SESSION,
+        "我来看看",
+        OPENING,
+        work_id=uuid.uuid4(),
+        on_mark=lambda _: None,
+        register_input=AsyncMock(),
     )
     worker.says("查到了")
     worker.says("顺带还有一处")
@@ -273,7 +279,12 @@ async def test_a_parent_thread_retasks_its_worker() -> None:
     worker.works()
 
     # 送到的是父线程，不是那条子线程（结论 43）。
-    assert await runtime.deliver(SESSION.topic_id, "先只改后端") is True
+    assert (
+        await runtime.deliver(
+            SESSION.topic_id, "先只改后端", register_input=AsyncMock()
+        )
+        is True
+    )
     (instruction,) = runtime.delivered(SESSION)
     # 父线程读到它，自己去改子线程的指令。
     worker.retask(instruction)
