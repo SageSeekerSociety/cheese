@@ -52,7 +52,8 @@ class SilentMachine:
         self.asked = 0
 
     async def send_bytes(self, data: bytes) -> None:
-        self.asked += 1
+        if wire.decode(data)[0] == wire.OP_REQ:
+            self.asked += 1
 
 
 async def test_a_request_reaches_the_seats_machine_and_comes_back():
@@ -235,3 +236,68 @@ async def test_another_teammates_arrival_does_not_end_a_wait():
     Machine().attach(hub, topic_id, "cheese-two")
 
     assert await waiter is False
+
+
+async def test_headers_and_first_bytes_arrive_before_end_and_cancel_is_once():
+    hub = PreviewHub()
+    topic_id = uuid.uuid4()
+    frames = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            op, sid, _ = wire.decode(data)
+            frames.append(op)
+            if op == wire.OP_REQ:
+                machine.on_frame(
+                    wire.encode(
+                        wire.OP_RESP,
+                        sid,
+                        wire.encode_meta(
+                            {
+                                "status": 206,
+                                "headers": [["content-range", "bytes 0-2/9"]],
+                            },
+                            b"one",
+                        ),
+                    )
+                )
+
+    machine = hub.attach(topic_id, SEAT, Transport())
+    response = await asyncio.wait_for(
+        hub.request_stream(topic_id, SEAT, method="GET", path="/stream", headers=[]), 1
+    )
+    assert response.status == 206
+    assert response.headers == [("content-range", "bytes 0-2/9")]
+    iterator = response.iter_bytes()
+    assert await anext(iterator) == b"one"
+    pending = asyncio.create_task(anext(iterator))
+    await asyncio.sleep(0)
+    assert not pending.done()
+    pending.cancel()
+    await asyncio.gather(pending, return_exceptions=True)
+    await response.aclose()
+    assert frames == [wire.OP_REQ, wire.OP_CLOSE]
+    assert not machine.streams
+
+
+async def test_slow_consumer_is_cancelled_without_blocking_sibling():
+    from app.domain.agent.preview_hub import MAX_QUEUED_BYTES
+
+    hub = PreviewHub()
+    frames = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            frames.append(wire.decode(data))
+
+    machine = hub.attach(uuid.uuid4(), SEAT, Transport())
+    slow = machine.open()
+    sibling = machine.open()
+    for _ in range(MAX_QUEUED_BYTES // wire._CHUNK + 1):
+        machine.on_frame(wire.encode(wire.OP_DATA, slow.id, b"x" * wire._CHUNK))
+    machine.on_frame(wire.encode(wire.OP_DATA, sibling.id, b"sibling"))
+    assert await sibling.receive() == (wire.OP_DATA, b"sibling")
+    assert (await slow.receive())[0] == wire.OP_CLOSE
+    await asyncio.sleep(0)
+    assert frames == [(wire.OP_CLOSE, slow.id, b"")]
+    sibling.close()

@@ -9,7 +9,7 @@ import uuid
 from http.cookies import CookieError, SimpleCookie
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from app.api import proxy
@@ -181,27 +181,91 @@ async def preview_tunnel(
 # --- the browser's end ---------------------------------------------------------
 
 
+class _PreviewStreamingResponse(StreamingResponse):
+    def __init__(self, upstream):
+        self.upstream = upstream
+        super().__init__(upstream.iter_bytes(), status_code=upstream.status)
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self.upstream.aclose()
+
+
+def _response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    dropped = {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "x-frame-options",
+    }
+    for name, value in headers:
+        if name.lower() == "connection":
+            dropped.update(part.strip().lower() for part in value.split(","))
+    return [(k, v) for k, v in headers if k.lower() not in dropped]
+
+
 async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Response:
     """Forward an already authorized content-host request without URL rewriting,
     to the app ``seat`` (the teammate who declared it) is serving."""
-    upstream = await preview_hub.request(
-        topic_id,
-        seat,
-        method=request.method,
-        path=_upstream_path(request),
-        headers=_app_headers(request),
-        body=await request.body(),
+    body = await request.body()
+
+    async def disconnected():
+        while True:
+            if (await request.receive())["type"] == "http.disconnect":
+                return
+
+    waiting = asyncio.create_task(
+        preview_hub.request_stream(
+            topic_id,
+            seat,
+            method=request.method,
+            path=_upstream_path(request),
+            headers=_app_headers(request),
+            body=body,
+        )
     )
+    gone = asyncio.create_task(disconnected())
+    upstream = None
+    transferred = False
+    try:
+        done, _ = await asyncio.wait(
+            {waiting, gone}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if gone in done:
+            waiting.cancel()
+            results = await asyncio.gather(waiting, return_exceptions=True)
+            if (
+                results
+                and not isinstance(results[0], BaseException)
+                and results[0] is not None
+            ):
+                await results[0].aclose()
+            return Response(status_code=404, content=b"preview unavailable")
+        upstream = await waiting
+        transferred = True
+    finally:
+        gone.cancel()
+        if not waiting.done():
+            waiting.cancel()
+        results = await asyncio.gather(waiting, gone, return_exceptions=True)
+        if not transferred:
+            candidate = upstream or (
+                results[0] if not isinstance(results[0], BaseException) else None
+            )
+            if candidate is not None:
+                await candidate.aclose()
     if upstream is None:
         return Response(status_code=404, content=b"preview unavailable")
-    kept = [
-        (k, v)
-        for k, v in upstream.headers
-        if k.lower() not in proxy.DROP_HEADERS | {"x-frame-options"}
-    ]
+    kept = _response_headers(upstream.headers)
     media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
-    body = upstream.body
-    response = Response(content=body, status_code=upstream.status)
+    response = _PreviewStreamingResponse(upstream)
     # Keep application sessions without allowing an app to replace preview auth.
     for name, value in kept:
         if name.lower() == "set-cookie":

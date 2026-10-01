@@ -30,6 +30,7 @@ definition of the wire instead of two that drift.
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -70,27 +71,103 @@ class PreviewResponse:
     body: bytes
 
 
+MAX_QUEUED_BYTES = 1024 * 1024
+MAX_QUEUED_FRAMES = 256
+SEND_TIMEOUT_S = 5.0
+MAX_STREAMS = 64
+
+
 class PreviewStream:
     """One browser request (or one browser WebSocket) and its whole life."""
 
     def __init__(self, machine: "PreviewMachine", stream_id: int) -> None:
         self._machine = machine
         self.id = stream_id
-        self.inbox: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
+        self.inbox: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(MAX_QUEUED_FRAMES)
+        self._queued_bytes = 0
+        self._closed = False
+        self._terminal = False
 
     async def send(self, op: int, payload: bytes = b"") -> None:
         await self._machine.send(op, self.id, payload)
 
+    def offer(self, op: int, payload: bytes) -> None:
+        if self._closed or self._terminal:
+            return
+        limit = wire._CHUNK if op == wire.OP_DATA else MAX_QUEUED_BYTES
+        if (
+            len(payload) > limit
+            or self._queued_bytes + len(payload) > MAX_QUEUED_BYTES
+            or self.inbox.full()
+        ):
+            self.terminate(b"preview consumer queue overflow")
+            self._machine.cancel_later(self.id)
+            return
+        self._queued_bytes += len(payload)
+        self.inbox.put_nowait((op, payload))
+
+    def terminate(self, reason: bytes) -> None:
+        if self._closed or self._terminal:
+            return
+        self._terminal = True
+        while not self.inbox.empty():
+            self.inbox.get_nowait()
+        self._queued_bytes = len(reason)
+        self.inbox.put_nowait((wire.OP_CLOSE, reason))
+        self._machine.forget(self.id)
+
     async def receive(
         self, timeout: float | None = STREAM_TIMEOUT_S
     ) -> tuple[int, bytes]:
-        """The next frame from the machine. Bounded by default (see
-        STREAM_TIMEOUT_S); ``None`` waits indefinitely, which only a proxied
-        WebSocket wants — an HMR socket is silent until somebody edits a file."""
-        return await asyncio.wait_for(self.inbox.get(), timeout=timeout)
+        item = await asyncio.wait_for(self.inbox.get(), timeout=timeout)
+        self._queued_bytes -= len(item[1])
+        return item
 
     def close(self) -> None:
+        self._closed = True
         self._machine.forget(self.id)
+
+    async def aclose(self, *, cancel: bool = True) -> None:
+        if self._closed:
+            return
+        terminal = self._terminal
+        self.close()
+        if cancel and not terminal:
+            try:
+                await self.send(wire.OP_CLOSE)
+            except (OSError, RuntimeError, TimeoutError):
+                pass
+
+
+@dataclass
+class PreviewHttpResponse:
+    status: int
+    headers: list[tuple[str, str]]
+    stream: PreviewStream
+    first: bytes = b""
+    timeout: float = STREAM_TIMEOUT_S
+    ended: bool = False
+
+    async def iter_bytes(self) -> AsyncIterator[bytes]:
+        try:
+            if self.first:
+                yield self.first
+                self.first = b""
+            while not self.ended:
+                op, payload = await self.stream.receive(self.timeout)
+                if op == wire.OP_END:
+                    self.ended = True
+                    break
+                if op != wire.OP_DATA:
+                    raise ConnectionError(
+                        f"preview response interrupted: {payload[:200]!r}"
+                    )
+                yield payload
+        finally:
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        await self.stream.aclose(cancel=not self.ended)
 
 
 @dataclass
@@ -105,13 +182,27 @@ class PreviewMachine:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, op: int, stream_id: int, payload: bytes = b"") -> None:
-        # Serialised for the same reason the device channel serialises: a
-        # WebSocket is not safe for concurrent writes, and every open stream
-        # sends here.
-        async with self.send_lock:
-            await self.transport.send_bytes(wire.encode(op, stream_id, payload))
+        try:
+            async with asyncio.timeout(SEND_TIMEOUT_S):
+                async with self.send_lock:
+                    await self.transport.send_bytes(wire.encode(op, stream_id, payload))
+        except (TimeoutError, OSError, RuntimeError):
+            for stream in list(self.streams.values()):
+                stream.terminate(b"preview tunnel write failed")
+            raise
 
-    def open(self) -> PreviewStream:
+    def cancel_later(self, stream_id: int) -> None:
+        async def cancel() -> None:
+            try:
+                await self.send(wire.OP_CLOSE, stream_id)
+            except (OSError, RuntimeError, TimeoutError):
+                pass
+
+        asyncio.create_task(cancel())
+
+    def open(self) -> PreviewStream | None:
+        if len(self.streams) >= MAX_STREAMS:
+            return None
         self.next_stream += 1
         stream = PreviewStream(self, self.next_stream)
         self.streams[stream.id] = stream
@@ -137,7 +228,7 @@ class PreviewMachine:
         stream = self.streams.get(stream_id)
         if stream is None:
             return
-        stream.inbox.put_nowait((op, payload))
+        stream.offer(op, payload)
 
 
 _Seat = tuple[uuid.UUID, str]
@@ -165,7 +256,7 @@ class PreviewHub:
         held open per viewer, forever, with no frame ever arriving to end it.
         """
         for stream in list(machine.streams.values()):
-            stream.inbox.put_nowait((wire.OP_CLOSE, b"the machine went away"))
+            stream.terminate(b"the machine went away")
         machine.streams.clear()
 
     def attach(
@@ -239,7 +330,7 @@ class PreviewHub:
         machine = self._machines.get((topic_id, seat))
         return None if machine is None else machine.open()
 
-    async def request(
+    async def request_stream(
         self,
         topic_id: uuid.UUID,
         seat: str,
@@ -249,12 +340,12 @@ class PreviewHub:
         headers: list[tuple[str, str]],
         body: bytes = b"",
         timeout: float = STREAM_TIMEOUT_S,
-    ) -> PreviewResponse | None:
-        """One HTTP request to the topic's app. None = there is no tunnel, the
-        app did not answer, or it answered with more than we will hold."""
+    ) -> PreviewHttpResponse | None:
+        """Return at RESP; the caller owns the body and cancellation."""
         stream = self.open_stream(topic_id, seat)
         if stream is None:
             return None
+        transferred = False
         try:
             await stream.send(
                 wire.OP_REQ,
@@ -272,32 +363,58 @@ class PreviewHub:
                 logger.info("preview request on %s failed: %s", topic_id, payload[:200])
                 return None
             meta, first = wire.decode_meta(payload)
-            chunks = [first]
-            size = len(first)
-            while size <= MAX_BODY:
-                op, payload = await stream.receive(timeout)
-                if op == wire.OP_END:
-                    break
-                if op != wire.OP_DATA:
-                    logger.info(
-                        "preview body on %s ended early: %s", topic_id, payload[:200]
-                    )
-                    return None
-                size += len(payload)
-                chunks.append(payload)
-            if size > MAX_BODY:
-                logger.info("preview body on %s is too large to hold", topic_id)
-                return None
-            return PreviewResponse(
+            response = PreviewHttpResponse(
                 status=int(meta.get("status", 502)),
                 headers=[(str(k), str(v)) for k, v in meta.get("headers") or []],
-                body=b"".join(chunks),
+                stream=stream,
+                first=first,
+                timeout=timeout,
             )
+            transferred = True
+            return response
         except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
             logger.info("preview request on %s did not complete: %s", topic_id, exc)
             return None
         finally:
-            stream.close()
+            if not transferred:
+                await stream.aclose()
+
+    async def request(
+        self,
+        topic_id: uuid.UUID,
+        seat: str,
+        *,
+        method: str,
+        path: str,
+        headers: list[tuple[str, str]],
+        body: bytes = b"",
+        timeout: float = STREAM_TIMEOUT_S,
+    ) -> PreviewResponse | None:
+        response = await self.request_stream(
+            topic_id,
+            seat,
+            method=method,
+            path=path,
+            headers=headers,
+            body=body,
+            timeout=timeout,
+        )
+        if response is None:
+            return None
+        try:
+            chunks = []
+            size = 0
+            async for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > MAX_BODY:
+                    return None
+                chunks.append(chunk)
+            return PreviewResponse(response.status, response.headers, b"".join(chunks))
+        except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
+            logger.info("preview buffered response interrupted: %s", exc)
+            return None
+        finally:
+            await response.aclose()
 
     async def probe(
         self, topic_id: uuid.UUID, seat: str, *, timeout: float = PROBE_TIMEOUT_S
