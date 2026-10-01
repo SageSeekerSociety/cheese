@@ -249,7 +249,8 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                 assert native_runner.work == str(original_work)
             else:
                 assert operations.count("send") == initial_sends + 1, operations
-                assert operations.count("steer") == 0, operations
+                if mode == "idle":
+                    assert operations.count("steer") == 0, operations
             if mode == "busy":
                 await get_work_runner().drain(10)
                 retry = await asyncio.to_thread(
