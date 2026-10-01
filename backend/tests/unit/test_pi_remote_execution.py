@@ -194,17 +194,31 @@ async def test_a_file_tool_is_one_call_per_operation_and_starts_no_command(
         assert (checkout / "notes.md").read_text() == "new line\n"
         assert "old line" in told(model.requests[1])
         # Before anything, once for the machine: the project's hook settings.
-        first = asked.index("files:access")
+        first = asked.index("files:open")
         assert asked[:first] == ["shell:start", "shell:read"]
-        # read: access, image, read; edit: access, read, write.
-        assert asked[first:] == [
-            "files:access",
-            "files:image",
-            "files:read",
-            "files:access",
-            "files:read",
-            "files:write",
-        ]
+        # A read is one call; an edit is that one and the write.
+        assert asked[first:] == ["files:open", "files:open", "files:write"]
+
+
+async def test_each_read_sees_the_file_as_it_is_then(tmp_path, machine):
+    """What one tool call read is not what the next one reads: a file changed
+    in between is read again, and a file past the limit is refused."""
+    checkout = Path(machine["workspace"])
+    (checkout / "notes.md").write_text("first\n")
+    with (checkout / "huge.bin").open("wb") as huge:
+        huge.truncate(32 * 1024 * 1024 + 1)
+    route = script(
+        ("read", {"path": "notes.md"}),
+        ("bash", {"command": "echo second > notes.md"}),
+        ("read", {"path": "notes.md"}),
+        ("read", {"path": "huge.bin"}),
+    )
+    async with pi(tmp_path, machine, route) as (runner, model, _):
+        await turn(runner, model, "看两遍笔记，再看大文件", 5)
+
+        assert "first" in told(model.requests[1])
+        assert "second" in told(model.requests[3])
+        assert "超过 32 MB" in told(model.requests[4])
 
 
 async def test_a_question_takes_no_machine_and_work_takes_one(

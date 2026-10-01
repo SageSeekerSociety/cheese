@@ -43,31 +43,47 @@ IMAGE_MAGIC = (
 )
 
 
+def _too_large(path: str) -> str:
+    return f"{path} 超过 {READ_LIMIT // (1024 * 1024)} MB，读不进来"
+
+
 def read(path: str) -> dict:
     with open(path, "rb") as file:
         data = file.read(READ_LIMIT + 1)
     if len(data) > READ_LIMIT:
-        return {"error": f"{path} 超过 {READ_LIMIT // (1024 * 1024)} MB，读不进来"}
+        return {"error": _too_large(path)}
     return {"data": base64.b64encode(data).decode()}
 
 
-def access(path: str, write: bool) -> dict:
+def _image_type(head: bytes) -> str | None:
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    for magic, kind in IMAGE_MAGIC:
+        if head.startswith(magic):
+            return kind
+    return None
+
+
+def open_file(path: str, write: bool) -> dict:
+    """Whether `path` is there to read (and write), and when it is a file,
+    what pi reads next: its bytes and whether they are an image. pi's read and
+    edit ask whether they may, then read, so one call answers all of it. A
+    file past the read limit passes the check and says so where its bytes
+    would be: reading it is what fails, as it does on its own."""
     if not os.path.exists(path):
         return {"error": f"ENOENT: no such file or directory, access '{path}'"}
     if not os.access(path, os.R_OK | (os.W_OK if write else 0)):
         return {"error": f"EACCES: permission denied, access '{path}'"}
-    return {}
-
-
-def image(path: str) -> dict:
+    if not os.path.isfile(path):
+        return {}
     with open(path, "rb") as file:
-        head = file.read(16)
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return {"type": "image/webp"}
-    for magic, kind in IMAGE_MAGIC:
-        if head.startswith(magic):
-            return {"type": kind}
-    return {"type": None}
+        data = file.read(READ_LIMIT + 1)
+    opened: dict = {"type": _image_type(data[:16])}
+    if len(data) > READ_LIMIT:
+        opened["too_large"] = _too_large(path)
+    else:
+        opened["data"] = base64.b64encode(data).decode()
+    return opened
 
 
 def write(path: str, data: str) -> dict:
@@ -358,10 +374,8 @@ def answer(request: dict, root: str = ".") -> dict:
     try:
         if operation == "read":
             return read(path)
-        if operation == "access":
-            return access(path, bool(request.get("write")))
-        if operation == "image":
-            return image(path)
+        if operation == "open":
+            return open_file(path, bool(request.get("write")))
         if operation == "write":
             return write(path, request["data"])
         if operation == "mkdir":

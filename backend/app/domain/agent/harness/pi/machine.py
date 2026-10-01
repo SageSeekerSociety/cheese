@@ -134,6 +134,8 @@ class Machine:
         # The lease whose executor was found to take file operations (`files`),
         # as a one-item tuple: a machine with no generation is still checked.
         self.files_checked: tuple | None = None
+        # What `access` brought back for the tool call that asked, by path.
+        self.opened: dict[str, dict] = {}
 
     # --- where things are ------------------------------------------------------
 
@@ -306,6 +308,8 @@ class Machine:
         machine's executor itself (`remote_execution/machine_files.py`): one
         call, no command started. Raises `OSError` with what it said when the
         operation could not be done."""
+        if operation in ("write", "mkdir"):
+            self.opened.pop(path, None)
         self.take()
         lease = (self.client.config.get("generation"),)
         if self.files_checked != lease:
@@ -330,21 +334,37 @@ class Machine:
             answer["paths"] = [posixpath.join(path, found) for found in answer["paths"]]
         return answer
 
-    def read_file(self, path: str) -> bytes:
-        here = self.local(path)
-        if here is not None:
-            return here.read_bytes()
-        return base64.b64decode(self.files("read", path)["data"])
+    # pi's read asks whether it may read a file, what kind of file it is, and
+    # then reads it; its edit asks whether it may write it, reads it and writes
+    # it, one path each time. So `access` brings back what the calls after it
+    # ask (`open`), and those take it from `opened` instead of the machine: the
+    # read takes it away, and so does a write or the next access of the path.
+    # It serves the one tool call that asked, never a later one.
 
     def access(self, path: str, *, write: bool = False) -> None:
         if not write and self.local(path) is not None:
             return
-        self.files("access", path, write=write)
+        self.opened.pop(path, None)
+        opened = self.files("open", path, write=write)
+        if "data" in opened or "too_large" in opened:
+            self.opened[path] = opened
 
     def image_type(self, path: str) -> str | None:
         if self.local(path) is not None:
             return None  # the platform's skills and pi's own output: text
-        return self.files("image", path)["type"]
+        opened = self.opened.get(path) or self.files("open", path)
+        return opened.get("type")
+
+    def read_file(self, path: str) -> bytes:
+        here = self.local(path)
+        if here is not None:
+            return here.read_bytes()
+        opened = self.opened.pop(path, None)
+        if opened is None:
+            return base64.b64decode(self.files("read", path)["data"])
+        if "too_large" in opened:
+            raise OSError(opened["too_large"])
+        return base64.b64decode(opened["data"])
 
     # --- what the project says -------------------------------------------------
 
