@@ -10,6 +10,8 @@ This stage adds a transactional journal. It does not establish AI request/propos
 
 ## Stored contract
 
+The production writer paths are `usePanelDoc`, `ProjectDocsView → DocEditor`, the agent's specialized `get_document`/`set_document` tools, ordinary HTTP PUT, authenticated restore and project/room brief seeds. They all enter `DocumentWriter` before root content changes. The generic `platform_request` tool also reaches the same HTTP PUT route: it can supply a chosen `expected_version` without the specialized tool's read cache, but cannot bypass backend CAS, raw history or refresh storage. Client-side source-version fencing remains the caller's responsibility.
+
 `living_doc_locks` serializes ordinary writes and operations per canonical room, including absent-document creation. The existing conditional SQL update remains the CAS check. Every new canonical write stores raw content, SHA256 of UTF-8 bytes, version, previous/base versions, actor, optional operation_id and persisted contribution event id in the same transaction as root/node changes.
 
 `living_doc_operations` uniquely claims `(room_id, verified live account id, action, operation_id)`. The room identifies the single canonical document, including absent-document creation. Payload fingerprint is a separate column. Same key/payload returns the original JSON receipt, even if another writer has advanced. Different payload returns 409. Older receipts are not latest snapshots: clients retain their response/version fences and use GET for current correctness.
@@ -39,8 +41,10 @@ Exclusive machine: cheese-de808b-46. Resolved implementation: `/home/cheese/docs
 - Integrated-main journal/API/ordinary-writer/raw-span/import-guard run: 75 passed, exit 0. The added real database test rejects completed-receipt, actor and fingerprint rewrites. PostgreSQL also freezes operation claim identity before completion; completion is the only allowed update.
 - Main 45fb conflict-resolution run: `phase2-main45fb-integrated.log/.exit`, 77 passed, exit 0. Includes current decision-as-message regression, ordinary agent writers, node/notice effects, journal and import guard. Targeted Pyright zero errors; one Alembic head. No production migration was run.
 
+- Required CI `36842063743` ran on `2bdb95a1cc273d6d496283e076985ae6014cda50` and completed successfully. All four PostgreSQL integration jobs executed (985, 1008, 1051 and 993 tests), alongside backend lint, migration heads, pure and contract checks. Frontend, CLI, MCP, cifast and deploy jobs were skipped and provide no coverage for this stage. Independent source review traced the actual ordinary writers and verified that the main merge retained the canonical writer and journal paths; this is separate from database execution and production behavior.
+
 Original logs and exit files are in `/home/cheese/docs-evidence/runs`. The first test PostgreSQL initialization exited 1 during its temporary-server shutdown; that container and full original log are retained, not restarted. A separate container with a longer initialization timeout reached readiness.
 
 ## Remaining boundaries
 
-No latest-head Required CI or independent canonical-stage review yet. No canonical-stage merge/deploy claimed. UI reconnect transport, source-map selection issuance/node validation, AI persisted lease/recovery, tool-less project-bound completion and authenticated-human acceptance remain to implement and test. Runtime and actual-page checks are not replaced by these PostgreSQL/API tests.
+UI reconnect transport, source-map selection issuance/node validation, AI persisted lease/recovery, tool-less project-bound completion and authenticated-human acceptance belong to the subsequent stages. Runtime and actual-page checks are not replaced by these PostgreSQL/API tests. Schema changes reach a deployment only through the normal required checks, merge queue and CI/CD pipeline.
