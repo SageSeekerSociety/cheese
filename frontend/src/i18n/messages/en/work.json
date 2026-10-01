@@ -779,9 +779,18 @@
       "write": "Write a comment",
       "placeholder": "Write a comment…",
       "keyHint": "Enter to send, Shift+Enter for a new line",
-      "cancel": "Cancel",
       "locate": "Go to the paragraph",
-      "anchorChanged": "The original paragraph has changed"
+      "anchorChanged": "The original paragraph has changed",
+      "anchorAmbiguous": "This quote occurs more than once; the original selection cannot be identified",
+      "closePanel": "Close comments panel",
+      "resize": "Resize comments panel",
+      "waitForSend": "Comment is sending; wait for the result",
+      "closeDraft": "Close composer",
+      "discardDraft": "Discard draft",
+      "resumeDraft": "Resume draft",
+      "unavailable": "This host has not provided a comment posting interface",
+      "showMore": "Show more",
+      "showLess": "Show less"
     },
     "chat": {
       "pickTopic": "Select a topic to start chatting",

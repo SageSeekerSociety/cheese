@@ -343,6 +343,15 @@ def toolchain_fetcher() -> str:
       rm -rf "$_work"
       return 0
     fi
+    # A raw artifact is the binary itself (agent-browser ships one per
+    # platform), so there is nothing to unpack.
+    if [ "$3" = raw ]; then
+      chmod +x "$_work/a" 2>/dev/null || true
+      mv "$_work/a" "$_dest/$4$_exe" || {{ rm -rf "$_work"; return 0; }}
+      rm -rf "$_work"
+      $_ln "$_dest/$4$_exe" "$CHEESE_TOOLCHAIN/bin/$4$_exe"
+      return 0
+    fi
     # The archive's inside is the vendor's business and it changes between
     # releases, so the binary is found by name rather than by a path spelled
     # out here. tar reads .tar.gz and .tar.xz; macOS pandoc ships a zip.

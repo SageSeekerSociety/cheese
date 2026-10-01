@@ -1,6 +1,6 @@
 """The programs the platform puts on a machine for its rooms' work: the
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
-find, and on Windows the runtime the connector itself needs.
+find, browser automation, and on Windows the runtime the connector itself needs.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -39,6 +39,7 @@ UV_VERSION = "0.12.15"
 FJ_VERSION = "0.6.0-cheese.2"
 GH_VERSION = "2.62.0"
 RIPGREP_VERSION = "15.2.0"
+AGENT_BROWSER_VERSION = "0.38.1"
 #: The runtime a Windows machine's connector provisions for itself, so that the
 #: `python3` and `sh` the platform runs everywhere exist there too. Windows only:
 #: every other machine brings its own.
@@ -57,6 +58,7 @@ _RG_BASE = (
     "https://github.com/BurntSushi/ripgrep/releases/download/"
     f"{RIPGREP_VERSION}/ripgrep-{RIPGREP_VERSION}"
 )
+_AB_BASE = f"https://github.com/vercel-labs/agent-browser/releases/download/v{AGENT_BROWSER_VERSION}"
 _PYTHON_BASE = f"https://www.python.org/ftp/python/{PYTHON_VERSION}"
 _GIT_BASE = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}"
 _FJ_BASE = (
@@ -270,6 +272,38 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         1789611,
         ".zip",
     ),
+    # agent-browser ships a bare binary per platform, not an archive; the
+    # launcher places those under the "raw" kind, which skips unpacking.
+    ("agent-browser", "linux-x64"): Artifact(
+        f"{_AB_BASE}/agent-browser-linux-x64",
+        "5100149a1903211c889de4e545bf36d90803740cea4f99aa22651649f9205ea1",
+        18247376,
+        "",
+    ),
+    ("agent-browser", "linux-arm64"): Artifact(
+        f"{_AB_BASE}/agent-browser-linux-arm64",
+        "937b315ee0761e8a62f7950ddcfef9b3d3d8e8d5eb9c9d2bf9e23e5725664511",
+        15832320,
+        "",
+    ),
+    ("agent-browser", "darwin-x64"): Artifact(
+        f"{_AB_BASE}/agent-browser-darwin-x64",
+        "9187f885f7da0a6d880ff6d2e7dea58e17bea490a1fec85bbb6a36067272ea8e",
+        17378184,
+        "",
+    ),
+    ("agent-browser", "darwin-arm64"): Artifact(
+        f"{_AB_BASE}/agent-browser-darwin-arm64",
+        "2e61287259053ea964d39e77002c6a34af0e589e55ccff25e659efae7e892e0d",
+        15768448,
+        "",
+    ),
+    ("agent-browser", "windows-x64"): Artifact(
+        f"{_AB_BASE}/agent-browser-win32-x64.exe",
+        "70bd758b2a5a72b18055f60ff877d2297d036c4104e3bc94af6f7c1ceb941408",
+        17868288,
+        ".exe",
+    ),
     # The connector's own runtime on Windows (see PYTHON_VERSION). The embeddable
     # distribution is the interpreter and its standard library, nothing else.
     ("python", "windows-x64"): Artifact(
@@ -323,6 +357,9 @@ PLACEMENTS: tuple[tuple[str, str, str, str], ...] = (
     ("pandoc", PANDOC_VERSION, "bin", "pandoc"),
     ("uv", UV_VERSION, "bin", "uv"),
     ("ripgrep", RIPGREP_VERSION, "bin", "rg"),
+    # Browser automation for rooms that operate websites; useless without the
+    # Chrome `agent-browser install` fetches on first use, which stays on demand.
+    ("agent-browser", AGENT_BROWSER_VERSION, "raw", "agent-browser"),
     ("font-sans", "pinned", "font", "NotoSansSC-VF.otf"),
     ("font-serif", "pinned", "font", "NotoSerifSC-VF.otf"),
 )

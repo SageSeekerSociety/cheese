@@ -104,3 +104,61 @@ describe('selection-specific comment drafts', () => {
     scope.stop()
   })
 })
+
+describe('closing is distinct from discarding comment drafts', () => {
+  it('keeps target/text through close, remount and resume, and discards only explicitly', () => {
+    const d = fixture()
+    d.open(first)
+    d.text.value = '保留'
+    expect(d.close()).toBe(true)
+    expect(d.draft.value).toBeNull()
+    expect(d.hasDraft.value).toBe(true)
+    expect(d.target.value).toEqual(first)
+    const saved = JSON.parse(
+      sessionStorage.getItem(`cheese:doc-comments:${JSON.stringify(['reader', d.topic.value])}`)!
+    )
+    expect(saved.hidden).toBe(true)
+    d.scope.stop()
+    const scope = effectScope()
+    const next = scope.run(() =>
+      useDocCommentDraft(
+        () => d.topic.value,
+        () => 'reader',
+        d.send,
+        vi.fn()
+      )
+    )!
+    expect(next.draft.value).toBeNull()
+    next.open(first)
+    expect(next.text.value).toBe('保留')
+    next.cancel()
+    expect(next.hasDraft.value).toBe(false)
+    scope.stop()
+  })
+
+  it('guards close/discard across targets while another target is sending', async () => {
+    const d = fixture()
+    let finish!: () => void
+    d.send.mockImplementation(
+      () =>
+        new Promise<void>((done) => {
+          finish = done
+        })
+    )
+    d.open(first)
+    d.text.value = '已送出'
+    const operation = d.submit()
+    d.open(second)
+    d.text.value = '另一处草稿'
+    expect(d.sending.value).toBe(false)
+    expect(d.busy.value).toBe(true)
+    expect(d.close()).toBe(false)
+    d.cancel()
+    expect(d.draft.value).toEqual(second)
+    finish()
+    await operation
+    expect(d.busy.value).toBe(false)
+    expect(d.text.value).toBe('另一处草稿')
+    d.scope.stop()
+  })
+})

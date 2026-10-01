@@ -337,6 +337,9 @@ def _fake_upstream(tmp_path):
             tar.add(directory, arcname=directory.name)
     (served / "font-sans").write_bytes(b"OTTO sans")
     (served / "font-serif").write_bytes(b"OTTO serif")
+    # agent-browser's artifact is the binary itself (kind "raw"), so a bare
+    # file here is the faithful fixture, not a shortcut.
+    (served / "agent-browser").write_text("#!/bin/sh\necho agent-browser\n")
 
     bin_dir = tmp_path / "fakebin"
     bin_dir.mkdir()
@@ -411,6 +414,24 @@ def test_the_toolchain_belongs_to_the_machine_not_to_the_room(tmp_path):
     # Version-named, so a bump lands beside the old copy instead of over it.
     assert (chain / "typst" / machine_launcher.toolchain.TYPST_VERSION).is_dir()
     assert not (session / ".cheese" / "toolchain").exists()
+
+
+def test_a_raw_artifact_is_placed_without_unpacking(tmp_path):
+    """agent-browser ships a bare binary per platform, not an archive: the raw
+    kind must land it in bin/ directly, where the unpack-and-find path would
+    just fail tar and unzip both."""
+    home, env, _log = _machine_with_upstream(tmp_path)
+
+    chain = home / ".cheese" / "toolchain"
+    report = tmp_path / "raw"
+    prepare = _agent_waiting_for(
+        tmp_path, chain / "bin" / "agent-browser", report, "CHEESE_TOOLCHAIN"
+    )
+    result = _run(tmp_path, env, prepare=prepare, command='"$AGENT"')
+
+    assert result.returncode == 0, result.stderr
+    assert report.read_text(), "the agent gave up waiting for the placement"
+    assert (chain / "bin" / "agent-browser").exists()
 
 
 def test_a_toolchain_that_cannot_be_fetched_never_fails_the_launch(tmp_path):
