@@ -414,7 +414,16 @@ function onSayClick(event: MouseEvent, b: Block): void {
 }
 
 // 在跑的那一轮，这一页读回来时可能还没登记：对话栏从 socket 上知道它从什么时候开始。
-const turns = computed(() => groupByTurn(visible.value, { ...props.runningTurns, ...turnStarts.value }))
+// 记下来，这一轮停了、重读还没回来的那一会儿，用时也不缩回去。
+watch(
+  () => props.runningTurns,
+  (running) => {
+    const unseen = Object.entries(running ?? {}).filter(([id]) => !(id in turnStarts.value))
+    if (unseen.length) turnStarts.value = { ...Object.fromEntries(unseen), ...turnStarts.value }
+  },
+  { immediate: true }
+)
+const turns = computed(() => groupByTurn(visible.value, turnStarts.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
 // 新一轮还没落下第一行时，上一轮的那一组会被说成进行中。
