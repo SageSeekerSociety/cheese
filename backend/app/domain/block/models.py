@@ -1,6 +1,6 @@
 """Block model — 万物皆块 (spec §5).
 
-Every piece of content (a message, a doc node, a decision, an attachment) is a
+Every piece of content (a message, a doc node, an attachment) is a
 Block. Blocks live in one pool per project and are organized by two trees:
 
 - reply_to     → conversation tree ("how it was discussed")
@@ -45,7 +45,6 @@ class BlockKind(enum.StrEnum):
     # B4: an inline comment anchored to a doc node (reply_to = the doc_node id).
     # Shown in the document margin, not the conversation timeline.
     comment = "comment"
-    decision = "decision"
     attachment = "attachment"
     event = "event"
     # A renderable product 芝士 explicitly points at (spec §9.1): content = the
@@ -54,9 +53,9 @@ class BlockKind(enum.StrEnum):
     # created via `cheese show`. Never inferred from prose — the AI names it.
     artifact = "artifact"
     # 一份周报 (spec §7.1 周报集): content = 周报正文，meta 里的 `since`/`until`
-    # 是它讲的那一周。和 `decision` 同属「项目自己的话」——项目文档页按项目列出
-    # 它们。区别是它讲的是一段历史而不是一个当前状态，所以带时间窗：并排摆着
-    # 的几份周报，是那个窗口把它们分开的。
+    # 是它讲的那一周。它是「项目自己的话」——项目文档页按项目列出它们。它讲的
+    # 是一段历史而不是一个当前状态，所以带时间窗：并排摆着的几份周报，是那个
+    # 窗口把它们分开的。
     weekly = "weekly"
 
 
@@ -309,7 +308,7 @@ class Block(UuidPk, Timestamps, Base):
     # fallback for old clients / old rows). Null on non-event blocks and on
     # event rows created before this field existed.
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # Citations: which decisions / PRs / files this block leans on.
+    # Citations: which topics / PRs / files this block leans on.
     refs: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     # If this block was upgraded into its own topic (spec §6.1), the original

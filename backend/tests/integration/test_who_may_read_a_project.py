@@ -36,7 +36,7 @@ DOORS = {
     "房间列表（页面）": "/topics?project_id={pid}",
     "任务列表": "/projects/{pid}/tasks",
     "成员名册": "/projects/{pid}/members",
-    "决策记录": "/projects/{pid}/decisions",
+    "周报集": "/projects/{pid}/weeklies",
     "AI 摘要（贡献聚合）": "/projects/{pid}/contributions",
 }
 

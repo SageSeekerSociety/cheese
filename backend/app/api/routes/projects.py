@@ -33,7 +33,6 @@ from app.domain.agent.liveness import task_liveness
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.block.notice_text import exception_text, say
 from app.domain.block.queries import (
-    decisions_for_project,
     tasks_awaiting_an_answer,
     weeklies_for_project,
 )
@@ -250,7 +249,7 @@ async def list_projects(
         return ok(page(await _project_payloads(db, projects), len(projects)))
     if team_id is not None:
         # A team's project list is not a directory: every row carries the
-        # project's `id`, and that id opens its roster, decisions and usage. So
+        # project's `id`, and that id opens its roster, documents and usage. So
         # this answered "which projects does that team have, and what are their
         # ids" to anyone who asked — including callers with no credential at
         # all, while the SAME route without `team_id` was strict.
@@ -358,32 +357,6 @@ async def get_project(
     return ok(payload)
 
 
-@router.get("/{project_id}/decisions")
-async def list_decisions(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    topic: str = "",
-) -> dict:
-    """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
-    source topic via topic_id.
-
-    These are the project's own words, not metadata about it — the same content
-    ``/topics`` has always guarded.
-
-    ``topic`` is the caller naming its place, and it is how 芝士 reads this at
-    all (``project_reader``): a per-turn credential is minted for one turn in
-    one room, so a bare ``authorize_project`` refuses it — which left the one
-    caller that WRITES decisions (``POST /topics/{id}/decision``, the
-    ``cheese decision`` CLI) unable to read a single one back. Its own room's
-    blocks were reachable; the project's record was not."""
-    await project_reader(db, resolver, project_id, topic)
-    await ProjectService(db).get_or_404(project_id)
-    blocks = await decisions_for_project(db, project_id)
-    items = [b.model_dump(mode="json") for b in blocks]
-    return ok(page(items, len(items)))
-
-
 @router.get("/{project_id}/weeklies")
 async def list_weeklies(
     project_id: uuid.UUID,
@@ -397,10 +370,11 @@ async def list_weeklies(
     report says what happened over a piece of time rather than what the project
     looks like right now, so that window is what tells two of them apart.
 
-    Same shape as /decisions and for the same reason: these are the project's
-    own words, and each is traceable to the room it was written in via
-    `topic_id` — including the same ``topic`` place, so the caller that writes
-    a weekly (``POST /topics/{id}/weekly``) can read the set back."""
+    These are the project's own words, and each is traceable to the room it was
+    written in via `topic_id`. ``topic`` is the caller naming its place, so the
+    caller that writes a weekly (``POST /topics/{id}/weekly``) can read the set
+    back: a per-turn credential is minted for one turn in one room, and a bare
+    ``authorize_project`` refuses it."""
     await project_reader(db, resolver, project_id, topic)
     await ProjectService(db).get_or_404(project_id)
     blocks = await weeklies_for_project(db, project_id)

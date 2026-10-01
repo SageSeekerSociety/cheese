@@ -289,7 +289,6 @@
         "due": "截止 {date}",
         "noDue": "日期待定"
       },
-      "decisionFrom": "来自「{topic}」",
       "failed": "无法加载这部分内容"
     },
     "accept": {
@@ -375,7 +374,6 @@
       },
       "action": {
         "doc": "查看文档",
-        "decision": "查看决策记录",
         "split": "查看任务",
         "undo": "撤销",
         "milestone": "查看日历",

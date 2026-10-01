@@ -318,10 +318,6 @@ def central_transport(executor, tmp_path):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 platform_calls.append(payload)
                 result = {"data": payload}
-            elif self.path == "/topics/fixture/decision":
-                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
-                platform_calls.append(payload)
-                result = {"data": payload}
             elif self.path == "/topics/fixture/messages":
                 uuid.UUID(payload["request_id"])
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"

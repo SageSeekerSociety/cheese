@@ -891,7 +891,7 @@ export interface MilestoneFull {
 
 // ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
 
-// 总览是五块：①「项目是什么」写在文档正文里，②~⑤ 由平台现拼。这一份是 ②~⑤
+// 总览是四块：①「项目是什么」写在文档正文里，②~④ 由平台现拼。这一份是 ②~④
 // 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
 // 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
 // `domain/topic/overview.py`），所以两边不会各说各的。
@@ -910,16 +910,6 @@ export interface OverviewTopicItem {
   conclusion: string | null
 }
 
-export interface OverviewDecisionItem {
-  kind: 'decision'
-  /** 去处：这条决策卡所在的房间。 */
-  block_id: string | null
-  text: string
-  /** 全文在哪个话题里（点它跳过去）。 */
-  topic_id: string | null
-  topic_title: string | null
-}
-
 export interface OverviewMilestoneItem {
   kind: 'milestone'
   /** 去处：日历上的这一条。 */
@@ -931,10 +921,10 @@ export interface OverviewMilestoneItem {
   status: string | null
 }
 
-export type OverviewAutoItem = OverviewTopicItem | OverviewDecisionItem | OverviewMilestoneItem
+export type OverviewAutoItem = OverviewTopicItem | OverviewMilestoneItem
 
 export interface OverviewAutoBlock {
-  /** `active_topics` / `decisions` / `milestones` / `closed_topics`。 */
+  /** `active_topics` / `milestones` / `closed_topics`。 */
   key: string
   title: string
   items: OverviewAutoItem[]

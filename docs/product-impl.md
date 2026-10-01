@@ -68,13 +68,13 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 工作台 | `views/WorkspaceView.vue` | 左栏(话题树/项目文档/成员) ｜ 对话 ｜ 实况文档 + 跨区输入栏；栏宽可拖拽(持久化) |
 | 对话 | `components/ChatPanel.vue` | 飞书群聊式；只显示 message + 系统行（doc/decision/🔧 事件不混入）；本地时区 |
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
-| 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/决策/周报) + 成员(私聊从名册进)；右缘可拖拽调宽 |
+| 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/周报/记忆) + 成员(私聊从名册进)；右缘可拖拽调宽 |
 | 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定（一叠卡，一次摆一条）+ 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
 | 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Office 文档比的是正文（`domain/documents/text.py`），其余按字节 |
 | 日历 | `views/CalendarView.vue` | 里程碑倒排 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |
 | 个人主页 | `views/ProfileView.vue` | `/users/:handle` 与 `/projects/:id/members/:handle` 两个入口同一页：头像/简介/团队 + 一年活动图（点一周筛话题）+ 项目 + 最近参与的话题；自己的页多「编辑资料」和芝士眼中的你（可删）；从项目进来多「在这个项目里」 |
-| 项目文档 | `views/ProjectDocsView.vue` | 章程/决策记录/周报集；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |
+| 项目文档 | `views/ProjectDocsView.vue` | 章程/周报集/记忆；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |
 
 ---
 
@@ -103,7 +103,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
-- **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
+- **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。
 - **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（`AgentRuntime.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
 

@@ -333,7 +333,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         emit('state-changed', frame.resource)
         break
       case 'event_block':
-        // A persisted, clickable action card (decision/doc/...) for this turn.
+        // A persisted, clickable action card (milestone/doc/...) for this turn.
         pushBlock(frame.block)
         toSite(frame.block)
         autoScroll()
@@ -623,8 +623,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   // The conversation stream shows messages + lightweight system lines only.
-  // doc/decision blocks are document state (they live in the doc panel), and AI
-  // tool events belong in 现场 — neither belongs in the group chat (spec §7.1).
+  // doc blocks are document state (they live in the doc panel), and AI tool
+  // events belong in 现场 — neither belongs in the group chat (spec §7.1).
   // Historical SDK turns can contain one fenced Markdown block split across
   // consecutive message rows. Repair those rows before collapseNotices hides
   // event blocks, because an event is a hard boundary and must prevent an

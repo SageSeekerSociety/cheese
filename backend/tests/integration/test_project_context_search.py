@@ -70,7 +70,7 @@ def test_a_room_finds_what_another_room_of_the_project_said(client):
     here = _room(client, project, "周报")
     there = _room(client, project, "预算讨论")
     _seed(client, _say(project, there, "预算定为 48 万元，其中外包 12 万"))
-    _seed(client, _say(project, there, "预算按 48 万执行", kind=BlockKind.decision))
+    _seed(client, _say(project, there, "预算按 48 万执行", kind=BlockKind.weekly))
 
     async def task(db):
         db.add(
@@ -90,7 +90,7 @@ def test_a_room_finds_what_another_room_of_the_project_said(client):
     assert r.status_code == 200, r.text
     hits = r.json()["data"]["hits"]
     kinds = {h["kind"] for h in hits["records"]}
-    assert {"message", "decision"} <= kinds
+    assert {"message", "weekly"} <= kinds
     assert all(h["room_id"] == there for h in hits["records"])
     assert hits["records"][0]["room_title"] == "预算讨论"
     assert [t["title"] for t in hits["tasks"]] == ["核对预算执行"]
@@ -245,21 +245,21 @@ def test_artifacts_rank_by_name_and_stay_in_their_project(client):
 
 def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
     """``limit`` is per kind: a hundred matching messages still leave room for
-    the one decision and the one document paragraph that match too."""
+    the one weekly report and the one document paragraph that match too."""
     project = _project(client)
     room = _room(client, project, "排期")
     # The messages are short and say little else, so each outranks the longer
-    # decision and document paragraph.
+    # weekly report and document paragraph.
     for i in range(6):
         _seed(client, _say(project, room, f"上线日期？{i}"))
     long = "经过三轮讨论，考虑到测试、审批和宣传各自需要的时间，"
     _seed(
         client,
-        _say(project, room, long + "上线日期定在 10 月 8 日", kind=BlockKind.decision),
+        _say(project, room, long + "上线日期定在 10 月 8 日", kind=BlockKind.weekly),
     )
     _seed(
         client,
-        _say(project, room, long + "上线日期以决策为准", kind=BlockKind.doc_node),
+        _say(project, room, long + "上线日期以周报为准", kind=BlockKind.doc_node),
     )
 
     r = client.get(
@@ -270,7 +270,7 @@ def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
     records = r.json()["data"]["hits"]["records"]
     kinds = [h["kind"] for h in records]
     assert kinds.count("message") == 3
-    assert "decision" in kinds
+    assert "weekly" in kinds
     assert "doc_node" in kinds
 
 
@@ -283,7 +283,7 @@ def test_paging_through_one_kind_gives_every_hit_once(client):
     room = _room(client, project, "排期")
     for i in range(7):
         _seed(client, _say(project, room, f"发布窗口第 {i} 次讨论"))
-    _seed(client, _say(project, room, "发布窗口定了", kind=BlockKind.decision))
+    _seed(client, _say(project, room, "发布窗口定了", kind=BlockKind.weekly))
 
     seen: list[str] = []
     for offset in (0, 3, 6):
@@ -333,7 +333,7 @@ def test_counts_match_what_the_pages_hold(client):
     room = _room(client, project, "预算")
     for i in range(4):
         _seed(client, _say(project, room, f"季度预算 {i}"))
-    _seed(client, _say(project, room, "季度预算按此执行", kind=BlockKind.decision))
+    _seed(client, _say(project, room, "季度预算按此执行", kind=BlockKind.weekly))
 
     r = client.get(
         f"/projects/{project}/context/search",
@@ -342,7 +342,7 @@ def test_counts_match_what_the_pages_hold(client):
     assert r.status_code == 200, r.text
     counts = r.json()["data"]["counts"]
     assert counts["message"] == 4
-    assert counts["decision"] == 1
+    assert counts["weekly"] == 1
     assert counts["tasks"] == 0
 
 

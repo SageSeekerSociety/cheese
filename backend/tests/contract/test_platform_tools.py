@@ -83,7 +83,6 @@ CALLS = {
         "/projects/fixture-project/milestones",
     ),
     "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
-    "cheese_decision": ({"text": "用 CF"}, "POST", "/topics/fixture/decision"),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",

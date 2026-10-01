@@ -1,7 +1,7 @@
-/** 总览的其余四块（#1889 ②~⑤）：正文下面那一栏。
+/** 总览的其余三块（#1889 ②~④）：正文下面那一栏。
  *
  * 它在这之前只进 AI 队友的提示词，人翻开总览文档只看得到正文那一块。这一份钉的是
- * 界面这一头：四块都画出来、每块标着「平台自动生成」，而且每一条都点得动——去哪
+ * 界面这一头：三块都画出来、每块标着「平台自动生成」，而且每一条都点得动——去哪
  * 看是它自己的那一头，不是一段死文字。
  */
 import type { Component } from 'vue'
@@ -44,11 +44,6 @@ const BLOCKS: OverviewAutoBlock[] = [
     ],
   },
   {
-    key: 'decisions',
-    title: '最近决策',
-    items: [{ kind: 'decision', block_id: 'd-1', text: '先做分页', topic_id: 't-1', topic_title: '分页接口' }],
-  },
-  {
     key: 'milestones',
     title: '里程碑',
     items: [
@@ -77,14 +72,14 @@ beforeEach(() => {
 })
 
 describe('总览的自动区', () => {
-  it('四块都画出来，每块都标着它不由人维护', async () => {
+  it('三块都画出来，每块都标着它不由人维护', async () => {
     const { container, findAllByText } = mount()
 
     await findAllByText('现在在做什么')
-    for (const title of ['现在在做什么', '最近决策', '里程碑', '已结束的话题']) {
+    for (const title of ['现在在做什么', '里程碑', '已结束的话题']) {
       expect(container.textContent).toContain(title)
     }
-    // 每块一份：读的人在一屏里连着看到四块，说明只写一次就够不着第二块。
+    // 每块一份：读的人在一屏里连着看到三块，说明只写一次就够不着第二块。
     expect(container.querySelectorAll('.auto-block__badge')).toHaveLength(BLOCKS.length)
     expect(container.querySelectorAll('.auto-block__badge')[0].textContent).toContain('平台自动生成，不可编辑')
   })
@@ -116,16 +111,15 @@ describe('总览的自动区', () => {
     expect(emitted()['open-topic']).toEqual([['t-1']])
   })
 
-  it('决策和里程碑各自去项目里的那一页 —— 面板自己不导航', async () => {
+  it('里程碑去项目里的那一页 —— 面板自己不导航', async () => {
     const { findAllByText, emitted } = mount()
 
-    await fireEvent.click((await findAllByText('先做分页'))[0].closest('button') as HTMLElement)
     await fireEvent.click((await findAllByText('中期答辩'))[0].closest('button') as HTMLElement)
 
-    expect(emitted()['open-resource']).toEqual([['decision'], ['milestone']])
+    expect(emitted()['open-resource']).toEqual([['milestone']])
   })
 
-  it('四块都没有就整段不画 —— 不补一排「暂无」', async () => {
+  it('三块都没有就整段不画 —— 不补一排「暂无」', async () => {
     getOverviewAuto.mockResolvedValue({ root_topic_id: 'root-1', blocks: [] })
     const { container } = mount()
 

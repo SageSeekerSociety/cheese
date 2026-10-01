@@ -80,7 +80,7 @@ describe('返回上一级', () => {
     ['/projects/project-a/topics/topic-b', '/projects/project-a'],
     ['/projects/project-a/settings', '/projects/project-a'],
     ['/projects/project-a/agents', '/projects/project-a'],
-    ['/projects/project-a/docs/decisions', '/projects/project-a'],
+    ['/projects/project-a/docs/weeklies', '/projects/project-a'],
     ['/spaces/42/tasks/7', '/spaces/42/tasks'],
     ['/spaces/42/tasks/7/submit', '/spaces/42/tasks/7'],
     ['/spaces/42/tasks/7/edit', '/spaces/42/tasks/7'],

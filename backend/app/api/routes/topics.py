@@ -1022,9 +1022,9 @@ async def get_topic_overview(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """总览房间的自动区（#1889）：②~⑤，结构化，给文档面板正文下方那一栏。
+    """总览房间的自动区（#1889）：②~④，结构化，给文档面板正文下方那一栏。
 
-    总览文档是五块：① 写在文档正文里，②~⑤ 由平台现拼。注入 agent 提示词的
+    总览文档是四块：① 写在文档正文里，②~④ 由平台现拼。注入 agent 提示词的
     那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
     逐个点击的结构化条目。
 
@@ -1287,56 +1287,6 @@ async def mint_webhook_token(
     return ok({"token": token})
 
 
-@router.post("/{topic_id}/decision")
-async def record_decision(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese_decision` tool."""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    decision = (body.get("decision") or "").strip()
-    if not decision:
-        raise ValidationError("decision 不能为空")
-    decision = await canonicalize_refs(
-        db, place.project_id, decision, exclude_topic_id=place.room_id
-    )
-    # 重发幂等 (④): inside a re-sent turn, the same decision text is the
-    # same decision — a re-sent 芝士 re-recording it must not stack a second
-    # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
-    # and no dedup: pressing the button twice means it twice.
-    continuation = get_work_runner().continuation_for(topic_id)
-    key = action_key(continuation, "decision", decision) if continuation else None
-    if key is not None and not await idem.claim(
-        db, key, action="decision", scope_id=str(topic_id)
-    ):
-        prior = await idem.stored_result(db, key)
-        return ok(prior or {"skipped": True})
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=(
-            actor.handle
-            if actor.authenticated
-            else await TopicMemberService(db).resolve_agent_handle(
-                topic_id, room_id=place.room_id
-            )
-        ),
-        author_type=AuthorType.participant,
-        content=decision,
-        kind=BlockKind.decision,
-        refs=[str(topic_id)],
-    )
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    if key is not None:
-        await idem.record_result(db, key, out)
-    await db.commit()
-    await announce_stale(place.room_id, "decision")
-    return ok(out)
-
-
 def _parse_moment(raw: object) -> datetime | None:
     """一个可选的 ISO-8601 时刻；空串和缺席是一回事。"""
     if not isinstance(raw, str) or not raw.strip():
@@ -1372,7 +1322,7 @@ async def record_weekly(
     的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
     列 —— 它是这一条记录的属性，没有第二处会读它。
 
-    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去，和决策记录一样。
+    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -1383,7 +1333,7 @@ async def record_weekly(
     report = await canonicalize_refs(
         db, place.project_id, report, exclude_topic_id=place.room_id
     )
-    # 重发幂等 (④)，和决策记录同一个道理：一轮重新送达时，同一份正文是同一份
+    # 重发幂等 (④)：一轮重新送达时，同一份正文是同一份
     # 周报，不能垒出第二行。轮次之外（人在界面上点）没有 continuation，也就没有
     # 去重 —— 点两次就是两次。
     continuation = get_work_runner().continuation_for(topic_id)

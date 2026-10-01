@@ -1233,8 +1233,8 @@ class BlockRepository:
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind
     ) -> list[Block]:
-        """Project-wide blocks of a kind, newest first — e.g. the decision log
-        (kind=decision), each traceable to its source topic via refs (§7.1)."""
+        """Project-wide blocks of a kind, newest first — e.g. the weekly reports
+        (kind=weekly), each traceable to its source topic (§7.1)."""
         stmt = (
             select(Block)
             .where(Block.project_id == project_id, Block.kind == kind)
