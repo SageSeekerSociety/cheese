@@ -36,7 +36,6 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.tasks import get_task_pdf_draft_service
 from app.core.config import settings
-from app.domain.feature_stats import pricing
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from tests.integration.conftest import (
@@ -121,15 +120,11 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
 def fake_llm(api_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> _FakeLLM:
     """把模型的调用换成假的：路由其余部分（鉴权、库、模板行、个人额度）全真。"""
     llm = _FakeLLM()
-    service = TaskPdfDraftService(chat=llm)  # type: ignore[arg-type]
-    api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: service
     # 这个模型在网关上的单价：预览从发起人的个人额度里扣，没有单价就扣不了。
+    rates = {_FakeLLM.model: (1e-3, 2e-3, 1e-4, 1e-3)}
+    service = TaskPdfDraftService(chat=llm, rate_table=rates)  # type: ignore[arg-type]
+    api_client.app.dependency_overrides[get_task_pdf_draft_service] = lambda: service
     monkeypatch.setattr(settings, "llm_gateway_credit_usd", 0.01)
-
-    async def rates(*_args, **_kwargs):
-        return {_FakeLLM.model: (1e-3, 2e-3, 1e-4, 1e-3)}
-
-    monkeypatch.setattr(pricing, "model_rates", rates)
     try:
         yield llm
     finally:

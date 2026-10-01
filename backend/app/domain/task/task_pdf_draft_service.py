@@ -6,20 +6,23 @@ import pathlib
 import re
 import shutil
 import tempfile
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
 import pymupdf4llm
 
 from app.core.config import settings
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, QuotaExceededError, SystemBusyError
 from app.core.storage import (
     compute_file_hash,
     generate_storage_key,
     get_storage_backend,
 )
 from app.domain.gateway_chat import GatewayCallError, GatewayChat, Usage
-from app.domain.service_keys import KeySpec
+from app.domain.service_keys import KeySpec, service_key
+from app.domain.usage.personal import PersonalCredits, Rates
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,10 @@ def task_draft_key_spec() -> KeySpec:
     )
 
 
+RateTable = Mapping[str, tuple[float, float, float, float]]
+_NOT_OPEN = "从 PDF 生成草稿暂未开放，稍后再试。"
+
+
 class TaskPdfDraftService:
     """Generate task payload from a PDF document via the model on ``chat``.
 
@@ -66,11 +73,13 @@ class TaskPdfDraftService:
         self,
         *,
         chat: GatewayChat,
+        rate_table: RateTable | None = None,
         timeout_seconds: float | None = None,
         max_pages: int | None = None,
         max_concurrency: int | None = None,
     ) -> None:
         self._chat = chat
+        self._rate_table = rate_table
         self.spent = Usage()
         self.model = chat.model
         self._timeout_seconds = timeout_seconds or settings.task_draft_timeout_s
@@ -82,6 +91,54 @@ class TaskPdfDraftService:
             if max_concurrency is not None
             else settings.pdf_import_max_concurrency
         )
+
+    @classmethod
+    async def on_gateway(
+        cls, db: Any, rate_table: RateTable | None
+    ) -> "TaskPdfDraftService":
+        key = await service_key(db, task_draft_key_spec())
+        if key is None:
+            raise SystemBusyError(_NOT_OPEN)
+        return cls(
+            rate_table=rate_table,
+            chat=GatewayChat(
+                key,
+                settings.task_draft_model,
+                max_tokens=settings.task_draft_max_tokens,
+            ),
+        )
+
+    @asynccontextmanager
+    async def charged_to(self, db: Any, user_id: int) -> AsyncIterator[None]:
+        """Admit a preview the user asked for, then charge what it spent.
+
+        Every page the model answered was paid for, drafts or not; the charge
+        is committed on the way out so a preview that fails afterwards still
+        leaves it.
+        """
+        rates = Rates.of(self.model, self._rate_table)
+        if rates is None:
+            raise SystemBusyError(_NOT_OPEN)
+        credits = PersonalCredits(db)
+        balance = await credits.balance(user_id)
+        if balance.credits_remaining <= 0:
+            raise QuotaExceededError(balance.exhausted_message())
+        try:
+            yield
+        finally:
+            spent = self.spent
+            if spent.total_tokens:
+                await credits.charge(
+                    user_id,
+                    model=self.model,
+                    rates=rates,
+                    input_tokens=spent.prompt_tokens,
+                    output_tokens=spent.completion_tokens,
+                    cache_read_tokens=spent.cache_read_tokens,
+                    cache_write_tokens=spent.cache_write_tokens,
+                    kind="task_pdf_draft",
+                )
+            await db.commit()
 
     @staticmethod
     def pick_template(
