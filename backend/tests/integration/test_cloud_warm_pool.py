@@ -766,14 +766,19 @@ def test_failed_claim_stays_reserved_until_explicit_retry(warm_case, monkeypatch
     assert cloud.created == []
 
 
-def _failed_cleanup(machine_id):
+def _failed_cleanup(machine_id, error="delete HTTP None"):
     return WarmMachine(
         state="cleanup_failed",
         machine_id=machine_id,
         attempts=5,
-        error="delete HTTP None",
+        error=error,
         create_request={"hostname": f"warm-stale-{machine_id}"},
     )
+
+
+def _provider_still_has(cloud, *machine_ids):
+    for machine_id in machine_ids:
+        cloud.machines[machine_id] = {"id": machine_id, "status": "error"}
 
 
 def test_machines_that_failed_cleanup_do_not_hold_the_pool_empty(
@@ -789,6 +794,7 @@ def test_machines_that_failed_cleanup_do_not_hold_the_pool_empty(
             await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topics[0]), actor=actor
             )
+            _provider_still_has(cloud, 901, 902)
             session.add_all([_failed_cleanup(901), _failed_cleanup(902)])
             await session.commit()
             await WarmPoolService(session, cloud).sweep()
@@ -811,11 +817,52 @@ def test_a_pile_of_failed_cleanups_stops_replacement(warm_case, monkeypatch):
             await MachineService(session, cloud).ensure_topic_machine(
                 uuid.UUID(topics[0]), actor=actor
             )
+            _provider_still_has(cloud, 901, 902, 903)
             session.add_all([_failed_cleanup(n) for n in (901, 902, 903)])
             await session.commit()
             await WarmPoolService(session, cloud).sweep()
             states = (await session.scalars(select(WarmMachine.state))).all()
             assert "preparing" not in states
+
+    client.portal.call(lambda: run())
+
+
+def test_failed_cleanups_the_provider_has_since_dropped_stop_blocking_the_pool(
+    warm_case, monkeypatch
+):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            # The provider no longer knows 901-903; nothing is left to bill.
+            session.add_all([_failed_cleanup(n) for n in (901, 902, 903)])
+            # 904 was set aside by a person; it is not ours to settle.
+            session.add(
+                _failed_cleanup(
+                    904, error="Quarantined stale deletion: ownership unverified"
+                )
+            )
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            rows = {
+                row.machine_id: row.state
+                for row in (await session.scalars(select(WarmMachine))).all()
+                if row.machine_id in (901, 902, 903, 904)
+            }
+            assert rows == {
+                901: "deleted",
+                902: "deleted",
+                903: "deleted",
+                904: "cleanup_failed",
+            }
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert states.count("preparing") == 1
+            assert cloud.deleted == []
 
     client.portal.call(lambda: run())
 
