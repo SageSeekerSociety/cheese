@@ -45,6 +45,12 @@ Exact head 544ad50b RequiredCI run 36794781556/frontend job 110156034710 failed 
 
 `e2e/preview-lifecycle.mjs` mounts the formal owning component via `preview-lifecycle-fixture.ts`. Chromium 153.0.8010.12 observed same iframe/input/scroll/focus and one POST for known-version silent updates; a rejected v2 grant retained v1 with a visible explanation; explicit retry and manual refresh each performed another real form POST/navigation. Narrow 320px right-pane screenshots use actual Vuetify light/dark themes inside a fixture layout, not the full production WorkPanel. APIs are substituted, while the local content origin and HTTP navigation are real. This does not verify real JWT/cookie authorization, deployment, browser suspension, controlled runtime readiness, fixed instances or resource snapshots. Generated screenshots, JSON and PDF belong outside the product repository.
 
+## Unsupported-kind follow-up
+
+The independent 4bde9419 review archive `preview-unsupported-kind-4bde9419-review.zip` was verified at 27841 bytes, SHA256 `4abb3bd53c347b4fbd26159e171e64544e34b79be8a22721eaddf8a4537029c9`. A loaded app followed by `weights.bin` with null text and binary metadata left the old iframe visible without the new target or explanation. The owning regression failed before the fix, while the first-open binary control passed (1 failed / 1 passed / 34 skipped). The unsupported-kind branch now resets the frame host so the existing non-text state and that file's new-window address are visible; image and document dispatch are unchanged.
+
+The head-specific `preview-lifecycle-4bde9419.pdf` is published in the room. The reviewer inspected all three pages and found the light/dark 320px pane, input, retained-page error and retry readable. This report predates the unsupported-kind fix and is not browser evidence for that fix. Exact 4bde RequiredCI run 36799121062 succeeded; branch CI is not merge or deployment proof. Helper/hub/relay changes continue separately on `codex/preview-transport-rebuild` and are not part of this frontend PR.
+
 ## Ownership
 
 Starting main: d322374275756ffc081e5cc41eb0da3695026ee7. Docs PR2300 and its machine40 worktree are untouched. Open PR1413 owns ArtifactVersionPreview/ProjectArtifactView and office rendering; open PR1207 owns documentBytes/fileKind and office rendering. Both share frontend/api.ts; this checkpoint does not edit those paths. Right-hand panel positioning, tabs, scene coupling, source/download/history, content-domain authorization POST and iframe sandbox are retained.

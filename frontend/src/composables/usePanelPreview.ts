@@ -245,6 +245,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         // - 其它二进制（docx/xlsx 走 documentType 那份分支，这里指没认出来的）：
         //   没有 iframe 能显示它，停下。
         if (previewFile.value.content === null && !previewFile.value.too_large && !isImageArtifact.value) {
+          host.reset()
           previewUrl.value = null
           return
         }
