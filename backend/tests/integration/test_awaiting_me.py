@@ -17,6 +17,7 @@ from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
     post_project,
+    room_agent_headers,
     session_auth_headers,
 )
 from tests.turn_log import close_turn, open_turn
@@ -61,11 +62,12 @@ def _set_reporter(client, room: str, handle: str) -> None:
     client.portal.call(go)
 
 
-def _ask(client, room: str, handle: str) -> None:
+def _ask(client, room: str) -> None:
+    """芝士在这一轮里问出口的题 —— 用房间里那位队友自己的凭据。"""
     r = client.post(
         f"/topics/{room}/ask",
         json={"question": "预算按哪个口径统计", "options": ["按部门", "按项目"]},
-        headers=session_auth_headers(handle),
+        headers=room_agent_headers(client, room),
     )
     assert r.status_code == 200, r.text
 
@@ -117,7 +119,7 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(client):
         lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="alice")
     )
 
-    _ask(client, room, "alice")
+    _ask(client, room)
 
     (item,) = _mine(client, "alice")
     assert item["phrase"] == NeedsYou.awaiting_answer
@@ -135,7 +137,7 @@ def test_a_question_still_waits_on_its_person_after_the_turn_ends(client):
     turn = client.portal.call(
         lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="alice")
     )
-    _ask(client, room, "alice")
+    _ask(client, room)
     client.portal.call(lambda: close_turn(client.test_request_factory, turn))
 
     (item,) = _mine(client, "alice")
@@ -161,7 +163,7 @@ def test_the_newest_open_turn_decides_who_the_question_is_waiting_on(client):
         )
     )
 
-    _ask(client, room, "alice")
+    _ask(client, room)
 
     (item,) = _mine(client, "alice")
     assert item["reason"] == "asked"
@@ -175,7 +177,7 @@ def test_a_question_in_a_platform_turn_is_on_nobody_s_list(client):
         lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="system")
     )
 
-    _ask(client, room, "alice")
+    _ask(client, room)
 
     assert _mine(client, "alice") == []
 

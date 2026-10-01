@@ -97,7 +97,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30  # it waits for the image rebuild below (about 5–7 minutes)
     permissions:
       contents: write
       actions: write
@@ -136,4 +136,24 @@ jobs:
           gh release upload desktop-latest latest.json --clobber
           # okcheese.com serves these files from the frontend image (build.yml
           # copies the release in), so rebuild the images for it to carry this one.
+          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           gh workflow run build.yml --ref main
+          # A build started with this job's GITHUB_TOKEN raises no workflow_run
+          # event when it finishes, so deploy-dev, which deploys on that event,
+          # never shipped the image carrying these installers: the site kept
+          # the previous version until the next merge was built and deployed.
+          # Wait for the build here, then ask deploy-dev for an automatic
+          # release, which keeps every guard of the event-driven one.
+          run=""
+          for _ in $(seq 30); do
+            run=$(gh run list --workflow build.yml --event workflow_dispatch --branch main \
+              --json databaseId,createdAt --jq "[.[] | select(.createdAt >= \"$dispatched_at\")][-1].databaseId // empty")
+            [ -n "$run" ] && break
+            sleep 10
+          done
+          if [ -z "$run" ]; then
+            echo "::error::the image rebuild dispatched at $dispatched_at never appeared" >&2
+            exit 1
+          fi
+          gh run watch "$run" --exit-status --interval 30
+          gh workflow run deploy-dev.yml --ref main -f automatic=true

@@ -41,6 +41,21 @@ class InvalidCompletion(ValidationError):
         self.usage = usage
 
 
+class CompletionCallFailed(ValidationError):
+    def __init__(
+        self,
+        stage: Literal["http_status", "timeout", "transport"],
+        status_code: int | None = None,
+    ):
+        code: str = stage
+        if stage == "http_status" and status_code is not None:
+            # Only the numeric HTTP status is safe, never HTTP exception text.
+            code = f"{stage}:{status_code}" if 100 <= status_code <= 599 else stage
+        super().__init__(f"文档模型调用失败 [doc_ai:{code}]")
+        self.stage = stage
+        self.status_code = status_code
+
+
 async def complete(
     lease: Lease,
     *,
@@ -61,28 +76,35 @@ async def complete(
         "offset_unit": "utf8-bytes",
     }
     identity = f"doc-ai:{lease.request_id}:{lease.generation}"
-    async with httpx.AsyncClient(timeout=80, transport=transport) as client:
-        response = await client.post(
-            f"{base.rstrip('/')}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "X-Request-ID": identity,
-                "Idempotency-Key": identity,
-            },
-            json={
-                "model": lease.binding["wire_model"],
-                "stream": False,
-                "max_tokens": 4096,
-                "messages": [
-                    {"role": "system", "content": instruction},
-                    {
-                        "role": "user",
-                        "content": json.dumps(context, ensure_ascii=False),
-                    },
-                ],
-            },
-        )
-        response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=80, transport=transport) as client:
+            response = await client.post(
+                f"{base.rstrip('/')}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "X-Request-ID": identity,
+                    "Idempotency-Key": identity,
+                },
+                json={
+                    "model": lease.binding["wire_model"],
+                    "stream": False,
+                    "max_tokens": 4096,
+                    "messages": [
+                        {"role": "system", "content": instruction},
+                        {
+                            "role": "user",
+                            "content": json.dumps(context, ensure_ascii=False),
+                        },
+                    ],
+                },
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise CompletionCallFailed("http_status", exc.response.status_code) from None
+    except httpx.TimeoutException:
+        raise CompletionCallFailed("timeout") from None
+    except httpx.RequestError:
+        raise CompletionCallFailed("transport") from None
     usage = None
     stage: CompletionStage = "response_json"
     try:

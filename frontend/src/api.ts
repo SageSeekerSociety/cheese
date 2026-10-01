@@ -1894,14 +1894,6 @@ export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
 }
 
-// 选项问题 (cheese_ask): one-click answer.
-export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
-  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
-    method: 'POST',
-    body: JSON.stringify({ option, author }),
-  })
-}
-
 // 叫芝士现在就读它还没读到的消息（一轮失败之后的「重试」）。不发新消息 —— 那些
 // 消息已经在时间线上了，补一条一模一样的只会让人分不清哪条是真的。
 // `started` 为 false 时说明这一下没必要（房间已经在干活，或者没有待读的东西）。

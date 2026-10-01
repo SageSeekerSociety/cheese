@@ -29,6 +29,7 @@ from tests.integration.conftest import (
     join_project_team,
     post_message,
     post_project,
+    room_agent_headers,
     session_auth_headers,
 )
 from tests.turn_log import close_turn, open_turn
@@ -313,7 +314,7 @@ def test_a_question_with_no_open_turn_waits_on_whoever_summoned_the_agent(client
     r = client.post(
         f"/topics/{tid}/ask",
         json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
-        headers=session_auth_headers("alice"),
+        headers=room_agent_headers(client, tid),
     )
     assert r.status_code == 200, r.text
 
@@ -329,7 +330,7 @@ def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
     r = client.post(
         f"/topics/{tid}/ask",
         json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
-        headers=session_auth_headers("alice"),
+        headers=room_agent_headers(client, tid),
     )
     assert r.status_code == 200, r.text
 
@@ -354,7 +355,7 @@ def test_a_question_awaits_only_whoever_started_the_turn(client):
     r = client.post(
         f"/topics/{tid}/ask",
         json={"question": "按哪个口径", "options": ["按部门", "按项目"]},
-        headers=session_auth_headers("alice"),
+        headers=room_agent_headers(client, tid),
     )
     assert r.status_code == 200, r.text
     # 芝士问完就收尾（`cheese_ask` 不等回答），这一轮随即关闭——题照样在等 bob。

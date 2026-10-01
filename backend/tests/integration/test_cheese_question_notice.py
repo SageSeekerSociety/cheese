@@ -21,9 +21,9 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
 from tests.conftest import seed_user
-from tests.delivery import delivery_headers
 from tests.integration.conftest import (
     post_project,
+    room_agent_headers,
     room_agent_seat,
     session_auth_headers,
 )
@@ -41,10 +41,11 @@ def _room(client) -> tuple[str, str]:
 
 
 def _ask(client, room: str, question: str = "预算按哪个口径统计") -> str:
+    """芝士在这一轮里问出口的题 —— 用房间里那位队友自己的凭据。"""
     r = client.post(
         f"/topics/{room}/ask",
         json={"question": question, "options": ["按部门", "按项目"]},
-        headers=session_auth_headers("alice"),
+        headers=room_agent_headers(client, room),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
@@ -54,20 +55,6 @@ def _open_turn(client, room: str, handle: str = "alice"):
     return client.portal.call(
         lambda: open_turn(client.test_request_factory, uuid.UUID(room), author=handle)
     )
-
-
-def _agent_ask(client, room: str) -> str:
-    """芝士自己问出口的那道题（`cheese_ask`）—— 署名是房间里的那个席位。"""
-    r = client.post(
-        f"/topics/{room}/ask",
-        json={
-            "question": "截图里那个灰底圆角块是哪一处？",
-            "options": ["左边那行", "顶上那行"],
-        },
-        headers=delivery_headers(client, room),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["id"]
 
 
 def _agent_says(client, room: str, text: str) -> None:
@@ -159,7 +146,7 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
     pid, room = _room(client)
     _open_turn(client, room)
 
-    _agent_ask(client, room)
+    _ask(client, room, "截图里那个灰底圆角块是哪一处？")
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
     _agent_says(client, room, "找到根因了，改完推上去了")
@@ -170,13 +157,18 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
 def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
     """这条只管芝士自己问的题：人问的题不会因为芝士在房间里说话而消失。
 
-    人问完那一句，要答的还是他；芝士在旁边干活不是他的回答。
+    人在房间里发起的选项问的是房间里的人；芝士在旁边干活不是他们的回答。
     """
     seed_user(client, "alice")
     pid, room = _room(client)
     _open_turn(client, room)
 
-    _ask(client, room)
+    r = client.post(
+        f"/topics/{room}/ask",
+        json={"question": "周会挪到周四行吗", "options": ["行", "不行"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
     _agent_says(client, room, "我先把能查的查了")
 
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
