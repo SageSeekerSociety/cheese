@@ -25,10 +25,9 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.domain.docs_site import library
+from app.domain.assistant import tools as personal_tools
 from app.domain.service_keys import KeySpec, gateway_base
 from app.domain.task.models import Task
-from app.domain.task.services import TaskService
 
 
 def key_spec() -> KeySpec:
@@ -135,38 +134,17 @@ def build(key: str) -> Agent[Deps, str]:
     @agent.tool
     async def my_tasks(ctx: RunContext[Deps]) -> list[dict]:
         """我参与的题：自己领的个人题，和所在团队领的团队题。含截止时间。"""
-        async with ctx.deps.sessions() as session:
-            tasks = await TaskService.of(session).list_joined(ctx.deps.user_id)
-        return [
-            {
-                "id": t.id,
-                "title": t.name,
-                "intro": t.intro,
-                "deadline": _when(t.deadline),
-                "ended": t.ended_at is not None,
-            }
-            for t in tasks
-        ]
+        return await personal_tools.my_tasks(ctx.deps.sessions, ctx.deps.user_id)
 
     @agent.tool_plain
     async def search_docs(query: str) -> list[dict] | str:
         """按关键词检索知是的使用文档（怎么领题、建项目、验收、额度……），返回相关的
         页、小节、链接和摘录。关键词检索，没命中就换个说法再试。"""
-        found = await library.search(query, dev=False)
-        if found is None:
-            return "文档暂时读不到。"
-        return [
-            {"title": f.title, "heading": f.heading, "url": f.url, "excerpt": f.excerpt}
-            for f in found
-        ]
+        return await personal_tools.search_docs(query)
 
     @agent.tool_plain
     async def read_doc(page: str) -> str:
         """读知是使用文档里的一页（search_docs 给出的 url），返回它的 Markdown 原文。"""
-        try:
-            text = await library.read_page(page, dev=False)
-        except (library.DevDocsForbidden, ValueError):
-            return "没有这一页。"
-        return text or "没有这一页。"
+        return await personal_tools.read_doc(page)
 
     return agent

@@ -62,6 +62,25 @@ class AssistantConversation(UuidPk, Timestamps, Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
+class AssistantGatewayKey(Timestamps, Base):
+    """A person's own virtual key on the gateway, and how far its spend has been
+    charged to them.
+
+    Every model call a person's 芝士 makes is made on this key, so what the
+    gateway records under it is exactly what that person asked for, priced the
+    way the gateway prices it (cache reads at the cache rate). ``usage_ckpt`` is
+    the cumulative spend already charged, in the shape a project's checkpoint
+    has (``agent.gateway.drain_new_usage``)."""
+
+    __tablename__ = "assistant_gateway_keys"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    usage_ckpt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
 class AssistantMessage(UuidPk, Timestamps, Base):
     __tablename__ = "assistant_messages"
     __table_args__ = (

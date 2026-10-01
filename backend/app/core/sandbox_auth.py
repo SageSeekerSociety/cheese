@@ -4,7 +4,9 @@ The sandbox container reaches the backend over the network (host.docker.internal
 so the cheese write-endpoints must NOT be open like the browser-facing ones. Each
 `cheese` call carries X-Cheese-Token; the gate lives in app.main.cheese_token_gate.
 
-Three token kinds (review R5):
+Three token kinds (review R5), and a fourth outside rooms altogether — the
+**personal credential** a person's 芝士 holds (below), which opens nothing the
+other three open:
 - **Scoped per-turn token** (the default, minted by the compute provider for each
   turn): an HMAC over {project, topic, exp, acting agent}. The gate verifies the
   signature AND
@@ -285,6 +287,77 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
         epoch=epoch,
         expires_at=datetime.fromtimestamp(expires, UTC),
     )
+
+
+# --- Personal credential --------------------------------------------------------
+#
+# A person's 芝士 runs on the session host like a room's does, and reaches the
+# platform for two things: the model, and the few tools that read what that
+# person may see. What it holds for that names a person and one of their
+# conversations, and nothing of any project: no project, room or agent claim that
+# a room's endpoint could match. Its own prefix and signing domain, as the
+# project credential's, make it no credential at all to every path that reads
+# the other kinds, and the paths that take it take nothing else.
+PERSONAL_CREDENTIAL_PREFIX = "cxpu_"
+_PERSONAL_CREDENTIAL_DOMAIN = "cxpu1"
+#: A session holds its credential for as long as it runs, and one idle for a few
+#: minutes exits; a week is far past any session's life.
+PERSONAL_CREDENTIAL_TTL_S = 7 * _DAY_S
+
+
+@dataclass(frozen=True)
+class PersonalClaims:
+    """What a VALID personal credential asserts: whose 芝士, in which
+    conversation. That the conversation is still that person's is the caller's
+    to check, against the database."""
+
+    user_id: int
+    conversation_id: str
+
+
+def mint_personal_credential(
+    *, user_id: int, conversation_id: str, ttl_s: int = PERSONAL_CREDENTIAL_TTL_S
+) -> str:
+    now = int(time.time())
+    payload = {"u": user_id, "c": conversation_id, "iat": now, "exp": now + ttl_s}
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    signature = _sign(f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
+    return f"{PERSONAL_CREDENTIAL_PREFIX}{body}.{signature}"
+
+
+def personal_claims(token: str) -> PersonalClaims | None:
+    """The claims of a well-formed, correctly-signed, unexpired personal
+    credential, else ``None`` — never an exception, for the same reason as
+    ``project_agent_claims``."""
+    if not token.startswith(PERSONAL_CREDENTIAL_PREFIX):
+        return None
+    try:
+        body, signature = token[len(PERSONAL_CREDENTIAL_PREFIX) :].split(".", 1)
+    except ValueError:
+        return None
+    expected = _sign(f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    user_id, conversation, expires = (
+        payload.get("u"),
+        payload.get("c"),
+        payload.get("exp"),
+    )
+    if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0:
+        return None
+    if not isinstance(conversation, str) or not conversation:
+        return None
+    if not isinstance(expires, int) or expires < time.time():
+        return None
+    return PersonalClaims(user_id=user_id, conversation_id=conversation)
 
 
 def is_global_sandbox_token(token: str) -> bool:
