@@ -53,7 +53,7 @@ class WorkingScreen(StubChannel):
             return
         self.prompts.append(prompt)
         self.last_prompt = prompt
-        self.starts(topic_id, session_id="s1")
+        self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
         self.started.set()
         task = asyncio.get_running_loop().create_task(self._answer(topic_id))
@@ -63,7 +63,7 @@ class WorkingScreen(StubChannel):
     async def _answer(self, topic_id: uuid.UUID) -> None:
         await self.release.wait()
         self.says(topic_id, "done")
-        self.stops(topic_id, "done", session_id="s1")
+        self.stops(topic_id, "done")
 
 
 def _said(message: dict) -> str:

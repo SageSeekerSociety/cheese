@@ -79,9 +79,9 @@ class QuietScreen(StubChannel):
         agent: str | None = None,
     ) -> None:
         del reply
-        self.starts(topic_id, session_id="s1")
+        self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
-        self.stops(topic_id, "ok", session_id="s1")
+        self.stops(topic_id, "ok")
 
 
 class FakeGateway:

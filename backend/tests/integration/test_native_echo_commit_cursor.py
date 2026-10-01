@@ -234,8 +234,18 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(
             receipts=chat.confirm_prompt_receipt,
         )
         injected = []
+        settlement_task = asyncio.current_task()
+        assert settlement_task is not None
 
         def fail_commit(session):
+            # Only this drain's receipt transaction is faulted. Background jobs
+            # commit on other tasks while the native fixture is running.
+            try:
+                current_task = asyncio.current_task()
+            except RuntimeError:
+                return
+            if current_task is not settlement_task:
+                return
             # Installed only around this drain. Reaction reads may have flushed
             # the effects already, so dirty membership cannot gate the fault.
             session.flush()

@@ -31,6 +31,7 @@ from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
     chat_ws_url,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -157,7 +158,9 @@ def test_http_answer_continues_original_native_executor(
         else:
             content = "先保留这个会话，等我回答。"
         with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
-            ws.send_json({"type": "message", "content": f"<@{asker}> " + content})
+            post_message(
+                client, str(topic), "alice", {"content": f"<@{asker}> " + content}
+            )
             observed = _until(
                 ws,
                 lambda frame: (
@@ -565,8 +568,11 @@ def test_http_answer_continues_original_native_executor(
                     with client.websocket_connect(
                         chat_ws_url(str(topic), "alice")
                     ) as ws:
-                        ws.send_json(
-                            {"type": "message", "content": f"<@{asker}> 普通追加消息"}
+                        post_message(
+                            client,
+                            str(topic),
+                            "alice",
+                            {"content": f"<@{asker}> 普通追加消息"},
                         )
                         return _until(ws, lambda frame: frame["type"] == "user_block")
 
