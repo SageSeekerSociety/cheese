@@ -94,7 +94,6 @@
     "editorjs-paragraph-with-alignment": "~3.0.0",
     "editorjs-parser": "^1.5.3",
     "editorjs-undo": "^2.0.28",
-    "eventsource": "^3.0.7",
     "exceljs": "4.4.0",
     "i18next": "^23.16.8",
     "jwt-decode": "^4.0.0",

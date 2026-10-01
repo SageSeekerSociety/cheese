@@ -69,7 +69,7 @@ const groups = computed(() => [
             :style="{ backgroundColor: avatarColor(member) }"
             >{{ avatarInitial(member) }}</span
           >
-          <CheeseAvatar :size="24" :name="t('publicSite.room.agent')" class="topic-avatar-ai" />
+          <CheeseAvatar :size="24" :name="t('publicSite.room.agent')" handle="cheese" class="topic-avatar-ai" />
         </span>
         <span class="topic-bar"><span :style="{ width: `${group.progress}%` }" /></span>
         <span class="topic-state" :class="{ 'topic-state-review': group.tone === 'review' }">{{ group.state }}</span>
@@ -165,7 +165,14 @@ const groups = computed(() => [
 .topic-avatar,
 .topic-avatar-ai {
   margin-left: -6px;
+}
+.topic-avatar {
   outline: 2px solid var(--surface);
+}
+/* 超椭圆外面套 outline 会画出一个方框：描边压在它自己的边上，约 2px。 */
+.topic-avatar-ai :deep(.cheese-avatar__tile) {
+  stroke: var(--surface);
+  stroke-width: 17px;
 }
 
 .topic-avatar {
@@ -175,7 +182,7 @@ const groups = computed(() => [
   font-size: 12px;
   font-weight: 600;
   color: var(--inverse-ink);
-  /* 人是圆的，旁边的 AI 队友是 CheeseAvatar 的圆角方块。 */
+  /* 人是圆的，旁边的 AI 队友是 CheeseAvatar 的超椭圆。 */
   border-radius: var(--radius-pill);
   align-items: center;
   justify-content: center;

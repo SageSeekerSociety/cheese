@@ -61,6 +61,10 @@ class ClaudeCodeChannel:
         self.provisions_machine = channel.provisions_machine
         self.deferred_work = channel.deferred_work
 
+    @property
+    def hands_here(self) -> bool:
+        return self.channel.hands_here
+
     def available(self) -> bool:
         return self.channel.available()
 

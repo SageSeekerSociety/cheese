@@ -166,7 +166,7 @@ def test_only_what_a_participant_said_counts_as_pending_input():
     assert prompt._is_pending_input(_block(kind=BlockKind.message))
     assert prompt._is_pending_input(_block(kind=BlockKind.attachment))
     assert not prompt._is_pending_input(_block(kind=BlockKind.doc))
-    assert not prompt._is_pending_input(_block(kind=BlockKind.decision))
+    assert not prompt._is_pending_input(_block(kind=BlockKind.weekly))
     assert not prompt._is_pending_input(
         _block(author_type=AuthorType.platform, kind=BlockKind.message)
     )
@@ -277,7 +277,7 @@ def test_a_compaction_that_came_back_says_it_carries_on():
 async def test_the_overview_outside_the_overview_room_is_the_standalone_doc():
     """别的房间只注入 ① —— 房间自己的实况文档不进总览。
 
-    传 ``session=None`` 是故意的：非总览房间那条路根本走不到取 ②~⑤ 的那一步，所以
+    传 ``session=None`` 是故意的：非总览房间那条路根本走不到取 ②~④ 的那一步，所以
     这也顺手钉住了「它只在那一个分支里碰会话」。取数那条路（总览房间）由集成测试
     覆盖，那里才有真的 Project 与 topic 行。
     """

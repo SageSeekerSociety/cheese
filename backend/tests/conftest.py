@@ -337,6 +337,8 @@ class StubChannel:
     provisions_machine = False
     deferred_work = False
     builds_model_env = False
+    #: A Claude Code session: on the session host, its tools reaching elsewhere.
+    hands_here = False
     #: The id a new session's runner is started with (``--session-id``): known
     #: before the process has written anything, which is why the runtime can
     #: announce it the moment the session is opened.
@@ -843,6 +845,19 @@ def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
+    """A launched session keeps its temporary files under the system's
+    `/var/tmp`, which outlives the test that launched it. Each test gets a
+    directory of its own instead; the one test that removes a room through the
+    shipped cleanup program puts the real one back."""
+    from app.domain.agent import machine_launcher
+
+    monkeypatch.setattr(
+        machine_launcher, "SESSION_TMP", str(tmp_path_factory.mktemp("var-tmp"))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_background_doc_nudge(monkeypatch) -> None:
     """轮末的文档提醒（`topic/doc_nudge.py`）在后台睡几秒再起一轮：测试里它要么
     赶上一个已经关掉的事件循环，要么真的替某个测试房间起一轮没人要的 agent 轮次。
@@ -1138,7 +1153,7 @@ def client(
         with TestClient(app) as c:
             # The cheese write-API is token-gated (app.main.cheese_token_gate); send
             # the secret on every test request so contract tests exercising those
-            # endpoints (doc/split/decision/...) aren't rejected with 401.
+            # endpoints (doc/split/weekly/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]

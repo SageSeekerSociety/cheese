@@ -11,6 +11,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -370,12 +371,19 @@ onMounted(load)
                    `aria-hidden` 而不是把属性透传给 `UserAvatar` —— 它的根是组件，
                    属性不保证落到底层的 `<img>`/`<div>` 上。 -->
                   <span class="am__pfp" aria-hidden="true">
+                    <CheeseAvatar
+                      v-if="row.isAgent"
+                      class="am__avatar"
+                      :name="row.primary"
+                      :handle="row.handle"
+                      :size="20"
+                    />
                     <UserAvatar
+                      v-else
                       class="am__avatar"
                       :name="row.handle"
                       :avatar="avatarUrl(row.avatarId)"
                       :size="20"
-                      :kind="row.isAgent ? 'agent' : 'person'"
                     />
                   </span>
                   <span class="am__name-main">{{ row.primary }}</span>
@@ -438,12 +446,19 @@ onMounted(load)
               <td class="am__cell" data-card="primary" :title="row.label">
                 <span class="am__who">
                   <span class="am__pfp" aria-hidden="true">
+                    <CheeseAvatar
+                      v-if="row.isAgent"
+                      class="am__avatar"
+                      :name="row.primary"
+                      :handle="row.handle"
+                      :size="20"
+                    />
                     <UserAvatar
+                      v-else
                       class="am__avatar"
                       :name="row.handle"
                       :avatar="avatarUrl(row.avatarId)"
                       :size="20"
-                      :kind="row.isAgent ? 'agent' : 'person'"
                     />
                   </span>
                   <span class="am__name-main">{{ row.primary }}</span>

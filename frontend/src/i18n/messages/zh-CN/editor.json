@@ -1,5 +1,6 @@
 {
   "image": {
     "tooltip": "插入图片"
-  }
+  },
+  "renderError": "渲染错误: {text}"
 }

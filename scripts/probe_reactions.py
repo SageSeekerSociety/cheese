@@ -127,36 +127,23 @@ async def main() -> None:
         await pg.wait_for_load_state("networkidle")
         await pg.wait_for_timeout(800)
 
-        # Post two messages over the chat WS from the page itself. The token is
-        # passed IN rather than read from localStorage: an empty token is not an
-        # error, it is a refusal 4 seconds later with no reason attached, and
-        # that silence is exactly how this probe broke once.
+        # Post two messages from the page itself, the way the app does. The
+        # token is passed IN rather than read from localStorage: an empty token
+        # is not an error, it is a refusal with no reason attached, and that
+        # silence is exactly how this probe broke once.
         post = """
         async ({ topicId, content, token }) => {
           // window.__cxApi.base, not a hand-written path: the gateway strips
           // exactly one `/api`, so the base the app dials with is spelled once,
           // in frontend/src/api.ts — read it, don't reconstruct it here.
-          const ws = new WebSocket(
-            `ws://${location.host}${window.__cxApi.base}`
-            + `/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);
-          await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-          ws.send(JSON.stringify({ type: 'message', content, summon: false }));
-          const out = await new Promise((res) => {
-            const t = setTimeout(() => res({ error: 'timeout' }), 4000);
-            ws.onmessage = (ev) => {
-              const f = JSON.parse(ev.data);
-              // A refused socket answers one error frame and closes; surface the
-              // code instead of letting it look like a timeout.
-              if (f.type === 'error') {
-                clearTimeout(t); res({ error: f.code || f.message });
-              }
-              if (f.type === 'user_block' && f.block?.content === content) {
-                clearTimeout(t); res({ id: f.block.id });
-              }
-            };
+          const r = await fetch(`${window.__cxApi.base}/topics/${topicId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ content, request_id: crypto.randomUUID() }),
           });
-          ws.close();
-          return out;
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) return { error: body?.error?.name || `HTTP ${r.status}` };
+          return { id: body.data.id };
         }
         """
 
@@ -165,7 +152,7 @@ async def main() -> None:
                 post, {"topicId": topic["id"], "content": content, "token": token}
             )
             if out.get("error"):
-                raise SystemExit(f"chat WS refused {content!r}: {out['error']}")
+                raise SystemExit(f"message refused {content!r}: {out['error']}")
             return out["id"]
 
         m1 = await seed("这个方案大家觉得怎么样？", tok1)

@@ -726,7 +726,7 @@ export interface ProjectSearchHits {
     id: string
     room_id: string
     room_title: string
-    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'decision' | 'weekly'
+    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
     author: string
     created_at: string
     /** 说在某件活的卡片里，而不是房间自己的对话里。 */
@@ -752,7 +752,7 @@ export async function searchProject(
 
 /**
  * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
- * `decision`、`weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
+ * `weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
  */
 export async function searchProjectCounted(
   projectId: string,
@@ -1376,83 +1376,6 @@ export function taskAttachmentRawUrl(taskId: number, attachmentId: number): stri
   return `${BASE}/tasks/${taskId}/attachments/${attachmentId}/download`
 }
 
-export interface Routine {
-  id: string
-  project_id: string
-  topic_id: string
-  title: string
-  instructions: string
-  context_scope: string
-  output_dir: string
-  trigger: 'schedule' | 'library_file_added' | 'task_closed' | 'card_accepted'
-  trigger_text: string
-  spec: Record<string, unknown>
-  timezone: string
-  state: 'draft' | 'active' | 'paused'
-  agent_handle: string
-  owner_handle: string
-  proposed_by: string
-  confirmed_by: string | null
-  confirmed_at: string | null
-  next_run_at: string | null
-  revision: number
-  created_at: string
-  updated_at: string
-}
-
-export interface RoutineRun {
-  id: string
-  routine_id: string
-  trigger_detail: string
-  routine_revision: number
-  scheduled_for: string | null
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
-  summary: string
-  outputs: string[]
-  error: string
-  created_at: string
-  started_at: string | null
-  finished_at: string | null
-}
-
-export type RoutineInput = Pick<
-  Routine,
-  'title' | 'instructions' | 'context_scope' | 'output_dir' | 'trigger' | 'spec' | 'timezone'
->
-
-export function listProjectRoutines(projectId: string): Promise<ListPayload<Routine>> {
-  return request<ListPayload<Routine>>(`/projects/${encodeURIComponent(projectId)}/routines`)
-}
-
-export function getRoutine(id: string): Promise<Routine & { runs: RoutineRun[] }> {
-  return request<Routine & { runs: RoutineRun[] }>(`/routines/${encodeURIComponent(id)}`)
-}
-
-export function createRoutine(topicId: string, body: RoutineInput): Promise<Routine> {
-  return request<Routine>(`/topics/${encodeURIComponent(topicId)}/routines`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function updateRoutine(id: string, body: Partial<RoutineInput>): Promise<Routine> {
-  return request<Routine>(`/routines/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  })
-}
-
-export function routineAction(
-  id: string,
-  action: 'confirm' | 'pause' | 'resume' | 'run-now'
-): Promise<Routine | RoutineRun> {
-  return request<Routine | RoutineRun>(`/routines/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
-}
-
-export function deleteRoutine(id: string): Promise<{ deleted: string }> {
-  return request<{ deleted: string }>(`/routines/${encodeURIComponent(id)}`, { method: 'DELETE' })
-}
-
 export interface Integration {
   id: string
   provider: 'mail' | 'feishu'
@@ -1911,7 +1834,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~⑤, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -1966,12 +1889,6 @@ export function addComment(
     method: 'POST',
     body: JSON.stringify({ content, author, anchor, quote }),
   })
-}
-
-// 决策记录 (spec §7.1): the project's decision log. Each entry is a Block whose
-// `topic_id` points back to the source topic where the decision was made.
-export function getProjectDecisions(projectId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/decisions`)
 }
 
 // 周报集 (spec §7.1): the project's weekly reports, newest first. Each Block
@@ -3449,8 +3366,7 @@ export function acceptFeedbackProposal(
 export function chatWsUrl(topicId: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   // Browsers can't set an Authorization header on a WebSocket, so the session
-  // token rides as ?token= (the backend pins authorship from it, ignoring any
-  // per-message `author` the client sends).
+  // token rides as ?token=. The socket only carries what lands in the room.
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
   // BASE, not a hand-written '/api': the gateway strips exactly one '/api', so a

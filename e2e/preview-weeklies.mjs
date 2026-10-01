@@ -153,7 +153,7 @@ await shot('01-weeklies')
 
 // 空态：没有周报时它到底说了什么。
 state.weeklies = []
-await p.goto(`${BASE}/projects/${PID}/docs/decisions`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+await p.goto(`${BASE}/projects/${PID}/docs/charter`, { waitUntil: 'domcontentloaded', timeout: 60000 })
 await p.goto(`${BASE}/projects/${PID}/docs/weeklies`, { waitUntil: 'domcontentloaded', timeout: 60000 })
 await p.getByText('暂无周报').waitFor({ timeout: 30000 })
 await shot('02-empty')

@@ -15,7 +15,7 @@ Five actions, five tests:
 
   1. 发消息      — the resumed turn re-narrating must not post a second copy
   2. 拆子话题    — must not spawn a second 分身 on the same brief
-  3. 记决策      — must not stack a second 决策记录 row
+  3. 记周报      — must not stack a second 周报 row
   4. 钉里程碑    — must not pin the same milestone twice
   5. 开 PR       — must not open a second PR / file a second card
 
@@ -241,16 +241,16 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     assert second.json()["data"]["id"] == first.json()["data"]["id"]
 
 
-# --- 3. 记决策 ---------------------------------------------------------------
+# --- 3. 记周报 ---------------------------------------------------------------
 
 
-def test_decision_is_recorded_once(client, in_a_turn):
+def test_weekly_is_recorded_once(client, in_a_turn):
     pid = _project(client)
     tid = _topic(client, pid)
-    body = {"decision": "用 item-based CF"}
+    body = {"body": "这周把分页接口做完了"}
 
-    assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
-    assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
+    assert client.post(f"/topics/{tid}/weekly", json=body).status_code == 200
+    assert client.post(f"/topics/{tid}/weekly", json=body).status_code == 200
 
     rows = client.portal.call(
         lambda: _count(
@@ -259,11 +259,11 @@ def test_decision_is_recorded_once(client, in_a_turn):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.decision,
+                Block.kind == BlockKind.weekly,
             ),
         )
     )
-    assert rows == 1, "重发把同一条决策记了两遍"
+    assert rows == 1, "重发把同一份周报记了两遍"
 
 
 # --- 4. 钉里程碑 -------------------------------------------------------------
@@ -335,7 +335,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
 def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     """Proves the three endpoint tests above are not vacuous, and states the
     rule deliberately: outside an automatic turn there is no continuation and
-    no dedup. A human pressing 记决策 twice means it twice — the risk this whole
+    no dedup. A human pressing 记周报 twice means it twice — the risk this whole
     mechanism exists for is created by 自动重发, not by people."""
     runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: None)
@@ -350,9 +350,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
 
     for _ in range(2):
         assert (
-            client.post(
-                f"/topics/{tid}/decision", json={"decision": "同一条"}
-            ).status_code
+            client.post(f"/topics/{tid}/weekly", json={"body": "同一份"}).status_code
             == 200
         )
         assert (
@@ -377,12 +375,12 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
             == 200
         )
 
-    decisions = client.portal.call(
+    weeklies = client.portal.call(
         lambda: _count(
             client.test_request_factory,
             select(func.count())
             .select_from(Block)
-            .where(Block.topic_id == uuid.UUID(tid), Block.kind == BlockKind.decision),
+            .where(Block.topic_id == uuid.UUID(tid), Block.kind == BlockKind.weekly),
         )
     )
     milestones = client.portal.call(
@@ -401,7 +399,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
             .where(Task.room_id == uuid.UUID(tid)),
         )
     )
-    assert (decisions, milestones, children) == (2, 2, 2)
+    assert (weeklies, milestones, children) == (2, 2, 2)
 
 
 # --- the mechanism itself ----------------------------------------------------
@@ -413,14 +411,14 @@ def test_the_same_key_can_only_be_claimed_once(client):
     the DB row, not anything held in memory."""
     from app.domain.idempotency import store as idem
 
-    key = action_key(CONTINUATION, "decision", "同一件事")
+    key = action_key(CONTINUATION, "weekly", "同一件事")
 
     async def _claims() -> tuple[bool, bool]:
         async with client.test_request_factory() as s1:
-            first = await idem.claim(s1, key, action="decision", scope_id="t")
+            first = await idem.claim(s1, key, action="weekly", scope_id="t")
             await s1.commit()
         async with client.test_request_factory() as s2:
-            second = await idem.claim(s2, key, action="decision", scope_id="t")
+            second = await idem.claim(s2, key, action="weekly", scope_id="t")
             await s2.commit()
         return first, second
 

@@ -150,28 +150,95 @@ export function createLiveRefBadges(opts: {
 
 export const commentMarkKey = new PluginKey('cheeseCommentMarks')
 
+export function mappedCommentQuoteState(doc: PMNode, mark: Decoration): 'unique' | 'missing' | 'ambiguous' {
+  const $from = doc.resolve(mark.from)
+  if (!$from.depth || typeof mark.spec.quote !== 'string') return 'missing'
+  const result = commentQuoteRanges($from.node(1), $from.before(1), mark.spec.quote)
+  if (result.status !== 'unique') return result.status
+  // A new unique occurrence elsewhere is not the original mapped selection.
+  return result.ranges.length === 1 && result.ranges[0].from === mark.from && result.ranges[0].to === mark.to
+    ? 'unique'
+    : 'missing'
+}
+
+export function commentQuoteRanges(
+  node: PMNode,
+  offset: number,
+  quote: string
+): {
+  status: 'unique' | 'missing' | 'ambiguous'
+  ranges: { from: number; to: number }[]
+} {
+  if (!quote) return { status: 'missing', ranges: [] }
+  const runs: { text: string; positions: number[] }[] = []
+  function textblock(block: PMNode, contentStart: number) {
+    let text = ''
+    const positions: number[] = []
+    block.descendants((child, pos) => {
+      if (child.isText) {
+        text += child.text ?? ''
+        for (let i = 0; i < (child.text?.length ?? 0); i++) positions.push(contentStart + pos + i)
+      } else if (child.isLeaf) {
+        text += '\u0000'
+        positions.push(-1)
+      }
+    })
+    runs.push({ text, positions })
+  }
+  if (node.isTextblock) textblock(node, offset + 1)
+  else
+    node.descendants((child, pos) => {
+      if (!child.isTextblock) return
+      textblock(child, offset + pos + 2)
+      return false
+    })
+  const matches: { from: number; to: number }[][] = []
+  for (const run of runs) {
+    for (let at = run.text.indexOf(quote); at >= 0; at = run.text.indexOf(quote, at + 1)) {
+      const positions = run.positions.slice(at, at + quote.length)
+      if (positions.some((pos) => pos < 0)) continue
+      const ranges: { from: number; to: number }[] = []
+      for (const pos of positions) {
+        const last = ranges[ranges.length - 1]
+        if (last?.to === pos) last.to++
+        else ranges.push({ from: pos, to: pos + 1 })
+      }
+      matches.push(ranges)
+    }
+  }
+  return matches.length === 1
+    ? { status: 'unique', ranges: matches[0] }
+    : { status: matches.length ? 'ambiguous' : 'missing', ranges: [] }
+}
+
 function commentMarkDecorations(doc: PMNode, index: Map<number, { id: string; quote: string }[]>): DecorationSet {
   const decos: Decoration[] = []
   doc.forEach((node, offset, index_) => {
     const anchored = index.get(index_)
     if (!anchored?.length) return
-    const text = node.textContent
     for (const c of anchored) {
-      const at = text.indexOf(c.quote)
-      if (at < 0) continue
-      // +1: past the block's opening token into its text content.
-      decos.push(
-        Decoration.inline(offset + 1 + at, offset + 1 + at + c.quote.length, {
-          class: 'comment-anchor',
-          'data-comment': c.id,
-        })
-      )
+      for (const range of commentQuoteRanges(node, offset, c.quote).ranges) {
+        decos.push(
+          Decoration.inline(
+            range.from,
+            range.to,
+            {
+              class: 'comment-anchor',
+              'data-comment': c.id,
+            },
+            { commentId: c.id, quote: c.quote }
+          )
+        )
+      }
     }
   })
   return DecorationSet.create(doc, decos)
 }
 
-export function createCommentMarks(opts: { index: () => Map<number, { id: string; quote: string }[]> }): Extension {
+export function createCommentMarks(opts: {
+  index: () => Map<number, { id: string; quote: string }[]>
+  openId?: () => string | null
+}): Extension {
   return TiptapExtension.create({
     name: 'cheeseCommentMarks',
     addProseMirrorPlugins() {
@@ -181,13 +248,31 @@ export function createCommentMarks(opts: { index: () => Map<number, { id: string
           state: {
             init: (_cfg, state) => commentMarkDecorations(state.doc, opts.index()),
             apply: (tr, old) => {
+              if (tr.getMeta(commentMarkKey) === 'active-only') return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
               if (tr.getMeta(commentMarkKey)) return commentMarkDecorations(tr.doc, opts.index())
               return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
             },
           },
           props: {
             decorations(state) {
-              return this.getState(state)
+              const marks = this.getState(state) as DecorationSet
+              return DecorationSet.create(
+                state.doc,
+                marks
+                  .find()
+                  .filter((mark) => mappedCommentQuoteState(state.doc, mark) === 'unique')
+                  .map((mark) =>
+                    Decoration.inline(
+                      mark.from,
+                      mark.to,
+                      {
+                        class: mark.spec.commentId === opts.openId?.() ? 'comment-anchor is-active' : 'comment-anchor',
+                        'data-comment': mark.spec.commentId,
+                      },
+                      mark.spec
+                    )
+                  )
+              )
             },
           },
         }),

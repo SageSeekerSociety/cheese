@@ -58,7 +58,7 @@ vi.mock('@/api', async () => {
   }
 })
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshProjects: vi.fn(), refreshMembers: vi.fn() }),
+  useWorkspaceStore: () => ({ refreshProjects: vi.fn(), refreshMembers: vi.fn(), projects: [] }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 vi.mock('vue-router', async () => ({
@@ -166,7 +166,7 @@ describe('English settings copy', () => {
     await screen.findByText('No members can take it over')
     await fireEvent.update(screen.getByLabelText('Full username or email'), 'bob')
     await fireEvent.click(await screen.findByText('Bob', {}, { timeout: 2000 }))
-    await screen.findByText(/isn't on this project's team/)
+    await screen.findByText(/The whole project moves to/)
     await fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
     await screen.findByRole('button', { name: 'Confirm transfer' })
     expectNoChinese()
@@ -174,7 +174,13 @@ describe('English settings copy', () => {
 
   it('the work computer form, with a custom cloud size', async () => {
     render(ComputeChoiceForm, {
-      props: { cloudAvailable: true, devices: [{ device_id: 'd1', name: 'Lab box', online: true }] as never },
+      props: {
+        cloudAvailable: true,
+        devices: [{ device_id: 'd1', name: 'Lab box', online: true }] as never,
+        // The real "not asked yet" state: no range has been read, so the form
+        // shows no range numbers at all.
+        supply: null,
+      },
       ...mountOpts(),
     })
     await fireEvent.input(screen.getByLabelText('Custom CPU, memory and disk'), { target: { checked: true } })

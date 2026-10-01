@@ -158,8 +158,9 @@
     "name": "项目名称",
     "intent": "你打算做什么（可选）",
     "intentExample": "例如：帮我把这学期的课程材料整理成一份大纲",
-    "team": "所属团队",
-    "personalTeam": "个人",
+    "team": "归属",
+    "ownHint": "你名下，可以另外邀请人",
+    "teamHint": "团队的 {n} 位成员会自动加入",
     "teamsEmpty": "暂无可用团队，请先创建或加入团队",
     "teamsFailed": "团队列表加载失败",
     "forge": "代码仓库",
@@ -179,6 +180,7 @@
     "projects": "项目数量：当前未设置上限",
     "concurrent": "工作电脑按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
     "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
+    "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",
     "retry": "重试",
     "loading": "正在加载资源限制…"
@@ -287,7 +289,6 @@
         "due": "截止 {date}",
         "noDue": "日期待定"
       },
-      "decisionFrom": "来自「{topic}」",
       "failed": "无法加载这部分内容"
     },
     "accept": {
@@ -373,7 +374,6 @@
       },
       "action": {
         "doc": "查看文档",
-        "decision": "查看决策记录",
         "split": "查看任务",
         "undo": "撤销",
         "milestone": "查看日历",
@@ -432,7 +432,19 @@
       "running": "进行中"
     },
     "checklist": {
-      "updatedAt": "清单更新于 {time}"
+      "updatedAt": "清单更新于 {time}",
+      "compose": "发清单",
+      "newTitle": "新清单",
+      "post": "发送",
+      "stepsLabel": "步骤",
+      "stepsHint": "一行一步",
+      "tooManySteps": "最多 {max} 步",
+      "stepTooLong": "每步最多 {max} 字",
+      "saveFailed": "清单保存失败",
+      "advance": "{step}：{status}",
+      "statusPending": "未开始",
+      "statusInProgress": "进行中",
+      "statusCompleted": "已完成"
     },
     "backToChat": "返回对话",
     "unselected": "选择一个话题",
@@ -509,7 +521,8 @@
       "overview": "总览",
       "site": "现场",
       "changes": "改动",
-      "preview": "预览"
+      "preview": "预览",
+      "routines": "定时与触发"
     },
     "preview": {
       "fullscreenFailed": "无法进入全屏，请在新标签页打开",
@@ -766,9 +779,18 @@
       "write": "写评论",
       "placeholder": "输入评论…",
       "keyHint": "Enter 发送，Shift+Enter 换行",
-      "cancel": "取消",
       "locate": "定位到该段",
-      "anchorChanged": "原段落已改动"
+      "anchorChanged": "原段落已改动",
+      "anchorAmbiguous": "这段引用出现多次，无法确定原选区",
+      "closePanel": "关闭评论栏",
+      "resize": "调整评论栏宽度",
+      "waitForSend": "评论发送中，请等待结果",
+      "closeDraft": "关闭输入",
+      "discardDraft": "丢弃草稿",
+      "resumeDraft": "继续草稿",
+      "unavailable": "当前宿主未提供评论发送接口",
+      "showMore": "展开全文",
+      "showLess": "收起全文"
     },
     "chat": {
       "pickTopic": "选择一个话题开始对话",
@@ -875,7 +897,17 @@
       "uploadFailed": "文件上传失败",
       "addFailed": "添加文件失败"
     },
-    "defaultAgentName": "芝士"
+    "defaultAgentName": "芝士",
+    "reminder": {
+      "open": "提醒我",
+      "title": "提醒我",
+      "when": "时间",
+      "content": "内容",
+      "submit": "设置提醒",
+      "inPast": "这个时间已经过去",
+      "failed": "设置提醒失败",
+      "set": "将在 {when} 提醒你"
+    }
   },
   "board": {
     "column": {
@@ -1026,7 +1058,7 @@
     "cancel": "取消",
     "confirmRemove": "移出",
     "inviteTitle": "邀请外部成员",
-    "inviteHint": "外部成员是团队以外、只参与这个项目的人。对方接受邀请后才会加入，只能看到这个项目",
+    "inviteHint": "邀请只参与这个项目的人。对方接受邀请后才会加入，只能看到这个项目",
     "inviteLabel": "用户名或邮箱",
     "invitePlaceholder": "输入完整的用户名或邮箱",
     "notFound": "找不到这个用户名或邮箱",
@@ -1038,7 +1070,7 @@
   },
   "external": {
     "tag": "外部",
-    "tagHint": "团队以外的成员，只参与这个项目"
+    "tagHint": "只参与这个项目的成员"
   },
   "mcp": {
     "title": "MCP 服务器",
@@ -1418,9 +1450,21 @@
     "cores": "CPU 核",
     "memory": "内存 GB",
     "disk": "磁盘 GB",
-    "cloudHint": "首次运行时分配，计入团队云额度；超出供应范围时会提示调整",
-    "deviceHint": "设备已加入团队，无需再次授权；离线时需要等待设备上线",
+    "coresUnit": "核",
+    "memoryLabel": "内存",
+    "diskLabel": "磁盘",
+    "noValue": "当前没有可选值",
+    "outOfRange": "超出可选范围",
+    "noRangeFor": "{label}暂无可选值",
+    "supplyLoading": "正在查询云端当前可选范围…",
+    "supplyRange": "可选范围：{range}",
+    "supplyUnknown": "暂时查不到云端可选范围（{reason}）。可以先保存，开机时由云端校验。",
+    "cloudHint": "首次运行时分配，计入云端额度。云端不报告剩余容量，范围内的配置开机时仍可能创建失败。",
+    "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
+  },
+  "cloudSupply": {
+    "requestFailed": "请求失败"
   },
   "projectTransfer": {
     "lookupFailed": "没有找到这个账号",
@@ -1433,9 +1477,10 @@
     "cancel": "取消",
     "intro": "项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出",
     "noCandidates": "暂无可以接手的成员",
-    "lookupIntro": "团队里没人可交？直接找一个人：",
+    "lookupTeam": "团队里没人可交？直接找一个人：",
+    "lookupOwn": "输入接手人的用户名或邮箱：",
     "lookupLabel": "用户名或邮箱（要写完整）",
-    "movingOut": "{'@'}{handle} 不在这个项目的团队里：转让会把项目整个搬到 TA 名下。转完你就不再是项目成员，也看不到它的任何话题。（项目属于某个共享团队时只能转给团队里的人，后端会拒。）"
+    "movingOut": "转让会把项目整个搬到 {'@'}{handle} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
   },
   "skills": {
     "edit": "修改",
@@ -1532,7 +1577,8 @@
     "failed": "图片加载失败"
   },
   "agentAvatar": {
-    "defaultName": "芝士"
+    "defaultName": "芝士",
+    "live": "{name}：{status}，点击查看现场"
   },
   "liveView": {
     "connecting": "连接现场中…",

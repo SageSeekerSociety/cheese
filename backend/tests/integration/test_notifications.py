@@ -88,7 +88,7 @@ def test_create_notification(client):
 def test_create_notification_missing_project_404(client):
     r = client.post(
         f"/projects/{NIL_UUID}/alerts",
-        json={"level": "silent", "kind": "heartbeat", "title": "x"},
+        json={"level": "silent", "kind": "change_alert", "title": "x"},
     )
     assert r.status_code == 404
 
@@ -97,7 +97,7 @@ def test_create_notification_invalid_level_rejected(client):
     pid = _create_project(client)
     r = client.post(
         f"/projects/{pid}/alerts",
-        json={"level": "loud", "kind": "heartbeat", "title": "x"},
+        json={"level": "loud", "kind": "change_alert", "title": "x"},
     )
     # The merged app maps request-validation errors to 400 (知是 convention),
     # not FastAPI's default 422 (app/core/errors.validation_exception_handler).
@@ -107,7 +107,7 @@ def test_create_notification_invalid_level_rejected(client):
 def test_list_newest_first_and_filters(client):
     pid = _create_project(client)
     _roster(client, pid, "alice", "bob")
-    _post_notif(client, pid, level="silent", kind="heartbeat", title="第一条")
+    _post_notif(client, pid, level="silent", kind="change_alert", title="第一条")
     _one(
         client,
         pid,
@@ -192,21 +192,13 @@ def test_inbox_carries_decisions_accepts_and_change_alerts(client):
         title="提醒",
         target_handle="alice",
     )
-    # 不进收件箱：silent 的提醒（它的意思就是「记下来，别打扰」）+ 巡检。
+    # 不进收件箱：silent 的提醒（它的意思就是「记下来，别打扰」）。
     _one(
         client,
         pid,
         level="silent",
         kind="change_alert",
         title="安静的提醒",
-        target_handle="alice",
-    )
-    _one(
-        client,
-        pid,
-        level="light",
-        kind="heartbeat",
-        title="beat",
         target_handle="alice",
     )
     # 进收件箱：decision_request + accept_request。
@@ -227,8 +219,8 @@ def test_inbox_carries_decisions_accepts_and_change_alerts(client):
         target_handle="bob",
     )
 
-    # 决定进不进收件箱的是类别 + 读没读，不是发给谁：那两条提醒和那次巡检 alice
-    # 都收到了，收件箱里只多出「提醒」。
+    # 决定进不进收件箱的是类别 + 读没读，不是发给谁：那两条提醒 alice 都收到了，
+    # 收件箱里只多出「提醒」。
     assert _inbox_titles(client, pid, "alice") == ["拍板", "提醒"]
     assert _inbox_titles(client, pid, "bob") == ["验收"]
 

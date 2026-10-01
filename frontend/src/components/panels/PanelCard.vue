@@ -201,7 +201,6 @@ const cardSocket = useRoomSocket({
     }
   },
   onOpen: () => {},
-  onDrop: () => {},
   // 断线期间可能漏掉了几次改动：重读一次，再连回去。
   reconnect(id) {
     void loadChecklist()
@@ -466,7 +465,7 @@ async function send() {
             :block="e.block"
             :notice="e.notice"
             :run="[e.block]"
-            :name="null"
+            :agent="null"
             :time="relTime(e.block.created_at)"
             :agent-name="t('work.room.card.subagent')"
             :refs="refs"

@@ -1,12 +1,12 @@
-"""项目那三条读接口的线形状：/decisions、/weeklies、/tasks。
+"""项目那两条读接口的线形状：/weeklies、/tasks。
 
 钉的是**同一个用户看得见的东西**，一条一条对到线上，而不是「函数被调过」：
 
-* `/decisions` 和 `/weeklies` 是项目的原话，每一行的字段、顺序、`meta` 都是契约。
+* `/weeklies` 是项目的原话，每一行的字段、顺序、`meta` 都是契约。
 * `/tasks` 每一行带 `presentation`（哪一列、卡面那句话）和 `card`（这条活此刻骑的
   那张卡，窄到侧栏画得出来的四个字段）。
 
-这三条以前各读一次别的领域的 repository，现在各走对方领域的一个窄读入口（#2143）。
+这两条以前各读一次别的领域的 repository，现在各走对方领域的一个窄读入口（#2143）。
 窄读入口把行折成**纯值**再交出来 —— 所以这里的负样本卡把 `note_code`、
 `merge_state`、`decided_by`/`auto_merge_armed_by` 都填上，钉住「显示状态是从这些
 值算出来的」：谁把那一位从窄读里丢掉，哪一行的说法就会变，而用户看得见的就是那句
@@ -68,80 +68,6 @@ def _rows(client, project_id: str, tail: str) -> list[dict]:
     return _list(client, project_id, tail)["data"]
 
 
-# —— 决策记录 /decisions —————————————————————————————————————————
-
-
-def test_decisions_come_back_newest_first_with_every_field_on_the_wire(client):
-    project = _project(client)
-    room = _room(client, project)
-
-    ids: dict[str, str] = {}
-
-    async def _seed_them(s):
-        older = Block(
-            project_id=uuid.UUID(project),
-            topic_id=uuid.UUID(room),
-            kind=BlockKind.decision,
-            author_type=AuthorType.participant,
-            author="alice",
-            content="先做产物页",
-            refs=[room],
-            created_at=OLDER,
-        )
-        newer = Block(
-            project_id=uuid.UUID(project),
-            topic_id=uuid.UUID(room),
-            kind=BlockKind.decision,
-            author_type=AuthorType.participant,
-            author="alice",
-            content="再做看板",
-            refs=[room],
-            created_at=NEWER,
-        )
-        s.add_all([older, newer])
-        await s.flush()
-        ids["older"], ids["newer"] = str(older.id), str(newer.id)
-
-    _seed(client, _seed_them)
-
-    payload = _list(client, project, "decisions")
-    assert payload["total"] == 2
-    # 最新在前：决策记录是「这个项目说过什么」，最近说的那句话在最上面。
-    assert [row["id"] for row in payload["data"]] == [ids["newer"], ids["older"]]
-
-    # 一行整份对下来，不是挑几个键。BlockOut 是这条线对外的契约。
-    newest = payload["data"][0]
-    assert newest == {
-        "id": ids["newer"],
-        "topic_id": room,
-        "task_id": None,
-        "kind": "decision",
-        "author_type": "participant",
-        "author": "alice",
-        "content": "再做看板",
-        "reply_to": None,
-        "struct_parent": None,
-        "node_type": None,
-        "struct_order": None,
-        "anchor_quote": None,
-        "mime_type": None,
-        "doc_version": 1,
-        "refs": [room],
-        "upgraded_to_topic_id": None,
-        "upgraded_to_task_id": None,
-        "turn_id": None,
-        "meta": None,
-        "reactions": [],
-        "created_at": _wire(NEWER),
-    }
-
-
-def test_a_project_with_no_decisions_says_empty_rather_than_guessing(client):
-    project = _project(client)
-    payload = _list(client, project, "decisions")
-    assert payload == {"data": [], "total": 0}
-
-
 # —— 周报集 /weeklies ———————————————————————————————————————————
 
 
@@ -187,15 +113,35 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
     assert payload["total"] == 2
     assert [row["id"] for row in payload["data"]] == [ids["newer"], ids["older"]]
 
+    # 一行整份对下来，不是挑几个键。BlockOut 是这条线对外的契约；窗口是这一行
+    # 的身份：并排摆着的几份周报，是它把它们分开的。
     newest = payload["data"][0]
-    # 窗口是这一行的身份：并排摆着的几份周报，是它把它们分开的。
-    assert newest["kind"] == "weekly"
-    assert newest["content"] == "这一周：产物页上线。"
-    assert newest["topic_id"] == room
-    assert newest["meta"]["since"] == NEWER.isoformat()
-    assert newest["meta"]["until"] == "2026-09-09T10:00:00+00:00"
-    assert newest["refs"] == [room]
-    assert newest["created_at"] == _wire(NEWER)
+    assert newest == {
+        "id": ids["newer"],
+        "topic_id": room,
+        "task_id": None,
+        "kind": "weekly",
+        "author_type": "participant",
+        "author": "alice",
+        "content": "这一周：产物页上线。",
+        "reply_to": None,
+        "struct_parent": None,
+        "node_type": None,
+        "struct_order": None,
+        "anchor_quote": None,
+        "mime_type": None,
+        "doc_version": 1,
+        "refs": [room],
+        "upgraded_to_topic_id": None,
+        "upgraded_to_task_id": None,
+        "turn_id": None,
+        "meta": {
+            "since": NEWER.isoformat(),
+            "until": "2026-09-09T10:00:00+00:00",
+        },
+        "reactions": [],
+        "created_at": _wire(NEWER),
+    }
 
 
 def test_a_project_with_no_weeklies_says_empty_rather_than_guessing(client):

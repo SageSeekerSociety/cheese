@@ -79,11 +79,11 @@ Nunito 781，按字体自带的字偶间距排，再整体收紧 10/1000 em。�
 
 | 用途 | 文件 | 画法 |
 |---|---|---|
-| 网站图标 | [`favicon.svg`](../frontend/public/favicon.svg)、`favicon.ico` | 深色圆角方块 `#1F1B16`，图形标占七成 |
-| PWA、iOS 主屏 | `pwa-192x192.png`、`pwa-512x512.png`、`apple-touch-icon-180x180.png` | 深色满底，图形标占七成；圆角由系统裁 |
+| 网站图标 | [`favicon.svg`](../frontend/public/favicon.svg)、`favicon.ico` | 白色圆角方块，一圈 `#E5E3DF` 细边，图形标占七成 |
+| PWA、iOS 主屏 | `pwa-192x192.png`、`pwa-512x512.png`、`apple-touch-icon-180x180.png` | 白色满底，图形标占七成；圆角由系统裁 |
 | PWA 可裁切图标 | `pwa-maskable-512x512.png` | 同上，图形标只占五成，留在系统的安全圆里 |
-| 下载页 | [`app-icon.png`](../frontend/src/assets/app-icon.png) | 深色圆角方块，自带圆角 |
-| 桌面客户端 | `desktop/src-tauri/icons/` | 由 `pwa-512x512.png` 生成，见 §8 |
+| 下载页 | [`app-icon.png`](../frontend/src/assets/app-icon.png) | 白色圆角方块，自带圆角和细边 |
+| 桌面客户端 | `desktop/src-tauri/icons/` | 由 `desktop/icon-source.png` 生成，见 §8。macOS 不替应用裁形状，所以源图就是苹果模板的形状：1024 的透明方块里居中一块 824 的白色圆角方块，带细边 |
 | 登录页动效 | `brand-scene/logo-*.png` | 彩色贴图是图形标本身；金属和热成像两张是 Paper Shaders 处理过的，见 §8 |
 
 **首页方块**是侧栏首页那一格（悬停和选中时）、主页面在桌面客户端里的启动画面、桌面客户端的启动页：品牌色平涂的方块，上面压深色 `#23242a` 的图形标，两个主题下一样。两张启动页必须像素一致，里面的图形标都由脚本写入。
@@ -115,7 +115,7 @@ uv run --with fonttools --with skia-pathops --with uharfbuzz \
 之后再跑两步：
 
 ```bash
-# 桌面客户端图标：从 pwa-512x512.png 生成；tauri 还会写出各平台的一堆尺寸，
+# 桌面客户端图标：从 desktop/icon-source.png 生成；tauri 还会写出各平台的一堆尺寸，
 # 仓库只留 tauri.conf.json 列出的六个，其余用 git clean 删掉
 pnpm --dir desktop icons
 git clean -fdq -- desktop/src-tauri/icons
@@ -149,3 +149,20 @@ import WordmarkZh from '@/assets/brand/wordmark-zh.svg?component'
 ```
 
 组合文件的字标颜色是写死的，只用 `<img>` 或 `?url` 引入，按页面底色选 `-light` 或 `-dark`。
+
+## 10. AI 队友头像
+
+AI 队友（芝士，以及项目里的其他队友）有自己的头像，和标志分开用：标志代表平台，头像代表在房间里做事的那一位。代码里是 [`CheeseAvatar`](../frontend/src/components/CheeseAvatar.vue)，AI 队友出现的地方一律用它，不自己拼。
+
+- **外形**：超椭圆。人是圆形，团队、空间、项目是圆角方块，AI 队友单独用超椭圆，三者靠形状就能分开。
+- **脸**：只有一双胶囊形的眼睛，一大一小，整体偏右，像把脸转向说话的一方。不加嘴、耳朵，也不写字。
+- **底色**：五档暖色的深色，每位队友按 handle 固定分到一档：同一位队友在哪里都是同一个颜色，改名也不变。平台自己的 `cheese` 落在第 0 档，就是应用图标的暖黑。颜色值见 [`design-system.md`](design-system.md) §2.7。
+- **表情**：队友在干活时，对话里它最近出现的那个头像（它最后一组消息的第一条，或者它那几条事件行的第一条）跟着它此刻的状态动，更早的头像都不动。状态和现场顶上那一行是同一份（`lib/agentFace`）：
+  - 在想：眼睛往右上看，孔一个接一个冒出来；
+  - 在干活：眯眼，慢慢左右来回扫；
+  - 等机器：转过来正对着，慢慢呼吸；
+  - 卡住了（平台在重试，或这一轮以失败收场）：一只眼眯起，歪一下头；
+  - 做完了：眼睛弯成笑眼，小跳一下，然后回到静止。
+
+  持续的状态循环播放，节奏放慢；卡住和做完了只在变的那一刻播一次。悬停在动的头像上显示现场顶上那一行，点它打开现场。系统开了「减弱动效」时一帧都不动，每种状态停在自己的样子上，不靠动画也分得出来。不做的：被 @ 的一跳、跟着指针看、平常的眨眼——头像只在有事时动。
+- **不要**：用琥珀或品牌色做底；加描边、投影；换成名字的首字。几个头像叠在一起时，描一圈页面底色把前后分开，这是唯一的描边。

@@ -205,13 +205,18 @@ def _team_to_api_model(
             for rel in ordered
         ]
 
+    name, avatar_id = team.name, team.avatar_id
+    if team.personal_owner_user_id is not None and owner_info is not None:
+        # A person's own projects go under their name and face, not a team's.
+        name, avatar_id = owner_info["nickname"], owner_info["avatarId"]
+
     result = {
         "id": team.id,
         "handle": _team_handle(team, users_map),
-        "name": team.name,
+        "name": name,
         "intro": team.intro,
         "description": team.description,
-        "avatarId": team.avatar_id,
+        "avatarId": avatar_id,
         # 个人 = 单人真团队 (v4): the frontend labels/orders the personal team.
         "personal": team.personal_owner_user_id is not None,
         "visibility": team.visibility,

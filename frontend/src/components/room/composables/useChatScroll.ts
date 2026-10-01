@@ -96,7 +96,11 @@ export function useChatScroll(
         atBottom.value = isAtBottom(sc)
         return
       }
-      if (atBottom.value && showingNewest() && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
+      // 停在底部的人，内容一变高就在同一帧跟到底，差一个像素也跟。BOTTOM_THRESHOLD
+      // 只回答「他算不算停在底部」；拿它当重钉的门槛的话，要攒够 80px 才跳一次，
+      // 流式输出和展开的卡片都是一格一格地往上蹦，攒的那一截一直藏在视口下面。
+      if (atBottom.value && showingNewest() && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 1)
+        sc.scrollTop = sc.scrollHeight
     })
     if (content) contentObserver.observe(content)
     if (pane) contentObserver.observe(pane)

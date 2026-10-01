@@ -158,8 +158,9 @@
     "name": "Project name",
     "intent": "What do you plan to do (optional)",
     "intentExample": "For example: turn this term's course materials into an outline",
-    "team": "Team",
-    "personalTeam": "Personal",
+    "team": "Belongs to",
+    "ownHint": "Under your name; you can invite people to it",
+    "teamHint": "All {n} team members join automatically",
     "teamsEmpty": "No teams available. Create or join a team first.",
     "teamsFailed": "Could not load teams",
     "forge": "Code repository",
@@ -179,6 +180,7 @@
     "projects": "Projects: no limit is set",
     "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
     "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
+    "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
@@ -287,7 +289,6 @@
         "due": "Due {date}",
         "noDue": "No date"
       },
-      "decisionFrom": "From “{topic}”",
       "failed": "This part could not be loaded"
     },
     "accept": {
@@ -373,7 +374,6 @@
       },
       "action": {
         "doc": "View doc",
-        "decision": "View decisions",
         "split": "View task",
         "undo": "Undo",
         "milestone": "View calendar",
@@ -432,7 +432,19 @@
       "running": "In progress"
     },
     "checklist": {
-      "updatedAt": "Checklist updated {time}"
+      "updatedAt": "Checklist updated {time}",
+      "compose": "Post a checklist",
+      "newTitle": "New checklist",
+      "post": "Post",
+      "stepsLabel": "Steps",
+      "stepsHint": "One step per line",
+      "tooManySteps": "At most {max} steps",
+      "stepTooLong": "Each step can be at most {max} characters",
+      "saveFailed": "Couldn't save the checklist",
+      "advance": "{step}: {status}",
+      "statusPending": "Not started",
+      "statusInProgress": "In progress",
+      "statusCompleted": "Done"
     },
     "backToChat": "Back to chat",
     "unselected": "Select a topic",
@@ -509,7 +521,8 @@
       "overview": "Overview",
       "site": "Activity",
       "changes": "Changes",
-      "preview": "Preview"
+      "preview": "Preview",
+      "routines": "Routines"
     },
     "preview": {
       "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
@@ -766,9 +779,18 @@
       "write": "Write a comment",
       "placeholder": "Write a comment…",
       "keyHint": "Enter to send, Shift+Enter for a new line",
-      "cancel": "Cancel",
       "locate": "Go to the paragraph",
-      "anchorChanged": "The original paragraph has changed"
+      "anchorChanged": "The original paragraph has changed",
+      "anchorAmbiguous": "This quote occurs more than once; the original selection cannot be identified",
+      "closePanel": "Close comments panel",
+      "resize": "Resize comments panel",
+      "waitForSend": "Comment is sending; wait for the result",
+      "closeDraft": "Close composer",
+      "discardDraft": "Discard draft",
+      "resumeDraft": "Resume draft",
+      "unavailable": "This host has not provided a comment posting interface",
+      "showMore": "Show more",
+      "showLess": "Show less"
     },
     "chat": {
       "pickTopic": "Select a topic to start chatting",
@@ -875,7 +897,17 @@
       "uploadFailed": "Couldn't upload the file",
       "addFailed": "Couldn't add the file"
     },
-    "defaultAgentName": "Cheese"
+    "defaultAgentName": "Cheese",
+    "reminder": {
+      "open": "Remind me",
+      "title": "Remind me",
+      "when": "When",
+      "content": "Reminder",
+      "submit": "Set reminder",
+      "inPast": "This time has already passed",
+      "failed": "Could not set the reminder",
+      "set": "You will be reminded at {when}"
+    }
   },
   "board": {
     "column": {
@@ -1026,7 +1058,7 @@
     "cancel": "Cancel",
     "confirmRemove": "Remove",
     "inviteTitle": "Invite an external member",
-    "inviteHint": "An external member is someone outside the team who takes part in this project only. They join once they accept, and see only this project",
+    "inviteHint": "Invite someone to this project only. They join once they accept, and see only this project",
     "inviteLabel": "Username or email",
     "invitePlaceholder": "Enter the full username or email",
     "notFound": "No one has this username or email",
@@ -1038,7 +1070,7 @@
   },
   "external": {
     "tag": "External",
-    "tagHint": "Not on the team; takes part in this project only"
+    "tagHint": "Takes part in this project only"
   },
   "mcp": {
     "title": "MCP servers",
@@ -1418,9 +1450,21 @@
     "cores": "CPU cores",
     "memory": "Memory (GB)",
     "disk": "Disk (GB)",
-    "cloudHint": "Allocated on the first run and counted against the team's cloud quota. You'll be asked to adjust it if it exceeds what's available",
-    "deviceHint": "The device is already on the team, so no further authorization is needed. If it is offline, work waits until it comes online",
+    "coresUnit": "cores",
+    "memoryLabel": "Memory",
+    "diskLabel": "Disk",
+    "noValue": "No selectable values right now",
+    "outOfRange": "Outside the available range",
+    "noRangeFor": "{label}: no selectable values",
+    "supplyLoading": "Checking what the cloud can offer right now…",
+    "supplyRange": "Available range: {range}",
+    "supplyUnknown": "The cloud's available range can't be read right now ({reason}). You can save anyway and it is checked again when the machine starts",
+    "cloudHint": "Allocated on the first run and counted against the cloud quota. The cloud does not report remaining capacity, so a configuration inside the range can still fail to start",
+    "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
+  },
+  "cloudSupply": {
+    "requestFailed": "Request failed"
   },
   "projectTransfer": {
     "lookupFailed": "No account found",
@@ -1433,9 +1477,10 @@
     "cancel": "Cancel",
     "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
     "noCandidates": "No members can take it over",
-    "lookupIntro": "No one on the team to hand it to? Find a person directly:",
+    "lookupTeam": "No one on the team to hand it to? Find a person directly:",
+    "lookupOwn": "Enter the new owner's username or email:",
     "lookupLabel": "Full username or email",
-    "movingOut": "{'@'}{handle} isn't on this project's team, so the transfer moves the whole project to them. Afterwards you are no longer a member and can't see any of its topics. (A project that belongs to a shared team can only go to someone on that team.)"
+    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and can't see any of its topics."
   },
   "skills": {
     "edit": "Edit",
@@ -1532,7 +1577,8 @@
     "failed": "Couldn't load the image"
   },
   "agentAvatar": {
-    "defaultName": "Cheese"
+    "defaultName": "Cheese",
+    "live": "{name}: {status}. Click to open Activity"
   },
   "liveView": {
     "connecting": "Connecting to the live view…",

@@ -43,6 +43,7 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.resource_cleanup import SESSION_TMP
 
 # The launcher below spells the platform's own directory literally, because the
 # script is one long shell string and a name threaded through sixty paths would
@@ -512,6 +513,26 @@ def launch_script(
     preview_up = CHEESE_PREVIEW_UP
     toolchain = toolchain_block()
     return f"""set -e
+# A session the platform capped runs in a systemd scope of its own, under that
+# cap (#1544). tmux puts each pane in a scope under the user manager, outside
+# the connector's unit, so a limit on the connector reaches no session; without
+# this, one session filling the machine took every other room into swap with
+# it. The script re-runs itself inside the scope once, which the marker says.
+# A machine that cannot make a user scope runs the session as before, and says
+# so in its log. Either way the session is the kernel's first choice when
+# memory runs out: a process that inherited an exempt score is never killed at
+# its cap, it only stalls there (measured under a -1000 parent, 2026-10-01).
+if [ -n "${{CHEESE_SESSION_MEMORY_MAX:-}}" ] && [ -z "${{CHEESE_SESSION_SCOPE:-}}" ] \\
+  && [ -f "$0" ]; then
+  export CHEESE_SESSION_SCOPE=1
+  {{ echo 500 > /proc/self/oom_score_adj; }} 2>/dev/null || :
+  if command -v systemd-run >/dev/null 2>&1 \\
+    && systemd-run --user --scope --quiet true >/dev/null 2>&1; then
+    exec systemd-run --user --scope --quiet \\
+      -p MemoryMax="$CHEESE_SESSION_MEMORY_MAX" -p MemorySwapMax=0 -- bash "$0"
+  fi
+  echo "cheese: no user systemd scope here; the session runs without its memory cap" >&2
+fi
 # CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
 # server cannot know the device user's home). Substitute the REAL home first —
 # treating it as a relative path only worked by accident from a writable cwd
@@ -575,6 +596,19 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+# The session's temporary files go where the system keeps those it keeps on
+# disk (`/var/tmp`), one directory per room that its cleanup removes with it.
+# The machine's `/tmp` is often a tmpfs: what a session leaves there is memory
+# nothing can reclaim, and a room that ends leaves it behind. `/var/tmp` is
+# every account's, so the rooms sit under a directory only this one owns;
+# one somebody else made, or a link, leaves the session on the system default.
+# Short, because programs make sockets in TMPDIR and a path stops at 108 bytes.
+TB="{SESSION_TMP}/cheese-$(id -u)"
+TD="$TB/${{CH##*/}}"
+if mkdir -p -m 700 "$TB" 2>/dev/null && [ ! -L "$TB" ] && [ -O "$TB" ] \
+    && mkdir -p "$TD" 2>/dev/null; then
+  export TMPDIR="$TD"
+fi
 # With the stores redirected above, the copies these tools left in the room's
 # own HOME are read by nothing. Reclaim them — a room created before the store
 # existed holds them until it is retired, and nothing retires an idle room.

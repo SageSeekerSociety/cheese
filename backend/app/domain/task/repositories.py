@@ -5,14 +5,11 @@ from typing import cast
 from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.llm.models import AIConversation, AIMessage
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
-    TaskAIAdvice,
-    TaskAIAdviceContext,
     TaskMembership,
     TaskSubmission,
     TaskSubmissionEntry,
@@ -34,6 +31,37 @@ class TaskRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    def joined_by(user_id: int):
+        """The tasks ``user_id`` takes part in: as themselves on an individual
+        task, through one of their teams on a team task."""
+        user_member_exists = exists().where(
+            TaskMembership.task_id == Task.id,
+            TaskMembership.member_id == user_id,
+            TaskMembership.deleted_at.is_(None),
+        )
+        team_member_exists = exists().where(
+            TaskMembership.task_id == Task.id,
+            TaskMembership.deleted_at.is_(None),
+            TaskMembership.member_id == TeamUserRelation.team_id,
+            TeamUserRelation.user_id == user_id,
+            TeamUserRelation.deleted_at.is_(None),
+        )
+        return or_(
+            and_(Task.submitter_type == 0, user_member_exists),
+            and_(Task.submitter_type == 1, team_member_exists),
+        )
+
+    async def list_joined(self, user_id: int, *, limit: int) -> Sequence[Task]:
+        """Every task ``user_id`` takes part in, across spaces, latest first."""
+        stmt = (
+            select(Task)
+            .where(Task.deleted_at.is_(None), self.joined_by(user_id))
+            .order_by(Task.updated_at.desc(), Task.id.desc())
+            .limit(limit)
+        )
+        return (await self._session.execute(stmt)).scalars().all()
 
     async def list_tasks(
         self,
@@ -92,24 +120,7 @@ class TaskRepository:
 
         # joined 过滤：如果传入 joined 且当前用户已知，则根据用户是否参与任务过滤。
         if joined is not None and current_user_id is not None:
-            user_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.member_id == current_user_id,
-                TaskMembership.deleted_at.is_(None),
-            )
-
-            team_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.deleted_at.is_(None),
-                TaskMembership.member_id == TeamUserRelation.team_id,
-                TeamUserRelation.user_id == current_user_id,
-                TeamUserRelation.deleted_at.is_(None),
-            )
-
-            joined_predicate = or_(
-                and_(Task.submitter_type == 0, user_member_exists),
-                and_(Task.submitter_type == 1, team_member_exists),
-            )
+            joined_predicate = self.joined_by(current_user_id)
 
             if joined:
                 stmt = stmt.where(joined_predicate)
@@ -225,24 +236,7 @@ class TaskRepository:
             )
 
         if joined is not None and current_user_id is not None:
-            user_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.member_id == current_user_id,
-                TaskMembership.deleted_at.is_(None),
-            )
-
-            team_member_exists = exists().where(
-                TaskMembership.task_id == Task.id,
-                TaskMembership.deleted_at.is_(None),
-                TaskMembership.member_id == TeamUserRelation.team_id,
-                TeamUserRelation.user_id == current_user_id,
-                TeamUserRelation.deleted_at.is_(None),
-            )
-
-            joined_predicate = or_(
-                and_(Task.submitter_type == 0, user_member_exists),
-                and_(Task.submitter_type == 1, team_member_exists),
-            )
+            joined_predicate = self.joined_by(current_user_id)
 
             if joined:
                 stmt = stmt.where(joined_predicate)
@@ -1129,218 +1123,6 @@ class TaskSubmissionReviewRepository:
     async def soft_delete(self, review: TaskSubmissionReview) -> None:
         review.deleted_at = datetime.now(UTC)
         self._session.add(review)
-        await self._session.flush()
-
-
-class TaskAIAdviceRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def list_by_task(self, task_id: int) -> list[TaskAIAdvice]:
-        stmt: Select[tuple[TaskAIAdvice]] = (
-            select(TaskAIAdvice)
-            .where(TaskAIAdvice.task_id == task_id)
-            .order_by(TaskAIAdvice.updated_at.desc())
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def get_latest(self, task_id: int) -> TaskAIAdvice | None:
-        stmt = (
-            select(TaskAIAdvice)
-            .where(TaskAIAdvice.task_id == task_id)
-            .order_by(TaskAIAdvice.updated_at.desc())
-            .limit(1)
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def find_by_model_hash(
-        self, task_id: int, model_hash: str
-    ) -> TaskAIAdvice | None:
-        stmt = select(TaskAIAdvice).where(
-            TaskAIAdvice.task_id == task_id,
-            TaskAIAdvice.model_hash == model_hash,
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def create(
-        self,
-        *,
-        task_id: int,
-        model_hash: str,
-        status: str,
-        topic_summary: str | None = None,
-        knowledge_fields: str | None = None,
-        learning_paths: str | None = None,
-        methodology: str | None = None,
-        team_tips: str | None = None,
-        raw_response: str | None = None,
-    ) -> TaskAIAdvice:
-        advice = TaskAIAdvice(
-            task_id=task_id,
-            model_hash=model_hash,
-            status=status,
-            topic_summary=topic_summary,
-            knowledge_fields=knowledge_fields,
-            learning_paths=learning_paths,
-            methodology=methodology,
-            team_tips=team_tips,
-            raw_response=raw_response,
-        )
-        self._session.add(advice)
-        await self._session.flush()
-        return advice
-
-    async def save(self, advice: TaskAIAdvice) -> TaskAIAdvice:
-        self._session.add(advice)
-        await self._session.flush()
-        return advice
-
-
-class TaskAIAdviceContextRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def get_or_create(
-        self,
-        *,
-        task_id: int,
-        section: str | None,
-        section_index: int | None,
-    ) -> TaskAIAdviceContext:
-        stmt = select(TaskAIAdviceContext).where(
-            TaskAIAdviceContext.task_id == task_id,
-            TaskAIAdviceContext.section == section
-            if section is not None
-            else TaskAIAdviceContext.section.is_(None),
-            TaskAIAdviceContext.section_index == section_index
-            if section_index is not None
-            else TaskAIAdviceContext.section_index.is_(None),
-            TaskAIAdviceContext.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        entity = result.scalar_one_or_none()
-        if entity is not None:
-            return entity
-        ctx = TaskAIAdviceContext(
-            task_id=task_id,
-            section=section,
-            section_index=section_index,
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-        )
-        self._session.add(ctx)
-        await self._session.flush()
-        return ctx
-
-
-class AIConversationRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def list_for_task(
-        self, task_id: int, *, owner_id: int
-    ) -> list[AIConversation]:
-        """``owner_id`` 是查询的一部分，不是取回来之后再筛掉的东西。
-
-        会话属于提问的那个人（``create`` 一直写着 ``owner_id``），所以「这道题
-        有谁问过」不是一个该被回答的问题 —— 能回答的是「我在这道题上问过什么」。
-        过滤写在 WHERE 里：应用层筛完再丢，那些本不该看见的行仍然先被读了出来
-        （id 与 title 都经过了应用）。
-        """
-        stmt = (
-            select(AIConversation)
-            .where(
-                AIConversation.context_id == task_id,
-                AIConversation.owner_id == owner_id,
-                AIConversation.module_type == "task_ai_advice",
-                AIConversation.deleted_at.is_(None),
-            )
-            .order_by(AIConversation.created_at.desc())
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def get_by_conversation_id(
-        self, conversation_id: str
-    ) -> AIConversation | None:
-        stmt = select(AIConversation).where(
-            AIConversation.conversation_id == conversation_id,
-            AIConversation.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def create(
-        self,
-        *,
-        conversation_id: str,
-        task_id: int,
-        owner_id: int,
-        title: str | None,
-    ) -> AIConversation:
-        now = datetime.now(UTC)
-        convo = AIConversation(
-            conversation_id=conversation_id,
-            context_id=task_id,
-            owner_id=owner_id,
-            title=title,
-            module_type="task_ai_advice",
-            created_at=now,
-            updated_at=now,
-        )
-        self._session.add(convo)
-        await self._session.flush()
-        return convo
-
-    async def soft_delete(self, conversation: AIConversation) -> None:
-        conversation.deleted_at = datetime.now(UTC)
-        self._session.add(conversation)
-        await self._session.flush()
-
-
-class AIMessageRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def list_for_conversation(self, conversation_id: int) -> list[AIMessage]:
-        stmt = (
-            select(AIMessage)
-            .where(
-                AIMessage.conversation_id == conversation_id,
-                AIMessage.deleted_at.is_(None),
-            )
-            .order_by(AIMessage.created_at.asc())
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def create_message(
-        self,
-        *,
-        conversation_id: int,
-        role: str,
-        content: str,
-        parent_id: int | None = None,
-        tokens_used: int | None = None,
-    ) -> AIMessage:
-        msg = AIMessage(
-            conversation_id=conversation_id,
-            role=role,
-            content=content,
-            parent_id=parent_id,
-            tokens_used=tokens_used,
-        )
-        self._session.add(msg)
-        await self._session.flush()
-        return msg
-
-    async def soft_delete(self, message: AIMessage) -> None:
-        now = datetime.now(UTC)
-        message.deleted_at = now
-        message.updated_at = now
         await self._session.flush()
 
 

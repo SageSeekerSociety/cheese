@@ -218,7 +218,12 @@ async function confirmDeactivate() {
       <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="agent-head">
           <div class="agent-head__id">
-            <CheeseAvatar :name="a.display_name || a.handle" :size="36" class="mr-3 flex-shrink-0" />
+            <CheeseAvatar
+              :name="a.display_name || a.handle"
+              :handle="a.seat_handle"
+              :size="36"
+              class="mr-3 flex-shrink-0"
+            />
             <div class="min-w-0">
               <div class="d-flex align-center flex-wrap ga-2">
                 <span class="t-title agent-head__name">{{ a.display_name || a.handle }}</span>

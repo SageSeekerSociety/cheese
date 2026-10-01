@@ -262,7 +262,10 @@ export function roomNoticeProps(row: RoomRow, over: Record<string, unknown> = {}
     block: row.block,
     notice,
     run: row.run,
-    name: row.block.author === 'system' ? null : NAMES[row.block.author] ?? null,
+    agent:
+      row.block.author === 'system' || !NAMES[row.block.author]
+        ? null
+        : { name: NAMES[row.block.author]!, handle: row.block.author },
     time: row.line.time,
     agentName: AGENT_NAME,
     refs: ROOM_REFS,
@@ -859,7 +862,7 @@ const CHAT_BASE = {
   isExternal: () => false,
   avatarSrc: () => null as string | null,
   displayName: (b: Block) => NAMES[b.author] ?? b.author,
-  noticeAgentName: (b: Block) => NAMES[b.author] ?? null,
+  noticeAgent: (b: Block) => (NAMES[b.author] ? { name: NAMES[b.author]!, handle: b.author } : null),
   parentOf: () => undefined,
   showReplyCue: () => false,
   fmtTime: (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -885,3 +888,25 @@ export function chatTimelineProps(over: Record<string, unknown> = {}): Record<st
     ...over,
   }
 }
+
+/** 工作电脑表单：两台自有设备（一台离线），以及云端此刻的供应（示例数字，取自 2026-09-30 的 dev）。 */
+export const COMPUTE_DEVICES = [
+  { device_id: 'lab', name: '实验室工作站', online: true },
+  { device_id: 'home', name: '家里那台', online: false },
+]
+export const CLOUD_SUPPLY = {
+  available: true as const,
+  offering: 'standard-lxc',
+  selectable: {
+    cores: { min: 1, max: 32 },
+    memory_mb: { min: 512, max: 131072 },
+    disk_gb: { min: 2, max: 128 },
+  },
+  provider: {
+    cores: { min: 1, max: 32 },
+    memory_mb: { min: 128, max: 131072 },
+    disk_gb: { min: 2, max: 128 },
+  },
+  capacity_known: false,
+}
+export const CLOUD_SUPPLY_UNKNOWN = { available: false as const, reason: 'MicroCloud unreachable' }

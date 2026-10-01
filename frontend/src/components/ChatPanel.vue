@@ -96,6 +96,7 @@ const {
   agentName,
   agentSeat,
   awaitingReply,
+  agentFaces,
   prShortId,
   prState,
   composerHint,
@@ -119,7 +120,7 @@ const {
   retrySend,
   outbox,
   clearReply,
-  noticeAgentName,
+  noticeAgent,
   parentOf,
   showReplyCue,
   fmtTime,
@@ -177,6 +178,8 @@ const {
   send,
   askBusy,
   pickOption,
+  postChecklist,
+  changeChecklist,
   onReact,
   setReply,
   undoTitle,
@@ -266,7 +269,8 @@ defineExpose({ send, connected })
         :is-external="isExternal"
         :avatar-src="avatarSrc"
         :display-name="displayName"
-        :notice-agent-name="noticeAgentName"
+        :notice-agent="noticeAgent"
+        :agent-faces="agentFaces"
         :parent-of="parentOf"
         :show-reply-cue="showReplyCue"
         :fmt-time="fmtTime"
@@ -290,6 +294,7 @@ defineExpose({ send, connected })
         @open-card="emit('open-card', $event)"
         @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
         @answer="pickOption"
+        @checklist="changeChecklist"
         @download="downloadAttachment"
         @jump="openAt"
         @avatar-error="onAvatarError"
@@ -339,6 +344,7 @@ defineExpose({ send, connected })
         :atts="pendingAtts"
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"
+        :post-checklist="postChecklist"
         @send="onComposerSend"
         @clear-reply="clearReply"
         @files="(files) => void addFiles(files)"

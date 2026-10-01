@@ -49,7 +49,10 @@ async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
             log.info("project=%s status=skip reason=awaiting_github", project_id)
             return "skipped"
         source = Path(settings.workspace_root).resolve() / str(project_id)
-        if binding is not None and binding.kind == "github_app" and not source.exists():
+        # A project created on a forge has nothing to copy. Its webhook was set at
+        # creation and the periodic reconciliation keeps it, so a new project
+        # must never make a release stop repository writers.
+        if binding is not None and not source.exists():
             log.info("project=%s status=skip reason=no_local_repository", project_id)
             return "skipped"
         project_backup = backups / str(project_id)

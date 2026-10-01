@@ -32,7 +32,7 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
     all_frames: list[list[dict]] = []
     for author, content in CHITCHAT:
         frames = await api.send_chat(
-            topic["id"], content=content, author=author, summon=False
+            topic["id"], content=content, author=author
         )
         all_frames.append(frames)
         ctx.log.info("C3 posted (%s): %d frames", author, len(frames))

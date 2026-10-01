@@ -12,6 +12,7 @@ from app.domain.agent import models as agent  # noqa: F401
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
 from app.domain.agent_session import models as agent_session  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401
+from app.domain.assistant import models as assistant  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401
 from app.domain.block import models as block  # noqa: F401
@@ -28,7 +29,7 @@ from app.domain.integration import models as integration  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
 from app.domain.library import models as library  # noqa: F401
-from app.domain.llm import models as llm  # noqa: F401
+from app.domain.living_doc import models as living_doc  # noqa: F401
 from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
 from app.domain.machine.limits import MachineLimit, TeamMachineLimit  # noqa: F401

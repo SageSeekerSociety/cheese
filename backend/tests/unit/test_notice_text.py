@@ -140,8 +140,12 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
         test_every_sentence_in_the_catalog_is_said_somewhere()
 
 
-def test_only_the_two_retired_comment_notices_are_historical():
-    assert HISTORICAL_NOTICE_KEYS == {"docCommented", "docCommentedHandedTo"}
+def test_only_the_retired_comment_and_decision_notices_are_historical():
+    assert HISTORICAL_NOTICE_KEYS == {
+        "docCommented",
+        "docCommentedHandedTo",
+        "actionDecision",
+    }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()
     assert not {key for _, _, key, _ in _say_calls()} & HISTORICAL_NOTICE_KEYS
@@ -156,11 +160,10 @@ def test_only_the_two_retired_comment_notices_are_historical():
             {"actor": "ana😀", "seat": "<@cheese-test>"},
             "ana😀 评论了文档，已交给 <@cheese-test>",
         ),
+        ("actionDecision", {"actor": "<@cheese-test>"}, "<@cheese-test> 记录了决策"),
     ],
 )
-def test_historical_comment_descriptor_replays_without_allowing_generation(
-    key, params, stored
-):
+def test_historical_descriptor_replays_without_allowing_generation(key, params, stored):
     descriptor = json.loads(json.dumps({"key": key, "params": params}))
     line = from_descriptor(descriptor)
     assert line == stored

@@ -246,6 +246,16 @@ async def lifespan(_: FastAPI):
             ),
             sessions=async_session_factory,
         )
+        from app.domain.agent.runtime import get_broker
+        from app.domain.living_doc.delivery import drain_refreshes
+
+        jobs.append(
+            background.PeriodicRunner(
+                "document refresh delivery",
+                5,
+                lambda: drain_refreshes(async_session_factory, get_broker().publish),
+            )
+        )
         runs = JobRuns(async_session_factory)
         try:
             last_runs = await runs.load(
@@ -469,15 +479,10 @@ register_all_permissions()
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
-    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
-    # the receiver is in the body and is checked against the threads that room
-    # dispatched — this gate can only prove "some agent of this project", because
-    # a project-scoped credential reaches every topic of it.
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
-    # 同 handle 便条与定时投递：两条都只有 agent 会调，收件人都由平台算出来（便条
-    # 比席位，投递就是请求者自己），所以正文里没有一个「发给谁」可以被冒名。
+    # 同 handle 便条：只有 agent 会调，收件人由平台比席位算出来，所以正文里没有一个
+    # 「发给谁」可以被冒名。定时投递不在这里：房间里的人也设提醒（Bearer），这道闸
+    # 看不见；路由自己把门（`ask_for_a_delivery`）。
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/note$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/deliveries$")),
     # Task bind/title/close/readiness/delivery routes are shared by human and
     # agent executors. They authorize the room and task in the route itself;
     # adding them here would incorrectly restrict them to agent credentials.

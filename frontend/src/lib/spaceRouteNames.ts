@@ -13,8 +13,6 @@ export interface TaskRouteNames {
   submissions: string
   /** 交作业。 */
   submit: string
-  /** 启星研导（AI 建议）。 */
-  aiAdvice: string
   /** 改题。 */
   edit: string
   /** 「数据」页签。 */
@@ -29,7 +27,6 @@ export const TASK_ROUTE_NAMES: TaskRouteNames = {
   participants: 'TasksParticipants',
   submissions: 'TasksSubmissions',
   submit: 'TasksSubmit',
-  aiAdvice: 'TasksAIAdvice',
   edit: 'TasksEdit',
   insights: 'TasksInsights',
   spaceHome: 'SpacesDetail',

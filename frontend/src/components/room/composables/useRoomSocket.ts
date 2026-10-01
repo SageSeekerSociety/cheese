@@ -5,8 +5,9 @@
  * 要碰消息列表、待办、轮次、发件箱、错误横幅十几样东西，搬进来只会把同一堆东西
  * 换个地方放，外加一层间接。所以这里收到帧就原样交出去。
  *
- * 出口只有一个 `post`：外面拿不到那个 socket 对象，也就不会有第二处在它身上挂
- * 回调——「哪条 socket 是当前那条」的判断只存在于这个文件里。
+ * 它只收不发（心跳除外）：消息是 POST 出去的（`useOutbox`），这条 socket 只把房间
+ * 里落下的东西推过来。外面拿不到那个 socket 对象，也就不会有第二处在它身上挂回调
+ * ——「哪条 socket 是当前那条」的判断只存在于这个文件里。
  */
 
 import type { Ref } from 'vue'
@@ -23,13 +24,8 @@ export function useRoomSocket(options: {
   topicId: () => string | undefined
   /** 收到一帧（`pong` 已经在这里吃掉了）。 */
   onFrame: (frame: WsServerFrame) => void
-  /** 刚连上：这是把断线期间攒下的东西放出去的时刻。 */
+  /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。 */
   onOpen: () => void
-  /**
-   * 这条链路没了（关掉，或者被判定假活换掉）。正在等回声的那几条消息失去了通道，
-   * 该重新排队，而不是让它们的定时器判定「没送到」。
-   */
-  onDrop: () => void
   /** 重连：重新拉一遍历史再开一条新的——断线期间漏掉的消息要补回来。 */
   reconnect: (topicId: string) => void
   /** 房间那条错误横幅。连上要清掉它，断了要在上面写原因。 */
@@ -102,14 +98,12 @@ export function useRoomSocket(options: {
 
   // OPEN is only the browser's last observation: a socket whose path stopped
   // carrying frames stays OPEN until TCP gives up, which took 6.5 minutes once.
-  // Whoever decides the link is gone (no echo for a sent message, no answer to a
-  // ping) comes here: drop that socket without telling it, queue what it was
-  // carrying, and let `reconnect` reconcile history and open a fresh one.
+  // A ping nobody answers decides the link is gone: drop that socket without
+  // telling it, and let `reconnect` reconcile history and open a fresh one.
   function replaceStaleSocket() {
     const topicId = options.topicId()
     const stale = socket
     if (!topicId || !stale) return false
-    options.onDrop()
     stopHeartbeat()
     socket = null
     stale.onopen = null
@@ -170,9 +164,6 @@ export function useRoomSocket(options: {
       if (socket === ws) {
         connected.value = false
         stopHeartbeat()
-        // Anything still waiting for an echo lost its channel — queue it again
-        // rather than let its timer call it undelivered while we reconnect.
-        options.onDrop()
         scheduleReconnect(topicId)
       }
     }
@@ -221,13 +212,5 @@ export function useRoomSocket(options: {
     /** 每次连接都从这里进。旧的那条会先被干净地关掉。 */
     open: openSocket,
     close: closeSocket,
-    /** 发一帧。没连上返回 false，由调用方决定是排队还是报错。 */
-    post(message: WsClientMessage): boolean {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return false
-      socket.send(JSON.stringify(message))
-      return true
-    },
-    /** 这条 socket 还 OPEN 着但不再送帧了——扔掉它，重新连。 */
-    replaceStale: replaceStaleSocket,
   }
 }

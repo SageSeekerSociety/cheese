@@ -119,7 +119,6 @@
   "deviceNotInProjectOrTeam": "This device doesn't belong to this project or team",
   "teamHasNoDevices": "The team has no devices of its own yet",
   "cloudQuotaMembersOnly": "Only project members can use the project's cloud quota",
-  "cloudSpecOutOfRange": "The selected cloud configuration is outside what's currently available. Choose another configuration",
   "teamCloudMachineLimit": "The team is using {used} / {limit} cloud machines. Release machines you no longer use first",
   "machineBusyCannotSuspend": "An agent task is still running on this machine. Wait for it to finish before suspending",
   "switchPushFailed": "Couldn't push, so the work computer wasn't switched: {error}",

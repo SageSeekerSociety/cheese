@@ -8,6 +8,8 @@ a fake with a list in it is a complete machine.
 import asyncio
 import uuid
 
+import pytest
+
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub, PreviewMachine
 
@@ -52,7 +54,8 @@ class SilentMachine:
         self.asked = 0
 
     async def send_bytes(self, data: bytes) -> None:
-        self.asked += 1
+        if wire.decode(data)[0] == wire.OP_REQ:
+            self.asked += 1
 
 
 async def test_a_request_reaches_the_seats_machine_and_comes_back():
@@ -235,3 +238,184 @@ async def test_another_teammates_arrival_does_not_end_a_wait():
     Machine().attach(hub, topic_id, "cheese-two")
 
     assert await waiter is False
+
+
+async def test_headers_and_first_bytes_arrive_before_end_and_cancel_is_once():
+    hub = PreviewHub()
+    topic_id = uuid.uuid4()
+    frames = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            op, sid, _ = wire.decode(data)
+            frames.append(op)
+            if op == wire.OP_REQ:
+                machine.on_frame(
+                    wire.encode(
+                        wire.OP_RESP,
+                        sid,
+                        wire.encode_meta(
+                            {
+                                "status": 206,
+                                "headers": [["content-range", "bytes 0-2/9"]],
+                            },
+                            b"one",
+                        ),
+                    )
+                )
+
+    machine = hub.attach(topic_id, SEAT, Transport())
+    response = await asyncio.wait_for(
+        hub.request_stream(topic_id, SEAT, method="GET", path="/stream", headers=[]), 1
+    )
+    assert response.status == 206
+    assert response.headers == [("content-range", "bytes 0-2/9")]
+    iterator = response.iter_bytes()
+    assert await anext(iterator) == b"one"
+    pending = asyncio.create_task(anext(iterator))
+    await asyncio.sleep(0)
+    assert not pending.done()
+    pending.cancel()
+    await asyncio.gather(pending, return_exceptions=True)
+    await response.aclose()
+    assert frames == [wire.OP_REQ, wire.OP_CLOSE]
+    assert not machine.streams
+
+
+async def test_task_cancellation_during_close_still_delivers_bounded_cancel():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    accepted = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            started.set()
+            await release.wait()
+            accepted.append(wire.decode(data))
+
+    hub = PreviewHub()
+    machine = hub.attach(uuid.uuid4(), SEAT, Transport())
+    stream = machine.open()
+    closing = asyncio.create_task(stream.aclose())
+    await started.wait()
+    closing.cancel()
+    release.set()
+    result = await asyncio.gather(closing, return_exceptions=True)
+    assert isinstance(result[0], asyncio.CancelledError)
+    assert accepted == [(wire.OP_CLOSE, stream.id, b"")]
+    assert not machine.streams
+
+
+async def test_repeated_cancellation_reaps_one_deadline_bounded_close(monkeypatch):
+    import app.domain.agent.preview_hub as module
+
+    monkeypatch.setattr(module, "SEND_TIMEOUT_S", 0.05)
+    started = asyncio.Event()
+    writes = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            writes.append(wire.decode(data))
+            started.set()
+            await asyncio.Event().wait()
+
+    machine = PreviewHub().attach(uuid.uuid4(), SEAT, Transport())
+    stream = machine.open()
+    closing = asyncio.create_task(stream.aclose())
+    await started.wait()
+    closing.cancel()
+    await asyncio.sleep(0)
+    closing.cancel()
+    another = asyncio.create_task(stream.aclose())
+    results = await asyncio.wait_for(
+        asyncio.gather(closing, another, return_exceptions=True), 1
+    )
+    assert isinstance(results[0], asyncio.CancelledError)
+    assert results[1] is None
+    assert writes == [(wire.OP_CLOSE, stream.id, b"")]
+    assert stream._close_task.done()
+    assert not machine.streams
+
+
+async def test_queue_overflow_keeps_cancel_ownership_until_machine_teardown():
+    started = asyncio.Event()
+    reaped = asyncio.Event()
+
+    class Transport:
+        async def send_bytes(self, data):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                reaped.set()
+
+    hub = PreviewHub()
+    machine = hub.attach(uuid.uuid4(), SEAT, Transport())
+    stream = machine.open()
+    stream.offer(wire.OP_DATA, b"x" * (wire._CHUNK + 1))
+    await started.wait()
+    hub.detach(machine)
+    await machine.drain()
+    assert reaped.is_set()
+    assert not machine.pending_cancels
+    assert not machine.streams
+    assert machine.open() is None
+
+
+async def test_slow_consumer_is_cancelled_without_blocking_sibling():
+    from app.domain.agent.preview_hub import MAX_QUEUED_BYTES
+
+    hub = PreviewHub()
+    frames = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            frames.append(wire.decode(data))
+
+    machine = hub.attach(uuid.uuid4(), SEAT, Transport())
+    slow = machine.open()
+    sibling = machine.open()
+    for _ in range(MAX_QUEUED_BYTES // wire._CHUNK + 1):
+        machine.on_frame(wire.encode(wire.OP_DATA, slow.id, b"x" * wire._CHUNK))
+    machine.on_frame(wire.encode(wire.OP_DATA, sibling.id, b"sibling"))
+    assert await sibling.receive() == (wire.OP_DATA, b"sibling")
+    assert (await slow.receive())[0] == wire.OP_CLOSE
+    await asyncio.sleep(0)
+    assert frames == [(wire.OP_CLOSE, slow.id, b"")]
+    sibling.close()
+
+
+@pytest.mark.parametrize("failure", ["error", "deadline"])
+async def test_failed_shared_write_refuses_admission_and_marks_seat_offline(
+    monkeypatch, failure
+):
+    import app.domain.agent.preview_hub as module
+
+    monkeypatch.setattr(module, "SEND_TIMEOUT_S", 0.02)
+    entered = asyncio.Event()
+
+    class Transport:
+        async def send_bytes(self, data):
+            entered.set()
+            if failure == "error":
+                raise OSError("lost tunnel")
+            await asyncio.Event().wait()
+
+    hub = PreviewHub()
+    topic = uuid.uuid4()
+    machine = hub.attach(topic, SEAT, Transport())
+    sibling = machine.open()
+    stream = machine.open()
+    with pytest.raises((OSError, TimeoutError)):
+        await stream.send(wire.OP_REQ)
+    assert entered.is_set()
+    assert not hub.is_online(topic, SEAT)
+    assert hub.open_stream(topic, SEAT) is None
+    assert machine.open() is None
+    assert (await sibling.receive())[0] == wire.OP_CLOSE
+    replacement = Machine().attach(hub, topic, issued=1)
+    hub.detach(machine)
+    assert hub.is_online(topic, SEAT)
+    response = await hub.request(topic, SEAT, method="GET", path="/", headers=[])
+    assert response is not None and response.body == b"body"
+    hub.detach(replacement.attached)

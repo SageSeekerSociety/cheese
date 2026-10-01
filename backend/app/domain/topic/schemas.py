@@ -146,17 +146,6 @@ class ConclusionIn(BaseModel):
     contributor_handles: list[str] | None = None
 
 
-class RelayIn(BaseModel):
-    """母子传话 (`cheese_tell`): one message across the parent/child edge.
-
-    ``target`` is a topic id, a ``<#id>`` reference token, or a title — resolved
-    against the sender's parent + direct children only (app.domain.topic.relay).
-    """
-
-    target: str = Field(min_length=1, max_length=200)
-    content: str = Field(min_length=1)
-
-
 class DocEditIn(BaseModel):
     content: str
     author: str = "anonymous"
@@ -164,4 +153,5 @@ class DocEditIn(BaseModel):
     # Required, and deliberately so: this doc is only ever written whole, so a
     # writer with no version is a writer about to erase whatever it did not
     # read. Everything that writes here has just read the doc.
-    expected_version: int
+    expected_version: int = Field(ge=0)
+    operation_id: uuid.UUID | None = None

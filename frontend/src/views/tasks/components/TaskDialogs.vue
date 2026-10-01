@@ -201,16 +201,6 @@
     </v-card>
   </v-dialog>
 
-  <!-- AI 对话框组件 -->
-  <AIAdviceChatDialog
-    ref="chatDialogRef"
-    :model-value="chatDialogOpen"
-    :task-id="taskData?.id || 0"
-    :context="selectedContext"
-    @update:model-value="handleCloseChat"
-    @clear-context="handleClearContext"
-  />
-
   <!-- 新增队伍选择对话框 -->
   <TeamSelectionDialog
     :open="teamSelectionDialogOpen"
@@ -235,7 +225,6 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskAIAdviceConversationContext } from '@/network/api/tasks/types'
 import type { Task, Team, TeamTaskEligibility } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
@@ -247,7 +236,6 @@ const { t } = useI18n()
 
 // 组件
 const VerifyInfoFormComponent = defineAsyncComponent(() => import('@/components/tasks/VerifyInfoForm.vue'))
-const AIAdviceChatDialog = defineAsyncComponent(() => import('@/components/tasks/AIAdviceChatDialog.vue'))
 const PrivacyProtectionInfo = defineAsyncComponent(() => import('./PrivacyProtectionInfo.vue'))
 const TeamSelectionDialog = defineAsyncComponent(() => import('./TeamSelectionDialog.vue'))
 const LeaveTeamDialog = defineAsyncComponent(() => import('./LeaveTeamDialog.vue'))
@@ -259,7 +247,6 @@ const props = defineProps<{
   loadingTeams: boolean
   joinedTeams: Team[]
   selectedLeaveTeamId: number | null
-  selectedContext: TaskAIAdviceConversationContext | undefined
   participationInfo: any
 }>()
 
@@ -269,7 +256,6 @@ const events = useEvents()
 // 各种对话框的状态
 const verifyInfoDialogOpen = ref(false)
 const privacyDialogOpen = ref(false)
-const chatDialogOpen = ref(false)
 const teamSelectionDialogOpen = ref(false)
 const leaveTeamDialogOpen = ref(false)
 const privacyAgreed = ref(false)
@@ -277,7 +263,6 @@ const fromSubmit = ref(false)
 
 // 组件引用
 const verifyInfoFormRef = ref<InstanceType<typeof VerifyInfoFormComponent> | null>(null)
-const chatDialogRef = ref<InstanceType<typeof AIAdviceChatDialog> | null>(null)
 
 // 监听对话框状态变化
 onMounted(() => {
@@ -287,13 +272,6 @@ onMounted(() => {
 
   events.on('privacy-dialog-open', (value) => {
     privacyDialogOpen.value = value
-  })
-
-  events.on('chat-dialog-open', ({ status, question }) => {
-    chatDialogOpen.value = status
-    if (question) {
-      chatDialogRef.value?.sendMessage(question)
-    }
   })
 
   events.on('team-selection-dialog-open', (value) => {
@@ -381,11 +359,6 @@ const handleCancelPrivacy = () => {
   events.emit('cancel-privacy', undefined)
 }
 
-const handleCloseChat = (value: boolean) => {
-  chatDialogOpen.value = value
-  events.emit('chat-dialog-open', { status: value })
-}
-
 const handleCloseTeamSelection = () => {
   teamSelectionDialogOpen.value = false
   events.emit('team-selection-dialog-open', false)
@@ -407,10 +380,6 @@ const handleSelectLeaveTeam = (teamId: number) => {
 const handleConfirmLeaveTeam = () => {
   events.emit('confirm-leave-team', undefined)
   leaveTeamDialogOpen.value = false
-}
-
-const handleClearContext = () => {
-  events.emit('clear-context', undefined)
 }
 
 // 直接显示隐私声明

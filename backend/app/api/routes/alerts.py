@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
+from app.auth.project_access import may_read_project
 from app.core.db import get_db
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.runtime import announce_stale
 from app.domain.notification.models import Notification
 from app.domain.notification.schemas import (
@@ -67,16 +68,22 @@ async def create_notification(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """往项目的收件箱里写 —— agent（带 scope 的令牌）、开发覆盖，或者一个登录了
-    的人；匿名的进不来。路由自己核一遍凭据，而不是只靠中间件那道闸
-    （见 ``require_verified_caller``）。
+    """往项目的收件箱里写 —— agent（带 scope 的令牌）或者一个登录了的人；匿名的进
+    不来。
+
+    凭据之外还要看两头的成员身份。写的人：这个项目（指了房间就是那个房间）的成员
+    —— 否则任何登录了的人都能往一个他不在的项目里、给每个成员的收件箱写一条标题和
+    正文都由他定的消息。收的人：同样打得开这个项目或房间 —— 打不开的人读不到它，
+    一条到不了任何人的通知不是成功；指着私密房间的那一条，也不能把字给房间外面的
+    人看。房间得是这个项目的。全局 sandbox token 是开发用的受信覆盖，和
+    ``authorize_project`` 一样不问成员。
 
     返回的是**一组**：一条广播在这里就展开成一人一行，所以「刚写下的那一条」不再
     只有一个答案。
     """
     if body.kind not in PROJECT_NOTIFICATION_KINDS:
         raise ValidationError("这一类通知不从项目收件箱写入")
-    await resolver.require_verified_caller(
+    actor = await resolver.require_verified_caller(
         project_id=project_id, topic_id=body.topic_id
     )
     # `topic_id` 是 `topics` 的外键，而一条线程不是那张表里的行 —— 所以每个 agent
@@ -87,7 +94,29 @@ async def create_notification(
     # `task_id`，像块和用量已经有的那样。
     topic_id = body.topic_id
     if topic_id is not None:
-        topic_id = (await TopicService(db).place_or_404(topic_id)).room_id
+        place = await TopicService(db).place_or_404(topic_id)
+        if place.project_id != project_id:
+            raise NotFoundError("Topic not found")
+        topic_id = place.room_id
+    if actor.authenticated:
+        if topic_id is not None:
+            await resolver.authorize_topic(
+                actor, project_id=project_id, topic_id=topic_id, enforce=True
+            )
+        elif actor.via == "token":
+            # A session token names a person and no project, so the project is
+            # asked. An agent credential is minted for one project and `resolve`
+            # has already refused it everywhere else: its scope is the answer.
+            await resolver.authorize_project(actor, project_id=project_id)
+        target = body.target_handle
+        if target is not None and not (
+            await resolver.topic_admits_handle(
+                actor, project_id=project_id, topic_id=topic_id, handle=target
+            )
+            if topic_id is not None
+            else await may_read_project(db, project_id=project_id, handle=target)
+        ):
+            raise ValidationError("收件人不在这个项目或房间里")
     rows = await ProjectNotificationService(db).create(
         project_id=project_id,
         level=body.level,

@@ -277,8 +277,8 @@ export function useChatComposer(deps: ChatComposerDeps) {
     draft.value = saved?.draft ?? ''
     replyTarget.value = saved?.reply ?? null
     pendingAtts.value = saved?.atts ?? []
-    // 换话题时在飞的那些没法再等回声了（socket 换了），回到队列，等这个话题
-    // 下次连上再走。它们不会在别的房间里露面。
+    // 换话题时在飞的那一条被叫停了，回到队列，回到这个话题时带同一个 id 再发
+    // （后端认得它，不会落两遍）。它们不会在别的房间里露面。
     outbox.value = (saved?.outbox ?? []).map((o) => (o.state === 'sending' ? { ...o, state: 'queued' } : o))
   }
 

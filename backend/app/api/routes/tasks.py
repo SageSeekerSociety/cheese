@@ -23,8 +23,7 @@ from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
-from app.domain.llm.repositories import AIUserQuotaRepository
-from app.domain.llm.services import AiAdviceService
+from app.domain.feature_stats import pricing
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -47,11 +46,7 @@ from app.domain.task.models import (
     TaskTagRelation,
 )
 from app.domain.task.repositories import (
-    AIConversationRepository,
-    AIMessageRepository,
     TaskAccessDomainRepository,
-    TaskAIAdviceContextRepository,
-    TaskAIAdviceRepository,
     TaskMembershipRepository,
     TaskRepository,
     TaskSubmissionEntryRepository,
@@ -67,7 +62,6 @@ from app.domain.task.services import (
     TaskSubmissionService,
 )
 from app.domain.task.submission_state import claim_state
-from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
@@ -144,27 +138,8 @@ async def get_team_service(db=Depends(get_db)) -> TeamService:
     return TeamService(repo)
 
 
-async def get_task_ai_advice_service(db=Depends(get_db)) -> TaskAIAdviceService:
-    advice_repo = TaskAIAdviceRepository(session=db)
-    conversation_repo = AIConversationRepository(session=db)
-    message_repo = AIMessageRepository(session=db)
-    context_repo = TaskAIAdviceContextRepository(session=db)
-    task_repo = TaskRepository(session=db)
-    quota_repo = AIUserQuotaRepository(session=db)
-    quota_service = AiAdviceService(repo=quota_repo)
-    return TaskAIAdviceService(
-        advice_repo=advice_repo,
-        conversation_repo=conversation_repo,
-        message_repo=message_repo,
-        context_repo=context_repo,
-        task_repo=task_repo,
-        quota_service=quota_service,
-    )
-
-
 async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    _ = db
-    return TaskPdfDraftService()
+    return await TaskPdfDraftService.on_gateway(db, await pricing.model_rates())
 
 
 class ConfirmTaskPublishFromPdfRequest(BaseModel):
@@ -1602,8 +1577,7 @@ async def preview_task_from_pdf(
     if len(pdf_bytes) > 15 * 1024 * 1024:
         raise BadRequestError("PDF file is too large (max 15MB)")
 
-    space_repo = SpaceRepository(session=db)
-    space = await space_repo.get_by_id(space_id)
+    space = await SpaceRepository(session=db).get_by_id(space_id)
     if space is None:
         raise NotFoundError("Space not found")
 
@@ -1641,20 +1615,21 @@ async def preview_task_from_pdf(
         default_topic_ids.append(default_topic.id)
 
     template = draft_service.pick_template(space.task_templates or [], template_index)
-    (
-        drafts,
-        token_used,
-        illustrations,
-    ) = await draft_service.generate_task_payloads_from_pdf(
-        pdf_bytes=pdf_bytes,
-        template=template,
-        space_id=space_id,
-        category_id=resolved_category_id,
-        forced_submitter_type=forced_submitter_type,
-        user_id=auth_user.user_id,
-        default_topic_ids=default_topic_ids,
-        max_tasks=max_tasks,
-    )
+    async with draft_service.charged_to(db, auth_user.user_id):
+        (
+            drafts,
+            token_used,
+            illustrations,
+        ) = await draft_service.generate_task_payloads_from_pdf(
+            pdf_bytes=pdf_bytes,
+            template=template,
+            space_id=space_id,
+            category_id=resolved_category_id,
+            forced_submitter_type=forced_submitter_type,
+            user_id=auth_user.user_id,
+            default_topic_ids=default_topic_ids,
+            max_tasks=max_tasks,
+        )
 
     # 解析出来的东西落成**发布者本人名下**的附件行，把 id 交回给前端去勾：原 PDF 与
     # 那几张插图在服务端手上，只有这里能登记它们。挂在 ``meta.uploaderId`` 上的名字
@@ -3613,24 +3588,3 @@ async def delete_task_submission_review(
     await review_service.delete_review(submission_id=submission_id)
     review_dto = await review_service.get_review_dto(submission_id)
     return {"code": 200, "message": "OK", "data": {"review": review_dto}}
-
-
-async def _ensure_task_visible_for_advice(
-    *, db, task_id: int, auth_user: AuthUserInfo
-) -> None:
-    """A task's AI advice is about that task, so reading it takes the same
-    visibility judgment as reading the task itself (``TaskVisibilityService``).
-
-    看不到的任务，它的 advice 也看不到: the advice records quote the task and the
-    conversations are the AI's reasoning about it, so a caller refused the task
-    must not be handed its advice by id. Not-found rather than forbidden, for
-    the same reason the task reads answer that way — a 403 would confirm the id
-    names something.
-    """
-    task = await TaskRepository(session=db).get_by_id(task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
-    if not await TaskVisibilityService(session=db).can_view_task(
-        task=task, user_id=auth_user.user_id
-    ):
-        raise NotFoundError.for_resource("task", task_id)

@@ -11,6 +11,7 @@ import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 会话里的 Agent 反馈卡：芝士排查完之后，在这里问一句「要提交反馈吗」。
 //
@@ -45,6 +46,12 @@ defineOptions({ name: 'AgentFeedbackCard' })
 const props = defineProps<{ topicId: string }>()
 
 const store = useFeedbackStore()
+const workspace = useWorkspaceStore()
+
+/** 名册上的名字；名册里没有（还没加载、或者不在这个项目里）就退回 handle。 */
+function nameOf(handle: string): string {
+  return workspace.members.find((m) => m.user_handle === handle)?.name || handle
+}
 const router = useRouter()
 
 /** 这个话题里还活着的提案。拉不到就是空数组（提案是顺路问一句，不该让对话栏报错）。 */
@@ -151,21 +158,26 @@ function onSubmitted(id: string) {
 
     <div v-else class="fb-agent-card mt-2">
       <div class="fb-agent-card__pad">
-        <div class="d-flex align-center ga-2 mb-1">
-          <v-icon size="19">mdi-robot-outline</v-icon>
-          <span class="t-title">{{ t('feedback.proposal.confirm') }}</span>
-        </div>
-        <!-- 这张卡只有一个作者，而且一定是 agent（提案接口就是 agent 那条通道），
-             所以 `is-agent` 直接写死，不按 handle 去猜。 -->
-        <div class="t-meta mb-2 d-flex align-center ga-2">
-          <FeedbackAuthorAvatar :handle="proposal.author_handle" is-agent :size="20" />
-          <span>
-            {{ kindLabel(proposal.payload.kind) }} · {{ proposal.author_handle }} ·
-            {{ relTime(proposal.authored_at) }}
-          </span>
+        <!-- 谁的判断只占一行小字：这句话每张卡都一样，反馈自己的标题才是这张卡唯一
+             的标题。作者显示名册上的名字，不是 handle。这张卡只有一个作者，而且一定是
+             agent（提案接口就是 agent 那条通道），所以 `is-agent` 直接写死，不按
+             handle 去猜。 -->
+        <div class="fb-agent-card__byline t-meta-read">
+          <FeedbackAuthorAvatar
+            :handle="proposal.author_handle"
+            :name="nameOf(proposal.author_handle)"
+            is-agent
+            :size="20"
+          />
+          <!-- 一整段字，跟着宽度自然折行；拆成几块各自换行的话，窄的时候头像、
+               这句话、类型和时间会各占一行。 -->
+          <span
+            >{{ t('feedback.proposal.byline', { name: nameOf(proposal.author_handle) }) }} ·
+            {{ kindLabel(proposal.payload.kind) }} · {{ relTime(proposal.authored_at) }}</span
+          >
         </div>
 
-        <div class="t-title mb-2">{{ proposal.payload.title }}</div>
+        <div class="t-title fb-agent-card__title">{{ proposal.payload.title }}</div>
 
         <!-- 用户原话。**放在判断依据上面**，理由见文件开头：这是这张卡唯一一个
              不用解释就成立的诚信机制，读的人该先看见它。 -->
@@ -180,41 +192,44 @@ function onSubmitted(id: string) {
         </div>
 
         <!-- 展开区：三段现场。默认收起，见上面那段注释。
-             高度用 v-expand-transition 过渡（仓库里另外三处也是这么做的）：直接跳
-             出来会让人以为自己点错了 —— 卡片底下凭空多出三行，而按钮上的字同时从
-             「查看详情」变成「收起详情」。它走的是 Vuetify 自己的那组 class，所以
-             style.css 里那条 prefers-reduced-motion 兜底照样管得住它。 -->
-        <v-expand-transition>
-          <div v-if="expanded.has(proposal.block_id)" class="fb-agent-card__evidence mb-3">
-            <div v-if="proposal.payload.what_happened" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">{{ t('feedback.detail.whatHappened') }}</div>
-              <div class="t-body fb-agent-card__text">{{ proposal.payload.what_happened }}</div>
-            </div>
-            <div v-if="proposal.payload.repro" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">{{ t('feedback.detail.repro') }}</div>
-              <pre class="fb-evidence-pre">{{ proposal.payload.repro }}</pre>
-            </div>
-            <div v-if="proposal.payload.evidence" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">{{ t('feedback.detail.evidence') }}</div>
-              <div class="t-body fb-agent-card__text">{{ proposal.payload.evidence }}</div>
-            </div>
-            <!-- 日志只给个长度，不铺开：它是最大的一段（上限两万字），而这一屏的
+             高度用网格行从 0fr 过渡到 1fr，内容常驻在 DOM 里、收起时 inert。证据框的
+             内边距、边框和下外边距都在被裁的那一层**里面**：放在外面的话，高度动画缩不
+             过那 22px 的内边距加边框，外边距又根本不参与动画，展开第一帧就凭空多出
+             34px、停住一下才开始长，收起时也停在 34px 再一下子消失。 -->
+        <!-- `|| undefined`：inert 只看属性在不在，`inert="false"` 照样让整块读不到、点不了。 -->
+        <div class="fb-agent-card__fold" :class="{ 'is-open': expanded.has(proposal.block_id) }">
+          <div class="fb-agent-card__fold-inner" :inert="!expanded.has(proposal.block_id) || undefined">
+            <div class="fb-agent-card__evidence">
+              <div v-if="proposal.payload.what_happened" class="fb-evidence-block">
+                <div class="t-eyebrow mb-1">{{ t('feedback.detail.whatHappened') }}</div>
+                <div class="t-body fb-agent-card__text">{{ proposal.payload.what_happened }}</div>
+              </div>
+              <div v-if="proposal.payload.repro" class="fb-evidence-block">
+                <div class="t-eyebrow mb-1">{{ t('feedback.detail.repro') }}</div>
+                <pre class="fb-evidence-pre">{{ proposal.payload.repro }}</pre>
+              </div>
+              <div v-if="proposal.payload.evidence" class="fb-evidence-block">
+                <div class="t-eyebrow mb-1">{{ t('feedback.detail.evidence') }}</div>
+                <div class="t-body fb-agent-card__text">{{ proposal.payload.evidence }}</div>
+              </div>
+              <!-- 日志只给个长度，不铺开：它是最大的一段（上限两万字），而这一屏的
                  目的是让人决定要不要提交，不是读日志。真正的日志随反馈一起走。 -->
-            <div v-if="proposal.payload.logs" class="fb-evidence-block">
-              <div class="t-eyebrow mb-1">{{ t('feedback.proposal.logs') }}</div>
-              <div class="t-meta">
-                {{ t('feedback.proposal.logsAttached', { n: proposal.payload.logs.length }) }}
+              <div v-if="proposal.payload.logs" class="fb-evidence-block">
+                <div class="t-eyebrow mb-1">{{ t('feedback.proposal.logs') }}</div>
+                <div class="t-meta">
+                  {{ t('feedback.proposal.logsAttached', { n: proposal.payload.logs.length }) }}
+                </div>
+              </div>
+              <div v-if="proposal.payload.session_id || proposal.payload.environment" class="t-meta">
+                <template v-if="proposal.payload.session_id">
+                  {{ t('feedback.sessionLine', { id: proposal.payload.session_id }) }}
+                </template>
+                <template v-if="proposal.payload.session_id && proposal.payload.environment"> · </template>
+                <template v-if="proposal.payload.environment">{{ proposal.payload.environment }}</template>
               </div>
             </div>
-            <div v-if="proposal.payload.session_id || proposal.payload.environment" class="t-meta">
-              <template v-if="proposal.payload.session_id">
-                {{ t('feedback.sessionLine', { id: proposal.payload.session_id }) }}
-              </template>
-              <template v-if="proposal.payload.session_id && proposal.payload.environment"> · </template>
-              <template v-if="proposal.payload.environment">{{ proposal.payload.environment }}</template>
-            </div>
           </div>
-        </v-expand-transition>
+        </div>
 
         <div class="d-flex align-center flex-wrap ga-2">
           <v-btn
@@ -255,6 +270,38 @@ function onSubmitted(id: string) {
 }
 .fb-agent-card__pad {
   padding: 12px;
+}
+/* 谁的判断：头像、名字和这句话一行，类型和时间接在后面。 */
+.fb-agent-card__byline {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.fb-agent-card__title {
+  margin-bottom: 10px;
+}
+/* 展开区：网格行 0fr → 1fr。内层裁掉溢出，间距（下外边距）在内层里面，所以跟着
+   高度一起出现、一起消失。 */
+.fb-agent-card__fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-base) var(--ease-standard);
+}
+.fb-agent-card__fold.is-open {
+  grid-template-rows: 1fr;
+}
+.fb-agent-card__fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-agent-card__fold-inner > .fb-agent-card__evidence {
+  margin-bottom: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-agent-card__fold {
+    transition: none;
+  }
 }
 /* 用户原话用左边一道竖线引用，判断依据用 inset 底色 —— 两件事不该长得一样：
    原话是**证据**（不可改写），判断依据是**推理**（可能错）。 */

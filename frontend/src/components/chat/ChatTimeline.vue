@@ -8,16 +8,19 @@
 // doing. The three animation sets (`arrived` / `older` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
-import type { Block, Topic } from '../../cx_types'
+import type { Block, TodoItem, Topic } from '../../cx_types'
+import type { AgentFace } from '../../lib/agentFace'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
-import type { NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { editableText } from '../../lib/renderMessage'
+import { formatSpan } from '../../lib/siteLog'
+import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DispatchedMarker from '../DispatchedMarker.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
@@ -71,7 +74,7 @@ const props = defineProps<{
   isExternal: (handle: string) => boolean
   avatarSrc: (handle: string) => string | null
   displayName: (m: Block) => string
-  noticeAgentName: (m: Block, notice: PlatformNotice) => string | null
+  noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
   parentOf: (m: Block) => Block | undefined
   showReplyCue: (m: Block) => boolean
   fmtTime: (iso: string) => string
@@ -80,6 +83,8 @@ const props = defineProps<{
   outboxEdge: (index: number) => RunEdge
   myName: string
   viewer: string
+  /** 在干活（或刚干完）的队友此刻的表情，按 handle（lib/agentFace）。 */
+  agentFaces?: Record<string, AgentFace>
 }>()
 
 const emit = defineEmits<{
@@ -94,6 +99,7 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'answer', block: Block, option: string): void
+  (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
   (e: 'avatar-error', handle: string): void
@@ -130,13 +136,61 @@ const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
     if (!row.notice || !prev?.notice) return false
-    const name = props.noticeAgentName(row.block, row.notice)
-    if (!name || name !== props.noticeAgentName(prev.block, prev.notice)) return false
+    const agent = props.noticeAgent(row.block, row.notice)
+    const before = props.noticeAgent(prev.block, prev.notice)
+    if (!agent || !before || agent.name !== before.name || agent.handle !== before.handle) return false
     if (props.splitMarkers.before.has(row.block.id) || row.block.id === props.unreadAnchorId) return false
     if (dayKey(prev.block.created_at) !== dayKey(row.block.created_at)) return false
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
   })
 )
+
+// 队友在干活时，对话里它最近出现的那个头像跟着它的状态动：从下往上找，每位队友
+// 只认第一个带头像的行——消息一组里的第一条，或者它那几条事件行里的第一条。
+const faceRows = computed(() => {
+  const faces = props.agentFaces ?? {}
+  const wanted = Object.keys(faces).length
+  const out = new Map<string, AgentFace>()
+  const seen = new Set<string>()
+  for (let i = props.rows.length - 1; i >= 0 && seen.size < wanted; i--) {
+    const { block, notice } = props.rows[i]
+    const handle = notice
+      ? noticeCont.value[i]
+        ? null
+        : props.noticeAgent(block, notice)?.handle ?? null
+      : props.runEdges[i] !== 'cont' && props.isAgentBlock(block)
+        ? block.author
+        : null
+    if (!handle || !faces[handle] || seen.has(handle)) continue
+    seen.add(handle)
+    out.set(block.id, faces[handle])
+  }
+  return out
+})
+
+// 悬停在动的头像上：现场顶上那一行，连同已经用了多久。秒数只在有队友在跑时走。
+const now = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | undefined
+const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status))
+watch(
+  ticking,
+  (on) => {
+    clearInterval(ticker)
+    now.value = Date.now()
+    ticker = on ? setInterval(() => (now.value = Date.now()), 1000) : undefined
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => clearInterval(ticker))
+
+function faceLabel(face: AgentFace | undefined): string | null {
+  const status = face?.status
+  if (!status) return null
+  const label = siteStatusLabel(status)
+  if (status.startedAt === null) return label
+  const span = formatSpan(Math.max(0, Math.floor((now.value - status.startedAt) / 1000)))
+  return `${label} · ${t('work.room.site.status.elapsed', { span })}`
+}
 
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
@@ -146,6 +200,9 @@ function emitReact(block: Block, emoji: string) {
 }
 function emitAnswer(block: Block, option: string) {
   emit('answer', block, option)
+}
+function emitChecklist(block: Block, items: TodoItem[]) {
+  emit('checklist', block, items)
 }
 function emitOpenFile(path: string, taskId: string | null) {
   emit('open-file', path, taskId)
@@ -243,8 +300,10 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :block="m"
           :notice="notice"
           :run="run"
-          :name="noticeAgentName(m, notice)"
+          :agent="noticeAgent(m, notice)"
           :cont="noticeCont[i]"
+          :face="faceRows.get(m.id)?.state ?? null"
+          :face-label="faceLabel(faceRows.get(m.id))"
           :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
           :agent-name="agentName"
           :refs="refs"
@@ -284,6 +343,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :active="bar.shown && bar.id === m.id"
           :ask-busy="askBusy === m.id"
           :live="liveChecklists.has(m.id)"
+          :face="faceRows.get(m.id)?.state ?? null"
+          :face-label="faceLabel(faceRows.get(m.id))"
           :editing="editingId === m.id"
           :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
           :saving="editSaving"
@@ -293,6 +354,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @open-card="emit('open-card', $event)"
           @react="emitReact"
           @answer="emitAnswer"
+          @checklist="emitChecklist"
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"
           @avatar-error="emit('avatar-error', $event)"

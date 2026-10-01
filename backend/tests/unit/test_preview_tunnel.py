@@ -44,10 +44,12 @@ def _server(body: bytes = b"served") -> ThreadingHTTPServer:
 class _Peer:
     """The backend end of the tunnel, spoken over a socket pair."""
 
-    def __init__(self, port_file: str) -> None:
+    def __init__(self, port_file: str, *, capabilities=frozenset()) -> None:
         self.backend, machine = socket.socketpair()
         self.backend.settimeout(10)
-        self.session = wire.Session(machine, wire.PortSource(port_file))
+        self.session = wire.Session(
+            machine, wire.PortSource(port_file), capabilities=capabilities
+        )
         self.thread = threading.Thread(target=self.session.serve, daemon=True)
         self.thread.start()
 
@@ -300,3 +302,166 @@ def test_a_helper_handed_over_stops_instead_of_dialling_back(tmp_path):
 
     assert codes == [0], "the helper is still dialling"
     assert len(dials) == 1
+
+
+@pytest.mark.parametrize("stage", ["headers", "body"])
+def test_cancel_closes_actual_upstream_and_reaps_worker(port_file, stage):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port_file.write_text(str(listener.getsockname()[1]))
+    reached = threading.Event()
+    eof = threading.Event()
+    errors = []
+
+    def app():
+        try:
+            with listener.accept()[0] as connection:
+                connection.settimeout(2)
+                request = bytearray()
+                while b"\r\n\r\n" not in request:
+                    request.extend(connection.recv(4096))
+                if stage == "body":
+                    connection.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nfirst"
+                    )
+                reached.set()
+                try:
+                    assert connection.recv(1) == b""
+                except ConnectionResetError:
+                    pass
+                eof.set()
+        except BaseException as exc:
+            errors.append(exc)
+
+    server = threading.Thread(target=app, daemon=True)
+    server.start()
+    peer = _Peer(str(port_file), capabilities=wire.CAPABILITIES)
+    try:
+        peer.send(wire.OP_REQ, 41, wire.encode_meta({"path": "/gated"}))
+        assert reached.wait(2)
+        state = peer.session._streams[41]
+        if stage == "body":
+            assert peer.recv()[0] == wire.OP_RESP
+            assert peer.recv() == (wire.OP_DATA, 41, b"first")
+        peer.send(wire.OP_CLOSE, 41)
+        assert eof.wait(2), errors
+        state.worker.join(timeout=2)
+        assert not state.worker.is_alive()
+        assert state.done.is_set()
+        assert 41 not in peer.session._streams
+        assert state.socket.fileno() == -1
+        assert not errors
+    finally:
+        peer.close()
+        listener.close()
+        server.join(timeout=2)
+
+
+def test_sse_first_chunk_arrives_before_app_releases_end(port_file):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port_file.write_text(str(listener.getsockname()[1]))
+    release = threading.Event()
+
+    def app():
+        with listener.accept()[0] as connection:
+            request = bytearray()
+            while b"\r\n\r\n" not in request:
+                request.extend(connection.recv(4096))
+            connection.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                b"Transfer-Encoding: chunked\r\n\r\nc\r\ndata: first\n\r\n"
+            )
+            assert release.wait(2)
+            connection.sendall(b"0\r\n\r\n")
+
+    server = threading.Thread(target=app, daemon=True)
+    server.start()
+    peer = _Peer(str(port_file), capabilities=wire.CAPABILITIES)
+    peer.backend.settimeout(1)
+    try:
+        peer.send(wire.OP_REQ, 42, wire.encode_meta({"path": "/events"}))
+        assert peer.recv()[0] == wire.OP_RESP
+        assert peer.recv() == (wire.OP_DATA, 42, b"data: first\n")
+        assert not release.is_set()
+        release.set()
+        assert peer.recv()[0] == wire.OP_END
+    finally:
+        release.set()
+        peer.close()
+        listener.close()
+        server.join(timeout=2)
+
+
+@pytest.mark.parametrize("direction", ["app", "browser"])
+def test_actual_websocket_preserves_1013_close_and_reaps_workers(port_file, direction):
+    from websockets.exceptions import ConnectionClosed
+    from websockets.sync.server import serve
+
+    observed = []
+    closed = threading.Event()
+
+    def app(connection):
+        if direction == "app":
+            connection.close(1013, "稍后重试")
+        else:
+            try:
+                connection.recv()
+            except ConnectionClosed as exc:
+                observed.append((exc.rcvd.code, exc.rcvd.reason))
+            finally:
+                closed.set()
+
+    server = serve(app, "127.0.0.1", 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port_file.write_text(str(server.socket.getsockname()[1]))
+    peer = _Peer(str(port_file), capabilities=wire.CAPABILITIES)
+    try:
+        peer.send(wire.OP_WS_OPEN, 44, wire.encode_meta({"path": "/hmr"}))
+        assert peer.recv()[0] == wire.OP_WS_OK
+        if direction == "app":
+            op, sid, payload = peer.recv()
+            assert (op, sid) == (wire.OP_CLOSE, 44)
+            assert wire.parse_close(payload) == (1013, "稍后重试")
+        else:
+            state = peer.session._streams[44]
+            peer.send(wire.OP_CLOSE, 44, wire.close_payload(1013, "稍后重试"))
+            assert closed.wait(2)
+            assert observed == [(1013, "稍后重试")]
+            state.worker.join(timeout=2)
+            assert state.done.is_set()
+            assert not state.worker.is_alive()
+            assert not state.writer.is_alive()
+            assert 44 not in peer.session._streams
+    finally:
+        peer.close()
+        server.shutdown()
+
+
+def test_truncated_declared_length_is_error_not_end(port_file):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port_file.write_text(str(listener.getsockname()[1]))
+
+    def app():
+        with listener.accept()[0] as connection:
+            connection.recv(4096)
+            connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
+
+    server = threading.Thread(target=app, daemon=True)
+    server.start()
+    peer = _Peer(str(port_file), capabilities=wire.CAPABILITIES)
+    try:
+        peer.send(wire.OP_REQ, 43, wire.encode_meta({"path": "/truncated"}))
+        assert peer.recv()[0] == wire.OP_RESP
+        assert peer.recv() == (wire.OP_DATA, 43, b"short")
+        op, sid, payload = peer.recv()
+        assert (op, sid) == (wire.OP_ERR, 43)
+        assert b"IncompleteRead" in payload
+    finally:
+        peer.close()
+        listener.close()
+        server.join(timeout=2)

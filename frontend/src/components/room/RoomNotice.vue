@@ -10,7 +10,8 @@
 // 这里只画已经判好档的东西：判档在 lib/platformNotice.ts，署名和时间由房间算好
 // 传进来。它不认识名册，也不认识 socket。
 import type { Block } from '../../cx_types'
-import type { PlatformNotice } from '../../lib/platformNotice'
+import type { FaceState } from '../../lib/agentFace'
+import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -33,10 +34,14 @@ const props = defineProps<{
   notice: PlatformNotice
   /** 折起来的那一串同类事件（`agent-status` 档要拿它画现场）。 */
   run: Block[]
-  /** 署名：平台替谁写的这一条。算不出来就是 null，框里不画名字。 */
-  name: string | null
+  /** 署名：平台替哪位队友写的这一条。算不出来就是 null，框里不画名字。 */
+  agent: NoticeAgent | null
   /** 接在同一位队友上一条事件行下面：不再重复头像和名字。 */
   cont?: boolean
+  /** 这一行的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
+  face?: FaceState | null
+  /** 头像在动时，悬停看到的那一句。 */
+  faceLabel?: string | null
   time: string
   /** 这个房间当前那位 AI 队友的名字，`fold` 档在「…处理中」里用。 */
   agentName: string
@@ -60,7 +65,8 @@ const emit = defineEmits<{
 }>()
 
 /** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
-const happening = computed(() => props.notice.mode === 'plain' && !props.name)
+const happening = computed(() => props.notice.mode === 'plain' && !props.agent)
+const name = computed(() => props.agent?.name ?? null)
 
 /** 本轮改动先列三个文件；其余的点一下再展开，不必去别处看。 */
 const FILES_SHOWN = 3
@@ -118,7 +124,6 @@ const splitTask = computed(() => {
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: 'work.room.notice.action.doc' },
-  decision: { btn: 'work.room.notice.action.decision' },
   topics: { btn: '' },
   split: { btn: 'work.room.notice.action.split' },
   // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
@@ -138,7 +143,10 @@ const ACTION_META: Record<string, { btn: string }> = {
   <AgentNoticeFrame
     v-else
     :name="name"
+    :handle="agent?.handle ?? null"
     :cont="cont"
+    :face="face ?? null"
+    :face-label="faceLabel ?? null"
     :time="time"
     :class="{ 'notice-bump': bumped }"
     @animationend="bumped = false"

@@ -133,34 +133,32 @@ CLAUDE_CODE = "claude-code"
 CODEX = "codex"
 PI = "pi"
 
-# 部署的设置里没写跑哪个骨架时，跑的就是这个。写在这里而不是写进
+# 部署的设置里没列可用骨架时，列表就是这一份。写在这里而不是写进
 # ``core/config.py`` 的默认值，因为骨架的名字全仓只在这个文件出现（不变量 I5，
 # ``tests/unit/test_harness_boundary.py`` 的字面量守卫盯着这一条）。
-_UNCONFIGURED = CLAUDE_CODE
+_UNCONFIGURED = (CLAUDE_CODE,)
 
-#: 项目设置里盖过部署设置的那个键（``Project.settings``）。开发者选项，界面上没
-#: 有它——普通用户看不到骨架这回事（结论 28）。
+#: 项目设置里指定骨架的那个键（``Project.settings``）。开发者选项，界面上没有
+#: 它——普通用户看不到骨架这回事（结论 28）。
 HARNESS_SETTING = "harness"
 
 
 def _known(name: str, source: str) -> str:
     """名字得是这个仓库有适配层的一个，否则是写错了。
 
-    不兜底回默认值：兜底的那一版会让一个配错名字的部署安静地跑另一个骨架，而
-    「跑的是哪个」正是结论 28 要求只有一个答法的那件事。
-
-    认的是适配层的名字，不是注册表：注册表只列答得出四条硬性要求、这套部署真跑
-    的骨架（结论 43），而一个项目把设置指向一个有适配层、这套部署却没注册的骨架，
-    是一件轮次开始时要**在房间里说出来**的事（``chat.py`` 的「没有部署」那一
-    句），不是一次配置错误。部署级的那一条另有一问（``deployment_harness``）。
+    写错的名字不兜底：兜底的那一版会让一个配错名字的部署或项目安静地跑另一个骨
+    架，而「跑的是哪个」正是结论 28 要求只有一个答法的那件事。
     """
     if name not in (CLAUDE_CODE, CODEX, PI):
         raise ValueError(f"{source} 指定的骨架 {name!r} 没有适配层")
     return name
 
 
-def deployment_harness() -> str:
-    """这套部署跑的骨架（结论 28）——一条部署设置，不是谁的属性。
+def deployment_harnesses() -> tuple[str, ...]:
+    """这套部署可用的骨架，按偏好排好（结论 28）——一条部署设置，不是谁的属性。
+
+    每一个都得注册了：装配 ``ComputePool`` 时就会解析，所以配错了是起不来，不是跑
+    到一半才炸。
 
     设置在函数里读，不在模块顶上 import：这个文件是 codex runner 那个
     standard-library-only 归档的一部分（``codex/bundle.py``），而 ``core.config``
@@ -169,25 +167,49 @@ def deployment_harness() -> str:
     """
     from app.core.config import settings
 
-    configured = (settings.agent_harness or "").strip()
+    configured = [name.strip() for name in settings.agent_harnesses if name.strip()]
     if not configured:
         return _UNCONFIGURED
-    # 部署级的这一条要的不只是有适配层，还得注册了：装配 ``ComputePool`` 时就
-    # 会解析，所以配错了是起不来，不是跑到一半才炸。
-    if _known(configured, "agent_harness") not in HARNESSES:
-        raise ValueError(
-            f"agent_harness 指定的骨架 {configured!r} 这套部署没有；"
-            f"有的是 {sorted(HARNESSES)}"
-        )
-    return configured
+    for name in configured:
+        if _known(name, "agent_harnesses") not in HARNESSES:
+            raise ValueError(
+                f"agent_harnesses 列的骨架 {name!r} 这套部署没有；"
+                f"有的是 {sorted(HARNESSES)}"
+            )
+    return tuple(dict.fromkeys(configured))
+
+
+def _in_order(project_settings: Mapping[str, Any] | None) -> list[str]:
+    """这个项目会依次考虑的骨架：它自己指定的那个排最前，前提是部署列了它。"""
+    listed = deployment_harnesses()
+    wanted = str((project_settings or {}).get(HARNESS_SETTING) or "").strip()
+    if wanted and _known(wanted, f"项目设置 {HARNESS_SETTING}") in listed:
+        return [wanted, *(name for name in listed if name != wanted)]
+    return list(listed)
 
 
 def harness_for(project_settings: Mapping[str, Any] | None) -> str:
-    """这个项目跑的骨架：项目自己的设置盖过部署设置，都没说就是部署的那个。"""
-    wanted = str((project_settings or {}).get(HARNESS_SETTING) or "").strip()
-    if not wanted:
-        return deployment_harness()
-    return _known(wanted, f"项目设置 {HARNESS_SETTING}")
+    """这个项目跑的骨架，不问哪台机器：它指定的那个，部署没列就是部署偏好的第一个。
+
+    房间的一轮问的是 ``harness_on``——那一问还要看房间那台机器上挂没挂这个骨架。
+    今天每条进池子的通道都挂着每个注册了的骨架，所以两问答的是同一个。
+    """
+    return _in_order(project_settings)[0]
+
+
+def harness_on(
+    project_settings: Mapping[str, Any] | None, offered: Callable[[str], bool]
+) -> str | None:
+    """这个项目在一台机器上跑的骨架：按 ``_in_order`` 的次序，第一个这台机器挂着的。
+
+    一个骨架挂不挂得上一台机器，取决于它能不能把工具送到那台机器的手上：手就在
+    跑会话的机器上，或者它声明了 ``Capability.REMOTE_EXECUTION``、能把工具调用交
+    出去（``compute.py`` 的 ``build_compute_pool``）。所以「这个场景要远端执行」不
+    在这里再问一遍，问的是那张池子。
+
+    ``None`` = 一个都没有，这一轮在房间里说明，不开始。
+    """
+    return next((name for name in _in_order(project_settings) if offered(name)), None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +319,18 @@ class SubagentRequirement(StrEnum):
     LABELS_ITS_THREAD = "子 agent 的每个事件带可归到卡的线程标识"
     PARENT_RETASKS_IT = "父线程能改它的指令"
     PARENT_STOPS_IT = "父线程能停掉它"
+
+
+class Capability(StrEnum):
+    """骨架自己要提供、一部分场景才要的能力——可选的那一档。
+
+    和 ``SubagentRequirement`` 不同：答不出不妨碍注册，只是要它的地方用不了这个骨
+    架。每一项在 ``Harness.capabilities`` 里写一句「怎么做到的」，指得出代码在哪，
+    规矩和四条硬性要求一样（``test_subagent_requirements.py`` 核）；没有这一项就是
+    做不到。看图是模型的事，空闲退出是平台 runner 的事，都不在这里。
+    """
+
+    REMOTE_EXECUTION = "会话在一台机器上，工具调用交给另一台机器上的执行环境去跑"
 
 
 @runtime_checkable
@@ -450,8 +484,8 @@ class AgentRuntime(Protocol):
         place, and the errand would silently rent a second machine every time.
 
         ``ensure`` + ``send`` + read, for a caller that has nothing to recover
-        to: the platform's OWN errands — the activity digest, the heartbeat
-        patrol, the project summary — have no room waiting on them and no
+        to: the platform's OWN errands — the activity digest and the project
+        summary — have no room waiting on them and no
         timeline to backfill, so the turn is worth exactly as much as the
         iterator that reads it.
 
@@ -688,6 +722,9 @@ class Harness:
     # 值只能是一句话。``Difference`` 是 StrEnum，填进来照样是个 ``str``，所以
     # ``__post_init__`` 认的是类型本身：硬性要求没有「这个骨架做不到」那一档。
     subagents: Mapping[SubagentRequirement, str]
+    # 可选能力（``Capability``），每项一句「怎么做到的」，引文规矩同上。不在这里
+    # 的就是做不到。
+    capabilities: Mapping[Capability, str] = field(default_factory=dict)
     # Does it speak the platform gateway's own shape? Then every model the
     # project can use is one it can drive, and no deployment has to list them.
     # False means it supports only what it has its own adapter for, and an
@@ -711,6 +748,12 @@ class Harness:
                     f"{self.name} 没有答「{requirement}」。这是硬性要求（结论 43）："
                     "答得出的骨架才上注册表，答不出的留着代码不注册。"
                     "一条差异码也不算答——硬性要求没有「暂缺」那一档。"
+                )
+        for capability, answer in self.capabilities.items():
+            if type(answer) is not str or not answer.strip():
+                raise ValueError(
+                    f"{self.name} 声明了「{capability}」却没说怎么做到的。"
+                    "做不到就不写这一项。"
                 )
 
 
@@ -764,6 +807,16 @@ HARNESSES: dict[str, Harness] = {
                 "架。"
             ),
         },
+        capabilities={
+            Capability.REMOTE_EXECUTION: (
+                "中心机上的会话启动时带一个插件，"
+                "`agent/harness/claude_code/remote_execution/client.py` 的 "
+                "`write_plugin` 写出它；插件里的函数钩子 "
+                "`agent/harness/claude_code/remote_execution/proxy.js` 用 `on` 接住"
+                "每一次工具调用，把 Read、Edit、Write、Bash 这些用 `mcp.call` 交给执"
+                "行机上的 native 服务去跑，结果原样还给会话，本机不执行。"
+            ),
+        },
         carries_subscription=True,
     ),
     PI: Harness(
@@ -808,5 +861,5 @@ HARNESSES: dict[str, Harness] = {
 
 
 def harness_name(name: str | None) -> str:
-    """调用方给的 harness 名，没给就是这套部署跑的那个。"""
-    return name or deployment_harness()
+    """调用方给的 harness 名，没给就是这套部署偏好的第一个。"""
+    return name or deployment_harnesses()[0]

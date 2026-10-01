@@ -55,13 +55,16 @@ class Journal(journal.Journal):
 
 
 class Runner(runner.Runner[Journal]):
-    def __init__(self, state: Path):
-        super().__init__(state, Journal, "records.sqlite")
+    def __init__(self, state: Path, **options):
+        super().__init__(state, Journal, "records.sqlite", **options)
         self.submitted: list[str] = []
 
     async def start(self) -> None:
         self.claim()
         await self.listen(2**16)
+
+    def busy(self) -> bool:
+        return False
 
     async def _submit(self, text: str, work_id: str) -> dict:
         self.submitted.append(text)
@@ -253,6 +256,29 @@ async def test_an_input_id_reused_for_different_text_is_refused(tmp_path):
         assert [row["record"].get("said") for row in rows.read()] == ["first", None]
     finally:
         rows.close()
+
+
+@pytest.mark.anyio
+async def test_a_session_with_something_going_is_kept_however_quiet_it_is(tmp_path):
+    """A long command or a background task says nothing for minutes on end;
+    the session that holds it is not idle."""
+
+    class Working(Runner):
+        going = True
+
+        def busy(self) -> bool:
+            return self.going
+
+    runner = Working(tmp_path / "state", idle_exit_s=0.2)
+    runner.process = await asyncio.create_subprocess_exec("sleep", "60")
+    await runner.start()
+    try:
+        await asyncio.sleep(1)
+        assert runner.process.returncode is None
+        runner.going = False
+        await asyncio.wait_for(runner.process.wait(), 10)
+    finally:
+        await runner.close()
 
 
 #: Only guards a hang: the tests below wait on events, never on how long

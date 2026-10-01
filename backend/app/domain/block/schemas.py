@@ -23,6 +23,15 @@ class ReactionToggleIn(BaseModel):
     author: str = Field(min_length=1, max_length=128)
 
 
+class OptionAnswerIn(BaseModel):
+    """POST /topics/blocks/{id}/answer — the option picked, one of the ask's own.
+
+    ``author`` is read only when no credential names the caller."""
+
+    option: str
+    author: str | None = None
+
+
 class BlockOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

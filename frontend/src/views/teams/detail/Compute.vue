@@ -28,6 +28,8 @@ type CloudMachine = ProjectMachine & { projectName: string }
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
+// 自己名下（只有自己的那个团队）不说「团队」：说到归属的几句各有一份。
+const scope = computed(() => (teamData.value?.personal ? 'own' : 'team'))
 
 const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
@@ -119,7 +121,7 @@ async function load() {
     projects.value = projectList.data
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, t('teams.compute.loadTeamFailed'))
+    error.value = errorMessage(cause, t('teams.compute.loadFailed'))
   } finally {
     loading.value = false
     schedulePoll()
@@ -156,7 +158,7 @@ async function addMachine(device: MyDevice) {
 }
 
 async function removeMachine(device: MyDevice) {
-  if (!window.confirm(t('teams.compute.removeDeviceConfirm', { name: device.name }))) return
+  if (!window.confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }))) return
   busy.value = device.device_id
   error.value = null
   try {
@@ -216,7 +218,7 @@ onBeforeUnmount(() => {
     <div class="mb-5 d-flex align-start flex-wrap ga-3">
       <div>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          {{ t('teams.compute.subtitle') }}
+          {{ t(`teams.compute.${scope}.subtitle`) }}
         </p>
       </div>
     </div>
@@ -235,7 +237,7 @@ onBeforeUnmount(() => {
         <v-row>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">{{ t('teams.compute.teamMachines') }}</div>
+              <div class="text-body-2 mb-2">{{ t(`teams.compute.${scope}.machines`) }}</div>
               <div class="text-h6">
                 {{ t('teams.compute.machineQuotaCount', { used: quotas.machines.used, limit: quotas.machines.limit }) }}
               </div>
@@ -249,7 +251,7 @@ onBeforeUnmount(() => {
           </v-col>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">{{ t('teams.compute.creditsTitle') }}</div>
+              <div class="text-body-2 mb-2">{{ t(`teams.compute.${scope}.creditsTitle`) }}</div>
               <div v-if="quotas.credits.unlimited" class="text-h6">{{ t('teams.compute.creditsUnlimited') }}</div>
               <template v-else>
                 <div class="text-h6">
@@ -297,7 +299,7 @@ onBeforeUnmount(() => {
         <div class="section-heading mb-3">
           <div>
             <h3 class="text-subtitle-1 font-weight-medium">{{ t('teams.compute.cloudSection') }}</h3>
-            <p class="text-caption text-medium-emphasis mb-0">{{ t('teams.compute.cloudSubtitle') }}</p>
+            <p class="text-caption text-medium-emphasis mb-0">{{ t(`teams.compute.${scope}.cloudSubtitle`) }}</p>
           </div>
         </div>
 
@@ -392,7 +394,7 @@ onBeforeUnmount(() => {
         <div class="section-heading mb-3">
           <div>
             <h3 class="text-subtitle-1 font-weight-medium">{{ t('teams.compute.selfHostedSection') }}</h3>
-            <p class="text-caption text-medium-emphasis mb-0">{{ t('teams.compute.selfHostedSubtitle') }}</p>
+            <p class="text-caption text-medium-emphasis mb-0">{{ t(`teams.compute.${scope}.selfHostedSubtitle`) }}</p>
           </div>
           <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
@@ -415,7 +417,7 @@ onBeforeUnmount(() => {
               <v-list-item
                 v-if="!addable.length && myDevices.length"
                 disabled
-                :title="t('teams.compute.allDevicesAdded')"
+                :title="t(`teams.compute.${scope}.allDevicesAdded`)"
               />
               <v-list-item
                 v-if="!myDevices.length"
@@ -432,7 +434,7 @@ onBeforeUnmount(() => {
           <v-icon size="38" class="empty-panel-icon">mdi-laptop-off</v-icon>
           <div>
             <div class="text-body-2 font-weight-medium">{{ t('teams.compute.selfHostedEmptyTitle') }}</div>
-            <div class="text-caption text-medium-emphasis">{{ t('teams.compute.selfHostedEmptyHint') }}</div>
+            <div class="text-caption text-medium-emphasis">{{ t(`teams.compute.${scope}.selfHostedEmptyHint`) }}</div>
           </div>
         </div>
         <template v-else>
@@ -500,7 +502,7 @@ onBeforeUnmount(() => {
                     :loading="busy === device.device_id"
                     @click="removeMachine(device)"
                   >
-                    {{ t('teams.compute.removeFromTeam') }}
+                    {{ t(`teams.compute.${scope}.remove`) }}
                   </v-btn>
                 </div>
               </v-card>

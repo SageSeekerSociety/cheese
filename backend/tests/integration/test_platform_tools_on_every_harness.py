@@ -40,7 +40,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi import catalog
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 HARNESSES = ["claude-code", "codex", "pi"]
@@ -315,7 +315,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
             if frame["type"] == "event_block" and (
