@@ -134,7 +134,7 @@ async def test_contract_failure_persists_safe_stage_and_available_usage_once(
                         "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
-                            "content": '{"answer":"private body","extra":"private data"}',
+                            "content": '{"answer":"private","extra":"private"}',
                         },
                     }
                 ],
