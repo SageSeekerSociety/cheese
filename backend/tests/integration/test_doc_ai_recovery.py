@@ -4,10 +4,11 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import DBAPIError
 
 from app.core.errors import ConflictError
-from app.domain.doc_ai.models import DocAiAttempt, DocAiProposal
+from app.domain.doc_ai.models import DocAiAttempt, DocAiProposal, DocAiRequest
 from app.domain.doc_ai.schemas import AskResult, CompletionUsage, ProposalResult
 from app.domain.doc_ai.services import DocAiService
 from app.domain.topic.services import TopicService
@@ -92,6 +93,12 @@ async def test_expired_lease_late_result_retains_spend_without_second_proposal(
         proposals = list(await session.scalars(select(DocAiProposal)))
         assert len(proposals) == 1
         assert proposals[0].replacement == "新提案"
+        with pytest.raises(ConflictError):
+            await DocAiService(session).settle(
+                new,
+                result=ProposalResult(answer="新结果", replacement="另一份内容"),
+                usage=usage("new"),
+            )
         attempts = list(
             await session.scalars(
                 select(DocAiAttempt).order_by(DocAiAttempt.generation)
@@ -202,3 +209,38 @@ async def test_failure_is_durable_and_not_acceptible(business_db_factory):
         assert (
             await session.scalar(select(func.count()).select_from(DocAiProposal)) == 0
         )
+
+
+@pytest.mark.anyio
+async def test_database_freezes_request_proposal_and_attempt_receipts(
+    business_db_factory,
+):
+    factory = business_db_factory
+    room, request_id = await request(factory)
+    async with factory() as session:
+        lease = await DocAiService(session).claim_next()
+        await session.commit()
+    async with factory() as session:
+        await DocAiService(session).settle(
+            lease,
+            result=ProposalResult(answer="结果", replacement="提案"),
+            usage=usage("immutable"),
+        )
+        await session.commit()
+    statements = [
+        update(DocAiRequest).where(DocAiRequest.id == request_id).values(source="改写"),
+        update(DocAiRequest)
+        .where(DocAiRequest.id == request_id)
+        .values(state="pending"),
+        update(DocAiProposal).values(replacement="被篡改"),
+        update(DocAiAttempt).values(result_hash="0" * 64),
+    ]
+    for statement in statements:
+        async with factory() as session:
+            with pytest.raises(DBAPIError, match="document AI"):
+                await session.execute(statement)
+                await session.commit()
+            await session.rollback()
+    async with factory() as session:
+        assert (await DocAiService(session).get(room, request_id)).answer == "结果"
+        assert (await TopicService(session).get_doc(room)).doc_version == 1

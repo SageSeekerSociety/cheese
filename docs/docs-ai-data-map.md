@@ -55,6 +55,6 @@ HTTP、恢复读接口、tool-less transport、项目 binding/admission 和进�
 `phase3-worker-restored-2.log/.exit`：25 passed，exit 0。包含真实人接受与 agent/scoped/过期/跨 room 拒绝，HTTP MockTransport 证明不发送 tools，不替换订阅供给，预算耗尽不调用模型。首轮后台测试 1 passed/2 failed 的原日志保留；错误分类修复后通过。
 `phase3-meter-auth-restored.log/.exit`：29 passed，exit 0。真实数据库证明 HTTP 前进程中断后仍有持久计费扫描；模拟延迟 spend 经现有项目账本扣 grant，普通房间再次 drain 与扫描不重复扣费。扫描不重放 completion；项目累计账本仍只归因到 drain 窗口，不能声称请求级精确分账。
 后台按已存数字身份复查现有账号、agent binding、room 权限、房间/项目归档和租约。测试覆盖项目所有者也不能绕私聊撤权。
-存储不可变保护与 owning 负控尚需补齐。网关实际 header/API 行为未在线验证。
+`phase3-immutable-restored-2.log/.exit`：30 passed，exit 0。数据库触发器冻结请求快照、终态、提案内容及完成尝试回执；同 generation 改结果也拒绝。初轮地址笔误与 JSON 行比较报错均保留原日志，修复后通过。owning 摘保护负控尚需补齐。网关实际 header/API 行为未在线验证。
 UI 接线、Required CI、独立审查、合并、正常部署与页面核验未完成。
 此阶段不是整个 Docs/AI/Slides/Design 交付。

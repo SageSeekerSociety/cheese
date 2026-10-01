@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.doc_ai.models import DocAiAttempt, DocAiProposal, DocAiRequest
 from app.domain.doc_ai.schemas import AskResult, CompletionUsage, ProposalResult
-from app.domain.living_doc.services import content_hash
+from app.domain.living_doc.services import content_hash, payload_fingerprint
 
 
 @dataclass(frozen=True)
@@ -230,12 +230,20 @@ class DocAiService:
         if attempt is None:
             raise ConflictError("没有这次文档 AI 尝试")
         receipt = usage.model_dump(mode="json") if usage else None
+        result_hash = payload_fingerprint(
+            {"result": result.model_dump(mode="json") if result else None}
+        )
         if attempt.finished_at is not None:
-            if attempt.usage != receipt or attempt.error != error:
-                raise ConflictError("同次 completion 已保存不同用量或错误")
+            if (
+                attempt.usage != receipt
+                or attempt.error != error
+                or attempt.result_hash != result_hash
+            ):
+                raise ConflictError("同次 completion 已保存不同结果、用量或错误")
             return False
         attempt.finished_at = now
         attempt.usage = receipt
+        attempt.result_hash = result_hash
         attempt.error = error
         current = (
             row.state == "running"

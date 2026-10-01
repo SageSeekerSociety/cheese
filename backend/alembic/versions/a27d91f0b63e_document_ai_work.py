@@ -76,6 +76,7 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("usage", sa.JSON(), nullable=True),
+        sa.Column("result_hash", sa.String(64), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.UniqueConstraint("request_id", "generation", name="uq_doc_ai_attempt"),
     )
@@ -100,9 +101,48 @@ def upgrade() -> None:
             name="ck_doc_ai_proposal_state",
         ),
     )
+    op.execute("""
+        CREATE FUNCTION freeze_doc_ai_data() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF TG_TABLE_NAME = 'doc_ai_requests' THEN
+            IF (to_jsonb(NEW) - ARRAY['state','generation','lease_until','answer',
+                'error','meter_after']) IS DISTINCT FROM
+               (to_jsonb(OLD) - ARRAY['state','generation','lease_until','answer',
+                'error','meter_after']) THEN
+              RAISE EXCEPTION 'immutable document AI request';
+            END IF;
+            IF OLD.state IN ('succeeded','failed','cancelled') AND
+               (to_jsonb(NEW) - 'meter_after') IS DISTINCT FROM
+               (to_jsonb(OLD) - 'meter_after') THEN
+              RAISE EXCEPTION 'terminal document AI request';
+            END IF;
+          ELSIF TG_TABLE_NAME = 'doc_ai_proposals' THEN
+            IF (to_jsonb(NEW) - ARRAY['state','accepted_by','accepted_version'])
+                IS DISTINCT FROM
+               (to_jsonb(OLD) - ARRAY['state','accepted_by','accepted_version']) OR
+               (OLD.state <> 'pending' AND to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD)) THEN
+              RAISE EXCEPTION 'immutable document AI proposal';
+            END IF;
+          ELSIF TG_TABLE_NAME = 'doc_ai_attempts' THEN
+            IF (to_jsonb(NEW) - ARRAY['finished_at','usage','error','result_hash'])
+                IS DISTINCT FROM
+               (to_jsonb(OLD) - ARRAY['finished_at','usage','error','result_hash']) OR
+               (OLD.finished_at IS NOT NULL AND to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD)) THEN
+              RAISE EXCEPTION 'immutable document AI attempt receipt';
+            END IF;
+          END IF;
+          RETURN NEW;
+        END $$;
+    """)
+    for table in ("doc_ai_requests", "doc_ai_proposals", "doc_ai_attempts"):
+        op.execute(f"""
+            CREATE TRIGGER freeze_{table} BEFORE UPDATE ON {table}
+            FOR EACH ROW EXECUTE FUNCTION freeze_doc_ai_data();
+        """)
 
 
 def downgrade() -> None:
     op.drop_table("doc_ai_proposals")
     op.drop_table("doc_ai_attempts")
     op.drop_table("doc_ai_requests")
+    op.execute("DROP FUNCTION freeze_doc_ai_data()")

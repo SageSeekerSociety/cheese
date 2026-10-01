@@ -80,6 +80,7 @@ class DocAiAttempt(UuidPk, Base):
     )
     # Late attempts still retain their actual spend; a stale result is not free.
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
