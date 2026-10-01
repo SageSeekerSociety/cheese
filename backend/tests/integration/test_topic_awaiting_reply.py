@@ -1,9 +1,9 @@
-"""侧栏红灯的依据 —— `awaiting_reply_since`：有人点了 AI 的名，到现在还没有 AI 回话。
+"""侧栏红标的依据 —— `waits`：这个房间在等**哪位成员**，从什么时候开始，为什么。
 
-规则是一个没读过代码的人也能判的：人 @ 了 AI 而 AI 一句话都没回，这个房间就在
-干等；AI 开口了就不再等；人和人聊天叫不起 AI，也就谈不上在等它；平台自己弹的
-提示不是 AI 在回话。灯什么时候亮（等了多久算太久）是前端按当下的钟判的，这里只
-钉接口给出的那个时间对不对。
+规则是一个没读过代码的人也能判的：人 @ 了一位 AI 队友而它一句话都没回，房间就
+在等它；它开口了就不再等；人和人聊天叫不起 AI，也就谈不上在等它；平台自己弹的
+提示不是 AI 在回话。等的永远是某一位成员，不是房间。标什么时候亮（等了多久算太
+久）是前端按当下的钟判的，这里只钉接口给出的那位成员和那个时间对不对。
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
 AGENT = "cheese-0123456789ab"
+OTHER_AGENT = "cheese-ba9876543210"
 
 
 def _room(client) -> tuple[str, str]:
@@ -72,12 +73,25 @@ def _say(
     return at
 
 
-def _since(client, project_id: str, room_id: str) -> datetime | None:
+def _waits(client, project_id: str, room_id: str) -> list[dict]:
     rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
-    listed = next(t for t in rows if t["id"] == room_id)["awaiting_reply_since"]
-    header = client.get(f"/topics/{room_id}").json()["data"]["awaiting_reply_since"]
-    assert listed == header
-    return datetime.fromisoformat(listed.replace("Z", "+00:00")) if listed else None
+    listed = next(t for t in rows if t["id"] == room_id)["waits"]
+    assert client.get(f"/topics/{room_id}").json()["data"]["waits"] == listed
+    return listed
+
+
+def _wait(client, project_id: str, room_id: str) -> dict | None:
+    """The one wait these rooms have, if any (none of them has two)."""
+    waits = _waits(client, project_id, room_id)
+    assert len(waits) <= 1, waits
+    return waits[0] if waits else None
+
+
+def _since(client, project_id: str, room_id: str) -> datetime | None:
+    wait = _wait(client, project_id, room_id)
+    if wait is None or wait["reason"] == "failed":
+        return None
+    return datetime.fromisoformat(wait["since"].replace("Z", "+00:00"))
 
 
 def test_an_unanswered_summons_waits_from_the_earliest_message(client):
@@ -88,6 +102,16 @@ def test_an_unanswered_summons_waits_from_the_earliest_message(client):
     since = _since(client, pid, rid)
     assert since is not None
     assert abs(since - first) < timedelta(seconds=1)
+    # The wait is on the teammate that was addressed.
+    assert _wait(client, pid, rid)["member"] == AGENT
+
+
+def test_another_agent_speaking_does_not_answer_for_the_one_addressed(client):
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    _say(client, pid, rid, OTHER_AGENT, ago=timedelta(minutes=8))
+
+    assert _wait(client, pid, rid)["member"] == AGENT
 
 
 def test_an_agent_reply_ends_the_wait(client):
@@ -169,24 +193,46 @@ def test_a_platform_notice_is_not_the_agent_answering(client):
 # ---- 轮次报错：不等五分钟，立刻算坏 ---------------------------------------
 
 
+def _failed(client, project_id: str, room_id: str) -> list[dict]:
+    return [w for w in _waits(client, project_id, room_id) if w["reason"] == "failed"]
+
+
 def _failed_at(client, project_id: str, room_id: str) -> str | None:
-    rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
-    listed = next(t for t in rows if t["id"] == room_id)["turn_failed_at"]
-    header = client.get(f"/topics/{room_id}").json()["data"]["turn_failed_at"]
-    assert listed == header
-    return listed
+    failed = _failed(client, project_id, room_id)
+    return failed[0]["since"] if failed else None
 
 
-def _failure(client, pid, rid, *, ago, event_type="turn_failed", severity="error"):
-    return _say(
-        client,
-        pid,
-        rid,
-        "cheese",
-        ago=ago,
-        author_type=AuthorType.platform,
-        meta={"event_type": event_type, "severity": severity},
-    )
+def _failure(
+    client,
+    pid,
+    rid,
+    *,
+    ago,
+    event_type="turn_failed",
+    severity="error",
+    turn_id=None,
+):
+    at = datetime.now(UTC) - ago
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                Block(
+                    project_id=uuid.UUID(pid),
+                    topic_id=uuid.UUID(rid),
+                    turn_id=turn_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.platform,
+                    author="cheese",
+                    content="…",
+                    created_at=at,
+                    meta={"event_type": event_type, "severity": severity},
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+    return at
 
 
 def test_a_failed_turn_marks_the_room_until_the_agent_speaks_again(client):
@@ -197,6 +243,29 @@ def test_a_failed_turn_marks_the_room_until_the_agent_speaks_again(client):
 
     _say(client, pid, rid, AGENT, ago=timedelta(seconds=10))
     assert _failed_at(client, pid, rid) is None
+
+
+def test_a_failed_turn_is_on_the_member_whose_turn_it_was(client):
+    """The failure names its turn; the turn is the teammate that wrote in it.
+    Another teammate talking afterwards does not mend it."""
+    pid, rid = _room(client)
+    turn = uuid.uuid4()
+    _say(
+        client,
+        pid,
+        rid,
+        "alice",
+        ago=timedelta(seconds=50),
+        meta={
+            "agent_recipient": {"handle": AGENT, "mentioned": True},
+            "prompted_turn": str(turn),
+        },
+    )
+    _failure(client, pid, rid, ago=timedelta(seconds=30), turn_id=turn)
+    _say(client, pid, rid, OTHER_AGENT, ago=timedelta(seconds=10))
+
+    failed = _failed(client, pid, rid)
+    assert [w["member"] for w in failed] == [AGENT]
 
 
 def test_a_classified_platform_error_counts_too(client):
@@ -343,7 +412,7 @@ def test_a_failed_check_on_a_thread_waits_for_an_agent(client):
     assert abs(since - at) < timedelta(seconds=1)
     assert _reason(client, pid, rid) == "check"
     # 悬停要写出是哪个 PR。
-    assert _field(client, pid, rid, "reply_wait_pr") == 1950
+    assert _wait(client, pid, rid)["pr"] == 1950
 
 
 def test_an_agent_just_talking_does_not_clear_a_red_check(client):
@@ -414,6 +483,35 @@ def test_a_rejected_card_nobody_picks_up_waits_for_an_agent(client):
     assert _reason(client, pid, rid) == "rejected"
 
 
+def test_a_stuck_card_waits_on_the_agent_that_last_worked_here(client):
+    """Rejected half an hour ago, but the agent has been fixing it round after
+    round and touched the task two minutes ago: the wait is on that agent, and
+    runs from its last touch, not from the rejection — otherwise the gap
+    between two rounds reads as half an hour of nobody picking it up."""
+    from app.domain.review.models import AcceptStatus
+
+    pid, rid = _room(client)
+    tid = _task(client, pid, rid)
+    card = _card(client, pid, rid, tid)
+    _update_card(client, card, status=AcceptStatus.rejected, decided_by="alice")
+    _rejected(client, pid, rid, tid, ago=timedelta(minutes=30))
+    touched = _on_task(
+        client,
+        pid,
+        rid,
+        tid,
+        AGENT,
+        ago=timedelta(minutes=2),
+        author_type=AuthorType.participant,
+        meta={},
+    )
+
+    wait = _wait(client, pid, rid)
+    assert wait["member"] == AGENT
+    since = datetime.fromisoformat(wait["since"].replace("Z", "+00:00"))
+    assert abs(since - touched) < timedelta(seconds=1)
+
+
 def test_refiling_after_a_rejection_ends_the_wait(client):
     from app.domain.review.models import AcceptStatus
 
@@ -447,62 +545,6 @@ def test_a_card_the_gate_failed_waits_for_an_agent(client):
     assert _since(client, pid, rid) is not None
 
 
-# ---- 绿灯常亮：已采纳、在等合并 -------------------------------------------
-
-
-def _merging(client, pid, rid) -> bool:
-    rows = client.get(f"/topics?project_id={pid}").json()["data"]["data"]
-    listed = next(t for t in rows if t["id"] == rid)["merging"]
-    assert client.get(f"/topics/{rid}").json()["data"]["merging"] == listed
-    return listed
-
-
-def test_an_approved_card_in_the_merge_queue_is_merging(client):
-    pid, rid = _room(client)
-    tid = _task(client, pid, rid)
-    _card(
-        client,
-        pid,
-        rid,
-        tid,
-        decided_by="alice",
-        note_code="waiting_merge_queue",
-        merge_state={"state": "blocked", "who": "ci", "reasons": []},
-    )
-    assert _merging(client, pid, rid) is True
-
-
-def test_checks_running_before_anyone_approved_are_not_merging(client):
-    pid, rid = _room(client)
-    tid = _task(client, pid, rid)
-    _card(
-        client,
-        pid,
-        rid,
-        tid,
-        merge_state={"state": "blocked", "who": "ci", "reasons": []},
-    )
-    assert _merging(client, pid, rid) is False
-
-
-def test_a_merged_card_is_no_longer_merging(client):
-    from app.domain.review.models import AcceptStatus
-
-    pid, rid = _room(client)
-    tid = _task(client, pid, rid)
-    card = _card(
-        client,
-        pid,
-        rid,
-        tid,
-        decided_by="alice",
-        merge_state={"state": "blocked", "who": "ci", "reasons": []},
-    )
-    assert _merging(client, pid, rid) is True
-    _update_card(client, card, status=AcceptStatus.accepted)
-    assert _merging(client, pid, rid) is False
-
-
 def test_a_check_event_without_a_red_card_does_not_wait(client):
     pid, rid = _room(client)
     tid = _task(client, pid, rid)
@@ -529,19 +571,9 @@ def test_a_notice_that_is_not_for_the_agent_does_not_wait(client):
 # ---- 为什么还没人回：机器 / 环境那一侧 -----------------------------------
 
 
-def _field(client, project_id: str, room_id: str, name: str):
-    rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
-    listed = next(t for t in rows if t["id"] == room_id)[name]
-    assert client.get(f"/topics/{room_id}").json()["data"][name] == listed
-    return listed
-
-
 def _reason(client, project_id: str, room_id: str) -> str | None:
-    rows = client.get(f"/topics?project_id={project_id}").json()["data"]["data"]
-    listed = next(t for t in rows if t["id"] == room_id)["reply_wait_reason"]
-    header = client.get(f"/topics/{room_id}").json()["data"]["reply_wait_reason"]
-    assert listed == header
-    return listed
+    wait = _wait(client, project_id, room_id)
+    return wait["reason"] if wait else None
 
 
 def _machine(client, pid, rid, event_type, *, ago):

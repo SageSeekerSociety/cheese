@@ -24,8 +24,8 @@ import MailDraftCard from '@/components/room/MailDraftCard.vue'
 import TopicRailArchivedGroup from '@/components/topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 import i18n, { setLocale } from '@/i18n'
-import { stallReasonText } from '@/lib/replyWait'
-import { topicPhaseBadge } from '@/lib/topicState'
+import { stallReasonText, waitText } from '@/lib/replyWait'
+import { topicStateBadge } from '@/lib/topicState'
 
 const CJK = /[㐀-䶿一-鿿豈-﫿]/
 const vuetify = createVuetify({ components, directives })
@@ -68,19 +68,20 @@ describe('topic and room surfaces in English', () => {
     expectNoChinese()
   })
 
-  it('topic rail row with a stalled, collapsed, draft topic', () => {
+  it('topic rail row with a stalled member, collapsed, draft topic', () => {
+    const now = Date.parse('2026-09-28T04:00:00Z')
+    const wait = { member: 'cheese-a1', reason: 'mention', since: '2026-09-28T00:00:00Z' }
     const row = {
-      topic: topic({ status: 'draft', title_source: 'auto', awaiting_reply_since: '2026-09-28T00:00:00Z' }),
+      topic: topic({ status: 'draft', title_source: 'auto', waits: [wait] }),
       depth: 1,
       hasChildren: true,
       collapsed: true,
       hiddenCount: 3,
       hiddenUnread: 2,
       unreadTotal: 2,
-      hiddenRunning: true,
+      hiddenWorking: true,
       hiddenAwaits: false,
       hiddenStalled: false,
-      hiddenMerging: false,
     } as unknown as VisibleRow<Topic>
     mount(TopicRailRow, {
       row,
@@ -88,10 +89,12 @@ describe('topic and room surfaces in English', () => {
       page: false,
       renaming: false,
       menuOpen: false,
-      stalled: false,
+      stalled: true,
+      marks: [
+        { handle: 'cheese-a1', name: 'Moss', agent: true, state: 'stalled', title: waitText(wait, 'Moss', now) },
+        { handle: 'cheese-b2', name: 'Fern', agent: true, state: 'working', title: 'Fern is working here' },
+      ],
       toggleTitle: 'Expand',
-      now: Date.parse('2026-09-28T04:00:00Z'),
-      agentName: 'Moss',
       actions: () => [],
     })
     expectNoChinese()
@@ -155,8 +158,11 @@ describe('topic and room surfaces in English', () => {
       const text = stallReasonText({ reason, since: '2026-09-28T12:00:00Z', pr: 12 }, 'Moss', now)
       expect(text).not.toMatch(CJK)
     }
-    for (const phase of ['archived', 'closed', 'draft', 'working', 'delivering', 'reviewing', 'open'] as const) {
-      expect(topicPhaseBadge(phase).label).not.toMatch(CJK)
+    expect(waitText({ member: 'cheese-a1', reason: 'failed', since: '2026-09-28T12:00:00Z' }, 'Moss', now)).not.toMatch(
+      CJK
+    )
+    for (const status of ['archived', 'closed', 'draft', 'active']) {
+      expect(topicStateBadge(status).label).not.toMatch(CJK)
     }
   })
 })

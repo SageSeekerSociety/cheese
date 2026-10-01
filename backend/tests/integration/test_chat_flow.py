@@ -83,7 +83,9 @@ def test_blocks_empty_then_populated_after_chat(client):
     # `reaction` (芝士's 👀) is filtered out rather than placed: it rides the
     # harness's prompt receipt, which is reported on its own task, so it has no
     # fixed position among these. test_reactions.py is where it is asserted.
-    types = [f["type"] for f in frames if f["type"] != "reaction"]
+    # `activity` (the agent working, then done) is the same: it follows the
+    # turn's lifecycle frames, and test_member_activity.py asserts it.
+    types = [f["type"] for f in frames if f["type"] not in ("reaction", "activity")]
     assert types == [
         "user_block",
         "turn_started",

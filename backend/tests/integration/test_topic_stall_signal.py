@@ -92,6 +92,8 @@ def test_a_turn_that_died_mid_tool_is_reported_stalled(client):
     # The verdict shows its work: a reader can go look at this exact block.
     assert stall["last_block"]["tool"] == "Bash"
     assert stall["last_block"]["kind"] == "event"
+    # A turn is a member's: the one whose half-finished action this is.
+    assert stall["member"] == "cheese"
 
 
 def test_a_turn_that_died_right_after_showing_something_is_reported_stalled(client):
@@ -123,6 +125,7 @@ def test_a_topic_that_just_acted_is_not_stalled(client):
     stall = _stall(client, tid)
     assert stall["stalled"] is False
     assert stall["reason"] is None
+    assert stall["member"] is None
 
 
 def test_a_turn_that_finished_hours_ago_is_not_stalled(client):

@@ -37,7 +37,6 @@
     "src/components/panels/PanelPreviewView.vue",
     "src/components/panels/PanelProgress.vue",
     "src/components/panels/PanelSite.vue",
-    "src/components/panels/SiteStatusBar.vue",
     "src/components/panels/SiteStepOutput.vue",
     "src/components/panels/TaskProgress.vue",
     "src/components/panels/doc/OverviewAuto.vue",

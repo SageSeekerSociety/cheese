@@ -127,32 +127,15 @@ describe('tab 栏', () => {
 describe('打开房间时开在哪一格', () => {
   it('待验收、而且真有改动：开在「改动」', async () => {
     workSummary.mockResolvedValue({ has_run: true, changed_files: ['a.ts'] })
-    const { container } = mount({ phase: 'reviewing' })
+    const { container } = mount({ cardPhase: 'pending' })
     await waitFor(() => expect(selected(container)).toMatch(/^改动/))
   })
 
   it('待验收、但一个改动文件都没有：留在「总览」，不落在一格空的上', async () => {
-    const { container, emitted } = mount({ phase: 'reviewing' })
+    const { container, emitted } = mount({ cardPhase: 'pending' })
     await waitFor(() => expect(workSummary).toHaveBeenCalled())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(selected(container)).toBe('总览')
     expect(emitted()['update:tab']).toBeUndefined()
-  })
-})
-
-// 「现场」那一格在有人干活时把「谁在干」写进标签的 title：一间房几个座位并行在跑
-// 就并列几个名字（对话栏按轮次帧报上来的名单）；名单空着 = 帧没带座位（老后端），
-// 退回 agentName 的单数说法，和从前一样。
-describe('「现场」tab 上谁在干活', () => {
-  it('几个队友并行在干：名字并列报出来', async () => {
-    const { findByRole } = mount({ working: true, workingAgents: ['芝士K', '芝士O'] })
-    const site = await findByRole('tab', { name: /现场/ })
-    expect(site.getAttribute('title')).toBe('现场（芝士K、芝士O正在工作）')
-  })
-
-  it('名单空着：退回 agentName 的单数说法', async () => {
-    const { findByRole } = mount({ working: true, agentName: '芝士', workingAgents: [] })
-    const site = await findByRole('tab', { name: /现场/ })
-    expect(site.getAttribute('title')).toBe('现场（芝士正在工作）')
   })
 })
