@@ -1380,19 +1380,9 @@ class ChatService:
 
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""
-        async with self._sessions() as session:
-            await complete_work_inputs(
-                session,
-                require_registered=True,
-                **{
-                    field: getattr(completion, field)
-                    for field in WorkCompletion.__dataclass_fields__
-                },
-            )
-            await session.commit()
-        from app.domain.agent.pending_messages import nudge_messages
+        from app.domain.agent.pending_messages import finish_work
 
-        nudge_messages(self, completion.topic_id)
+        await finish_work(self, completion, complete_work_inputs)
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""

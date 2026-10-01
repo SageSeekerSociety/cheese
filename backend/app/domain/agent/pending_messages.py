@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select
 
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     Block,
@@ -14,9 +15,32 @@ from app.domain.block.models import (
     consumed_turn,
     prompt_attempts,
 )
+from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+from app.domain.identity.handles import recipient_seat
 
 DEFERRED_INPUT = "deferred_native_input"
+_runner = None
+
+
+def bind_runner(runner):
+    global _runner
+    _runner = runner
+
+
+async def finish_work(chat, completion, settle):
+    """Only a committed native completion can wake a deferred message."""
+    async with chat.session_factory() as session:
+        await settle(
+            session,
+            require_registered=True,
+            **{
+                field: getattr(completion, field)
+                for field in completion.__dataclass_fields__
+            },
+        )
+        await session.commit()
+    nudge_messages(chat, completion.topic_id)
 
 
 async def defer_message(session, block_id):
@@ -26,12 +50,11 @@ async def defer_message(session, block_id):
 
 
 def nudge_messages(chat, topic_id):
-    from app.api.deps import get_work_runner
-
-    runner = get_work_runner()
+    runner = _runner
     caller = asyncio.current_task()
     if (
-        not runner.owns_sessions
+        runner is None
+        or not runner.owns_sessions
         or not runner.accepting_turns
         or (caller is not None and caller.cancelling())
     ):
@@ -52,7 +75,6 @@ def nudge_messages(chat, topic_id):
 
 
 async def resume_messages(runner, chat, *, topic_id=None):
-    from app.domain.agent.runtime import _WAITING, addressed_to_agent, recipient_seat
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.project.repositories import ProjectRepository
     from app.domain.topic.repositories import TopicRepository
@@ -100,7 +122,7 @@ async def resume_messages(runner, chat, *, topic_id=None):
             for block in await session.scalars(
                 select(Block).where(Block.turn_id.in_(ids), Block.id.not_in(ids))
             )
-            if (block.meta or {}).get("event_type") not in _WAITING
+            if (block.meta or {}).get("event_type") not in {EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK}
         }
         seats = {}
         for block in mentioned:
@@ -148,7 +170,7 @@ async def resume_messages(runner, chat, *, topic_id=None):
             chat,
             room,
             block.id,
-            addressed=addressed_to_agent(recipient_seat(recipient)),
+            addressed=address(Event(asked=recipient_seat(recipient)), Hand.participant),
             continuation_id=block.id,
             author=block.author,
             content=block.content,

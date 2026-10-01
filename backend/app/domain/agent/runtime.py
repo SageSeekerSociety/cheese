@@ -892,6 +892,9 @@ class AgentWorkRunner:
 
     def subscribe_messages(self) -> None:
         """Attach the process-owned runner to accepted room messages."""
+        from app.domain.agent.pending_messages import bind_runner
+
+        bind_runner(self)
         self._broker.subscribe_messages(self._receive_message)
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
