@@ -111,7 +111,9 @@ beforeEach(() => {
   mocks.getComments.mockResolvedValue({ data: [], total: 0 })
   mocks.getDocNodes.mockResolvedValue({ data: [], total: 0 })
   mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
-  mocks.putDoc.mockResolvedValue(doc('第一段\n', 2))
+  mocks.putDoc.mockImplementation((_topic: string, content: string, _author: string, version: number) =>
+    Promise.resolve(doc(content, version + 1))
+  )
   vuetify = createVuetify({ components, directives })
 })
 
@@ -214,5 +216,189 @@ describe('写完一篇文档', () => {
 
     await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(1))
     expect(mocks.putDoc.mock.calls[0][1]).toContain('源码里改的一段')
+  })
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((ok, fail) => {
+    resolve = ok
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+function body(view: { container: Element }) {
+  return view.container.querySelector('.doc-prose')?.textContent ?? ''
+}
+async function tick(view: Awaited<ReturnType<typeof mountDoc>>, value: number) {
+  await view.rerender({ topic, activityTick: value, topicList: [] })
+  await settle()
+}
+async function typeAndSave(view: Awaited<ReturnType<typeof mountDoc>>, text: string) {
+  const calls = mocks.putDoc.mock.calls.length
+  mocks.editor!.commands.insertContent(text)
+  await fireEvent.keyDown(view.container.querySelector('.doc-prose')!, { key: 's', metaKey: true })
+  await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(calls + 1))
+  await settle()
+}
+
+// Real PanelDoc -> DocSurface -> Editor; only HTTP responses are controlled.
+// Positive schedules accompany the two counterexamples supplied at f135b3be.
+describe('canonical snapshot timing', () => {
+  it('ordered refresh installs latest text and saves against its version', async () => {
+    const view = await mountDoc()
+    mocks.getDoc.mockResolvedValue(doc('第二版\n', 2))
+    await tick(view, 1)
+    await waitFor(() => expect(body(view)).toBe('第二版'))
+    mocks.getDoc.mockResolvedValue(doc('第三版\n', 3))
+    await tick(view, 2)
+    await waitFor(() => expect(body(view)).toBe('第三版'))
+    await typeAndSave(view, '后续编辑')
+    expect(mocks.putDoc.mock.calls[0][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[0][1]).toContain('第三版')
+  })
+
+  it('settled save followed by notification refetches remote text', async () => {
+    const view = await mountDoc()
+    const put = deferred<Block>()
+    mocks.putDoc.mockReturnValueOnce(put.promise)
+    await typeAndSave(view, '本地编辑')
+    const sent = mocks.putDoc.mock.calls[0][1] as string
+    put.resolve(doc(sent, 2))
+    await waitFor(() => expect(bar(view.container)).toContain('已保存'))
+    mocks.getDoc.mockResolvedValue(doc(sent + '\n\n远端追加\n', 3))
+    await tick(view, 1)
+    await waitFor(() => expect(body(view)).toContain('远端追加'))
+    await typeAndSave(view, '又一次编辑')
+    expect(mocks.getDoc).toHaveBeenCalledTimes(2)
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(3)
+  })
+
+  it('late older GET cannot replace a newer displayed version or the next save base', async () => {
+    const view = await mountDoc()
+    const older = deferred<Block>()
+    const newer = deferred<Block>()
+    mocks.getDoc.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+    await tick(view, 1)
+    await tick(view, 2)
+    expect(mocks.getDoc).toHaveBeenCalledTimes(3)
+    newer.resolve(doc('第三版\n', 3))
+    await waitFor(() => expect(body(view)).toBe('第三版'))
+    older.resolve(doc('第二版\n', 2))
+    await settle()
+    expect(body(view)).toBe('第三版')
+    await typeAndSave(view, '后续编辑')
+    expect(mocks.putDoc.mock.calls[0][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[0][1]).toContain('第三版')
+  })
+
+  it('notification during PUT is reconciled when that save settles', async () => {
+    const view = await mountDoc()
+    const put = deferred<Block>()
+    mocks.putDoc.mockReturnValueOnce(put.promise)
+    await typeAndSave(view, '本地编辑')
+    const sent = mocks.putDoc.mock.calls[0][1] as string
+    mocks.getDoc.mockResolvedValue(doc(sent + '\n\n远端追加\n', 3))
+    await tick(view, 1)
+    put.resolve(doc(sent, 2))
+    await waitFor(() => expect(body(view)).toContain('远端追加'))
+    expect(mocks.getDoc).toHaveBeenCalledTimes(2)
+    await typeAndSave(view, '又一次编辑')
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(3)
+    expect(mocks.putDoc.mock.calls[1][1]).toContain('远端追加')
+  })
+
+  it('GET issued before PUT cannot replace the acknowledged base after PUT', async () => {
+    const view = await mountDoc()
+    const get = deferred<Block>()
+    mocks.getDoc.mockReturnValueOnce(get.promise)
+    await tick(view, 1)
+    await typeAndSave(view, '我的写入')
+    await waitFor(() => expect(bar(view.container)).toContain('已保存'))
+    const sent = mocks.putDoc.mock.calls[0][1] as string
+    mocks.getDoc.mockResolvedValue(doc(sent, 2))
+    get.resolve(doc('第一段\n', 1))
+    await settle()
+    await typeAndSave(view, '下一次')
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][1]).toContain('我的写入')
+  })
+
+  it('canonical receipt becomes the next base instead of the submitted draft', async () => {
+    const view = await mountDoc()
+    mocks.putDoc.mockResolvedValueOnce(doc('服务端规范正文\n', 2))
+    await typeAndSave(view, '提交稿')
+    await waitFor(() => expect(body(view)).toBe('服务端规范正文'))
+    await typeAndSave(view, '下一次')
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][1]).toContain('服务端规范正文')
+    expect(mocks.putDoc.mock.calls[1][1]).not.toContain('提交稿')
+  })
+
+  it('typing during PUT stays dirty and survives the pending refresh as a conflict', async () => {
+    const view = await mountDoc()
+    const put = deferred<Block>()
+    mocks.putDoc.mockReturnValueOnce(put.promise)
+    await typeAndSave(view, '提交稿')
+    const sent = mocks.putDoc.mock.calls[0][1] as string
+    mocks.editor!.commands.insertContent('仍在输入')
+    mocks.getDoc.mockResolvedValue(doc(sent + '\n\n远端追加\n', 3))
+    await tick(view, 1)
+    await tick(view, 2)
+    put.resolve(doc(sent, 2))
+    await waitFor(() => expect(view.container.querySelector('.doc-notice--conflict')).not.toBeNull())
+    expect(body(view)).toContain('仍在输入')
+    expect(body(view)).not.toContain('远端追加')
+    expect(mocks.getDoc).toHaveBeenCalledTimes(2)
+    expect(bar(view.container)).not.toContain('已保存')
+  })
+
+  it('source edits typed during PUT are not replaced by its receipt', async () => {
+    const view = await mountDoc()
+    await openSourceMode(view.container)
+    const put = deferred<Block>()
+    mocks.putDoc.mockReturnValueOnce(put.promise)
+    await fireEvent.update(view.container.querySelector('.code-stub')!, '提交源码\n')
+    await fireEvent.keyDown(view.container.querySelector('.doc-source')!, { key: 's', metaKey: true })
+    await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(1))
+    await fireEvent.update(view.container.querySelector('.code-stub')!, '提交源码\n继续输入\n')
+    put.resolve(doc('提交源码\n', 2))
+    await settle()
+    expect((view.container.querySelector('.code-stub') as HTMLTextAreaElement).value).toContain('继续输入')
+    expect(bar(view.container)).toContain('编辑中')
+    await fireEvent.keyDown(view.container.querySelector('.doc-source')!, { key: 's', metaKey: true })
+    await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(2))
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(2)
+    expect(mocks.putDoc.mock.calls[1][1]).toContain('继续输入')
+  })
+
+  it.each([new Error('response lost'), new ApiError(409, 'conflict')])(
+    'reconciles a pending notification on save failure without a retry loop: %s',
+    async (failure) => {
+      const view = await mountDoc()
+      const put = deferred<Block>()
+      mocks.putDoc.mockReturnValueOnce(put.promise)
+      await typeAndSave(view, '保留的本地稿')
+      mocks.getDoc.mockResolvedValue(doc('远端新版\n', 3))
+      await tick(view, 1)
+      put.reject(failure)
+      await waitFor(() => expect(view.container.querySelector('.doc-notice--conflict')).not.toBeNull())
+      expect(body(view)).toContain('保留的本地稿')
+      expect(mocks.getDoc).toHaveBeenCalledTimes(2)
+      expect(mocks.putDoc).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('an unmounted panel ignores the pending PUT and does not refresh', async () => {
+    const view = await mountDoc()
+    const put = deferred<Block>()
+    mocks.putDoc.mockReturnValueOnce(put.promise)
+    await typeAndSave(view, '提交稿')
+    await tick(view, 1)
+    view.unmount()
+    put.resolve(doc('迟到回执\n', 2))
+    await settle()
+    expect(mocks.getDoc).toHaveBeenCalledTimes(1)
   })
 })
