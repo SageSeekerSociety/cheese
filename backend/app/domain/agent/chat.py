@@ -2125,8 +2125,9 @@ class ChatService(SessionRecovery):
     ) -> None:
         """Best-effort, like the delivery stamp: losing it costs a turn picked
         up by another backend its reply link and the accuracy of one route
-        label, and the sweeps judge it by its room rather than its seat —
-        never the turn."""
+        label. It lands after the interval exists, so the row carries this
+        turn's exact seat and route — what death evidence is matched against,
+        never a room-level guess."""
         from app.domain.agent.repositories import AgentTurnRepository
 
         try:
@@ -4495,11 +4496,8 @@ class ChatService(SessionRecovery):
         # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
         # 同一个条件也是「这一轮欠人一句回话」：召唤它的是人，会话就得先在房间里
         # 回一句，再做别的（`driven/runner.py`）。
-        # FB-56: this input's durable interval and ledger row, opened only
-        # after every fallible preparation above has succeeded — a failure
-        # there leaves no interval to retire. The nonce is what the native
-        # user entry is bound back with; the row exists even if the send
-        # below fails (a fact, never a resend).
+        # FB-56: the interval and ledger open after every fallible preparation
+        # (a failure there leaves no interval); the nonce binds the entry back.
         nonce = turn_inputs.new_nonce()
         prompt_text = f"{prompt_text}\n{nonce}"
         await turn_inputs.open_interval_with_input(
@@ -4516,10 +4514,6 @@ class ChatService(SessionRecovery):
         )
         # And on the turn itself: the backend that ends this turn may not be
         # this one (`_begin_self_started_turn`), and it remembers neither.
-        # AFTER the interval exists (FB-56): a direct converse opens its row
-        # just above, and an UPDATE ahead of that insert deterministically
-        # found zero rows — delivered with no agent_handle, a row no death
-        # evidence can ever match.
         await self._note_turn_context(
             turn_id,
             route=route,
