@@ -62,6 +62,7 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
     )
     original_get = BlockRepository.get
     original_execute = AsyncSession.execute
+    original_scalar = AsyncSession.scalar
 
     async def race():
         both_read = asyncio.Event()
@@ -100,17 +101,17 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
                 and getattr(statement, "is_select", False)
             )
             if not is_answer_lock:
-                return await original_execute(session, statement, *args, **kwargs)
+                return await original_scalar(session, statement, *args, **kwargs)
             if name == "B":
                 b_submitted_lock.set()
-            result = await original_execute(session, statement, *args, **kwargs)
+            result = await original_scalar(session, statement, *args, **kwargs)
             if name == "A":
                 a_locked.set()
                 await real_wait_observed.wait()
             return result
 
         monkeypatch.setattr(BlockRepository, "get", initial_read)
-        monkeypatch.setattr(AsyncSession, "execute", lock_query)
+        monkeypatch.setattr(AsyncSession, "scalar", lock_query)
 
         async def observe_pg_wait():
             await b_submitted_lock.wait()
