@@ -28,6 +28,7 @@ class Lease:
     binding: dict
     project_id: uuid.UUID
     room_id: uuid.UUID
+    actor: str = ""
 
 
 class DocAiService:
@@ -122,6 +123,58 @@ class DocAiService:
             row.binding,
             row.project_id,
             row.room_id,
+            row.actor,
+        )
+
+    async def ready_to_invoke(self, lease: Lease) -> bool:
+        row = await self.get(lease.room_id, lease.request_id)
+        return (
+            row.state == "running"
+            and row.generation == lease.generation
+            and row.lease_until is not None
+            and row.lease_until > datetime.now(UTC)
+        )
+
+    async def mark_invoking(self, lease: Lease) -> bool:
+        row = await self.session.scalar(
+            select(DocAiRequest)
+            .where(DocAiRequest.id == lease.request_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if row is None or not await self.ready_to_invoke(lease):
+            return False
+        # Commit before HTTP, so a crash with a lost response still gets metered.
+        row.meter_after = datetime.now(UTC)
+        await self.session.flush()
+        return True
+
+    async def claim_meter(self, *, now: datetime | None = None) -> Lease | None:
+        now = now or datetime.now(UTC)
+        row = await self.session.scalar(
+            select(DocAiRequest)
+            .where(DocAiRequest.meter_after <= now)
+            .order_by(DocAiRequest.meter_after, DocAiRequest.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if row is None:
+            return None
+        # Keep the row scan-able for delayed upstream spend, even after success.
+        # The shared ledger checkpoint, not this schedule, deduplicates billing.
+        row.meter_after = now + timedelta(minutes=5)
+        await self.session.flush()
+        return Lease(
+            row.id,
+            row.generation,
+            row.kind,
+            row.question,
+            row.source,
+            row.selection,
+            row.binding,
+            row.project_id,
+            row.room_id,
+            row.actor,
         )
 
     async def cancel(self, room_id: uuid.UUID, request_id: uuid.UUID) -> DocAiRequest:

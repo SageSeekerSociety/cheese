@@ -15,6 +15,7 @@ async def run_one(
     sessions,
     invoke: Callable[[Lease], Awaitable[Completion]],
     meter: Callable[[Lease], Awaitable[None]],
+    authorize,
 ) -> bool:
     async with sessions() as session:
         lease = await DocAiService(session).claim_next()
@@ -24,9 +25,17 @@ async def run_one(
     result = None
     usage = None
     error = None
+    invoking = False
     try:
         async with sessions() as session:
             await admit(session, lease.project_id, lease.binding)
+        async with sessions() as session:
+            await authorize(session, lease)
+            permitted = await DocAiService(session).mark_invoking(lease)
+            await session.commit()
+        if not permitted:
+            return True
+        invoking = True
         completion = await invoke(lease)
         result, usage = completion.result, completion.usage
     except InvalidCompletion as exc:
@@ -35,7 +44,7 @@ async def run_one(
         error = str(exc)
     except Exception:
         # Never persist HTTP exception text containing upstream credentials.
-        logger.exception("document completion failed for %s", lease.request_id)
+        logger.error("document completion failed for %s", lease.request_id)
         error = "文档模型调用失败，请重新请求"
     async with sessions() as session:
         await DocAiService(session).settle(
@@ -44,5 +53,6 @@ async def run_one(
         await session.commit()
     # The existing project-key cumulative meter owns credit deduction. Recording
     # attempt JSON above must not charge the same gateway spend a second time.
-    await meter(lease)
+    if invoking:
+        await meter(lease)
     return True

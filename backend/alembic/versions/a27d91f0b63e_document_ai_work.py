@@ -47,6 +47,7 @@ def upgrade() -> None:
         sa.Column("state", sa.String(16), nullable=False),
         sa.Column("generation", sa.Integer(), nullable=False),
         sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("meter_after", sa.DateTime(timezone=True), nullable=True),
         sa.Column("answer", sa.Text(), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -59,6 +60,9 @@ def upgrade() -> None:
     )
     op.create_index("ix_doc_ai_requests_room_id", "doc_ai_requests", ["room_id"])
     op.create_index("ix_doc_ai_requests_state", "doc_ai_requests", ["state"])
+    op.create_index(
+        "ix_doc_ai_requests_meter_after", "doc_ai_requests", ["meter_after"]
+    )
     op.create_table(
         "doc_ai_attempts",
         sa.Column("id", sa.Uuid(), primary_key=True),
