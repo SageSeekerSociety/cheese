@@ -129,6 +129,13 @@ def _ocr_page(image: Path, number: int, out: Out) -> None:
         out.miss(f"第 {number} 页：tesseract 没有识别出文字（渲染图仍可阅读）")
 
 
+def _miss_scanned_page(out: Out, number: int, images: int, hint: str) -> None:
+    out.miss(
+        f"第 {number} 页：几乎没有文字层、有 {images} 张图片，"
+        f"是扫描/图片页，内容没有读到{hint}"
+    )
+
+
 def read_pdf(path: Path, out: Out, args) -> None:
     import pdfplumber
 
@@ -158,10 +165,7 @@ def read_pdf(path: Path, out: Out, args) -> None:
         nonlocal rendered, skipped
         if renderer is None:
             hint = f"（{renderer_err}）" if not args.no_render else ""
-            out.miss(
-                f"第 {number} 页：几乎没有文字层、有 {images} 张图片，"
-                f"是扫描/图片页，内容没有读到{hint}"
-            )
+            _miss_scanned_page(out, number, images, hint)
             return
         if rendered >= args.max_render:
             skipped += 1

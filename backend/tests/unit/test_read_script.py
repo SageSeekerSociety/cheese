@@ -87,10 +87,20 @@ def samples(tmp_path_factory):
     return where
 
 
-def _read(samples, *files, pymupdf=True, extra=()):
-    withs = WITH + (["--with", "pymupdf"] if pymupdf else [])
+def _read(samples, *files, extra=()):
     result = subprocess.run(
-        ["uv", "run", "-q", *withs, "python3", str(READ), *files, *extra],
+        [
+            "uv",
+            "run",
+            "-q",
+            *WITH,
+            "--with",
+            "pymupdf",
+            "python3",
+            str(READ),
+            *files,
+            *extra,
+        ],
         cwd=samples,
         capture_output=True,
         text=True,
@@ -133,14 +143,25 @@ def test_a_scanned_page_is_rendered_to_an_image(samples):
     assert not (samples / "review-pages" / "page-1.png").exists()
 
 
-def test_a_scanned_page_without_pymupdf_is_reported_unread(samples):
-    _code, out = _read(
-        samples, "review.pdf", pymupdf=False, extra=("--render-dir", "nopdfium-check")
-    )
-    unread = out.split("没有读到的部分")[-1]
-    assert "第 2 页" in unread and "扫描" in unread and "没有读到" in unread
-    assert "pymupdf" in unread
-    assert not (samples / "nopdfium-check").exists()
+def test_a_scanned_page_without_pymupdf_is_reported_unread(monkeypatch, tmp_path):
+    # uv 会复用满足约束的缓存环境，子进程里「不带 --with pymupdf」模拟不出
+    # 渲染库缺失；进程内屏蔽 import 才是确定性的。
+    import importlib.util
+    import sys
+
+    for mod in ("pymupdf", "fitz"):
+        monkeypatch.setitem(sys.modules, mod, None)
+    spec = importlib.util.spec_from_file_location("read_script", READ)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    renderer, err = module._open_renderer(tmp_path / "x.pdf")
+    assert renderer is None and "pymupdf" in err
+    out = module.Out(1000)
+    module._miss_scanned_page(out, 2, 1, f"（{err}）")
+    text = "\n".join(out.missing)
+    assert "第 2 页" in text and "扫描" in text and "没有读到" in text
+    assert "pymupdf" in text
 
 
 def test_no_render_keeps_the_honest_unread_report(samples):
