@@ -27,7 +27,7 @@ export interface SiteStatus {
 }
 
 /** 这一轮以失败收场的提示：房间停下来不是因为做完了。 */
-const STOPPED = new Set(['turn_failed', 'turn_timeout'])
+export const STOPPED = new Set(['turn_failed', 'turn_timeout'])
 /** 还没开工、在等工作电脑起来的那几种提示。 */
 const PROVISIONING = new Set(['cloud_provisioning', 'cloud_startup', 'machine_provisioning'])
 

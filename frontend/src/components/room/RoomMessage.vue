@@ -8,6 +8,7 @@
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
+import type { FaceState } from '../../lib/agentFace'
 
 import { computed, ref, watch } from 'vue'
 
@@ -54,6 +55,10 @@ const props = defineProps<{
   askBusy: boolean
   /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
   live?: boolean
+  /** 这一条的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
+  face?: FaceState | null
+  /** 头像在动时，悬停看到的那一句（现场顶上那一行）。 */
+  faceLabel?: string | null
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
@@ -68,6 +73,11 @@ const props = defineProps<{
   editText?: string
   saving?: boolean
 }>()
+
+// 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
+const personLabel = computed(() =>
+  props.faceLabel ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceLabel }) : props.authorName
+)
 
 const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
@@ -163,15 +173,18 @@ async function onAgentTextClick(e: MouseEvent) {
     <div class="im-gutter">
       <!-- 头像和名字点下去和正文里的 @chip 一样：去这个人的成员页。点击由房间委派
            （useChatPanel 的 onMessagesClick 认 data-handle），去处只有一处定义。 -->
+      <!-- 队友在干活时，它在动的这个头像点下去是去「现场」看它在干什么（data-site），
+           名字照旧去成员页。 -->
       <button
         v-if="runStart"
         type="button"
         class="im-person"
         :data-handle="block.author"
-        :aria-label="authorName"
-        :title="authorName"
+        :data-site="faceLabel ? '' : undefined"
+        :aria-label="personLabel"
+        :title="personLabel"
       >
-        <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" />
+        <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" :state="face ?? null" />
         <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
            底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
            变的只有色块里的字。 -->

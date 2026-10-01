@@ -1535,7 +1535,8 @@
     "failed": "图片加载失败"
   },
   "agentAvatar": {
-    "defaultName": "芝士"
+    "defaultName": "芝士",
+    "live": "{name}：{status}，点击查看现场"
   },
   "liveView": {
     "connecting": "连接现场中…",

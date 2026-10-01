@@ -8,11 +8,28 @@
 // 东西。平台自己的事（不属于任何一位队友的那一轮）是头像列里一个小一号的中性记号，
 // 事件那一行接在后面，时间在行尾。两种的正文都和消息正文在同一条竖线上。轻重不归
 // 记号管，归这一行的底色（RoomNotice 的 `sys-row--warn/danger`）。
+import type { FaceState } from '../lib/agentFace'
+
+import { computed } from 'vue'
+
 import CheeseAvatar from './CheeseAvatar.vue'
 
 import { t } from '@/i18n'
 
-defineProps<{ name: string | null; handle?: string | null; time: string; cont?: boolean }>()
+const props = defineProps<{
+  name: string | null
+  handle?: string | null
+  time: string
+  cont?: boolean
+  /** 这一行的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
+  face?: FaceState | null
+  /** 头像在动时，悬停看到的那一句（现场顶上那一行）。有它，头像点下去去现场。 */
+  faceLabel?: string | null
+}>()
+
+const liveLabel = computed(() =>
+  props.faceLabel ? t('work.agentAvatar.live', { name: props.name, status: props.faceLabel }) : null
+)
 </script>
 
 <template>
@@ -21,8 +38,19 @@ defineProps<{ name: string | null; handle?: string | null; time: string; cont?: 
     <span v-if="cont" class="notice-row__gutter">
       <span class="notice-row__gutter-time">{{ time }}</span>
     </span>
+    <!-- 在动的头像和消息里的一样：点下去去现场（ChatPanel 认 data-site）。 -->
+    <button
+      v-else-if="liveLabel"
+      type="button"
+      class="notice-row__avatar notice-row__live im-person"
+      data-site=""
+      :title="liveLabel"
+      :aria-label="liveLabel"
+    >
+      <CheeseAvatar :size="28" :name="name" :handle="handle" :state="face ?? null" />
+    </button>
     <span v-else class="notice-row__avatar" :title="name" :aria-label="name" role="img">
-      <CheeseAvatar :size="28" :name="name" :handle="handle" />
+      <CheeseAvatar :size="28" :name="name" :handle="handle" :state="face ?? null" />
     </span>
     <div class="notice-row__body">
       <div v-if="!cont" class="notice-row__meta">
@@ -93,6 +121,12 @@ defineProps<{ name: string | null; handle?: string | null; time: string; cont?: 
 .notice-row__mark {
   display: inline-flex;
   flex: none;
+}
+.notice-row__live {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
 }
 .notice-row__platform {
   display: inline-flex;

@@ -272,6 +272,10 @@ async function handleOpenResource(resource: string, turnId?: string) {
     void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
   } else if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
+  } else if (resource === 'site') {
+    // 对话里在动的那个头像：它此刻在干什么，去现场看。
+    focusMode.value = false
+    onPanelTab('site')
   } else if (resource === 'changes') {
     // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
     focusMode.value = false
