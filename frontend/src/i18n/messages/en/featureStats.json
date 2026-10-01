@@ -118,7 +118,7 @@
       "renamesNote": "A row is written only when the title actually changes, so this counts renames, not looks.",
       "stages": "first {name} · calibrate {calibrate} · follow {follow}",
       "overridden": "Renamed by people",
-      "overriddenNote": "Of the rooms naming did title, how many a person later renamed. The denominator is only those rooms: a name a person chose themselves is not the platform being overridden.",
+      "overriddenNote": "The denominator is topics automatically renamed within the window. The numerator is those later renamed or undone by a person within the same window. Automatic titles from before the window are excluded; this is not a lifetime retention rate.",
       "overriddenOf": "{value} / {named} rooms"
     },
     "trend": {

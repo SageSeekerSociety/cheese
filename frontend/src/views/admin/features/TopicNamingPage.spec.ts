@@ -182,6 +182,28 @@ describe('智能命名的功能数据页', () => {
     await waitFor(() => expect(report).toHaveBeenCalledWith(7))
   })
 
+  it.each(['success', 'failure'])('旧窗口晚到的 %s 不覆盖已选窗口', async (outcome) => {
+    let resolveOld!: (value: ReturnType<typeof fixture>) => void
+    let rejectOld!: (reason: Error) => void
+    report.mockReturnValueOnce(
+      new Promise((resolve, reject) => {
+        resolveOld = resolve
+        rejectOld = reject
+      })
+    )
+    report.mockResolvedValueOnce(fixture({ days: 7, start: '2026-09-25' }))
+    const { getAllByRole, findByText, queryByText } = mountPage()
+    const seven = getAllByRole('tab').find((tab) => tab.textContent?.includes('featureStats.days.7'))
+    await fireEvent.click(seven as HTMLElement)
+    const selectedWindow = 'featureStats.page.window {"start":"2026-09-25","end":"2026-10-01"}'
+    await findByText(selectedWindow)
+    if (outcome === 'success') resolveOld(fixture())
+    else rejectOld(new Error('old request failed'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(queryByText(selectedWindow)).not.toBeNull()
+    expect(queryByText('featureStats.page.loadFailed')).toBeNull()
+  })
+
   it('读失败画错误态，不画一排 0', async () => {
     report.mockRejectedValueOnce(new Error('boom'))
     const { findByText, queryByText } = mountPage()

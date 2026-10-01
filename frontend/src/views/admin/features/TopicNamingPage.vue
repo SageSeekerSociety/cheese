@@ -56,16 +56,22 @@ const count = (value: number | null | undefined) =>
 
 const money = (value: number | null | undefined) => (value === null || value === undefined ? '' : fmtCost(value))
 
+// 切换窗口后，旧请求晚到也不能覆盖当前窗口。
+let requestId = 0
 async function load() {
+  const current = ++requestId
   loading.value = true
   failed.value = false
   try {
-    report.value = await getTopicNamingReport(days.value)
+    const next = await getTopicNamingReport(days.value)
+    if (current === requestId) report.value = next
   } catch {
-    report.value = null
-    failed.value = true
+    if (current === requestId) {
+      report.value = null
+      failed.value = true
+    }
   } finally {
-    loading.value = false
+    if (current === requestId) loading.value = false
   }
 }
 
