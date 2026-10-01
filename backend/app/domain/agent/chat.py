@@ -854,7 +854,7 @@ class ChatService:
         if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
-            # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
+            # System-initiated turn (重发 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
             # instruction goes straight to the agent as the prompt.
             #
