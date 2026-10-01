@@ -52,7 +52,13 @@ from app.domain.block.notice_text import say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,  # noqa: F401 — re-exported through `agent.chat`
+    TitleSource,
+    Topic,
+    TopicKind,
+    TopicStatus,
+)
 from app.domain.topic.overview import (
     project_brief,
     render_overview,
@@ -195,12 +201,6 @@ def _resume_notice() -> str:
     )
 
 
-# A topic created from the rail's + has no human-typed title ("新话题"); 芝士 names
-# it via `cheese_title` (titles are AI-generated, never deterministically derived
-# from human input or the agent's output — see CLAUDE.md).
-PLACEHOLDER_TITLE = "新话题"
-
-
 def _topic_ref_lists(
     topics: list[Topic], *, exclude_id: uuid.UUID
 ) -> tuple[list[dict], list[dict]]:
@@ -236,7 +236,8 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     live = [
         t
         for t in topics
-        if t.status != TopicStatus.archived and t.title != PLACEHOLDER_TITLE
+        if t.status != TopicStatus.archived
+        and t.title_source != TitleSource.placeholder
     ]
     titles = Counter(t.title for t in live)
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]

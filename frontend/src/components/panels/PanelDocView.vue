@@ -15,6 +15,7 @@ import { topicTitle } from '../../lib/topicState'
 import CodeEditor from '../CodeEditor.vue'
 
 import DocComments from './doc/DocComments.vue'
+import DocFormatToolbar from './doc/DocFormatToolbar.vue'
 import DocSurface from './doc/DocSurface.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
@@ -196,77 +197,83 @@ defineExpose({
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
-        <!-- 文档自己的工具条。保存状态 / 只读 / 源码 只对这个 tab 有意义，所以住在
-             这个 tab 里 —— 每个 tab 自带自己的控件，后面四张卡才各改各的文件。
-             它浮在文档右上角、标题上方那片留白里，不单占一行：平时它只有一颗 ⋯，
-             单占一行就是一条什么都没说的横杠。源码模式下编辑器顶到最上面，浮着会压住
-             代码，才回到自己的一行。 -->
-        <div class="doc-bar" :class="{ 'doc-bar--row': sourceMode }">
-          <span v-if="saveStatus === 'loading'" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
-          <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">{{ t('work.room.doc.saving') }}</span>
-          <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
-          <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
-            <v-icon size="13">mdi-pause-circle-outline</v-icon>
-            {{ t('work.room.doc.paused') }}
-          </span>
-          <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
-            <span class="status-dot status-dot--ok" />{{ t('work.room.doc.saved') }}
-          </span>
-          <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">{{ t('work.room.doc.editing') }}</span>
+        <div class="doc-tools">
+          <DocFormatToolbar
+            v-if="!sourceMode"
+            :editor="surfaceRef?.editor ?? null"
+            @keydown="handleDocKeydown"
+            :disabled="loading || !editable || editingBlocked"
+            :disabled-reason="
+              loading ? t('work.room.doc.loading') : !editable || editingBlocked ? t('work.room.doc.readOnly') : ''
+            "
+          />
+          <div class="doc-bar" :class="{ 'doc-bar--row': sourceMode }">
+            <span v-if="saveStatus === 'loading'" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
+            <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">{{ t('work.room.doc.saving') }}</span>
+            <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
+            <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
+              <v-icon size="13">mdi-pause-circle-outline</v-icon>
+              {{ t('work.room.doc.paused') }}
+            </span>
+            <span v-else-if="saveStatus === 'saved'" class="d-inline-flex align-center ga-1 t-meta me-2">
+              <span class="status-dot status-dot--ok" />{{ t('work.room.doc.saved') }}
+            </span>
+            <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">{{ t('work.room.doc.editing') }}</span>
 
-          <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
+            <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
                就回去。平常用不上，进去的入口在 ⋯ 里。 -->
-          <v-btn
-            v-if="!editable && !editingBlocked"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
-            class="me-1"
-            :title="t('work.room.doc.backToEdit')"
-            @click="toggleEditable"
-          >
-            {{ t('work.room.doc.readOnly') }}
-          </v-btn>
-          <v-btn
-            v-if="sourceMode"
-            size="small"
-            variant="text"
-            class="me-1 tool-btn--active"
-            :title="t('work.room.doc.exitSourceMode')"
-            @click="toggleSourceMode"
-          >
-            {{ t('work.room.doc.source') }}
-          </v-btn>
-          <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
-            <template #activator="{ props: menuProps }">
-              <v-btn
-                v-bind="menuProps"
-                icon="mdi-dots-horizontal"
-                size="small"
-                variant="text"
-                color="medium-emphasis"
-                :title="t('work.room.menu.more')"
-                :aria-label="t('work.room.menu.more')"
-              />
-            </template>
-            <v-list density="compact" :aria-label="t('work.room.doc.options')">
-              <v-list-item
-                v-if="!editingBlocked"
-                :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
-                :disabled="sourceMode"
-                @click="toggleEditable"
-              />
-              <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+            <v-btn
+              v-if="!editable && !editingBlocked"
+              size="small"
+              variant="text"
+              color="medium-emphasis"
+              class="me-1"
+              :title="t('work.room.doc.backToEdit')"
+              @click="toggleEditable"
+            >
+              {{ t('work.room.doc.readOnly') }}
+            </v-btn>
+            <v-btn
+              v-if="sourceMode"
+              size="small"
+              variant="text"
+              class="me-1 tool-btn--active"
+              :title="t('work.room.doc.exitSourceMode')"
+              @click="toggleSourceMode"
+            >
+              {{ t('work.room.doc.source') }}
+            </v-btn>
+            <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  icon="mdi-dots-horizontal"
+                  size="small"
+                  variant="text"
+                  color="medium-emphasis"
+                  :title="t('work.room.menu.more')"
+                  :aria-label="t('work.room.menu.more')"
+                />
+              </template>
+              <v-list density="compact" :aria-label="t('work.room.doc.options')">
+                <v-list-item
+                  v-if="!editingBlocked"
+                  :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
+                  :disabled="sourceMode"
+                  @click="toggleEditable"
+                />
+                <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
                    syntax the visual editor can't fully represent (军规 1)。手机上不提供，
                    见 editingBlocked。 -->
-              <v-list-item
-                v-if="mdAndUp"
-                :title="sourceMode ? t('work.room.doc.exitSourceMode') : t('work.room.doc.sourceMode')"
-                :subtitle="t('work.room.doc.sourceModeHint')"
-                @click="toggleSourceMode"
-              />
-            </v-list>
-          </v-menu>
+                <v-list-item
+                  v-if="mdAndUp"
+                  :title="sourceMode ? t('work.room.doc.exitSourceMode') : t('work.room.doc.sourceMode')"
+                  :subtitle="t('work.room.doc.sourceModeHint')"
+                  @click="toggleSourceMode"
+                />
+              </v-list>
+            </v-menu>
+          </div>
         </div>
         <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
            column) — this is the file itself, not the document view. -->
@@ -394,34 +401,31 @@ defineExpose({
 </template>
 
 <style scoped>
-/* 文档 tab 自己的工具条：右对齐的一条细行（保存状态 / 只读 / 源码）。原来这些
-   控件挂在 DocPanel 的 v-toolbar 上，那条 toolbar 同时还是「文档」标题、专注按钮
-   和五个抽屉图标的家 —— 现在标题和专注归话题头部，抽屉图标变成了 tab。 */
-.doc-bar {
-  position: absolute;
-  top: 6px;
-  right: 14px;
-  z-index: 2;
+.doc-tools {
   display: flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 2px 0 6px;
-  border-radius: var(--radius-md);
+  flex: 0 0 auto;
+  min-width: 0;
+  border-bottom: 0.5px solid var(--line);
+  background: var(--surface);
+}
+.doc-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 6px;
   background: var(--surface);
 }
 .doc-bar--row {
-  position: static;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   justify-content: flex-end;
-  min-height: 34px;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
 }
 .doc {
   /* In the split workspace the doc is a full white surface that fills the pane —
      not a floating card on a gray canvas (which left gray gutters around it). */
   background: var(--surface);
+  container-type: inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -440,19 +444,23 @@ defineExpose({
    readability and centered. No card border/radius — it IS the surface. */
 .doc-page {
   width: 100%;
-  max-width: 820px;
+  max-width: 48rem;
   background: transparent;
-  padding: 32px 48px 72px;
+  padding: 16px 24px 72px;
 }
-/* 和项目页的大标题同一档（.t-page-title 23/33）：这一栏只有对话那么宽，30px 的
-   标题和 16px 的正文放在 14px 的对话旁边，像另一个产品。 */
+@container (min-width: 48rem) {
+  .doc-page {
+    padding: 24px 44px 72px;
+  }
+}
+/* The topic title stays outside the editable Markdown. */
 .doc-page__title {
   max-width: 720px;
-  margin: 0 auto 0.4em;
+  margin: 0 auto 24px;
   font-family: var(--font-display);
-  font-size: 23px;
-  font-weight: 650;
-  line-height: var(--lh-23);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.5;
   letter-spacing: -0.02em;
   color: var(--ink);
 }

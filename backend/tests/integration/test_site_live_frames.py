@@ -149,6 +149,40 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
     assert restated == [2, 3]
 
 
+def test_a_retry_that_got_no_response_says_so(client, stub_hooks):
+    """Claude Code files a request that got no response at all as ``unknown``
+    with no HTTP status. The line says what that means — nothing came back, and
+    for how long — instead of showing the bare word."""
+
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        stub_hooks.record(
+            topic,
+            type="system",
+            subtype="api_retry",
+            attempt=1,
+            max_retries=10,
+            retry_delay_ms=500,
+            error_status=None,
+            error="unknown",
+            no_response={"waited_ms": 30000, "retry_wait_ms": 500},
+        )
+        stub_hooks.stops(topic, "好了")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "@芝士 查一下"})
+        _until(ws, _done)
+    wait_work_idle()
+
+    [retry] = _of_type(_blocks(client, room), "api_retry")
+    assert "30 秒" in retry.meta["detail"]
+    assert "没收到" in retry.meta["detail"]
+    assert "unknown" not in retry.meta["detail"]
+
+
 def _compaction(stub, topic, **status) -> None:
     stub.record(topic, type="system", subtype="status", **status)
 

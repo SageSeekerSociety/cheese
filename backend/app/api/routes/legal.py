@@ -10,6 +10,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.db.session import get_db
+from app.domain.block.notice_text import say
 from app.domain.legal.documents import (
     DOCUMENTS,
     LegalDocument,
@@ -122,7 +123,7 @@ async def accept_documents(
         if doc is None or version != doc.current.version:
             # A dialog opened before a newer version was published: recording
             # it would say this person accepted rules they never saw.
-            raise UnprocessableEntityError("协议已更新，请刷新页面后重新阅读")
+            raise UnprocessableEntityError(say("termsUpdatedRefresh"))
     pending = await service.pending(auth_user.user_id)
     missing = [k for k in pending if k not in payload.documents]
     if missing:

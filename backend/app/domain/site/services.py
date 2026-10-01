@@ -20,6 +20,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.domain.block.notice_text import say
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
@@ -33,10 +34,7 @@ from app.domain.user.services import user_by_handle
 MAX_SITE_BYTES = 100 * 1024 * 1024
 MAX_SITE_FILES = 2000
 MAX_ENTRY_BYTES = 1024 * 1024
-BUILD_REQUIRED = (
-    "当前已采纳版本没有可直接发布的静态网站。"
-    "需要先准备包含全部资源的静态网站，并提交审阅。"
-)
+BUILD_REQUIRED = say("siteBuildRequired")
 
 
 async def require_site_access(
@@ -104,7 +102,7 @@ def _directory(value: str) -> str:
     if value == ".":
         return value
     if not _asset_path(value):
-        raise ValidationError("请选择项目中的静态网站目录")
+        raise ValidationError(say("siteDirectoryChoose"))
     return value
 
 
@@ -123,14 +121,12 @@ def _validate_bundle(files: list[dict]) -> None:
         len(files) > MAX_SITE_FILES
         or sum(row["bytes"] for row in files) > MAX_SITE_BYTES
     ):
-        raise ValidationError("网站最多包含 2000 个文件，总大小不能超过 100 MiB")
+        raise ValidationError(say("siteTooLarge"))
     if any(
         row["mode"] not in {"100644", "100755"} or row["kind"] != "blob"
         for row in files
     ):
-        raise ValidationError(
-            "网站目录包含符号链接或 Git 子模块，请先将资源放入目录并采纳"
-        )
+        raise ValidationError(say("siteSymlinkOrSubmodule"))
 
 
 class _EntryReferences(HTMLParser):
@@ -172,7 +168,7 @@ def _resolve_resource_path(path: str, base_path: str) -> str:
             continue
         if part == "..":
             if not parts:
-                raise ValidationError("网站资源引用超出发布目录，请将资源放入网站目录")
+                raise ValidationError(say("siteAssetOutsideDir"))
             parts.pop()
         else:
             parts.append(part)
@@ -208,11 +204,9 @@ def _validate_entry_resources(parser: _EntryReferences, files: list[dict]) -> No
             if path.endswith("/"):
                 path += "index.html"
             if path not in paths:
-                raise ValidationError(
-                    f"网站缺少资源：{path}。请将资源放入网站目录并采纳后再发布"
-                )
+                raise ValidationError(say("siteAssetMissing", path=path))
     except ValueError as exc:
-        raise ValidationError("网站 HTML 中的资源地址格式无效") from exc
+        raise ValidationError(say("siteAssetUrlInvalid")) from exc
 
 
 def _static_entry(files: list[dict], html: bytes) -> bool:
@@ -227,7 +221,7 @@ def _static_entry(files: list[dict], html: bytes) -> bool:
     try:
         parser.feed(html.decode("utf-8", errors="replace"))
     except ValueError as exc:
-        raise ValidationError("网站 HTML 中的资源地址格式无效") from exc
+        raise ValidationError(say("siteAssetUrlInvalid")) from exc
     _validate_entry_resources(parser, files)
     return not parser.source_files
 
@@ -341,7 +335,7 @@ async def publish_site(
 ) -> SiteRelease:
     await require_site_access(session, handle, project_id)
     if not await can_publish_site(session, handle, project_id):
-        raise ForbiddenError("只有项目负责人或团队管理员可以发布网站")
+        raise ForbiddenError(say("sitePublishForbidden"))
     directory = _directory(directory)
     # Serialize even a project's first publication; no Site row exists to lock yet.
     await session.scalar(
@@ -349,7 +343,7 @@ async def publish_site(
     )
     revision = await ProjectFiles(session, project_id, None).revision()
     if revision != expected_source_revision:
-        raise ConflictError("项目已采纳的版本发生变化，请刷新后再发布")
+        raise ConflictError(say("siteRevisionChanged"))
     release_id = uuid.uuid4()
     manifest = await _snapshot(session, project_id, revision, directory, release_id)
     release = SiteRelease(

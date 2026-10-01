@@ -18,6 +18,23 @@ export function compactChoices(...choices: (ComputeChoice | null | undefined)[])
   })
 }
 
+// What a choice is called. A device keeps its own name; the platform's choices
+// are named here, in the reader's language, from their fields. A name stored on
+// one of those is another reader's label and is not shown.
+export function choiceName(c: ComputeChoice): string {
+  if (c.profile === 'device') return deviceName(c.name, c.device_id)
+  if (c.cores || c.memory_mb || c.disk_gb) return t('compute.choice.cloudCustom')
+  return t('compute.choice.cloudStandard')
+}
+
+// A self-hosted device by its own name, or — with none known — as the platform's
+// choice: any online device (no id yet, and never a stored name), or a device
+// whose name was not found.
+export function deviceName(name: string | null, deviceId: string | null): string {
+  if (name && deviceId) return name
+  return t(deviceId ? 'compute.choice.device' : 'compute.choice.anyDevice')
+}
+
 export function choiceDetail(c: ComputeChoice): string {
   if (c.profile === 'device') return c.device_id ? t('compute.choice.device') : t('compute.choice.deviceOnFirstRun')
   if (!c.cores && !c.memory_mb && !c.disk_gb) return t('compute.choice.standard')

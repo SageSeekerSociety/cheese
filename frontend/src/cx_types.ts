@@ -214,8 +214,8 @@ export interface ListPayload<T> {
 
 /** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。
  *
- *  `displayStatus` 就是看板卡面上那一句，后端算好的 —— 前端不做第二张映射表，理由
- *  和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
+ *  `phrase` 就是看板卡面上那一句的码，后端算好的 —— 前端不推状态，理由和
+ *  `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
  *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
  *  待回答的问题上 (`asked`)。 */
 export interface WaitingItem {
@@ -225,7 +225,7 @@ export interface WaitingItem {
   topicTitle: string
   taskId: string | null
   taskTitle: string | null
-  displayStatus: string
+  phrase: BoardPhrase
   reason: 'reviewer' | 'reporter' | 'asked'
   at: string
 }
@@ -312,15 +312,15 @@ export interface RoomTask {
  */
 export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
-/** 后端算好的呈现，前端照抄。
- *
- *  `display_status` 已经是可以直接显示的中文，**前端不再做第二张映射表**——这正是
- *  这个字段存在的理由。同一个客观事实（比如快检红了）在不同的列里是不同的话：平台
- *  自己在修时是「修复检查」，等人拍板时是「检查未通过」，所以短语属于列，一列只会
- *  产出属于它自己的那几个词。前端再映射一次，两边就会各说各的。 */
+type BuildingPhrase = 'running' | 'started' | 'not_started' | 'returned' | 'idle' | 'draft' | 'lost'
+type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
+type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
+export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | 'accepted' | 'closed' | 'archived'
+
+/** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {
   column: BoardColumn
-  display_status: string
+  phrase: BoardPhrase
 }
 
 /** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
@@ -1120,7 +1120,7 @@ export interface EnvironmentStatus {
 }
 
 export interface ComputeChoice {
-  name: string
+  name: string | null
   profile: 'cloud' | 'device'
   device_id: string | null
   cores: number | null
@@ -1161,7 +1161,7 @@ export interface DeviceSession {
 
 export interface ComputeDistribution {
   cloud: number
-  devices: { device_id: string | null; name: string; agents: number; machine_access: boolean }[]
+  devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)

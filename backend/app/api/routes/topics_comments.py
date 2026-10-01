@@ -63,6 +63,7 @@ from app.api.routes.topics import (
     _actor_in_place,
 )
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.topic.services import TopicService
 
@@ -119,7 +120,7 @@ async def add_comment(
         try:
             anchor_id = uuid.UUID(anchor)
         except ValueError as exc:
-            raise ValidationError("锚点不是本话题的文档块") from exc
+            raise ValidationError(say("commentAnchorNotInDoc")) from exc
         node = await repo.get(anchor_id)
         root = await repo.doc_root(place.room_id)
         if (
@@ -130,7 +131,7 @@ async def add_comment(
             or node.kind != BlockKind.doc_node
             or node.struct_parent != root.id
         ):
-            raise ValidationError("锚点不是本话题的文档块")
+            raise ValidationError(say("commentAnchorNotInDoc"))
         reply_to = node.id
     # B4 Feishu-style: the exact selected span, kept for display next to the
     # comment. Bounded so a runaway selection can't bloat the row.

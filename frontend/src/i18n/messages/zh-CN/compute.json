@@ -5,7 +5,10 @@
     "standard": "平台标准配置 · 首次运行时自动准备",
     "cores": "{n} 核 CPU",
     "memory": "{n} GB 内存",
-    "disk": "{n} GB 磁盘"
+    "disk": "{n} GB 磁盘",
+    "cloudStandard": "云端 · 标准配置",
+    "cloudCustom": "云端 · 自定义配置",
+    "anyDevice": "自有设备 · 自动选择"
   },
   "startup": {
     "elapsed": "共用时",

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import Block
+from app.domain.block.notice_text import say
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
@@ -91,7 +92,7 @@ class TaskService:
     async def require_in_room(self, room_id: uuid.UUID, task_id: uuid.UUID) -> Task:
         task = await self.get(task_id)
         if task is None or task.room_id != room_id:
-            raise NotFoundError("这个房间里没有这条任务")
+            raise NotFoundError(say("taskNotFoundInRoom"))
         return task
 
     async def require_source_in_room(

@@ -68,7 +68,7 @@ async def access(
         m.handle == handle for m in await roster(db, project_id)
     )
     if not steward and (write or not member):
-        raise ForbiddenError("只有项目成员能查看环境，项目所有者或团队管理员能修改环境")
+        raise ForbiddenError(say("environmentAccessForbidden"))
     # This router authenticates on its own rather than through ActorResolver, so
     # it asks the archived-project question that the resolver asks for the rest.
     if write:
@@ -98,14 +98,14 @@ async def room(
 
 async def require_idle(db: AsyncSession, topic: Topic) -> None:
     if topic.archived_at is not None:
-        raise ValidationError("请先取消归档，再修改房间环境")
+        raise ValidationError(say("unarchiveBeforeEnvironmentChange"))
     active = await db.scalar(
         select(AgentTurn.id)
         .where(AgentTurn.topic_id == topic.id, AgentTurn.stopped_at.is_(None))
         .limit(1)
     )
     if active is not None:
-        raise ValidationError("房间仍有未结束的工作，不能修改正在使用的环境")
+        raise ValidationError(say("roomBusyEnvironmentChange"))
 
 
 @router.get("")
@@ -227,7 +227,7 @@ async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uui
     if binding is None:
         return
     if not device_hub.is_online(binding.device_id):
-        raise ValidationError("机器离线，无法确认旧会话已停止，请连接后重试")
+        raise ValidationError(say("machineOfflineCannotConfirmStop"))
     await environment_status(
         device_hub, binding.device_id, project_id, resource_id, action="reset"
     )
@@ -249,7 +249,7 @@ async def apply_environment(
     async with chat.edit_environment(topic_id):
         topic = await room(db, project_id, topic_id)
         if topic.kind == TopicKind.root:
-            raise ValidationError("总览使用基础运行环境，不应用项目脚本")
+            raise ValidationError(say("overviewUsesBaseEnvironment"))
         await reset_idle_room(db, topic_id, project_id)
         topic = await room(db, project_id, topic_id, lock=True)
         await require_idle(db, topic)

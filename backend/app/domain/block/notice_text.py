@@ -31,6 +31,15 @@ result: that text is no longer the catalog's sentence.
 ``notice_messages.json`` holds the Chinese templates. The frontend's
 ``zh-CN/roomNotice.json`` holds the same ones and a test keeps the two equal, so
 what the room stores and what a screen renders cannot say different things.
+
+A refusal is a sentence too. An error raised with ``say()`` as its message
+(``raise ValidationError(say("inviteSelf"))``) goes out with its key beside the
+Chinese ``message`` in the error body (``error.i18n``, see
+``app/core/errors.py``), and the browser shows it in its reader's language.
+Those sentences live in ``error_messages.json``, mirrored by the frontend
+catalog ``apiError``: they are shown in a toast or a form, not in a room. The
+two files share one key space, so a key names one sentence wherever it is
+said — an error's sentence can also end up in a room line.
 """
 
 from __future__ import annotations
@@ -43,13 +52,26 @@ from typing import Final
 #: Where the per-field keys live in a block's ``meta``.
 I18N_META_KEY: Final = "i18n"
 
-#: key → Chinese template, from ``notice_messages.json``. Placeholders are
-#: ``{name}``, the syntax both ``str.format`` and vue-i18n read. A mention is a
-#: parameter (``<@handle>``), never literal text: vue-i18n reads a bare ``@`` as
-#: a linked message.
-MESSAGES: Final[dict[str, str]] = json.loads(
-    Path(__file__).with_name("notice_messages.json").read_text(encoding="utf-8")
-)
+
+def _templates(name: str) -> dict[str, str]:
+    return json.loads(Path(__file__).with_name(name).read_text(encoding="utf-8"))
+
+
+#: key → Chinese template of a room line, from ``notice_messages.json``.
+NOTICE_MESSAGES: Final[dict[str, str]] = _templates("notice_messages.json")
+#: key → Chinese template of an error, from ``error_messages.json``.
+ERROR_MESSAGES: Final[dict[str, str]] = _templates("error_messages.json")
+if NOTICE_MESSAGES.keys() & ERROR_MESSAGES.keys():
+    raise RuntimeError(
+        "a key is both a room line and an error: "
+        f"{sorted(NOTICE_MESSAGES.keys() & ERROR_MESSAGES.keys())}"
+    )
+
+#: key → Chinese template, both catalogs. Placeholders are ``{name}``, the
+#: syntax both ``str.format`` and vue-i18n read. A mention is a parameter
+#: (``<@handle>``), never literal text: vue-i18n reads a bare ``@`` as a linked
+#: message.
+MESSAGES: Final[dict[str, str]] = {**NOTICE_MESSAGES, **ERROR_MESSAGES}
 
 
 class NoticeText(str):

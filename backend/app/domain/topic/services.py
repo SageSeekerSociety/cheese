@@ -55,6 +55,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import (
+    PLACEHOLDER_TITLE,
     RoomCleanup,
     Topic,
     TopicKind,
@@ -82,11 +83,6 @@ from app.domain.topic.repositories import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-
-# Titles are AI-generated (the agent names a topic via `cheese_title`), never
-# deterministically derived from text — see CLAUDE.md. An upgraded block starts
-# untitled and 芝士 names it on its first turn (same as a + new topic).
-PLACEHOLDER_TITLE = "新话题"
 
 
 @overload
@@ -254,7 +250,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.status == TopicStatus.archived:
-            raise ConflictError("房间已归档，请先取消归档再继续工作")
+            raise ConflictError(say("roomArchivedUnarchiveFirst"))
         return topic
 
     async def _starting_agent_handle(self, topic: Topic) -> str:
@@ -289,10 +285,11 @@ class TopicService:
         self,
         *,
         project_id: uuid.UUID,
-        title: str,
+        title: str | None,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
     ) -> Topic:
+        """``title=None`` opens an unnamed room (see `TopicRepository.add`)."""
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
@@ -641,7 +638,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.kind == TopicKind.root:
-            raise ValidationError("项目本体不能归档")
+            raise ValidationError(say("projectRootCannotArchive"))
         if topic.status == TopicStatus.archived:
             return topic
         await self._archive_one(topic, by=by)
@@ -776,7 +773,7 @@ class TopicService:
         )
         if operation is not None:
             if operation.state == "preparing":
-                raise ConflictError("会话正在停止并保存记录，确认完成后即可取消归档")
+                raise ConflictError(say("unarchiveWhileSessionStopping"))
             if operation.state == "pending":
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "retained", "complete"}:
@@ -890,7 +887,7 @@ class TopicService:
             raise NotFoundError("Parent topic not found")
         # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
         if parent.status == TopicStatus.archived:
-            raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+            raise ValidationError(say("topicArchivedFrozen"))
 
         project = await self._projects.get(block.project_id)
 
@@ -901,9 +898,7 @@ class TopicService:
                 branch_protection_of(project).default_reviewer or None
             )
             if reviewer_handle is None:
-                raise ValidationError(
-                    "需要指定由谁审阅，或在项目设置中设置默认审阅的人"
-                )
+                raise ValidationError(say("reviewerRequired"))
             task = await tasks.open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
@@ -937,9 +932,12 @@ class TopicService:
             source_block=block.content,
         )
         root_id = project.root_topic_id if project else None
+        # Titles are AI-generated (the agent names a topic via `cheese_title`),
+        # never derived from text — see CLAUDE.md. An upgraded block starts
+        # unnamed and 芝士 names it on its first turn, like a + new topic.
         new_room = await self._repo.add(
             project_id=block.project_id,
-            title=PLACEHOLDER_TITLE,
+            title=None,
             parent_id=root_id,
             kind=TopicKind.topic,
             created_by=created_by,
@@ -1377,7 +1375,7 @@ class TopicService:
         topic = place.room
         # 归档后文档定格 (spec §6.3).
         if topic.status == TopicStatus.archived:
-            raise ValidationError("话题已归档，文档已定格，不能再编辑")
+            raise ValidationError(say("topicArchivedDocFrozen"))
         doc = await self._blocks.doc_root(place.room_id)
         previous_content = doc.content if doc is not None else ""
         if doc is not None:

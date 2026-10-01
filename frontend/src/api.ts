@@ -68,6 +68,7 @@ import type {
 } from './cx_types'
 
 import { desktopAppHeaders } from './lib/desktopApp'
+import { refusalText } from './lib/noticeText'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -344,8 +345,7 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       // #450 rule 2 (frontend edition): the backend's errors carry a human
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
-      const said = body as { message?: string; error?: { message?: string } }
-      const serverSaid = said.error?.message || said.message || ''
+      const serverSaid = refusalText(body, details.error?.message || details.message || '')
       throw new ApiError(
         res.status,
         serverSaid || `请求失败（HTTP ${res.status}）`,
@@ -411,7 +411,7 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const said = body as { message?: string; error?: { name?: string; message?: string } }
-    const serverSaid = said.message || said.error?.message || ''
+    const serverSaid = refusalText(body, said.message || said.error?.message || '')
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
   const envelope = body as ApiEnvelope<T>
@@ -798,8 +798,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, title }
+export function createTopic(projectId: string, title?: string, parentId?: string): Promise<Topic> {
+  const body: Record<string, string> = { project_id: projectId, ...(title ? { title } : {}) }
   if (parentId) body.parent_id = parentId
   return request<Topic>('/topics', {
     method: 'POST',
@@ -3544,10 +3544,10 @@ export function copyIntoRoom(
   })
 }
 
-/** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 说为什么打不开。 */
+/** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 是为什么打不开的码。 */
 export interface RoomFileEditorSession {
   enabled: boolean
-  reason?: string
+  reason?: 'not_configured' | 'unsupported' | 'library_original'
   copyable?: boolean
   editable?: boolean
   api_url?: string

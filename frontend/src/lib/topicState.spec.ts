@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { topicPhase, topicPhaseBadge, topicShortId, topicStateBadge } from './topicState'
+import { topicPhase, topicPhaseBadge, topicShortId, topicStateBadge, topicTitle } from './topicState'
 
 import { setLocale } from '@/i18n'
 
@@ -61,5 +61,24 @@ describe('话题所处阶段', () => {
     expect(topicPhaseBadge('working').label).toBe('施工中')
     expect(topicPhaseBadge('delivering').label).toBe('交付中')
     expect(topicPhaseBadge('archived').label).toBe('已采纳')
+  })
+})
+
+// 还没名字的话题按读者的语言叫；认它靠 `title_source`，不靠库里那几个中文字。
+describe('话题叫什么', () => {
+  it('未命名的话题在英文界面叫 New topic，中文界面叫「新话题」', () => {
+    const unnamed = { kind: 'topic', title: '新话题', title_source: 'placeholder' }
+    setLocale('en')
+    expect(topicTitle(unnamed)).toBe('New topic')
+    setLocale('zh-CN')
+    expect(topicTitle(unnamed)).toBe('新话题')
+  })
+
+  it('有人起过的名字照原样显示，哪怕它恰好就是「新话题」', () => {
+    setLocale('en')
+    expect(topicTitle({ kind: 'topic', title: '新话题', title_source: 'human' })).toBe('新话题')
+    expect(topicTitle({ kind: 'topic', title: '分页调研', title_source: 'auto' })).toBe('分页调研')
+    // 没带这一位的话题（旧接口、别处拼出来的行）照存着的标题显示。
+    expect(topicTitle({ kind: 'topic', title: '分页调研' })).toBe('分页调研')
   })
 })
