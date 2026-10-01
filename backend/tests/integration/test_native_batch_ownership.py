@@ -18,7 +18,12 @@ from app.domain.block.models import AuthorType, Block, BlockKind, BlockReaction
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
-from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
+from app.domain.delivery.receipts import (
+    complete_work_inputs,
+    held_blocks,
+    record_receipt,
+    register_input,
+)
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
 
@@ -284,7 +289,15 @@ def test_only_consumption_by_registered_work_releases_an_initial_hold(client):
                 topic_id=topic,
                 recipient_handle=identity.recipient_handle,
             ) == set(ids)
-            await BlockRepository(session).mark_consumed(list(ids), identity.work_id)
+            await complete_work_inputs(
+                session,
+                project_id=project,
+                topic_id=topic,
+                recipient_handle=identity.recipient_handle,
+                harness=identity.harness,
+                native_session_id=identity.native_session_id,
+                work_id=identity.work_id,
+            )
             await session.commit()
         async with factory() as session:
             assert (

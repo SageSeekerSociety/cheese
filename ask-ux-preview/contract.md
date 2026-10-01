@@ -308,14 +308,15 @@ POST /topics/asks/{group_id}/settle
 登记重试：Delivery → NativeInput 行 → 核对原登记并返回
 native echo：无锁读不可变关联 → Delivery → NativeInput 行 → Block[id 升序]
 accepted：无锁读不可变关联 → Delivery → NativeInput 行
-完成 work：Block 消费更新 → commit；本路径不再锁 Delivery/NativeInput
+完成 work：NativeInput[id 升序] → Block[id 升序] → 消费与持久释放 → commit
 ```
 
 - 无关联投递时跳过 Delivery。输入插入和唯一键冲突必须在块锁之前，包含隐式等待；不能留下 Block→NativeInput 边。
 - 两笔不同投递共享块时，各持自己的输入行，只按块 id 升序竞争。持块后查询其他输入的持有信息不加输入锁；不会反向等待对方输入行。无块交集的不同席位、话题、项目不设全局锁。
 - 登记自己的未提交行不计入重叠检查。争抢失败必须回滚整笔登记，不得 commit 无效持有或外发。同身份重试仅核对，不替换身份或效果。
 - accepted、unknown、echo 不能释放初始持有。完成消费只释放对应原 work 的块；其他 work 的消费标记不能替代。可验证未外发的显式释放与完整组效果仍待接线和证据。
-- 仓库现有 work 完成更新尚未统一稳定块锁，其他组事务必须沿用上述顺序；本图不是全链无死锁或全目标完成的声明。旧已闭合锁测试不为此重复运行。
+- 完成 work 路径不锁投递，持输入锁后只取稳定块锁，不产生 Block→NativeInput 或 NativeInput→Delivery 边。释放集合单调写入，与原 work 消费同事务；后续轮次覆盖块标记不复活旧持有。失败、取消及不完整原生身份不释放。
+- 完成事务失败必须向订阅传播，保留 result 和游标以便重试。全部执行器与恢复原执行者仍待接线；本图不是全链无死锁或全目标完成声明。旧已闭合锁测试不重复运行。
 
 **「列出 `uncertain` + 反馈」是可见边界，不是恢复实现。** 三者关系是这样：
 
