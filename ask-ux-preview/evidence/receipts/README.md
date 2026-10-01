@@ -83,4 +83,12 @@ The external channel is a counter, not a native executor. Consumption in the rel
 
 The existing contract now includes Delivery→NativeInput→sorted Block ordering, including INSERT/unique-key waiting before block locks. The new overlap/independent-batch tests do not rerun the previously closed Delivery→NativeInput checkpoint. Work completion and remaining group/caller transaction paths still require consistent locking and validation.
 
-The staged runtime/ChatService code registers before RPC and settles structured identities. All harness/caller cutovers, complete Ask group effects, safe hold release, full converse recovery and original executor continuation remain incomplete. The migration and this draft PR are not independently releasable.
+## Monotonic work-completion transaction (WIP)
+
+Source: `8877768c`. `work-completion-routing.txt` and manifest record 8 passed, 8 test-JWT key-length warnings, 7.95s, exit 0. Native-shaped results pass through the real Claude assembler and ChatService completion transaction, against PostgreSQL. Exact clean work with a settled echo consumes and durably releases its registered batch; wrong work/session/receiver, error, interrupted result and missing echo do not release. Repeated completion is idempotent, and later consumption-marker replacement cannot resurrect released ownership.
+
+A real `before_commit` flush followed by PostgreSQL `SELECT 1 / 0` abort rolls back consumption and release together; direct retry of the same completion commits both. This is not successful-COMMIT/lost-ack evidence. It is not a real native Stop, journal/cursor recovery, a new interpreter or original-executor restart. Hook completion now propagates transaction failure and keeps context, but its full subscription/recovery path remains unverified.
+
+`work-completion-first.txt` records 2 failed/6 passed at `29488e43`: the shared helper used `claude_code`, while the real parser produces `claude-code`. Both positive completions were correctly excluded by exact identity. The fixture now uses the real harness constant; no identity check was removed. This first run is not a product negative control.
+
+The completion path locks input rows by stable ID before block rows by stable ID. Released block IDs persist monotonically in the input row in the same transaction as original-work consumption. Synthetic/interrupted results do not carry successful completion evidence. Remaining harnesses, full runtime/caller cutover, safe never-sent release, group effects and original-executor recovery are still incomplete. The migration and this draft PR are not independently releasable.
