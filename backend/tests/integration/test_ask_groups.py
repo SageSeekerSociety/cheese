@@ -147,6 +147,47 @@ def test_last_member_error_leaves_every_answer_unchanged(client, group):
     assert response.status_code == 422, response.text
 
 
+def test_second_submission_confirms_delta_and_preserves_effective_answers(
+    client, group
+):
+    data, _ = group
+    first = submission(data)
+    response = settle(client, data, first)
+    assert response.status_code == 200, response.text
+    first_operation = response.json()["data"]["settlement"]["operation"]
+    q1, q2 = data["group"]["members"]
+    second = {
+        **submission(data, operation="op-2", version=1),
+        "answered": [
+            {
+                "block_id": q2,
+                "kind": "option",
+                "option": "B",
+                "note": "",
+                "expect_version": 0,
+                "client_op_id": "op-2-answer",
+            }
+        ],
+        "later": [],
+        "unanswered": [{"block_id": q1, "client_op_id": "op-2-kept"}],
+    }
+    response = settle(client, data, second)
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    settlement = result["settlement"]
+    assert settlement["operation"] == {**second, "group_id": data["group"]["id"]}
+    assert settlement["answered"] == [q1, q2]
+    assert settlement["unanswered"] == []
+    assert [b["meta"]["answer_log"][-1]["option"] for b in result["blocks"]] == [
+        "A",
+        "B",
+    ]
+    replay = settle(client, data, first)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["settlement"]["operation"] == first_operation
+    assert read(client, data)["settlement"]["operation"] == settlement["operation"]
+
+
 def test_human_cannot_create_group_or_append_members(client, group):
     data, body = group
     path = f"/topics/{data['group']['topic_id']}/ask"

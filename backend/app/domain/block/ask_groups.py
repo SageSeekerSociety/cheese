@@ -249,6 +249,7 @@ class AskGroups:
                 if str(row.id) in parsed["unanswered"] and str(row.id) not in effective
             ],
             "payload_hash": payload_hash,
+            "operation": {**canonical, "client_op_id": operation},
             "client_op_id": operation,
             "delivery_event_id": str(event_id),
         }
