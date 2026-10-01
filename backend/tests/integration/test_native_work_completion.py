@@ -80,7 +80,12 @@ def test_only_exact_clean_native_work_releases_its_registered_batch(client, case
         async with factory() as session:
             await register_input(session, identity, InputEffects(held_block_ids=ids))
             if case != "no_echo":
-                await record_receipt(session, InputReceipt(identity, "native_echo"))
+                await record_receipt(
+                    session,
+                    InputReceipt(
+                        identity, "native_echo", execution_work_id=identity.work_id
+                    ),
+                )
             await session.commit()
         state = _state(identity)
         result = _result(identity)
@@ -151,7 +156,12 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
         ids = await _blocks(factory, project, topic)
         async with factory() as session:
             await register_input(session, identity, InputEffects(held_block_ids=ids))
-            await record_receipt(session, InputReceipt(identity, "native_echo"))
+            await record_receipt(
+                session,
+                InputReceipt(
+                    identity, "native_echo", execution_work_id=identity.work_id
+                ),
+            )
             await session.commit()
         chat = ChatService.__new__(ChatService)
         chat._sessions, chat._gateway = factory, None

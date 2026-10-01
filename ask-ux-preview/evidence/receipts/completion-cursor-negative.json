@@ -1,0 +1,21 @@
+{
+  "source": "98ebc8408e40f008fc09fb8f3625e8893d9f1c7f",
+  "argv": [
+    ".venv/bin/python",
+    "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/ask-ux-preview/evidence/receipts/completion_cursor_control.py"
+  ],
+  "cwd": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend",
+  "env": {
+    "TEST_PG_BASE": "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433",
+    "REDIS_URL": "redis://127.0.0.1:6379/12",
+    "CHEESE_CI_SLOT": "ask_s_concurrency",
+    "CHEESE_CI_REDIS_BASE_DB": "12",
+    "CHEESE_TEST_CLAUDE": "/var/tmp/ask-s-native-2.1.282/claude",
+    "PYTHONPATH": "."
+  },
+  "start": "2026-10-01T01:09:00.480078+00:00",
+  "end": "2026-10-01T01:09:14.132939+00:00",
+  "exit": 1,
+  "stdout_sha256": "0787d34ed8300d802c3128a719a42c9a42d5f4bf850d7ab31ba47e46b6e11a84",
+  "control_sha256": "dc138cda70ca7f150f35b998b7ee59dc1c0e830f8c31da7c13c7d50bb969b600"
+}

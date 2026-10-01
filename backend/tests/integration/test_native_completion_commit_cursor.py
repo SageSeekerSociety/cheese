@@ -222,8 +222,11 @@ def test_native_completion_commit_failure_replays_after_start_landed(
             event.listen(Session, "before_commit", fail_commit)
             try:
                 for _ in range(4):
-                    with pytest.raises(DBAPIError):
+                    refused = False
+                    try:
                         await reading.drain()
+                    except DBAPIError:
+                        refused = True
                     journal = Journal(mirror_path)
                     try:
                         assert journal.recall("landed") == str(result_seq - 1)
@@ -235,6 +238,7 @@ def test_native_completion_commit_failure_replays_after_start_landed(
                         )
                     finally:
                         journal.close()
+                    assert refused, "The real completion commit must fail"
             finally:
                 event.remove(Session, "before_commit", fail_commit)
             assert aborted == [True] * 4
