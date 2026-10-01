@@ -309,9 +309,9 @@ function sendLocator() {
           />
         </template>
       </div>
-      <div v-if="displayedFrame" role="status" class="px-3 py-2 text-caption">
-        <span v-if="displayedFrame.resourceId">{{
-          t('work.room.preview.resourceIdentity', { id: displayedFrame.resourceId })
+      <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
+        <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
+          t('work.room.preview.resourceIdentity', { id: displayedFrame.resourceId.slice(0, 12) })
         }}</span>
         <span v-if="displayedFrame.instance">
           · {{ t('work.room.preview.instanceIdentity', { id: displayedFrame.instance.slice(0, 12) }) }}</span
@@ -649,6 +649,9 @@ function sendLocator() {
      transparent — the page controls its own colours, we only back it. */
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #fff;
+}
+.preview-runtime-status {
+  overflow-wrap: anywhere;
 }
 .preview-frames {
   position: relative;
