@@ -873,8 +873,12 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
+            from app.domain.agent.answer_delivery import run_with_answer_offer
             from app.domain.delivery.agent import run_attempt
 
+            work = run_with_answer_offer(
+                chat_service, topic_id, delivery_id, turn_id, content, work
+            )
             work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
             work,

@@ -29,6 +29,7 @@ from tests.conftest import settle_turn
 from tests.integration.conftest import (
     chat_ws_url,
     post_project,
+    room_agent_seat,
     session_auth_headers,
 )
 from tests.integration.test_claude_session_records import _until
@@ -41,11 +42,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
     sys.path.insert(0, scripts)
     import headless_contract
 
-    machine = Machine(headless_contract, tmp_path)
-    project = post_project(
-        client, {"name": "Native Ask answer", "owner_handle": "alice"}
-    ).json()["data"]
-    project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+    machine = None
     native_runner = None
     handle = None
     operations = []
@@ -98,15 +95,32 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
 
     channel = Channel()
     runtime = ClaudeCodeRuntime(channel)
-    chat = ChatService(
-        session_factory=client.test_request_factory,
-        base_system_prompt="你是芝士。",
-        workspace_root=str(machine.workspace),
-        compute=ComputePool([runtime], channel.name),
-    )
-    app.dependency_overrides[get_chat_service] = lambda: chat
     gate = tmp_path / "continue-ask"
     try:
+        project = post_project(
+            client, {"name": "Native Ask answer", "owner_handle": "alice"}
+        ).json()["data"]
+        project_id = uuid.UUID(project["id"])
+        topic = uuid.UUID(project["root_topic_id"])
+        default_seat = room_agent_seat(client, str(topic))
+        made = client.post(f"/projects/{project_id}/agents", json={"handle": "opus"})
+        assert made.status_code == 200, made.text
+        asker = made.json()["data"]["seat_handle"]
+        joined = client.post(
+            f"/topics/{topic}/members",
+            json={"handle": asker, "role": "member", "actor": "alice"},
+            headers=session_auth_headers("alice"),
+        )
+        assert joined.status_code == 200, joined.text
+        assert asker != default_seat
+        machine = Machine(headless_contract, tmp_path)
+        chat = ChatService(
+            session_factory=client.test_request_factory,
+            base_system_prompt="你是芝士。",
+            workspace_root=str(machine.workspace),
+            compute=ComputePool([runtime], channel.name),
+        )
+        app.dependency_overrides[get_chat_service] = lambda: chat
         if mode == "busy":
             content = headless_contract.do(
                 "Bash",
@@ -119,7 +133,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         else:
             content = "先保留这个会话，等我回答。"
         with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
-            ws.send_json({"type": "message", "content": "@芝士 " + content})
+            ws.send_json({"type": "message", "content": f"<@{asker}> " + content})
             observed = _until(
                 ws,
                 lambda frame: (
@@ -192,6 +206,38 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
             else:
                 assert operations.count("send") == initial_sends + 1, operations
                 assert operations.count("steer") == 0, operations
+            if mode == "busy":
+                await get_work_runner().drain(10)
+                retry = await asyncio.to_thread(
+                    client.post,
+                    f"/topics/blocks/{question['id']}/answer",
+                    json={
+                        "kind": "option",
+                        "option": "继续",
+                        "client_op_id": f"http-{mode}",
+                        "expect_version": 0,
+                    },
+                    headers=session_auth_headers("alice"),
+                )
+                assert retry.status_code == 200, retry.text
+                assert operations.count("steer") == 1
+                correction = await asyncio.to_thread(
+                    client.post,
+                    f"/topics/blocks/{question['id']}/answer",
+                    json={
+                        "kind": "option",
+                        "option": "稍后",
+                        "client_op_id": "http-correct",
+                        "expect_version": 1,
+                    },
+                    headers=session_auth_headers("alice"),
+                )
+                assert correction.status_code == 200, correction.text
+                assert len(correction.json()["data"]["meta"]["answer_log"]) == 2
+                async with asyncio.timeout(30):
+                    while operations.count("steer") != 2:
+                        await asyncio.sleep(0.05)
+                assert operations.count("send") == initial_sends
             gate.touch()
             async with asyncio.timeout(90):
                 while native_runner.working:
@@ -204,7 +250,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                         select(NativeInput).where(NativeInput.topic_id == topic)
                     )
                 )
-                assert len(rows) == 2
+                assert len(rows) == (3 if mode == "busy" else 2)
                 assert {row.native_session_id for row in rows} == {native}
                 assert all(row.echoed_at and row.settled_at for row in rows)
                 assert all(
@@ -217,22 +263,39 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                     topic_id=topic,
                     recipient_handle=handle.agent_handle,
                 )
-                delivery = await session.scalar(
-                    select(Delivery).where(Delivery.topic_id == topic)
-                )
-                assert delivery.state == "received" and delivery.sent_at
-                delivered = [row for row in rows if row.delivery_id == delivery.id]
-                assert len(delivered) == 1
-                answer_block = await session.scalar(
-                    select(Block).where(
-                        Block.topic_id == topic,
-                        Block.meta["answer_to"].astext == question["id"],
+                deliveries = list(
+                    await session.scalars(
+                        select(Delivery).where(Delivery.topic_id == topic)
                     )
                 )
-                assert str(answer_block.id) in delivered[0].held_block_ids
-                assert consumed_turn(answer_block) == str(
-                    delivered[0].execution_work_id
+                assert len(deliveries) == (2 if mode == "busy" else 1)
+                assert all(d.state == "received" and d.sent_at for d in deliveries)
+                answers = list(
+                    await session.scalars(
+                        select(Block).where(
+                            Block.topic_id == topic,
+                            Block.meta["answer_to"].astext == question["id"],
+                        )
+                    )
                 )
+                assert len(answers) == len(deliveries)
+                for answer_block in answers:
+                    owners = [
+                        row
+                        for row in rows
+                        if str(answer_block.id) in row.held_block_ids
+                    ]
+                    assert len(owners) == 1
+                    assert str(answer_block.id) in owners[0].released_block_ids
+                    assert consumed_turn(answer_block) == str(
+                        owners[0].execution_work_id
+                    )
+                    assert (
+                        answer_block.meta["agent_recipient"]["handle"]
+                        == handle.session.agent_handle
+                    )
+                    assert answer_block.meta["agent_recipient"]["mentioned"]
+                    assert owners[0].delivery_id in {d.id for d in deliveries}
                 turns = list(
                     await session.scalars(
                         select(AgentTurn).where(AgentTurn.topic_id == topic)
@@ -247,8 +310,15 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         client.portal.call(verify)
     finally:
         gate.touch()
-        if native_runner is not None:
-            client.portal.call(native_runner.close)
-        client.portal.call(runtime.stop_listening)
-        machine.close()
-        sys.path.remove(scripts)
+        try:
+            if native_runner is not None:
+                client.portal.call(native_runner.close)
+        finally:
+            try:
+                client.portal.call(runtime.stop_listening)
+            finally:
+                try:
+                    if machine is not None:
+                        machine.close()
+                finally:
+                    sys.path.remove(scripts)

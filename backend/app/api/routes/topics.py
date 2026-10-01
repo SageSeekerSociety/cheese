@@ -1238,7 +1238,7 @@ _ANSWER_KINDS = ("option", "note", "reject")
 def _option_texts(meta: dict) -> list[str]:
     """选项的文字。顺序是选项列表唯一的意思，所以按原数组顺序返回。"""
     out: list[str] = []
-    for entry in (meta.get("options") or []):
+    for entry in meta.get("options") or []:
         out.append(entry["text"] if isinstance(entry, dict) else str(entry))
     return out
 
@@ -1358,9 +1358,7 @@ async def answer_options(
             raise ValidationError("kind=note 要给 note")
         if kind == "note" and not meta.get("allow_other"):
             raise ValidationError("这道题不接受自由输入")
-    if kind == "reject" and not (
-        meta.get("reject_option") or meta.get("allow_other")
-    ):
+    if kind == "reject" and not (meta.get("reject_option") or meta.get("allow_other")):
         # 老题没有这两个键：界面没补「以上都不是」，就不该有一条 API 能替它补。
         raise ValidationError("这道题不接受「以上都不是」")
 
@@ -1397,7 +1395,18 @@ async def answer_options(
     else:
         seat = await members.addressable_agent_handle(blk.topic_id)
 
+    instance = (
+        await instance_for_seat(db, blk.project_id, seat) if seat is not None else None
+    )
+    answer_meta = {"answer_to": str(block_id)}
+    if instance is not None:
+        answer_meta["agent_recipient"] = {
+            "instance_id": str(instance.id),
+            "handle": instance.handle,
+            "mentioned": True,
+        }
     event_id = event_id_for(NotificationType.MENTION, f"{block_id}:{entry['v']}")
+    answer_meta["delivery_event_id"] = str(event_id)
     text = _answer_line(seat, entry)
 
     # 7. 同一件事一个事务里写完：答案、那条给人看的文本、那条给席位的投递意图。
@@ -1409,23 +1418,21 @@ async def answer_options(
         author_type=AuthorType.participant,
         content=text,
         kind=BlockKind.message,
-        meta={"delivery_event_id": str(event_id), "answer_to": str(block_id)},
+        meta=answer_meta,
     )
-    if seat is not None:
-        instance = await instance_for_seat(db, blk.project_id, seat)
-        if instance is not None:
-            await record_agent(
-                db,
-                DeliveryEvent(
-                    id=event_id,
-                    type=NotificationType.MENTION,
-                    payload={"answer_to": str(block_id), "v": entry["v"]},
-                    occurred_at=datetime.now(UTC),
-                ),
-                topic_id=blk.topic_id,
-                instance_id=instance.id,
-                content=text,
-            )
+    if instance is not None:
+        await record_agent(
+            db,
+            DeliveryEvent(
+                id=event_id,
+                type=NotificationType.MENTION,
+                payload={"answer_to": str(block_id), "v": entry["v"]},
+                occurred_at=datetime.now(UTC),
+            ),
+            topic_id=blk.topic_id,
+            instance_id=instance.id,
+            content=text,
+        )
 
     updated = BlockOut.model_validate(blk).model_dump(mode="json")
     answer_out = BlockOut.model_validate(answer_block).model_dump(mode="json")
