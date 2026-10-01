@@ -83,7 +83,7 @@ it('mounts the slides branch and keeps quote normalization capped at 200 charact
   const message = payload[0]
   expect(message).toContain('q'.repeat(200))
   expect(message).not.toContain('q'.repeat(201))
-  await fireEvent.click(ui.getByRole('button', { name: '下载', exact: true }))
+  await fireEvent.click(ui.getByRole('button', { name: /^下载$/ }))
   expect(ui.emitted().download).toHaveLength(1)
 })
 it('sends whole-page PDF context with complete text and the verified file identity', async () => {
