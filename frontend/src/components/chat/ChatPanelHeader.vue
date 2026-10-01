@@ -6,6 +6,7 @@
 import type { Topic } from '../../cx_types'
 
 import { t } from '@/i18n'
+import { topicTitle } from '@/lib/topicState'
 
 defineProps<{
   topic: Topic
@@ -29,7 +30,7 @@ const emit = defineEmits<{
            The root topic (本体) and private chat use the plain header below. -->
   <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
     <div class="d-flex align-center ga-2 flex-wrap">
-      <span class="t-title">{{ topic.title }}</span>
+      <span class="t-title">{{ topicTitle(topic) }}</span>
       <span class="pr-num t-meta">#{{ prShortId }}</span>
       <v-spacer />
       <span class="pr-state ms-1" :class="prState.cls">{{ prState.label }}</span>
@@ -55,7 +56,7 @@ const emit = defineEmits<{
       >
         {{ backLabel }}
       </v-btn>
-      <span class="t-title">{{ titleOverride || topic.title }}</span>
+      <span class="t-title">{{ titleOverride || topicTitle(topic) }}</span>
       <v-spacer />
       <span
         class="status-dot"

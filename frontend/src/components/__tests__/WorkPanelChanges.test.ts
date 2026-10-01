@@ -59,7 +59,7 @@ vi.mock('../../api', async () => {
           title: name,
           status: 'open',
           branch_name: `task/${name}`,
-          presentation: { column: 'building', display_status: '运行中' },
+          presentation: { column: 'building', phrase: 'running' },
           blocks: [],
         })),
         total: 2,
@@ -339,14 +339,14 @@ describe('文件面板', () => {
           blocks: [],
           created_at: '2026-09-09T00:00:00Z',
           updated_at: '2026-09-09T00:00:00Z',
-          presentation: { column: 'done', display_status: '已完成' },
+          presentation: { column: 'done', phrase: 'accepted' },
         },
       ],
       total: 1,
     })
     await fromMenu(container, '刷新')
     await flush()
-    expect(container.querySelector('.source-status')?.textContent).toBe('已完成 · 只读')
+    expect(container.querySelector('.source-status')?.textContent).toBe('已采纳 · 只读')
     expect(editor(container)!.readOnly).toBe(true)
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     await fireEvent.update(editor(container)!, 'late edit')
@@ -773,7 +773,7 @@ describe('task file navigation', () => {
           title: 'Only task',
           status: 'open',
           branch_name: 'task/single',
-          presentation: { column: 'building', display_status: '进行中' },
+          presentation: { column: 'building', phrase: 'running' },
           blocks: [],
         },
       ],

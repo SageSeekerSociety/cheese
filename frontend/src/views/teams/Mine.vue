@@ -2,7 +2,7 @@
   <v-container class="teams-container" fluid>
     <v-row>
       <v-col cols="12">
-        <v-card flat class="my-teams-card" :title="t('home.team.mine.title')">
+        <v-card flat class="my-teams-card" :title="t('teams.mine.title')">
           <template #text>
             <!-- 加载状态 -->
             <div v-if="isLoadingMyTeams" class="d-flex flex-column align-center py-5">
@@ -13,7 +13,7 @@
                 :width="3"
                 class="mb-3"
               ></v-progress-circular>
-              <p class="text-body-2 text-medium-emphasis text-center">{{ t('home.team.mine.loading') }}</p>
+              <p class="text-body-2 text-medium-emphasis text-center">{{ t('teams.mine.loading') }}</p>
             </div>
 
             <!-- 错误状态 -->
@@ -21,10 +21,10 @@
               <v-avatar size="50" class="mb-3 bg-error-lighten-5">
                 <v-icon icon="mdi-alert-circle" size="large" color="error"></v-icon>
               </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('home.team.mine.failed') }}</p>
-              <p class="text-body-2 text-center text-medium-emphasis mb-3">{{ t('home.team.mine.failedHint') }}</p>
+              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('teams.mine.loadFailed') }}</p>
+              <p class="text-body-2 text-center text-medium-emphasis mb-3">{{ t('teams.mine.loadFailedHint') }}</p>
               <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" @click="fetchMyTeams">
-                {{ t('home.team.mine.retry') }}
+                {{ t('teams.mine.reload') }}
               </v-btn>
             </div>
 
@@ -33,8 +33,8 @@
               <v-avatar size="50" class="mb-3 bg-surface-light">
                 <v-icon icon="mdi-account-group" size="large" color="on-surface-variant"></v-icon>
               </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('home.team.mine.empty') }}</p>
-              <p class="text-body-2 text-center text-medium-emphasis">{{ t('home.team.mine.emptyHint') }}</p>
+              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('teams.mine.emptyTitle') }}</p>
+              <p class="text-body-2 text-center text-medium-emphasis">{{ t('teams.mine.emptyHint') }}</p>
             </div>
 
             <!-- 小队列表 -->

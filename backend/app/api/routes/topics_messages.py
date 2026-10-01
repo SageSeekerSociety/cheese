@@ -99,6 +99,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -199,16 +200,15 @@ async def _summon_the_named(
             fused = await announce(
                 session,
                 place_id=place.room_id,
-                content="AI 队友之间的点名本小时已到上限，这次没有叫醒对方",
+                content=say("mentionFused"),
                 meta=notice(
                     EVENT_MENTION_FUSED,
                     severity=SEVERITY_WARN,
                     who=WHO_PLATFORM,
-                    detail=(
-                        f"同一个话题里，AI 队友点名每小时最多叫起 "
-                        f"{AGENT_MENTIONS_PER_HOUR} 轮，防止互相点名停不下来。"
-                        f"这次没叫醒：{'、'.join(summoned.fused)}。"
-                        "人点名不受这个限制。"
+                    detail=say(
+                        "mentionFusedDetail",
+                        limit=AGENT_MENTIONS_PER_HOUR,
+                        names="、".join(summoned.fused),
                     ),
                 ),
             )

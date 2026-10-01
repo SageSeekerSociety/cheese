@@ -19,7 +19,7 @@ import {
   updateTopicMemberRole,
 } from '../api'
 import { t } from '../i18n'
-import { choiceKey } from '../lib/computeConfig'
+import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
@@ -125,16 +125,13 @@ const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
   return props.projectMembers
     .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
-    .map((m) => {
-      const name = m.name || m.user_handle
-      const tag = m.agent
-        ? t('work.room.roster.agentBadge')
-        : externals.value.has(m.user_handle)
-          ? t('work.external.tag')
-          : ''
-      const mark = tag ? t('work.room.roster.mark', { tag }) : ''
-      return { title: `${name}${mark}`, subtitle: `@${m.user_handle}`, value: m.user_handle }
-    })
+    .map((m) => ({
+      title: m.name || m.user_handle,
+      value: m.user_handle,
+      agent: !!m.agent,
+      external: externals.value.has(m.user_handle),
+      face: m.avatar_id != null && !broken.value.has(m.user_handle) ? getAvatarUrl(m.avatar_id) : null,
+    }))
 })
 
 // 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用
@@ -148,8 +145,9 @@ function onFaceError(handle: string): void {
   if (broken.value.has(handle)) return
   broken.value = new Set(broken.value).add(handle)
 }
+// AI 队友的底色按名字取，和它在别处的头像（CheeseAvatar）一个颜色。
 function faceColor(m: TopicMemberRow): string {
-  return avatarColor(m.member_handle)
+  return avatarColor(m.agent ? m.name || m.member_handle : m.member_handle)
 }
 function initial(name: string): string {
   return avatarInitial(name)
@@ -213,7 +211,7 @@ async function onSetRole(handle: string, role: string) {
               v-else
               class="members-mini__face"
               :class="{ 'members-mini__face--ai': m.agent }"
-              :style="{ zIndex: MAX_FACES - i, backgroundColor: m.agent ? undefined : faceColor(m) }"
+              :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }"
               >{{ initial(m.name || m.member_handle) }}</span
             >
           </template>
@@ -294,7 +292,9 @@ async function onSetRole(handle: string, role: string) {
       </ul>
 
       <div v-if="machines" class="roster__future" data-testid="future-machine">
-        <span class="roster__machine-text">{{ t('work.roomMachine.here', { name: machines.choice.name }) }}</span>
+        <span class="roster__machine-text">{{
+          t('work.roomMachine.here', { name: choiceName(machines.choice) })
+        }}</span>
         <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
         <span v-if="machines.visibility.machine_access" class="roster__notice" :title="machines.visibility.notice">
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
@@ -318,7 +318,35 @@ async function onSetRole(handle: string, role: string) {
           :placeholder="t('work.room.roster.addPlaceholder')"
           :no-data-text="t('work.room.roster.allIn')"
           class="roster__select"
-        />
+        >
+          <!-- 每一行和上面名册里那一行同一个样子：头像、名字、@handle、标。只有一串
+               名字的话，好几个「芝士X」分不出谁是谁。 -->
+          <template #item="{ props: ip, item }">
+            <v-list-item v-bind="ip" :title="undefined" class="roster__option">
+              <template #prepend>
+                <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" />
+                <img
+                  v-else-if="item.raw.face"
+                  class="roster__avatar roster__avatar--photo"
+                  :src="item.raw.face"
+                  :alt="item.raw.title"
+                  @error="onFaceError(item.raw.value)"
+                />
+                <span v-else class="roster__avatar" :style="{ backgroundColor: avatarColor(item.raw.value) }">{{
+                  initial(item.raw.title)
+                }}</span>
+              </template>
+              <span class="roster__who">
+                <span class="roster__name">{{ item.raw.title }}</span>
+                <span class="roster__handle">@{{ item.raw.value }}</span>
+              </span>
+              <template #append>
+                <span v-if="item.raw.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
+                <ExternalTag v-else-if="item.raw.external" />
+              </template>
+            </v-list-item>
+          </template>
+        </v-select>
         <v-btn
           size="small"
           variant="flat"
@@ -397,11 +425,9 @@ async function onSetRole(handle: string, role: string) {
   color: var(--muted);
   font-size: 0.6rem;
 }
-/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：反色的圆角方块，圆角是边长
-   的四分之一（22px → 6px，见 squareRadius）。人是圆的。 */
+/* AI 队友在头像堆里和在别处一个样子（CheeseAvatar）：按名字取色的圆角方块，圆角是
+   边长的四分之一（22px → 6px，见 squareRadius）。人是圆的。 */
 .members-mini__face--ai {
-  color: var(--inverse-ink);
-  background: var(--inverse-surface);
   border-radius: var(--radius-sm);
 }
 
@@ -511,6 +537,13 @@ async function onSetRole(handle: string, role: string) {
 }
 .roster__avatar--photo {
   object-fit: cover;
+}
+/* 「添加成员」下拉里的一行：头像和名字之间留出和名册一样的间距。 */
+.roster__option :deep(.v-list-item__prepend) {
+  margin-inline-end: 10px;
+}
+.roster__option :deep(.v-list-item__spacer) {
+  display: none;
 }
 .roster__who {
   display: flex;

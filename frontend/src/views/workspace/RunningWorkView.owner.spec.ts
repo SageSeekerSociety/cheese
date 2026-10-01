@@ -66,7 +66,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'n1ctheboy',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'building', display_status: '排队中' },
+    presentation: { column: 'building', phrase: 'not_started' },
     ...over,
   }
 }
@@ -173,8 +173,8 @@ describe('同一列里，在跑的和闲着的不再长得一样', () => {
   it('「运行中」那张卡的状态点带上呼吸，排队的那张没有', async () => {
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', title: '在跑的', presentation: { column: 'building', display_status: '运行中' } }),
-        task({ id: 'b', title: '排队的', presentation: { column: 'building', display_status: '排队中' } }),
+        task({ id: 'a', title: '在跑的', presentation: { column: 'building', phrase: 'running' } }),
+        task({ id: 'b', title: '排队的', presentation: { column: 'building', phrase: 'not_started' } }),
       ],
       total: 2,
     })
@@ -190,7 +190,7 @@ describe('同一列里，在跑的和闲着的不再长得一样', () => {
 
   it('后端换个别的短语，那张卡就不呼吸了 —— 「在跑」不是前端自己推的', async () => {
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'building', display_status: '等待检查' } })],
+      data: [task({ presentation: { column: 'building', phrase: 'awaiting_checks' } })],
       total: 1,
     })
     const { container } = mount()

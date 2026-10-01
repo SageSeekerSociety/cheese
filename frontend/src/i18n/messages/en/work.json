@@ -42,7 +42,6 @@
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
-    "cloud": "Cloud · Standard configuration",
     "unavailable": "{name} · Unavailable",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
     "abandon": "Change without pushing"
@@ -358,7 +357,37 @@
       "platform": "Platform",
       "changedFiles": "Changed files",
       "moreFiles": "{n} more files",
-      "goConfirm": "Review and confirm"
+      "goConfirm": "Review and confirm",
+      "who": {
+        "platform": "Handled by the platform",
+        "cheese": "Cheese is on it",
+        "human": "Needs a person"
+      },
+      "working": "{name} is on it",
+      "machineReady": "Work computer ready",
+      "machinePreparing": "Preparing the work computer",
+      "incident": {
+        "title": "Work computer temporarily unavailable",
+        "cleaning": "Cleaning up automatically",
+        "recovering": "Recovering",
+        "retryable": "Can retry",
+        "needsAdmin": "Needs an admin"
+      },
+      "action": {
+        "doc": "View doc",
+        "decision": "View decisions",
+        "split": "View task",
+        "undo": "Undo",
+        "milestone": "View calendar",
+        "accept": "Review"
+      },
+      "filesChanged": "Changed files: {n}",
+      "viewChanges": "View changes",
+      "showDetail": "Show details",
+      "detail": "Details",
+      "docDiff": "Document changes",
+      "added": "Added",
+      "removed": "Removed"
     },
     "message": {
       "copy": "Copy",
@@ -491,12 +520,20 @@
       "locateMessage": "In {path} at {address} (“{quote}”): {note}",
       "publishSite": "Publish site",
       "openInNewTab": "Open in a new tab",
+      "openLatestPreview": "Open the latest preview in a new tab",
       "exitFullscreen": "Exit full screen",
       "fullscreen": "Full-screen preview",
       "refresh": "Refresh",
       "runningApp": "Running app",
       "download": "Download",
       "frameTitle": "Topic preview",
+      "authorizing": "Authorizing the preview…",
+      "navigating": "Loading the new page…",
+      "navigationTimeout": "The new page took too long to load. Try again.",
+      "navigationFailed": "The new page couldn't load. Try again.",
+      "retainedPage": "New content hasn't loaded. Still showing the previously opened page.",
+      "retryTarget": "Retry new content",
+      "readVersion": "Version at metadata read: {version}",
       "loadFailed": "Couldn't load the preview",
       "readFailed": "Couldn't read the file",
       "pathError": "{path}: {error}",
@@ -561,7 +598,12 @@
       "loadNew": "Load the new version",
       "copyName": "Save in the room as",
       "makeCopy": "Make a copy to edit",
-      "originalKept": "The original stays in the library unchanged."
+      "originalKept": "The original stays in the library unchanged.",
+      "unavailable": {
+        "not_configured": "Online editing is not enabled on this deployment",
+        "unsupported": "This kind of file can't be edited online",
+        "library_original": "Originals in the project library are read-only. Make a copy in the room to edit it"
+      }
     },
     "fileHistory": {
       "source": {
@@ -679,6 +721,20 @@
       "copied": "Copied",
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
+      "format": {
+        "label": "Document formatting",
+        "unavailable": "This format is unavailable for the selection",
+        "bold": "Bold",
+        "italic": "Italic",
+        "strike": "Strikethrough",
+        "code": "Inline code",
+        "h1": "Heading 1",
+        "h2": "Heading 2",
+        "bullet": "Bulleted list",
+        "ordered": "Numbered list",
+        "task": "Task list",
+        "quote": "Quote"
+      },
       "slash": {
         "text": "Text",
         "h1": "Heading 1",
@@ -750,7 +806,6 @@
       "loadFailed": "Couldn't load members",
       "count": "No members | 1 member | {count} members",
       "agentBadge": "AI teammate",
-      "mark": " ({tag})",
       "role": {
         "owner": "Owner",
         "admin": "Admin",
@@ -784,7 +839,12 @@
       "discardFailed": "Couldn't discard"
     },
     "mention": {
-      "escBack": "Press Esc to go back",
+      "back": "Back",
+      "notInTopic": "Not in topic",
+      "outsideNotice": "{names} aren't in this topic and won't be notified",
+      "addToTopic": "Add to topic",
+      "dismissOutside": "Dismiss",
+      "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
       "all": "Everyone",
@@ -827,6 +887,27 @@
       "done": "Done",
       "archived": "Archived"
     },
+    "phrase": {
+      "running": "Running",
+      "started": "Started",
+      "not_started": "Not started",
+      "returned": "Handed back",
+      "idle": "Idle",
+      "draft": "Draft",
+      "lost": "Lost contact",
+      "gate_running": "Checks running",
+      "awaiting_checks": "Waiting for checks",
+      "fixing_checks": "Fixing checks",
+      "resolving_conflict": "Resolving conflict",
+      "updating_branch": "Platform updating branch",
+      "checks_failed": "Checks failed",
+      "awaiting_review": "Awaiting review",
+      "bounced": "Sent back",
+      "awaiting_answer": "Awaiting answer",
+      "accepted": "Accepted",
+      "closed": "Closed",
+      "archived": "Archived"
+    },
     "loadFailed": "Couldn't load",
     "unknownRoom": "Unknown room",
     "noneMine": "No tasks assigned to you",
@@ -857,7 +938,8 @@
     "notFound": "This topic doesn't exist",
     "notFoundHint": "It may have been deleted, or it isn't part of this project",
     "resize": "Drag to resize, double-click to reset",
-    "dmFailed": "Couldn't open the conversation"
+    "dmFailed": "Couldn't open the conversation",
+    "untitled": "New topic"
   },
   "access": {
     "signedOutTitle": "Sign in to view this project",
@@ -1328,14 +1410,6 @@
       "accountConnected": "GitHub account connected"
     }
   },
-  "leaveProject": {
-    "title": "Leave this project?",
-    "body": "You will no longer see this project. Existing messages and records are kept. You can come back if you are invited again.",
-    "bodyTeam": "You will no longer see this project. Existing messages and records are kept. You leave the project, not the team: your place in the team and its other projects stay the same. You can come back if you are invited again.",
-    "cancel": "Cancel",
-    "confirm": "Leave",
-    "failed": "Failed to leave"
-  },
   "computeChoice": {
     "cloud": "Cloud",
     "deviceOnline": "{name} · Online",
@@ -1427,5 +1501,44 @@
     "deleteTitle": "Delete \"{title}\"",
     "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
     "cancel": "Cancel"
+  },
+  "nodeBoard": {
+    "loadFailed": "Couldn't load machine status",
+    "title": "Machine status",
+    "hint": "Whether work computers are available now",
+    "active": "{count} runs in progress across the platform",
+    "online": "Online",
+    "offline": "Offline",
+    "device": "Own device",
+    "cloud": "Cloud",
+    "current": "Used when nothing is chosen"
+  },
+  "needsYou": {
+    "changeAlert": "Change alert",
+    "waiting": "Waiting for your answer",
+    "answerFailed": "Couldn't answer",
+    "dismissFailed": "Couldn't dismiss",
+    "feedbackFailed": "Couldn't send feedback",
+    "next": "Next",
+    "open": "Open topic",
+    "dismiss": "Dismiss",
+    "helpful": "Helpful",
+    "notHelpful": "Not helpful"
+  },
+  "push": {
+    "ask": "This run may take a while. Get notified when it finishes",
+    "enable": "Turn on notifications",
+    "decline": "Not now"
+  },
+  "image": {
+    "alt": "Image",
+    "failed": "Couldn't load the image"
+  },
+  "agentAvatar": {
+    "defaultName": "Cheese"
+  },
+  "liveView": {
+    "connecting": "Connecting to the live view…",
+    "closed": "Live view disconnected"
   }
 }

@@ -32,7 +32,7 @@ const { t } = useI18n()
 const inviter = computed(() => getEntity(props.notification, 'inviter'))
 const project = computed(() => getEntity(props.notification, 'project'))
 const projectName = computed(() => getStringMetadata(props.notification, 'projectName', project.value?.name || ''))
-const role = computed(() => getStringMetadata(props.notification, 'role', '成员'))
+const role = computed(() => getStringMetadata(props.notification, 'role', t('notifications.common.member')))
 const message = computed(() => getStringMetadata(props.notification, 'message', ''))
 const invitationId = computed(() => getStringMetadata(props.notification, 'invitationId', ''))
 

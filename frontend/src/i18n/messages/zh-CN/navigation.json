@@ -115,9 +115,6 @@
     "resize": "拖动调整宽度"
   },
   "backTo": {
-    "place": "返回{place}",
-    "up": "返回上一级",
-    "team": "团队",
     "own": "你名下的项目"
   },
   "desktopApp": {
@@ -142,5 +139,34 @@
     "close": "关闭",
     "phoneTitle": "在手机上使用",
     "phoneScan": "用手机扫码打开，再添加到主屏幕"
+  },
+  "pages": {
+    "terms": "用户协议",
+    "feedbackDetail": "反馈详情",
+    "adminModels": "模型管理",
+    "adminMembers": "成员管理",
+    "openPreview": "打开预览",
+    "openSite": "打开网站",
+    "connect": "连接设备",
+    "market": "市场",
+    "notFound": "页面未找到",
+    "teamsExplore": "发现团队",
+    "teamsMine": "我的团队",
+    "teamsPending": "申请与邀请",
+    "questions": "问答",
+    "ask": "提问",
+    "questionDetail": "问题详情",
+    "spaceTasks": "题目",
+    "taskAdvice": "启星研导",
+    "taskSubmissions": "我的提交",
+    "taskSubmit": "提交",
+    "taskParticipants": "领取者",
+    "taskData": "数据",
+    "taskEdit": "编辑题目",
+    "spaceAnalytics": "数据分析",
+    "projectWorkspace": "项目工作台",
+    "dm": "私聊",
+    "artifact": "产物",
+    "member": "成员"
   }
 }

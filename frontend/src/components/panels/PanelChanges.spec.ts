@@ -113,7 +113,7 @@ function openTask(id = 't-1', title = '把登录页的报错说清楚') {
     title,
     status: 'open',
     branch_name: 'cheese/login-copy',
-    presentation: { column: 'building', display_status: '施工中' },
+    presentation: { column: 'building', phrase: 'running' },
   }
 }
 

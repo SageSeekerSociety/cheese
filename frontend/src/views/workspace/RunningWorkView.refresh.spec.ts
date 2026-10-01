@@ -56,7 +56,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'building', display_status: '排队中' },
+    presentation: { column: 'building', phrase: 'not_started' },
     ...over,
   }
 }
@@ -90,16 +90,16 @@ function mount() {
 describe('板自己变新', () => {
   it('后端那边变了，人什么都不用点，板上的话跟着变', async () => {
     const { container, findByText, queryByText } = mount()
-    await findByText('排队中')
+    await findByText('待开工')
 
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'building', display_status: '运行中' } })],
+      data: [task({ presentation: { column: 'building', phrase: 'running' } })],
       total: 1,
     })
     await vi.advanceTimersByTimeAsync(20_000)
 
     await waitFor(() => expect(queryByText('运行中')).not.toBeNull())
-    expect(queryByText('排队中')).toBeNull()
+    expect(queryByText('待开工')).toBeNull()
     // 还是那一张卡，不是多出来一张。
     expect(container.querySelectorAll('.board-card').length).toBe(1)
   })
@@ -165,12 +165,12 @@ describe('看不见的时候不空转', () => {
 
   it('切回来的那一下补一次 —— 看到的是此刻的板，不是离开时的', async () => {
     const { findByText, queryByText } = mount()
-    await findByText('排队中')
+    await findByText('待开工')
 
     hidden = true
     await vi.advanceTimersByTimeAsync(60_000)
     listProjectTasks.mockResolvedValue({
-      data: [task({ presentation: { column: 'building', display_status: '运行中' } })],
+      data: [task({ presentation: { column: 'building', phrase: 'running' } })],
       total: 1,
     })
 

@@ -1,7 +1,9 @@
 import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import { fireEvent, render } from '@testing-library/vue'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { setLocale } from '@/i18n'
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 // 这一页的数据源是缓存的，每个用例先摆好它看到的那一份，再渲染。
@@ -23,6 +25,9 @@ vi.mock('@/composables/useCachedResource', () => ({
 vi.mock('../me', () => ({ myHandle: () => 'writer' }))
 
 import ProjectDocsView from './ProjectDocsView.vue'
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 describe('周报集', () => {
   it('按窗口列出一份真周报，并指得回它写在哪间房', async () => {
@@ -58,6 +63,32 @@ describe('周报集', () => {
     expect(view.queryByText('周报由芝士定期产出')).toBeNull()
     expect(view.getByText(/在项目房间里 @ 芝士/)).toBeTruthy()
     expect(view.getByText('暂无周报')).toBeTruthy()
+    view.unmount()
+  })
+})
+
+describe('in English', () => {
+  it('names the weekly window in English', async () => {
+    setLocale('en')
+    state.payload = {
+      weeklies: [
+        {
+          id: 'w1',
+          topic_id: 'room-1',
+          kind: 'weekly',
+          content: 'Shipped the artifact preview.',
+          created_at: '2026-09-07T02:00:00Z',
+          meta: { since: '2026-08-31T00:00:00+00:00', until: '2026-09-06T23:59:59+00:00' },
+        },
+      ],
+    }
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p', kind: 'weeklies' },
+      global: { plugins: [createVuetify()] },
+    })
+    expect(view.getByText('Aug 31 – Sep 6')).toBeTruthy()
+    expect(view.getByText('From topic')).toBeTruthy()
+    expect(view.getByText('Weekly reports')).toBeTruthy()
     view.unmount()
   })
 })

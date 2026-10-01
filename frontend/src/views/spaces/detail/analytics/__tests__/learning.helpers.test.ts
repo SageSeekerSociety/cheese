@@ -1,6 +1,6 @@
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { buildSourceLink, dedupeBlockIds, formatLearningTime, knowledgePointLabel } from '../helpers'
 import {
@@ -9,6 +9,8 @@ import {
   normalizeAnalyticsQuery,
   serializeAnalyticsQuery,
 } from '../utils'
+
+import i18n, { setLocale } from '@/i18n'
 
 const NOW = new Date('2026-03-19T12:00:00.000Z').getTime()
 
@@ -75,6 +77,11 @@ describe('学习的筛选', () => {
 })
 
 describe('学习的展示与坐标', () => {
+  // 这一组断言的是中文界面下的写法。
+  const previous = i18n.global.locale.value
+  beforeAll(() => setLocale('zh-CN'))
+  afterAll(() => setLocale(previous))
+
   it('没归类的发言写成「未归类」', () => {
     expect(knowledgePointLabel(null)).toBe('未归类')
     expect(knowledgePointLabel('循环')).toBe('循环')

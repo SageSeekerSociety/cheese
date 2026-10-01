@@ -72,9 +72,8 @@ onBeforeUnmount(clearTimers)
     <div v-if="shown" class="ustrip" role="status" aria-live="polite">
       <span class="ustrip__msg">{{ props.message }}</span>
       <button type="button" class="ustrip__undo" @click="emit('undo')">{{ t('feedback.undo.action') }}</button>
-      <!-- 关闭是纯图标，名字只能挂在 aria-label 上；管理后台这几个页面里用户可见的
-           字都是直接写中文的（见 AdminMembersPage 的「刷新」），这里跟着它们。 -->
-      <button type="button" class="ustrip__close" aria-label="关闭" @click="emit('dismiss')">
+      <!-- 关闭是纯图标，名字只能挂在 aria-label 上。 -->
+      <button type="button" class="ustrip__close" :aria-label="t('navigation.shell.close')" @click="emit('dismiss')">
         <v-icon icon="mdi-close" size="16" />
       </button>
     </div>

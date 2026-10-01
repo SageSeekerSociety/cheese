@@ -1,12 +1,12 @@
 <template>
   <div class="text-center">
     <div v-if="countdown && !isExpired" class="countdown-display">
-      <span class="countdown-number text-primary">{{ countdown.days }}</span> 天
-      <span class="countdown-number text-primary">{{ countdown.hours }}</span> 时
-      <span class="countdown-number text-primary">{{ countdown.minutes }}</span> 分
-      <span class="countdown-number text-primary">{{ countdown.seconds }}</span> 秒
+      <span class="countdown-number text-primary">{{ countdown.days }}</span> {{ t('shell.countdown.days') }}
+      <span class="countdown-number text-primary">{{ countdown.hours }}</span> {{ t('shell.countdown.hours') }}
+      <span class="countdown-number text-primary">{{ countdown.minutes }}</span> {{ t('shell.countdown.minutes') }}
+      <span class="countdown-number text-primary">{{ countdown.seconds }}</span> {{ t('shell.countdown.seconds') }}
     </div>
-    <div v-else class="expired-text text-error">已截止</div>
+    <div v-else class="expired-text text-error">{{ t('shell.countdown.closed') }}</div>
     <div v-if="countdown && label" class="text-caption">{{ label }}</div>
   </div>
 </template>
@@ -14,6 +14,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   deadline: string | Date | number

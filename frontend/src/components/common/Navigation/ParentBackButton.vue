@@ -8,7 +8,7 @@ import { useDisplay } from 'vuetify'
 import { topBarBack } from '../topBarBack'
 
 import { t } from '@/i18n'
-import { projectFrameOf, readEntry } from '@/lib/projectEntry'
+import { projectFrameOf } from '@/lib/projectFrame'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -18,7 +18,18 @@ const { mdAndUp } = useDisplay()
 const workspace = useWorkspaceStore()
 
 /**
- * 站在项目这个框的**根**上吗？根这一层没有「上一层」可声明，← 得靠记下来的来路。
+ * ← 回到人是从哪一页来的，和浏览器的后退一样。`state.back` 是 vue-router 在每次
+ * 应用内跳转时记下的上一个地址；贴链接直接打开的第一页上它是 null，这时
+ * `history.back()` 会把人踢出整个应用，所以才退到下面那套层级兜底。
+ * 读 route 只为让它随每次跳转重算：history 的 state 不是响应式的。
+ */
+const cameFrom = computed(() => {
+  void route.fullPath
+  return typeof router.options.history.state.back === 'string'
+})
+
+/**
+ * 站在项目这个框的**根**上吗？根这一层没有「上一层」可声明。
  *
  * 两端的根不是同一条路由，这不是漂移：`/projects/:projectId` 在桌面上一帧都不停，
  * WorkspaceEntry 当场 `router.replace` 去看板；所以桌面的根是看板，手机的根才是
@@ -30,30 +41,14 @@ const atProjectRoot = computed(() => {
   return route.name === (mdAndUp.value ? 'workspace-running' : 'workspace-project')
 })
 
-/** 记下来的来路：从项目外面走进来的那一跳。 */
-const entry = computed(() => {
-  const projectId = projectFrameOf(route)
-  if (!projectId || !atProjectRoot.value) return null
-  const saved = readEntry(projectId)
-  if (!saved) return null
-  // 存的是路由名 + 参数，不是地址：小队被删、路由改名之后 resolve 会抛，此时落回
-  // 兜底，而不是把人送进一个 404。
-  try {
-    router.resolve({ name: saved.name, params: saved.params })
-  } catch {
-    return null
-  }
-  return saved
-})
-
 /**
- * 兜底：项目所属的小队。后端本来就在 `ProjectOut` 里返回 `team_id`，不用改。
+ * 项目的根上退到项目所属的小队。后端本来就在 `ProjectOut` 里返回 `team_id`。
  * 小队页只要求登录、不要求是队员，所以这个地址对任何能打开这个项目的人都点得开。
  * `team_id` 为空的历史项目没有这一层，← 就不显示。
  */
 const owningTeam = computed(() => {
   const projectId = projectFrameOf(route)
-  if (!projectId || !atProjectRoot.value || entry.value) return null
+  if (!projectId || !atProjectRoot.value) return null
   const project = workspace.projects.find((p) => p.id === projectId)
   const handle = project?.team_handle
   if (!handle) return null
@@ -62,10 +57,10 @@ const owningTeam = computed(() => {
   if (handle === project.owner_handle) {
     return handle === myHandle() ? { name: 'TeamsDetail', params: { handle }, label: t('navigation.backTo.own') } : null
   }
-  return { name: 'TeamsDetail', params: { handle }, label: t('navigation.backTo.team') }
+  return { name: 'TeamsDetail', params: { handle }, label: t('navigation.teams') }
 })
 
-/** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）——那些本来就是对的。 */
+/** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）。 */
 const declaredParent = computed(() => {
   if (typeof route.meta.backTo !== 'string') return null
   if (route.meta.backOnPhoneOnly && mdAndUp.value) return null
@@ -73,24 +68,24 @@ const declaredParent = computed(() => {
 })
 
 // 根这一层**不吃** `meta.backTo`：看板在桌面上声明的父级就是它自己会被弹回来的那
-// 个地址，落到它身上等于留一颗按了没反应的按钮。没有来路也没有小队，诚实的答案
-// 是没有上一层——那就不显示。
-const target = computed(() => (atProjectRoot.value ? entry.value ?? owningTeam.value : declaredParent.value))
+// 个地址，落到它身上等于留一颗按了没反应的按钮。没有小队，诚实的答案是没有上一
+// 层——那就不显示。
+const target = computed(() => (atProjectRoot.value ? owningTeam.value : declaredParent.value))
 
 const to = computed<RouteLocationRaw | null>(() => {
-  const dest = target.value
-  if (!dest) return null
+  const parent = target.value
+  if (!parent) return null
   try {
-    return router.resolve({ name: dest.name, params: dest.params }, route).path
+    return router.resolve({ name: parent.name, params: parent.params }, route).path
   } catch {
     return null
   }
 })
 
-// 说得出去处就说：读屏和长按看到的是「返回小队」而不是一句放之四海皆准的
-// 「返回上一级」。名字是**离开那一页时**存下来的——现在再去取，那一页早卸载了。
+// 说得出去处就说：读屏和长按看到的是「返回团队」而不是一句放之四海皆准的
+// 「返回上一级」。
 const label = computed(() =>
-  target.value?.label ? t('navigation.backTo.place', { place: target.value.label }) : t('navigation.backTo.up')
+  target.value?.label ? t('shell.back.to', { label: target.value.label }) : t('shell.back.up')
 )
 
 // 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
@@ -115,6 +110,18 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
        Vuetify 一直给它盖一层 12% 的实底遮罩——一颗永远处于按下态的返回键，在
        顶栏左上角就是一个突兀的灰方块。返回是「离开这一层」，不是「你在这儿」，
        它本来就不该有激活态。 -->
+  <v-btn
+    v-else-if="cameFrom"
+    icon
+    color="on-surface-variant"
+    variant="text"
+    :size="mdAndUp ? 28 : 44"
+    :aria-label="t('shell.back.previous')"
+    :title="t('shell.back.previous')"
+    @click="router.back()"
+  >
+    <v-icon size="20">mdi-arrow-left</v-icon>
+  </v-btn>
   <v-btn
     v-else-if="to"
     :to="to"

@@ -58,6 +58,7 @@ from app.api.routes.topics import (
 )
 from app.core.errors import NotFoundError
 from app.domain.agent.step_output import without_output
+from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -108,7 +109,7 @@ async def topic_transcript(
             or cursor.topic_id != place.room_id
             or cursor.task_id is not None
         ):
-            raise NotFoundError("游标事件不存在")
+            raise NotFoundError(say("cursorEventNotFound"))
     if limit is None:
         site = [
             b
@@ -158,7 +159,7 @@ async def step_output(
         or block.task_id is not None
         or block.kind != BlockKind.event
     ):
-        raise NotFoundError("步骤不存在")
+        raise NotFoundError(say("stepNotFound"))
     meta = block.meta or {}
     return ok(
         {

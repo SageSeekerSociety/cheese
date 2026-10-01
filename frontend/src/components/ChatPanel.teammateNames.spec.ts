@@ -138,7 +138,7 @@ function mount() {
 // 是谁，和它说的话。平台自己的那一行两样都没有。
 function notices(container: Element) {
   return Array.from(container.querySelectorAll('.notice-row')).map((row) => ({
-    avatar: row.querySelector('.notice-row__mark[role="img"]')?.getAttribute('aria-label') ?? null,
+    avatar: row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null,
     name: row.querySelector('.notice-row__name')?.textContent?.trim() ?? null,
     text: row.textContent ?? '',
   }))

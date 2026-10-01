@@ -27,6 +27,7 @@ from app.domain.agent.harness.claude_code import (
     CLAUDE_PINNED_VERSION,
 )
 from app.domain.agent.harness.pi import device_launch as pi_launch
+from app.domain.block.notice_text import say
 from app.domain.machine import claude_dist
 
 logger = logging.getLogger("cheese.machine.enrollment")
@@ -37,11 +38,11 @@ SSH_TIMEOUT_S = 180.0
 
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
-    "tools": "正在检查并安装基础工具",
-    "runtime": "正在安装运行程序",
-    "connector": "正在下载连接器",
-    "connect": "正在启动连接器",
-    "verify": "正在检查连接器服务",
+    "tools": say("cloudStepTools"),
+    "runtime": say("cloudStepRuntime"),
+    "connector": say("cloudStepConnector"),
+    "connect": say("cloudStepConnect"),
+    "verify": say("cloudStepVerify"),
 }
 
 SSH_OPTS = [
@@ -310,7 +311,7 @@ async def run_bootstrap(
     """
     with tempfile.TemporaryDirectory() as tmp:
         if progress:
-            await progress("正在连接机器并检查运行程序")
+            await progress(say("cloudStepChecking"))
         key_path = os.path.join(tmp, "bootstrap")
         with open(os.open(key_path, os.O_CREAT | os.O_WRONLY, 0o600), "w") as handle:
             handle.write(private_key)
@@ -367,14 +368,14 @@ async def run_bootstrap(
             platform = f"linux-{arch}" + ("-musl" if "musl" in facts else "")
             try:
                 if progress:
-                    await progress("正在准备 Claude 运行程序")
+                    await progress(say("cloudStepPreparingClaude"))
                 binary = await claude_dist.ensure_cached(
                     connector_build.dist_dir(), pin, platform
                 )
             except claude_dist.ClaudeDistError as exc:
                 raise EnrollmentError("platform Claude binary unavailable") from exc
             if progress:
-                await progress("正在传输 Claude 运行程序")
+                await progress(say("cloudStepTransferringClaude"))
             await run(
                 "scp",
                 "-i",

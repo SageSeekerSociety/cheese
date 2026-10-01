@@ -10,6 +10,7 @@
 // 留在这里的是「画」和「只和这一格有关的手势」：全屏（它要的就是这个 DOM 节点）、
 // 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
 // 需要问后端。
+import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { FileContent } from '../../cx_types'
 import type { FileKind } from '../../lib/fileKind'
 
@@ -43,6 +44,10 @@ const props = withDefaults(
     path?: string | null
     /** 授权表要落进的那个 iframe 的名字（取数那一层按它 POST）。 */
     frameName: string
+    frames?: PreviewFrame[]
+    displayedFrame?: PreviewFrame | null
+    navigation?: PreviewNavigation
+    navigationError?: string
     loading: boolean
     refreshing: boolean
     previewFile: FileContent | null
@@ -65,9 +70,11 @@ const props = withDefaults(
     docError: string
     docRendererMissing: boolean
   }>(),
-  { path: null }
+  { path: null, frames: undefined, displayedFrame: null, navigation: 'idle', navigationError: '' }
 )
 const emit = defineEmits<{
+  (e: 'frame-load', id: number, event: Event): void
+  (e: 'frame-error', id: number, event: Event): void
   /** ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈。 */
   (e: 'refresh'): void
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
@@ -94,7 +101,11 @@ const fullscreenError = ref('')
  *  所以要把它自己的地址带过去；不给就是当前预览，那一条路本来就落在预览域根上。 */
 function openPreviewInNewTab(path?: string | null) {
   if (!props.topicId) return
-  const query = path ? `?path=${encodeURIComponent(roomFileDestination(path))}` : ''
+  // Bind the displayed file path, not latest metadata. This still serves mutable
+  // room resources; it is not an immutable version or a fixed app instance.
+  const displayedPath = props.displayedFrame && !props.displayedFrame.live ? props.displayedFrame.label : null
+  const targetPath = displayedPath || path
+  const query = targetPath ? `?path=${encodeURIComponent(roomFileDestination(targetPath))}` : ''
   window.open(`/previews/${encodeURIComponent(props.topicId)}${query}`, '_blank', 'noopener')
 }
 
@@ -228,7 +239,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          :title="t('work.room.preview.openInNewTab')"
+          :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <v-btn
@@ -254,17 +265,24 @@ function sendLocator() {
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
 
-    <div v-if="loading" class="d-flex justify-center py-8">
+    <div v-if="loading && !frames?.length" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
 
-    <div v-else-if="previewUrl" class="preview-wrap">
+    <div v-else-if="frames ? frames.length > 0 : previewUrl" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">
-        <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
-        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">{{
-          t('work.room.preview.runningApp')
-        }}</v-chip>
-        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
+        <span class="text-medium-emphasis">{{ displayedFrame?.label || previewAppNote || previewFile?.path }}</span>
+        <span v-if="displayedFrame?.version" class="text-medium-emphasis ms-2">{{
+          t('work.room.preview.readVersion', { version: displayedFrame.version })
+        }}</span>
+        <v-chip
+          v-if="displayedFrame ? displayedFrame.live && !navigationError : previewAppNote"
+          size="x-small"
+          variant="tonal"
+          class="ms-2"
+          >{{ t('work.room.preview.runningApp') }}</v-chip
+        >
+        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ displayedFrame?.mime || previewMime }}</v-chip>
         <!-- 指定了文件的那一格：它不跟着当前预览走，所以顶栏那些动作（发布、新标签
              页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
         <template v-if="path">
@@ -274,7 +292,7 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            :title="t('work.room.preview.openInNewTab')"
+            :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
           <v-btn
@@ -287,18 +305,59 @@ function sendLocator() {
           />
         </template>
       </div>
-      <!-- The form supplies a scoped grant; neither src nor srcdoc carries content. -->
-      <iframe
-        :name="frameName"
-        class="preview-frame"
-        :title="t('work.room.preview.frameTitle')"
-        sandbox="allow-scripts allow-forms allow-same-origin"
-      />
+      <div
+        v-if="navigation === 'authorizing' || navigation === 'navigating'"
+        role="status"
+        class="px-3 py-2 text-caption"
+      >
+        {{ t(navigation === 'authorizing' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
+      </div>
+      <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
+        {{ navigationError || previewError || previewReadError }}
+        <div v-if="previewAppNote && !previewUrl">
+          {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+        </div>
+        <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
+        <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
+      </div>
+      <v-btn v-if="path" size="small" variant="text" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
+        t('work.room.preview.refresh')
+      }}</v-btn>
+      <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
+      <div class="preview-frames">
+        <template v-if="frames">
+          <iframe
+            v-for="frame in frames"
+            :key="frame.id"
+            :name="frame.name"
+            class="preview-frame"
+            :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
+            :inert="frame.id !== displayedFrame?.id"
+            :aria-hidden="frame.id !== displayedFrame?.id"
+            :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
+            :title="t('work.room.preview.frameTitle')"
+            sandbox="allow-scripts allow-forms allow-same-origin"
+            @load="emit('frame-load', frame.id, $event)"
+            @error="emit('frame-error', frame.id, $event)"
+          />
+        </template>
+        <iframe
+          v-else
+          :name="frameName"
+          class="preview-frame"
+          :title="t('work.room.preview.frameTitle')"
+          sandbox="allow-scripts allow-forms allow-same-origin"
+        />
+      </div>
     </div>
-    <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
+    <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
       <div>{{ t('work.room.preview.loadFailed') }}</div>
-      <div class="text-caption mt-1">{{ previewError }}</div>
+      <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
+      <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
+        {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+      </div>
+      <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -472,7 +531,7 @@ function sendLocator() {
         size="small"
         variant="tonal"
         prepend-icon="mdi-open-in-new"
-        @click="openPreviewInNewTab(path)"
+        @click="openPreviewInNewTab(previewFile.path)"
       >
         {{ t('work.room.preview.openInNewWindow') }}
       </v-btn>
@@ -558,6 +617,21 @@ function sendLocator() {
      transparent — the page controls its own colours, we only back it. */
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #fff;
+}
+.preview-frames {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: var(--preview-min);
+}
+.preview-frames .preview-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.preview-frame--incoming {
+  opacity: 0;
+  pointer-events: none;
 }
 .panel-preview:fullscreen {
   width: 100%;

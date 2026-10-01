@@ -4,12 +4,15 @@
 import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import BarList from '@/components/spaces/BarList.vue'
 import MetricCard from '@/components/spaces/MetricCard.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import SplitBar from '@/components/spaces/SplitBar.vue'
 import TrendChart from '@/components/spaces/TrendChart.vue'
+
+const { t } = useI18n()
 
 type ClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 
@@ -53,10 +56,10 @@ const passed = computed(() => counts.value.PASSED)
 const rate = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
 
 const statusSegments = computed(() => [
-  { label: '已通过', count: counts.value.PASSED, tone: 'ok' as const },
-  { label: '已提交', count: counts.value.SUBMITTED, tone: 'warn' as const },
-  { label: '进行中', count: counts.value.IN_PROGRESS, tone: 'muted' as const },
-  { label: '未通过', count: counts.value.REJECTED, tone: 'danger' as const },
+  { label: t('tasks.insights.status.passed'), count: counts.value.PASSED, tone: 'ok' as const },
+  { label: t('tasks.insights.status.submitted'), count: counts.value.SUBMITTED, tone: 'warn' as const },
+  { label: t('tasks.insights.status.inProgress'), count: counts.value.IN_PROGRESS, tone: 'muted' as const },
+  { label: t('tasks.insights.status.rejected'), count: counts.value.REJECTED, tone: 'danger' as const },
 ])
 
 /** 「卡住的人」：领了但一步没动，而且领了超过 5 天。出题人最该盯的就是这一行。 */
@@ -75,7 +78,7 @@ function isTeamClaim(r: TaskMembership): boolean {
 const teamRows = computed(() => {
   const map = new Map<string, number>()
   for (const r of claimedRoster.value) {
-    const key = r.team?.name?.trim() || (isTeamClaim(r) ? '小队' : '单人')
+    const key = r.team?.name?.trim() || (isTeamClaim(r) ? t('tasks.insights.team') : t('tasks.insights.solo'))
     map.set(key, (map.get(key) ?? 0) + 1)
   }
   return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
@@ -104,58 +107,75 @@ const claimTrend = computed(() => {
   <div v-if="task" class="ins">
     <div class="ins__kpis">
       <MetricCard
-        label="领取人数"
+        :label="t('tasks.insights.claims')"
         :value="task.participantLimit ? `${totalClaims} / ${task.participantLimit}` : `${totalClaims}`"
         icon="mdi-hand-extended-outline"
-        :hint="task.participantLimit ? `还剩 ${Math.max(0, task.participantLimit - totalClaims)} 个名额` : '不限人数'"
+        :hint="
+          task.participantLimit
+            ? t('tasks.insights.placesLeft', { n: Math.max(0, task.participantLimit - totalClaims) })
+            : t('tasks.insights.noLimit')
+        "
       />
-      <MetricCard label="已提交" :value="submitted" icon="mdi-tray-arrow-up" hint="含已通过的" />
-      <MetricCard label="通过率" :value="`${rate(passed, submitted)}%`" icon="mdi-progress-check" hint="通过 / 提交" />
       <MetricCard
-        label="领取后一直没动"
+        :label="t('tasks.insights.submitted')"
+        :value="submitted"
+        icon="mdi-tray-arrow-up"
+        :hint="t('tasks.insights.submittedHint')"
+      />
+      <MetricCard
+        :label="t('tasks.insights.passRate')"
+        :value="`${rate(passed, submitted)}%`"
+        icon="mdi-progress-check"
+        :hint="t('tasks.insights.passRateHint')"
+      />
+      <MetricCard
+        :label="t('tasks.insights.stalled')"
         :value="stalled.length"
         icon="mdi-alert-circle-outline"
         :tone="stalled.length ? 'warn' : 'muted'"
-        :hint="stalled.length ? '领了 5 天以上还是「进行中」' : '没有长期停住的'"
+        :hint="stalled.length ? t('tasks.insights.stalledHint') : t('tasks.insights.noStalled')"
       />
     </div>
 
     <div class="ins__grid">
-      <PanelCard class="ins__span2" title="领取走势" subtitle="最近 12 天，累计领取人数">
+      <PanelCard
+        class="ins__span2"
+        :title="t('tasks.insights.trendTitle')"
+        :subtitle="t('tasks.insights.trendSubtitle')"
+      >
         <TrendChart
           v-if="totalClaims"
           :labels="DAY_LABELS"
-          :series="[{ name: '累计领取', values: claimTrend }]"
+          :series="[{ name: t('tasks.insights.trendSeries'), values: claimTrend }]"
           :height="200"
         />
         <v-empty-state
           v-else
           icon="mdi-chart-timeline-variant"
-          title="还没有领取数据"
-          text="题目上板之后这里才会有走势。"
+          :title="t('tasks.insights.trendEmptyTitle')"
+          :text="t('tasks.insights.trendEmptyText')"
         />
       </PanelCard>
 
-      <PanelCard title="大家走到哪一步了">
+      <PanelCard :title="t('tasks.insights.progressTitle')">
         <SplitBar :segments="statusSegments" />
         <p class="ins__note">
-          通过率 {{ rate(passed, submitted) }}%，未通过 {{ counts.REJECTED }} 人。
-          这个比例跟整个空间的平均比对，才看得出题目是偏难还是偏松。
+          {{ t('tasks.insights.progressNote', { rate: rate(passed, submitted), rejected: counts.REJECTED }) }}
         </p>
       </PanelCard>
 
-      <PanelCard title="小队构成">
-        <BarList :rows="teamRows" unit=" 人" empty="还没有人成组" />
+      <PanelCard :title="t('tasks.insights.teamsTitle')">
+        <BarList :rows="teamRows" :unit="t('tasks.insights.peopleUnit')" :empty="t('tasks.insights.teamsEmpty')" />
       </PanelCard>
     </div>
 
     <!-- 只有出题人/管理员打得到这一页；打不到的人应该被告知为什么，而不是看到一张空表。 -->
     <v-alert v-if="!canManage" type="info" variant="tonal" class="ins__guard">
-      这一页只对这道题的出题人本人和管理员开放。
+      {{ t('tasks.insights.guard') }}
     </v-alert>
   </div>
 
-  <v-empty-state v-else-if="!loading" icon="mdi-help-circle-outline" title="找不到这道题" />
+  <v-empty-state v-else-if="!loading" icon="mdi-help-circle-outline" :title="t('tasks.insights.notFound')" />
 </template>
 
 <style scoped lang="scss">

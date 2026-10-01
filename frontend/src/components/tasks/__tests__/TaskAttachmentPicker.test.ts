@@ -12,9 +12,11 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }
 
 import TaskAttachmentPicker from '../TaskAttachmentPicker.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const pdf = (name = '讲义.pdf', bytes = 2048) => new File([new Uint8Array(bytes)], name, { type: 'application/pdf' })
 
-const mount = () => render(TaskAttachmentPicker, { global: { plugins: [createVuetify()] } })
+const mount = () => render(TaskAttachmentPicker, { global: { plugins: [createVuetify(), i18n] } })
 
 const fileInputOf = (view: ReturnType<typeof render>) =>
   view.container.querySelector('input[type="file"]') as HTMLInputElement
@@ -26,6 +28,7 @@ const LIMIT_BYTES = 12_345_678
 describe('发题时带的材料', () => {
   // 这几条按「传了几次」下断言，调用记录必须一条一条分开数。
   beforeEach(() => {
+    setLocale('zh-CN')
     mocks.upload.mockReset()
     mocks.limits.mockReset()
     mocks.limits.mockResolvedValue({ data: { maxFileBytes: LIMIT_BYTES } })

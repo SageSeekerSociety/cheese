@@ -1,11 +1,13 @@
 import type { Block } from '../cx_types'
 
 import { fireEvent, render } from '@testing-library/vue'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { collapseNotices } from '../lib/platformNotice'
 
 import CloudStartupStatus from './CloudStartupStatus.vue'
+
+import { setLocale } from '@/i18n'
 
 function event(id: string, seconds: number, content: string, state?: string): Block {
   return {
@@ -20,6 +22,8 @@ function event(id: string, seconds: number, content: string, state?: string): Bl
   }
 }
 
+// The first case pins the Chinese copy; the English one follows it.
+beforeEach(() => setLocale('zh-CN'))
 afterEach(() => vi.useRealTimers())
 
 it('shows live elapsed time, retains logs on completion, and stops the clock', async () => {
@@ -37,6 +41,21 @@ it('shows live elapsed time, retains logs on completion, and stops the clock', a
   expect(view.getByText('正在传输运行程序')).toBeTruthy()
   await vi.advanceTimersByTimeAsync(60000)
   expect(view.getByText(/共用时 1分20秒/)).toBeTruthy()
+  view.unmount()
+})
+
+it('reads in English under the English locale', async () => {
+  setLocale('en')
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-09-21T12:01:30Z'))
+  const events = [event('1', 0, 'Creating machine', 'waiting'), event('2', 10, 'Copying the runtime')]
+  const view = render(CloudStartupStatus, { props: { events } })
+  expect(view.getByText(/Copying the runtime · Waiting 1m 30s/)).toBeTruthy()
+  await fireEvent.click(view.container.querySelector('summary')!)
+  expect(view.getByRole('list', { name: 'Startup log' })).toBeTruthy()
+  expect(view.getByText(/No new startup progress for 1m 20s/)).toBeTruthy()
+  await view.rerender({ events: [...events, event('3', 80, 'Connected', 'ready')] })
+  expect(view.getByText(/Work computer ready · Took 1m 20s/)).toBeTruthy()
   view.unmount()
 })
 

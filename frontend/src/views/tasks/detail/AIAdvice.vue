@@ -63,12 +63,12 @@ const startPolling = () => {
         stopPolling()
       } else if (statusData.status === 'FAILED') {
         // 生成失败
-        error.value = '生成建议失败，请重试'
+        error.value = t('tasks.advice.generateFailed')
         loading.value = false
         stopPolling()
       }
     } catch (err: any) {
-      error.value = err instanceof Error ? err.message : '获取建议失败'
+      error.value = err instanceof Error ? err.message : t('tasks.advice.loadFailed')
       loading.value = false
       stopPolling()
     }
@@ -105,7 +105,7 @@ const fetchAIAdvice = async () => {
     const { data: requestData } = await TasksApi.requestAIAdvice(props.taskData.id)
 
     if (requestData.status === 'FAILED') {
-      error.value = '生成建议失败，请重试'
+      error.value = t('tasks.advice.generateFailed')
       loading.value = false
     } else if (requestData.status === 'COMPLETED') {
       // 如果已经生成完成，直接获取结果
@@ -117,7 +117,7 @@ const fetchAIAdvice = async () => {
       startPolling()
     }
   } catch (err: any) {
-    error.value = err instanceof Error ? err.message : '获取建议失败'
+    error.value = err instanceof Error ? err.message : t('tasks.advice.loadFailed')
     loading.value = false
   }
 }

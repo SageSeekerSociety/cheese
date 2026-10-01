@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.core.db import async_session_factory
 from app.domain.agent.announce import announce
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.machine.models import ProjectMachine
 from app.domain.machine.repositories import ProjectMachineRepository
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 #: The line that ends a session machine's startup record in its room: its
 #: connector has reached the platform, which is what the enrollment's last step
 #: (「连接器安装完成，等待平台确认连接」) waits for.
-CONNECTED = "云端工作电脑已接入"
+CONNECTED = say("cloudConnected")
 #: How long an enrolled machine's connector has to reach the platform before
 #: the room is told it did not. The bootstrap has already seen the service stay
 #: up, so a connector that is still not heard from after this is not coming on
@@ -143,7 +144,7 @@ async def _close(machine: ProjectMachine, *, ready: bool) -> None:
                 place_id=topic_id,
                 content=CONNECTED
                 if ready
-                else f"连接器已安装，但 {minutes} 分钟内没有连上平台",
+                else say("cloudConnectorSilent", minutes=minutes),
                 meta={
                     "event_type": "cloud_provisioning",
                     "state": "ready",
@@ -158,11 +159,8 @@ async def _close(machine: ProjectMachine, *, ready: bool) -> None:
                     "severity": "error",
                     "who": "human",
                     "machine": str(machine.id),
-                    "detail": (
-                        f"平台不再等待「{machine.hostname}」；对话和平台工具仍可用。"
-                        "它之后连上时，这里会再说一声。"
-                    ),
-                    "detail_label": "接下来会发生什么",
+                    "detail": say("cloudConnectorSilentDetail", host=machine.hostname),
+                    "detail_label": say("labelWhatHappensNext"),
                 },
             )
             if block is None:

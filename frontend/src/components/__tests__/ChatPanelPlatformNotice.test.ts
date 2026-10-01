@@ -228,6 +228,46 @@ describe('agent status messages', () => {
     expect(emitted()['open-resource']).toEqual([['doc', undefined]])
   })
 
+  // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
+  it('merges consecutive rows of the same agent under one avatar and name', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'agent-test', name: '测试助手', agent: true },
+        { member_handle: 'editor-test', name: '编辑者', agent: false },
+      ],
+    })
+    const a = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const b = { ...event('', '测试助手 又编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const human = { ...event('', '编辑者 编辑了文档', { action: 'doc' }), author: 'editor-test' }
+    const c = { ...event('', '测试助手 第三次编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const { container } = mountRoom([a, b, human, c])
+    await flush()
+    const rows = Array.from(container.querySelectorAll('.agent-status'))
+    expect(rows).toHaveLength(3)
+    const avatars = rows.map((row) => row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null)
+    expect(avatars).toEqual(['测试助手', null, '测试助手'])
+  })
+
+  // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
+  it('merges consecutive rows of the same agent under one avatar and name', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'agent-test', name: '测试助手', agent: true },
+        { member_handle: 'editor-test', name: '编辑者', agent: false },
+      ],
+    })
+    const a = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const b = { ...event('', '测试助手 又编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const human = { ...event('', '编辑者 编辑了文档', { action: 'doc' }), author: 'editor-test' }
+    const c = { ...event('', '测试助手 第三次编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const { container } = mountRoom([a, b, human, c])
+    await flush()
+    const rows = Array.from(container.querySelectorAll('.agent-status'))
+    expect(rows).toHaveLength(3)
+    const avatars = rows.map((row) => row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null)
+    expect(avatars).toEqual(['测试助手', null, '测试助手'])
+  })
+
   it('does not give member events or backend logs an agent avatar', async () => {
     const { container } = mountRoom([
       event('', '编辑者加入了话题', null),

@@ -15,13 +15,15 @@ import { ref, watch } from 'vue'
 import { VForm } from 'vuetify/lib/components/index.mjs'
 
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import { t } from '@/i18n'
 import { emptyKnowledgeDraft } from '@/lib/knowledgeDraft'
 import {
   filePreviewUrl,
   fileTypeIcon,
   isImageFile,
   KNOWLEDGE_TYPE_OPTIONS,
-  LANGUAGE_OPTIONS,
+  knowledgeTypeLabel,
+  languageOptions,
   uploadTypeIcon,
 } from '@/lib/knowledgeFormat'
 
@@ -74,7 +76,7 @@ async function submitUpload() {
   <v-dialog :model-value="modelValue" max-width="600" @update:model-value="emit('update:modelValue', $event)">
     <v-card rounded="lg" class="upload-dialog">
       <v-card-title class="d-flex justify-space-between align-center pa-4">
-        <div class="text-h6 font-weight-medium">添加资料</div>
+        <div class="text-h6 font-weight-medium">{{ t('teams.knowledge.addResource') }}</div>
         <v-btn icon="mdi-close" variant="text" @click="close"></v-btn>
       </v-card-title>
 
@@ -84,29 +86,31 @@ async function submitUpload() {
           <v-text-field
             v-model="form.name"
             autocomplete="off"
-            label="资料名称"
+            :label="t('teams.knowledge.name')"
             variant="outlined"
             hide-details="auto"
             class="mb-4"
             density="comfortable"
-            :rules="[(v) => !!v || '请输入资料名称']"
+            :rules="[(v) => !!v || t('teams.knowledge.nameRequired')]"
           ></v-text-field>
 
           <div class="type-selector mb-5">
-            <label class="text-body-2 text-medium-emphasis mb-3 d-block">资料类型</label>
+            <label class="text-body-2 text-medium-emphasis mb-3 d-block">{{
+              t('teams.knowledge.resourceTypeLabel')
+            }}</label>
 
             <div class="type-options">
               <div
                 v-for="type in KNOWLEDGE_TYPE_OPTIONS"
-                :key="type.value"
+                :key="type"
                 class="type-option"
-                :class="{ 'type-option-active': form.type === type.value }"
-                @click="pickType(type.value)"
+                :class="{ 'type-option-active': form.type === type }"
+                @click="pickType(type)"
               >
                 <div class="type-icon-wrapper">
-                  <v-icon :icon="uploadTypeIcon(type.value)" size="18"></v-icon>
+                  <v-icon :icon="uploadTypeIcon(type)" size="18"></v-icon>
                 </div>
-                <div class="type-label">{{ type.text }}</div>
+                <div class="type-label">{{ knowledgeTypeLabel(type) }}</div>
               </div>
             </div>
           </div>
@@ -116,11 +120,11 @@ async function submitUpload() {
             <div v-if="form.type === 'MATERIAL'" class="upload-content">
               <v-file-input
                 v-model="form.file"
-                label="选择文件"
+                :label="t('teams.knowledge.chooseFile')"
                 variant="outlined"
                 density="comfortable"
                 accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,video/*,audio/*"
-                :rules="[(v) => !!v || '请选择文件']"
+                :rules="[(v) => !!v || t('teams.knowledge.fileRequired')]"
                 hide-details="auto"
                 class="mb-4"
                 show-size
@@ -165,23 +169,26 @@ async function submitUpload() {
               <v-text-field
                 v-model="form.url"
                 autocomplete="off"
-                label="链接地址"
+                :label="t('teams.knowledge.linkUrl')"
                 variant="outlined"
                 density="comfortable"
                 hide-details="auto"
                 class="mb-4"
-                :rules="[(v) => !!v || '请输入链接地址', (v) => /^https?:\/\//.test(v) || '请输入有效的URL']"
+                :rules="[
+                  (v) => !!v || t('teams.knowledge.linkUrlRequired'),
+                  (v) => /^https?:\/\//.test(v) || t('teams.knowledge.linkUrlInvalid'),
+                ]"
                 placeholder="https://"
                 prepend-inner-icon="mdi-link"
               ></v-text-field>
               <v-text-field
                 v-model="form.title"
                 autocomplete="off"
-                label="链接标题（可选）"
+                :label="t('teams.knowledge.linkTitle')"
                 variant="outlined"
                 density="comfortable"
                 hide-details="auto"
-                placeholder="如果留空，将使用资料名称"
+                :placeholder="t('teams.knowledge.linkTitleHint')"
               ></v-text-field>
             </div>
 
@@ -190,8 +197,8 @@ async function submitUpload() {
               <v-select
                 v-model="form.language"
                 autocomplete="off"
-                label="编程语言"
-                :items="LANGUAGE_OPTIONS"
+                :label="t('teams.knowledge.language')"
+                :items="languageOptions()"
                 item-title="text"
                 item-value="value"
                 variant="outlined"
@@ -203,13 +210,13 @@ async function submitUpload() {
               <v-textarea
                 v-model="form.code"
                 autocomplete="off"
-                label="代码内容"
+                :label="t('teams.knowledge.codeContent')"
                 variant="outlined"
                 density="comfortable"
-                :rules="[(v) => !!v || '请输入代码内容']"
+                :rules="[(v) => !!v || t('teams.knowledge.codeRequired')]"
                 rows="6"
                 hide-details="auto"
-                placeholder="在此处粘贴代码..."
+                :placeholder="t('teams.knowledge.codePlaceholder')"
                 class="code-textarea"
                 color="primary"
               ></v-textarea>
@@ -223,26 +230,26 @@ async function submitUpload() {
                 <v-expansion-panel-title>
                   <div class="d-flex align-center">
                     <v-icon icon="mdi-information-outline" size="small" class="mr-2"></v-icon>
-                    附加信息
+                    {{ t('teams.knowledge.additionalInfo') }}
                   </div>
                 </v-expansion-panel-title>
                 <v-expansion-panel-text>
                   <v-textarea
                     v-model="form.description"
                     autocomplete="off"
-                    label="资料描述"
+                    :label="t('teams.knowledge.descriptionLabel')"
                     variant="outlined"
                     density="comfortable"
                     rows="2"
                     hide-details="auto"
                     class="mb-3"
-                    placeholder="简要描述此资料的内容和用途"
+                    :placeholder="t('teams.knowledge.descriptionPlaceholder')"
                   ></v-textarea>
 
                   <v-combobox
                     v-model="form.labels"
                     autocomplete="off"
-                    label="标签"
+                    :label="t('teams.knowledge.tags')"
                     variant="outlined"
                     density="comfortable"
                     multiple
@@ -250,7 +257,7 @@ async function submitUpload() {
                     closable-chips
                     hide-details="auto"
                     :items="availableTags"
-                    placeholder="添加标签，便于分类和查找"
+                    :placeholder="t('teams.knowledge.tagsPlaceholder')"
                   ></v-combobox>
                 </v-expansion-panel-text>
               </v-expansion-panel>
@@ -263,8 +270,10 @@ async function submitUpload() {
 
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="close">取消</v-btn>
-        <v-btn color="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">上传</v-btn>
+        <v-btn variant="text" @click="close">{{ t('teams.knowledge.cancel') }}</v-btn>
+        <v-btn color="primary" :loading="uploading" :disabled="uploading" @click="submitUpload">{{
+          t('teams.knowledge.uploadSubmit')
+        }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

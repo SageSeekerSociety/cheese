@@ -30,6 +30,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.domain.block.notice_text import say
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
 from app.domain.remote_mcp import oauth, service, upstream
@@ -51,7 +52,7 @@ async def member(
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
     if not any(m.handle == actor.handle for m in await roster(db, project_id)):
-        raise ForbiddenError("只有项目成员能管理项目的 MCP 服务器")
+        raise ForbiddenError(say("mcpManageMembersOnly"))
     return actor.handle
 
 
@@ -133,7 +134,9 @@ async def callback(
     query = {"mcp": flow["server"]}
     try:
         if error or not code:
-            raise ValidationError(f"授权没有完成：{error or '没有收到授权码'}")
+            raise ValidationError(
+                say("mcpAuthIncomplete", error=error or "没有收到授权码")
+            )
         await service.finish_connect(db, flow, code=code, issuer=iss)
     except (AppError, BaseError) as exc:
         query["mcp_error"] = str(exc)

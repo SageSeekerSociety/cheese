@@ -16,6 +16,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 
 import { screenWsUrl } from '../api'
+import { t } from '../i18n'
 
 const props = defineProps<{ sid: string; readonly?: boolean }>()
 
@@ -132,7 +133,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="device-live">
     <div v-if="status !== 'open'" class="device-live__status">
-      {{ status === 'connecting' ? '连接现场中…' : '现场已断开' }}
+      {{ status === 'connecting' ? t('work.liveView.connecting') : t('work.liveView.closed') }}
     </div>
     <div ref="host" class="device-live__term"></div>
   </div>

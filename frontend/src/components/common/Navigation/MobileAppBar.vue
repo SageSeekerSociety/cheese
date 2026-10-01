@@ -99,7 +99,9 @@
       </v-menu>
 
       <!-- 未登录时的登录按钮 -->
-      <v-btn v-else-if="!backTo" to="/account/signin" variant="text" prepend-icon="mdi-account">登录</v-btn>
+      <v-btn v-else-if="!backTo" to="/account/signin" variant="text" prepend-icon="mdi-account">{{
+        t('account.signIn.submit')
+      }}</v-btn>
     </template>
   </v-app-bar>
 </template>

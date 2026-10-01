@@ -33,9 +33,13 @@ vi.mock('vue-i18n', async () => {
 import Members from './Members.vue'
 
 import DialogContainer from '@/components/common/DialogContainer.vue'
+import { setLocale } from '@/i18n'
 import { dialogs } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
+
+// The confirm dialog's buttons are read by their Chinese labels below.
+setLocale('zh-CN')
 
 const SPACE_ID = 11
 const OWNER = { id: 1, username: 'boss', nickname: '所有者甲' }

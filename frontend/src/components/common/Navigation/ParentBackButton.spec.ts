@@ -1,6 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import { VBtn, VIcon } from 'vuetify/components'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
@@ -12,7 +12,6 @@ import { topBarBack } from '../topBarBack'
 import ParentBackButton from './ParentBackButton.vue'
 
 import { setLocale } from '@/i18n'
-import { recordEntry } from '@/lib/projectEntry'
 import HomeRoutes from '@/router/home'
 import { legacyProjectRedirects } from '@/router/legacyProjectPaths'
 import SpacesRoutes from '@/router/spaces'
@@ -44,7 +43,6 @@ let pinia: ReturnType<typeof createPinia>
 
 beforeEach(() => {
   setLocale('zh-CN')
-  sessionStorage.clear()
   widthIs(DESKTOP)
   pinia = createPinia()
   setActivePinia(pinia)
@@ -70,20 +68,6 @@ async function mount(router: ReturnType<typeof makeRouter>) {
 async function open(path: string) {
   const router = makeRouter()
   await router.push(path)
-  const view = await mount(router)
-  return { router, ...view }
-}
-
-/** 走一条真实的路线，每一跳都过一遍「记来路」那条规则。 */
-async function walk(...path: string[]) {
-  const router = makeRouter()
-  router.afterEach((to, from) => {
-    recordEntry(to, from, (r) => {
-      for (const record of [...r.matched].reverse()) if (record.meta?.title) return String(record.meta.title)
-      return ''
-    })
-  })
-  for (const step of path) await router.push(step)
   const view = await mount(router)
   return { router, ...view }
 }
@@ -138,65 +122,6 @@ describe('返回上一级', () => {
     const { router, getByRole } = await open('/projects/project-a/topics/topic-b')
     await router.push('/projects/project-c/settings')
     expect(getByRole('link', { name: '返回上一级' }).getAttribute('href')).toBe('/projects/project-c')
-  })
-})
-
-// 顶栏那颗 ← 原本只认路由自己声明的父级，而 `/projects/:projectId` 一个都没声明——
-// 从小队点进一个项目之后，那颗按钮根本不出现，人只能靠底栏或左栏绕回去。写死的父级
-// 描述的是一棵树，可项目是图上的一个点：小队、空间、左边的项目栏、别人贴的链接，
-// 每一个都是合法入口，没有哪一个能当"那个"父级。所以入口是走进来的时候记下来的。
-describe('走进一个项目之后，← 回得去', () => {
-  const TEAM = '/teams/12'
-  const PROJECT = '/projects/project-a'
-
-  it('从小队走进项目，← 回小队', async () => {
-    const view = await walk(TEAM, PROJECT + '/running')
-    expect(back(view)?.getAttribute('href')).toBe(TEAM)
-  })
-
-  it('手机上项目的根是话题列表，← 同样回小队', async () => {
-    widthIs(PHONE)
-    const view = await walk(TEAM, PROJECT)
-    expect(back(view)?.getAttribute('href')).toBe(TEAM)
-  })
-
-  // 在项目里翻一圈——看板、话题、再按 ← 回到根——每一跳都会经过记来路那条规则。
-  // 任何一跳覆盖了入口，人就再也出不去这个项目。
-  it('在项目里翻一圈，来路不被覆盖', async () => {
-    const view = await walk(
-      TEAM,
-      PROJECT + '/running',
-      PROJECT + '/topics/t1',
-      PROJECT + '/settings',
-      PROJECT + '/running'
-    )
-    expect(back(view)?.getAttribute('href')).toBe(TEAM)
-  })
-
-  it('点下去真能到小队', async () => {
-    const { router, ...view } = await walk(TEAM, PROJECT + '/running')
-    await fireEvent.click(back(view)!)
-    await waitFor(() => expect(router.currentRoute.value.path).toBe(TEAM))
-  })
-
-  // 一个光秃秃的箭头说不出它去哪儿。名字是**离开小队那一刻**抓下来存的——等按 ←
-  // 的时候再去取，那一页早就卸载了。
-  it('说得出自己去哪儿', async () => {
-    const view = await walk(TEAM, PROJECT + '/running')
-    expect(back(view)?.getAttribute('title')).toBe('返回团队')
-  })
-
-  // 左栏切项目是同一层上的平移。少了这一条，B 项目的 ← 会指向 A 项目。
-  it('从别的项目横切过来，不算走进来', async () => {
-    const view = await walk(TEAM, PROJECT + '/running', '/projects/project-b/running')
-    expect(back(view)).toBeNull()
-  })
-
-  it('每个项目各记各的来路', async () => {
-    await walk(TEAM, PROJECT + '/running')
-    cleanup() // 两次 render 都挂在 document.body 上，不清掉就会查到上一颗按钮
-    const view = await open('/projects/project-b/running')
-    expect(back(view)).toBeNull()
   })
 })
 
@@ -260,29 +185,6 @@ describe('没有来路时，退到项目所属的小队', () => {
     const view = await open('/projects/project-a/running')
     expect(back(view)?.getAttribute('href')).toBe('/projects/project-a')
   })
-
-  // 记下来的来路可能已经失效（小队被删、路由改名）。存的是路由名+参数、跳之前
-  // resolve 一次，就是为了此时能落回兜底，而不是把人送进一个 404。
-  it('来路失效时落回所属小队', async () => {
-    ownedBy(12)
-    sessionStorage.setItem(
-      'cheese:project-entry:project-a',
-      JSON.stringify({ name: 'RouteThatNoLongerExists', params: {}, label: '哪儿' })
-    )
-    const view = await open('/projects/project-a/running')
-    expect(back(view)?.getAttribute('href')).toBe('/teams/crew-12')
-  })
-})
-
-// 小队页上那个项目链接指的是 `/project/<id>`（单数），靠一条重定向落到
-// `/projects/<id>`。「记来路」跑在重定向**之后**，所以它看见的 from 仍是小队——
-// 要是它看见的是重定向的中间态，← 就会指回项目自己。这是从小队进项目的真实路径。
-describe('走的是小队页上那条真实链接（带重定向）', () => {
-  it('重定向不吃掉来路', async () => {
-    widthIs(PHONE)
-    const view = await walk('/teams/12', '/project/project-a')
-    expect(back(view)?.getAttribute('href')).toBe('/teams/12')
-  })
 })
 
 // 设备、连接这几页：手机上是从头像菜单推进来的一层，← 回首页；桌面上 rail 一直在，
@@ -335,5 +237,37 @@ describe('页面接管 ←', () => {
     topBarBack.value = { label: '返回对话', onBack }
     const view = await open('/projects/project-a/topics/topic-b')
     expect(back(view)?.getAttribute('href')).toBe('/projects/project-a')
+  })
+})
+
+// ← 回的是人实际从哪一页来的，不是层级上的父级：从话题 A 跳到话题 B，← 回 A，
+// 而不是回话题列表。只有没有应用内来路时（贴链接直接打开）才退到上面那套层级。
+// 测试环境的 history.back/go 什么都不做，所以这里看的是 ← 有没有让浏览器后退一步。
+describe('有来路时，← 让浏览器后退一步', () => {
+  function webRouter() {
+    return createRouter({
+      history: createWebHistory(),
+      routes: [
+        ...legacyProjectRedirects,
+        ...[HomeRoutes, SpacesRoutes, TeamsRoutes, UserRoutes, workspaceRoutes].map(withoutViews),
+      ],
+    })
+  }
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it.each([
+    ['从一个话题跳到另一个话题', '/projects/project-a/topics/topic-a', '/projects/project-a/topics/topic-b'],
+    ['从小队页进项目看板', '/teams/12', '/projects/project-a/running'],
+    ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings'],
+  ])('%s，← 后退而不是去层级上的父级', async (_, from, to) => {
+    const router = webRouter()
+    await router.push(from)
+    await router.push(to)
+    const go = vi.spyOn(window.history, 'go')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    await fireEvent.click(getByRole('button', { name: '返回' }))
+    expect(go).toHaveBeenCalledWith(-1)
   })
 })

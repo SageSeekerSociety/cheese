@@ -37,6 +37,7 @@ from app.domain.agent.github_app import (
     fetch_user_installation_repos,
     list_user_installations,
 )
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.oauth.repositories import OAuthConnectionRepository
@@ -69,12 +70,12 @@ async def _manager(
 ) -> Actor:
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能连接 GitHub 仓库")
+        raise AuthenticationRequiredError(say("githubRepoSignIn"))
     await ProjectService(db).get_or_404(project_id)
     try:
         await MemberService(db).require_manager(project_id, actor)
     except ForbiddenError:
-        raise ForbiddenError("只有项目所有者或团队管理员能连接 GitHub 仓库") from None
+        raise ForbiddenError(say("githubRepoManagerOnly")) from None
     return actor
 
 
@@ -86,7 +87,7 @@ async def _user_token(db: AsyncSession, actor: Actor) -> tuple[int, str]:
         else None
     )
     if user is None or token is None:
-        raise ForbiddenError("请先在项目设置中连接或重新连接 GitHub 账号，再连接仓库")
+        raise ForbiddenError(say("githubAccountLinkFirst"))
     return user.id, token
 
 
@@ -101,7 +102,7 @@ async def _install_url(
     try:
         await reserve(_INSTALL_SCOPE, claims.jti, ttl_s=INSTALL_TTL_S)
     except SingleUseUnavailableError:
-        raise InternalServerError("暂时无法发起 GitHub 仓库连接，请稍后重试") from None
+        raise InternalServerError(say("githubRepoConnectUnavailable")) from None
     return f"https://github.com/apps/{settings.github_app_slug}/installations/new?state={state}"
 
 
@@ -146,14 +147,10 @@ async def _connect(
         )
     except RepositoryTakenError as taken:
         holder = await _visible_holder(db, taken, actor.handle)
-        where = f"项目「{holder}」" if holder else "另一个你看不到的项目"
         raise ConflictError(
-            f"仓库 {taken.repo} 已经连接在{where}上，一个仓库只能连接一个项目。"
-            + (
-                "请到那个项目里工作，或者换一个仓库。"
-                if holder
-                else "请换一个仓库，或者请那个项目的成员邀请你加入。"
-            )
+            say("repoTakenVisible", repo=taken.repo, project=holder)
+            if holder
+            else say("repoTakenHidden", repo=taken.repo)
         ) from None
     return {
         "connected": True,
@@ -170,7 +167,7 @@ async def get_github_connection(
 ) -> dict:
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能查看 GitHub 连接")
+        raise AuthenticationRequiredError(say("githubConnectionSignIn"))
     await ProjectService(db).get_or_404(project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
@@ -204,18 +201,14 @@ async def connect_github_repo(
                 ):
                     if str(repo.get("full_name", "")).lower() == target:
                         if not _writable(repo):
-                            raise ForbiddenError(
-                                "连接仓库需要你的 GitHub 账号对该仓库有写入权限"
-                            )
+                            raise ForbiddenError(say("githubRepoWriteRequired"))
                         return ok(
                             await _connect(
                                 db, project_id, installation["id"], repo, actor
                             )
                         )
         except GitHubAppError as exc:
-            raise GatewayUnavailableError(
-                "无法验证 GitHub 仓库访问权限，请重新连接 GitHub 账号后重试"
-            ) from exc
+            raise GatewayUnavailableError(say("githubRepoAccessUnverified")) from exc
     return ok(
         {
             "connected": False,

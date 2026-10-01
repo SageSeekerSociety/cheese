@@ -3,6 +3,10 @@ import type { Block } from '../cx_types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { noticeText } from '../lib/noticeText'
+
+import i18n, { t } from '@/i18n'
+
 const props = defineProps<{ events: Block[] }>()
 const now = ref(Date.now())
 const lifecycle = computed(() =>
@@ -14,17 +18,20 @@ const finished = computed(() => ['ready', 'failed'].includes(String(lifecycle.va
 const latest = computed(() => props.events.at(-1)!)
 const steps = computed(() => props.events.filter((event) => event.meta?.event_type === 'cloud_startup'))
 const title = computed(() => {
-  if (lifecycle.value?.meta?.state === 'ready') return '工作电脑已就绪'
-  if (lifecycle.value?.meta?.state === 'failed') return lifecycle.value.content
-  return steps.value.at(-1)?.content || '正在准备工作电脑'
+  if (lifecycle.value?.meta?.state === 'ready') return t('work.room.notice.machineReady')
+  if (lifecycle.value?.meta?.state === 'failed') return noticeText(lifecycle.value)
+  const step = steps.value.at(-1)
+  return (step && noticeText(step)) || t('work.room.notice.machinePreparing')
 })
 const end = computed(() => (finished.value ? Date.parse(lifecycle.value!.created_at) : now.value))
 function duration(start: string, until = end.value) {
   const seconds = Math.max(0, Math.floor((until - Date.parse(start)) / 1000))
-  return seconds < 60 ? `${seconds}秒` : `${Math.floor(seconds / 60)}分${seconds % 60}秒`
+  return seconds < 60
+    ? t('compute.startup.seconds', { s: seconds })
+    : t('compute.startup.minutes', { m: Math.floor(seconds / 60), s: seconds % 60 })
 }
 function time(value: string) {
-  return new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
+  return new Date(value).toLocaleTimeString(i18n.global.locale.value, { hour12: false })
 }
 function stepEnd(index: number) {
   const next = props.events
@@ -53,20 +60,23 @@ onBeforeUnmount(() => clearInterval(timer))
 <template>
   <details class="cloud-startup" data-testid="platform-notice">
     <summary>
-      <span>{{ title }} · {{ finished ? '共用时' : '已等待' }} {{ duration(events[0].created_at) }}</span>
+      <span
+        >{{ title }} · {{ finished ? t('compute.startup.elapsed') : t('compute.startup.waited') }}
+        {{ duration(events[0].created_at) }}</span
+      >
       <svg class="cloud-startup-chev" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
       </svg>
     </summary>
     <div class="cloud-startup-body">
       <p v-if="quiet">
-        已 {{ duration(latest.created_at) }} 没有新的启动进度，最近一条进度记录：{{ time(latest.created_at) }}。
+        {{ t('compute.startup.quiet', { duration: duration(latest.created_at), time: time(latest.created_at) }) }}
       </p>
-      <ol aria-label="启动日志">
+      <ol :aria-label="t('compute.startup.log')">
         <li v-for="(event, index) in events" :key="event.id">
           <time :datetime="event.created_at">{{ time(event.created_at) }}</time>
           <span
-            >{{ event.content }}<small v-if="event.meta?.detail">{{ event.meta.detail }}</small></span
+            >{{ noticeText(event) }}<small v-if="event.meta?.detail">{{ noticeText(event, 'detail') }}</small></span
           >
           <span v-if="event.meta?.event_type === 'cloud_startup'" class="cloud-startup-duration">{{
             duration(event.created_at, stepEnd(index))

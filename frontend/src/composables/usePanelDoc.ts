@@ -17,7 +17,7 @@ import type { Block, Topic } from '../cx_types'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { ApiError, getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../api'
+import { addComment, ApiError, getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../api'
 import {
   autosavePaused,
   docSaveStatus,
@@ -605,6 +605,9 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     commentMarkIndex,
     // 动作
     refreshComments,
+    commentAuthor: AUTHOR,
+    sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
+      addComment(topicId, content, AUTHOR, anchor, quote),
     save,
     confirmLossySave,
     onBlur,

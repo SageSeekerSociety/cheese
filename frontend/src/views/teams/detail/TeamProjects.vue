@@ -12,9 +12,10 @@ import { useRouter } from 'vue-router'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
+const { locale } = i18n.global
 const router = useRouter()
 // The URL names the team by handle; its id comes from the team the page loaded.
 const teamData = inject(teamDataInjectionKey, ref())
@@ -31,7 +32,7 @@ async function load() {
   try {
     projects.value = (await listProjects(teamId.value)).data
   } catch (e) {
-    error.value = e instanceof Error ? e.message : t('home.team.projects.loadFailed')
+    error.value = e instanceof Error ? e.message : t('teams.projects.loadFailed')
   } finally {
     loading.value = false
   }
@@ -46,8 +47,7 @@ function open(p: Project) {
 }
 
 function fmtDate(iso: string): string {
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return new Date(iso).toLocaleDateString(locale.value, { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
 onMounted(load)
@@ -59,13 +59,13 @@ watch(teamId, load)
     <div class="mb-4 d-flex align-start">
       <div>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          {{ t(teamData?.personal ? 'home.team.projects.ownIntro' : 'home.team.projects.teamIntro') }}
+          {{ t(teamData?.personal ? 'teams.projects.ownSubtitle' : 'teams.projects.subtitle') }}
         </p>
       </div>
       <v-spacer />
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject">
-        {{ t('home.team.projects.new') }}
-      </v-btn>
+      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject">{{
+        t('teams.projects.newProject')
+      }}</v-btn>
     </div>
 
     <div v-if="loading" class="py-10 text-center">
@@ -78,11 +78,11 @@ watch(teamId, load)
 
     <div v-else-if="projects.length === 0" class="text-center py-12">
       <v-icon icon="mdi-rocket-launch-outline" size="56" class="mb-3 empty-state-icon" />
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">{{ t('home.team.projects.empty') }}</h3>
-      <p class="text-body-2 text-medium-emphasis mb-4">{{ t('home.team.projects.emptyHint') }}</p>
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject">
-        {{ t('home.team.projects.new') }}
-      </v-btn>
+      <h3 class="text-subtitle-1 font-weight-medium mb-1">{{ t('teams.projects.emptyTitle') }}</h3>
+      <p class="text-body-2 text-medium-emphasis mb-4">{{ t('teams.projects.emptyHint') }}</p>
+      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject">{{
+        t('teams.projects.newProject')
+      }}</v-btn>
     </div>
 
     <v-row v-else>
@@ -94,7 +94,7 @@ watch(teamId, load)
           </div>
           <p v-if="p.summary" class="text-body-2 text-medium-emphasis summary mb-2">{{ p.summary }}</p>
           <div class="text-caption text-medium-emphasis">
-            {{ t('home.team.projects.createdAt', { date: fmtDate(p.created_at) }) }}
+            {{ t('teams.projects.createdAt', { date: fmtDate(p.created_at) }) }}
           </div>
         </v-card>
       </v-col>

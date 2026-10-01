@@ -4,15 +4,15 @@
       <v-card-title class="pa-4 pb-3">
         <div class="d-flex align-center">
           <v-icon color="error" class="mr-3" size="28">mdi-exit-run</v-icon>
-          <span class="text-h5 font-weight-medium">退出题目</span>
+          <span class="text-h5 font-weight-medium">{{ t('tasks.leaveTeam.title') }}</span>
         </div>
       </v-card-title>
       <v-divider></v-divider>
       <v-card-text class="pa-0">
         <div class="px-4 pt-4 pb-3">
-          <div class="text-body-1">请选择要退出的团队：</div>
+          <div class="text-body-1">{{ t('tasks.leaveTeam.choose') }}</div>
           <div class="text-caption text-medium-emphasis mt-1">
-            退出后，该团队将不再参与此题目。如需重新参与，可重新领取题目。
+            {{ t('tasks.leaveTeam.hint') }}
           </div>
         </div>
 
@@ -25,8 +25,8 @@
             <!-- info 底上的反白图标：深色下 info 是 #AEB4BD，白色只有 2.1:1 -->
             <v-icon icon="mdi-information-outline" color="surface" size="36"></v-icon>
           </v-avatar>
-          <div class="text-h6 font-weight-medium mb-2">没有已参与的团队</div>
-          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">您目前没有代表任何团队参与此题目</div>
+          <div class="text-h6 font-weight-medium mb-2">{{ t('tasks.leaveTeam.emptyTitle') }}</div>
+          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">{{ t('tasks.leaveTeam.emptyText') }}</div>
         </div>
 
         <div v-else class="px-4 pt-2 pb-4">
@@ -51,7 +51,7 @@
                 <div class="flex-grow-1 min-width-0">
                   <div class="d-flex align-center flex-wrap gap-2 mb-1">
                     <span class="text-subtitle-1 font-weight-medium text-truncate">{{ team.name }}</span>
-                    <v-chip size="small" color="info" label class="px-2"> 已参与 </v-chip>
+                    <v-chip size="small" color="info" label class="px-2">{{ t('tasks.leaveTeam.joined') }}</v-chip>
                   </div>
 
                   <div class="text-body-2 text-medium-emphasis text-truncate mb-2">{{ team.intro }}</div>
@@ -70,8 +70,10 @@
       <v-divider></v-divider>
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="$emit('close')">取消</v-btn>
-        <v-btn color="error" variant="flat" :disabled="!selectedTeamId" @click="$emit('confirm')"> 退出题目 </v-btn>
+        <v-btn variant="text" @click="$emit('close')">{{ t('global.cancel') }}</v-btn>
+        <v-btn color="error" variant="flat" :disabled="!selectedTeamId" @click="$emit('confirm')">{{
+          t('tasks.leaveTeam.title')
+        }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -81,8 +83,11 @@
 import type { Task, Team } from '@/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean

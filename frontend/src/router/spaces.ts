@@ -31,7 +31,7 @@ export default {
       component: () => import('@/layouts/spaces/SpacesTasks.vue'),
       redirect: { name: 'SpacesDetailTasksList' },
       meta: {
-        title: '题目',
+        titleKey: 'navigation.pages.spaceTasks',
       },
       children: [
         {
@@ -71,31 +71,31 @@ export default {
               path: 'ai-advice',
               name: 'TasksAIAdvice',
               component: () => import('@/views/tasks/detail/AIAdvice.vue'),
-              meta: { title: '启星研导' },
+              meta: { titleKey: 'navigation.pages.taskAdvice' },
             },
             {
               path: 'submissions',
               name: 'TasksSubmissions',
               component: () => import('@/views/tasks/detail/Submissions.vue'),
-              meta: { title: '我的提交' },
+              meta: { titleKey: 'navigation.pages.taskSubmissions' },
             },
             {
               path: 'submit',
               name: 'TasksSubmit',
               component: () => import('@/views/tasks/detail/Submit.vue'),
-              meta: { title: '提交', backTo: 'TasksDetail' },
+              meta: { titleKey: 'navigation.pages.taskSubmit', backTo: 'TasksDetail' },
             },
             {
               path: 'participants',
               name: 'TasksParticipants',
               component: () => import('@/views/tasks/detail/Roster.vue'),
-              meta: { title: '领取者' },
+              meta: { titleKey: 'navigation.pages.taskParticipants' },
             },
             {
               path: 'insights',
               name: 'TasksInsights',
               component: () => import('@/views/tasks/detail/Insights.vue'),
-              meta: { title: '数据' },
+              meta: { titleKey: 'navigation.pages.taskData' },
             },
           ],
         },
@@ -104,7 +104,7 @@ export default {
           name: 'TasksEdit',
           component: () => import('@/views/tasks/Edit.vue'),
           meta: {
-            title: '编辑题目',
+            titleKey: 'navigation.pages.taskEdit',
             backTo: 'TasksDetail',
           },
         },
@@ -127,7 +127,7 @@ export default {
       component: () => import('@/views/spaces/detail/analytics/Index.vue'),
       redirect: { name: 'SpacesDetailAnalyticsOverview' },
       meta: {
-        title: '数据分析',
+        titleKey: 'navigation.pages.spaceAnalytics',
       },
       children: [
         {

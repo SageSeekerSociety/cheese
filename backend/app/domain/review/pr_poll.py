@@ -17,6 +17,7 @@ import httpx
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
+from app.domain.block.notice_text import say
 
 logger = logging.getLogger("cheesex.review.pr_poll")
 
@@ -169,7 +170,7 @@ async def poll_uncarded_task_prs(
                 await announce(
                     session,
                     place_id=task.room_id,
-                    content=f"PR #{number} 已在代码仓库合并，任务已交付",
+                    content=say("prMergedDelivered", pr=number),
                     meta=notice(
                         EVENT_ACCEPT_DONE,
                         severity=SEVERITY_INFO,

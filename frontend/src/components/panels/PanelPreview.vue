@@ -45,6 +45,12 @@ const emit = defineEmits<{
 const frameName = `cheese-preview-${useId()}`
 
 const {
+  frames,
+  displayedFrame,
+  navigation,
+  navigationError,
+  frameLoaded,
+  frameFailed,
   loading,
   refreshing,
   previewFile,
@@ -90,6 +96,10 @@ function refresh() {
     :project-id="props.projectId"
     :path="props.path"
     :frame-name="frameName"
+    :frames="frames"
+    :displayed-frame="displayedFrame"
+    :navigation="navigation"
+    :navigation-error="navigationError"
     :loading="loading"
     :refreshing="refreshing"
     :preview-file="previewFile"
@@ -110,6 +120,8 @@ function refresh() {
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
+    @frame-load="frameLoaded"
+    @frame-error="frameFailed"
     @refresh="refresh"
     @download="downloadArtifact"
     @document-changed="refreshDocument"

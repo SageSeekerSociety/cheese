@@ -25,8 +25,10 @@ const props = withDefaults(
     title?: string
     /** 桌面菜单相对激活器的位置。 */
     location?: 'bottom end' | 'bottom start' | 'top end' | 'top start'
+    /** 右键打开时鼠标的位置：给了就弹在这一点上，而不是挂在激活器下面。 */
+    point?: [number, number] | null
   }>(),
-  { title: undefined, location: 'bottom end' }
+  { title: undefined, location: 'bottom end', point: null }
 )
 
 defineSlots<{
@@ -52,7 +54,13 @@ const sheetActivator = () => ({
 </script>
 
 <template>
-  <v-menu v-if="mdAndUp" v-model="open" :location="props.location" :offset="8">
+  <v-menu
+    v-if="mdAndUp"
+    v-model="open"
+    :target="props.point ?? undefined"
+    :location="props.point ? 'bottom start' : props.location"
+    :offset="props.point ? 2 : 8"
+  >
     <template #activator="{ props: activator }">
       <slot name="activator" :props="activator" />
     </template>

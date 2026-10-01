@@ -259,7 +259,7 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
     assert no_card["room_id"] == room
     assert no_card["presentation"] == {
         "column": "building",
-        "display_status": Building.not_started,
+        "phrase": Building.not_started,
     }
 
     # 有卡的那一行：`card` 窄到侧栏画得出来的四个字段，一个不多一个不少。
@@ -272,7 +272,7 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
     # 一张什么都没镜像、没入队、没人采纳的卡，就是在等你去审阅。
     assert with_card["presentation"] == {
         "column": "needs_you",
-        "display_status": NeedsYou.awaiting_review,
+        "phrase": NeedsYou.awaiting_review,
     }
 
 
@@ -341,7 +341,7 @@ def test_note_code_decides_the_cell_even_when_the_merge_mirror_says_something_el
     assert row["id"] == ids["t0"]
     assert row["presentation"] == {
         "column": "delivering",
-        "display_status": Delivering.awaiting_checks,
+        "phrase": Delivering.awaiting_checks,
     }
 
 
@@ -368,7 +368,7 @@ def test_the_merge_mirror_decides_that_the_platform_is_driving(client):
     (row,) = _rows(client, project, "tasks")
     assert row["presentation"] == {
         "column": "delivering",
-        "display_status": Delivering.updating_branch,
+        "phrase": Delivering.updating_branch,
     }
 
 
@@ -396,7 +396,7 @@ def test_a_decided_card_is_not_reported_as_waiting_for_review(client):
     (row,) = _rows(client, project, "tasks")
     assert row["presentation"] == {
         "column": "delivering",
-        "display_status": Delivering.awaiting_checks,
+        "phrase": Delivering.awaiting_checks,
     }
 
 
@@ -420,7 +420,7 @@ def test_an_armed_auto_merge_counts_as_decided_too(client):
     (row,) = _rows(client, project, "tasks")
     assert row["presentation"] == {
         "column": "delivering",
-        "display_status": Delivering.awaiting_checks,
+        "phrase": Delivering.awaiting_checks,
     }
 
 
@@ -441,7 +441,7 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
     (row,) = _rows(client, project, "tasks")
     assert row["presentation"] == {
         "column": "needs_you",
-        "display_status": NeedsYou.awaiting_review,
+        "phrase": NeedsYou.awaiting_review,
     }
     assert row["card"] == {
         "id": row["card"]["id"],

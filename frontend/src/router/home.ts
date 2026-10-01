@@ -39,7 +39,6 @@ export default {
       path: '',
       name: 'HomeDefault',
       meta: {
-        title: '首页',
         titleKey: 'navigation.home',
         publicLanding: true,
       },
@@ -63,7 +62,6 @@ export default {
       path: 'about',
       name: 'About',
       meta: {
-        title: '了解知是',
         titleKey: 'publicSite.aboutCheese',
         publicLanding: true,
       },
@@ -75,7 +73,6 @@ export default {
       path: 'solutions',
       name: 'Solutions',
       meta: {
-        title: '方案',
         titleKey: 'publicSite.solutionsPage.title',
         publicLanding: true,
       },
@@ -87,7 +84,6 @@ export default {
       path: 'download',
       name: 'Download',
       meta: {
-        title: '下载',
         titleKey: 'publicSite.downloadPage.title',
         publicLanding: true,
       },
@@ -100,7 +96,6 @@ export default {
       path: 'inbox',
       component: () => import('@/views/InboxView.vue'),
       meta: {
-        title: '待办',
         titleKey: 'navigation.inbox',
         isFullPage: true,
         palette: { label: 'navigation.inbox', icon: 'mdi-inbox-outline' },
@@ -112,7 +107,6 @@ export default {
       path: 'home',
       component: () => import('@/views/home/HomeHub.vue'),
       meta: {
-        title: '首页',
         titleKey: 'navigation.home',
         isFullPage: true,
       },
@@ -122,7 +116,6 @@ export default {
       name: 'HomeSpaces',
       component: () => import('@/views/spaces/Index.vue'),
       meta: {
-        title: '空间',
         titleKey: 'navigation.spaces',
         isFullPage: true,
       },
@@ -134,7 +127,6 @@ export default {
       // 落在「我的」：发现是有意图才去的一段，而从底栏点进来的人是回自己队里。
       redirect: { name: 'HomeTeamsMine' },
       meta: {
-        title: '团队',
         titleKey: 'navigation.teams',
         isFullPage: true,
       },
@@ -144,7 +136,7 @@ export default {
           name: 'HomeTeamsExplore',
           component: () => import('@/views/teams/Explore.vue'),
           meta: {
-            title: '发现团队',
+            titleKey: 'navigation.pages.teamsExplore',
             isFullPage: true,
           },
         },
@@ -153,7 +145,7 @@ export default {
           name: 'HomeTeamsMine',
           component: () => import('@/views/teams/Mine.vue'),
           meta: {
-            title: '我的团队',
+            titleKey: 'navigation.pages.teamsMine',
             isFullPage: true,
           },
         },
@@ -162,7 +154,7 @@ export default {
           name: 'HomeTeamsPending',
           component: () => import('@/views/teams/Pending.vue'),
           meta: {
-            title: '申请与邀请',
+            titleKey: 'navigation.pages.teamsPending',
             isFullPage: true,
           },
         },

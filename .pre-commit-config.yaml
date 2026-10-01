@@ -111,6 +111,13 @@ repos:
         pass_filenames: false
         files: ^frontend/
 
+      - id: i18n-cjk
+        name: hardcoded Chinese (i18n ratchet)
+        entry: bash -c 'cd frontend && pnpm run lint:i18n'
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+
       # Components must not reach the network layer: `@/api`, `@/services/*`,
       # `@/network/*` and vue-router are off limits under src/components/**.
       # 127 violations in 82 components are frozen in

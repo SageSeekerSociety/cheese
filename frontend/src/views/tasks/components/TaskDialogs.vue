@@ -12,15 +12,15 @@
       <v-card-title class="text-h5 pa-4 pb-2">
         <div class="d-flex align-center">
           <v-icon color="primary" class="mr-2" size="26">mdi-account-check</v-icon>
-          {{ taskData?.requireRealName ? '实名参与确认' : '参与确认' }}
+          {{ taskData?.requireRealName ? t('tasks.verifyDialog.titleRealName') : t('tasks.verifyDialog.title') }}
         </div>
       </v-card-title>
       <v-card-text class="pa-4 pt-2">
         <div class="text-body-1 mb-4">
           <template v-if="taskData?.requireRealName">
-            此题目要求实名参与。为确保题目相关通知能够及时送达，同时便于身份认证和项目认证，请补充您的联系方式。
+            {{ t('tasks.verifyDialog.introRealName') }}
           </template>
-          <template v-else> 为确保题目相关通知能够及时送达，请至少提供一种联系方式。 </template>
+          <template v-else>{{ t('tasks.verifyDialog.intro') }}</template>
         </div>
 
         <!-- 信息获取提示卡片 - 仅在需要实名时显示 -->
@@ -38,9 +38,11 @@
                 <v-icon icon="mdi-account-details" color="surface" size="20"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">实名信息确认</div>
+                <div class="text-subtitle-2 font-weight-medium mb-1">
+                  {{ t('tasks.verifyDialog.realNameConfirmTitle') }}
+                </div>
                 <p class="text-body-2 mb-0">
-                  您的真实姓名和学籍信息将从已认证的信息中获取。参与此题目表示您同意向题目组织者提供您的实名信息，用于身份验证和项目认证。
+                  {{ t('tasks.verifyDialog.realNameConfirmBody') }}
                 </p>
               </div>
             </div>
@@ -62,9 +64,11 @@
                     <v-icon icon="mdi-lock-check" color="surface" size="18"></v-icon>
                   </v-avatar>
                   <div class="flex-grow-1">
-                    <span class="text-body-2"
-                      >此题目设置了<strong>审核通过后锁定</strong>策略，队伍一旦确认参与将无法变更成员
-                    </span>
+                    <i18n-t scope="global" keypath="tasks.verifyDialog.lockNotice" tag="span" class="text-body-2">
+                      <template #policy>
+                        <strong>{{ t('tasks.form.teamLockingPolicyLockOnApproval') }}</strong>
+                      </template>
+                    </i18n-t>
                   </div>
                   <v-icon size="small" color="info">mdi-information-outline</v-icon>
                 </div>
@@ -72,11 +76,17 @@
             </v-card>
           </template>
           <div class="pa-2">
-            <div class="text-subtitle-2 font-weight-medium mb-1">队伍成员锁定说明</div>
+            <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.verifyDialog.lockTitle') }}</div>
             <p class="text-body-2 mb-0">
-              • 参与申请被审核通过后，队伍成员将被<strong>锁定</strong>，无法添加或移除成员<br />
-              • 成员锁定将在任务完成后解除（提交被接受或题目截止日期结束后）<br />
-              • 系统将以审核通过时的队伍成员名单为准进行最终评估和认证
+              •
+              <i18n-t scope="global" keypath="tasks.verifyDialog.lockLine1" tag="span">
+                <template #locked>
+                  <strong>{{ t('tasks.verifyDialog.locked') }}</strong>
+                </template>
+              </i18n-t>
+              <br />
+              • {{ t('tasks.verifyDialog.lockLine2') }}<br />
+              • {{ t('tasks.verifyDialog.lockLine3') }}
             </p>
           </div>
         </v-tooltip>
@@ -95,17 +105,17 @@
                   <v-avatar size="36" color="info" class="mr-3 info-avatar">
                     <v-icon icon="mdi-account-group" color="surface" size="18"></v-icon>
                   </v-avatar>
-                  <span class="text-body-2">系统将记录审核通过时的队伍成员名单，用于最终评估和证书发放</span>
+                  <span class="text-body-2">{{ t('tasks.verifyDialog.rosterRecorded') }}</span>
                   <v-icon size="small" color="info" class="ms-auto">mdi-information-outline</v-icon>
                 </div>
               </v-card-text>
             </v-card>
           </template>
           <div class="pa-2">
-            <div class="text-subtitle-2 font-weight-medium mb-1">队伍成员管理说明</div>
+            <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.verifyDialog.rosterTitle') }}</div>
             <p class="text-body-2 mb-0">
-              • 系统会记录审核通过时的队伍成员名单，用于最终评估和证书发放<br />
-              • 即使申请通过后可以调整队伍成员，但这些变动不会影响已记录的参与情况
+              • {{ t('tasks.verifyDialog.rosterLine1') }}<br />
+              • {{ t('tasks.verifyDialog.rosterLine2') }}
             </p>
           </div>
         </v-tooltip>
@@ -127,17 +137,18 @@
           >
             <template #label>
               <div class="d-flex align-center">
-                <span>
-                  我已阅读并理解
-                  <span class="text-primary font-weight-medium privacy-link" @click.stop.prevent="directShowPrivacy">
-                    隐私保护声明
-                  </span>
-                </span>
+                <i18n-t scope="global" keypath="tasks.verifyDialog.consent" tag="span">
+                  <template #statement>
+                    <span class="text-primary font-weight-medium privacy-link" @click.stop.prevent="directShowPrivacy">
+                      {{ t('tasks.verifyDialog.privacyStatement') }}
+                    </span>
+                  </template>
+                </i18n-t>
                 <v-tooltip location="end" max-width="300">
                   <template #activator="{ props }">
                     <v-icon size="small" color="primary" class="ms-1" v-bind="props"> mdi-information-outline </v-icon>
                   </template>
-                  <span>您的实名信息和联系方式仅供题目组织者查看，受到严格保护</span>
+                  <span>{{ t('tasks.verifyDialog.privacyTip') }}</span>
                 </v-tooltip>
               </div>
             </template>
@@ -146,8 +157,10 @@
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="handleCloseVerify">取消</v-btn>
-        <v-btn variant="flat" color="primary" @click="submitVerifyForm">确认参与</v-btn>
+        <v-btn variant="text" @click="handleCloseVerify">{{ t('global.cancel') }}</v-btn>
+        <v-btn variant="flat" color="primary" @click="submitVerifyForm">{{
+          t('tasks.verifyDialog.confirmJoin')
+        }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -163,11 +176,11 @@
     <v-card rounded="lg">
       <v-card-title class="d-flex align-center px-4 pt-4 pb-2">
         <v-icon color="primary" class="mr-3" size="28">mdi-shield-check</v-icon>
-        <span class="text-h5 font-weight-medium">实名信息隐私保护</span>
+        <span class="text-h5 font-weight-medium">{{ t('tasks.verifyDialog.privacyTitle') }}</span>
       </v-card-title>
 
       <v-card-text class="px-4 pb-2">
-        <p class="text-subtitle-2 font-weight-medium mb-4">我们重视您的隐私安全，并采取多重措施保护您的实名信息：</p>
+        <p class="text-subtitle-2 font-weight-medium mb-4">{{ t('tasks.verifyDialog.privacyIntro') }}</p>
 
         <!-- 隐私信息保护区域 -->
         <PrivacyProtectionInfo />
@@ -175,10 +188,14 @@
 
       <v-card-actions class="pa-4 pt-2">
         <v-spacer></v-spacer>
-        <v-btn v-if="!fromSubmit" color="secondary" variant="text" @click="handleCancelPrivacy">我已了解</v-btn>
+        <v-btn v-if="!fromSubmit" color="secondary" variant="text" @click="handleCancelPrivacy">{{
+          t('tasks.verifyDialog.understood')
+        }}</v-btn>
         <template v-else>
-          <v-btn variant="text" @click="handleCancelPrivacy">暂不参与</v-btn>
-          <v-btn color="primary" variant="flat" @click="confirmPrivacy">同意并参与</v-btn>
+          <v-btn variant="text" @click="handleCancelPrivacy">{{ t('tasks.verifyDialog.notNow') }}</v-btn>
+          <v-btn color="primary" variant="flat" @click="confirmPrivacy">{{
+            t('tasks.verifyDialog.agreeAndJoin')
+          }}</v-btn>
         </template>
       </v-card-actions>
     </v-card>
@@ -222,8 +239,11 @@ import type { TaskAIAdviceConversationContext } from '@/network/api/tasks/types'
 import type { Task, Team, TeamTaskEligibility } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { useEvents } from '../events'
+
+const { t } = useI18n()
 
 // 组件
 const VerifyInfoFormComponent = defineAsyncComponent(() => import('@/components/tasks/VerifyInfoForm.vue'))

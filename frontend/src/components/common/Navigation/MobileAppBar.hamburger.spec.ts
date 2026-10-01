@@ -13,9 +13,11 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import MobileAppBar from './MobileAppBar.vue'
 
-import i18n from '@/i18n'
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
+
+// 这组用例读的是中文界面上的字。
+setLocale('zh-CN')
 
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
@@ -32,7 +34,6 @@ const routes = [
 ]
 
 beforeAll(() => {
-  setLocale('zh-CN')
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}

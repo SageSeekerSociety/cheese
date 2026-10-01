@@ -13,7 +13,6 @@ export default {
       name: 'SignIn',
       component: () => import('@/views/account/SignIn.vue'),
       meta: {
-        title: '登录',
         titleKey: 'account.signIn.title',
       },
     },
@@ -22,7 +21,6 @@ export default {
       name: 'SignInEmailCode',
       component: () => import('@/views/account/emailCode/Request.vue'),
       meta: {
-        title: '邮箱验证码登录',
         titleKey: 'account.emailCode.title',
       },
     },
@@ -31,7 +29,6 @@ export default {
       name: 'SignInEmailCodeVerify',
       component: () => import('@/views/account/emailCode/Verify.vue'),
       meta: {
-        title: '输入验证码',
         titleKey: 'account.emailCode.codeTitle',
       },
     },
@@ -40,7 +37,6 @@ export default {
       name: 'SignUpStart',
       component: () => import('@/views/account/signup/Start.vue'),
       meta: {
-        title: '创建账号',
         titleKey: 'account.signUp.title',
       },
     },
@@ -49,7 +45,6 @@ export default {
       name: 'SignUpVerifyEmail',
       component: () => import('@/views/account/signup/VerifyEmail.vue'),
       meta: {
-        title: '验证邮箱',
         titleKey: 'account.verifyEmail.title',
       },
     },
@@ -58,7 +53,6 @@ export default {
       name: 'RecoverPasswordRequest',
       component: () => import('@/views/account/recover/password/Start.vue'),
       meta: {
-        title: '找回密码',
         titleKey: 'account.recover.title',
       },
     },
@@ -67,7 +61,6 @@ export default {
       name: 'RecoverPasswordVerify',
       component: () => import('@/views/account/recover/password/Verify.vue'),
       meta: {
-        title: '设置新密码',
         titleKey: 'account.resetPassword.title',
       },
       beforeEnter: (to: any, from: any, next: any) => {
@@ -85,7 +78,6 @@ export default {
       name: 'PasskeyOffer',
       component: () => import('@/views/account/PasskeyOffer.vue'),
       meta: {
-        title: '添加通行密钥',
         titleKey: 'account.passkeyOffer.add',
       },
     },
@@ -96,7 +88,6 @@ export default {
       name: 'AccountAddEmail',
       component: () => import('@/views/account/AddEmail.vue'),
       meta: {
-        title: '添加邮箱',
         titleKey: 'account.addEmail.title',
       },
     },
@@ -105,7 +96,6 @@ export default {
       name: 'Verify2FA',
       component: () => import('@/views/account/Verify2FA.vue'),
       meta: {
-        title: '两步验证',
         titleKey: 'account.twoFactor.title',
       },
     },
@@ -114,7 +104,7 @@ export default {
       name: 'OAuthComplete',
       component: () => import('@/views/account/OAuthComplete.vue'),
       meta: {
-        title: 'OAuth 账户选择',
+        titleKey: 'account.oauth.complete.pageTitle',
       },
     },
     {
@@ -122,7 +112,6 @@ export default {
       name: 'OAuthVerify',
       component: () => import('@/views/account/OAuthVerify.vue'),
       meta: {
-        title: '关联账号',
         titleKey: 'account.oauth.verify.title',
       },
     },
@@ -131,7 +120,6 @@ export default {
       name: 'OAuthSuccess',
       component: () => import('@/views/account/OAuthSuccess.vue'),
       meta: {
-        title: '登录',
         titleKey: 'account.signIn.title',
       },
     },
@@ -142,7 +130,6 @@ export default {
       name: 'AppSignInStart',
       component: () => import('@/views/account/AppSignInStart.vue'),
       meta: {
-        title: '登录',
         titleKey: 'account.signIn.title',
       },
     },
@@ -152,7 +139,6 @@ export default {
       component: () => import('@/views/account/BackToApp.vue'),
       props: { signIn: true },
       meta: {
-        title: '登录',
         titleKey: 'account.signIn.title',
       },
     },
@@ -161,7 +147,6 @@ export default {
       name: 'AppSignInFinish',
       component: () => import('@/views/account/AppSignInFinish.vue'),
       meta: {
-        title: '登录',
         titleKey: 'account.signIn.title',
       },
     },
@@ -180,7 +165,6 @@ export default {
       name: 'OAuthError',
       component: () => import('@/views/account/OAuthError.vue'),
       meta: {
-        title: '登录失败',
         titleKey: 'account.oauth.error.title',
       },
     },

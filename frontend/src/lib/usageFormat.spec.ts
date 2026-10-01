@@ -1,6 +1,6 @@
 import type { UsageStats } from '../cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
   costLabel,
@@ -14,6 +14,11 @@ import {
   fmtPercent,
   fmtSI,
 } from './usageFormat'
+
+import { setLocale } from '@/i18n'
+
+// The cases below pin the Chinese copy; English is checked where it differs in shape.
+beforeEach(() => setLocale('zh-CN'))
 
 function stats(over: Partial<UsageStats> = {}): UsageStats {
   return {

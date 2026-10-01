@@ -26,6 +26,7 @@ import {
   workspaceFileRawUrl,
   writeFile,
 } from '../api'
+import { phraseLabel } from '../lib/board'
 import { parseDiffLines, splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
@@ -78,7 +79,8 @@ export function usePanelChanges(props: PanelChangesProps) {
   // 任务结束了，它的文件就只读——这件事以前是横条下面单独一行字，现在跟在状态后面。
   const sourceStatus = computed(() => {
     if (!selectedTask.value) return t('work.room.changes.readOnly')
-    const status = currentTask.value?.presentation.display_status ?? ''
+    const phrase = currentTask.value?.presentation.phrase
+    const status = phrase ? phraseLabel(phrase) : ''
     return currentTask.value && currentTask.value.status !== 'open'
       ? t('work.room.changes.statusReadOnly', { status })
       : status

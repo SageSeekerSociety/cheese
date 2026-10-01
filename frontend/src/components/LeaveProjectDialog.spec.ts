@@ -14,6 +14,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const leaveProject = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -35,8 +37,6 @@ vi.mock('@/stores/workspace', () => ({
 }))
 
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
-
-import { setLocale } from '@/i18n'
 
 const Dialog = LeaveProjectDialog as unknown as Component
 
@@ -90,6 +90,9 @@ function mount(projectId = 'p1') {
   }
   return render(Host as unknown as Component, { global: { plugins: [vuetify] } })
 }
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 describe('LeaveProjectDialog 的被拒语义', () => {
   it('被拒时弹窗不关，理由说在弹窗里——人还没退成', async () => {
@@ -155,5 +158,14 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     mount('p-other')
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p-other'))
+  })
+
+  it('reads in English under the en locale', async () => {
+    setLocale('en')
+    mount()
+    expect(await screen.findByText('Leave project?')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
+    await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
   })
 })

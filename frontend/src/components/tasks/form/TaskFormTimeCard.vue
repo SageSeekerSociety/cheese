@@ -35,7 +35,7 @@ const isAllowedDates = (date: unknown) => {
 </script>
 
 <template>
-  <TaskFormSection icon="mdi-clock-outline" title="时间设置">
+  <TaskFormSection icon="mdi-clock-outline" :title="t('tasks.form.schedule')">
     <v-row dense>
       <v-col cols="12" md="6">
         <v-date-input
@@ -53,7 +53,7 @@ const isAllowedDates = (date: unknown) => {
           v-model="deadline"
           :label="t('tasks.form.deadline')"
           clearable
-          hint="留空表示不设置报名截止时间"
+          :hint="t('tasks.form.deadlineHint')"
           density="comfortable"
           v-bind="deadlineControl"
           :allowed-dates="isAllowedDates"
@@ -65,8 +65,8 @@ const isAllowedDates = (date: unknown) => {
           :label="t('tasks.form.defaultDeadline')"
           type="number"
           required
-          prefix="领取题目后"
-          suffix="天"
+          :prefix="t('tasks.form.defaultDeadlinePrefix')"
+          :suffix="t('tasks.form.defaultDeadlineSuffix')"
           min="1"
           v-bind="defaultDeadlineControl"
         ></v-text-field>

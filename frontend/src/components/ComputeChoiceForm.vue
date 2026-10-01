@@ -27,15 +27,10 @@ const valid = computed(
 function submit() {
   if (!valid.value) return
   const cloud = target.value === 'cloud'
-  // `name` is not UI copy: the backend stores it on the project or topic and shows it to
-  // every member in every language, and its own defaults are the same Chinese labels.
-  // Translating it here would save whichever language the chooser happened to use.
+  // Only a device is saved with a name — its own. The cloud is identified by its
+  // specs and every member's screen names it in its own language (`choiceName`).
   emit('select', {
-    name: cloud
-      ? custom.value
-        ? '云端 · 自定义配置'
-        : '云端 · 标准配置'
-      : props.devices.find((d) => d.device_id === target.value)?.name ?? '自有设备',
+    name: cloud ? null : props.devices.find((d) => d.device_id === target.value)?.name ?? null,
     profile: cloud ? 'cloud' : 'device',
     device_id: cloud ? null : target.value,
     cores: cloud && custom.value ? Number(cores.value) : null,

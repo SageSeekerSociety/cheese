@@ -11,6 +11,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AppError, AuthenticationRequiredError, BaseError
+from app.domain.block.notice_text import say
 from app.domain.site.hosting import content_origin
 from app.domain.site.services import (
     BUILD_REQUIRED,
@@ -37,7 +38,7 @@ async def get_project_site(
 ) -> dict:
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("请先登录")
+        raise AuthenticationRequiredError(say("signInFirst"))
     await require_site_access(db, actor.handle, project_id)
     source = await publication_source(db, project_id)
     release = await get_current_release(db, project_id)
@@ -68,7 +69,7 @@ async def publish_project_site(
 ) -> dict:
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("请先登录")
+        raise AuthenticationRequiredError(say("signInFirst"))
     await require_site_access(db, actor.handle, project_id)
     content_origin(project_id)
     release = await publish_site(

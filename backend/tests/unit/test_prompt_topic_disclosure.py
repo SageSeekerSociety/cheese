@@ -12,7 +12,7 @@ from app.domain.agent.chat import (
     _topic_ref_lists,
 )
 from app.domain.agent.harness.prompt import build_system_prompt
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
 
 ARCHIVED_ID = uuid.uuid4()
 CURRENT_ID = uuid.uuid4()
@@ -28,6 +28,10 @@ def _topic(
     return Topic(
         id=topic_id or uuid.uuid4(),
         title=title,
+        # 未命名认的是这一位，不是标题那几个字。
+        title_source=(
+            TitleSource.placeholder if title == PLACEHOLDER_TITLE else TitleSource.human
+        ),
         status=status,
         kind=kind,
     )
