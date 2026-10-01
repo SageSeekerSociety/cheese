@@ -100,6 +100,7 @@
     ".github/scripts/required-ci.py",
     ".github/scripts/required-ci-paths.json",
     ".pre-commit-config.yaml",
-    "Taskfile.yml"
+    "Taskfile.yml",
+    ".github/workflows/ci-fast.yml"
   ]
 }

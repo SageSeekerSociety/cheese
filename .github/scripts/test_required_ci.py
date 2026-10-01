@@ -152,6 +152,7 @@ class RequiredCITest(unittest.TestCase):
             ".github/scripts/required-ci-paths.json",
             ".pre-commit-config.yaml",
             "Taskfile.yml",
+            ".github/workflows/ci-fast.yml",
         ):
             with self.subTest(path=path):
                 self.assertTrue(gate.select([path])["cifast"])

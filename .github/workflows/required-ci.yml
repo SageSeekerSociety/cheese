@@ -54,29 +54,14 @@ jobs:
     if: needs.scope.outputs.backend == 'true'
     uses: ./.github/workflows/test.yml
 
-  # ci-fast's black-box tests drive real pre-commit against fixture repos
-  # (system-language stub hooks), so this job needs the tool itself — provided
-  # the repo's way, through uv. Same pin as repo-guards.yml and test.yml.
-  # A parallel lane like the product suites: it used to run inside scope,
-  # which put its ~65–121s on the serial path of every Required run.
+  # ci-fast's black-box tests are their own suite: they used to run inside
+  # scope, which put their ~65–121s on the serial path of every Required run.
+  # A reusable workflow like every other suite — the docs site names the
+  # workflow behind a suite by reading this job's `uses:`.
   cifast:
     needs: scope
     if: needs.scope.outputs.cifast == 'true'
-    # A merge-queue run takes this job on the cheese-ci pool, so it does not
-    # wait behind pull-request runs for one of the hosted runners.
-    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.1"
-          enable-cache: true
-      - name: ci-fast black-box tests
-        env:
-          CI_FAST_PRECOMMIT: uvx pre-commit
-        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_fast.py'
+    uses: ./.github/workflows/ci-fast.yml
 
   frontend:
     needs: scope
