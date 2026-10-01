@@ -14,45 +14,50 @@ import Underline from '@editorjs/underline'
 import Warning from '@editorjs/warning'
 import LaTeX from 'editorjs-latex'
 
-export const DEFAULT_CONFIG: EditorConfig = {
-  placeholder: '问题描述',
-  tools: {
-    paragraph: {
-      class: Paragraph,
-      inlineToolbar: true,
-      tunes: ['textVariant'],
-    },
-    header: {
-      class: Header,
-      inlineToolbar: true,
-      config: {
-        placeholder: '请输入标题',
-        levels: [2, 3, 4],
-        defaultLevel: 3,
+import { t } from '@/i18n'
+
+// A function, not a constant: the placeholders are read in the reader's language
+// each time an editor is created.
+export const defaultEditorConfig = (): EditorConfig =>
+  ({
+    placeholder: t('editor.question.placeholder'),
+    tools: {
+      paragraph: {
+        class: Paragraph,
+        inlineToolbar: true,
+        tunes: ['textVariant'],
       },
+      header: {
+        class: Header,
+        inlineToolbar: true,
+        config: {
+          placeholder: t('editor.question.headingPlaceholder'),
+          levels: [2, 3, 4],
+          defaultLevel: 3,
+        },
+      },
+      quote: {
+        class: Quote,
+        inlineToolbar: true,
+      },
+      delimiter: Delimiter,
+      warning: Warning,
+      math: LaTeX,
+      code: Codecup,
+      table: Table,
+      textVariant: {
+        class: TextVariantTune,
+        inlineToolbar: true,
+      },
+      underline: {
+        class: Underline,
+        inlineToolbar: true,
+      },
+      inlineCode: {
+        class: InlineCode,
+        inlineToolbar: true,
+      },
+      checklist: Checklist,
+      nestedList: NestedList,
     },
-    quote: {
-      class: Quote,
-      inlineToolbar: true,
-    },
-    delimiter: Delimiter,
-    warning: Warning,
-    math: LaTeX,
-    code: Codecup,
-    table: Table,
-    textVariant: {
-      class: TextVariantTune,
-      inlineToolbar: true,
-    },
-    underline: {
-      class: Underline,
-      inlineToolbar: true,
-    },
-    inlineCode: {
-      class: InlineCode,
-      inlineToolbar: true,
-    },
-    checklist: Checklist,
-    nestedList: NestedList,
-  },
-} as EditorConfig
+  }) as EditorConfig

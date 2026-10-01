@@ -49,7 +49,6 @@ while True:
             "binary": str(binary),
             "opening": {"model": "fixture"},
             "execution_target": {"url": "http://fixture"},
-            "mcp_servers": [],
         },
         "codex_config": 'model_provider = "cheese"\n',
         "env": {

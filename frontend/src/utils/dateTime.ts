@@ -22,7 +22,7 @@ export function useFormattedTime() {
 
     // 如果是昨天的消息，显示"昨天 XX:XX"
     if (date.isSame(now.subtract(1, 'day'), 'day')) {
-      return `昨天 ${date.format('HH:mm')}`
+      return t('notifications.common.yesterday', { time: date.format('HH:mm') })
     }
 
     // 如果是今年的消息，显示"MM-DD HH:MM"

@@ -2,7 +2,25 @@
   "ask": {
     "buttons": {
       "createTopic": "Create {name} topic"
-    }
+    },
+    "titleLabel": "Question title",
+    "addBounty": "Add bounty",
+    "removeBounty": "Remove bounty",
+    "bounty": "Bounty {bounty}",
+    "submit": "Post question",
+    "guide": {
+      "title": "How to ask a good question",
+      "tried": "Start by briefly sharing what you've already tried. It shows you're genuinely looking for help rather than an easy answer, and people would rather help someone who will learn from the question.",
+      "effort": "Think your question through. Showing that you tried to solve the problem before asking makes a useful answer more likely.",
+      "premise": "Make sure your question rests on the right premise. A meaningful, thought-provoking question helps you and adds something to the community.",
+      "willing": "Finally, show that you are willing to do the work. Asking \"Can you give me a hint?\" or \"Where should I look?\" shows you mean to solve it yourself, and usually gets better answers."
+    },
+    "errors": {
+      "titleRequired": "Enter a question title",
+      "titleQuestionMark": "End the title with a question mark",
+      "topicRequired": "Choose at least one topic"
+    },
+    "success": "Question posted"
   },
   "detail": {
     "createdAt": "Posted {time}",
@@ -32,7 +50,9 @@
     "bounty": "Bounty {bounty}",
     "addBountyTitle": "Add bounty",
     "addBountySuccess": "Bounty added — awaiting answers",
-    "acceptedAnswerTitle": "{user}'s answer was accepted"
+    "acceptedAnswerTitle": "{user}'s answer was accepted",
+    "searchUsers": "Search users",
+    "close": "Close"
   },
   "invitationList": {
     "buttons": {
@@ -43,5 +63,8 @@
       "inviteFailed": "Couldn't invite: {reason}",
       "loadFailed": "Could not load who you can invite."
     }
+  },
+  "answer": {
+    "acceptSuccess": "Answer accepted"
   }
 }

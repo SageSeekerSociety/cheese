@@ -3,6 +3,8 @@ import type { VNode } from 'vue'
 import { h, reactive } from 'vue'
 import { VTextField } from 'vuetify/lib/components/index.mjs'
 
+import { t } from '@/i18n'
+
 interface DialogOptions<T = any> {
   title: string
   content: string | (() => VNode)
@@ -65,7 +67,7 @@ export const closeDialog = <T>(id: number, result: T, isCancel = false) => {
 export function useDialog() {
   const alert = (message: string, options?: { title?: string }): DialogInstance<void> =>
     showDialog({
-      title: options?.title || '提示',
+      title: options?.title || t('global.dialog.alertTitle'),
       content: message,
       showCancel: false,
       onConfirm: () => {},
@@ -73,7 +75,7 @@ export function useDialog() {
 
   const confirm = (message: string, options?: { title?: string }): DialogInstance<boolean> =>
     showDialog({
-      title: options?.title || '确认',
+      title: options?.title || t('global.confirm'),
       content: message,
       showCancel: true,
       onConfirm: () => true,
@@ -86,7 +88,7 @@ export function useDialog() {
   ): DialogInstance<string> => {
     let inputValue = options?.defaultValue || ''
     return showDialog({
-      title: options?.title || '输入',
+      title: options?.title || t('global.dialog.promptTitle'),
       content: () =>
         h(VTextField, {
           modelValue: inputValue,

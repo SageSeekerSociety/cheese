@@ -90,7 +90,7 @@ const summonText = computed(() => ({
       variant="text"
       size="small"
       color="medium-emphasis"
-      title="上传文件（每个最大 10MB）"
+      :title="t('work.room.composer.attachFiles')"
       @click="pickFiles"
     />
     <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
@@ -102,7 +102,7 @@ const summonText = computed(() => ({
       variant="text"
       size="small"
       color="medium-emphasis"
-      title="发送照片"
+      :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
     <!-- 发一张自己的清单：也是「这条消息本身」，所以和附件站在左边。 -->
@@ -161,7 +161,7 @@ const summonText = computed(() => ({
       variant="flat"
       icon="mdi-send"
       size="small"
-      title="发送"
+      :title="t('work.room.composer.send')"
       :disabled="uploading || !canSend"
       @click="emit('send')"
     />

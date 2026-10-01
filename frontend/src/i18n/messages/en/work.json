@@ -186,6 +186,45 @@
     "loading": "Loading resource limits…"
   },
   "room": {
+    "docAi": {
+      "title": "Document AI",
+      "selectionToolbar": "Selection actions",
+      "failed": "Request failed; input retained",
+      "signIn": "Sign in to use document AI",
+      "unverified": "The selection could not be verified against saved source. Save, resolve conflicts, or select supported text again.",
+      "refresh": "Refresh records",
+      "close": "Close AI panel and retain draft",
+      "unknown": "Outcome unknown. Recover the original operation to avoid duplicate requests.",
+      "recover": "Recover operation",
+      "question": "Question or rewrite instructions",
+      "ask": "Ask AI",
+      "propose": "Propose rewrite",
+      "aiProposal": "AI request and proposal",
+      "replacement": "Proposed source replacement",
+      "baseVersion": "Based on document version {version}",
+      "humanAccept": "Accept and save as me",
+      "accepted": "Accepted by {actor}, saved as version {version}",
+      "cancel": "Cancel request",
+      "state": {
+        "pending": "Pending",
+        "running": "Generating",
+        "succeeded": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      }
+    },
+    "docLink": {
+      "title": "Link actions",
+      "close": "Close link actions",
+      "url": "Link URL",
+      "save": "Save link",
+      "cancel": "Cancel",
+      "edit": "Edit",
+      "remove": "Remove link",
+      "stale": "Source or link changed; open it again",
+      "invalid": "Unsupported link format",
+      "readonly": "Document is read-only"
+    },
     "noTasks": "No tasks",
     "site": {
       "agents": {
@@ -422,7 +461,10 @@
       "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
       "pasteHint": "You can paste images",
       "placeholderDm": "Message {name}",
-      "placeholder": "Type a message, or {'@'}{name} to hand it over"
+      "placeholder": "Type a message, or {'@'}{name} to hand it over",
+      "attachFiles": "Upload files (up to 10 MB each)",
+      "sendPhotos": "Send photos",
+      "send": "Send"
     },
     "dispatched": {
       "created": "New task",
@@ -914,6 +956,23 @@
       "inPast": "This time has already passed",
       "failed": "Could not set the reminder",
       "set": "You will be reminded at {when}"
+    },
+    "docThread": {
+      "title": "Comment thread",
+      "open": "Open",
+      "resolved": "Resolved",
+      "resolve": "Resolve",
+      "reopen": "Reopen",
+      "refresh": "Refresh thread",
+      "historicalAnchor": "Stored document anchor; this is not a current rewrite selection",
+      "reply": "Reply",
+      "placeholder": "Reply to this thread (Ctrl/Cmd+Enter to send)",
+      "send": "Send reply",
+      "reopenToReply": "Reopen this thread before replying",
+      "load": "Load thread",
+      "unknown": "Outcome unknown. Recover the original operation before sending again.",
+      "recover": "Recover original operation",
+      "storage": "Draft storage is unavailable; keep this panel open"
     }
   },
   "board": {
@@ -1037,7 +1096,16 @@
     "autoTitle": "Named automatically; the name updates if the topic changes direction",
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
-    "moreActions": "More actions"
+    "moreActions": "More actions",
+    "chooseProject": "Choose a project",
+    "switchProject": "Switch project",
+    "chooseProjectFirst": "Choose a project first",
+    "topics": "Topics",
+    "newTopic": "New topic",
+    "creatingTopic": "Creating topic",
+    "noneMine": "No topics involve you yet",
+    "othersUnread": "New messages in other topics",
+    "empty": "No topics yet"
   },
   "members": {
     "leave": "Leave project",
@@ -1590,5 +1658,17 @@
   "liveView": {
     "connecting": "Connecting to the live view…",
     "closed": "Live view disconnected"
+  },
+  "labels": {
+    "notifKind": {
+      "decisionRequest": "Decision request",
+      "changeAlert": "Change alert",
+      "acceptRequest": "Review"
+    },
+    "topicStatus": {
+      "active": "In progress",
+      "archived": "Archived",
+      "draft": "Draft"
+    }
   }
 }

@@ -146,7 +146,6 @@ def _log(project: Path) -> list[dict]:
 def test_codex_lists_and_calls_the_types_server_on_the_machine(
     acceptance, tmp_path, monkeypatch
 ):
-    from app.domain.agent.executor_transport import RemoteClient
     from app.domain.agent.harness.codex.tools import RemoteTools
 
     executor, target, project = _machine(acceptance, tmp_path / "codex", monkeypatch)
@@ -154,13 +153,11 @@ def test_codex_lists_and_calls_the_types_server_on_the_machine(
     try:
         # A teammate of another type, on the same machine, has no such tool.
         other = RemoteTools(dict(target))
-        listed = asyncio.run(other.discover(RemoteClient(target).session_servers()))
+        listed = asyncio.run(other.discover())
         assert "mcp__lint__where" not in [tool["name"] for tool in listed]
 
         tools = RemoteTools(own)
-        servers = RemoteClient(own).session_servers()
-        assert "lint" in servers
-        names = [tool["name"] for tool in asyncio.run(tools.discover(servers))]
+        names = [tool["name"] for tool in asyncio.run(tools.discover())]
         assert "mcp__lint__where" in names
 
         def call(call_id, note):

@@ -8,10 +8,12 @@ import io
 import json
 import posixpath
 import shutil
+import time
 import types
 from pathlib import Path
 
 from app.domain.agent.executor_transport import (
+    DEFERRED_WORKSPACE,
     MACHINE_OUT_OF_REACH,
     MachineOutOfReach,
     PlatformHost,
@@ -240,10 +242,26 @@ class RemoteTools:
             for key, value in arguments.items()
         }
 
-    async def discover(self, servers: list[str]) -> list[dict]:
+    async def discover(self) -> list[dict]:
+        """Every tool the session lists: the executor's own, each MCP server's
+        the session reaches (`RemoteClient.session_servers`), and the
+        platform's.
+
+        A session started on its leased machine (`central_provider`) takes it
+        first, as Claude Code's does (`_take_leased_machine`): the lease names
+        the machine's stdio servers, the checkout's `.mcp.json` ones, which the
+        target the session was started with does not. Taken as it is, with no
+        wait for a machine being prepared; a lease the platform cannot hand out
+        fails the start."""
+        target = self.client.config
+        if (
+            target.get("kind") == "deferred"
+            and target.get("workspace") != DEFERRED_WORKSPACE
+        ):
+            await asyncio.to_thread(self.client.acquire, deadline=time.monotonic())
         tools = []
         routes = {}
-        for server in ["native", *servers]:
+        for server in ["native", *self.client.session_servers()]:
             cursor = None
             while True:
                 result = await asyncio.to_thread(

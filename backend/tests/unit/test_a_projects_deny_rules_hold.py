@@ -136,7 +136,7 @@ def test_a_codex_session_refuses_a_denied_command(
     monkeypatch.setenv("CHEESE_TOKEN", "room-token")
     try:
         tools = RemoteTools(target)
-        asyncio.run(tools.discover([]))
+        asyncio.run(tools.discover())
         answers = []
         for index, (command, _) in enumerate(COMMANDS):
             answer = asyncio.run(

@@ -19,8 +19,11 @@ import type { Topic } from '../../cx_types'
 
 import { ref } from 'vue'
 
+import { useDocAi } from '../../composables/useDocAi'
+import { useDocThreads } from '../../composables/useDocThreads'
 import { usePanelDoc } from '../../composables/usePanelDoc'
 
+import DocAiPanel from './doc/DocAiPanel.vue'
 import PanelDocView from './PanelDocView.vue'
 
 import { t } from '@/i18n'
@@ -69,6 +72,10 @@ const {
   lossyConfirmOpen,
   sourceMode,
   sourceDraft,
+  rawDoc,
+  titlePrefix,
+  docVersion,
+  reloadFromActivity,
   pendingEdits,
   hasPendingEdits,
   externalDoc,
@@ -99,6 +106,24 @@ const {
 } = usePanelDoc(props, {
   serializeVisual: () => viewRef.value?.serializeVisual() ?? null,
   installMarkdown: (body) => viewRef.value?.installMarkdown(body),
+})
+
+const threads = useDocThreads(() => props.topic?.id ?? null)
+const aiBlocked = () =>
+  loading.value ||
+  dirty.value ||
+  lossy.value ||
+  externalDoc.value !== null ||
+  hasPendingEdits.value ||
+  sourceMode.value ||
+  editingBlocked.value
+const ai = useDocAi({
+  topic: () => props.topic?.id ?? null,
+  raw: () => rawDoc.value,
+  prefix: () => titlePrefix.value,
+  version: () => docVersion.value,
+  blocked: aiBlocked,
+  reload: reloadFromActivity,
 })
 
 // Dev-only probe hook: lets Playwright inspect serialization/dirty state
@@ -153,6 +178,8 @@ defineExpose({ pulse, highlightTurn })
     :comments="comments"
     :comment-author="commentAuthor"
     :send-comment="sendComment"
+    :thread-state="threads.state"
+    :thread-actions="threads.actions"
     :anchor-nodes="anchorNodes"
     :live-ref-index="liveRefIndex"
     :comment-mark-index="commentMarkIndex"
@@ -178,5 +205,27 @@ defineExpose({ pulse, highlightTurn })
     @open-resource="emit('open-resource', $event)"
     @edited="markEdited"
     @close-lossy-confirm="lossyConfirmOpen = false"
-  />
+    @open-ai="ai.prepare($event)"
+  >
+    <template #ai>
+      <DocAiPanel
+        v-if="ai.opened.value"
+        :cards="ai.cards.value"
+        :question="ai.question.value"
+        :busy="ai.busy.value"
+        :error="ai.error.value"
+        :selection-status="ai.selectionStatus.value"
+        :has-selection="!!ai.selection.value"
+        :blocked="aiBlocked()"
+        :unknown="!!ai.unknown.value"
+        :version="docVersion"
+        @update:question="ai.question.value = $event"
+        @submit="ai.submit"
+        @accept="ai.accept"
+        @cancel="ai.cancel"
+        @recover="ai.recover"
+        @close="ai.opened.value = false"
+      />
+    </template>
+  </PanelDocView>
 </template>

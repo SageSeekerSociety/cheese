@@ -13,6 +13,7 @@ import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 
 import { toast } from 'vuetify-sonner'
 
+import { t } from '@/i18n'
 import { SpacesApi } from '@/network/api/spaces'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
 import { TasksApi } from '@/network/api/tasks'
@@ -35,7 +36,7 @@ export function useSpaceData() {
       space.setSpace(data.space)
     } catch (error) {
       console.error('获取题目板信息失败:', error)
-      toast.error('获取空间信息失败')
+      toast.error(t('spaces.detail.data.loadFailed'))
     }
   }
 
@@ -62,12 +63,12 @@ export function useSpaceData() {
       const response = await SpacesApi.update(spaceId, data)
       space.setSpace(response.data.space)
       if (showToast) {
-        toast.success('更新空间信息成功')
+        toast.success(t('spaces.detail.data.updateSuccess'))
       }
     } catch (error) {
       console.error('更新题目板信息失败:', error)
       if (showToast) {
-        toast.error('更新空间信息失败')
+        toast.error(t('spaces.detail.data.updateFailed'))
       }
       throw error
     }
@@ -80,7 +81,7 @@ export function useSpaceData() {
       await updateSpace(space.currentSpace.id, { taskTemplates: JSON.stringify(newTemplates) }, false)
     } catch (error) {
       console.error('更新模板失败:', error)
-      toast.error('更新模板失败')
+      toast.error(t('spaces.detail.data.templatesFailed'))
       throw error
     }
   }
@@ -98,7 +99,7 @@ export function useSpaceData() {
       await updateSpace(space.currentSpace.id, { classificationTopics: topicIds }, false)
     } catch (error) {
       console.error('更新分类话题失败:', error)
-      toast.error('更新分类话题失败')
+      toast.error(t('spaces.detail.data.classificationTopicsFailed'))
     }
   }
 
@@ -139,7 +140,7 @@ export function useSpaceData() {
       space.setCategories(data.categories)
     } catch (error) {
       console.error('获取分类失败:', error)
-      toast.error('获取分类失败')
+      toast.error(t('spaces.detail.manageCategories.loadFailed'))
     } finally {
       space.setLoadingCategories(false)
     }
@@ -151,10 +152,10 @@ export function useSpaceData() {
     try {
       await SpacesApi.createCategory(space.currentSpaceId, { name, description, displayOrder })
       await fetchCategories()
-      toast.success('创建分类成功')
+      toast.success(t('spaces.detail.manageCategories.createSuccess'))
     } catch (error) {
       console.error('创建分类失败:', error)
-      toast.error('创建分类失败')
+      toast.error(t('spaces.detail.manageCategories.createFailed'))
       throw error
     }
   }
@@ -165,10 +166,10 @@ export function useSpaceData() {
     try {
       await SpacesApi.updateCategory(space.currentSpaceId, categoryId, data)
       await fetchCategories()
-      toast.success('更新分类成功')
+      toast.success(t('spaces.detail.manageCategories.updateSuccess'))
     } catch (error) {
       console.error('更新分类失败:', error)
-      toast.error('更新分类失败')
+      toast.error(t('spaces.detail.manageCategories.updateFailed'))
       throw error
     }
   }
@@ -179,10 +180,10 @@ export function useSpaceData() {
     try {
       await SpacesApi.deleteCategory(space.currentSpaceId, categoryId)
       await fetchCategories()
-      toast.success('删除分类成功')
+      toast.success(t('spaces.detail.manageCategories.deleteSuccess'))
     } catch (error) {
       console.error('删除分类失败:', error)
-      toast.error('删除分类失败')
+      toast.error(t('spaces.detail.manageCategories.deleteFailed'))
       throw error
     }
   }
@@ -193,10 +194,10 @@ export function useSpaceData() {
     try {
       await SpacesApi.archiveCategory(space.currentSpaceId, categoryId)
       await fetchCategories()
-      toast.success('归档分类成功')
+      toast.success(t('spaces.detail.manageCategories.archiveSuccess'))
     } catch (error) {
       console.error('归档分类失败:', error)
-      toast.error('归档分类失败')
+      toast.error(t('spaces.detail.manageCategories.archiveFailed'))
       throw error
     }
   }
@@ -207,10 +208,10 @@ export function useSpaceData() {
     try {
       await SpacesApi.unarchiveCategory(space.currentSpaceId, categoryId)
       await fetchCategories()
-      toast.success('恢复分类成功')
+      toast.success(t('spaces.detail.manageCategories.unarchiveSuccess'))
     } catch (error) {
       console.error('恢复分类失败:', error)
-      toast.error('恢复分类失败')
+      toast.error(t('spaces.detail.manageCategories.unarchiveFailed'))
       throw error
     }
   }
@@ -220,10 +221,10 @@ export function useSpaceData() {
 
     try {
       await updateSpace(space.currentSpace.id, { defaultCategoryId: categoryId }, false)
-      toast.success('设置默认分类成功')
+      toast.success(t('spaces.detail.manageCategories.setDefaultSuccess'))
     } catch (error) {
       console.error('设置默认分类失败:', error)
-      toast.error('设置默认分类失败')
+      toast.error(t('spaces.detail.manageCategories.setDefaultFailed'))
       throw error
     }
   }
@@ -235,10 +236,10 @@ export function useSpaceData() {
     try {
       const { data } = await SpacesApi.addAdmin(space.currentSpaceId, { userId, role })
       space.setSpace(data.space)
-      toast.success('添加管理员成功')
+      toast.success(t('spaces.detail.data.adminAddSuccess'))
     } catch (error) {
       console.error('添加管理员失败:', error)
-      toast.error('添加管理员失败')
+      toast.error(t('spaces.detail.data.adminAddFailed'))
       throw error
     }
   }
@@ -249,10 +250,10 @@ export function useSpaceData() {
     try {
       const { data } = await SpacesApi.updateAdmin(space.currentSpaceId, userId, { role })
       space.setSpace(data.space)
-      toast.success('更新管理员角色成功')
+      toast.success(t('spaces.detail.data.adminRoleSuccess'))
     } catch (error) {
       console.error('更新管理员角色失败:', error)
-      toast.error('更新管理员角色失败')
+      toast.error(t('spaces.detail.data.adminRoleFailed'))
       throw error
     }
   }
@@ -264,10 +265,10 @@ export function useSpaceData() {
       await SpacesApi.removeAdmin(space.currentSpaceId, userId)
       // 重新获取空间信息以更新管理员列表
       await fetchSpace(space.currentSpaceId)
-      toast.success('移除管理员成功')
+      toast.success(t('spaces.detail.data.adminRemoveSuccess'))
     } catch (error) {
       console.error('移除管理员失败:', error)
-      toast.error('移除管理员失败')
+      toast.error(t('spaces.detail.data.adminRemoveFailed'))
       throw error
     }
   }

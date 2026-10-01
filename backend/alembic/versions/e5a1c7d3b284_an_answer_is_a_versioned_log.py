@@ -43,7 +43,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "e5a1c7d3b284"
-down_revision: str | Sequence[str] | None = "b84d0f9ac721"
+down_revision: str | Sequence[str] | None = "2733a598f271"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
