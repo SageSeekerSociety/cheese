@@ -83,6 +83,10 @@ WS_BINARY = 1
 CLOSE_SUPERSEDED = 4001
 
 _HEAD = struct.Struct("!BI")
+MAX_META_BYTES = 64 * 1024
+MAX_WS_MESSAGE_BYTES = 1024 * 1024
+MAX_REQUEST_BYTES = 32 * 1024 * 1024
+MAX_TUNNEL_MESSAGE_BYTES = MAX_REQUEST_BYTES + MAX_META_BYTES + 4 + _HEAD.size
 
 
 def encode(op: int, stream: int, payload: bytes = b"") -> bytes:
@@ -101,6 +105,10 @@ def decode(frame: bytes) -> tuple[int, int, bytes]:
 def encode_meta(meta: dict, body: bytes = b"") -> bytes:
     """A frame payload carrying a JSON header and (optionally) bytes after it."""
     blob = json.dumps(meta, separators=(",", ":")).encode()
+    if len(blob) > MAX_META_BYTES:
+        raise ValueError("preview frame header too large")
+    if len(body) > MAX_REQUEST_BYTES:
+        raise ValueError("preview request body too large")
     return struct.pack("!I", len(blob)) + blob + body
 
 
@@ -108,6 +116,10 @@ def decode_meta(payload: bytes) -> tuple[dict, bytes]:
     if len(payload) < 4:
         raise ValueError("preview frame carries no header length")
     (size,) = struct.unpack_from("!I", payload)
+    if size > MAX_META_BYTES:
+        raise ValueError("preview frame header too large")
+    if len(payload) - 4 - size > MAX_REQUEST_BYTES:
+        raise ValueError("preview request body too large")
     if len(payload) < 4 + size:
         raise ValueError("preview frame header is truncated")
     meta = json.loads(payload[4 : 4 + size].decode())
@@ -176,7 +188,11 @@ def send_frame(sock: socket.socket, payload: bytes, opcode: int = _OP_BIN) -> No
 
 
 def recv_message(
-    sock: socket.socket, write_lock: threading.Lock | None = None, *, control=None
+    sock: socket.socket,
+    write_lock: threading.Lock | None = None,
+    *,
+    control=None,
+    max_bytes: int = MAX_WS_MESSAGE_BYTES,
 ) -> tuple[int, bytes]:
     """The next data message as ``(opcode, payload)``, reassembled. A close from
     the peer comes back as ``(_OP_CLOSE, <its payload>)``: the payload carries
@@ -204,6 +220,11 @@ def recv_message(
             (length,) = struct.unpack("!H", _read_exact(sock, 2))
         elif length == 127:
             (length,) = struct.unpack("!Q", _read_exact(sock, 8))
+        if opcode in (_OP_CLOSE, _OP_PING, _OP_PONG):
+            if not fin or length > 125:
+                raise PreviewError("invalid control frame")
+        elif length + len(payload) > max_bytes:
+            raise PreviewError("WebSocket message too large")
         mask = _read_exact(sock, 4) if masked else b""
         data = _read_exact(sock, length) if length else b""
         if mask:
@@ -496,9 +517,13 @@ class Session:
         here only turned into unhandled exceptions on threads nobody watches —
         one per stream still in flight when a connection dropped.
         """
-        self._send_tunnel(encode(op, stream, payload), _OP_BIN)
+        with self._lock:
+            state = self._streams.get(stream)
+        self._send_tunnel(encode(op, stream, payload), _OP_BIN, state=state)
 
-    def _send_tunnel(self, payload: bytes, opcode: int) -> None:
+    def _send_tunnel(
+        self, payload: bytes, opcode: int, *, state: _StreamState | None = None
+    ) -> None:
         if self._stopped.is_set():
             return
         if not self._write_lock.acquire(timeout=_WRITE_TIMEOUT_S):
@@ -507,6 +532,10 @@ class Session:
         timer = threading.Timer(_WRITE_TIMEOUT_S, self._stop)
         timer.daemon = True
         try:
+            if self._stopped.is_set() or (
+                state is not None and state.cancelled.is_set()
+            ):
+                return
             timer.start()
             send_frame(self._sock, payload, opcode)
         except OSError:
@@ -529,7 +558,11 @@ class Session:
         heartbeat.start()
         try:
             while True:
-                kind, data = recv_message(self._sock, control=self._send_tunnel)
+                kind, data = recv_message(
+                    self._sock,
+                    control=self._send_tunnel,
+                    max_bytes=MAX_TUNNEL_MESSAGE_BYTES,
+                )
                 if kind == _OP_CLOSE:
                     if data[:2] == struct.pack("!H", CLOSE_SUPERSEDED):
                         self.superseded = data[2:].decode(errors="replace")

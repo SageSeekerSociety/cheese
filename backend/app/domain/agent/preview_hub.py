@@ -101,7 +101,13 @@ class PreviewStream:
     def offer(self, op: int, payload: bytes) -> None:
         if self._closed or self._terminal:
             return
-        limit = wire._CHUNK if op == wire.OP_DATA else MAX_QUEUED_BYTES
+        limit = (
+            wire._CHUNK
+            if op == wire.OP_DATA
+            else wire.MAX_META_BYTES + 4
+            if op in (wire.OP_RESP, wire.OP_WS_OK)
+            else MAX_QUEUED_BYTES
+        )
         if (
             len(payload) > limit
             or self._queued_bytes + len(payload) > MAX_QUEUED_BYTES

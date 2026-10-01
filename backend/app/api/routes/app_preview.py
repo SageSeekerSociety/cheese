@@ -254,7 +254,11 @@ def _response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
 async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Response:
     """Forward an already authorized content-host request without URL rewriting,
     to the app ``seat`` (the teammate who declared it) is serving."""
-    body = await request.body()
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > wire.MAX_REQUEST_BYTES:
+            return Response("preview request body too large", status_code=413)
+        body.extend(chunk)
 
     async def disconnected():
         while True:
@@ -268,7 +272,7 @@ async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Respon
             method=request.method,
             path=_upstream_path(request),
             headers=_app_headers(request),
-            body=body,
+            body=bytes(body),
         )
     )
     gone = asyncio.create_task(disconnected())
