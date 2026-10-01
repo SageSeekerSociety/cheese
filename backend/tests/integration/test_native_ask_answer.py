@@ -147,33 +147,61 @@ def test_http_answer_continues_original_native_executor(
         )
         app.dependency_overrides[get_chat_service] = lambda: chat
         if not mode.startswith("history-multi"):
+            started = machine.workspace / "ask-http-gate-started"
             content = headless_contract.do(
                 "Bash",
                 command=(
+                    f"printf ASK_HTTP_GATE_STARTED > '{started}'; "
                     f"for i in $(seq 1 1200); do test -f '{gate}' && break; "
                     "sleep 0.05; done; printf ASK_HTTP_GATE"
                 ),
                 description="wait for answer",
             )
+            initial_gate = json.loads(content[3:])
+
+            class InitialGate(headless_contract.Directives):
+                def __getitem__(self, index):
+                    if index == 0:
+                        return initial_gate
+                    return super().__getitem__(index)
+
+            machine.server.state["actions"] = InitialGate()
+
+            async def wait_initial_gate():
+                # A tool event can contain the command before Bash runs it.
+                # The file and exact work must agree before HTTP Ask creation.
+                async with asyncio.timeout(30):
+                    while True:
+                        if native_runner is not None and handle is not None:
+                            ping = await native_runner.dispatch("ping", {})
+                            assert native_runner.process is not None
+                            assert native_runner.process.returncode is None, ping
+                            logical_handle = handle.session.agent_handle
+                            if (
+                                started.exists()
+                                and ping["alive"]
+                                and ping["working"]
+                                and ping["work_id"] is not None
+                                and chat.has_running_turn(topic, logical_handle)
+                                and runtime.work_in_flight(topic, logical_handle)
+                                == uuid.UUID(ping["work_id"])
+                            ):
+                                return
+                        await asyncio.sleep(0.01)
+
         else:
             content = "先保留这个会话，等我回答。"
         with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
             post_message(
                 client, str(topic), "alice", {"content": f"<@{asker}> " + content}
             )
-            observed = _until(
-                ws,
-                lambda frame: (
-                    frame["type"] == "error"
-                    or (
-                        not mode.startswith("history-multi")
-                        and frame["type"] == "event_block"
-                        and "ASK_HTTP_GATE" in str(frame["block"])
-                    )
-                    or (mode.startswith("history-multi") and frame["type"] == "done")
-                ),
-            )
-            assert observed["type"] != "error", observed
+            if mode.startswith("history-multi"):
+                observed = _until(
+                    ws, lambda frame: frame["type"] in ("done", "error")
+                )
+                assert observed["type"] != "error", observed
+            else:
+                client.portal.call(wait_initial_gate)
             if not mode.startswith("history-multi"):
                 assert native_runner.working
                 asked = client.post(

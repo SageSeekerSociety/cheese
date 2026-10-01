@@ -164,7 +164,8 @@ def test_ask_requires_a_valid_topic_scoped_credential(client):
         json=body,
         headers={"X-Cheese-Token": ""},
     )
-    assert without_token.status_code == 401
+    assert without_token.status_code == 403
+    assert "登录" in without_token.text
 
     other = _topic(client)
     wrong_topic = client.post(
