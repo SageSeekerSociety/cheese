@@ -106,17 +106,21 @@ def test_new_full_service_process_reuses_original_native_executor(
         )
         with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
             ws.send_json({"type": "message", "content": "@芝士 " + directive})
-            _until(
+            observed = _until(
                 ws,
                 lambda frame: (
-                    (
-                        frame["type"] == "event_block"
-                        and "PROCESS_RECOVERY" in str(frame["block"])
+                    frame["type"] == "error"
+                    or (
+                        (
+                            frame["type"] == "event_block"
+                            and "PROCESS_RECOVERY" in str(frame["block"])
+                        )
+                        if mode == "busy"
+                        else frame["type"] == "done"
                     )
-                    if mode == "busy"
-                    else frame["type"] == "done"
                 ),
             )
+            assert observed["type"] != "error", observed
 
         async def replace_backend():
             if mode == "idle":

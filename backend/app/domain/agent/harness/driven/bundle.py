@@ -13,6 +13,7 @@ from pathlib import Path
 #: What every runner imports, whatever it drives.
 SHARED = (
     "domain/agent/service.py",
+    "domain/delivery/input_identity.py",
     "domain/agent/harness/__init__.py",
     "domain/agent/harness/driven/journal.py",
     "domain/agent/harness/driven/runner.py",
@@ -32,6 +33,7 @@ def build(
         "app/__init__.py": "",
         "app/domain/__init__.py": "",
         "app/domain/agent/__init__.py": "",
+        "app/domain/delivery/__init__.py": "",
         "app/domain/agent/harness/driven/__init__.py": "",
         f"{package}/__init__.py": "",
     }
