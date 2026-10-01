@@ -112,13 +112,13 @@ describe('现场还在路上的时候', () => {
 })
 
 describe('AI 那几行的头像', () => {
-  it('头像上的字和它旁边的名字是同一个队友', async () => {
+  it('头像和它旁边的名字是同一个队友', async () => {
     getTranscript.mockResolvedValue({ data: [aiSaid('a', '看过了')], total: 1 })
     const { container } = open({ 'cheese-t1': '评审' })
 
     await waitFor(() => expect(container.querySelector('.site-msg')).not.toBeNull())
     expect(container.querySelector('.site-msg__name')?.textContent?.trim()).toBe('评审')
-    // 写死的话这里会是「芝」——头像和名字当场对不上。
-    expect(container.querySelector('.site-msg .cheese-avatar')?.textContent?.trim()).toBe('评')
+    // 写死的话头像会是「芝士」——头像和名字当场对不上。
+    expect(container.querySelector('.site-msg .cheese-avatar')?.getAttribute('aria-label')).toBe('评审')
   })
 })

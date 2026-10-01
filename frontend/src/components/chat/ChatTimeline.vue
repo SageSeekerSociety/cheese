@@ -11,7 +11,7 @@ import type { Ref } from 'vue'
 import type { Block, Topic } from '../../cx_types'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
-import type { NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
 import { computed } from 'vue'
@@ -71,7 +71,7 @@ const props = defineProps<{
   isExternal: (handle: string) => boolean
   avatarSrc: (handle: string) => string | null
   displayName: (m: Block) => string
-  noticeAgentName: (m: Block, notice: PlatformNotice) => string | null
+  noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
   parentOf: (m: Block) => Block | undefined
   showReplyCue: (m: Block) => boolean
   fmtTime: (iso: string) => string
@@ -130,8 +130,9 @@ const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
     if (!row.notice || !prev?.notice) return false
-    const name = props.noticeAgentName(row.block, row.notice)
-    if (!name || name !== props.noticeAgentName(prev.block, prev.notice)) return false
+    const agent = props.noticeAgent(row.block, row.notice)
+    const before = props.noticeAgent(prev.block, prev.notice)
+    if (!agent || !before || agent.name !== before.name || agent.handle !== before.handle) return false
     if (props.splitMarkers.before.has(row.block.id) || row.block.id === props.unreadAnchorId) return false
     if (dayKey(prev.block.created_at) !== dayKey(row.block.created_at)) return false
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
@@ -243,7 +244,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :block="m"
           :notice="notice"
           :run="run"
-          :name="noticeAgentName(m, notice)"
+          :agent="noticeAgent(m, notice)"
           :cont="noticeCont[i]"
           :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
           :agent-name="agentName"

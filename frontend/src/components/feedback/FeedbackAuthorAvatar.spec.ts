@@ -12,8 +12,8 @@
  *    同一张脸；按 handle 派生的首字母至少彼此不同 —— 区分人正是头像唯一的活。
  *    `getAvatarUrl` 对空值返回的正是那张默认图，所以这一条测的是「有没有人绕过判空」。
  *
- * agent 那一支不看 id：agent 没有自己挑的图，它的标记是 `CheeseAvatar`（深色方块 +
- * 名字首字），上面传什么 id 都不该变成一张图片。
+ * agent 那一支不看 id：agent 没有自己挑的图，它的标记是 `CheeseAvatar`，上面传什么
+ * id 都不该变成一张图片。
  */
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -49,7 +49,7 @@ describe('FeedbackAuthorAvatar', () => {
     expect(getByText('A')).toBeTruthy()
   })
 
-  it('agent 画的是那个深色方块，不是一张图片', () => {
+  it('agent 画的是 AI 队友的头像，不是一张图片', () => {
     const { container } = mountAvatar({ isAgent: true, avatarId: 7 })
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('.cheese-avatar')).not.toBeNull()

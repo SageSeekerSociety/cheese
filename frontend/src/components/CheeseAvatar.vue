@@ -1,65 +1,70 @@
 <script setup lang="ts">
-// AI 队友的头像 — one identity everywhere (spec §8.4 人格唯一). A confident dark
-// mark: an inverse rounded-square + light glyph. NOT amber (amber is a rare
-// accent, never an avatar). Shapes follow GitHub: people are circles, an AI
-// teammate is a rounded square — the shape alone tells the two apart.
+// AI 队友的头像 — one identity everywhere (spec §8.4 人格唯一)：一块超椭圆，里面
+// 一双胶囊眼，一大一小，整体偏右，像把脸转向了说话的一方。样子和由来见
+// docs/brand.md「AI 队友头像」。
 //
-// 字取名字的第一个字，因为一个项目可以有好几个 AI 队友：写死的「芝」会让换过
-// 队友的房间里，头像和它旁边的名字对不上。
+// 形状：人是圆的，团队、空间、项目是圆角方块（squareRadius），AI 队友单独是超椭圆，
+// 形状本身就把三者分开。底色不用琥珀（琥珀留给主操作）。
 //
-// 底色也按名字算（和人的头像同一套 avatarColor）。名字怎么起都行，常有好几位
-// 第一个字相同（芝士GLM、芝士派），一排同色的「芝」只能靠读名字分辨；换成各自
-// 的底色，一眼就分得开。种子用名字而不是 handle：用的地方大多只拿得到名字，
-// 而且改了名字、字变了，底色跟着变也说得通。
+// 一个项目可以有好几个 AI 队友，它们的脸一样，靠底色分：底色按 handle 从一组深色里
+// 取一档（agentTone），不按名字——队友改名之后颜色不能跟着变。没有 handle 的地方
+// （官网示例、演示房间）拿名字当种子。
 import { computed } from 'vue'
 
 import { t } from '../i18n'
-import { avatarColor, avatarInitial, squareRadius } from '../utils/avatar'
+import { agentTone } from '../utils/avatar'
 
-const props = withDefaults(defineProps<{ size?: number | string; name?: string }>(), {
+const props = withDefaults(defineProps<{ size?: number | string; name?: string; handle?: string | null }>(), {
   size: 28,
   name: undefined,
+  handle: null,
 })
 
-// 没给名字时是默认的那一位：字和底色都按它的默认名取，不然会是一块中性灰。
+// 没给名字时是默认的那一位：读屏读它的默认名，底色也按这个名字取。
 const shownName = computed(() => props.name || t('work.agentAvatar.defaultName'))
-const glyph = computed(() => avatarInitial(shownName.value))
-const ground = computed(() => avatarColor(shownName.value))
-// 字号和圆角都跟着头像走，不跟着外面的字号走：同一个 20px 的头像放进 13px 的
-// 事件行和放进 14px 的正文里，字不该一大一小；圆角按边长的比例取，缩小之后才不会
-// 看着更圆，和旁边 28px 的那一个像同一个东西。
+
 const px = computed(() => Number(props.size))
+const tone = computed(() => agentTone(props.handle || shownName.value))
 </script>
 
 <template>
-  <div
+  <svg
     class="cheese-avatar"
-    :style="{
-      width: px + 'px',
-      height: px + 'px',
-      fontSize: Math.round(px * 0.45) + 'px',
-      borderRadius: squareRadius(px),
-      backgroundColor: ground,
-    }"
+    :width="px"
+    :height="px"
+    viewBox="0 0 100 100"
+    role="img"
+    :aria-label="shownName"
+    :data-tone="tone"
   >
-    <span class="cheese-avatar__glyph">{{ glyph }}</span>
-  </div>
+    <path class="cheese-avatar__tile" d="M50 0C88 0 100 12 100 50S88 100 50 100S0 88 0 50S12 0 50 0Z" />
+    <rect class="cheese-avatar__eye" x="42.5" y="44.5" width="13" height="21" rx="6.5" />
+    <rect class="cheese-avatar__eye" x="66" y="46" width="10" height="16" rx="5" />
+  </svg>
 </template>
 
 <style scoped>
 .cheese-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   flex: 0 0 auto;
-  /* 底色是 avatarColor() 按名字给的（内联），两套主题一样；它保证白字过 4.5:1，
-     所以字是写死的白，和人的头像同一个理由（room-row.css 的 .im-avatar）。 */
-  /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色，底色不随主题变。 */
-  color: #fff;
   user-select: none;
 }
-.cheese-avatar__glyph {
-  font-weight: 600;
-  line-height: 1;
+.cheese-avatar__eye {
+  fill: var(--agent-ink);
+}
+.cheese-avatar[data-tone='0'] .cheese-avatar__tile {
+  fill: var(--agent-tone-0);
+}
+.cheese-avatar[data-tone='1'] .cheese-avatar__tile {
+  fill: var(--agent-tone-1);
+}
+.cheese-avatar[data-tone='2'] .cheese-avatar__tile {
+  fill: var(--agent-tone-2);
+}
+.cheese-avatar[data-tone='3'] .cheese-avatar__tile {
+  fill: var(--agent-tone-3);
+}
+.cheese-avatar[data-tone='4'] .cheese-avatar__tile {
+  fill: var(--agent-tone-4);
 }
 </style>

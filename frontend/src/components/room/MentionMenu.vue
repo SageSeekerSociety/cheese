@@ -13,6 +13,7 @@ import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import { nextTick, ref } from 'vue'
 
 import { avatarColor, avatarInitial } from '../../utils/avatar'
+import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 
 import { t } from '@/i18n'
@@ -84,14 +85,12 @@ defineExpose({ scrollActiveIntoView })
               <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
               </span>
-              <!-- AI 队友的底色按名字算（和 CheeseAvatar 一样）：几位都叫「芝士…」的队友
-                   首字相同，只能靠颜色分开。 -->
-              <span
+              <CheeseAvatar
                 v-else-if="mm.kind === 'member' && mm.agent"
-                class="mention-avatar"
-                :style="{ backgroundColor: avatarColor(mm.label) }"
-                >{{ avatarInitial(mm.label) }}</span
-              >
+                :size="22"
+                :name="mm.label"
+                :handle="mm.handle"
+              />
               <span
                 v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
@@ -177,7 +176,7 @@ defineExpose({ scrollActiveIntoView })
   justify-content: center;
   width: 22px;
   height: 22px;
-  /* 人是圆的；AI 队友、「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。 */
+  /* 人是圆的；「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。AI 队友画 CheeseAvatar。 */
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;

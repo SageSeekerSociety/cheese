@@ -12,7 +12,7 @@ import CheeseAvatar from './CheeseAvatar.vue'
 
 import { t } from '@/i18n'
 
-defineProps<{ name: string | null; time: string; cont?: boolean }>()
+defineProps<{ name: string | null; handle?: string | null; time: string; cont?: boolean }>()
 </script>
 
 <template>
@@ -22,7 +22,7 @@ defineProps<{ name: string | null; time: string; cont?: boolean }>()
       <span class="notice-row__gutter-time">{{ time }}</span>
     </span>
     <span v-else class="notice-row__avatar" :title="name" :aria-label="name" role="img">
-      <CheeseAvatar :size="28" :name="name" />
+      <CheeseAvatar :size="28" :name="name" :handle="handle" />
     </span>
     <div class="notice-row__body">
       <div v-if="!cont" class="notice-row__meta">

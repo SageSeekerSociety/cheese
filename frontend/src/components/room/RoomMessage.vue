@@ -171,7 +171,7 @@ async function onAgentTextClick(e: MouseEvent) {
         :aria-label="authorName"
         :title="authorName"
       >
-        <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" />
+        <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" />
         <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
            底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
            变的只有色块里的字。 -->

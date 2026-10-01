@@ -466,7 +466,7 @@ async function send() {
             :block="e.block"
             :notice="e.notice"
             :run="[e.block]"
-            :name="null"
+            :agent="null"
             :time="relTime(e.block.created_at)"
             :agent-name="t('work.room.card.subagent')"
             :refs="refs"

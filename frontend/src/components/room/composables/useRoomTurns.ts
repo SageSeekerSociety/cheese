@@ -71,6 +71,11 @@ export function useRoomTurns(options: {
     return { ...owners, ...turnAgents.value }
   })
 
+  /** 这一轮那位队友的 handle；认不出是谁的轮次就是 null。 */
+  function turnAgentHandle(turnId: string | null | undefined): string | null {
+    return (turnId && turnOwners.value[turnId]) || null
+  }
+
   /** 这一轮那位队友的名字；认不出是谁的轮次，才退回这个房间 AI 的名字。 */
   function turnAgentName(turnId: string | null | undefined): string {
     const owner = turnId ? turnOwners.value[turnId] : undefined
@@ -139,6 +144,7 @@ export function useRoomTurns(options: {
     turnStarts,
     workingAgentNames,
     turnAgentName,
+    turnAgentHandle,
     active,
     started,
     finished,
