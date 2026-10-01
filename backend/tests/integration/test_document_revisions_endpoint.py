@@ -144,7 +144,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
     task = delivery_task(client, tid)
 
     async def place():
-        from app.domain.agent.harness import deployment_harness
+        from app.domain.agent.harness import harness_for
         from app.domain.agent_session.services import AgentSessionService
         from app.domain.topic.models import Topic
 
@@ -159,7 +159,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
                     "channel": "central",
                     "resource_id": str(room.resource_id or room.id),
                 },
-                harness=deployment_harness(),
+                harness=harness_for(None),
             )
             await session.commit()
 

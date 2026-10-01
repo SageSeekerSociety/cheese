@@ -29,7 +29,7 @@ from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import Opening, SessionRef, deployment_harness
+from app.domain.agent.harness import Opening, SessionRef, harness_for
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.bundle import build
@@ -69,7 +69,7 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
             "resource_id": str(resource),
             "channel": "device",
         },
-        harness=deployment_harness(),
+        harness=harness_for(None),
     )
 
 
@@ -888,7 +888,7 @@ async def lease_machine(factory, topic, workspace):
     """The session's first project tool rented its machine; the lease is ready."""
     async with factory() as db:
         row = await AgentSessionService(db).ensure(
-            topic, AGENT, harness=deployment_harness()
+            topic, AGENT, harness=harness_for(None)
         )
         generation = str(uuid.uuid4())
         row.work_lease = {
