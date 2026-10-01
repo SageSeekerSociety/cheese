@@ -28,7 +28,7 @@ class _Screen(StubChannel):
         #: 时刻，所以这就是「这条会话接不接得回去」的全部证据。
         self.resume_asked: list[str | None] = []
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         self.resume_asked.append(opening.resume_token)
         return await super().ensure(session, opening)
 

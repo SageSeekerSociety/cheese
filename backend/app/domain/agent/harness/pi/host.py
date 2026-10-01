@@ -6,7 +6,9 @@ room's seat running and answers with its status. A runner already running for
 the seat is kept while it was started with the same launch (`contract`), and
 while it is working even when it was not: closing a session ends whatever it is
 doing, so a changed launch waits for the first turn that finds it idle, and
-that turn starts it again on the session's own id.
+that turn starts it again on the session's own id. The answer names the launch
+the runner left running was started with (``contract``), so the backend knows
+when a kept runner is still behind.
 
 Standard library only: this runs in the runner archive on the session host.
 """
@@ -109,7 +111,7 @@ def configure(payload: dict) -> dict:
                 or running.get("working")
                 or running.get("tasks")
             ):
-                return running
+                return {**running, "contract": previous.get("contract", "")}
             _stop(state, int(running["pid"]))
         binary = _install(payload["install"])
         agent = state / "agent"
@@ -162,7 +164,7 @@ def configure(payload: dict) -> dict:
         while process.poll() is None:
             running = ping(state)
             if running:
-                return running
+                return {**running, "contract": config["contract"]}
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"pi has not answered yet; see {state / 'runner.log'}"

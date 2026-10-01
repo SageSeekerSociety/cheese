@@ -40,7 +40,7 @@ class OldRunners(Counting):
     """Runners started before runners could hold a read: they say nothing of
     it when greeted."""
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         handle = await super().ensure(session, opening)
         return dataclasses.replace(handle, capabilities=frozenset())
 

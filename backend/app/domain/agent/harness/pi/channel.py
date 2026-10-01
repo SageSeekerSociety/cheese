@@ -82,7 +82,9 @@ class PiChannel:
             / "entries.sqlite"
         )
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, Placement)
         agent = precheck.agent_handle
@@ -154,6 +156,15 @@ class PiChannel:
                 model=model,
                 env=env,
             )
+            if (
+                live is not None
+                and (live.device_id, live.state, live.contract)
+                == (prepared.device_id, state, launch.contract)
+                and opening.resume_token in (None, "", live.session_id)
+            ):
+                # The runner that answered the last read was started with this
+                # launch, so the host would only say so again.
+                return live
             status = await self._run(
                 prepared.device_id,
                 launch.program(ship=False),
@@ -173,6 +184,7 @@ class PiChannel:
                 agent,
                 self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
                 frozenset(status.get("capabilities") or ()),
+                contract=status.get("contract", ""),
             )
 
     async def _run(self, device_id: str, program: str, *, timeout: int) -> dict:

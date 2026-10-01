@@ -81,7 +81,9 @@ def central_over_offline_hands(client, monkeypatch):
     )
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
-    central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    central._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center", sid="s1")
+    )
     central._wait_executor = AsyncMock()
     return central
 
@@ -198,7 +200,9 @@ async def test_the_hands_decide_the_workspace_not_the_memory_scope(
     hub: Any = SimpleNamespace(is_online=lambda device: True)
     channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     channel._existing_screen = lambda *args: None
-    channel._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    channel._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center", sid="s1")
+    )
     session = SessionRef(project, topic, "cheese", harness="pi")
     token = mint_scoped_token(project_id=str(project), topic_id=str(topic))
 
@@ -311,7 +315,7 @@ class HandsRefused(StubChannel):
         super().__init__()
         self.asked: list[bool] = []
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         # The turn says whether it needs hands (`Opening.needs_place`); a
         # channel with no machine to give refuses only the turn that does.
         self.asked.append(opening.needs_place)

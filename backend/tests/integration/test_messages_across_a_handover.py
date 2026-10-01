@@ -167,7 +167,7 @@ class _SlowToSetUp(StubChannel):
 
     slow: uuid.UUID | None = None
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         if session.topic_id == self.slow:
             await asyncio.Event().wait()
         return await super().ensure(session, opening)

@@ -149,7 +149,18 @@ class SessionChannel[H: Handle](Protocol):
 
     async def prepare_topic(self, **kwargs) -> tuple[bool, str]: ...
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> H: ...
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: H | None = None
+    ) -> H:
+        """The seat's session, started if it has to be.
+
+        ``live`` is the seat's handle when this process started or confirmed it
+        and its runner has answered alive on every read since. The channel
+        hands it back without asking the machine again when nothing the
+        session was started with has changed, and otherwise ensures it as if
+        it were not given.
+        """
+        ...
 
     async def call(self, handle: H, method: str, params: dict) -> dict: ...
 
@@ -207,6 +218,11 @@ class DrivenRuntime[H: Handle]:
         self.told_waiting: dict[Seat, uuid.UUID] = {}
         self.unread: UnreadProbe | None = None
         self.live: dict[Seat, H] = {}
+        # Seats whose handle this process ensured and whose runner has answered
+        # alive on every read since: what a send hands the channel as ``live``.
+        # A read that fails or says the agent process is gone takes the seat
+        # out, and only the next ensure puts it back.
+        self.answering: set[Seat] = set()
         self.subscriptions: dict[Seat, Subscription] = {}
         self.tasks: dict[Seat, asyncio.Task] = {}
         self.work: dict[Seat, uuid.UUID] = {}
@@ -529,6 +545,8 @@ class DrivenRuntime[H: Handle]:
             subscription = self.subscriptions[seat]
             try:
                 delivered = await subscription.drain(wait=self._wait_s(seat))
+                if not subscription.heard.get("alive", True):
+                    self.answering.discard(seat)
                 self.unreachable.pop(seat, None)
                 if live := subscription.heard.get("live"):
                     await self._show(seat, live)
@@ -550,6 +568,7 @@ class DrivenRuntime[H: Handle]:
                     if verdict := self.verdict(seat):
                         await self._end_by_verdict(handle, verdict)
             except DeviceOffline:
+                self.answering.discard(seat)
                 # A room whose machine is switched off is the ordinary state of
                 # a platform nobody is using this minute, and this loop exists
                 # to wait it out. Logged as an exception it was two ERROR lines
@@ -566,6 +585,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except DeviceCallError as exc:
+                self.answering.discard(seat)
                 # The machine is there and said no — the runner's socket is not
                 # up yet (a cold one can take about a minute) or its home is gone.
                 # Either way the next read is what tells, and the machine's
@@ -595,6 +615,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except httpx.TransportError as exc:
+                self.answering.discard(seat)
                 # The connection owner is being replaced, or the socket to it
                 # went while this read was in flight. Retrying is what this loop
                 # is for, and the owner is back within seconds — but at ERROR
@@ -613,6 +634,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except Exception:
+                self.answering.discard(seat)
                 # The runner outlives a backend or connector outage. Re-reading
                 # is safe because the landing cursor only moves after the
                 # persistence callback returned.
@@ -716,6 +738,7 @@ class DrivenRuntime[H: Handle]:
         await self._activity(handle.session.project_id, seat, work, False)
         self.closed.add(work)
         self.live.pop(seat, None)
+        self.answering.discard(seat)
 
     async def ensure(self, session, opening, *, work_id=None) -> H:
         seat = self._seat_of(session)
@@ -728,8 +751,18 @@ class DrivenRuntime[H: Handle]:
             with contextlib.suppress(DeviceCallError):
                 await self.interrupt(session)
             await self.close(session)
-        handle = await self.channel.ensure(session, opening)
+        task = self.tasks.get(seat)
+        live = (
+            self.live.get(seat)
+            if seat in self.answering and task is not None and not task.done()
+            else None
+        )
+        handle = await self.channel.ensure(session, opening, live)
         await self._attach(handle)
+        # Only a runner that says when it has news is heard from between sends;
+        # an old one is pinged instead, so nothing here vouches for it.
+        if LONG_POLL in handle.capabilities:
+            self.answering.add(seat)
         return handle
 
     async def send(
@@ -862,6 +895,7 @@ class DrivenRuntime[H: Handle]:
             await asyncio.gather(task, return_exceptions=True)
         subscription = self.subscriptions.pop(seat, None)
         self.live.pop(seat, None)
+        self.answering.discard(seat)
         self.work.pop(seat, None)
         self.woken.pop(seat, None)
         self.clocks.pop(seat, None)
@@ -893,6 +927,7 @@ class DrivenRuntime[H: Handle]:
             held.clear()
         self.unreachable.clear()
         self.told_waiting.clear()
+        self.answering.clear()
 
     async def close(self, session: SessionRef) -> None:
         seat = self._seat_of(session)
