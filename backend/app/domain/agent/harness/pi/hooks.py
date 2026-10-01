@@ -116,6 +116,8 @@ async def run(
     # Taken first: the paths the hooks read are the machine's own, and the
     # first call that reaches it may be told to read the repository first.
     await asyncio.to_thread(machine.take)
+    if not await asyncio.to_thread(machine.has_hooks, event):
+        return args
     calls = [(name, machine.spelled(seen)) for name, seen in shown(tool, args)]
     updated = []
     for index, (name, seen) in enumerate(calls):

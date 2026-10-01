@@ -57,6 +57,23 @@ WORK_READY = (
 )
 
 
+#: The project's settings, as the executor reads them for its hooks
+#: (`project_hooks.run`): each file that is there, parsed, or its text when it
+#: does not parse.
+SETTINGS = """import json, os, sys
+found = []
+for name in (".claude/settings.json", ".claude/settings.local.json"):
+    path = os.path.join(sys.argv[1], name)
+    if os.path.isfile(path):
+        text = open(path, encoding="utf-8", errors="replace").read()
+        try:
+            found.append(json.loads(text))
+        except ValueError:
+            found.append(text)
+print(json.dumps(found))
+"""
+
+
 class WorkReady(RuntimeError):
     """The machine was taken just now, and the repository has instructions the
     session has not read: the operation is not run, and these are its answer."""
@@ -103,6 +120,8 @@ class Machine:
         # What the repository said when the session first reached the machine
         # (`take`): the session reads it then, and every turn after.
         self.instructions = ""
+        # The project's settings as `has_hooks` last read them.
+        self.settings: list | None = None
 
     # --- where things are ------------------------------------------------------
 
@@ -315,9 +334,13 @@ class Machine:
 
     def _on_machine(self, script: str) -> dict:
         """One of this package's scripts, run in the checkout on the machine."""
+        return self._on_machine_text(script_text(script))
+
+    def _on_machine_text(self, program: str):
+        """A Python program run in the checkout on the machine; what it printed,
+        as JSON."""
         output = self._check(
-            f"exec python3 - {_quote(self.workspace)}",
-            stdin=script_text(script).encode(),
+            f"exec python3 - {_quote(self.workspace)}", stdin=program.encode()
         )
         return json.loads(output)
 
@@ -337,6 +360,26 @@ class Machine:
         return [str(self.mirror) + skill for skill in found["skills"]]
 
     # --- the project's hooks ----------------------------------------------------
+
+    def has_hooks(self, event: str) -> bool:
+        """Whether the project has anything for the machine to run or check
+        around a call at `event`: a hook for it, or (before a call) a
+        `permissions.deny`. Asked of the project's settings once and kept until
+        `forget_settings`, so a project without hooks costs its calls nothing."""
+        if self.settings is None:
+            self.settings = self._on_machine_text(SETTINGS)
+        for source in self.settings:
+            if not isinstance(source, dict):
+                return True  # unreadable: the executor says why
+            if (source.get("hooks") or {}).get(event):
+                return True
+            if event == "PreToolUse" and (source.get("permissions") or {}).get("deny"):
+                return True
+        return False
+
+    def forget_settings(self) -> None:
+        """The project's settings may have changed: ask again before a call."""
+        self.settings = None
 
     def hooks(
         self,

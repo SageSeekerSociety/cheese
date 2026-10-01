@@ -432,6 +432,8 @@ class Runner(runner.Runner[Journal]):
         if operation == "write":
             data = base64.b64decode(params["data"])
             await asyncio.to_thread(machine.write_file, path, data)
+            if ".claude/settings" in path:
+                machine.forget_settings()
             return {}
         if operation == "mkdir":
             await asyncio.to_thread(machine.mkdir, path)
@@ -685,6 +687,10 @@ class Runner(runner.Runner[Journal]):
         assert self.client is not None
         if not steering:
             self.aborting = False
+            # A turn reads the project's settings afresh: a command of the last
+            # one may have changed its hooks.
+            if self.machine is not None:
+                self.machine.forget_settings()
         if work_id is not None and not steering:
             # Persist attribution before the call: entries can appear
             # before the command's own acknowledgement comes back.

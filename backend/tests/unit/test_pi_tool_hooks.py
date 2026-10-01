@@ -345,3 +345,59 @@ def test_an_edit_reaches_the_hooks_as_claude_codes_edit_calls(tmp_path):
     }
     # PostToolUse sees what ran, after the hook's correction.
     assert events[2]["tool_input"]["new_string"] == "the first"
+
+
+def test_a_project_without_hooks_asks_the_machine_nothing_per_call(tmp_path):
+    """Hooks run on the machine, so asking about one is a round trip there. A
+    project that has none pays for that once, not twice per call; one that
+    gains a rule mid-session has it hold once the settings are read again."""
+    work = tmp_path / "room"
+    work.mkdir()
+
+    async def session():
+        runner = Runner(tmp_path / "state")
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            await runner.start(
+                Opening("system prompt", None, agent_handle="teammate"),
+                binary=shim(tmp_path),
+                cwd=str(tmp_path),
+                env={"PATH": "/usr/bin:/bin"},
+                args=[],
+                target=target,
+            )
+            assert runner.machine is not None
+            asked: list[str] = []
+            control = runner.machine.client.control
+
+            def counted(request, preparing=None):
+                asked.append(request["subtype"])
+                return control(request, preparing=preparing)
+
+            runner.machine.client.control = counted  # type: ignore[method-assign]
+            ask = {"tool": "bash", "input": {"command": "echo hi"}}
+            try:
+                for index in range(3):
+                    for event in ("PreToolUse", "PostToolUse"):
+                        await call(
+                            runner.state,
+                            "hooks",
+                            {**ask, "event": event, "id": f"c{index}"},
+                        )
+                before = list(asked)
+                (work / ".claude").mkdir()
+                (work / ".claude/settings.json").write_text(
+                    json.dumps({"permissions": {"deny": ["Bash(echo *)"]}})
+                )
+                # The next turn reads the settings again.
+                await call(runner.state, "send", {"input_id": "t2", "text": "再来"})
+                denied = await call(
+                    runner.state, "hooks", {**ask, "event": "PreToolUse", "id": "c9"}
+                )
+                return before, denied
+            finally:
+                await runner.close()
+
+    before, denied = asyncio.run(session())
+    assert "tool_hooks" not in before
+    assert len(before) <= 2, before  # the settings, read once
+    assert "permissions.deny" in denied["denied"]
