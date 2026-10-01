@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RasterRegion } from './designRegion'
+import type { RasterRegion, RasterSelection } from './designRegion'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -7,8 +7,10 @@ import DesignRasterRegion from './DesignRasterRegion.vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{ src: string; alt: string; identity: string }>()
-const emit = defineEmits<{ region: [region: RasterRegion] }>()
+const props = withDefaults(defineProps<{ src: string; alt: string; identity: string; selectionEnabled?: boolean }>(), {
+  selectionEnabled: true,
+})
+const emit = defineEmits<{ region: [selection: RasterSelection] }>()
 const pane = ref<HTMLElement | null>(null)
 const image = ref<HTMLImageElement | null>(null)
 const natural = ref({ width: 0, height: 0 })
@@ -17,6 +19,7 @@ const zoom = ref(1)
 const fitted = ref(true)
 const selecting = ref(false)
 const selectedRegion = ref<RasterRegion | null>(null)
+const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
 const scale = computed(() => {
   if (!fitted.value) return zoom.value
   const width = natural.value.width
@@ -32,6 +35,17 @@ const dimensions = computed(() =>
     : {}
 )
 let observer: ResizeObserver | null = null
+const selectedStyle = computed(() => {
+  const region = selectedRegion.value
+  return region
+    ? {
+        left: `${region.x * scale.value}px`,
+        top: `${region.y * scale.value}px`,
+        width: `${region.width * scale.value}px`,
+        height: `${region.height * scale.value}px`,
+      }
+    : {}
+})
 watch(
   pane,
   (element) => {
@@ -54,17 +68,38 @@ watch(
   },
   { flush: 'sync' }
 )
-function loaded() {
-  if (image.value) natural.value = { width: image.value.naturalWidth, height: image.value.naturalHeight }
+watch(
+  () => props.selectionEnabled,
+  () => {
+    selecting.value = false
+    selectedRegion.value = null
+  },
+  { flush: 'sync' }
+)
+function loaded(event: Event) {
+  const current = image.value
+  if (current && event.currentTarget === current && current.getAttribute('src') === props.src)
+    natural.value = { width: current.naturalWidth, height: current.naturalHeight }
 }
 function setZoom(value: number) {
   zoom.value = Math.max(0.1, Math.min(3, value))
   fitted.value = false
 }
-function selected(region: RasterRegion) {
+function selected(selection: RasterSelection) {
+  const current = image.value
+  if (
+    !props.selectionEnabled ||
+    !current ||
+    selection.identity !== regionIdentity.value ||
+    selection.src !== props.src ||
+    current.getAttribute('src') !== selection.src ||
+    selection.naturalWidth !== current.naturalWidth ||
+    selection.naturalHeight !== current.naturalHeight
+  )
+    return
   selecting.value = false
-  selectedRegion.value = region
-  emit('region', region)
+  selectedRegion.value = selection.region
+  emit('region', { ...selection, identity: props.identity })
 }
 onBeforeUnmount(() => observer?.disconnect())
 </script>
@@ -80,20 +115,33 @@ onBeforeUnmount(() => observer?.disconnect())
         +
       </button>
       <button type="button" :aria-pressed="fitted" @click="fitted = true">{{ t('design.fit') }}</button>
-      <button type="button" :disabled="!natural.width" :aria-pressed="selecting" @click="selecting = !selecting">
+      <button
+        type="button"
+        :disabled="!natural.width || !selectionEnabled"
+        :title="selectionEnabled ? undefined : t('design.regionUnavailable')"
+        :aria-pressed="selecting"
+        @click="selecting = !selecting"
+      >
         {{ t(selecting ? 'design.cancelRegion' : 'design.region') }}
       </button>
+      <slot name="actions" />
     </div>
     <output v-if="selectedRegion" class="t-meta" aria-live="polite">{{
       t('design.selectedRegion', selectedRegion)
     }}</output>
     <div ref="pane" class="design-image__pane" @scroll="selecting = false">
       <div class="design-image__sheet" :style="dimensions">
-        <img ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
+        <img :key="`${identity}:${src}`" ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
+        <div
+          v-if="selectedRegion && !selecting"
+          class="design-image__selection"
+          :style="selectedStyle"
+          aria-hidden="true"
+        />
         <DesignRasterRegion
           :image="image"
-          :enabled="selecting"
-          :identity="`${identity}:${scale}:${available}`"
+          :enabled="selecting && selectionEnabled"
+          :identity="regionIdentity"
           @select="selected"
           @cancel="selecting = false"
         />
@@ -146,5 +194,12 @@ onBeforeUnmount(() => observer?.disconnect())
   display: block;
   width: 100%;
   height: 100%;
+}
+.design-image__selection {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 </style>
