@@ -80,6 +80,11 @@ class ComputeProvider(Protocol):
     @property
     def deferred_work(self) -> bool: ...
 
+    # Is the session process on the machine its tools run on? False means it
+    # runs on the session host and its tools reach the machine from there.
+    @property
+    def hands_here(self) -> bool: ...
+
     # Does this backend assemble its machine's model environment itself? The
     # platform then sends the model CHOICE and nothing else, and the turn's
     # supply route is the deployment's rather than the profile's. Asked instead

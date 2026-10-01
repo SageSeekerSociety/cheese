@@ -337,6 +337,8 @@ class StubChannel:
     provisions_machine = False
     deferred_work = False
     builds_model_env = False
+    #: A Claude Code session: on the session host, its tools reaching elsewhere.
+    hands_here = False
     #: The id a new session's runner is started with (``--session-id``): known
     #: before the process has written anything, which is why the runtime can
     #: announce it the moment the session is opened.
@@ -840,6 +842,19 @@ def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
     ca = tmp_path_factory.mktemp("meter-ca") / "proxy-ca.pem"
     ca.write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
     monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca))
+
+
+@pytest.fixture(autouse=True)
+def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
+    """A launched session keeps its temporary files under the system's
+    `/var/tmp`, which outlives the test that launched it. Each test gets a
+    directory of its own instead; the one test that removes a room through the
+    shipped cleanup program puts the real one back."""
+    from app.domain.agent import machine_launcher
+
+    monkeypatch.setattr(
+        machine_launcher, "SESSION_TMP", str(tmp_path_factory.mktemp("var-tmp"))
+    )
 
 
 @pytest.fixture(autouse=True)
