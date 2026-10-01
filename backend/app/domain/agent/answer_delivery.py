@@ -35,7 +35,8 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
             await session.scalars(
                 select(Block.id).where(
                     Block.topic_id == topic_id,
-                    Block.meta["delivery_event_id"].astext == str(delivery.event_id),
+                    Block.meta["delivery_event_id"].as_string()
+                    == str(delivery.event_id),
                 )
             )
         )
