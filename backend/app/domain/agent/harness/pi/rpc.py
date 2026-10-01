@@ -77,7 +77,16 @@ class Connection:
         future = asyncio.get_running_loop().create_future()
         self.pending[request_id] = future
         try:
-            await self.send({"id": request_id, "type": command, **fields})
+            try:
+                await self.send({"id": request_id, "type": command, **fields})
+            except BaseException:
+                # Nobody will await the reply now. pi exiting fails the write
+                # and, in ``listen``, this pending reply too, often before the
+                # write's own error arrives: that failure is read here, or the
+                # loop reports it as an exception never retrieved.
+                if not future.cancel():
+                    future.exception()
+                raise
             return await future
         finally:
             self.pending.pop(request_id, None)
