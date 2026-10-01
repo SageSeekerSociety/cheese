@@ -126,7 +126,7 @@ def hook_module(proxy_source: str, target: dict, platform_tools: list[str]) -> s
 def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
     """Allow the native server's tools by name, the table's rows included."""
     allowed = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for name in ("invoke", "platform_request", "project_tools", *platform_tools):
+    for name in ("invoke", "project_tools", *platform_tools):
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)

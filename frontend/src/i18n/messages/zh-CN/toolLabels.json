@@ -85,6 +85,7 @@
   "cheeseRoutinePause": "暂停周期任务",
   "cheeseRoutineReport": "交回执行结果",
   "cheeseDeliverAt": "定时发送",
+  "platformRequest": "调用平台接口",
   "bashStart": "启动后台任务",
   "bashRead": "读取任务输出",
   "bashWrite": "向任务输入",
