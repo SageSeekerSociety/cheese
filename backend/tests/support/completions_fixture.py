@@ -1,6 +1,6 @@
 """A deterministic OpenAI Chat Completions endpoint, for driving a real pi.
 
-pi reaches its model through `openai-completions` (`pi/device_launch.provider`),
+pi reaches its model through `openai-completions` (`pi/launch.provider`),
 so a scripted turn is a script of completions: each request the model endpoint
 receives is answered with the next step, in order. A step is a tool call
 (``{"tool": name, "arguments": {...}}``) or plain text (``{"text": ...}``); a

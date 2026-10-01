@@ -14,7 +14,6 @@ and which hooks ran around it. The machine's checkout never names the server.
 import argparse
 import asyncio
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -231,10 +230,12 @@ def test_a_session_at_the_placeholder_lists_no_stdio_server():
 
 
 def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
-    """pi's runner is its MCP client: it starts the type's server on the
-    machine as it starts the checkout's, and runs the project's hooks around
+    """pi's runner is its MCP client: the room's machine starts the type's
+    server as it starts the checkout's, and runs the project's hooks around
     the call."""
+    from app.domain.agent.harness.pi.machine import Machine
     from app.domain.agent.harness.pi.runner import Runner
+    from tests.support.room_machine import room_machine
 
     work = tmp_path / "room"
     (work / ".claude").mkdir(parents=True)
@@ -245,34 +246,33 @@ def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
     runner = Runner(tmp_path / "pi")
 
     async def session():
-        try:
-            await runner.open_servers(
-                workspace=str(work),
-                env=dict(os.environ),
-                remote=None,
-                agent={"lint": _definition(tmp_path)},
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            runner.machine = Machine(
+                {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
             )
-            home = runner.write_extension(
-                {"index.ts": "export default function () {}\n", "background.py": "\n"}
-            )
-            answers: list[object] = []
-            for index, note in enumerate(("hello", "FORBIDDEN")):
-                try:
-                    answers.append(
-                        await runner.dispatch(
-                            "mcp",
-                            {
-                                "id": f"call-{index}",
-                                "tool": "mcp__lint__where",
-                                "arguments": {"note": note},
-                            },
+            try:
+                await runner.open_servers()
+                home = runner.write_extension(
+                    {"index.ts": "export default function () {}\n"}
+                )
+                answers: list[object] = []
+                for index, note in enumerate(("hello", "FORBIDDEN")):
+                    try:
+                        answers.append(
+                            await runner.dispatch(
+                                "mcp",
+                                {
+                                    "id": f"call-{index}",
+                                    "tool": "mcp__lint__where",
+                                    "arguments": {"note": note},
+                                },
+                            )
                         )
-                    )
-                except Exception as error:  # noqa: BLE001 — the answer under test
-                    answers.append(error)
-            return (home / "platform.json").read_text(), answers
-        finally:
-            await runner.close()
+                    except Exception as error:  # noqa: BLE001 — the answer under test
+                        answers.append(error)
+                return (home / "platform.json").read_text(), answers
+            finally:
+                await runner.close()
 
     manifest, (allowed, denied) = asyncio.run(session())
     assert [tool["name"] for tool in json.loads(manifest)["mcp"]] == [
@@ -351,3 +351,42 @@ def test_claude_code_lists_and_calls_the_types_server_on_the_machine(
     finally:
         contract.stop_remote(session)
         sys.path.remove(str(SCRIPTS))
+
+
+def test_two_pi_sessions_on_one_machine_each_get_their_own_answer(tmp_path):
+    """pi numbers its tool calls per session, so two sessions on one room's
+    machine can both make a `call-0`. The machine answers each with its own
+    call, never with what it answered the other one."""
+    from app.domain.agent.harness.pi.machine import Machine
+    from app.domain.agent.harness.pi.runner import Runner
+    from tests.support.room_machine import room_machine
+
+    work = tmp_path / "room"
+    work.mkdir()
+
+    async def ask(name: str, target: dict, note: str):
+        runner = Runner(tmp_path / name)
+        runner.journal.remember("session_id", f"session-{name}")
+        runner.machine = Machine(
+            {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+        )
+        try:
+            await runner.open_servers()
+            return await runner.dispatch(
+                "mcp",
+                {
+                    "id": "call-0",
+                    "tool": "mcp__lint__where",
+                    "arguments": {"note": note},
+                },
+            )
+        finally:
+            await runner.close()
+
+    async def both():
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            return await ask("one", target, "first"), await ask("two", target, "second")
+
+    first, second = asyncio.run(both())
+    assert "first" in first["content"][0]["text"]
+    assert "second" in second["content"][0]["text"]

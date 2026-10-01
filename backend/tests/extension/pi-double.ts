@@ -167,6 +167,59 @@ export async function runner(answer: (request: any) => any) {
   return { address, asked, close: () => server.close() };
 }
 
+/** A runner whose `shell` is a machine: each command really runs (here, under
+ * /bin/sh), its output read back from an offset the way the runner hands it
+ * on. Anything else is answered by `other`. */
+export async function machine(other: (request: any) => any = () => ({ result: {} })) {
+  const { spawn } = await import("node:child_process");
+  const commands = new Map<string, { out: Buffer; exit?: number; pid: number }>();
+  let next = 0;
+  return runner((request) => {
+    if (request.method !== "shell") return other(request);
+    const params = request.params;
+    if (params.operation === "start") {
+      const id = `c${++next}`;
+      const child = spawn("/bin/sh", ["-c", params.command], {
+        cwd: params.cwd,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const record: { out: Buffer; exit?: number; pid: number } = {
+        out: Buffer.alloc(0),
+        pid: child.pid as number,
+      };
+      const take = (data: Buffer) => {
+        record.out = Buffer.concat([record.out, data]);
+      };
+      child.stdout.on("data", take);
+      child.stderr.on("data", take);
+      child.on("close", (code, signal) => {
+        record.exit = code ?? -(signal === "SIGKILL" ? 9 : 15);
+      });
+      commands.set(id, record);
+      return { result: { id } };
+    }
+    const record = commands.get(params.id);
+    if (!record) return { error: "unknown command" };
+    if (params.operation === "signal") {
+      try {
+        process.kill(-record.pid, params.signal);
+      } catch {
+        /* gone */
+      }
+      return { result: { running: record.exit === undefined } };
+    }
+    const data = record.out.subarray(params.offset);
+    return {
+      result: {
+        data: data.toString("base64"),
+        offset: record.out.length,
+        ...(record.exit === undefined ? {} : { exit: record.exit }),
+      },
+    };
+  });
+}
+
 let loaded = 0;
 
 /** Load the extension against a manifest, the way the runner writes one. */
@@ -179,8 +232,7 @@ export async function load(manifest: Partial<Record<string, unknown>> = {}) {
     JSON.stringify({
       socket: "",
       state: home,
-      python: "",
-      background: "",
+      workspace: home,
       jobs,
       tools: CATALOG,
       unavailable: "",

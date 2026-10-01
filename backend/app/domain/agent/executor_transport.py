@@ -791,8 +791,12 @@ class RemoteClient:
                 and (params or {}).get("subtype") == "shell"
                 and (params or {}).get("operation") == "start"
             )
-            # A project's hooks run on the machine that holds the project.
-            or (method == "control" and (params or {}).get("subtype") == "tool_hooks")
+            # A project's hooks run on the machine that holds the project, and
+            # its files are there (pi's tools take them one at a time).
+            or (
+                method == "control"
+                and (params or {}).get("subtype") in ("tool_hooks", "files")
+            )
         ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
@@ -816,7 +820,7 @@ class RemoteClient:
                         )
             if params and method == "control":
                 params = dict(params)
-                for field in ("body", "cwd"):
+                for field in ("body", "cwd", "path"):
                     if isinstance(params.get(field), str):
                         params[field] = params[field].replace(
                             original_workspace, workspace

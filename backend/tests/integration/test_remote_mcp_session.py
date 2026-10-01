@@ -15,25 +15,18 @@ import os
 import subprocess
 import sys
 import threading
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.executor_transport import RemoteClient
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import Placement
-from app.domain.agent.harness.pi.channel import PiChannel
-from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.remote_mcp import service
 from tests.integration import test_remote_mcp as base
+from tests.support.room_machine import room_machine
 
 # The same upstream and project as the settings tests.
 upstream = base.upstream
@@ -188,46 +181,19 @@ for line in sys.stdin:
 """
 
 # What the runner writes beside the manifest; its content is not the subject.
-EXTENSION = {"index.ts": "export default function () {}\n", "background.py": "\n"}
-
-
-def _pi_launch(client, pid: uuid.UUID, tid: str) -> PiLaunch:
-    """The launch `PiChannel` hands the machine for a turn in this room."""
-    hub: Any = SimpleNamespace(
-        is_online=lambda _machine: True,
-        call_executor=AsyncMock(return_value={"alive": True, "session_id": "s"}),
-    )
-    device = DeviceChannel(hub=hub, session_factory=client.test_factory)
-    device.precheck = AsyncMock(  # type: ignore[method-assign]
-        return_value=Placement("machine", 1, "cheese-x", rented=True)
-    )
-    device.ensure_ready = AsyncMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(resource_id=uuid.UUID(tid))
-    )
-    channel = PiChannel(device)
-    channel._remember = AsyncMock()  # type: ignore[method-assign]
-    ref = SessionRef(pid, uuid.UUID(tid), "cheese", harness="pi")
-    client.portal.call(lambda: channel.ensure(ref, Opening(system_prompt="Room")))
-    opened = device.ensure_ready.await_args
-    assert opened is not None
-    return opened.kwargs["launch"]
+EXTENSION = {"index.ts": "export default function () {}\n"}
 
 
 def _pi_room(client, upstream, api: str, tmp_path, monkeypatch):
     """A room whose project has a connected remote server, a checkout with a
-    stdio server, and the runner's environment on the machine."""
+    stdio server, and the runner's environment on the session host."""
     pid = _project(client, upstream)
     tid = _topic(client, pid)
     _connect(client, pid)
-    remote = _pi_launch(client, pid, tid).configuration(str(pid))["remote_mcp"]
+    remote = json.loads(_target(client, pid, tid, tmp_path).read_text())["remote_mcp"]
     work = tmp_path / "room"
     work.mkdir()
     (work / "notes.py").write_text(STDIO_SERVER)
-    stdio = {"command": sys.executable, "args": [str(work / "notes.py")]}
-    # The checkout cannot take a remote server's name for a process of its own.
-    (work / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"notes": stdio, "tracker": stdio}})
-    )
     room = mint_scoped_token(project_id=str(pid), topic_id=tid)
     for name, value in (
         ("CHEESE_API", api),
@@ -238,27 +204,38 @@ def _pi_room(client, upstream, api: str, tmp_path, monkeypatch):
     return tid, remote, work
 
 
-def _pi_calls(runner: PiRunner, work: Path, remote: dict, calls: list[dict]):
-    """Open the runner's servers, then answer the extension's `mcp` requests;
-    an answer that failed comes back as its exception."""
+def _pi_calls(
+    runner: PiRunner, tmp_path: Path, work: Path, remote: dict, calls: list[dict]
+):
+    """Open the runner's servers on a room machine whose checkout runs one stdio
+    server, then answer the extension's `mcp` requests; an answer that failed
+    comes back as its exception."""
+    stdio = {"command": sys.executable, "args": [str(work / "notes.py")]}
 
     async def session():
-        try:
-            await runner.open_servers(
-                workspace=str(work), env=dict(os.environ), remote=remote
-            )
-            home = runner.write_extension(EXTENSION)
-            answers: list[object] = []
-            for index, call in enumerate(calls):
-                try:
-                    answers.append(
-                        await runner.dispatch("mcp", {"id": f"call-{index}", **call})
-                    )
-                except Exception as error:  # noqa: BLE001 — the answer under test
-                    answers.append(error)
-            return (home / "platform.json").read_text(), answers
-        finally:
-            await runner.close()
+        with room_machine(
+            tmp_path / "machine",
+            checkout=work,
+            env={"NO_PROXY": "127.0.0.1"},
+            mcp_servers={"notes": stdio},
+        ) as target:
+            runner.machine = Machine({**target, "remote_mcp": remote})
+            try:
+                await runner.open_servers()
+                home = runner.write_extension(EXTENSION)
+                answers: list[object] = []
+                for index, call in enumerate(calls):
+                    try:
+                        answers.append(
+                            await runner.dispatch(
+                                "mcp", {"id": f"call-{index}", **call}
+                            )
+                        )
+                    except Exception as error:  # noqa: BLE001 — the answer under test
+                        answers.append(error)
+                return (home / "platform.json").read_text(), answers
+            finally:
+                await runner.close()
 
     return asyncio.run(session())
 
@@ -266,21 +243,17 @@ def _pi_calls(runner: PiRunner, work: Path, remote: dict, calls: list[dict]):
 def test_a_pi_session_calls_the_projects_servers_without_their_token(
     client, upstream, backend_over_http, tmp_path, monkeypatch
 ):
-    """pi has no MCP client; its runner is one. It lists the checkout's stdio
+    """pi has no MCP client; its runner is one. It lists the machine's stdio
     server and the connected remote one as `mcp__<server>__<tool>`, calls each
     where it is served, and holds nothing that carries the upstream token."""
     api, requests = backend_over_http
-    pid = _project(client, upstream)
-    tid = _topic(client, pid)
-    # Nothing connected yet: the launch carries no remote server.
-    assert _pi_launch(client, pid, tid).configuration(str(pid))["remote_mcp"] is None
-
     tid, remote, work = _pi_room(client, upstream, api, tmp_path, monkeypatch)
     # Only the connected server: `search` still needs a value set.
     assert remote == {"path": f"/topics/{tid}/mcp", "servers": ["tracker"]}
 
     manifest, (local, tracked) = _pi_calls(
         PiRunner(tmp_path / "pi"),
+        tmp_path,
         work,
         remote,
         [
@@ -292,6 +265,7 @@ def test_a_pi_session_calls_the_projects_servers_without_their_token(
         "mcp__notes__where",
         "mcp__tracker__whoami",
     ]
+    # The stdio server ran on the machine, in its checkout.
     assert local == {
         "content": [{"type": "text", "text": f"{work} hi"}],
         "isError": False,
@@ -324,9 +298,9 @@ if event['tool_input'].get('note') == 'forbidden':
 def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
     client, upstream, backend_over_http, tmp_path, monkeypatch
 ):
-    """pi fires no project hooks and has no executor to run them, so its runner
-    runs them around every MCP call, stdio or remote: PreToolUse before, and a
-    deny means the server is never called; PostToolUse after, with the result."""
+    """pi fires no project hooks, so the room's machine runs them around every
+    MCP call of its session, stdio or remote: PreToolUse before, and a deny
+    means the server is never called; PostToolUse after, with the result."""
     api, _ = backend_over_http
     _, remote, work = _pi_room(client, upstream, api, tmp_path, monkeypatch)
     # One line per event: the event as the hook received it.
@@ -364,6 +338,7 @@ def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
 
     _, answers = _pi_calls(
         PiRunner(tmp_path / "pi"),
+        tmp_path,
         work,
         remote,
         [
@@ -398,11 +373,9 @@ def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
         ("PreToolUse", "mcp__notes__where", "forbidden"),
         ("PreToolUse", "mcp__tracker__whoami", "forbidden"),
     ]
-    assert events[1]["tool_response"]["content"][0]["text"] == f"{work} hi"
-    assert events[3]["tool_response"]["content"][0]["text"] == (
-        "reached with oauth; note=from pi"
-    )
-    assert events[0]["tool_use_id"] == "call-0"
+    # Paired by one id, which names the session as well as the call.
+    assert events[0]["tool_use_id"] == events[1]["tool_use_id"]
+    assert events[0]["tool_use_id"].endswith("-call-0")
 
 
 def test_a_stdio_server_still_goes_to_the_rooms_machine(tmp_path):

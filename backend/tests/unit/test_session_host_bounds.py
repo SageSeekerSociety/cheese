@@ -206,6 +206,7 @@ async def _room_on(db_factory, harness: str) -> uuid.UUID:
     topic_id = await a_topic(db_factory)
     async with db_factory() as session:
         topic = await TopicRepository(session).get(topic_id)
+        assert topic is not None
         await session.execute(
             update(Project)
             .where(Project.id == topic.project_id)
@@ -216,9 +217,12 @@ async def _room_on(db_factory, harness: str) -> uuid.UUID:
 
 
 @pytest.mark.anyio
-async def test_only_a_turn_whose_session_starts_on_the_session_host_is_gated_there(
+async def test_every_harness_starts_its_session_on_the_session_host(
     db_factory, monkeypatch
 ):
+    """pi's session runs on the session host like the others', its tools
+    reaching the room's machine from there, so its turns wait for the host's
+    memory too."""
     from app.core.config import settings
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.harness import CLAUDE_CODE, PI
@@ -226,9 +230,8 @@ async def test_only_a_turn_whose_session_starts_on_the_session_host_is_gated_the
 
     monkeypatch.setattr(settings, "agent_harnesses", [CLAUDE_CODE, PI])
     pool = build_compute_pool()
-    beside = await work_policy(db_factory, pool, await _room_on(db_factory, PI))
-    central = await work_policy(
-        db_factory, pool, await _room_on(db_factory, CLAUDE_CODE)
-    )
-    assert beside is not None and beside["on_session_host"] is False
-    assert central is not None and central["on_session_host"] is True
+    for harness in (PI, CLAUDE_CODE):
+        policy = await work_policy(
+            db_factory, pool, await _room_on(db_factory, harness)
+        )
+        assert policy is not None and policy["on_session_host"] is True, harness

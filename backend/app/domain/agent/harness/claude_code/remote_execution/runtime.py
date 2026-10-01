@@ -73,6 +73,9 @@ RELEASE_FILES = {
     "remote-execution/mcp_process.py": (
         "app/domain/agent/harness/claude_code/remote_execution/mcp_process.py"
     ),
+    "remote-execution/machine_files.py": (
+        "app/domain/agent/harness/claude_code/remote_execution/machine_files.py"
+    ),
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
@@ -116,15 +119,10 @@ def write_json(path, value):
 
 
 @functools.cache
-def portable():
-    """The Windows primitives shipped beside this file; see portable.py."""
-    return runpy.run_path(str(Path(__file__).with_name("portable.py")))
-
-
-@functools.cache
-def mcp_process():
-    """The stdio MCP client (`mcp_process.py`), shipped beside this file."""
-    return runpy.run_path(str(Path(__file__).with_name("mcp_process.py")))
+def beside(name):
+    """A module shipped beside this file (`RELEASE_FILES`): Windows primitives
+    (`portable`), the stdio MCP client, the files pi's tools take."""
+    return runpy.run_path(str(Path(__file__).with_name(name + ".py")))
 
 
 @functools.cache
@@ -141,13 +139,13 @@ def project_hooks():
 
 def lock(file, blocking=True):
     if sys.platform == "win32":
-        portable()["lock"](file, blocking)
+        beside("portable")["lock"](file, blocking)
     else:
         fcntl.flock(file, fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def resolve_program(argv):
-    return portable()["which"](argv) if sys.platform == "win32" else argv
+    return beside("portable")["which"](argv) if sys.platform == "win32" else argv
 
 
 def socket_path(state):
@@ -463,7 +461,7 @@ class Executor:
                     )
                 ).open("a")
                 try:
-                    process = mcp_process()["MCPProcess"]
+                    process = beside("mcp_process")["MCPProcess"]
                     self.clients[server] = process(command, cwd, env, log)
                 finally:
                     log.close()
@@ -806,7 +804,7 @@ class Executor:
             return {"running": False}
         pid = entry["process"].pid
         if sys.platform == "win32":
-            portable()["terminate_tree"](pid)
+            beside("portable")["terminate_tree"](pid)
             return {"running": True}
         pids = self._tree(pid)
         with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -1124,6 +1122,8 @@ class Executor:
             )
         if kind == "shell":
             return self.shell(params)
+        if kind == "files":
+            return beside("machine_files")["answer"](params, str(self.root))
         if kind == "background":
             # The named Bash call returns now, its command running on. Named by
             # the call rather than by what is waiting: a call that is only
@@ -1891,7 +1891,7 @@ class Executor:
                 "protocol_version": PROTOCOL_VERSION,
                 "release": self.config.get("release"),
                 "upgrading": self.upgrading,
-                "capabilities": ["prepare", "idle_upgrade"]
+                "capabilities": ["prepare", "idle_upgrade", "machine_files"]
                 + (
                     ["cli_worker"]
                     if self.cli_worker is not None and self.cli_worker.poll() is None
@@ -2118,7 +2118,7 @@ def main():
             with (state / "service.log").open("a") as log:
                 options = {"stdin": subprocess.DEVNULL, "stdout": log, "stderr": log}
                 process = (
-                    portable()["popen_daemon"](argv, **options)
+                    beside("portable")["popen_daemon"](argv, **options)
                     if sys.platform == "win32"
                     else subprocess.Popen(argv, start_new_session=True, **options)
                 )

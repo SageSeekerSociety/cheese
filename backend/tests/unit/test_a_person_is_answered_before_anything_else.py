@@ -44,13 +44,14 @@ from app.domain.agent.harness.driven.runner import (
     REPLY_OWED,
     socket_path,
 )
-from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provider
+from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
 from tests.support.responses_fixture import Responses
+from tests.support.room_machine import room_machine
 
 BACKEND = Path(__file__).resolve().parents[2]
 SCRIPTS = BACKEND.parent / "scripts/remote_execution"
@@ -497,7 +498,6 @@ async def pi(tmp_path: Path, steps: list):
     config.mkdir()
     (config / "models.json").write_text(provider(model.url, "fixture-model"))
     machine = tmp_path / "work"
-    machine.mkdir()
     env = {
         "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(tmp_path),
@@ -506,35 +506,42 @@ async def pi(tmp_path: Path, steps: list):
         "PI_TELEMETRY": "0",
         **backend.room_env(),
     }
-    # The runner runs the platform's tools in its own process, as on a machine.
+    # The runner runs the platform's tools in its own process, as on the host.
     saved = {key: os.environ.get(key) for key in env}
     os.environ.update(env)
     runner = PiRunner(tmp_path / "state")
-    launch = PiLaunch(system_prompt="FIXTURE", model="fixture-model")
-    try:
-        await runner.start(
-            Opening(
-                system_prompt="FIXTURE", model="fixture-model", agent_handle="cheese"
-            ),
-            binary=pi_binary(),
-            cwd=str(machine),
-            env=env,
-            args=launch.arguments(),
-            extension=extension(),
-            notice=PLATFORM_NOTICE,
-        )
-        session = Session(machine, model.requests, runner.dispatch)
-        session.backend = backend
-        yield session
-    finally:
-        await runner.close()
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        model.close()
-        backend.close()
+    here = tmp_path / "session-host"
+    here.mkdir()
+    with room_machine(
+        tmp_path / "machine", env={"PATH": env["PATH"]}, checkout=machine
+    ) as target:
+        try:
+            await runner.start(
+                Opening(
+                    system_prompt="FIXTURE",
+                    model="fixture-model",
+                    agent_handle="cheese",
+                ),
+                binary=pi_binary(),
+                cwd=str(here),
+                env=env,
+                args=arguments("fixture-model"),
+                target=target,
+                extension=extension(),
+                notice=PLATFORM_NOTICE,
+            )
+            session = Session(machine, model.requests, runner.dispatch)
+            session.backend = backend
+            yield session
+        finally:
+            await runner.close()
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            model.close()
+            backend.close()
 
 
 HARNESSES = [claude_code, codex, pi]

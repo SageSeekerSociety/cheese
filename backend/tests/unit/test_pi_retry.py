@@ -28,6 +28,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentRetrying,
 )
+from tests.support.room_machine import NO_MACHINE
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -64,6 +65,7 @@ async def replay(tmp_path: Path, recording: str) -> list[dict]:
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=[],
+        target=NO_MACHINE,
     )
     try:
         await call(

@@ -4,7 +4,6 @@ import uuid
 from typing import NamedTuple
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import place
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
 from app.domain.agent.platform_failures import classify_session_start
@@ -127,22 +126,12 @@ class Channel:
 
     # --- 地点：这条通道租出来的那双手 (结论 24、60) ---------------------------
     #
-    # 物理事实写在这里，能力位（名字在 `place`）从它推出来，上游读能力位。
-    # 直接声明一张能力表的话，它会退化成「写它那天恰好有这个本事的通道」的清单，
-    # 而继承一份表的子类会连那张过期的清单一起继承走——`compute.py` 里那条恒为真
-    # 的 `isinstance(c, DeviceChannel)` 就是这么来的。
+    # 物理事实写在这里，上游读它，不读类名：按类名问的那条
+    # `isinstance(c, DeviceChannel)` 读起来像一条规则，实际恒为真。
 
     #: 这台机器是谁开的。它今天只回答一个问题：一台这样进来的机器归哪条通道认领
     #: （`owns` 就在下面）。
     supply: Supply = Supply.self_hosted
-
-    #: 这条通道上的手，是不是就是跑会话进程的那台机器。False 表示工具要再跳一程
-    #: 到执行机上去——进程和工作区不在一起的骨架才需要那一跳。
-    hands_here: bool = True
-
-    def capabilities(self) -> frozenset[str]:
-        """这个地点给得出什么 —— 由上面那些物理事实推出来，不是各家自己报一份。"""
-        return frozenset({place.HANDS_HERE}) if self.hands_here else frozenset()
 
     def owns(self, supply: Supply) -> bool:
         """一台这样进来的机器，是不是这条通道该认领的。

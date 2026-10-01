@@ -265,13 +265,15 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 
 
 def toolchain_fetcher() -> str:
-    """Place the room's document toolchain on this machine, once per machine.
+    """Place the room's toolchain (`toolchain.PLACEMENTS`) on this machine, once
+    per machine.
 
     These are capabilities, not dependencies — a room that never writes a
-    document needs none of them — so nothing here may fail a launch or delay
-    one. It runs detached behind a directory lock, and a room that asks for
-    pandoc while the fetch is still running finds it missing and says so, which
-    is the honest answer and the one `skills/documents` now gives.
+    document needs none of the document tools, and a search without ripgrep
+    falls back to git — so nothing here may fail a launch or delay one. It runs
+    detached behind a directory lock, and a room that asks for pandoc while the
+    fetch is still running finds it missing and says so, which is the honest
+    answer and the one `skills/documents` now gives.
 
     Under $REAL_HOME, not the session home: the tools belong to the MACHINE.
     Every room on it shares one copy, and the copy outlives any of them. The

@@ -37,9 +37,9 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
     override = (project_settings or {}).get("max_concurrent_turns")
     if isinstance(override, int) and override > 0:
         max_concurrent = override
-    # The backend the turn will run on, chosen by the call the turn makes. Only
-    # one whose hands are elsewhere starts its session on the session host; a
-    # harness that runs beside its workspace (pi) starts it on that machine.
+    # The backend the turn will run on, chosen by the call the turn makes. Every
+    # harness runs its session on the session host and reaches the room's
+    # machine from there; a turn with no backend here starts no session at all.
     _harness, provider = compute.choose(
         project_settings, resolve_compute_id(project_settings, topic)
     )
@@ -50,5 +50,5 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
         "credits_exhausted": (
             not balance["unlimited"] and balance["credits_remaining"] <= 0
         ),
-        "on_session_host": provider is not None and not provider.hands_here,
+        "on_session_host": provider is not None,
     }

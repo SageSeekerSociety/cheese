@@ -18,13 +18,25 @@ that settings array (`!`, `+`, `-` and globs, which switch discovered skills on
 and off), and the `.gitignore`, `.ignore` and `.fdignore` files pi honours
 inside a skill directory.
 
-Standard library only: this runs in the runner archive on the machine.
+The project is on the room's machine and pi on the session host, so this runs
+on the machine as a script (`python3 - <checkout>`, its source on stdin,
+`machine.py`) and prints the skills with their files; the runner keeps a copy of
+them where pi can load them. Standard library only, importing nothing of ours.
 """
 
+from __future__ import annotations
+
+import base64
 import json
 import os
 import pwd
+import sys
 from pathlib import Path
+
+#: What one skill's directory may bring across, file by file and in all: a
+#: skill is instructions and the small scripts they name, not a dataset.
+FILE_LIMIT = 2 * 1024 * 1024
+TOTAL_LIMIT = 16 * 1024 * 1024
 
 
 def entries(directory: Path, loose_at_top: bool, root: Path | None = None) -> list[str]:
@@ -120,3 +132,36 @@ def project_skills(cwd: str) -> list[str]:
             seen.add(real)
             unique.append(path)
     return unique
+
+
+def with_files(cwd: str) -> dict:
+    """The skills at `cwd` and every file each one carries, by absolute path:
+    a SKILL.md brings its whole directory (the references and scripts it names
+    are in it), a loose skill file only itself. A file over `FILE_LIMIT`, or past
+    `TOTAL_LIMIT` in all, is left on the machine, where a command still finds it."""
+    skills = project_skills(cwd)
+    files: dict[str, str] = {}
+    total = 0
+    for skill in skills:
+        if os.path.basename(skill) != "SKILL.md":
+            members = [skill]
+        else:
+            members = []
+            for directory, names, found in os.walk(os.path.dirname(skill)):
+                names[:] = sorted(n for n in names if n not in (".git", "node_modules"))
+                members += [os.path.join(directory, name) for name in sorted(found)]
+        for member in members:
+            try:
+                size = os.path.getsize(member)
+                if member in files or size > FILE_LIMIT or total + size > TOTAL_LIMIT:
+                    continue
+                with open(member, "rb") as stream:
+                    files[member] = base64.b64encode(stream.read()).decode()
+                total += size
+            except OSError:
+                continue
+    return {"skills": skills, "files": files}
+
+
+if __name__ == "__main__":
+    print(json.dumps(with_files(sys.argv[1])))
