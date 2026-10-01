@@ -1,6 +1,6 @@
 # Preview transport checkpoint
 
-This branch is separate from frontend PR #2303. It starts at frontend 4bde9419; frontend follow-up 007c66aa is not copied here. No merge or deployed-image verification is claimed.
+This transport-only branch is separate from merged frontend PR #2303 and has merged current main. The PR diff does not change frontend or SlidesDesign files. No network merge or deployed-image verification is claimed.
 
 ## Implemented boundaries
 
@@ -31,11 +31,11 @@ All four HTTP pairs preserve the tested gzip body bytes, 206/416 Content-Range a
 
 Eight WS direction cases completed with exit 0, recording legacy degradation rather than asserting it fixed. New/new preserves 1013 with Chinese reason in both directions. New helper workers/writers and sockets exit in both backend combinations. Old helper browser-origin close leaves the app awaiting input until the peer's five-second timeout; old backend reports upstream closure as normal 1000. New backend with old helper reports unknown upstream closure as 1011. All tested WS pairs preserve the repeated escaped query and text echo. Production content-host authorization is bypassed at the local viewer boundary.
 
-The repository live suite is under tests/unit and receives its pure layer marker from tests/conftest.py because its fixture closure has no DB fixtures. The existing test workflow runs tests/ with the selected TEST_LAYER, including pure; no workflow execution is claimed for this unpublished follow-up.
+The repository live suite is under tests/unit and receives its pure layer marker from tests/conftest.py because its fixture closure has no DB fixtures. The existing test workflow runs tests/ with the selected TEST_LAYER, including pure. At f44b02c3, RequiredCI 36810266243's pure job passed, but backend lint failed on two helper typing errors; that run is not CI success for the PR.
 
 ## Resource-bound verification
 
-Four test_preview_transport_bounds.py cases passed against independent raw TCP app peers. Sixteen pending HTTP streams reject the seventeenth and admit a replacement after cancel; sixteen WS streams separately reject the seventeenth while an HTTP sibling succeeds, then admit a WS replacement after cancel. Canceled app peers observe EOF and owned workers/writers join. A non-reading app WS peer receives a bounded outbox flood while an HTTP sibling still completes; after release the app observes EOF and reader/writer exit. A non-reading shared tunnel with a reduced socket send buffer forces a physical blocked send; its shortened test deadline closes the actual tunnel and app sockets and joins the helper session/worker. The tests shorten only the deadline, not the send/shutdown implementation. They do not prove real WAN timing or all admission races.
+Four test_preview_transport_bounds.py cases passed against independent raw TCP app peers. Sixteen pending HTTP streams reject the seventeenth and admit a replacement after cancel; sixteen WS streams separately reject the seventeenth while an HTTP sibling succeeds, then admit a WS replacement after cancel. Canceled app peers observe EOF and owned workers/writers join. A non-reading app WS peer receives a bounded outbox flood while an HTTP sibling still completes; after release the app observes EOF and reader/writer exit. A non-reading shared tunnel with a reduced socket send buffer and a shortened deadline verifies timer teardown: the actual tunnel and app sockets close, and the helper session/worker join. The author logs do not observe native sendall entry or establish kernel write blocking. An independent Windows run entered native sendall with fd=-1 and duration zero because the timer had already closed the socket during Python masking; this does not establish the same timing in the author's Linux run. The test does not prove kernel write blocking, real WAN timing or all admission races.
 
 ## Still required
 

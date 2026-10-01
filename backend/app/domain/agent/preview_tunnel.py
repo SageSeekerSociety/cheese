@@ -51,6 +51,7 @@ import struct
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from urllib.parse import urlparse
 
 logger = logging.getLogger("cheese.preview")
@@ -468,7 +469,11 @@ class Session:
     """One WebSocket to the backend, and the streams multiplexed over it."""
 
     def __init__(
-        self, sock: socket.socket, ports: PortSource, *, capabilities=frozenset()
+        self,
+        sock: socket.socket,
+        ports: PortSource,
+        *,
+        capabilities: Iterable[str] = (),
     ) -> None:
         self._sock = sock
         self._ports = ports
@@ -762,6 +767,11 @@ class Session:
                 state.queued_bytes -= len(payload)
             try:
                 with state.write_lock:
+                    with self._lock:
+                        sock = state.socket
+                        cancelled = state.cancelled.is_set()
+                    if sock is None or cancelled:
+                        return
                     opcode = (
                         _OP_CLOSE
                         if payload[0] == 2
@@ -777,7 +787,7 @@ class Session:
                     timer.daemon = True
                     try:
                         timer.start()
-                        send_frame(state.socket, payload[1:], opcode)
+                        send_frame(sock, payload[1:], opcode)
                     finally:
                         timer.cancel()
                 if opcode == _OP_CLOSE:
