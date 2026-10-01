@@ -178,6 +178,8 @@ const {
   send,
   askBusy,
   pickOption,
+  postChecklist,
+  changeChecklist,
   onReact,
   setReply,
   undoTitle,
@@ -292,6 +294,7 @@ defineExpose({ send, connected })
         @open-card="emit('open-card', $event)"
         @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
         @answer="pickOption"
+        @checklist="changeChecklist"
         @download="downloadAttachment"
         @jump="openAt"
         @avatar-error="onAvatarError"
@@ -341,6 +344,7 @@ defineExpose({ send, connected })
         :atts="pendingAtts"
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"
+        :post-checklist="postChecklist"
         @send="onComposerSend"
         @clear-reply="clearReply"
         @files="(files) => void addFiles(files)"

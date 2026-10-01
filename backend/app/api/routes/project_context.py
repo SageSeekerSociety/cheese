@@ -1,10 +1,10 @@
 """Find what the project already knows, from where the caller stands.
 
 One query across the rooms the caller may read: room titles, messages and
-documents, decisions, tasks, library file names and the artifact list. Every
+documents, weekly reports, tasks, library file names and the artifact list. Every
 word of the query has to be found; each group lists its best matches first (see
 `app.domain.search.bm25`), library file names aside, which are matched as
-written. `limit` caps each group, and each kind of record (message, decision…)
+written. `limit` caps each group, and each kind of record (message, weekly…)
 within its group. Each hit names where it lives, so it can be cited; rooms the
 caller may not read are not searched and are only counted.
 
@@ -43,7 +43,6 @@ SEARCHED_BLOCKS = (
     BlockKind.doc,
     BlockKind.doc_node,
     BlockKind.comment,
-    BlockKind.decision,
     BlockKind.weekly,
 )
 

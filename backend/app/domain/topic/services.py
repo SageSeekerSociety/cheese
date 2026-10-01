@@ -64,11 +64,8 @@ from app.domain.topic.overview import (
     ACTIVE_TOPICS_LIMIT,
     CLOSED_TOPICS_KEY,
     CLOSED_TOPICS_LIMIT,
-    DECISIONS_KEY,
-    DECISIONS_LIMIT,
     MILESTONES_KEY,
     MILESTONES_LIMIT,
-    decision_summary,
     first_sentence,
     overview_auto_blocks,
     topic_status,
@@ -1176,7 +1173,7 @@ class TopicService:
         return await self.doc_of_room(place.room_id)
 
     async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
-        """总览房间（项目根话题）的 ②~⑤，结构化（#1889）。
+        """总览房间（项目根话题）的 ②~④，结构化（#1889）。
 
         总览只属于根话题：别的房间读得到的是它们自己的实况文档，没有人从那里看
         项目全局。非根话题给的是一句 404 —— 它名下确实没有这么一件东西，这和
@@ -1196,7 +1193,7 @@ class TopicService:
         all_topics: list[Topic] | None = None,
         roster: list[dict] | None = None,
     ) -> dict[str, list[dict]]:
-        """②~⑤ 的每一行：活跃话题、最近决策卡、里程碑、已结束话题的结论。
+        """②~④ 的每一行：活跃话题、里程碑、已结束话题的结论。
 
         全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次就是
         新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
@@ -1253,13 +1250,9 @@ class TopicService:
             doc = docs.get(topic.id)
             return topic_status(doc.content) if doc is not None else None
 
-        decisions = (
-            await self._blocks.list_by_kind_for_project(project_id, BlockKind.decision)
-        )[:DECISIONS_LIMIT]
         milestones, _ = await MilestoneService(self._session).list_for_project(
             project_id
         )
-        title_of = {t.id: t.title for t in all_topics}
         return {
             ACTIVE_TOPICS_KEY: [
                 {
@@ -1274,15 +1267,6 @@ class TopicService:
                     "conclusion": conclusion(t, prefer_card=False),
                 }
                 for t in live
-            ],
-            DECISIONS_KEY: [
-                {
-                    "id": str(block.id),
-                    "text": decision_summary(block.content),
-                    "topic_id": str(block.topic_id),
-                    "topic": title_of.get(block.topic_id),
-                }
-                for block in decisions
             ],
             MILESTONES_KEY: [
                 {
@@ -1346,27 +1330,4 @@ class TopicService:
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         await DocumentWriter(self._session, summarize_doc_change)._sync_doc_nodes(
             root, content
-        )
-
-    async def add_relay_block(
-        self, *, target: Task, sender: Place, label: str, text: str
-    ) -> Block:
-        """母子传话's message block (see `app.domain.topic.relay`).
-
-        Lives here, not in `relay.py`, for one reason: writing a Block from
-        another domain's repository is the debt `tests/unit/test_domain_import_
-        guard.py` ratchets down, and this service already carries that exemption.
-        The ROOM's 芝士 is the author: a message from someone who is not on the
-        roster reads as a ghost. `refs` links back to the sender.
-        """
-        author = await self._members.resolve_agent_handle(target.room_id)
-        return await self._blocks.add(
-            project_id=target.project_id,
-            topic_id=target.room_id,
-            task_id=target.id,
-            author=author,
-            author_type=AuthorType.participant,
-            content=f"【{label}｜{sender.title}】\n{text}",
-            kind=BlockKind.message,
-            refs=[str(sender.room_id)],
         )

@@ -844,8 +844,8 @@ class AgentWorkRunner:
         performed be recognised as done — see domain.idempotency.keys.
 
         ``on_done`` fires when this turn's task finishes, whatever the outcome.
-        It exists for callers that COALESCE work onto a running turn (母子传话,
-        `domain.topic.relay`) and therefore need the moment the topic is free
+        It exists for callers that COALESCE work onto a running turn and
+        therefore need the moment the topic is free
         again; it is not an error channel and never sees the result. It runs on
         the event loop as a done-callback, so it must not block and must not
         raise — an exception there would only reach the loop's handler.

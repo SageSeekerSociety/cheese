@@ -608,7 +608,6 @@
   "assistant": {
     "label": "Ask Cheese",
     "ask": "Ask Cheese",
-    "mark": "C",
     "newConversation": "New conversation",
     "conversations": "Conversations on this task",
     "noQuestions": "No questions yet",

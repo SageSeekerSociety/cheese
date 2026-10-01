@@ -1,7 +1,7 @@
 """Living-document raw versions, write receipts and first-creation locks.
 
 Revision ID: e9c2a71d4b60
-Revises: e5c1a9f7b204
+Revises: db9718401a68
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "e9c2a71d4b60"
-down_revision = "e5c1a9f7b204"
+down_revision = "db9718401a68"
 branch_labels = None
 depends_on = None
 

@@ -213,7 +213,7 @@ def test_a_forged_credential_is_not_a_credential(client):
 
     assert _write_doc(client, tid, forged).status_code == 401
     gated = client.post(
-        f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(forged)
+        f"/topics/{tid}/weekly", json={"body": "x"}, headers=_cred(forged)
     )
     assert gated.status_code == 401
 
@@ -238,7 +238,7 @@ def test_revoking_stops_it_on_the_very_next_request(client):
 
     assert not _acts_as_cheese(client, pid, token)
     gated = client.post(
-        f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(token)
+        f"/topics/{tid}/weekly", json={"body": "x"}, headers=_cred(token)
     )
     assert gated.status_code == 401
 
@@ -271,7 +271,7 @@ def test_an_expired_credential_is_refused(client):
 
     assert not _acts_as_cheese(client, pid, expired)
     gated = client.post(
-        f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(expired)
+        f"/topics/{tid}/weekly", json={"body": "x"}, headers=_cred(expired)
     )
     assert gated.status_code == 401
 
@@ -291,8 +291,8 @@ def test_it_reaches_the_cheese_write_surface_in_every_topic(client):
 
     for tid in (first, second):
         r = client.post(
-            f"/topics/{tid}/decision",
-            json={"decision": "改用 asyncpg"},
+            f"/topics/{tid}/weekly",
+            json={"body": "改用 asyncpg"},
             headers=_cred(token),
         )
         assert r.status_code == 200, r.text
@@ -322,8 +322,8 @@ def test_the_gate_still_refuses_another_project_s_credential(client):
     their_topic = _topic(client, theirs, title="T", by="bob")
 
     topic_level = client.post(
-        f"/topics/{their_topic}/decision",
-        json={"decision": "x"},
+        f"/topics/{their_topic}/weekly",
+        json={"body": "x"},
         headers=_cred(token),
     )
     assert topic_level.status_code == 403
@@ -372,12 +372,12 @@ def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
     assert edit_events[-1]["content"] == "芝士 编辑了文档"
     assert edit_events[-1]["author_type"] == "platform"
 
-    decision = client.post(
-        f"/topics/{tid}/decision",
-        json={"decision": "记一笔"},
+    weekly = client.post(
+        f"/topics/{tid}/weekly",
+        json={"body": "记一笔"},
         headers=_cred(token),
     )
-    assert decision.json()["data"]["author"] == room_agent
+    assert weekly.json()["data"]["author"] == room_agent
 
 
 # --- 不能改坏既有的路径 -----------------------------------------------------------

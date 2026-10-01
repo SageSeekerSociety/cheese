@@ -614,7 +614,6 @@
   "assistant": {
     "label": "问芝士",
     "ask": "问芝士",
-    "mark": "芝",
     "newConversation": "新对话",
     "conversations": "这道题的对话",
     "noQuestions": "还没有提问",

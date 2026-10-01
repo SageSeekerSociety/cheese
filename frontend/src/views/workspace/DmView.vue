@@ -117,9 +117,7 @@ function handleMentionClick(handle: string) {
 }
 
 function handleOpenResource(resource: string) {
-  if (resource === 'decision') {
-    void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
-  } else if (resource === 'milestone') {
+  if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
   }
 }

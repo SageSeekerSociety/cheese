@@ -353,7 +353,7 @@ class TopicRepository:
 
         Unread = message blocks authored by OTHERS on the room's OWN line,
         created after the user's read cursor (no cursor = all of them). Only
-        kind=message counts — doc edits / events / decisions have their own
+        kind=message counts — doc edits / events / weeklies have their own
         surfaces. Other people's private chats are excluded.
 
         Threads are excluded (`task_id IS NULL`), and that is the opposite call

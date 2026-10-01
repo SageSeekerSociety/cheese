@@ -479,11 +479,6 @@ register_all_permissions()
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
-    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
-    # the receiver is in the body and is checked against the threads that room
-    # dispatched — this gate can only prove "some agent of this project", because
-    # a project-scoped credential reaches every topic of it.
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
     # 同 handle 便条：只有 agent 会调，收件人由平台比席位算出来，所以正文里没有一个
     # 「发给谁」可以被冒名。定时投递不在这里：房间里的人也设提醒（Bearer），这道闸
     # 看不见；路由自己把门（`ask_for_a_delivery`）。

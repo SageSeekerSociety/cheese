@@ -44,8 +44,8 @@ either ratchet and `.importlinter` is untouched.
 
 Ordering. This module sorts after `projects.py` (`_` > `.`) and before
 `push.py` (`projects_` < `push`), so its paths mount later in the route table
-than they did inside projects.py -- no longer between `/default-agent` and
-`/decisions`, but after every path that stays, up to `/upstream`. Every moved
+than they did inside projects.py -- no longer right after `/default-agent`,
+but after every path that stays, up to `/upstream`. Every moved
 path carries a literal `artifacts` where each route that now precedes it
 carries a literal of its own, and no route registered in between has a
 parameter in that segment, so none loses its first full match; resolving every

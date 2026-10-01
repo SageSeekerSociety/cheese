@@ -46,8 +46,8 @@ const props = defineProps<{
   selectedTopicId: string | null
   loadingTopics: boolean
   creatingTopic?: boolean
-  // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'|
-  // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
+  // Which 项目文档 is open in the main area ('charter'|'weeklies'|'memory'),
+  // or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
@@ -76,8 +76,8 @@ const emit = defineEmits<{
   // final: the platform stops renaming that room from then on.
   (e: 'rename-topic', payload: { id: string; title: string }): void
   // Open 项目文档 in the main area. The rail always asks for 章程 — the page
-  // itself carries the tabs that reach the other three.
-  (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
+  // itself carries the tabs that reach the other two.
+  (e: 'select-docs', kind: 'charter' | 'weeklies' | 'memory'): void
 }>()
 
 // ---- 数据那一半 ----
@@ -337,8 +337,8 @@ const rowSheetActions = computed<MenuAction[]>(() =>
   rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
 )
 
-// 项目文档 (C4): 章程 / 决策记录 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
-// 四选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
+// 项目文档 (C4): 章程 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
+// 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)
 </script>

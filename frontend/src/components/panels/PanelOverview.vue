@@ -58,7 +58,7 @@ const emit = defineEmits<{
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   /** 总览自动区里的一条决策 / 里程碑：面板不导航，交给 `TopicView`。 */
-  (e: 'open-resource', resource: 'decision' | 'milestone'): void
+  (e: 'open-resource', resource: 'milestone'): void
 }>()
 
 const docRef = ref<{ pulse: () => void; highlightTurn: (turnId: string) => void } | null>(null)

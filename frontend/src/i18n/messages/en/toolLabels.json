@@ -85,6 +85,7 @@
   "cheeseRoutinePause": "Pause a routine",
   "cheeseRoutineReport": "Report a run result",
   "cheeseDeliverAt": "Schedule a message",
+  "platformRequest": "Call a platform API",
   "bashStart": "Start a background task",
   "bashRead": "Read task output",
   "bashWrite": "Send input to the task",

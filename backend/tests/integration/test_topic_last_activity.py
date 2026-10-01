@@ -24,7 +24,7 @@ def _make_topic(client, project_id: str, title: str) -> str:
 
 def _add_block(client, topic_id: str, text: str) -> str:
     """Land a real block in the topic and return its created_at."""
-    r = client.post(f"/topics/{topic_id}/decision", json={"decision": text})
+    r = client.post(f"/topics/{topic_id}/weekly", json={"body": text})
     assert r.status_code == 200
     return r.json()["data"]["created_at"]
 

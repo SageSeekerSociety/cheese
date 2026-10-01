@@ -35,7 +35,7 @@ describe('the project frame', () => {
     ['/', 'workspace-project'],
     [`/topics/${TOPIC}`, 'workspace-topic'],
     ['/dm/agent:cheese', 'workspace-dm'],
-    ['/docs/decisions', 'project-docs'],
+    ['/docs/weeklies', 'project-docs'],
     ['/calendar', 'calendar'],
     ['/library', 'project-library'],
     ['/settings', 'project-settings'],
@@ -112,7 +112,7 @@ describe('links that used to work', () => {
     expect(resolved.query.topic).toBe(TOPIC)
   })
 
-  it.each(['charter', 'decisions', 'weeklies'])('sends the old /%s page to docs/:kind', async (kind) => {
+  it.each(['charter', 'weeklies'])('sends the old /%s page to docs/:kind', async (kind) => {
     const r = router()
     // A redirect only runs during navigation, and these carry a function that
     // must copy the project id across — calling resolve() would skip both.

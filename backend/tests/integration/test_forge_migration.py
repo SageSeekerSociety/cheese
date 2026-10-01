@@ -1,5 +1,6 @@
 """Existing GitHub projects keep local work without changing their remote refs."""
 
+import json
 import shutil
 from unittest.mock import AsyncMock
 
@@ -115,3 +116,40 @@ async def test_github_local_work_survives_migration_without_remote_writes(
     git(restored, "checkout", "--detach", snapshot.snapshot_sha)
     assert (restored / "file.txt").read_text() == "unpublished history\n"
     assert (restored / "new.txt").read_bytes() == b"untracked\x00bytes"
+
+
+@pytest.mark.anyio
+async def test_a_project_created_on_forgejo_leaves_nothing_to_migrate(
+    db_factory, monkeypatch, tmp_path, capsys
+):
+    """The release preflight finds no pending work, so writers keep running."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "workspaces"))
+    monkeypatch.setattr(migrate_forge, "async_session_factory", db_factory)
+    async with db_factory() as session:
+        project = Project(team_id=await a_team(session), name="Created on Forgejo")
+        session.add(project)
+        await session.flush()
+        session.add(
+            ProjectForge(
+                project_id=project.id,
+                kind="forgejo",
+                repo=f"cheese-{project.id.hex}/project",
+                url=f"https://forge.example/cheese-{project.id.hex}/project.git",
+                api_url="http://forgejo.invalid/api/v1",
+                default_branch="main",
+                account_password="sealed",
+            )
+        )
+        await session.commit()
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "migrate_forge",
+            "--backup-root",
+            str(tmp_path / "backups"),
+            "--check",
+        ],
+    )
+    await migrate_forge.main()  # Exit 2 would make the deploy stop the backend.
+    counts = json.loads(capsys.readouterr().out)
+    assert counts == {"migrated": 0, "skipped": 1, "planned": 0, "failed": 0}

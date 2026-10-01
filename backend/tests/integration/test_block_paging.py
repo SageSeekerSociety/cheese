@@ -25,7 +25,7 @@ def _topic(client) -> str:
 
 def _say(client, tid: str, text: str) -> str:
     """Append one timeline block and return its id."""
-    r = client.post(f"/topics/{tid}/decision", json={"decision": text})
+    r = client.post(f"/topics/{tid}/weekly", json={"body": text})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

@@ -9,6 +9,10 @@
 // 队友正在推进这张清单时（`live`），正在做的那一步的 ✱ 一边转一边开合，字上扫过
 // 一道光——一眼看得出它还在干活。停下来的清单（这一轮结束了、或者是更早的一张）
 // 只剩静止的 ✱：它说不出此刻有什么正在发生，就不该动。
+//
+// 写清单的人自己看它时（`editable`），每一步前面的记号是一颗按钮：点一下换到下
+// 一个状态（还没做 → 正在做 → 做完 → 还没做），整份新清单交给外面去存——存的是整
+// 份，和队友的 `todo_write` 一样。别人的清单只能看。
 import type { ChecklistMeta, TodoItem } from '../../cx_types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -24,7 +28,33 @@ const props = defineProps<{
   edited: boolean
   /** 队友此刻正在推进这张清单。 */
   live?: boolean
+  /** 这是看的人自己的清单：点记号改那一步的状态。 */
+  editable?: boolean
 }>()
+
+const emit = defineEmits<{
+  /** 改过一步之后的整份清单。 */
+  (e: 'change', items: TodoItem[]): void
+}>()
+
+const NEXT: Record<TodoItem['status'], TodoItem['status']> = {
+  pending: 'in_progress',
+  in_progress: 'completed',
+  completed: 'pending',
+}
+
+const STATUS_LABEL: Record<TodoItem['status'], string> = {
+  pending: 'work.room.checklist.statusPending',
+  in_progress: 'work.room.checklist.statusInProgress',
+  completed: 'work.room.checklist.statusCompleted',
+}
+
+function advance(item: TodoItem) {
+  emit(
+    'change',
+    props.checklist.items.map((it) => (it.id === item.id ? { ...it, status: NEXT[it.status] } : it))
+  )
+}
 
 /** 转动的 ✱ 的八条辐。 */
 const RAYS = Array.from({ length: 8 }, (_, i) => (i * 360) / 8)
@@ -94,6 +124,16 @@ const when = computed(() => {
             </g>
           </g>
         </svg>
+        <button
+          v-else-if="editable"
+          type="button"
+          class="checklist__mark checklist__toggle"
+          :aria-label="t('work.room.checklist.advance', { step: item.subject, status: t(STATUS_LABEL[item.status]) })"
+          :title="t(STATUS_LABEL[item.status])"
+          @click="advance(item)"
+        >
+          <v-icon size="14">{{ MARK[item.status] }}</v-icon>
+        </button>
         <v-icon v-else class="checklist__mark" size="14">{{ MARK[item.status] }}</v-icon>
         <span class="checklist__subject">{{ item.subject }}</span>
       </li>
@@ -139,6 +179,25 @@ const when = computed(() => {
 }
 .checklist__item.is-in_progress .checklist__mark {
   color: var(--ink);
+}
+/* 自己的清单上，记号是一颗按钮：静止时和别人的清单长得一样，只在指过去时垫一层
+   底色，说它点得动。颜色跟着那一步走（继承上面几条），不另起一套。 */
+.checklist__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 2px -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.checklist__toggle:hover {
+  background: var(--fill);
 }
 .checklist__item.is-pending .checklist__mark {
   color: var(--muted);
