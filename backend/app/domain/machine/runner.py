@@ -52,7 +52,7 @@ class MachineEnrollmentSweeper:
             # true the last time a human opened the project.
             await service.settle_reservations()
             await service.release_left_machines()
-            await service.refresh_unsettled()
+            await service.refresh_due()
             result = await service.enroll_pending()
             ready = await service.ready_topic_devices()
             # A lease MicroCloud has given up on will never appear in `ready`,

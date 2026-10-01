@@ -85,7 +85,7 @@ async def _require_project_access(
 async def list_machines(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """The project's machines, with status refreshed from MicroCloud."""
+    """The project's machines, as the background sweep last saw them."""
     await _require_project_access(project_id, db, resolver)
     service = _service(db)
     machines = await service.list_for_project(project_id)

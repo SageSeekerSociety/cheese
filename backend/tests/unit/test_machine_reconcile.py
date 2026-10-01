@@ -27,6 +27,9 @@ class _Repo:
     async def list_for_project(self, project_id):
         return list(self.machines)
 
+    async def list_due(self, limit, *, seen_before):
+        return list(self.machines)
+
     async def set_state(
         self, machine, *, status, ip, ai_mode=None, ai_status=None, seen_at=None
     ):
@@ -92,7 +95,9 @@ async def test_a_machine_the_provider_forgot_stops_being_reported():
     so a 404 upstream never reaches our books."""
     repo = _Repo([_machine()])
     client = _Client(None)  # MicroCloud 404 -> get_machine returns None
-    alive = await _service(repo, client).list_for_project(uuid.uuid4())
+    service = _service(repo, client)
+    await service.refresh_due()
+    alive = await service.list_for_project(uuid.uuid4())
 
     assert client.calls == 1, "a settled machine was never re-checked"
     assert alive == [], "a machine MicroCloud has forgotten was reported as alive"
@@ -100,35 +105,45 @@ async def test_a_machine_the_provider_forgot_stops_being_reported():
 
 
 @pytest.mark.anyio
-async def test_a_recently_checked_machine_is_not_re_fetched():
-    """This sits on a request path. Asking the provider on every read is its own
-    outage — the guard must be bounded, not unconditional."""
-    fresh = _machine(last_seen_at=datetime.now(UTC) - timedelta(seconds=5))
-    repo = _Repo([fresh])
+async def test_reading_a_projects_machines_never_asks_the_provider():
+    """Pages poll this every few seconds. With a provider round-trip per machine
+    on the read, one open page on a 48-machine project held dev's backend CPU on
+    2026-10-01."""
+    moving = _machine(status=MachineStatus.provisioning, ai_status=AiStatus.unknown)
+    overdue = _machine(last_seen_at=datetime.now(UTC) - timedelta(hours=2))
+    repo = _Repo([moving, overdue])
     client = _Client(None)
     alive = await _service(repo, client).list_for_project(uuid.uuid4())
 
     assert client.calls == 0
-    assert alive == [fresh]
+    assert alive == [moving, overdue]
+
+
+@pytest.mark.anyio
+async def test_a_read_drops_a_machine_already_known_to_be_gone():
+    gone = _machine(status=MachineStatus.deleted)
+    repo = _Repo([gone])
+    alive = await _service(repo, _Client(None)).list_for_project(uuid.uuid4())
+
+    assert alive == []
+    assert repo.deleted == [gone]
 
 
 @pytest.mark.anyio
 async def test_an_unreachable_provider_does_not_condemn_a_healthy_machine():
     """A blip is not evidence the machine is broken. Reporting `unknown` here
-    would trade one silent failure for a visible-but-wrong one, and would make
-    every later read re-fetch it."""
+    would trade one silent failure for a visible-but-wrong one."""
     from app.domain.machine.microcloud import MicroCloudError
 
     machine = _machine(last_seen_at=datetime.now(UTC) - timedelta(hours=2))
     repo = _Repo([machine])
     client = _Client(MicroCloudError("connection refused"))
-    alive = await _service(repo, client).list_for_project(uuid.uuid4())
+    await _service(repo, client).refresh_due()
 
-    assert alive == [machine]
     assert machine.status == MachineStatus.running
     assert machine.ai_status == AiStatus.disabled
-    # The attempt is still recorded, or a provider outage puts a provider
-    # timeout on every single read.
+    # The attempt is still recorded, or a provider outage makes the sweep spend
+    # every tick on the same machines.
     assert machine.last_seen_at is not None
     assert (datetime.now(UTC) - machine.last_seen_at).total_seconds() < 5
 
@@ -142,23 +157,22 @@ async def test_a_still_provisioning_machine_reports_unknown_when_unreachable():
     machine = _machine(status=MachineStatus.provisioning, ai_status=AiStatus.unknown)
     repo = _Repo([machine])
     client = _Client(MicroCloudError("connection refused"))
-    await _service(repo, client).list_for_project(uuid.uuid4())
+    await _service(repo, client).refresh_due()
 
     assert machine.status == MachineStatus.unknown
 
 
 async def test_the_sweep_refreshes_before_it_decides(monkeypatch):
-    """Enrolment reads state that only a READ path ever updated. Machine 473
-    sat unused for 13 minutes on 2026-08-14 while MicroCloud had it settled
-    the whole time — the sweep was deciding on a value nothing in the sweep
-    refreshes."""
+    """Enrolment decides on state only this refresh updates. Machine 473 sat
+    unused for 13 minutes on 2026-08-14 while MicroCloud had it settled the
+    whole time — the sweep was deciding on a value nothing in it refreshed."""
     from pathlib import Path
 
     source = (
         Path(__file__).resolve().parents[2] / "app" / "domain" / "machine" / "runner.py"
     )
     text = source.read_text()
-    assert text.index("refresh_unsettled()") < text.index("enroll_pending()")
+    assert text.index("refresh_due()") < text.index("enroll_pending()")
 
 
 async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
@@ -167,7 +181,7 @@ async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
     from app.domain.machine.microcloud import MicroCloudError
 
     class _Repo:
-        async def list_unsettled(self, limit):
+        async def list_due(self, limit, *, seen_before):
             return [
                 SimpleNamespace(hostname=name, status=MachineStatus.starting)
                 for name in ("a", "b")
@@ -184,5 +198,5 @@ async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
 
     service.refresh = _refresh  # type: ignore[method-assign]
 
-    assert await MachineService.refresh_unsettled(service) == 2
+    assert await MachineService.refresh_due(service) == 2
     assert seen == ["a", "b"]
