@@ -216,6 +216,7 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.turn_speakers import turn_speakers
+from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -1541,30 +1542,8 @@ class ChatService:
             return await cloud_waiting_topics(session, topic_ids)
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
-        """Admission facts the AgentWorkRunner gates on BEFORE running a turn
-        (spec §9.1 算力额度): the owning project, its concurrency ceiling, and
-        whether its compute credits are exhausted. None when the topic doesn't
-        exist (the turn itself will surface the 404)."""
-        async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
-                return None
-            project = await ProjectRepository(session).get(topic.project_id)
-            balance = await ComputeGrantRepository(session).summary(topic.project_id)
-        max_concurrent = settings.max_concurrent_turns
-        override = ((project.settings if project else None) or {}).get(
-            "max_concurrent_turns"
-        )
-        if isinstance(override, int) and override > 0:
-            max_concurrent = override
-        return {
-            "project_id": str(topic.project_id),
-            "max_concurrent_turns": max_concurrent,
-            # A project with no grants is unlimited (spec §4 自治项目不设限).
-            "credits_exhausted": (
-                not balance["unlimited"] and balance["credits_remaining"] <= 0
-            ),
-        }
+        """Admission facts the AgentWorkRunner gates on BEFORE running a turn."""
+        return await work_policy(self._sessions, self._compute, topic_id)
 
     async def _close_open_turns(self, topic_id: uuid.UUID) -> None:
         """End every open interval on this topic. Never raises — a Stop that

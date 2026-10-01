@@ -1937,7 +1937,7 @@ class AgentWorkRunner:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
         - credits exhausted → ("reject", None): the caller refuses the turn.
-        - no memory on the session host for a new session → wait, announced.
+        - its session starts on a session host with no memory for it → wait.
         - project concurrency full → queue on the project semaphore (FIFO),
           after posting a visible "排队中" system event. Returns ("ok", sem)
           with the ACQUIRED semaphore (caller must release).
@@ -1955,7 +1955,7 @@ class AgentWorkRunner:
             logger.info("turn %s rejected: credits exhausted", turn_id)
             return "reject", None
         await wait_for_host(
-            self._host_has_room,
+            self._host_has_room if policy.get("on_session_host") else None,
             topic_id,
             lambda text: self._post_event(
                 chat_service, topic_id, turn_id, text, meta=QUEUED_META

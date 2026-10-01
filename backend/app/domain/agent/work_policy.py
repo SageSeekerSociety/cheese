@@ -1,0 +1,49 @@
+"""The facts a turn is admitted on, read from the room it would run in.
+
+Kept apart from ``admission``, which the work runner imports: these read the
+project, the room and the compute pool, and a runner that reached them would
+close a loop through the harness packages.
+"""
+
+import uuid
+
+from app.core.config import settings
+from app.domain.agent.compute_configs import room_choice
+from app.domain.agent.harness import harness_for
+from app.domain.project.repositories import ProjectRepository
+from app.domain.topic.repositories import TopicRepository
+from app.domain.usage.repositories import ComputeGrantRepository
+
+
+async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
+    """Admission facts a turn is gated on before it runs (spec §9.1 算力额度):
+    the owning project, its concurrency ceiling, whether its compute credits are
+    exhausted, and whether its session starts on the session host. None when
+    the topic does not exist (the turn itself will surface the 404)."""
+    async with sessions() as session:
+        topic = await TopicRepository(session).get(topic_id)
+        if topic is None:
+            return None
+        project = await ProjectRepository(session).get(topic.project_id)
+        balance = await ComputeGrantRepository(session).summary(topic.project_id)
+    project_settings = project.settings if project else None
+    max_concurrent = settings.max_concurrent_turns
+    override = (project_settings or {}).get("max_concurrent_turns")
+    if isinstance(override, int) and override > 0:
+        max_concurrent = override
+    # The backend the turn will run on, chosen as the turn chooses it. Only one
+    # whose hands are elsewhere starts its session on the session host; a
+    # harness that runs beside its workspace (pi) starts it on that machine.
+    provider = compute.select(
+        provider_id=room_choice(topic, project_settings).profile,
+        harness=harness_for(project_settings),
+    )
+    return {
+        "project_id": str(topic.project_id),
+        "max_concurrent_turns": max_concurrent,
+        # A project with no grants is unlimited (spec §4 自治项目不设限).
+        "credits_exhausted": (
+            not balance["unlimited"] and balance["credits_remaining"] <= 0
+        ),
+        "on_session_host": provider is not None and not provider.hands_here,
+    }

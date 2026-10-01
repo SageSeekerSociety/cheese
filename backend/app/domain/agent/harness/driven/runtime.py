@@ -239,6 +239,10 @@ class DrivenRuntime[H: Handle]:
     def builds_model_env(self) -> bool:
         return self.channel.builds_model_env
 
+    @property
+    def hands_here(self) -> bool:
+        return self.channel.hands_here
+
     def available(self) -> bool:
         return self.channel.available()
 

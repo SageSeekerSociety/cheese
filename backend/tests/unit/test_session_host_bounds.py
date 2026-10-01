@@ -191,3 +191,39 @@ async def test_a_room_whose_session_is_running_is_never_held(capped_host):
 @pytest.mark.anyio
 async def test_a_host_that_cannot_be_read_holds_nobody(capped_host):
     assert await admission.HostMemory(_Hub(None)).has_room(uuid.uuid4())
+
+
+async def _room_on(db_factory, harness: str) -> uuid.UUID:
+    from sqlalchemy import update
+
+    from app.domain.project.models import Project
+    from app.domain.topic.repositories import TopicRepository
+    from tests.turn_log import a_topic
+
+    topic_id = await a_topic(db_factory)
+    async with db_factory() as session:
+        topic = await TopicRepository(session).get(topic_id)
+        await session.execute(
+            update(Project)
+            .where(Project.id == topic.project_id)
+            .values(settings={"harness": harness})
+        )
+        await session.commit()
+    return topic_id
+
+
+@pytest.mark.anyio
+async def test_only_a_turn_whose_session_starts_on_the_session_host_is_gated_there(
+    db_factory,
+):
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import CLAUDE_CODE, PI
+    from app.domain.agent.work_policy import work_policy
+
+    pool = build_compute_pool()
+    beside = await work_policy(db_factory, pool, await _room_on(db_factory, PI))
+    central = await work_policy(
+        db_factory, pool, await _room_on(db_factory, CLAUDE_CODE)
+    )
+    assert beside is not None and beside["on_session_host"] is False
+    assert central is not None and central["on_session_host"] is True

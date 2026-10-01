@@ -337,6 +337,8 @@ class StubChannel:
     provisions_machine = False
     deferred_work = False
     builds_model_env = False
+    #: A Claude Code session: on the session host, its tools reaching elsewhere.
+    hands_here = False
     #: The id a new session's runner is started with (``--session-id``): known
     #: before the process has written anything, which is why the runtime can
     #: announce it the moment the session is opened.

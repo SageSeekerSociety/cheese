@@ -374,6 +374,7 @@ async def test_a_turn_waits_for_memory_on_the_session_host_then_runs(
             "project_id": "proj-mem",
             "max_concurrent_turns": 4,
             "credits_exhausted": False,
+            "on_session_host": True,
         },
         db_factory,
     )
@@ -401,6 +402,44 @@ async def test_a_turn_waits_for_memory_on_the_session_host_then_runs(
     memory.set()
     await _until(lambda: chat.running == 1)
     assert len(chat.system_events) == 1
+
+    chat.release.set()
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_a_room_not_on_the_session_host_starts_while_the_host_is_full(
+    db_factory,
+):
+    """The host's memory holds only turns whose session starts there: a room
+    running beside its own workspace starts as usual."""
+    chat = FakeChat(
+        {
+            "project_id": "proj-elsewhere",
+            "max_concurrent_turns": 4,
+            "credits_exhausted": False,
+            "on_session_host": False,
+        },
+        db_factory,
+    )
+
+    async def host_has_room(_topic):
+        return False
+
+    runner = AgentWorkRunner(
+        InProcessBroker(), turn_timeout_s=5.0, host_has_room=host_has_room
+    )
+    runner.subscribe_messages()
+
+    runner.submit(
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="a",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
+    await _until(lambda: chat.running == 1)
+    assert chat.system_events == []
 
     chat.release.set()
     await _until(lambda: runner.active_work_count() == 0)
