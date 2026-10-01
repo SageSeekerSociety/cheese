@@ -65,9 +65,9 @@ fi
 drain_attempts=240
 drain_interval=0.25
 # An idle owner is what the drain waits for, and on a platform anybody is using
-# it does not arrive: `call_executor` is held open under a shield and the
-# backend re-polls it about once a second, so `_active_rpc_calls` stays above
-# zero for as long as a room has an agent in it — hours, for one turn. A fix
+# it may not arrive: every `call_executor` is held open under a shield until the
+# machine answers. (The reads a runner holds until it has news do not count; one
+# cut short is read again.) A fix
 # that lives in this process then cannot ship at all; #1114 sat merged and
 # unreleased while the alerts it fixes kept arriving. So the wait can be waived
 # deliberately, and only deliberately: the default is unchanged.

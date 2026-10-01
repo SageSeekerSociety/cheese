@@ -157,6 +157,18 @@ class Subscription[B: Backlog]:
         self.disk = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"mirror {session.topic_id}"
         )
+        # Whether the runner holds a read until there is news (``read``), set
+        # from what it said it can do when it was greeted.
+        self.waits = False
+        # What the first read of the drain under way asks besides the cursor,
+        # what that read answered besides records, and that read while the
+        # runner holds it: it has nothing in hand yet, so a drain that wants
+        # to land now has it give way (``unpark``) rather than wait it out.
+        self.asking: dict | None = None
+        self.heard: dict = {}
+        self.parked: asyncio.Future | None = None
+        # The mark of what the agent was last seen writing.
+        self.live_mark: str | None = None
 
     @property
     def seat(self) -> Seat:
@@ -180,8 +192,36 @@ class Subscription[B: Backlog]:
 
     async def receive(self) -> None:
         """Pull whatever the runner has that the mirror does not, touching the
-        mirror only through ``on_disk``."""
+        mirror only through ``on_disk``, a page at a time through ``read``."""
         raise NotImplementedError
+
+    def unpark(self) -> None:
+        """Have a read the runner is holding read at once instead."""
+        if self.parked is not None:
+            self.parked.cancel()
+
+    async def read(self, method: str, params: dict) -> dict:
+        """One page from the runner. The first page of a drain that may wait
+        asks the runner to hold it until there is news (``driven.runner``),
+        and what else that answer says is kept in ``heard``."""
+        asking, self.asking = self.asking, None
+        if asking is None:
+            return await self.call(method, params)
+        self.parked = asyncio.ensure_future(self.call(method, {**params, **asking}))
+        try:
+            answer = await self.parked
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            # Given way (``unpark``): read now instead.
+            return await self.call(method, params)
+        finally:
+            self.parked = None
+        self.heard = {k: v for k, v in answer.items() if k in ("alive", "live")}
+        if live := self.heard.get("live"):
+            self.live_mark = live.get("mark")
+        return answer
 
     def reader(self) -> B:
         raise NotImplementedError
@@ -208,9 +248,22 @@ class Subscription[B: Backlog]:
         coming back with nothing to show)."""
         return marks_of(events)
 
-    async def drain(self) -> int:
+    async def drain(self, wait: float = 0.0) -> int:
+        """Land what the runner has past the cursor; how many events that was.
+
+        ``wait`` lets a runner that can (``waits``) hold the first read up to
+        that long until there is something to answer it with.
+        """
+        if wait <= 0:
+            self.unpark()
         async with self.lock:
-            await self.receive()
+            self.heard = {}
+            if wait > 0 and self.waits:
+                self.asking = {"wait": wait, "live": self.live_mark}
+            try:
+                await self.receive()
+            finally:
+                self.asking = None
             reader = await self.on_disk(self.reader)
             delivered = stale = 0
             # A backlog nobody read for hours is mostly records too old to

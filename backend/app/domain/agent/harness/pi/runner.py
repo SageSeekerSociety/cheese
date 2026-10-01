@@ -113,6 +113,13 @@ class Runner(runner.Runner[Journal]):
         self.skill_args: list[str] = []
         self.extension_files: dict[str, str] = {}
         self.children = Subagents(self)
+        # The blocks of the assistant message pi is writing, by its content
+        # index (``write``), and how many messages ended and how many of them
+        # have had their entry pulled since: what is shown goes then (``refresh``).
+        self.writing: dict[int, dict] = {}
+        self.messages_ended, self.cleared = 0, 0
+
+    capabilities = (runner.LONG_POLL, runner.LIVE)
 
     # --- reading -------------------------------------------------------------
 
@@ -124,6 +131,15 @@ class Runner(runner.Runner[Journal]):
         itself. So the reader only records that something happened.
         """
         kind = event.get("type")
+        if kind == "message_update":
+            self.write(event.get("assistantMessageEvent") or {})
+        elif kind == "message_start":
+            if (event.get("message") or {}).get("role") == "assistant":
+                self.writing = {}
+                owner = json.loads(self.journal.recall("owner") or "{}")
+                self.show([], owner.get("work_id"))
+        elif kind in ("message_end", "agent_end"):
+            self.messages_ended += 1
         if kind == "agent_start":
             self.working = True
         elif kind == "agent_settled":
@@ -198,6 +214,37 @@ class Runner(runner.Runner[Journal]):
         if kind in SETTLES:
             self.doorbell.set()
 
+    def write(self, update: dict) -> None:
+        """Show the assistant message pi is writing, block by block, as its
+        deltas arrive (`message_update`): text, and tool calls with their
+        arguments as raw JSON so far. Reasoning is not shown."""
+        kind, index = update.get("type"), update.get("contentIndex")
+        if not isinstance(index, int):
+            return
+        if kind == "text_start":
+            self.writing[index] = {"type": "text", "text": ""}
+        elif kind == "toolcall_start":
+            self.writing[index] = {
+                "type": "tool",
+                "id": update.get("id"),
+                "name": update.get("toolName"),
+                "arguments": "",
+            }
+        elif kind in ("text_delta", "text_end", "toolcall_delta"):
+            block = self.writing.get(index)
+            if block is None:
+                return
+            if kind == "text_delta":
+                block["text"] += str(update.get("delta") or "")
+            elif kind == "text_end":
+                block["text"] = str(update.get("content") or block["text"])
+            else:
+                block["arguments"] += str(update.get("delta") or "")
+        else:
+            return
+        self.live_blocks = [self.writing[i] for i in sorted(self.writing)]
+        self.shown()
+
     def _verdict(self, kind: str, **fields) -> None:
         self.verdicts.append({"type": kind, "id": f"cheese:{uuid.uuid4()}", **fields})
         self.doorbell.set()
@@ -234,6 +281,9 @@ class Runner(runner.Runner[Journal]):
         if self.client is None:
             return
         async with self.refreshing:
+            # pi wrote a message's entry before it said the message ended, so
+            # this pull lands it, and what was shown of it goes.
+            ended = self.messages_ended
             # A failed call is held back until pi has said what it will do
             # about it (a verdict names it by ``after``), then goes in with the
             # verdict right behind it — so the log reads failure, verdict, next
@@ -288,6 +338,10 @@ class Runner(runner.Runner[Journal]):
                 self.journal.import_entries([stamped(v) for v in loose])
             # Not placed yet: the entry each names is still to be pulled.
             self.verdicts = verdicts + self.verdicts
+            if ended > self.cleared:
+                self.cleared = ended
+                self.writing = {}
+                self.show([], None)
 
     # --- the platform extension ----------------------------------------------
 
@@ -739,7 +793,8 @@ class Runner(runner.Runner[Journal]):
             await self.refresh()
             since = params.get("since")
             after = self.journal.sequence_of(since) if since else 0
-            return {"entries": [row["record"] for row in self.records(after)]}
+            news = await self.news_for(after, params)
+            return {"entries": [row["record"] for row in self.records(after)], **news}
         if method == "send":
             return await self.send(
                 params["input_id"],
@@ -832,7 +887,8 @@ class Runner(runner.Runner[Journal]):
                 # Background jobs still running: a relaunch would end them.
                 "tasks": self.jobs.running() if self.jobs is not None else 0,
                 "work_id": owner.get("work_id"),
-                "alive": self.process is not None and self.process.returncode is None,
+                "alive": self.alive(),
+                "capabilities": list(self.capabilities),
             }
         raise ValueError(f"Unknown pi session operation: {method}")
 

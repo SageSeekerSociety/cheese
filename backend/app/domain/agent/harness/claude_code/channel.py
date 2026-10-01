@@ -126,6 +126,7 @@ class ClaudeCodeChannel:
             status["session_id"],
             agent,
             self._mirror(session, placed["resource"] + agent),
+            frozenset(status.get("capabilities") or ()),
         )
 
     async def _greet(self, device_id: str, state: str, launch: str) -> dict:
@@ -255,6 +256,7 @@ class ClaudeCodeChannel:
                     status["session_id"],
                     agent,
                     self._mirror(ref, place.resource_id + agent),
+                    frozenset(status.get("capabilities") or ()),
                 )
             )
         return handles

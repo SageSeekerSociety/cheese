@@ -150,6 +150,7 @@ class CodexChannel:
                 status["thread_id"],
                 agent,
                 self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
+                frozenset(status.get("capabilities") or ()),
             )
 
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
@@ -191,6 +192,7 @@ class CodexChannel:
                         status["thread_id"],
                         agent,
                         self._mirror(ref, place.resource_id + agent),
+                        frozenset(status.get("capabilities") or ()),
                     )
                 )
         return handles

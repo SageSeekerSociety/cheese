@@ -258,11 +258,16 @@ class ComputePool:
         consumer: "EventConsumer",
         activity: "ActivityConsumer | None" = None,
     ) -> None:
-        """Give every runtime the room-side persistence and activity owners."""
+        """Give every runtime the room-side persistence and activity owners,
+        and the room's ear for what an agent is in the middle of writing."""
+        from app.domain.agent.live_frames import publish_live
+
         for runtime in self._runtimes():
             runtime.bind_events(consumer)
             if activity is not None:
                 runtime.bind_activity(activity)
+            if (bind_live := getattr(runtime, "bind_live", None)) is not None:
+                bind_live(publish_live)
 
     def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
         """Give every runtime the owner of prompt receipts — the consumed-stamp
@@ -341,16 +346,6 @@ class ComputePool:
         return any(
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
         )
-
-    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
-        """Read this seat's journal now: its runner wrote records nobody has
-        read. False when no backend in this process reads that seat."""
-        woken = False
-        for runtime in self._runtimes():
-            wake = getattr(runtime, "wake", None)
-            if wake is not None and wake(topic_id, agent_handle):
-                woken = True
-        return woken
 
     async def recover_sessions(
         self, device_id: str | None = None

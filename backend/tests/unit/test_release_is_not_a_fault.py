@@ -55,7 +55,11 @@ async def test_the_owner_going_away_mid_read_is_waited_out_not_reported(
     reads = 0
 
     class Subscription:
-        async def drain(self) -> int:
+        # A runner that holds reads, answering nothing besides records.
+        waits = True
+        heard: dict = {}
+
+        async def drain(self, wait: float = 0.0) -> int:
             nonlocal reads
             reads += 1
             if reads > 2:

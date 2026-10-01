@@ -24,7 +24,8 @@ PLATFORM_MANAGED_TOOLS = [
 DISALLOWED_TOOLS = ["AskUserQuestion", *PLATFORM_MANAGED_TOOLS]
 
 # How the runner drives Claude Code: headless, stream-json on both pipes, every
-# input echoed back once it is read (the echo is the delivery receipt), and no
+# input echoed back once it is read (the echo is the delivery receipt), the block
+# being written streamed as it is written (shown, never journaled), and no
 # permission request ever reaching the driver. Pinned by
 # `scripts/remote_execution/headless_contract.py` against the pinned build.
 LAUNCH_ARGS = [
@@ -35,6 +36,7 @@ LAUNCH_ARGS = [
     "stream-json",
     "--verbose",
     "--replay-user-messages",
+    "--include-partial-messages",
     "--permission-mode",
     "bypassPermissions",
     "--disallowedTools",

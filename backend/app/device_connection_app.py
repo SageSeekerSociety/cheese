@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 _executor_calls: dict[str, asyncio.Task[dict]] = {}
 _release_draining = False
 _active_rpc_calls = 0
+# Reads a runner holds until it has news (``harness/driven/runner.py``), by
+# trace. A backend keeps one in flight on every seat it reads, so they never
+# all end, and one cut short costs nothing: the backend reads again from its
+# cursor. So a release does not wait for them.
+_held_reads: set[str] = set()
 _RPC_METHODS = {
     "adopt_screen",
     "call_executor",
@@ -38,6 +43,11 @@ _RPC_METHODS = {
     "reassert_screen",
     "update_screen",
 }
+
+
+def _held_read(name: str, body: dict[str, Any]) -> bool:
+    params = body.get("params")
+    return name == "call_executor" and isinstance(params, dict) and "wait" in params
 
 
 def _authorize(secret: str | None) -> None:
@@ -86,13 +96,18 @@ async def release_drain(
     _authorize(x_device_connection_secret)
     global _release_draining
     pending = any(
-        device.exec_pending or device.executor_pending or device.session_pending
+        device.exec_pending
+        or device.session_pending
+        or any(call not in _held_reads for call in device.executor_pending)
         for device in device_hub._devices.values()
     )
     if (
         _active_rpc_calls
         or pending
-        or any(not task.done() for task in _executor_calls.values())
+        or any(
+            not task.done() and trace not in _held_reads
+            for trace, task in _executor_calls.items()
+        )
     ):
         raise HTTPException(status_code=409, detail="device calls are active")
     _release_draining = True
@@ -158,7 +173,9 @@ async def call(
         raise HTTPException(
             status_code=503, detail="device connection owner is draining"
         )
-    _active_rpc_calls += 1
+    held = _held_read(name, body)
+    if not held:
+        _active_rpc_calls += 1
     try:
         result = await _dispatch(name, body)
     except DeviceOffline as exc:
@@ -188,7 +205,8 @@ async def call(
             detail=f"device{named} did not answer {name} in time",
         ) from exc
     finally:
-        _active_rpc_calls -= 1
+        if not held:
+            _active_rpc_calls -= 1
     return {"result": result}
 
 
@@ -237,6 +255,9 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
             task = asyncio.create_task(device_hub.call_executor(**body))
             task.add_done_callback(_read_the_failure)
             _executor_calls[trace_id] = task
+            if _held_read(name, body):
+                _held_reads.add(trace_id)
+                task.add_done_callback(lambda _: _held_reads.discard(trace_id))
             if (
                 body["method"] == "control"
                 and body["params"].get("subtype") == "background_tasks"

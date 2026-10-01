@@ -86,12 +86,15 @@ class Journal(journal.Journal):
                 )
             if cursor is not None:
                 self.remember(*cursor)
-                return
-            # The cursor pi is asked from names pi's own entries only: the
-            # runner's records (``RETRYING``, ``GAVE_UP``) are ids pi never saw.
-            ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]
-            if ours:
-                self.remember("received", ours[-1]["id"])
+            else:
+                # The cursor pi is asked from names pi's own entries only: the
+                # runner's records (``RETRYING``, ``GAVE_UP``) are ids pi never
+                # saw.
+                ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]
+                if ours:
+                    self.remember("received", ours[-1]["id"])
+        if entries:
+            self.grew()
 
     def sequence_of(self, entry_id: str) -> int:
         """Where a pi entry id sits in arrival order, or 0 when we never saw it.

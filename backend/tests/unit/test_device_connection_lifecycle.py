@@ -426,6 +426,73 @@ async def test_release_drain_blocks_new_trace_but_keeps_completed_trace_readable
 
 
 @pytest.mark.anyio
+async def test_a_read_held_until_there_is_news_does_not_hold_up_a_release(
+    monkeypatch,
+) -> None:
+    """Every seat a backend reads keeps a read waiting at its runner, so a
+    release that waited for those would never come; one cut short is only read
+    again. A call that does work still holds the release up."""
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    device_hub._devices.clear()
+    device_connection_app._executor_calls.clear()
+    device_connection_app._release_draining = False
+    device_connection_app._active_rpc_calls = 0
+    connector = wire.RecordingDevice()
+    await device_hub.attach_device("machine", connector)
+    await connector.sent.get()
+    await device_hub.on_device_message(
+        "machine", {"t": "hello", "v": 3, "executor": True}
+    )
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    headers = {"X-Device-Connection-Secret": "test-owner-secret"}
+    payload = {
+        "device_id": "machine",
+        "state": "/room/executor",
+        "timeout": 60,
+    }
+    async with httpx.AsyncClient(
+        base_url="http://owner", transport=transport, headers=headers
+    ) as client:
+        held = asyncio.create_task(
+            client.post(
+                "/internal/device-connection/call/call_executor",
+                json={
+                    **payload,
+                    "method": "events",
+                    "params": {"after": 0, "wait": 25, "live": None},
+                    "trace_id": "held-read",
+                },
+            )
+        )
+        await connector.next_call()
+        assert (
+            await client.post("/internal/device-connection/release-drain")
+        ).status_code == 200
+        await client.post("/internal/device-connection/release-resume")
+
+        working = asyncio.create_task(
+            client.post(
+                "/internal/device-connection/call/call_executor",
+                json={
+                    **payload,
+                    "method": "send",
+                    "params": {"input_id": "i", "text": "hi"},
+                    "trace_id": "send",
+                },
+            )
+        )
+        await connector.next_call()
+        assert (
+            await client.post("/internal/device-connection/release-drain")
+        ).status_code == 409
+        held.cancel()
+        working.cancel()
+        await asyncio.gather(held, working, return_exceptions=True)
+    await device_hub.detach_device("machine", connector)
+    device_connection_app._executor_calls.clear()
+
+
+@pytest.mark.anyio
 async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
     monkeypatch,
 ) -> None:
