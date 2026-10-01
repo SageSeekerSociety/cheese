@@ -36,7 +36,7 @@ class SocketChannel:
             SessionRef(
                 uuid.UUID(descriptor["project"]),
                 uuid.UUID(descriptor["topic"]),
-                descriptor["agent"],
+                descriptor["session_agent"],
                 harness=CLAUDE_CODE,
             ),
             "isolated-device",

@@ -147,6 +147,7 @@ def test_new_full_service_process_reuses_original_native_executor(
                 "project": str(project_id),
                 "topic": str(topic),
                 "agent": handle.agent_handle,
+                "session_agent": handle.session.agent_handle,
                 "state": handle.state,
                 "native": handle.session_id,
                 "protocol": handle.input_protocol,
