@@ -21,6 +21,7 @@ import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
@@ -314,7 +315,7 @@ onMounted(() => {
 
       <div class="td__act">
         <v-btn class="td__ask" variant="outlined" :active="asking" data-testid="task-ask" @click="openAssistant">
-          <span class="td__ask-mark" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
+          <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
           {{ t('tasks.assistant.ask') }}
         </v-btn>
         <v-btn
@@ -572,16 +573,8 @@ onMounted(() => {
 }
 
 .td__ask-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
+  display: inline-flex;
   margin-right: 6px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--inverse-ink);
-  background: linear-gradient(135deg, var(--logo-primary), var(--logo-secondary));
-  border-radius: var(--radius-sm);
 }
 
 .td-ask :deep(.v-navigation-drawer__content) {
