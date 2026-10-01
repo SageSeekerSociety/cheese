@@ -120,13 +120,20 @@ async def run(descriptor):
             Path(descriptor["gate"]).touch()
         else:
             assert not status["working"] and not chat._hook_work
-            async for _ in chat.converse(
-                topic_id=topic,
+            from app.api.deps import get_work_runner
+            from app.domain.delivery.addressing import Addressed, Recipient
+
+            work_runner = get_work_runner()
+            turn = work_runner.submit(
+                chat,
+                topic,
                 author="alice",
                 content="@芝士 原答者已提交回答",
-                summon=True,
-            ):
-                pass
+                addressed=Addressed((Recipient(descriptor["agent"], "asked"),)),
+            )
+            async with asyncio.timeout(90):
+                while work_runner.turn_pending(turn):
+                    await asyncio.sleep(0.05)
         async with asyncio.timeout(90):
             while True:
                 for subscription in channel.runtime.subscriptions.values():
