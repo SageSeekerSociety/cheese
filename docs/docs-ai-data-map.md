@@ -12,8 +12,8 @@
 | §107–117 request/job/lease generation | `domain/doc_ai/models.py` 与 `services.py`；请求行即唯一可扫描 job |
 | §97–103 canonical raw span | `block/doc_selection.py` 保留 UTF-8 字节坐标；按结构顺序对应节点，不搜索 quote |
 | §87–95 已存提案接受 CAS | `doc_ai/acceptance.py`；普通 TopicService writer、节点、事件、raw history、receipt 同事务 |
-| §91 真用户接受身份 | `api/doc_identity.py:human_operation_actor`；尚待新 HTTP 路由接入并验证 |
-| §111–114 稳定 claim 与 payload 指纹 | 复用 canonical DocumentJournal，action=`ai-accept`；新 request route 尚未接入 |
+| §91 真用户接受身份 | `api/doc_identity.py:human_operation_actor` 与 `topics_doc_ai.py`；仅本人 bearer 与真实人账号 |
+| §111–114 稳定 claim 与 payload 指纹 | 复用 canonical DocumentJournal，action=`ai-request` / `ai-accept`；请求和接受均可原回执重放 |
 
 原 desktop `c053Et` generation 回调提供代际隔离参考；后端请求不依赖组件或活动 turn 存活。
 原 `Ut` / `Dt` 的 base/live 区分保留在前阶段同步实现；提案接受使用已存 raw source，不序列化编辑器。
@@ -51,7 +51,9 @@ CHEESE_CI_REDIS_BASE_DB=0 uv run pytest \
 
 ## 未完成
 
-HTTP 身份与同 room 权限负控、request 创建/恢复读接口、tool-less completion transport、项目 binding/admission/usage 真实接入、扫描 worker 正式组装尚未完成。
-尝试 JSON 用量回执还没有接入项目账本，不代表计费兼容已验证。
+HTTP、恢复读接口、tool-less transport、项目 binding/admission 和进程扫描已实现。
+`phase3-worker-restored-2.log/.exit`：25 passed，exit 0。包含真实人接受与 agent/scoped/过期/跨 room 拒绝，HTTP MockTransport 证明不发送 tools，不替换订阅供给，预算耗尽不调用模型。首轮后台测试 1 passed/2 failed 的原日志保留；错误分类修复后通过。
+计费调用现有项目 key 累计账本，不从 attempt JSON 再扣费。尚未证明文档路径真实扣 grant、不重复扣费及进程崩溃后的计费恢复。
+权限撤销/归档后的后台生成检查、存储不可变保护与 owning 负控尚需补齐。网关实际 header/API 行为未在线验证。
 UI 接线、Required CI、独立审查、合并、正常部署与页面核验未完成。
 此阶段不是整个 Docs/AI/Slides/Design 交付。

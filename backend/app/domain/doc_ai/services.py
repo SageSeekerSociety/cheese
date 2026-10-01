@@ -214,6 +214,24 @@ class DocAiService:
         await self.session.flush()
         return True
 
+    async def proposal_id(self, request_id: uuid.UUID) -> uuid.UUID | None:
+        return await self.session.scalar(
+            select(DocAiProposal.id).where(DocAiProposal.request_id == request_id)
+        )
+
+    async def list_requests(self, room_id: uuid.UUID, actor: str) -> list[DocAiRequest]:
+        return list(
+            await self.session.scalars(
+                select(DocAiRequest)
+                .where(
+                    DocAiRequest.room_id == room_id,
+                    DocAiRequest.actor == actor,
+                )
+                .order_by(DocAiRequest.created_at.desc())
+                .limit(100)
+            )
+        )
+
     async def proposal(
         self, room_id: uuid.UUID, proposal_id: uuid.UUID, *, lock: bool = False
     ):
