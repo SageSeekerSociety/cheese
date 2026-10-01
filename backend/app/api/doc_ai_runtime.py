@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ValidationError
 from app.domain.doc_ai.completion import complete
+from app.domain.doc_ai.routing import admit
 from app.domain.doc_ai.services import DocAiService
 from app.domain.doc_ai.worker import run_one
 from app.domain.identity.actor import Actor
@@ -45,6 +46,7 @@ async def invoke(lease):
         await authorize_work(session, lease)
         if not await DocAiService(session).ready_to_invoke(lease):
             raise ValidationError("文档请求已取消或租约已过期")
+        await admit(session, lease.project_id, lease.binding)
     return await complete(lease, base=base, key=key)
 
 

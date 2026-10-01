@@ -26,7 +26,9 @@
 - 一个 request 至多一份 proposal。ask/propose 结果本身不写 canonical。
 - 接受以已存 base/document/node/span/hash/replacement 为准。
 - raw splitter 的规范化输出与旧 parser 对照；不能证明映射就拒绝。
-- room lock 先于 proposal lock；两个 operation ID 竞争一份 proposal 只有一个成功。
+- room lock 先于 proposal lock；两个 operation ID 竞争一份 proposal，或两份同基线 proposal 竞争，只有一个成功。
+- `GET /doc-ai/source` 给出已保存 raw、version、节点 UTF-8 字节范围；dirty 编辑器与 quote 不是授权。
+- 模型 key 获取后再次检查身份、租约、项目供给、策略和额度；等待期间取消或撤权不会发出 completion。
 - 接受原回执可重放，不能回退之后的 current document。
 
 ## 本地证据
@@ -55,6 +57,15 @@ HTTP、恢复读接口、tool-less transport、项目 binding/admission 和进�
 `phase3-worker-restored-2.log/.exit`：25 passed，exit 0。包含真实人接受与 agent/scoped/过期/跨 room 拒绝，HTTP MockTransport 证明不发送 tools，不替换订阅供给，预算耗尽不调用模型。首轮后台测试 1 passed/2 failed 的原日志保留；错误分类修复后通过。
 `phase3-meter-auth-restored.log/.exit`：29 passed，exit 0。真实数据库证明 HTTP 前进程中断后仍有持久计费扫描；模拟延迟 spend 经现有项目账本扣 grant，普通房间再次 drain 与扫描不重复扣费。扫描不重放 completion；项目累计账本仍只归因到 drain 窗口，不能声称请求级精确分账。
 后台按已存数字身份复查现有账号、agent binding、room 权限、房间/项目归档和租约。测试覆盖项目所有者也不能绕私聊撤权。
-`phase3-immutable-restored-2.log/.exit`：30 passed，exit 0。数据库触发器冻结请求快照、终态、提案内容及完成尝试回执；同 generation 改结果也拒绝。初轮地址笔误与 JSON 行比较报错均保留原日志，修复后通过。owning 摘保护负控尚需补齐。网关实际 header/API 行为未在线验证。
-UI 接线、Required CI、独立审查、合并、正常部署与页面核验未完成。
+`phase3-immutable-restored-2.log/.exit`：30 passed，exit 0。数据库冻结请求快照、终态、提案内容及完成尝试回执；同 generation 改结果也拒绝。初轮地址笔误与 JSON 行比较报错均保留原日志。
+
+`09aaa76311b45e9494b4b458c57e2ae5cdfb556c` 的本地 AI 与 import guard 共 52 passed，exit 0；类型 0 errors，架构 3 kept/0 broken。Required CI `36845378462` 在该精确 head 完成成功；跳过的前端与部署任务不提供覆盖。
+
+`phase3-negative.log/.exit`：摘代际和 agent 身份保护，2 项行为断言失败，exit 1。`phase3-negative-restored.log/.exit`：完整 head 同 2 项通过，exit 0。不是收集失败或空输出。
+
+后续并发补充 `phase3-concurrency-restored.log/.exit`：12 passed，exit 0。真实 HTTP 重叠同 operation 请求只留一份请求/回执，改 payload 有一个 409；两份独立同基线提案只留赢家的一版/history/event/refresh/accept claim；真实已存提案拒绝 agent 后仍可由人采纳。首轮 lint 长行失败保留退出码，未运行测试。
+
+`phase3-key-wait-first.log/.exit`：11 passed，exit 0。真实 runtime 在 key 等待期间预算耗尽、取消、私聊撤权时不发 completion。工具调用结果经真实 worker 和数据库留失败/实际用量，不留提案、不改正文。
+
+UI 接线、最新 head CI、root 独立审查、合并、正常部署与页面核验未完成。网关实际 header/API 行为未在线验证。
 此阶段不是整个 Docs/AI/Slides/Design 交付。

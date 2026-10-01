@@ -1,7 +1,11 @@
 """New routes enforce real human and room authorization even in permissive dev."""
 
 import asyncio
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
@@ -67,6 +71,69 @@ def test_request_creation_replay_payload_conflict_and_cancel_preserve_canonical(
     assert client.get(f"/topics/{room}/doc").json() == before
 
 
+@pytest.mark.parametrize("changed_payload", [False, True])
+def test_concurrent_http_request_claim_has_one_persisted_request(
+    client, changed_payload
+):
+    room, body = setup(client)
+    before = client.get(f"/topics/{room}/doc").json()
+    start = threading.Barrier(2)
+
+    def submit(question):
+        start.wait(timeout=10)
+        return client.post(
+            f"/topics/{room}/doc-ai/requests", json={**body, "question": question}
+        )
+
+    questions = [body["question"], "另一问" if changed_payload else body["question"]]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, questions))
+    assert sorted(response.status_code for response in responses) == (
+        [202, 409] if changed_payload else [202, 202]
+    ), [response.text for response in responses]
+    winner = next(response for response in responses if response.status_code == 202)
+    if not changed_payload:
+        assert responses[0].json() == responses[1].json()
+    listed = client.get(f"/topics/{room}/doc-ai/requests").json()["data"]["requests"]
+    assert len(listed) == 1
+    assert listed[0]["request_id"] == winner.json()["data"]["request_id"]
+    assert client.get(f"/topics/{room}/doc").json() == before
+
+    async def persisted():
+        from sqlalchemy import select
+
+        from app.domain.doc_ai.models import DocAiAttempt, DocAiRequest
+        from app.domain.living_doc.models import DocumentOperation
+
+        async with client.test_factory() as session:
+            requests = list(
+                await session.scalars(
+                    select(DocAiRequest).where(DocAiRequest.room_id == uuid.UUID(room))
+                )
+            )
+            operations = list(
+                await session.scalars(
+                    select(DocumentOperation).where(
+                        DocumentOperation.room_id == uuid.UUID(room),
+                        DocumentOperation.action == "ai-request",
+                    )
+                )
+            )
+            assert len(requests) == len(operations) == 1
+            assert operations[0].receipt == winner.json()
+            assert requests[0].question == questions[responses.index(winner)]
+            assert (
+                await session.scalar(
+                    select(DocAiAttempt.id).where(
+                        DocAiAttempt.request_id == requests[0].id
+                    )
+                )
+                is None
+            )
+
+    asyncio.run(persisted())
+
+
 def test_real_human_accept_stored_proposal_only_and_replays_after_lost_response(client):
     room, body = setup(client)
     tree = client.get(f"/topics/{room}/docs")
@@ -113,6 +180,14 @@ def test_real_human_accept_stored_proposal_only_and_replays_after_lost_response(
     assert (
         client.post(url, json={**accept, "replacement": "恶意覆盖"}).status_code == 400
     )
+    agent = room_agent_seat(client, room)
+    client.headers.update(session_auth_headers(agent))
+    denied = client.post(url, json=accept)
+    assert denied.status_code == 403, denied.text
+    client.headers.update(session_auth_headers("owner"))
+    pending = client.get(f"/topics/{room}/doc-ai/proposals/{proposal_id}")
+    assert pending.json()["data"]["state"] == "pending"
+    assert client.get(f"/topics/{room}/doc").json()["data"]["doc_version"] == 1
     saved = client.post(url, json=accept)
     assert saved.status_code == 200, saved.text
     assert saved.json()["data"]["content"] == "新😀原文\r\n"

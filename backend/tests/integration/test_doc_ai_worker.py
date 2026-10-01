@@ -183,6 +183,118 @@ async def test_background_generation_rechecks_live_human_access(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("change", ["budget", "cancel", "revoke"])
+async def test_key_wait_cannot_bypass_changed_admission_or_lease(
+    business_db_factory, monkeypatch, change
+):
+    from app.api import doc_ai_runtime as runtime
+
+    factory = business_db_factory
+    room, request_id, _ = await pending(factory)
+    monkeypatch.setattr(runtime, "async_session_factory", factory)
+    monkeypatch.setattr(settings, "llm_gateway_admin_base", "https://gateway.example")
+    calls = []
+
+    class KeyLookup:
+        async def project_gateway_key(self, project_id):
+            async with factory() as session:
+                if change == "budget":
+                    session.add(
+                        ComputeGrant(
+                            project_id=project_id, credits_total=1, credits_used=1
+                        )
+                    )
+                elif change == "cancel":
+                    await DocAiService(session).cancel(room, request_id)
+                else:
+                    from sqlalchemy import delete
+
+                    from app.domain.topic.models import TopicMembership
+
+                    topic = await TopicService(session).get_or_404(room)
+                    topic.is_private = True
+                    await session.execute(
+                        delete(TopicMembership).where(TopicMembership.topic_id == room)
+                    )
+                await session.commit()
+            return "project-key"
+
+    async def completion(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("changed access/admission must not reach network")
+
+    async def meter(_):
+        pass
+
+    monkeypatch.setattr(runtime, "get_chat_service", lambda: KeyLookup())
+    monkeypatch.setattr(runtime, "complete", completion)
+    assert await run_one(factory, runtime.invoke, meter, authorize_work)
+    assert not calls
+    async with factory() as session:
+        row = await DocAiService(session).get(room, request_id)
+        assert row.state == ("cancelled" if change == "cancel" else "failed")
+        if change == "budget":
+            assert "budget spent" in row.error
+        assert (await TopicService(session).get_doc(room)).content == "原文"
+        assert (await TopicService(session).get_doc(room)).doc_version == 1
+
+
+@pytest.mark.anyio
+async def test_executable_completion_fails_with_usage_but_no_proposal_or_doc_effect(
+    business_db_factory,
+):
+    from app.domain.doc_ai.models import DocAiAttempt
+
+    factory = business_db_factory
+    room, request_id, _ = await pending(factory)
+
+    def gateway(_):
+        return httpx.Response(
+            200,
+            headers={"x-litellm-response-cost": "0.01"},
+            json={
+                "id": "malicious-completion",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"answer":"执行覆盖"}',
+                            "tool_calls": [{"function": {"name": "cheese_doc_set"}}],
+                        },
+                    }
+                ],
+            },
+        )
+
+    async def invoke(lease):
+        return await complete(
+            lease,
+            base="https://gateway.example",
+            key="project-key",
+            transport=httpx.MockTransport(gateway),
+        )
+
+    async def meter(_):
+        pass
+
+    assert await run_one(factory, invoke, meter, authorize_work)
+    async with factory() as session:
+        row = await DocAiService(session).get(room, request_id)
+        assert row.state == "failed" and row.answer is None
+        assert await DocAiService(session).proposal_id(request_id) is None
+        attempt = await session.scalar(
+            select(DocAiAttempt).where(DocAiAttempt.request_id == request_id)
+        )
+        assert attempt.finished_at is not None
+        assert attempt.usage["input_tokens"] == 10
+        assert attempt.usage["cost_usd"] == 0.01
+        doc = await TopicService(session).get_doc(room)
+        assert doc.content == "原文" and doc.doc_version == 1
+
+
+@pytest.mark.anyio
 async def test_crash_before_settle_and_late_spend_reconcile_without_double_charge(
     business_db_factory, tmp_path
 ):

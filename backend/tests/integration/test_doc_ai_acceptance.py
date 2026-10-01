@@ -13,7 +13,8 @@ from app.domain.doc_ai.acceptance import ProposalAcceptance
 from app.domain.doc_ai.models import DocAiProposal
 from app.domain.doc_ai.schemas import AcceptIn, CompletionUsage, ProposalResult
 from app.domain.doc_ai.services import DocAiService
-from app.domain.living_doc.services import content_hash
+from app.domain.living_doc.models import DocumentOperation, DocumentRefresh
+from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.topic.services import TopicService
 from tests.integration.test_living_doc_journal import seed
 
@@ -188,6 +189,123 @@ async def test_two_acceptors_with_different_ops_have_only_one_effect(
             )
         )
         assert edits == 2
+
+
+@pytest.mark.anyio
+async def test_distinct_same_base_proposals_have_one_canonical_effect(
+    business_db_factory,
+):
+    factory = business_db_factory
+    room, first_id, span, nodes = await proposal(factory)
+    async with factory() as session:
+        doc = await TopicService(session).get_doc(room)
+        request = await DocAiService(session).create(
+            project_id=doc.project_id,
+            room_id=room,
+            document_id=doc.id,
+            actor="user:2",
+            kind="propose",
+            question="另一份同基线提案",
+            base_version=1,
+            source=RAW,
+            selection=span,
+            binding={"model": "test-route", "supply": "gateway"},
+        )
+        await session.commit()
+    async with factory() as session:
+        lease = await DocAiService(session).claim_next()
+        assert lease.request_id == request.id
+        await session.commit()
+    async with factory() as session:
+        await DocAiService(session).settle(
+            lease,
+            result=ProposalResult(answer="另一个候选", replacement="另一😀句"),
+            usage=CompletionUsage(
+                model="test-route",
+                input_tokens=5,
+                output_tokens=5,
+                cost_usd=0.01,
+                upstream_id="second-proposal",
+            ),
+        )
+        await session.commit()
+        second_id = await DocAiService(session).proposal_id(request.id)
+        assert second_id != first_id
+    start = asyncio.Event()
+    operations = {item: uuid.uuid4() for item in [first_id, second_id]}
+
+    async def accept(item):
+        async with factory() as session:
+            await start.wait()
+            try:
+                receipt, _ = await ProposalAcceptance(session).apply(
+                    room_id=room,
+                    proposal_id=item,
+                    body=AcceptIn(
+                        operation_id=operations[item], expected_version=1, revision=1
+                    ),
+                    verified_actor="user:1",
+                    author="alice",
+                )
+                await session.commit()
+                return receipt
+            except ConflictError:
+                await session.rollback()
+                return None
+
+    tasks = [asyncio.create_task(accept(item)) for item in [first_id, second_id]]
+    start.set()
+    results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=20)
+    assert results.count(None) == 1
+    winner = next(result for result in results if result is not None)
+    async with factory() as session:
+        doc = await TopicService(session).get_doc(room)
+        assert doc.doc_version == 2 and doc.content == winner["content"]
+        versions = await DocumentJournal(session).history(room)
+        assert len(versions) == 2 and versions[-1]["content"] == winner["content"]
+        assert len(await DocumentJournal(session).refreshes(room)) == 2
+        items = list(
+            await session.scalars(
+                select(DocAiProposal).where(DocAiProposal.id.in_([first_id, second_id]))
+            )
+        )
+        assert sorted(item.state for item in items) == ["accepted", "pending"]
+        accepted = next(item for item in items if item.state == "accepted")
+        assert str(accepted.id) == winner["proposal_id"]
+        expected = (
+            RAW.encode()[: span["start"]]
+            + accepted.replacement.encode()
+            + RAW.encode()[span["end"] :]
+        )
+        assert doc.content.encode() == expected
+        assert set(
+            await session.scalars(
+                select(Block.id).where(Block.id.in_([nodes[0], nodes[1], nodes[3]]))
+            )
+        ) == {nodes[0], nodes[1], nodes[3]}
+        claims = list(
+            await session.scalars(
+                select(DocumentOperation).where(
+                    DocumentOperation.room_id == room,
+                    DocumentOperation.action == "ai-accept",
+                )
+            )
+        )
+        assert len(claims) == 1 and claims[0].receipt == winner
+        events = await session.scalar(
+            select(func.count())
+            .select_from(Block)
+            .where(Block.topic_id == room, Block.kind == BlockKind.event)
+        )
+        assert events == 2
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(DocumentRefresh)
+                .where(DocumentRefresh.room_id == room)
+            )
+            == 2
+        )
 
 
 @pytest.mark.anyio
