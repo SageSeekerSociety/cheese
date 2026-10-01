@@ -18,6 +18,7 @@ subscription keeps from what its records say (``subscription.marks_of``).
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -28,7 +29,7 @@ from typing import Protocol
 
 import httpx
 
-from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
@@ -67,6 +68,10 @@ READ_CEILING_S = 1.0
 # release, and than a device takes to reconnect after a network blip: those
 # are waited out, and a runner that is still there answers again.
 RUNNER_GONE_S = 120.0
+# How often a room with no turn open looks again for a runner that is not there.
+# A runner lets a session that has sat idle go (``driven.runner``), and nobody is
+# waiting on it: the next message starts it again, and wakes this read at once.
+IDLE_GONE_READ_S = 60.0
 # Output this recent means the session is talking right now. Talking without a
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
@@ -511,6 +516,18 @@ class DrivenRuntime[H: Handle]:
                 # up yet (a cold one can take about a minute) or its home is gone.
                 # Either way the next read is what tells, and the machine's
                 # own words are the fact worth writing down, once.
+                if seat not in self.work and not isinstance(exc, DeviceNotReady):
+                    # Nothing open: the runner let an idle session go.
+                    if not waiting:
+                        waiting = True
+                        self.logger.info(
+                            "%s runner gone with no turn open topic=%s: %s",
+                            self.records,
+                            topic,
+                            exc,
+                        )
+                    await self._wait(seat, IDLE_GONE_READ_S)
+                    continue
                 if not waiting:
                     waiting = True
                     self.logger.warning(
@@ -653,8 +670,10 @@ class DrivenRuntime[H: Handle]:
         if previous and opening.agent_handle != previous.agent_handle:
             # A different teammate is taking this seat over; the conversation
             # that belonged to the last one does not carry over to them. Other
-            # seats in the same room are not this call's business.
-            await self.interrupt(session)
+            # seats in the same room are not this call's business. A runner
+            # that let its idle session go has nothing to interrupt.
+            with contextlib.suppress(DeviceCallError):
+                await self.interrupt(session)
             await self.close(session)
         handle = await self.channel.ensure(session, opening)
         await self._attach(handle)
@@ -824,7 +843,10 @@ class DrivenRuntime[H: Handle]:
     async def close(self, session: SessionRef) -> None:
         seat = self._seat_of(session)
         if subscription := self.subscriptions.get(seat):
-            await subscription.drain()
+            # Nothing more is read from a runner that is not there; what it
+            # left is read when its session is next started.
+            with contextlib.suppress(DeviceCallError):
+                await subscription.drain()
         await self._detach(seat)
 
     async def recover(self, device_id=None) -> list[SessionRef]:

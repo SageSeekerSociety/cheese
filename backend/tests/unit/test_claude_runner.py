@@ -529,17 +529,64 @@ async def test_starting_one_seat_does_not_end_another_seat_on_the_same_config_di
             process.wait()
 
 
+async def _results(runner: Runner, count: int) -> None:
+    async with asyncio.timeout(90):
+        while sum(_is("result")(e["record"]) for e in runner.journal.read(0)) < count:
+            await asyncio.sleep(0.2)
+
+
 @pytest.mark.anyio
-async def test_an_idle_unread_session_is_let_go_by_closing_its_stdin(
+async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
     machine, monkeypatch
 ):
-    runner = await _started(machine, monkeypatch, idle_exit_s=0.1)
+    """A backend reads every session about once a second whether anyone talks
+    to it or not, so being read is not being used."""
+    runner = await _started(machine, monkeypatch, idle_exit_s=0.5)
+
+    async def backend():
+        while True:
+            await runner.dispatch("events", {"after": 0})
+            await asyncio.sleep(0.1)
+
+    reading = asyncio.create_task(backend())
     try:
+        await runner.send(str(uuid.uuid4()), "hello", work_id=str(uuid.uuid4()))
+        await _results(runner, 1)
         assert runner.process is not None
         # Closing stdin is the build's own way out: a clean exit, not a kill.
         assert await asyncio.wait_for(runner.process.wait(), 60) == 0
     finally:
+        reading.cancel()
         await runner.close()
+
+
+@pytest.mark.anyio
+async def test_the_message_after_an_idle_exit_continues_the_same_conversation(
+    machine, monkeypatch
+):
+    runner = await _started(machine, monkeypatch, idle_exit_s=0.5)
+    try:
+        await runner.send(
+            str(uuid.uuid4()), "The password is PINEAPPLE.", work_id=str(uuid.uuid4())
+        )
+        await _results(runner, 1)
+        assert runner.process is not None
+        await asyncio.wait_for(runner.process.wait(), 60)
+    finally:
+        await runner.close()
+
+    # What the next message does: the same state directory, started again.
+    again = await _started(machine, monkeypatch)
+    try:
+        await again.send(
+            str(uuid.uuid4()), "What was the password?", work_id=str(uuid.uuid4())
+        )
+        await _results(again, 2)
+    finally:
+        await again.close()
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "PINEAPPLE" in asked
+    assert "What was the password?" in asked
 
 
 @pytest.mark.anyio
