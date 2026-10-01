@@ -162,17 +162,19 @@ function onSubmitted(id: string) {
              的标题。作者显示名册上的名字，不是 handle。这张卡只有一个作者，而且一定是
              agent（提案接口就是 agent 那条通道），所以 `is-agent` 直接写死，不按
              handle 去猜。 -->
-        <div class="fb-agent-card__byline t-meta">
+        <div class="fb-agent-card__byline t-meta-read">
           <FeedbackAuthorAvatar
             :handle="proposal.author_handle"
             :name="nameOf(proposal.author_handle)"
             is-agent
-            :size="18"
+            :size="20"
           />
-          <span class="fb-agent-card__by">{{
-            t('feedback.proposal.byline', { name: nameOf(proposal.author_handle) })
-          }}</span>
-          <span>· {{ kindLabel(proposal.payload.kind) }} · {{ relTime(proposal.authored_at) }}</span>
+          <!-- 一整段字，跟着宽度自然折行；拆成几块各自换行的话，窄的时候头像、
+               这句话、类型和时间会各占一行。 -->
+          <span
+            >{{ t('feedback.proposal.byline', { name: nameOf(proposal.author_handle) }) }} ·
+            {{ kindLabel(proposal.payload.kind) }} · {{ relTime(proposal.authored_at) }}</span
+          >
         </div>
 
         <div class="t-title fb-agent-card__title">{{ proposal.payload.title }}</div>
@@ -272,13 +274,9 @@ function onSubmitted(id: string) {
 /* 谁的判断：头像、名字和这句话一行，类型和时间接在后面。 */
 .fb-agent-card__byline {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
+  align-items: flex-start;
+  gap: 6px;
   margin-bottom: 6px;
-}
-.fb-agent-card__by {
-  color: var(--muted);
 }
 .fb-agent-card__title {
   margin-bottom: 10px;
