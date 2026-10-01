@@ -6,6 +6,7 @@ are real. This does not cover runner upgrades or production device discovery.
 """
 
 import asyncio
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -36,7 +37,7 @@ from tests.integration.test_claude_session_records import _until
 from tests.unit.test_claude_runner import Machine
 
 
-@pytest.mark.parametrize("mode", ["busy", "idle"])
+@pytest.mark.parametrize("mode", ["busy", "idle", "idle-race"])
 def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
     scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
     sys.path.insert(0, scripts)
@@ -143,11 +144,11 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                         and frame["type"] == "event_block"
                         and "ASK_HTTP_GATE" in str(frame["block"])
                     )
-                    or (mode == "idle" and frame["type"] == "done")
+                    or (mode != "busy" and frame["type"] == "done")
                 ),
             )
             assert observed["type"] != "error", observed
-        if mode == "idle":
+        if mode != "busy":
             client.portal.call(settle_turn, chat, topic)
 
         async def initial_work():
@@ -179,6 +180,30 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         assert asked.status_code == 200, asked.text
         question = asked.json()["data"]
         assert question["author"] == handle.agent_handle
+        prepared_gate = asyncio.Event()
+        prepared_seen = asyncio.Event()
+        if mode == "idle-race":
+            assemble = chat._assemble_turn
+
+            async def paused_assembly(**kwargs):
+                prepared = await assemble(**kwargs)
+                prepared_seen.set()
+                await prepared_gate.wait()
+                return prepared
+
+            chat._assemble_turn = paused_assembly
+            directive = headless_contract.do(
+                "Bash",
+                command=(
+                    f"for i in $(seq 1 1200); do test -f '{gate}' && break; "
+                    "sleep 0.05; done; printf ASK_HTTP_GATE"
+                ),
+                description="hold admitted answer work",
+            )
+            machine.server.state["actions"] = [
+                lambda _body: json.loads(directive[3:]),
+                None,
+            ]
         answer = client.post(
             f"/topics/blocks/{question['id']}/answer",
             json={
@@ -193,6 +218,25 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
 
         async def verify():
+            if mode == "idle-race":
+                async with asyncio.timeout(30):
+                    await prepared_seen.wait()
+                assert not chat._hook_work
+                correction = await asyncio.to_thread(
+                    client.post,
+                    f"/topics/blocks/{question['id']}/answer",
+                    json={
+                        "kind": "option",
+                        "option": "稍后",
+                        "client_op_id": "http-correct-race",
+                        "expect_version": 1,
+                    },
+                    headers=session_auth_headers("alice"),
+                )
+                assert correction.status_code == 200, correction.text
+                await asyncio.sleep(0.05)
+                assert operations.count("send") == initial_sends
+                prepared_gate.set()
             async with asyncio.timeout(30):
                 while (
                     operations.count("send") + operations.count("steer")
@@ -238,6 +282,11 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                     while operations.count("steer") != 2:
                         await asyncio.sleep(0.05)
                 assert operations.count("send") == initial_sends
+            if mode == "idle-race":
+                async with asyncio.timeout(30):
+                    while operations.count("steer") != 1:
+                        await asyncio.sleep(0.05)
+                assert operations.count("send") == initial_sends + 1, operations
             gate.touch()
             async with asyncio.timeout(90):
                 while native_runner.working:
@@ -250,7 +299,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                         select(NativeInput).where(NativeInput.topic_id == topic)
                     )
                 )
-                assert len(rows) == (3 if mode == "busy" else 2)
+                assert len(rows) == (2 if mode == "idle" else 3)
                 assert {row.native_session_id for row in rows} == {native}
                 assert all(row.echoed_at and row.settled_at for row in rows)
                 assert all(
@@ -268,7 +317,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                         select(Delivery).where(Delivery.topic_id == topic)
                     )
                 )
-                assert len(deliveries) == (2 if mode == "busy" else 1)
+                assert len(deliveries) == (1 if mode == "idle" else 2)
                 assert all(d.state == "received" and d.sent_at for d in deliveries)
                 answers = list(
                     await session.scalars(
@@ -310,6 +359,8 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         client.portal.call(verify)
     finally:
         gate.touch()
+        if "prepared_gate" in locals():
+            client.portal.call(prepared_gate.set)
         try:
             if native_runner is not None:
                 client.portal.call(native_runner.close)
