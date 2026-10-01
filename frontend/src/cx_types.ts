@@ -336,8 +336,8 @@ export interface TopicProgress {
   updated_at: string | null
 }
 
-// WebSocket server -> client frames. No token streaming: 芝士 speaks in
-// discrete assistant_block messages (one per completed SDK message boundary).
+// WebSocket server -> client frames. What 芝士 says lands as discrete blocks; the
+// backend also sends `live` frames, what it is writing meanwhile (live_frames.py).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).

@@ -32,6 +32,7 @@ class Journal(journal.Journal):
                 "INSERT INTO records(recorded_at, record) VALUES (?, ?)",
                 (datetime.now(UTC).isoformat(), json.dumps(record, ensure_ascii=False)),
             )
+        self.grew()
 
     def import_records(self, entries: list[dict], facts: dict[str, str]) -> None:
         """Commit a remote page, the facts derived from it, then the cursor.

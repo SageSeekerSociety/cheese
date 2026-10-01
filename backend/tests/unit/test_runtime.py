@@ -108,6 +108,31 @@ async def test_reaction_frames_fan_out_but_never_buffer():
 
 
 @pytest.mark.anyio
+async def test_what_an_agent_is_writing_is_live_only(monkeypatch):
+    """A draft goes to whoever watches the room now and is kept nowhere: a
+    client that joins mid-turn is not handed an old one."""
+    from app.domain.agent import runtime as agent_runtime
+    from app.domain.agent.live_frames import publish_live
+
+    broker = InProcessBroker()
+    monkeypatch.setattr(agent_runtime, "get_broker", lambda: broker)
+    topic, turn = uuid.uuid4(), uuid.uuid4()
+    await broker.publish(str(topic), {"type": "turn_started", "turn_id": str(turn)})
+    async with broker.subscribe(str(topic)) as q:
+        await publish_live(topic, turn, "cheese", [{"type": "text", "text": "Hel"}])
+        frame = await asyncio.wait_for(q.get(), 1)
+    assert frame == {
+        "type": "live",
+        "turn_id": str(turn),
+        "agent": "cheese",
+        "blocks": [{"type": "text", "text": "Hel"}],
+    }
+    async with broker.subscribe(str(topic), replay=True) as q:
+        replayed = [q.get_nowait()["type"] for _ in range(q.qsize())]
+    assert replayed == ["turn_started"]
+
+
+@pytest.mark.anyio
 async def test_replay_catches_up_a_mid_turn_subscriber():
     # R3: a connection that subscribes mid-turn gets the in-progress frames.
     broker = InProcessBroker()

@@ -165,6 +165,7 @@ class PiChannel:
                 status["session_id"],
                 agent,
                 self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
+                frozenset(status.get("capabilities") or ()),
             )
 
     async def _run(self, device_id: str, program: str, *, timeout: int) -> dict:
@@ -217,6 +218,7 @@ class PiChannel:
                     status["session_id"],
                     agent,
                     self._mirror(ref, place.resource_id + agent),
+                    frozenset(status.get("capabilities") or ()),
                 )
             )
         return handles

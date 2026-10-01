@@ -21,6 +21,8 @@ class Handle:
     thread_id: str
     agent_handle: str
     mirror: Path
+    #: What its runner said it can do when it was greeted (``driven.runner``).
+    capabilities: frozenset[str] = frozenset()
 
 
 class CodexRuntime(DrivenRuntime[Handle]):

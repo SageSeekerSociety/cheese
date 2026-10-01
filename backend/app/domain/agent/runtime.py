@@ -325,12 +325,12 @@ class InProcessBroker:
         # can fire on an idle channel (a human reacting between turns) and are
         # rebuilt from GET /blocks on (re)connect — so they are fanned out live
         # but never buffered (buffering would also make an idle channel look
-        # in_flight forever).
-        # `agent_control` is the same kind of fact: the room's session state
-        # changed, and a client that missed the frame reads the whole of it back
-        # from GET /topics/{id}/agent/control, so buffering it would only replay
-        # a state that has since moved on.
-        if kind in ("reaction", "agent_control"):
+        # in_flight forever). `agent_control` is the same kind of fact: the
+        # room's session state changed, and a client that missed the frame reads
+        # the whole of it back from GET /topics/{id}/agent/control, so buffering
+        # it would replay a state that has since moved on; `live` (each frame
+        # all of what an agent is writing) would replay a draft.
+        if kind in ("reaction", "agent_control", "live"):
             for q in list(self._subs.get(channel, ())):
                 q.put_nowait(frame)
             return
