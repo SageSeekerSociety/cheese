@@ -47,7 +47,7 @@ class PrivateScreen(StubChannel):
                 ),
             }
         )
-        return await super().ensure(session, opening)
+        return await super().ensure(session, opening, live)
 
     def emit_turn(
         self,

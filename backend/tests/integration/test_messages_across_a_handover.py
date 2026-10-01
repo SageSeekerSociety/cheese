@@ -170,7 +170,7 @@ class _SlowToSetUp(StubChannel):
     async def ensure(self, session, opening, live=None):
         if session.topic_id == self.slow:
             await asyncio.Event().wait()
-        return await super().ensure(session, opening)
+        return await super().ensure(session, opening, live)
 
 
 def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(

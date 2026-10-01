@@ -41,7 +41,7 @@ class OldRunners(Counting):
     it when greeted."""
 
     async def ensure(self, session, opening, live=None):
-        handle = await super().ensure(session, opening)
+        handle = await super().ensure(session, opening, live)
         return dataclasses.replace(handle, capabilities=frozenset())
 
 

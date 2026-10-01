@@ -30,7 +30,7 @@ class _Screen(StubChannel):
 
     async def ensure(self, session, opening, live=None):
         self.resume_asked.append(opening.resume_token)
-        return await super().ensure(session, opening)
+        return await super().ensure(session, opening, live)
 
     def emit_turn(
         self,

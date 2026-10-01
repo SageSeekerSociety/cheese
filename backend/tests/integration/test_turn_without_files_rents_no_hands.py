@@ -321,7 +321,7 @@ class HandsRefused(StubChannel):
         self.asked.append(opening.needs_place)
         if opening.needs_place:
             raise ScreenSetupError("没有在线的绑定设备可运行本轮")
-        return await super().ensure(session, opening)
+        return await super().ensure(session, opening, live)
 
 
 async def test_a_private_chat_answers_while_every_work_machine_is_offline(
