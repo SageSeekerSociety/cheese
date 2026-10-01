@@ -11,6 +11,8 @@
 | 原生跨完成边界 | `717e21f6`；第五次原输出及单独标注的 `ask-http-process-fifth-identities.json` | 原登记 W，correction 实际用户回显归属 U；SID/recipient 保持；两个版本完成 | 原同-work 断言为红，总发送数断言未到达；不放宽重记 pure-busy，不当后端 idle 检测证据 |
 | 默认 A 下一轮 | 现有新 HTTP 两例只核非默认 recipient，未产生默认 A 后续内容 | 没有将 Ask Delivery 记给默认席位 | 下一真实轮次核内容与消费，不只核收件人字段 |
 | 原生出题身份 / 问者缺席 | HTTP scoped actor 建题；历史恢复、原实例准备链有独立窄审 | 原实例 pin 贯穿准入/准备；晚撤席位拒绝 | native CLI 创建时 session/work 归属、安全缺席政策、原 runner 安全升级仍开放 |
+| 未确认与迟到回执 | 原生精确回显能把 uncertain 结算为 received；故障/历史证据分别保留 | 不盲重发；实际确认与完成分开 | 真实前端状态读取、迟到 receipt 可见与反馈仍需验收 |
+| 显式释放 / 全部执行器 | 当前可信完成与持久释放已有窄证据 | 已知完成可释放；未知/中断不释放 | 可验证未外发显式释放、全部 harness/caller 恢复接线仍需闭合 |
 
 历史、并发、持有、完成、延后消息及准备链的已收证据见 `evidence/receipts/README.md` 与 `evidence/concurrency/README.md`，不为整理此表重跑。
 

@@ -22,7 +22,6 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
-    ConflictError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -34,6 +33,7 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
     announce_stale,
 )
+from app.domain.block.answers import Answer
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -1229,25 +1229,6 @@ async def summon_agent(
     return ok({"started": True})
 
 
-# 一次作答/更正的全部状态都写在 `meta` 上，形状见 ask-ux-preview/contract.md §4.1。
-# 处理顺序是有讲究的（§4.4）：先鉴权，再查重，再校验内容，最后才比版本 —— 颠倒
-# 任何一对都会留下一个可以拿来绕过的口子。
-_ANSWER_KINDS = ("option", "note", "reject")
-
-
-def _option_texts(meta: dict) -> list[str]:
-    """选项的文字。顺序是选项列表唯一的意思，所以按原数组顺序返回。"""
-    out: list[str] = []
-    for entry in meta.get("options") or []:
-        out.append(entry["text"] if isinstance(entry, dict) else str(entry))
-    return out
-
-
-def _answer_payload(kind: str, option: str, note: str) -> tuple[str, str, str]:
-    """幂等键要比的那份「内容」：换一个字就是另一次操作。"""
-    return kind, option, note
-
-
 @router.post("/blocks/{block_id}/answer")
 async def answer_options(
     block_id: uuid.UUID,
@@ -1296,20 +1277,7 @@ async def answer_options(
     )
     author = actor.handle
 
-    kind = (body.get("kind") or "option").strip()
-    option = (body.get("option") or "").strip()
-    note = (body.get("note") or "").strip()
-    client_op_id = (body.get("client_op_id") or "").strip()
-    expect_version = body.get("expect_version")
-
-    if kind not in _ANSWER_KINDS:
-        raise ValidationError("kind 要是 option / note / reject")
-    if not client_op_id:
-        raise ValidationError("client_op_id 必带")
-    if not isinstance(expect_version, int) or isinstance(expect_version, bool):
-        raise ValidationError("expect_version 必带：初答 0，之后是 answer_log 末项的 v")
-    if len(note) > 2000:
-        raise ValidationError("note 最多 2000 字")
+    answer = Answer.parse(body)
     if author == "anonymous":
         raise ValidationError("要登录才能作答")
 
@@ -1326,68 +1294,9 @@ async def answer_options(
     )
     blk = locked.scalar_one()
     meta = dict(blk.meta or {})
-    log: list[dict] = list(meta.get("answer_log") or [])
-
-    # 3. 幂等：同一个 (块, 人, 操作) 只记一次。**在版本拒绝之前** —— 重试的人手上
-    # 的 expect_version 可能已经过期，但他那一次操作确实已经落库了，这时该拿 200
-    # 而不是 409。
-    for entry in log:
-        if entry.get("by") != author or entry.get("client_op_id") != client_op_id:
-            continue
-        stored = _answer_payload(
-            entry.get("kind") or "option",
-            entry.get("option") or "",
-            entry.get("note") or "",
-        )
-        if stored != _answer_payload(kind, option, note):
-            raise ConflictError("同一个 client_op_id 换了内容")
+    entry, replay = answer.apply(meta, author)
+    if replay:
         return ok(BlockOut.model_validate(blk).model_dump(mode="json"))
-
-    # 4. 内容校验。`allow_other` 读建题 meta（持久化的那一份），不是读这次请求。
-    texts = _option_texts(meta)
-    if kind == "option":
-        if not option:
-            raise ValidationError("kind=option 要给 option")
-        if option not in texts:
-            raise ValidationError("不在选项里")
-    else:
-        # reject / note 都**不伪造合法项**：不写进 options，也不编一个 option 出来。
-        if option:
-            raise ValidationError(f"kind={kind} 不给 option")
-        if kind == "note" and not note:
-            raise ValidationError("kind=note 要给 note")
-        if kind == "note" and not meta.get("allow_other"):
-            raise ValidationError("这道题不接受自由输入")
-    if kind == "reject" and not (meta.get("reject_option") or meta.get("allow_other")):
-        # 老题没有这两个键：界面没补「以上都不是」，就不该有一条 API 能替它补。
-        raise ValidationError("这道题不接受「以上都不是」")
-
-    # 5. 更正闸门：只有原答者能改自己的答案。这是房间里的规则，不是「你不是成员」
-    # —— 后者才是 403（ForbiddenError），所以这里用 422。
-    if log:
-        last = log[-1]
-        if author != last.get("by"):
-            raise ValidationError("只有原答者能更正")
-
-    # 6. CAS：旧日志长度等于 expect_version。初答 expect_version=0、长度 0 → 成立
-    # → 写第 1 版；第一次更正 expect_version=1、长度 1 → 成立 → 写 v=2。
-    # 不是 `== expect_version + 1` —— 那个式子在初答时要求 0 == 1，会把第一次作答
-    # 整个拒掉。落败的那个拿 409。
-    if len(log) != expect_version:
-        raise ConflictError("版本不对，请重取这一题后再作答")
-
-    now_iso = datetime.now(UTC).isoformat()
-    entry = {
-        "v": expect_version + 1,
-        "kind": kind,
-        "option": option if kind == "option" else None,
-        "note": note or None,
-        "by": author,
-        "at": now_iso,
-        "client_op_id": client_op_id,
-    }
-    log.append(entry)
-    meta["answer_log"] = log
 
     members = TopicMemberService(db)
     if blk.author in await members.agent_handles(blk.topic_id):
