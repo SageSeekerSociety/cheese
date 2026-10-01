@@ -1,0 +1,588 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__________ test_http_answer_continues_original_native_executor[busy] ___________
+
+client = <starlette.testclient.TestClient object at 0x72c9383c8ad0>
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-53/test_http_answer_continues_ori0')
+mode = 'busy'
+
+    @pytest.mark.parametrize("mode", ["busy", "idle"])
+    def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
+        scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
+        sys.path.insert(0, scripts)
+        import headless_contract
+    
+        machine = Machine(headless_contract, tmp_path)
+        project = post_project(
+            client, {"name": "Native Ask answer", "owner_handle": "alice"}
+        ).json()["data"]
+        project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+        native_runner = None
+        handle = None
+        operations = []
+    
+        class Channel:
+            name = "native-ask-fixture"
+            provisions_machine = False
+            deferred_work = False
+            builds_model_env = False
+    
+            def available(self):
+                return True
+    
+            async def prepare_topic(self, **kwargs):
+                return True, ""
+    
+            async def ensure(self, session, opening):
+                nonlocal native_runner, handle
+                if native_runner is None:
+                    native_runner = Runner(machine.state)
+                    native = await native_runner.start(
+                        command=machine.command,
+                        env=machine.env,
+                        resume=None,
+                        agent_handle=opening.agent_handle or session.agent_handle,
+                    )
+                    handle = Handle(
+                        session,
+                        "isolated-device",
+                        str(machine.state),
+                        native,
+                        opening.agent_handle or session.agent_handle,
+                        tmp_path / "mirror.sqlite",
+                        INPUT_PROTOCOL,
+                    )
+                assert session == handle.session
+                return handle
+    
+            async def call(self, held, method, params):
+                assert held is handle
+                operations.append(method)
+                return await native_runner.dispatch(method, params)
+    
+            async def discover(self, device_id):
+                return [handle] if handle is not None else []
+    
+            async def images(self, held, images):
+                assert not images
+                return []
+    
+        channel = Channel()
+        runtime = ClaudeCodeRuntime(channel)
+        chat = ChatService(
+            session_factory=client.test_request_factory,
+            base_system_prompt="你是芝士。",
+            workspace_root=str(machine.workspace),
+            compute=ComputePool([runtime], channel.name),
+        )
+        app.dependency_overrides[get_chat_service] = lambda: chat
+        gate = tmp_path / "continue-ask"
+        try:
+            if mode == "busy":
+                content = headless_contract.do(
+                    "Bash",
+                    command=(
+                        f"for i in $(seq 1 1200); do test -f '{gate}' && break; "
+                        "sleep 0.05; done; printf ASK_HTTP_GATE"
+                    ),
+                    description="wait for answer",
+                )
+            else:
+                content = "先保留这个会话，等我回答。"
+            with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
+                ws.send_json({"type": "message", "content": "@芝士 " + content})
+                observed = _until(
+                    ws,
+                    lambda frame: (
+                        frame["type"] == "error"
+                        or (
+                            mode == "busy"
+                            and frame["type"] == "event_block"
+                            and "ASK_HTTP_GATE" in str(frame["block"])
+                        )
+                        or (mode == "idle" and frame["type"] == "done")
+                    ),
+                )
+                assert observed["type"] != "error", observed
+            if mode == "idle":
+                client.portal.call(settle_turn, chat, topic)
+            native, original_work, process = (
+                native_runner.session_id,
+                uuid.UUID(native_runner.work),
+                native_runner.process,
+            )
+            initial_sends = operations.count("send")
+            asked = client.post(
+                f"/topics/{topic}/ask",
+                json={
+                    "question": "接着执行哪个方案？",
+                    "options": [{"text": "继续"}, {"text": "稍后"}],
+                },
+                headers={
+                    "X-Cheese-Token": mint_scoped_token(
+                        project_id=str(project_id),
+                        topic_id=str(topic),
+                        agent_handle=handle.agent_handle,
+                    )
+                },
+            )
+            assert asked.status_code == 200, asked.text
+            question = asked.json()["data"]
+            assert question["author"] == handle.agent_handle
+            answer = client.post(
+                f"/topics/blocks/{question['id']}/answer",
+                json={
+                    "kind": "option",
+                    "option": "继续",
+                    "client_op_id": f"http-{mode}",
+                    "expect_version": 0,
+                },
+                headers=session_auth_headers("alice"),
+            )
+            assert answer.status_code == 200, answer.text
+            assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
+    
+            async def verify():
+                async with asyncio.timeout(30):
+                    while (
+                        operations.count("send") + operations.count("steer")
+                        == initial_sends
+                    ):
+                        await asyncio.sleep(0.05)
+                if mode == "busy":
+                    assert operations.count("send") == initial_sends, operations
+                    assert operations.count("steer") == 1, operations
+                    assert native_runner.work == str(original_work)
+                else:
+                    assert operations.count("send") == initial_sends + 1, operations
+                    assert operations.count("steer") == 0, operations
+                gate.touch()
+                async with asyncio.timeout(90):
+                    while native_runner.working:
+                        await asyncio.sleep(0.05)
+                await settle_turn(chat, topic)
+                await get_work_runner().drain(10)
+                async with client.test_request_factory() as session:
+                    rows = list(
+                        await session.scalars(
+                            select(NativeInput).where(NativeInput.topic_id == topic)
+                        )
+                    )
+                    assert len(rows) == 2
+                    assert {row.native_session_id for row in rows} == {native}
+                    assert all(row.echoed_at and row.settled_at for row in rows)
+                    assert all(
+                        set(row.held_block_ids) <= set(row.released_block_ids)
+                        for row in rows
+                    )
+                    assert not await held_blocks(
+                        session,
+                        project_id=project_id,
+                        topic_id=topic,
+                        recipient_handle=handle.agent_handle,
+                    )
+                    delivery = await session.scalar(
+                        select(Delivery).where(Delivery.topic_id == topic)
+                    )
+                    assert delivery.state == "received" and delivery.sent_at
+                    delivered = [row for row in rows if row.delivery_id == delivery.id]
+                    assert len(delivered) == 1
+                    answer_block = await session.scalar(
+                        select(Block).where(
+                            Block.topic_id == topic,
+                            Block.meta["answer_to"].astext == question["id"],
+                        )
+                    )
+                    assert str(answer_block.id) in delivered[0].held_block_ids
+                    assert consumed_turn(answer_block) == str(
+                        delivered[0].execution_work_id
+                    )
+                    turns = list(
+                        await session.scalars(
+                            select(AgentTurn).where(AgentTurn.topic_id == topic)
+                        )
+                    )
+                    assert len(turns) == (1 if mode == "busy" else 2)
+                    if mode == "busy":
+                        assert {row.execution_work_id for row in rows} == {original_work}
+                assert native_runner.session_id == native
+                assert native_runner.process is process and process.returncode is None
+    
+>           client.portal.call(verify)
+
+tests/integration/test_native_ask_answer.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def verify():
+        async with asyncio.timeout(30):
+            while (
+                operations.count("send") + operations.count("steer")
+                == initial_sends
+            ):
+                await asyncio.sleep(0.05)
+        if mode == "busy":
+>           assert operations.count("send") == initial_sends, operations
+E           AssertionError: ['ping', 'memory', 'send', 'events', 'ping', 'events', ...]
+E           assert 2 == 1
+E            +  where 2 = <built-in method count of list object at 0x72c9301bda80>('send')
+E            +    where <built-in method count of list object at 0x72c9301bda80> = ['ping', 'memory', 'send', 'events', 'ping', 'events', ...].count
+
+tests/integration/test_native_ask_answer.py:182: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-01 03:46:56 [info     ] actor_handle_fallback          [cheesex.auth] handle=alice req=1c34739edc43
+2026-10-01 03:46:56 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 03:46:56 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 03:46:56 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 03:46:56 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 03:46:57 [info     ] req                            [http] bytes=651 client=testclient host=testserver method=POST ms=1158.4 path=/projects req=1c34739edc43 status=200 ua=testclient
+2026-10-01 03:46:57 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 03:46:57 [info     ] chat_message_received          [cheesex.chat_ws] received_unix_ms=1790826417761.4702 topic=af080557-256e-43ed-b1c7-7df0fbb4997a
+2026-10-01 03:46:57 [info     ] chat_receive_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 persist_ms=65.172 publish_ms=0.026 [cheesex.runtime]
+2026-10-01 03:46:57 [info     ] chat_message_submitted         [cheesex.chat_ws] duration_ms=67.79580190777779 topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65
+2026-10-01 03:46:57 [info     ] chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=message_lock elapsed_ms=0.003 unix_ms=1790826417829.726 [cheesex.runtime]
+2026-10-01 03:46:57 [info     ] chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=live_delivery_declined elapsed_ms=0.248 unix_ms=1790826417829.971 [cheesex.runtime]
+2026-10-01 03:46:57 [info     ] chat_message_frame_sent        [cheesex.chat_ws] block_id=fb9e46d8-31c5-4220-9142-993416c11e65 frame_type=user_block sent_unix_ms=1790826417831.3176 topic=af080557-256e-43ed-b1c7-7df0fbb4997a
+2026-10-01 03:46:57 [info     ] chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=admitted verdict=ok elapsed_ms=11.069 unix_ms=1790826417841.222 [cheesex.runtime]
+2026-10-01 03:46:57 [info     ] turn start: author=alice summon=True resume=False [cheesex.runtime] topic=af080557 turn=fb9e46d8
+2026-10-01 03:46:57 [info     ] chat_assembly_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 elapsed_ms=101.620 phases_ms={'history': 13.49608600139618, 'identity': 31.537560746073723, 'memory': 37.248365581035614, 'metadata': 91.94725751876831, 'provider': 92.49628521502018, 'committed': 101.47267580032349} [app.domain.agent.chat] topic=af080557 turn=fb9e46d8
+2026-10-01 03:46:57 [info     ] chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=assembled elapsed_ms=102.292 unix_ms=1790826417950.691 [app.domain.agent.chat] topic=af080557 turn=fb9e46d8
+2026-10-01 03:46:57 [info     ] chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=prompt_built elapsed_ms=127.601 unix_ms=1790826417976.002 [app.domain.agent.chat] topic=af080557 turn=fb9e46d8
+2026-10-01 03:46:57 [info     ] chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=model_ready elapsed_ms=136.039 unix_ms=1790826417984.438 [app.domain.agent.chat] topic=af080557 turn=fb9e46d8
+2026-10-01 03:46:58 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.2s [cheesex.runtime] topic=af080557 turn=fb9e46d8
+2026-10-01 03:46:59 [info     ] req                            [http] bytes=639 client=testclient host=testserver method=POST ms=794.8 path=/topics/af080557-256e-43ed-b1c7-7df0fbb4997a/ask req=14941e99c619 status=200 ua=testclient
+2026-10-01 03:46:59 [info     ] HTTP Request: POST http://testserver/topics/af080557-256e-43ed-b1c7-7df0fbb4997a/ask "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 03:46:59 [info     ] req                            [http] bytes=788 client=testclient host=testserver method=POST ms=61.1 path=/topics/blocks/f1acebc9-f963-4714-82ea-bffa42f3a9eb/answer req=a2304f9504f0 status=200 ua=testclient
+2026-10-01 03:46:59 [info     ] HTTP Request: POST http://testserver/topics/blocks/f1acebc9-f963-4714-82ea-bffa42f3a9eb/answer "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 03:46:59 [info     ] chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=admitted verdict=ok elapsed_ms=8.063 unix_ms=1790826419599.730 [cheesex.runtime] req=a2304f9504f0
+2026-10-01 03:46:59 [info     ] turn start: author=system summon=True resume=False [cheesex.runtime] req=a2304f9504f0 topic=af080557 turn=a84fe98e
+2026-10-01 03:46:59 [info     ] chat_assembly_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d elapsed_ms=143.170 phases_ms={'history': 9.721063077449799, 'identity': 57.44016356766224, 'memory': 61.21552735567093, 'metadata': 134.89982672035694, 'provider': 136.21305488049984, 'committed': 142.86111295223236} [app.domain.agent.chat] req=a2304f9504f0 topic=af080557 turn=a84fe98e
+2026-10-01 03:46:59 [info     ] chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=assembled elapsed_ms=144.793 unix_ms=1790826419753.644 [app.domain.agent.chat] req=a2304f9504f0 topic=af080557 turn=a84fe98e
+2026-10-01 03:46:59 [info     ] chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=prompt_built elapsed_ms=153.872 unix_ms=1790826419762.724 [app.domain.agent.chat] req=a2304f9504f0 topic=af080557 turn=a84fe98e
+2026-10-01 03:46:59 [info     ] chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=model_ready elapsed_ms=159.224 unix_ms=1790826419768.076 [app.domain.agent.chat] req=a2304f9504f0 topic=af080557 turn=a84fe98e
+2026-10-01 03:46:59 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.2s [cheesex.runtime] req=a2304f9504f0 topic=af080557 turn=a84fe98e
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'alice', 'event': 'actor_handle_fallback', 'req': '1c34739edc43', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 03:46:56'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 1158.4, 'req': '1c34739edc43', 'bytes': 651, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 03:46:57'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.chat_ws:chat.py:229 {'topic': 'af080557-256e-43ed-b1c7-7df0fbb4997a', 'received_unix_ms': 1790826417761.4702, 'event': 'chat_message_received', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 03:46:57'}
+INFO     cheesex.runtime:runtime.py:277 chat_receive_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 persist_ms=65.172 publish_ms=0.026
+INFO     cheesex.chat_ws:chat.py:245 {'topic': 'af080557-256e-43ed-b1c7-7df0fbb4997a', 'turn': 'fb9e46d8-31c5-4220-9142-993416c11e65', 'duration_ms': 67.79580190777779, 'event': 'chat_message_submitted', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 03:46:57'}
+INFO     cheesex.runtime:runtime.py:937 chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=message_lock elapsed_ms=0.003 unix_ms=1790826417829.726
+INFO     cheesex.runtime:runtime.py:967 chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=live_delivery_declined elapsed_ms=0.248 unix_ms=1790826417829.971
+INFO     cheesex.chat_ws:chat.py:83 {'topic': 'af080557-256e-43ed-b1c7-7df0fbb4997a', 'frame_type': 'user_block', 'block_id': 'fb9e46d8-31c5-4220-9142-993416c11e65', 'sent_unix_ms': 1790826417831.3176, 'event': 'chat_message_frame_sent', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 03:46:57'}
+INFO     cheesex.runtime:runtime.py:2170 chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=admitted verdict=ok elapsed_ms=11.069 unix_ms=1790826417841.222
+INFO     cheesex.runtime:runtime.py:2387 turn start: author=alice summon=True resume=False
+INFO     app.domain.agent.chat:chat.py:4274 chat_assembly_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 elapsed_ms=101.620 phases_ms={'history': 13.49608600139618, 'identity': 31.537560746073723, 'memory': 37.248365581035614, 'metadata': 91.94725751876831, 'provider': 92.49628521502018, 'committed': 101.47267580032349}
+INFO     app.domain.agent.chat:chat.py:4341 chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=assembled elapsed_ms=102.292 unix_ms=1790826417950.691
+INFO     app.domain.agent.chat:chat.py:4436 chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=prompt_built elapsed_ms=127.601 unix_ms=1790826417976.002
+INFO     app.domain.agent.chat:chat.py:4456 chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=fb9e46d8-31c5-4220-9142-993416c11e65 phase=model_ready elapsed_ms=136.039 unix_ms=1790826417984.438
+INFO     cheesex.runtime:runtime.py:2623 turn done: status=done tools=0 first_output=Nones duration=0.2s
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/af080557-256e-43ed-b1c7-7df0fbb4997a/ask', 'status': 200, 'ms': 794.8, 'req': '14941e99c619', 'bytes': 639, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 03:46:59'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/af080557-256e-43ed-b1c7-7df0fbb4997a/ask "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/blocks/f1acebc9-f963-4714-82ea-bffa42f3a9eb/answer', 'status': 200, 'ms': 61.1, 'req': 'a2304f9504f0', 'bytes': 788, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 03:46:59'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/blocks/f1acebc9-f963-4714-82ea-bffa42f3a9eb/answer "HTTP/1.1 200 OK"
+INFO     cheesex.runtime:runtime.py:2170 chat_admission_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=admitted verdict=ok elapsed_ms=8.063 unix_ms=1790826419599.730
+INFO     cheesex.runtime:runtime.py:2387 turn start: author=system summon=True resume=False
+INFO     app.domain.agent.chat:chat.py:4274 chat_assembly_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d elapsed_ms=143.170 phases_ms={'history': 9.721063077449799, 'identity': 57.44016356766224, 'memory': 61.21552735567093, 'metadata': 134.89982672035694, 'provider': 136.21305488049984, 'committed': 142.86111295223236}
+INFO     app.domain.agent.chat:chat.py:4341 chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=assembled elapsed_ms=144.793 unix_ms=1790826419753.644
+INFO     app.domain.agent.chat:chat.py:4436 chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=prompt_built elapsed_ms=153.872 unix_ms=1790826419762.724
+INFO     app.domain.agent.chat:chat.py:4456 chat_preparation_timing topic=af080557-256e-43ed-b1c7-7df0fbb4997a turn=a84fe98e-75ba-4363-b4c7-d27bcbcfe08d phase=model_ready elapsed_ms=159.224 unix_ms=1790826419768.076
+INFO     cheesex.runtime:runtime.py:2623 turn done: status=done tools=0 first_output=Nones duration=0.2s
+__________ test_http_answer_continues_original_native_executor[idle] ___________
+
+client = <starlette.testclient.TestClient object at 0x72c9103fed50>
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-53/test_http_answer_continues_ori1')
+mode = 'idle'
+
+    @pytest.mark.parametrize("mode", ["busy", "idle"])
+    def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
+        scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
+        sys.path.insert(0, scripts)
+        import headless_contract
+    
+        machine = Machine(headless_contract, tmp_path)
+        project = post_project(
+            client, {"name": "Native Ask answer", "owner_handle": "alice"}
+        ).json()["data"]
+        project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+        native_runner = None
+        handle = None
+        operations = []
+    
+        class Channel:
+            name = "native-ask-fixture"
+            provisions_machine = False
+            deferred_work = False
+            builds_model_env = False
+    
+            def available(self):
+                return True
+    
+            async def prepare_topic(self, **kwargs):
+                return True, ""
+    
+            async def ensure(self, session, opening):
+                nonlocal native_runner, handle
+                if native_runner is None:
+                    native_runner = Runner(machine.state)
+                    native = await native_runner.start(
+                        command=machine.command,
+                        env=machine.env,
+                        resume=None,
+                        agent_handle=opening.agent_handle or session.agent_handle,
+                    )
+                    handle = Handle(
+                        session,
+                        "isolated-device",
+                        str(machine.state),
+                        native,
+                        opening.agent_handle or session.agent_handle,
+                        tmp_path / "mirror.sqlite",
+                        INPUT_PROTOCOL,
+                    )
+                assert session == handle.session
+                return handle
+    
+            async def call(self, held, method, params):
+                assert held is handle
+                operations.append(method)
+                return await native_runner.dispatch(method, params)
+    
+            async def discover(self, device_id):
+                return [handle] if handle is not None else []
+    
+            async def images(self, held, images):
+                assert not images
+                return []
+    
+        channel = Channel()
+        runtime = ClaudeCodeRuntime(channel)
+        chat = ChatService(
+            session_factory=client.test_request_factory,
+            base_system_prompt="你是芝士。",
+            workspace_root=str(machine.workspace),
+            compute=ComputePool([runtime], channel.name),
+        )
+        app.dependency_overrides[get_chat_service] = lambda: chat
+        gate = tmp_path / "continue-ask"
+        try:
+            if mode == "busy":
+                content = headless_contract.do(
+                    "Bash",
+                    command=(
+                        f"for i in $(seq 1 1200); do test -f '{gate}' && break; "
+                        "sleep 0.05; done; printf ASK_HTTP_GATE"
+                    ),
+                    description="wait for answer",
+                )
+            else:
+                content = "先保留这个会话，等我回答。"
+            with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
+                ws.send_json({"type": "message", "content": "@芝士 " + content})
+                observed = _until(
+                    ws,
+                    lambda frame: (
+                        frame["type"] == "error"
+                        or (
+                            mode == "busy"
+                            and frame["type"] == "event_block"
+                            and "ASK_HTTP_GATE" in str(frame["block"])
+                        )
+                        or (mode == "idle" and frame["type"] == "done")
+                    ),
+                )
+                assert observed["type"] != "error", observed
+            if mode == "idle":
+                client.portal.call(settle_turn, chat, topic)
+            native, original_work, process = (
+                native_runner.session_id,
+>               uuid.UUID(native_runner.work),
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                native_runner.process,
+            )
+
+tests/integration/test_native_ask_answer.py:140: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'uuid.UUID' object has no attribute 'int'") raised in repr()] UUID object at 0x72c910298fd0>
+hex = None, bytes = None, bytes_le = None, fields = None, int = None
+version = None, is_safe = <SafeUUID.unknown: None>
+
+    def __init__(self, hex=None, bytes=None, bytes_le=None, fields=None,
+                       int=None, version=None,
+                       *, is_safe=SafeUUID.unknown):
+        r"""Create a UUID from either a string of 32 hexadecimal digits,
+        a string of 16 bytes as the 'bytes' argument, a string of 16 bytes
+        in little-endian order as the 'bytes_le' argument, a tuple of six
+        integers (32-bit time_low, 16-bit time_mid, 16-bit time_hi_version,
+        8-bit clock_seq_hi_variant, 8-bit clock_seq_low, 48-bit node) as
+        the 'fields' argument, or a single 128-bit integer as the 'int'
+        argument.  When a string of hex digits is given, curly braces,
+        hyphens, and a URN prefix are all optional.  For example, these
+        expressions all yield the same UUID:
+    
+        UUID('{12345678-1234-5678-1234-567812345678}')
+        UUID('12345678123456781234567812345678')
+        UUID('urn:uuid:12345678-1234-5678-1234-567812345678')
+        UUID(bytes='\x12\x34\x56\x78'*4)
+        UUID(bytes_le='\x78\x56\x34\x12\x34\x12\x78\x56' +
+                      '\x12\x34\x56\x78\x12\x34\x56\x78')
+        UUID(fields=(0x12345678, 0x1234, 0x5678, 0x12, 0x34, 0x567812345678))
+        UUID(int=0x12345678123456781234567812345678)
+    
+        Exactly one of 'hex', 'bytes', 'bytes_le', 'fields', or 'int' must
+        be given.  The 'version' argument is optional; if given, the resulting
+        UUID will have its variant and version set according to RFC 4122,
+        overriding the given 'hex', 'bytes', 'bytes_le', 'fields', or 'int'.
+    
+        is_safe is an enum exposed as an attribute on the instance.  It
+        indicates whether the UUID has been generated in a way that is safe
+        for multiprocessing applications, via uuid_generate_time_safe(3).
+        """
+    
+        if [hex, bytes, bytes_le, fields, int].count(None) != 4:
+>           raise TypeError('one of the hex, bytes, bytes_le, fields, '
+                            'or int arguments must be given')
+E           TypeError: one of the hex, bytes, bytes_le, fields, or int arguments must be given
+
+/usr/lib/python3.13/uuid.py:175: TypeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-01 03:47:01 [info     ] actor_handle_fallback          [cheesex.auth] handle=alice req=1203d1227879
+2026-10-01 03:47:01 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 03:47:01 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 03:47:01 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 03:47:01 [info     ] req                            [http] bytes=651 client=testclient host=testserver method=POST ms=180.3 path=/projects req=1203d1227879 status=200 ua=testclient
+2026-10-01 03:47:01 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 03:47:01 [info     ] chat_message_received          [cheesex.chat_ws] received_unix_ms=1790826421222.135 topic=b80e83e9-4f20-4cec-93ff-62e8073a8658
+2026-10-01 03:47:01 [info     ] chat_receive_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e persist_ms=55.256 publish_ms=0.017 [cheesex.runtime]
+2026-10-01 03:47:01 [info     ] chat_message_submitted         [cheesex.chat_ws] duration_ms=56.23038299381733 topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e
+2026-10-01 03:47:01 [info     ] chat_admission_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=message_lock elapsed_ms=0.002 unix_ms=1790826421278.753 [cheesex.runtime]
+2026-10-01 03:47:01 [info     ] chat_admission_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=live_delivery_declined elapsed_ms=0.244 unix_ms=1790826421278.995 [cheesex.runtime]
+2026-10-01 03:47:01 [info     ] chat_message_frame_sent        [cheesex.chat_ws] block_id=911642c7-09c3-4521-9cdf-7f1fc592401e frame_type=user_block sent_unix_ms=1790826421280.0745 topic=b80e83e9-4f20-4cec-93ff-62e8073a8658
+2026-10-01 03:47:01 [info     ] chat_admission_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=admitted verdict=ok elapsed_ms=9.260 unix_ms=1790826421288.429 [cheesex.runtime]
+2026-10-01 03:47:01 [info     ] turn start: author=alice summon=True resume=False [cheesex.runtime] topic=b80e83e9 turn=911642c7
+2026-10-01 03:47:01 [info     ] chat_assembly_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e elapsed_ms=81.184 phases_ms={'history': 12.6150231808424, 'identity': 27.53756381571293, 'memory': 31.958015635609627, 'metadata': 73.90150055289268, 'provider': 74.29229468107224, 'committed': 81.04479499161243} [app.domain.agent.chat] topic=b80e83e9 turn=911642c7
+2026-10-01 03:47:01 [info     ] chat_preparation_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=assembled elapsed_ms=81.775 unix_ms=1790826421376.016 [app.domain.agent.chat] topic=b80e83e9 turn=911642c7
+2026-10-01 03:47:01 [info     ] chat_preparation_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=prompt_built elapsed_ms=103.029 unix_ms=1790826421397.271 [app.domain.agent.chat] topic=b80e83e9 turn=911642c7
+2026-10-01 03:47:01 [info     ] chat_preparation_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=model_ready elapsed_ms=108.986 unix_ms=1790826421403.228 [app.domain.agent.chat] topic=b80e83e9 turn=911642c7
+2026-10-01 03:47:01 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.2s [cheesex.runtime] topic=b80e83e9 turn=911642c7
+2026-10-01 03:47:02 [info     ] idempotent skip: action=message scope=b80e83e9-4f20-4cec-93ff-62e8073a8658 [app.domain.idempotency.store] topic=b80e83e9 turn=911642c7
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'alice', 'event': 'actor_handle_fallback', 'req': '1203d1227879', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 03:47:01'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 180.3, 'req': '1203d1227879', 'bytes': 651, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 03:47:01'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.chat_ws:chat.py:229 {'topic': 'b80e83e9-4f20-4cec-93ff-62e8073a8658', 'received_unix_ms': 1790826421222.135, 'event': 'chat_message_received', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 03:47:01'}
+INFO     cheesex.runtime:runtime.py:277 chat_receive_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e persist_ms=55.256 publish_ms=0.017
+INFO     cheesex.chat_ws:chat.py:245 {'topic': 'b80e83e9-4f20-4cec-93ff-62e8073a8658', 'turn': '911642c7-09c3-4521-9cdf-7f1fc592401e', 'duration_ms': 56.23038299381733, 'event': 'chat_message_submitted', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 03:47:01'}
+INFO     cheesex.runtime:runtime.py:937 chat_admission_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=message_lock elapsed_ms=0.002 unix_ms=1790826421278.753
+INFO     cheesex.runtime:runtime.py:967 chat_admission_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=live_delivery_declined elapsed_ms=0.244 unix_ms=1790826421278.995
+INFO     cheesex.chat_ws:chat.py:83 {'topic': 'b80e83e9-4f20-4cec-93ff-62e8073a8658', 'frame_type': 'user_block', 'block_id': '911642c7-09c3-4521-9cdf-7f1fc592401e', 'sent_unix_ms': 1790826421280.0745, 'event': 'chat_message_frame_sent', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 03:47:01'}
+INFO     cheesex.runtime:runtime.py:2170 chat_admission_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=admitted verdict=ok elapsed_ms=9.260 unix_ms=1790826421288.429
+INFO     cheesex.runtime:runtime.py:2387 turn start: author=alice summon=True resume=False
+INFO     app.domain.agent.chat:chat.py:4274 chat_assembly_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e elapsed_ms=81.184 phases_ms={'history': 12.6150231808424, 'identity': 27.53756381571293, 'memory': 31.958015635609627, 'metadata': 73.90150055289268, 'provider': 74.29229468107224, 'committed': 81.04479499161243}
+INFO     app.domain.agent.chat:chat.py:4341 chat_preparation_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=assembled elapsed_ms=81.775 unix_ms=1790826421376.016
+INFO     app.domain.agent.chat:chat.py:4436 chat_preparation_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=prompt_built elapsed_ms=103.029 unix_ms=1790826421397.271
+INFO     app.domain.agent.chat:chat.py:4456 chat_preparation_timing topic=b80e83e9-4f20-4cec-93ff-62e8073a8658 turn=911642c7-09c3-4521-9cdf-7f1fc592401e phase=model_ready elapsed_ms=108.986 unix_ms=1790826421403.228
+INFO     cheesex.runtime:runtime.py:2623 turn done: status=done tools=0 first_output=Nones duration=0.2s
+INFO     app.domain.idempotency.store:store.py:43 idempotent skip: action=message scope=b80e83e9-4f20-4cec-93ff-62e8073a8658
+=============================== warnings summary ===============================
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[busy]
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[busy]
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[busy]
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[idle]
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[idle]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[busy]
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[busy]
+tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[idle]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[busy]
+FAILED tests/integration/test_native_ask_answer.py::test_http_answer_continues_original_native_executor[idle]
+2 failed, 8 warnings in 9.17s

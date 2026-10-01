@@ -135,9 +135,16 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
             assert observed["type"] != "error", observed
         if mode == "idle":
             client.portal.call(settle_turn, chat, topic)
+
+        async def initial_work():
+            async with client.test_request_factory() as session:
+                return await session.scalar(
+                    select(AgentTurn.id).where(AgentTurn.topic_id == topic)
+                )
+
         native, original_work, process = (
             native_runner.session_id,
-            uuid.UUID(native_runner.work),
+            client.portal.call(initial_work),
             native_runner.process,
         )
         initial_sends = operations.count("send")
