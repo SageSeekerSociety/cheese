@@ -1535,7 +1535,8 @@
     "failed": "Couldn't load the image"
   },
   "agentAvatar": {
-    "defaultName": "Cheese"
+    "defaultName": "Cheese",
+    "live": "{name}: {status}. Click to open Activity"
   },
   "liveView": {
     "connecting": "Connecting to the live view…",

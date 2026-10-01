@@ -10,8 +10,9 @@
 import type { Ref } from 'vue'
 import type { Block } from '../../../cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 
+import { agentFaces, FACE_SETTLE_MS } from '../../../lib/agentFace'
 import { isAgentHandle } from '../../../lib/authorship'
 
 export function useRoomTurns(options: {
@@ -111,8 +112,44 @@ export function useRoomTurns(options: {
     awaitingReply.value = true
   }
 
+  // 刚干完一轮的队友 → 那一轮。头像在这一小会儿里做「做完了 / 卡住了」那一下，
+  // 到点就撤掉回到静止。用计时器撤，不等动画结束的事件：系统关了动效时动画不播，
+  // 那个事件也就永远不来。
+  const recentlyEnded = ref<Record<string, string>>({})
+  const settleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  function noteEnded(id: string) {
+    const handle = turnOwners.value[id]
+    if (!handle) return
+    recentlyEnded.value = { ...recentlyEnded.value, [handle]: id }
+    clearTimeout(settleTimers.get(handle))
+    settleTimers.set(
+      handle,
+      setTimeout(() => {
+        settleTimers.delete(handle)
+        if (recentlyEnded.value[handle] !== id) return
+        const next = { ...recentlyEnded.value }
+        delete next[handle]
+        recentlyEnded.value = next
+      }, FACE_SETTLE_MS)
+    )
+  }
+
+  function clearEnded() {
+    for (const timer of settleTimers.values()) clearTimeout(timer)
+    settleTimers.clear()
+    recentlyEnded.value = {}
+  }
+  onScopeDispose(clearEnded)
+
+  /** 每位在干活（或刚干完）的队友此刻的表情，按 handle。 */
+  const faces = computed(() =>
+    agentFaces(options.messages.value, turnStarts.value, turnOwners.value, recentlyEnded.value)
+  )
+
   /** 一轮结束。返回是否已经没有在跑的轮次。 */
   function finished(id: string): boolean {
+    noteEnded(id)
     const next = new Set(activeTurnIds.value)
     next.delete(id)
     activeTurnIds.value = next
@@ -137,11 +174,13 @@ export function useRoomTurns(options: {
     activeTurnIds.value = new Set()
     turnStarts.value = {}
     turnAgents.value = {}
+    clearEnded()
   }
 
   return {
     awaitingReply,
     turnStarts,
+    faces,
     workingAgentNames,
     turnAgentName,
     turnAgentHandle,

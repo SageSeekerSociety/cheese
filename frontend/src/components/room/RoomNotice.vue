@@ -10,6 +10,7 @@
 // 这里只画已经判好档的东西：判档在 lib/platformNotice.ts，署名和时间由房间算好
 // 传进来。它不认识名册，也不认识 socket。
 import type { Block } from '../../cx_types'
+import type { FaceState } from '../../lib/agentFace'
 import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -37,6 +38,10 @@ const props = defineProps<{
   agent: NoticeAgent | null
   /** 接在同一位队友上一条事件行下面：不再重复头像和名字。 */
   cont?: boolean
+  /** 这一行的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
+  face?: FaceState | null
+  /** 头像在动时，悬停看到的那一句。 */
+  faceLabel?: string | null
   time: string
   /** 这个房间当前那位 AI 队友的名字，`fold` 档在「…处理中」里用。 */
   agentName: string
@@ -141,6 +146,8 @@ const ACTION_META: Record<string, { btn: string }> = {
     :name="name"
     :handle="agent?.handle ?? null"
     :cont="cont"
+    :face="face ?? null"
+    :face-label="faceLabel ?? null"
     :time="time"
     :class="{ 'notice-bump': bumped }"
     @animationend="bumped = false"

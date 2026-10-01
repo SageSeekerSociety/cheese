@@ -199,7 +199,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (touchOnly.value && target) rowActions.toggleTime(target)
     const el = target?.closest('.mention, .im-person') as HTMLElement | null
     if (!el) return
-    if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+    // 在动的那个头像：它此刻在干的事在「现场」，点它就去那里。
+    if (el.dataset.site !== undefined) emit('open-resource', 'site')
+    else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
     else if (el.dataset.topic) {
       const id = el.dataset.topic
       if (roomTasks.value.some((task) => task.id === id)) emit('open-card', id)
@@ -873,6 +875,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rows,
     refMaps,
     awaitingReply,
+    agentFaces: turns.faces,
     timeline,
     hasMore,
     hasNewer,

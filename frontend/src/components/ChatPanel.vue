@@ -96,6 +96,7 @@ const {
   agentName,
   agentSeat,
   awaitingReply,
+  agentFaces,
   prShortId,
   prState,
   composerHint,
@@ -267,6 +268,7 @@ defineExpose({ send, connected })
         :avatar-src="avatarSrc"
         :display-name="displayName"
         :notice-agent="noticeAgent"
+        :agent-faces="agentFaces"
         :parent-of="parentOf"
         :show-reply-cue="showReplyCue"
         :fmt-time="fmtTime"
