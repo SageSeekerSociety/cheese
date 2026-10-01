@@ -43,6 +43,13 @@ class CiFastTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ci-fast-test-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # pre-commit keeps a sqlite store under PRE_COMMIT_HOME (default
+        # ~/.cache/pre-commit). Merge-queue runs execute on the shared
+        # self-hosted runners as one user, several queue entries at a time, and
+        # this file's runs have failed with "database is locked" on that one
+        # store. The hooks here are local stubs that install nothing, so each
+        # test gets a store of its own.
+        self.env = {**os.environ, "PRE_COMMIT_HOME": str(self.tmp / "pre-commit-home")}
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-b", "main")
@@ -85,7 +92,7 @@ class CiFastTest(unittest.TestCase):
         self.commit_file(head_path)
 
     def run_ci_fast(self, *extra, env_extra=None):
-        env = dict(os.environ)
+        env = dict(self.env)
         env.setdefault("CI_FAST_PRECOMMIT", "pre-commit")
         if env_extra:
             env.update(env_extra)
@@ -389,7 +396,7 @@ class CiFastTest(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT)],
             cwd=worktree, capture_output=True, text=True,
-            env={**os.environ, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", "pre-commit")},
+            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", "pre-commit")},
             timeout=120,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
