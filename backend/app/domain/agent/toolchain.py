@@ -1,4 +1,6 @@
-"""What the platform puts on a machine so a room can write a document.
+"""The programs the platform puts on a machine for its rooms' work: the
+document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
+find, and on Windows the runtime the connector itself needs.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -9,7 +11,8 @@ and `check-repo-rules` enforces that direction.
 
 What these tools do NOT share with claude and pi is a vendor checksum. Measured
 on 2026-09-16: typst v0.15.1 and pandoc 3.11 publish no checksum asset at all,
-and only uv does. So the digest lives here, beside the version.
+and only uv does (ripgrep does too). So the digest lives here, beside the
+version.
 
 That is not a downgrade from the other two — it is the stronger property. A
 checksum the vendor serves from the same place as the artifact vouches for
@@ -35,6 +38,7 @@ PANDOC_VERSION = "3.11"
 UV_VERSION = "0.12.15"
 FJ_VERSION = "0.6.0-cheese.2"
 GH_VERSION = "2.62.0"
+RIPGREP_VERSION = "15.2.0"
 #: The runtime a Windows machine's connector provisions for itself, so that the
 #: `python3` and `sh` the platform runs everywhere exist there too. Windows only:
 #: every other machine brings its own.
@@ -49,6 +53,10 @@ _TYPST_BASE = f"https://github.com/typst/typst/releases/download/v{TYPST_VERSION
 _PANDOC_BASE = f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}"
 _UV_BASE = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}"
 _GH_BASE = f"https://github.com/cli/cli/releases/download/v{GH_VERSION}"
+_RG_BASE = (
+    "https://github.com/BurntSushi/ripgrep/releases/download/"
+    f"{RIPGREP_VERSION}/ripgrep-{RIPGREP_VERSION}"
+)
 _PYTHON_BASE = f"https://www.python.org/ftp/python/{PYTHON_VERSION}"
 _GIT_BASE = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}"
 _FJ_BASE = (
@@ -230,6 +238,38 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         17578593,
         ".zip",
     ),
+    # musl-static on linux, as typst and uv are. Digests computed over the
+    # downloaded files on 2026-10-01 and checked against ripgrep's own.
+    ("ripgrep", "linux-x64"): Artifact(
+        f"{_RG_BASE}-x86_64-unknown-linux-musl.tar.gz",
+        "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+        2265718,
+        ".tar.gz",
+    ),
+    ("ripgrep", "linux-arm64"): Artifact(
+        f"{_RG_BASE}-aarch64-unknown-linux-musl.tar.gz",
+        "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+        1982561,
+        ".tar.gz",
+    ),
+    ("ripgrep", "darwin-x64"): Artifact(
+        f"{_RG_BASE}-x86_64-apple-darwin.tar.gz",
+        "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
+        1878284,
+        ".tar.gz",
+    ),
+    ("ripgrep", "darwin-arm64"): Artifact(
+        f"{_RG_BASE}-aarch64-apple-darwin.tar.gz",
+        "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+        1764284,
+        ".tar.gz",
+    ),
+    ("ripgrep", "windows-x64"): Artifact(
+        f"{_RG_BASE}-x86_64-pc-windows-msvc.zip",
+        "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+        1789611,
+        ".zip",
+    ),
     # The connector's own runtime on Windows (see PYTHON_VERSION). The embeddable
     # distribution is the interpreter and its standard library, nothing else.
     ("python", "windows-x64"): Artifact(
@@ -282,6 +322,7 @@ PLACEMENTS: tuple[tuple[str, str, str, str], ...] = (
     ("typst", TYPST_VERSION, "bin", "typst"),
     ("pandoc", PANDOC_VERSION, "bin", "pandoc"),
     ("uv", UV_VERSION, "bin", "uv"),
+    ("ripgrep", RIPGREP_VERSION, "bin", "rg"),
     ("font-sans", "pinned", "font", "NotoSansSC-VF.otf"),
     ("font-serif", "pinned", "font", "NotoSerifSC-VF.otf"),
 )

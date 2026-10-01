@@ -7,8 +7,10 @@ one call here, answered by this executor in its own process: no shell started,
 no command to read back. Any path the executor's account can reach, as Claude
 Code's Read and Write reach any; a relative one is the workspace's.
 
-A search uses the machine's ripgrep when it has one, as pi's grep and find
-would, and otherwise walks what git does not ignore and matches with `re`.
+A search uses ripgrep, as pi's grep and find would: the one the platform
+places on every machine (`toolchain.PLACEMENTS`), or the machine's own while
+that is still being fetched; with neither it walks what git does not ignore
+and matches with `re`.
 Either way the answer is in the shape pi's tools format, so the model sees
 their output unchanged.
 
@@ -168,10 +170,22 @@ def matcher(pattern: str):
     return lambda root, relative: bool(under.fullmatch(relative))
 
 
+def ripgrep() -> str | None:
+    """The ripgrep a search runs: the platform's, under the toolchain directory
+    the executor was started with (`bootstrap`), else one on PATH."""
+    toolchain = os.environ.get("CHEESE_TOOLCHAIN")
+    if toolchain:
+        name = "rg.exe" if os.name == "nt" else "rg"
+        placed = os.path.join(toolchain, "bin", name)
+        if os.path.isfile(placed) and os.access(placed, os.X_OK):
+            return placed
+    return shutil.which("rg")
+
+
 def files(root: str) -> list[str]:
     """Every file under `root` a search looks at, relative to it: hidden ones
     too, and none that git ignores."""
-    rg = shutil.which("rg")
+    rg = ripgrep()
     if rg:
         found = subprocess.run(
             [rg, "--files", "--hidden", "--null", "--glob", "!.git"],
@@ -237,7 +251,7 @@ def grep(request: dict) -> dict:
         return {"error": f"Path not found: {path}"}
     directory = os.path.isdir(path)
     limit = max(1, int(request.get("limit") or 100))
-    found = (_rg if shutil.which("rg") else _scan)(request, limit)
+    found = (_rg if ripgrep() else _scan)(request, limit)
     if "error" in found:
         return found
     context = max(0, int(request.get("context") or 0))
@@ -282,7 +296,7 @@ def _lines(name: str) -> list[str]:
 def _rg(request: dict, limit: int) -> dict:
     """The search as pi runs ripgrep for it."""
     args = [
-        shutil.which("rg") or "rg",
+        ripgrep() or "rg",
         "--json",
         "--line-number",
         "--color=never",

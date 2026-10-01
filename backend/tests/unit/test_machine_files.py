@@ -11,17 +11,41 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     machine_files as search,
 )
 
+SYSTEM_RG = shutil.which("rg")
 
-@pytest.fixture(params=["ripgrep", "no ripgrep"])
-def machine(request, monkeypatch):
-    if request.param == "ripgrep":
-        if shutil.which("rg") is None:
-            pytest.skip("this machine has no ripgrep")
-        return
+
+def _no_rg_on_path(monkeypatch):
     which = shutil.which
     monkeypatch.setattr(
         search.shutil, "which", lambda name: None if name == "rg" else which(name)
     )
+
+
+def _placed_rg(tmp_path, monkeypatch):
+    """The platform's ripgrep where the toolchain fetcher puts it, standing in
+    for the pinned download: the machine's own, run through a script that
+    notes each time it is used."""
+    toolchain = tmp_path / "toolchain"
+    (toolchain / "bin").mkdir(parents=True)
+    used = tmp_path / "placed-rg-used"
+    rg = toolchain / "bin" / "rg"
+    rg.write_text(f'#!/bin/sh\necho >> {used}\nexec {SYSTEM_RG} "$@"\n')
+    rg.chmod(0o755)
+    monkeypatch.setenv("CHEESE_TOOLCHAIN", str(toolchain))
+    return used
+
+
+@pytest.fixture(params=["ripgrep", "the platform's ripgrep", "no ripgrep"])
+def machine(request, monkeypatch, tmp_path):
+    monkeypatch.delenv("CHEESE_TOOLCHAIN", raising=False)
+    if request.param == "no ripgrep":
+        _no_rg_on_path(monkeypatch)
+        return
+    if SYSTEM_RG is None:
+        pytest.skip("this machine has no ripgrep")
+    if request.param == "the platform's ripgrep":
+        _no_rg_on_path(monkeypatch)
+        _placed_rg(tmp_path, monkeypatch)
 
 
 @pytest.fixture
@@ -114,3 +138,19 @@ def test_a_missing_path_is_said_to_be_missing(machine, checkout):
         {"operation": "grep", "pattern": "x", "path": str(checkout / "nowhere")}
     )
     assert "Path not found" in answer["error"]
+
+
+def test_the_platforms_ripgrep_is_the_one_searched_with(tmp_path, monkeypatch):
+    """A machine with no ripgrep of its own searches with the one the platform
+    placed there, and finds what it would find with any other."""
+    if SYSTEM_RG is None:
+        pytest.skip("this machine has no ripgrep")
+    root = tmp_path / "room"
+    root.mkdir()
+    (root / "app.py").write_text("NEEDLE = 1\n")
+    _no_rg_on_path(monkeypatch)
+    used = _placed_rg(tmp_path, monkeypatch)
+
+    assert grepped(root, "NEEDLE") == ["app.py:1"]
+    assert found(root, "*.py") == ["app.py"]
+    assert len(used.read_text().splitlines()) == 2

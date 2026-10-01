@@ -776,7 +776,7 @@ def test_executor_rooms_share_installed_tools(
             assert (cache / "setup-marker").read_text() == "cached"
             assert not (home / ".local/bin/shared-test-tool").exists()
             assert tally.read_text() == ("x" if room_project == project else "xx")
-        assert len(downloads.read_text().splitlines()) == 5
+        assert len(downloads.read_text().splitlines()) == 6
     finally:
         for state in states:
             subprocess.run(

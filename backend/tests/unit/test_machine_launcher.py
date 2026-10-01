@@ -326,11 +326,13 @@ def _fake_upstream(tmp_path):
     served = tmp_path / "served"
     served.mkdir()
     payload = tmp_path / "payload"
-    for tool in ("typst", "pandoc", "uv"):
+    for tool, _, kind, name in machine_launcher.toolchain.PLACEMENTS:
+        if kind != "bin":
+            continue
         directory = payload / f"{tool}-some-vendor-layout"
         directory.mkdir(parents=True)
-        (directory / tool).write_text(f"#!/bin/sh\necho {tool}\n")
-        (directory / tool).chmod(0o755)
+        (directory / name).write_text(f"#!/bin/sh\necho {name}\n")
+        (directory / name).chmod(0o755)
         with tarfile.open(served / tool, "w:gz") as tar:
             tar.add(directory, arcname=directory.name)
     (served / "font-sans").write_bytes(b"OTTO sans")

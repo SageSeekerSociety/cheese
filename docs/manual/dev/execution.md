@@ -81,7 +81,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 ## 环境与工具的发放 {#toolchain}
 
 - `environment_runner.py` 是一个标准库程序，在被选中的执行边界里跑：装依赖前先拿锁（`flock`，Windows 上走 `remote-execution/portable.py` 的原语），防止两个安装器同时开工；`exec` 的那一刻把锁放掉，之后 agent 的复用由 tmux 管。
-- `toolchain.py` 是**版本与摘要的唯一一处**：typst `0.15.1`、pandoc `3.11`、uv `0.12.15`、fj `0.6.0-cheese.2`、gh `2.62.0`、Windows 的 Python `3.13.13` 与 git `2.55.0.windows.5`，字体按 commit 钉住（`_SANS_COMMIT` / `_SERIF_COMMIT`）。摘要写在这里而不是下载脚本里的原因也在文件里：typst 0.15.1 与 pandoc 3.11 根本没有发布校验和资产（2026-09-16 记的）。
+- `toolchain.py` 是**版本与摘要的唯一一处**：typst `0.15.1`、pandoc `3.11`、uv `0.12.15`、fj `0.6.0-cheese.2`、gh `2.62.0`、ripgrep `15.2.0`（pi 的 grep、find 在执行机上搜索用它）、Windows 的 Python `3.13.13` 与 git `2.55.0.windows.5`，字体按 commit 钉住（`_SANS_COMMIT` / `_SERIF_COMMIT`）。摘要写在这里而不是下载脚本里的原因也在文件里：typst 0.15.1 与 pandoc 3.11 根本没有发布校验和资产（2026-09-16 记的）。
 - `capability/matrix.py` 按 harness 声明行为，不留空格（I6），连还没进注册表的 harness 也写进去，版本常数也钉在里面。
 
 ## 边界与坑 {#traps}
