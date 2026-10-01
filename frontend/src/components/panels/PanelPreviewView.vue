@@ -101,7 +101,11 @@ const fullscreenError = ref('')
  *  所以要把它自己的地址带过去；不给就是当前预览，那一条路本来就落在预览域根上。 */
 function openPreviewInNewTab(path?: string | null) {
   if (!props.topicId) return
-  const query = path ? `?path=${encodeURIComponent(roomFileDestination(path))}` : ''
+  // Bind the displayed file path, not latest metadata. This still serves mutable
+  // room resources; it is not an immutable version or a fixed app instance.
+  const displayedPath = props.displayedFrame && !props.displayedFrame.live ? props.displayedFrame.label : null
+  const targetPath = displayedPath || path
+  const query = targetPath ? `?path=${encodeURIComponent(roomFileDestination(targetPath))}` : ''
   window.open(`/previews/${encodeURIComponent(props.topicId)}${query}`, '_blank', 'noopener')
 }
 
@@ -235,7 +239,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          :title="t('work.room.preview.openInNewTab')"
+          :title="t(displayedFrame?.live ? 'work.room.preview.openCurrentApp' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <v-btn
@@ -288,7 +292,7 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            :title="t('work.room.preview.openInNewTab')"
+            :title="t(displayedFrame?.live ? 'work.room.preview.openCurrentApp' : 'work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
           <v-btn
@@ -310,6 +314,9 @@ function sendLocator() {
       </div>
       <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
         {{ navigationError || previewError || previewReadError }}
+        <div v-if="previewAppNote && !previewUrl">
+          {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+        </div>
         <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
         <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
       </div>
@@ -347,6 +354,9 @@ function sendLocator() {
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
       <div>{{ t('work.room.preview.loadFailed') }}</div>
       <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
+      <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
+        {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+      </div>
       <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">

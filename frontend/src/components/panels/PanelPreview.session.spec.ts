@@ -228,8 +228,26 @@ it('opens the platform preview launch route in a new tab', async () => {
   const opened = vi.spyOn(window, 'open').mockReturnValue(null)
   const { getByTitle } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
-  await fireEvent.click(getByTitle('在新标签页打开'))
+  await fireEvent.click(getByTitle('在新标签页打开当前连接的应用'))
   expect(opened).toHaveBeenCalledWith('/previews/topic-a', '_blank', 'noopener')
+})
+
+it('opens the displayed static path after the latest target fails', async () => {
+  getPreview.mockResolvedValue({ ...artifact('file'), path: 'a.html', version: 'v1' })
+  readPreviewFile.mockResolvedValue({ path: 'a.html', content: '<p>A</p>', version: 'v1' })
+  const { container, rerender, getByTitle, findByRole } = mount()
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const retained = container.querySelector('iframe')
+  getPreview.mockResolvedValue({ ...artifact('file', 'artifact-b'), path: 'b.html', version: 'v2' })
+  readPreviewFile.mockResolvedValue({ path: 'b.html', content: '<p>B</p>', version: 'v2' })
+  requestPreviewSession.mockRejectedValueOnce(new Error('denied-b'))
+  await rerender({ refreshTick: 1 })
+  await findByRole('alert')
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  await fireEvent.click(getByTitle('在新标签页打开'))
+  const launched = new URL(String(open.mock.calls[0][0]), 'https://app.example')
+  expect(launched.searchParams.get('path')).toBe('/_cheese/room/a.html')
+  expect(container.querySelector('iframe')).toBe(retained)
 })
 
 it('uses the same frame while entering fullscreen, refreshing and exiting', async () => {

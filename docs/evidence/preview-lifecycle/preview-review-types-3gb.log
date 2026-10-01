@@ -1,3 +1,0 @@
-Command: NODE_OPTIONS=--max-old-space-size=3072 npx vue-tsc --noEmit
-Exit: 0
-Compiler stdout/stderr: empty

@@ -519,6 +519,7 @@
       "locateMessage": "在 {path} 的 {address}（「{quote}」）：{note}",
       "publishSite": "发布网站",
       "openInNewTab": "在新标签页打开",
+      "openCurrentApp": "在新标签页打开当前连接的应用",
       "exitFullscreen": "退出全屏",
       "fullscreen": "全屏预览",
       "refresh": "刷新",
