@@ -8,15 +8,15 @@
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
 import type { Block } from '../../cx_types'
+import type { AskAction, AskFormState } from '../../lib/askPresentation'
 
 import { computed } from 'vue'
-import type { AskAction, AskFormState } from '../../lib/askPresentation'
-import AskQuestionForm from '../ask/AskQuestionForm.vue'
 
 import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { renderMarkdown as renderMarkdownWith, renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import { avatarColor, avatarInitial } from '../../utils/avatar'
+import AskQuestionForm from '../ask/AskQuestionForm.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
@@ -252,13 +252,14 @@ async function onAgentTextClick(e: MouseEvent) {
         </button>
       </div>
       <AskQuestionForm
-        v-if="askOptions(block)"
+        v-if="askOptions(block) && !block.meta?.ask_group"
         :block="block"
         :viewer="viewer"
         :names="refs.mentionNames"
         :state="askState"
         @action="emit('ask-action', block, $event)"
       />
+      <slot v-if="block.meta?.ask_group" name="ask-group" />
       <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
          升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
          一张表，同时只会有一个非空。 -->

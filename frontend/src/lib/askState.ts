@@ -33,8 +33,11 @@ export function answerVersion(block: Block): number {
 // has not changed. Keep the full fingerprint rather than a collision-prone hash.
 export function questionIdentity(block: Block): string {
   return JSON.stringify([
-    block.content, block.meta?.options, block.meta?.asked,
-    block.meta?.allow_other === true, block.meta?.reject_option === true,
+    block.content,
+    block.meta?.options,
+    block.meta?.asked,
+    block.meta?.allow_other === true,
+    block.meta?.reject_option === true,
     block.meta?.ask_group ?? null,
   ])
 }
@@ -58,10 +61,13 @@ export function validAskDraft(block: Block, draft: AskDraft): boolean {
 
 export function submittedAnswer(block: Block, pending: AskPending): AskAnswerEntry | undefined {
   const p = pending.payload
-  return block.meta?.answer_log?.find((a) =>
-    a.client_op_id === p.client_op_id && a.v === p.expect_version + 1 &&
-    a.kind === p.kind && (a.option ?? '') === (p.option ?? '') &&
-    (a.note ?? '') === (p.note ?? ''),
+  return block.meta?.answer_log?.find(
+    (a) =>
+      a.client_op_id === p.client_op_id &&
+      a.v === p.expect_version + 1 &&
+      a.kind === p.kind &&
+      (a.option ?? '') === (p.option ?? '') &&
+      (a.note ?? '') === (p.note ?? '')
   )
 }
 
@@ -86,8 +92,14 @@ export function loadAskDraft(storage: Storage, account: string, block: Block): A
   const saved = JSON.parse(raw)
   if (saved.question !== questionIdentity(block)) return null
   const d = saved.draft
-  if (!d || ![null, 'option', 'note', 'reject'].includes(d.kind) ||
-    typeof d.option !== 'string' || typeof d.note !== 'string' || typeof d.later !== 'boolean') return null
+  if (
+    !d ||
+    ![null, 'option', 'note', 'reject'].includes(d.kind) ||
+    typeof d.option !== 'string' ||
+    typeof d.note !== 'string' ||
+    typeof d.later !== 'boolean'
+  )
+    return null
   return d as AskDraft
 }
 
@@ -99,13 +111,20 @@ export function loadAskPending(storage: Storage, account: string, block: Block):
   const raw = storage.getItem(askPendingKey(account, block))
   if (!raw) return null
   const p = JSON.parse(raw) as AskPending
-  if (p.account !== account || p.topic !== block.topic_id || p.block !== block.id ||
-    typeof p.question !== 'string' || !p.payload ||
+  if (
+    p.account !== account ||
+    p.topic !== block.topic_id ||
+    p.block !== block.id ||
+    typeof p.question !== 'string' ||
+    !p.payload ||
     !['option', 'note', 'reject'].includes(p.payload.kind) ||
-    !Number.isInteger(p.payload.expect_version) || p.payload.expect_version < 0 ||
-    typeof p.payload.client_op_id !== 'string' || !p.payload.client_op_id ||
+    !Number.isInteger(p.payload.expect_version) ||
+    p.payload.expect_version < 0 ||
+    typeof p.payload.client_op_id !== 'string' ||
+    !p.payload.client_op_id ||
     (p.payload.option !== undefined && typeof p.payload.option !== 'string') ||
-    (p.payload.note !== undefined && typeof p.payload.note !== 'string')) {
+    (p.payload.note !== undefined && typeof p.payload.note !== 'string')
+  ) {
     // Never silently replace an unreadable operation: it may have committed.
     throw new Error('ask-pending-unreadable')
   }
@@ -113,19 +132,26 @@ export function loadAskPending(storage: Storage, account: string, block: Block):
 }
 
 export function prepareAskSubmission(
-  storage: Storage, account: string, block: Block, draft: AskDraft,
-  newId: () => string = () => crypto.randomUUID(),
+  storage: Storage,
+  account: string,
+  block: Block,
+  draft: AskDraft,
+  newId: () => string = () => crypto.randomUUID()
 ): AskPending {
   const existing = loadAskPending(storage, account, block)
   if (existing) return existing
   if (!validAskDraft(block, draft) || !draft.kind) throw new Error('ask-invalid-draft')
   const pending: AskPending = {
-    account, topic: block.topic_id, block: block.id, question: questionIdentity(block),
+    account,
+    topic: block.topic_id,
+    block: block.id,
+    question: questionIdentity(block),
     payload: {
       kind: draft.kind,
       ...(draft.kind === 'option' ? { option: draft.option } : {}),
       ...(draft.note ? { note: draft.note } : {}),
-      expect_version: answerVersion(block), client_op_id: newId(),
+      expect_version: answerVersion(block),
+      client_op_id: newId(),
     },
   }
   // Persist before any network request; quota/privacy failures must block send.
@@ -139,4 +165,8 @@ export function acknowledgeAsk(storage: Storage, account: string, block: Block, 
   storage.removeItem(askPendingKey(account, block))
   storage.removeItem(askDraftKey(account, block, pending.payload.expect_version))
   return true
+}
+
+export function canRevisePending(block: Block, pending: AskPending | null, fresh: boolean): boolean {
+  return fresh && !!pending && answerVersion(block) > pending.payload.expect_version && !submittedAnswer(block, pending)
 }

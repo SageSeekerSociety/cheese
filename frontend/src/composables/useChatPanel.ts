@@ -50,6 +50,7 @@ import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
 
 import { useAskAnswers } from './useAskAnswers'
+import { useAskGroups } from './useAskGroups'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
 
@@ -138,8 +139,20 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
   }
 
-  const { askStates, askAction, askViewer } = useAskAnswers({
+  const { askStates, askAction, askViewer, askAccount } = useAskAnswers({
     blocks: () => messages.value,
+    replace: (updated) => {
+      if (timeline.find(updated.id)) {
+        timeline.replace(updated)
+        historyChanges?.set(updated.id, updated)
+      }
+    },
+  })
+
+  const { askGroups, askGroupAction } = useAskGroups({
+    blocks: () => messages.value,
+    account: () => askAccount.value,
+    viewer: () => askViewer.value,
     replace: (updated) => {
       if (timeline.find(updated.id)) {
         timeline.replace(updated)
@@ -894,6 +907,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
     connected,
     send,
+    askGroups,
+    askGroupAction,
     askStates,
     askAction,
     askViewer,

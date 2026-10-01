@@ -269,6 +269,7 @@ export interface WaitingItem {
   taskTitle: string | null
   displayStatus: string
   reason: 'reviewer' | 'reporter' | 'asked'
+  blockId?: string | null
   at: string
 }
 

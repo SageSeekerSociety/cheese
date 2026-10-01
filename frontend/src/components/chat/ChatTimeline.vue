@@ -8,14 +8,21 @@
 // doing. The three animation sets (`arrived` / `older` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
-import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { Block, Topic } from '../../cx_types'
+import type { AskGroupScope } from '../../lib/askGroup'
+import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
+import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
+import { reactive, watch } from 'vue'
+
+import { t } from '../../i18n'
+import { groupKey, groupOf } from '../../lib/askGroup'
 import { editableText } from '../../lib/renderMessage'
+import AskGroupFlow from '../ask/AskGroupFlow.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DispatchedMarker from '../DispatchedMarker.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
@@ -25,7 +32,7 @@ import TimelineMark from '../TimelineMark.vue'
 
 import UserRef from '@/components/common/UserRefLink.vue'
 
-defineProps<{
+const props = defineProps<{
   topic: Topic | null
   rows: NoticeRow[]
   dayLabels: Map<string, string>
@@ -57,6 +64,7 @@ defineProps<{
   editingId: string | null
   editSaving: boolean
   askStates?: Record<string, AskFormState>
+  askGroups?: Record<string, AskGroupState>
   /** Bound with `:ref`, so the pane the panel measures is this one. */
   scrollRef: Ref<HTMLElement | null>
   contentRef: Ref<HTMLElement | null>
@@ -89,6 +97,7 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'ask-action', block: Block, action: AskAction): void
+  (e: 'ask-group-action', scope: AskGroupScope, action: AskGroupAction): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
   (e: 'avatar-error', handle: string): void
@@ -102,6 +111,29 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+const groupFocus = reactive<Record<string, string>>({})
+watch(
+  () => props.flashId,
+  (id) => {
+    const block = props.rows.find((row) => row.block.id === id)?.block
+    if (block) focusGroup(block)
+  }
+)
+function focusGroup(block: Block) {
+  const scope = groupOf(block)
+  if (scope) groupFocus[groupKey(scope)] = block.id
+}
+function groupAnchor(block: Block): string | undefined {
+  const scope = groupOf(block)
+  if (!scope) return undefined
+  const focus = groupFocus[groupKey(scope)]
+  return focus && props.rows.some((row) => row.block.id === focus) ? focus : groupFor(block)?.anchor
+}
+function groupFor(block: Block): AskGroupState | undefined {
+  const scope = groupOf(block)
+  return scope ? props.askGroups?.[groupKey(scope)] : undefined
+}
 
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
@@ -261,7 +293,19 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @avatar-error="emit('avatar-error', $event)"
           @save-edit="emitSaveEdit(m, $event)"
           @cancel-edit="emit('cancel-edit')"
-        />
+        >
+          <template #ask-group>
+            <AskGroupFlow
+              v-if="groupAnchor(m) === m.id"
+              :state="groupFor(m)!"
+              :viewer="viewer"
+              :names="refs.mentionNames"
+              :focus-block="groupFocus[groupKey(groupFor(m)!.scope)] ?? m.id"
+              @action="emit('ask-group-action', groupFor(m)!.scope, $event)"
+            />
+            <button v-else-if="groupFor(m)" type="button" @click="focusGroup(m)">{{ t('ask.group.open') }}</button>
+          </template>
+        </RoomMessage>
       </template>
 
       <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还

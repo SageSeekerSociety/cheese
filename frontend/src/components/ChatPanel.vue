@@ -172,6 +172,8 @@ const {
   errorMsg,
   connected,
   send,
+  askGroups,
+  askGroupAction,
   askStates,
   askAction,
   askViewer,
@@ -256,6 +258,7 @@ defineExpose({ send, connected })
         :editing-id="editingId"
         :edit-saving="editSaving"
         :ask-states="askStates"
+        :ask-groups="askGroups"
         :scroll-ref="timelineRefs.scrollRef"
         :content-ref="timelineRefs.contentRef"
         :is-agent-block="isAgentBlock"
@@ -287,6 +290,7 @@ defineExpose({ send, connected })
         @open-card="emit('open-card', $event)"
         @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
         @ask-action="askAction"
+        @ask-group-action="askGroupAction"
         @download="downloadAttachment"
         @jump="openAt"
         @avatar-error="onAvatarError"

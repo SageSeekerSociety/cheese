@@ -1,20 +1,35 @@
+import type { Block } from '../../cx_types'
+import type { AskFormState } from '../../lib/askPresentation'
+
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import type { Block } from '../../cx_types'
-import type { AskFormState } from '../../lib/askPresentation'
-import { emptyAskDraft } from '../../lib/askState'
 import { setLocale } from '../../i18n'
+import { emptyAskDraft } from '../../lib/askState'
+
 import AskQuestionForm from './AskQuestionForm.vue'
 
 setLocale('zh-CN')
 const block = (): Block => ({
-  id: 'q', topic_id: 't', kind: 'message', content: 'Pick', author_type: 'participant', author: 'agent', created_at: '',
+  id: 'q',
+  topic_id: 't',
+  kind: 'message',
+  content: 'Pick',
+  author_type: 'participant',
+  author: 'agent',
+  created_at: '',
   meta: { asked: 'alice', options: [{ text: 'A', explain: 'Explanation' }, { text: 'B' }], answer_log: [] },
 })
 const state = (): AskFormState => ({
-  draft: emptyAskDraft(), pending: null, editing: false, busy: false, fresh: true,
-  saved: false, error: null, conflict: false, storageBlocked: false,
+  draft: emptyAskDraft(),
+  pending: null,
+  editing: false,
+  busy: false,
+  fresh: true,
+  saved: false,
+  error: null,
+  conflict: false,
+  storageBlocked: false,
 })
 
 describe('real question form', () => {
@@ -23,7 +38,9 @@ describe('real question form', () => {
     const view = render(AskQuestionForm, { props: { block: block(), viewer: 'alice', names: {}, state: s } })
     expect(screen.getByText('Explanation')).toBeTruthy()
     await fireEvent.change(screen.getByRole('radio', { name: /A/ }))
-    expect(view.emitted().action).toEqual([[{ type: 'draft', draft: { ...emptyAskDraft(), kind: 'option', option: 'A' } }]])
+    expect(view.emitted().action).toEqual([
+      [{ type: 'draft', draft: { ...emptyAskDraft(), kind: 'option', option: 'A' } }],
+    ])
     await view.rerender({ state: { ...s, draft: { ...emptyAskDraft(), kind: 'option', option: 'A' } } })
     const submit = screen.getByRole('button', { name: '提交答案' })
     expect(submit.hasAttribute('disabled')).toBe(false)
@@ -54,7 +71,13 @@ describe('real question form', () => {
 
   it('freezes pending payload and offers the original retry, not a new edit', () => {
     const s = state()
-    s.pending = { account: '1', topic: 't', block: 'q', question: 'fixed', payload: { kind: 'option', option: 'A', client_op_id: 'same', expect_version: 0 } }
+    s.pending = {
+      account: '1',
+      topic: 't',
+      block: 'q',
+      question: 'fixed',
+      payload: { kind: 'option', option: 'A', client_op_id: 'same', expect_version: 0 },
+    }
     s.draft = { ...emptyAskDraft(), kind: 'option', option: 'A' }
     render(AskQuestionForm, { props: { block: block(), viewer: 'alice', names: {}, state: s } })
     expect(screen.getByRole('button', { name: '重试原提交' })).toBeTruthy()
