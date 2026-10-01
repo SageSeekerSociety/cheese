@@ -309,7 +309,17 @@ def test_http_answer_continues_original_native_executor(
             assert client.portal.call(chat.recover_sessions) == 1
             client.portal.call(chat.replays_settled)
 
-            async def assert_multi_repaired():
+            async def multi_recovery_state():
+                from app.domain.delivery.answer_ownership import (
+                    seat_has_unfinished_input,
+                )
+
+                refusal = None
+                if mode != "history-multi":
+                    try:
+                        await runtime.replay(handle.session, known_texts=set())
+                    except ValueError as exc:
+                        refusal = str(exc)
                 async with client.test_request_factory() as session:
                     rows = list(
                         await session.scalars(
@@ -319,16 +329,21 @@ def test_http_answer_continues_original_native_executor(
                             )
                         )
                     )
-                    assert len(rows) == 2
-                    assert all(
-                        bool(row.completed_at) == (mode == "history-multi")
-                        for row in rows
+                    completed = [bool(row.completed_at) for row in rows]
+                    unfinished = await seat_has_unfinished_input(
+                        session, topic, handle.agent_handle
                     )
-                if mode != "history-multi":
-                    with pytest.raises(ValueError):
-                        await runtime.replay(handle.session, known_texts=set())
+                return completed, unfinished, refusal
 
-            client.portal.call(assert_multi_repaired)
+            completed, unfinished, refusal = client.portal.call(multi_recovery_state)
+            assert completed == [mode == "history-multi"] * 2
+            assert unfinished == (mode != "history-multi")
+            if mode == "history-multi-missing":
+                assert refusal == "Historical completion disagrees with retained inputs"
+            else:
+                # A foreign session lacks trusted interval identity. It remains
+                # quarantined without throwing or fabricating completion.
+                assert refusal is None
             journal = Journal(handle.mirror)
             try:
                 assert journal.recall("landed") == landed
