@@ -86,7 +86,7 @@ const emit = defineEmits<{
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   // 总览自动区里的一条决策 / 里程碑：去向不在话题里，交给拿着路由的那一层。
-  (e: 'open-resource', resource: 'decision' | 'milestone'): void
+  (e: 'open-resource', resource: 'milestone'): void
   /** 有人在正文里改了东西（装配服务端那一版时不算）。 */
   (e: 'edited'): void
   /** 这个确认框里「取消」/ 点外面关掉：状态那一半归组合式函数管。 */
@@ -331,7 +331,7 @@ defineExpose({
               @error="setError"
             />
 
-            <!-- 总览房间的其余四块（#1889 ②~⑤）：正文下面、评论区上面。只有根话题
+            <!-- 总览房间的其余三块（#1889 ②~④）：正文下面、评论区上面。只有根话题
                  有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
             <OverviewAuto
               v-if="topic?.kind === 'root'"

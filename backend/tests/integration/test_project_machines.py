@@ -308,6 +308,11 @@ def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
     # Destroying paid infrastructure is team-admin only.
     machine = f"/projects/{pid}/machines/{uuid.uuid4()}"
     assert api_client.delete(machine, headers=headers(member)).status_code == 403
+    # A refusal names what the person tried, not an operation they never asked for.
+    refused = api_client.post(f"{machine}/suspend", headers=headers(member))
+    assert refused.status_code == 403
+    assert "休眠" in refused.json()["message"]
+    assert "创建" not in refused.json()["message"]
     assert api_client.delete(machine, headers=headers(admin)).status_code == 422
     # Outsiders learn neither the project nor its private machine inventory.
     assert (
@@ -636,3 +641,28 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
 
     first, second = client.portal.call(_run)
     assert {first, second} == {101, 102}
+
+
+def test_cloud_supply_says_unknown_rather_than_guessing(api_client, auth_headers):
+    # The test settings carry no MicroCloud credentials: whoever can choose the
+    # project's work computer is told the range is unknown, with no numbers.
+    pid = _project(api_client, auth_headers)
+    response = api_client.get(f"/projects/{pid}/cloud-supply", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["available"] is False
+    assert data["reason"]
+    assert "selectable" not in data
+
+
+def test_cloud_supply_is_not_shown_outside_the_project(
+    api_client: TestClient, user_client: UserCreator, auth_headers
+):
+    pid = _project(api_client, auth_headers)
+    outsider = user_client.create_user()
+    outsider.token = user_client.login(api_client, outsider.username, outsider.password)
+    response = api_client.get(
+        f"/projects/{pid}/cloud-supply",
+        headers={"Authorization": f"Bearer {outsider.token}"},
+    )
+    assert response.status_code in (403, 404)

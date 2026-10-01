@@ -174,7 +174,13 @@ describe('English settings copy', () => {
 
   it('the work computer form, with a custom cloud size', async () => {
     render(ComputeChoiceForm, {
-      props: { cloudAvailable: true, devices: [{ device_id: 'd1', name: 'Lab box', online: true }] as never },
+      props: {
+        cloudAvailable: true,
+        devices: [{ device_id: 'd1', name: 'Lab box', online: true }] as never,
+        // The real "not asked yet" state: no range has been read, so the form
+        // shows no range numbers at all.
+        supply: null,
+      },
       ...mountOpts(),
     })
     await fireEvent.input(screen.getByLabelText('Custom CPU, memory and disk'), { target: { checked: true } })

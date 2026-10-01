@@ -1,7 +1,7 @@
 <template>
   <section class="ap" :aria-label="t('tasks.assistant.label')">
     <header class="ap__head">
-      <span class="ap__mark" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
+      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" /></span>
       <v-menu location="bottom start" :disabled="busy">
         <template #activator="{ props: menu }">
           <button v-bind="menu" type="button" class="ap__title" :disabled="busy">
@@ -51,7 +51,7 @@
       <template v-if="messages.length === 0 && streaming === null">
         <p class="ap__ctx">{{ t('tasks.assistant.reads') }}</p>
         <div class="ap__a">
-          <span class="ap__avatar" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
+          <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
           <p class="ap__text">{{ t('tasks.assistant.greeting') }}</p>
         </div>
         <div class="ap__starters">
@@ -65,14 +65,16 @@
         <p v-if="dayOf(i)" class="ap__day">{{ dayOf(i) }}</p>
         <p v-if="m.role === 'user'" class="ap__q">{{ m.text }}</p>
         <div v-else class="ap__a">
-          <span class="ap__avatar" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
+          <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
           <div class="ap__text ap__md" v-html="render(m.text)" />
         </div>
       </template>
 
       <div v-if="streaming !== null" class="ap__a">
-        <span class="ap__avatar" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
+        <span class="ap__avatar" aria-hidden="true"
+          ><CheeseAvatar :size="26" :state="streaming ? null : 'think'"
+        /></span>
         <div class="ap__text">
           <p v-if="!streaming" class="ap__looking">{{ toolLabel }}</p>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
@@ -123,6 +125,7 @@ import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 
 export interface PanelConversation {
   id: string
@@ -245,26 +248,8 @@ watch(
 
 .ap__mark,
 .ap__avatar {
-  display: inline-grid;
+  display: inline-flex;
   flex-shrink: 0;
-  place-items: center;
-  font-weight: 700;
-  color: var(--inverse-ink);
-  background: linear-gradient(135deg, var(--logo-primary), var(--logo-secondary));
-}
-
-.ap__mark {
-  width: 20px;
-  height: 20px;
-  font-size: 12px;
-  border-radius: var(--radius-sm);
-}
-
-.ap__avatar {
-  width: 26px;
-  height: 26px;
-  font-size: 13px;
-  border-radius: var(--radius-sm);
 }
 
 .ap__title {

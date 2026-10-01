@@ -55,8 +55,8 @@ the four pairs `tests/unit/test_domain_import_guard.py` freezes against
 
 Ordering. This module sorts after `projects.py` (`_` > `.`) and before
 `projects_artifacts.py` (`projects_ag` < `projects_ar`), so its paths mount later
-in the route table than they did inside projects.py -- no longer between
-`GET /projects/{project_id}` and `/decisions`, but after every path that stays,
+in the route table than they did inside projects.py -- no longer right after
+`GET /projects/{project_id}`, but after every path that stays,
 up to `PUT /projects/{project_id}/upstream`, and before every artifact path.
 Every moved path carries a literal (`agents`, `default-agent`) where each route
 that now precedes it carries a literal of its own, and no route registered in

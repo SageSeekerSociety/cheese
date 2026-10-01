@@ -23,10 +23,6 @@ export interface AssistantMessage {
   at: string
 }
 
-interface Envelope<T> {
-  data: T
-}
-
 export function useAssistant(taskId: () => number) {
   const conversations = ref<AssistantConversation[]>([])
   const current = ref<string | null>(null)
@@ -43,14 +39,12 @@ export function useAssistant(taskId: () => number) {
   const title = computed(() => conversations.value.find((c) => c.id === current.value)?.title ?? '')
 
   async function listConversations() {
-    const { data } = await request<Envelope<{ conversations: AssistantConversation[] }>>(
-      `/assistant/tasks/${taskId()}/conversations`
-    )
+    const data = await request<{ conversations: AssistantConversation[] }>(`/assistant/tasks/${taskId()}/conversations`)
     conversations.value = data.conversations
   }
 
   async function open(id: string) {
-    const { data } = await request<Envelope<AssistantConversation & { messages: AssistantMessage[] }>>(
+    const data = await request<AssistantConversation & { messages: AssistantMessage[] }>(
       `/assistant/conversations/${id}`
     )
     current.value = id
@@ -81,7 +75,7 @@ export function useAssistant(taskId: () => number) {
 
   async function ensureConversation(): Promise<string> {
     if (current.value) return current.value
-    const { data } = await request<Envelope<AssistantConversation>>(`/assistant/tasks/${taskId()}/conversations`, {
+    const data = await request<AssistantConversation>(`/assistant/tasks/${taskId()}/conversations`, {
       method: 'POST',
     })
     conversations.value = [data, ...conversations.value]

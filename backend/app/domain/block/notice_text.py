@@ -73,9 +73,12 @@ if NOTICE_MESSAGES.keys() & ERROR_MESSAGES.keys():
 #: message.
 MESSAGES: Final[dict[str, str]] = {**NOTICE_MESSAGES, **ERROR_MESSAGES}
 
-#: Ordinary comments no longer schedule agent turns. Keep these keys only to
-#: replay stored room/notification descriptors; new notices must not say them.
-HISTORICAL_NOTICE_KEYS: Final = frozenset({"docCommented", "docCommentedHandedTo"})
+#: Keys that only replay stored room/notification descriptors; new notices must
+#: not say them. Ordinary comments no longer schedule agent turns, and agents no
+#: longer record decisions (the 「记录了一条决策」 line stays on old rooms).
+HISTORICAL_NOTICE_KEYS: Final = frozenset(
+    {"docCommented", "docCommentedHandedTo", "actionDecision"}
+)
 
 
 class NoticeText(str):

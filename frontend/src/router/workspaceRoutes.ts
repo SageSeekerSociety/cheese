@@ -20,7 +20,7 @@ import type { RouteRecordRaw } from 'vue-router'
 // parameter, which is how the same words ended up leading to two different
 // places: the sidebar swapped the panel in place, the action card pushed the
 // full page. One address per document now; the old links still resolve.
-const DOC_KINDS = ['charter', 'decisions', 'weeklies'] as const
+const DOC_KINDS = ['charter', 'weeklies'] as const
 
 // The topic list is the mobile workspace destination. Child pages declare their
 // parent through backTo, which is used by both desktop and mobile navigation.

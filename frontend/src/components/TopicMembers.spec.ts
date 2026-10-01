@@ -87,7 +87,7 @@ const settle = async () => {
 
 async function openRoster() {
   const utils = render(Roster, {
-    props: { topicId: 't1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
+    props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
     global: { plugins: [createVuetify({ components, directives })] },
   })
   await settle()
@@ -287,7 +287,7 @@ describe('名册上这个话题的工作电脑', () => {
       })
     )
     const { emitted } = render(Roster, {
-      props: { topicId: 't1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
+      props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
       global: { plugins: [createVuetify({ components, directives })] },
     })
     await settle()

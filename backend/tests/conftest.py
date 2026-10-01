@@ -1138,7 +1138,7 @@ def client(
         with TestClient(app) as c:
             # The cheese write-API is token-gated (app.main.cheese_token_gate); send
             # the secret on every test request so contract tests exercising those
-            # endpoints (doc/split/decision/...) aren't rejected with 401.
+            # endpoints (doc/split/weekly/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]

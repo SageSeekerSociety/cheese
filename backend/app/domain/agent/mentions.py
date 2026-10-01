@@ -14,7 +14,7 @@
 **和另外两个「mention」模块不是一份东西，是同一根管子上的三段。**
 
 - `app.domain.mentions`：friendly `@名字` / `@话题名` → 编码 token 的规范化
-  （`expand_mention_names` / `canonicalize_refs`），文档 PUT、决策、结论回流也
+  （`expand_mention_names` / `canonicalize_refs`），文档 PUT、周报、结论回流也
   要过。它**产出** token。
 - `app.domain.delivery.mention`：一条消息点到哪位 AI 队友，那条投递记在它那里
   （`record_mentions`），和定时投递同一本账。它决定**谁被叫起来**。

@@ -497,6 +497,53 @@ def test_ready_never_pushes_or_files_a_card():
     assert "PR #1" in out
 
 
+def _tasks(*titles):
+    return {
+        ("GET", f"/topics/{_ROOM}/tasks"): {
+            "data": [
+                {"id": f"00000000-0000-4000-8000-{i:012d}", "title": title}
+                for i, title in enumerate(titles, 1)
+            ]
+        }
+    }
+
+
+@pytest.mark.parametrize("target", [_TASK, f"<#{_TASK}>"])
+def test_tell_by_id_writes_on_that_thread_without_a_lookup(target):
+    host = Host()
+    out = run("cheese_tell", {"target": target, "message": "口径改了"}, host)
+    assert host.requests == [
+        {
+            "method": "POST",
+            "path": f"/topics/{_ROOM}/tasks/{_TASK}/messages",
+            "body": {"content": "口径改了"},
+        }
+    ]
+    assert "没有人被叫醒" in out
+
+
+def test_tell_by_title_finds_the_thread_in_this_room():
+    host = Host(_tasks("数据清洗", "数据清洗（旧）", "画图"))
+    out = run("cheese_tell", {"target": "画图", "message": "换配色"}, host)
+    post = host.requests[-1]
+    assert post["path"] == (
+        f"/topics/{_ROOM}/tasks/00000000-0000-4000-8000-000000000003/messages"
+    )
+    assert "画图" in out
+    # An exact title wins over the titles that merely contain it.
+    run("cheese_tell", {"target": "数据清洗", "message": "x"}, host)
+    assert host.requests[-1]["path"].endswith("-000000000001/messages")
+
+
+def test_tell_names_the_choices_when_the_title_matches_none_or_many():
+    host = Host(_tasks("清洗 A", "清洗 B"))
+    with pytest.raises(cheese.PlatformToolError, match="清洗 A、清洗 B"):
+        run("cheese_tell", {"target": "画图", "message": "x"}, host)
+    with pytest.raises(cheese.PlatformToolError, match="用 id 指明"):
+        run("cheese_tell", {"target": "清洗", "message": "x"}, host)
+    assert all(r["method"] == "GET" for r in host.requests)
+
+
 def test_a_lock_someone_else_holds_is_a_refusal():
     host = Host(
         {

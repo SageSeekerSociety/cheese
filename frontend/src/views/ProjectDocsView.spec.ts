@@ -13,7 +13,6 @@ vi.mock('@/composables/useCachedResource', () => ({
     data: ref({
       projectName: '项目',
       rootTopicId: 'root',
-      decisions: [],
       weeklies: [],
       memoryEntries: [],
       ...state.payload,

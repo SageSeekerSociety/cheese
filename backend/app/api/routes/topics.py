@@ -34,10 +34,11 @@ from app.domain.block.models import (
     AuthorType,
     Block,
     BlockKind,
+    checklist_text,
 )
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, OptionAnswerIn
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -57,7 +58,6 @@ from app.domain.room_task.services import (
 )
 from app.domain.topic import naming
 from app.domain.topic.models import Topic, TopicKind
-from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -67,7 +67,6 @@ from app.domain.topic.repositories import (
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
-    RelayIn,
     SplitIn,
     TopicCreate,
     TopicOut,
@@ -873,6 +872,9 @@ class ProgressIn(BaseModel):
     # request a list belongs to is the agent's call: it sets this when someone
     # brings it a new one.
     new: bool = False
+    # Edit this checklist of the writer's rather than their newest: a person
+    # ticks a step on whichever of their lists they are looking at.
+    message: uuid.UUID | None = None
     # One line on what landed, written when the work is done; shown under the
     # list in the same message. Same ceiling as an item.
     result: (
@@ -883,21 +885,6 @@ class ProgressIn(BaseModel):
     ) = None
 
 
-# The step markers of the checklist message's text. The room draws its own
-# icons from `meta.checklist`; this text is what every other reader gets — the
-# agent reading the history, a copy, a notification preview.
-_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
-
-
-def _checklist_text(items: list[dict], result: str | None) -> str:
-    """The checklist as the message's text: one line per step, and the result
-    line under it once there is one."""
-    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
-    if result:
-        lines += ["", f"✅ {result}"]
-    return "\n".join(lines)
-
-
 @router.put("/{topic_id}/progress")
 async def write_topic_progress(
     topic_id: uuid.UUID,
@@ -906,60 +893,68 @@ async def write_topic_progress(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """`todo_write`: the agent's whole checklist (进度层), and its message.
+    """A member's whole checklist as their message: `todo_write` for an agent,
+    the composer's checklist for a person. The first write posts it, later
+    ones edit the writer's own current list (or the one ``message`` names)
+    through the edit every author has; ``new`` posts another. Whole-list
+    replace, so the message says exactly what its writer last said.
 
-    Whole-list replace, so what is stored is exactly what the agent last said,
-    never a merge of two plans. The stored list is what 总览 shows and what the
-    room's next turn is handed back.
-
-    In the room the list is an ordinary message by the agent. The first call
-    posts it; later calls edit the agent's current checklist message through
-    the same edit every author has (`domain/block/editing`); ``new`` posts a
-    fresh one.
-
-    With ``task`` it is that card's 分身 writing, and the list is the card's:
-    stored under the card and pushed on the card's channel, the same channel its
-    attributed events go to (`chat.py`), leaving the room's own list and
-    conversation alone.
-
-    A platform tool, so it reaches here the same way from every harness.
+    Only a writer seated as one of the room's agents also stores the list as
+    the room's progress (进度层): that is the plan the room's next turn is
+    handed back as its own, and what 总览 shows. A person's list stored there
+    would hand the agent somebody else's plan. With ``task`` a 分身 is writing
+    its card's list: stored under the card, pushed on the card's channel, and
+    nothing posted in the room — the worker's plan, so it takes the same seat.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
-    if not actor.authenticated:
-        raise ForbiddenError("An authenticated agent must write this checklist")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
-        raise ForbiddenError("An authenticated agent must write this checklist")
+    if not actor.authenticated:
+        # The global development token opens the room but is nobody, and a
+        # message needs an author.
+        raise ForbiddenError("Sign in to write a checklist")
+    plans_the_turn = await TopicMemberService(db).holds_an_agent_seat(
+        place.room, actor.handle
+    )
     if body.task is not None:
+        if not plans_the_turn:
+            raise ForbiddenError("A card's checklist is written by its worker")
         task = await TaskRepository(db).get(body.task)
         if task is None or task.room_id != place.room_id:
             raise NotFoundError("Task not found in this room")
+    if body.new and body.message is not None:
+        raise ValidationError("message and new cannot both be given")
+    current = None
+    if body.task is None and not body.new:
+        current = await BlockRepository(db).current_checklist(
+            place.room_id, actor.handle, message=body.message
+        )
+        if current is None and body.message is not None:
+            raise NotFoundError("Checklist not found in this room")
+        if current is not None and current.author != actor.handle:
+            raise ForbiddenError("Only the author can edit this message")
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
     ]
     runner = get_work_runner()
-    work = runner.live_work_for_topic(place.room_id)
-    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    await TopicProgressRepository(db).save(
-        place.room_id, items, task_id=body.task, turn_id=turn_id
-    )
-    await db.commit()
+    turn_id = None
+    if plans_the_turn:
+        work = runner.live_work_for_topic(place.room_id)
+        turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
+        await TopicProgressRepository(db).save(
+            place.room_id, items, task_id=body.task, turn_id=turn_id
+        )
+        await db.commit()
     if body.task is not None:
         await get_broker().publish(str(body.task), {"type": "todo", "items": items})
         return ok({"items": items})
-    text = _checklist_text(items, body.result)
+    text = checklist_text(items, body.result)
     checklist = {"items": items, "result": body.result}
-    current = (
-        None
-        if body.new
-        else await BlockRepository(db).current_checklist(place.room_id, actor.handle)
-    )
     if current is not None:
         message = await edit_message(
             db,
@@ -982,7 +977,9 @@ async def write_topic_progress(
         topic_refs=[],
         publish=True,
         author=actor.handle,
-        own_output=True,
+        # An agent's list is its own output; a person's is said to the room and
+        # waits to be read like anything else they post.
+        own_output=plans_the_turn,
         extra_meta={CHECKLIST_META_KEY: checklist},
     )
     assert message is not None  # a publication with no eid never deduplicates
@@ -1000,9 +997,9 @@ async def get_topic_overview(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """总览房间的自动区（#1889）：②~⑤，结构化，给文档面板正文下方那一栏。
+    """总览房间的自动区（#1889）：②~④，结构化，给文档面板正文下方那一栏。
 
-    总览文档是五块：① 写在文档正文里，②~⑤ 由平台现拼。注入 agent 提示词的
+    总览文档是四块：① 写在文档正文里，②~④ 由平台现拼。注入 agent 提示词的
     那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
     逐个点击的结构化条目。
 
@@ -1084,7 +1081,7 @@ async def summon_agent(
 @router.post("/blocks/{block_id}/answer")
 async def answer_options(
     block_id: uuid.UUID,
-    body: dict,
+    body: OptionAnswerIn,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
@@ -1093,13 +1090,13 @@ async def answer_options(
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
     the choice as the answerer's message, addressed to the teammate that asked."""
-    option = (body.get("option") or "").strip()
+    option = body.option.strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
         raise NotFoundError(say("optionQuestionNotFound"))
     actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
+        fallback_handle=body.author,
         topic_id=blk.topic_id,
         project_id=blk.project_id,
     )
@@ -1183,56 +1180,6 @@ async def mint_webhook_token(
     return ok({"token": token})
 
 
-@router.post("/{topic_id}/decision")
-async def record_decision(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese_decision` tool."""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    decision = (body.get("decision") or "").strip()
-    if not decision:
-        raise ValidationError("decision 不能为空")
-    decision = await canonicalize_refs(
-        db, place.project_id, decision, exclude_topic_id=place.room_id
-    )
-    # 重发幂等 (④): inside a re-sent turn, the same decision text is the
-    # same decision — a re-sent 芝士 re-recording it must not stack a second
-    # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
-    # and no dedup: pressing the button twice means it twice.
-    continuation = get_work_runner().continuation_for(topic_id)
-    key = action_key(continuation, "decision", decision) if continuation else None
-    if key is not None and not await idem.claim(
-        db, key, action="decision", scope_id=str(topic_id)
-    ):
-        prior = await idem.stored_result(db, key)
-        return ok(prior or {"skipped": True})
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=(
-            actor.handle
-            if actor.authenticated
-            else await TopicMemberService(db).resolve_agent_handle(
-                topic_id, room_id=place.room_id
-            )
-        ),
-        author_type=AuthorType.participant,
-        content=decision,
-        kind=BlockKind.decision,
-        refs=[str(topic_id)],
-    )
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    if key is not None:
-        await idem.record_result(db, key, out)
-    await db.commit()
-    await announce_stale(place.room_id, "decision")
-    return ok(out)
-
-
 def _parse_moment(raw: object) -> datetime | None:
     """一个可选的 ISO-8601 时刻；空串和缺席是一回事。"""
     if not isinstance(raw, str) or not raw.strip():
@@ -1268,7 +1215,7 @@ async def record_weekly(
     的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
     列 —— 它是这一条记录的属性，没有第二处会读它。
 
-    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去，和决策记录一样。
+    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -1279,7 +1226,7 @@ async def record_weekly(
     report = await canonicalize_refs(
         db, place.project_id, report, exclude_topic_id=place.room_id
     )
-    # 重发幂等 (④)，和决策记录同一个道理：一轮重新送达时，同一份正文是同一份
+    # 重发幂等 (④)：一轮重新送达时，同一份正文是同一份
     # 周报，不能垒出第二行。轮次之外（人在界面上点）没有 continuation，也就没有
     # 去重 —— 点两次就是两次。
     continuation = get_work_runner().continuation_for(topic_id)
@@ -1611,45 +1558,3 @@ async def clone_topic_from(
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
-
-
-@router.post("/{topic_id}/tell")
-async def tell_topic(
-    topic_id: uuid.UUID,
-    body: RelayIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """留话给一条活: write one message onto a thread this room dispatched
-    (`cheese_tell`). See `app.domain.topic.relay` for why the comments endpoint
-    could not be this channel, and why nothing is woken.
-
-    `topic_id` is the SENDER — the place whose turn is speaking, which is what
-    the per-turn token in `_CHEESE_WRITE_PATHS` is scoped to. The receiver rides
-    in the body and is resolved against the threads that sender dispatched: an
-    id in the URL says "who is talking", never "which resource is this".
-    """
-    sender = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, sender)
-    service = TopicRelayService(db)
-    target = await service.resolve_target(sender=sender, target=body.target)
-    # Friendly "@名字 / @话题名" → structured tokens BEFORE the message lands on
-    # the thread, so chips render and @mentions notify over there.
-    content = await canonicalize_refs(
-        db, sender.project_id, body.content, exclude_topic_id=target.id
-    )
-    block = await service.relay(sender=sender, target=target, content=content)
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    await db.commit()
-    # The room is where a person is watching; a thread's message shows up there
-    # too, under its thread.
-    await get_broker().publish(
-        str(target.room_id), {"type": "assistant_block", "block": out}
-    )
-    return ok(
-        {
-            "block": out,
-            "target_topic_id": str(target.id),
-            "target_title": target.title,
-        }
-    )

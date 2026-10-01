@@ -54,6 +54,7 @@ import { myHandle } from '../me'
 
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
+import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
 
@@ -160,6 +161,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
       askBusy.value = null
     }
   }
+
+  // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
+  const { postChecklist, changeChecklist } = useOwnChecklist({
+    topicId: () => topic()?.id,
+    show: (block) => {
+      if (!timeline.find(block.id)) return
+      timeline.replace(block)
+      historyChanges?.set(block.id, block)
+    },
+    fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
+  })
 
   // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
   // MVP picker: a fixed strip of the 8 most common reactions.
@@ -321,7 +333,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         emit('state-changed', frame.resource)
         break
       case 'event_block':
-        // A persisted, clickable action card (decision/doc/...) for this turn.
+        // A persisted, clickable action card (milestone/doc/...) for this turn.
         pushBlock(frame.block)
         toSite(frame.block)
         autoScroll()
@@ -611,8 +623,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   // The conversation stream shows messages + lightweight system lines only.
-  // doc/decision blocks are document state (they live in the doc panel), and AI
-  // tool events belong in 现场 — neither belongs in the group chat (spec §7.1).
+  // doc blocks are document state (they live in the doc panel), and AI tool
+  // events belong in 现场 — neither belongs in the group chat (spec §7.1).
   // Historical SDK turns can contain one fenced Markdown block split across
   // consecutive message rows. Repair those rows before collapseNotices hides
   // event blocks, because an event is a hard boundary and must prevent an
@@ -938,6 +950,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     send,
     askBusy,
     pickOption,
+    postChecklist,
+    changeChecklist,
     onReact,
     undoTitle,
     downloadAttachment,

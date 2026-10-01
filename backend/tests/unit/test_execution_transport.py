@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -318,10 +319,6 @@ def central_transport(executor, tmp_path):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 platform_calls.append(payload)
                 result = {"data": payload}
-            elif self.path == "/topics/fixture/decision":
-                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
-                platform_calls.append(payload)
-                result = {"data": payload}
             elif self.path == "/topics/fixture/messages":
                 uuid.UUID(payload["request_id"])
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
@@ -390,7 +387,7 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
         if t["name"] == "platform_request"
     )
     discovery_clients = len(clients)
-    assert set(tool["inputSchema"]["required"]) == {"method", "path"}
+    assert {"method", "path", "body"} <= set(tool["inputSchema"]["properties"])
     body = {"title": "中文\n$(touch escaped); `false`", "values": [1, False, None]}
     for index in range(2):
         result = process.call(
@@ -441,38 +438,39 @@ def test_large_platform_response_keeps_its_json_receipt(central_transport):
 )
 def test_platform_mcp_cannot_redirect_credentials(central_transport, path):
     process, clients, _, _ = central_transport
-    with pytest.raises(RuntimeError, match="relative API path"):
-        process.call(
-            "tools/call",
-            {
-                "name": "platform_request",
-                "arguments": {
-                    "id": "invalid",
-                    "session_id": "fixture",
-                    "method": "POST",
-                    "path": path,
-                },
+    result = process.call(
+        "tools/call",
+        {
+            "name": "platform_request",
+            "arguments": {
+                "id": "invalid",
+                "session_id": "fixture",
+                "method": "POST",
+                "path": path,
             },
-        )
+        },
+    )
+    assert "relative API path" in json.loads(result["content"][0]["text"])["deny"]
     assert clients == []
 
 
 def test_platform_mcp_preserves_backend_permission_failure(central_transport):
     process, clients, _, _ = central_transport
-    with pytest.raises(RuntimeError, match="Platform HTTP 403.*room_scope_denied"):
-        process.call(
-            "tools/call",
-            {
-                "name": "platform_request",
-                "arguments": {
-                    "id": "denied",
-                    "session_id": "fixture",
-                    "method": "POST",
-                    "path": "/platform-denied",
-                    "body": {},
-                },
+    result = process.call(
+        "tools/call",
+        {
+            "name": "platform_request",
+            "arguments": {
+                "id": "denied",
+                "session_id": "fixture",
+                "method": "POST",
+                "path": "/platform-denied",
+                "body": {},
             },
-        )
+        },
+    )
+    denied = json.loads(result["content"][0]["text"])["deny"]
+    assert re.search("Platform HTTP 403.*room_scope_denied", denied), denied
     assert len(clients) == 1
 
 

@@ -231,8 +231,8 @@ describe('C4 项目文档', () => {
     expect(onSelectDocs).toHaveBeenCalledWith('charter')
   })
 
-  it('四种文档里的任何一种打开时，这一行都是选中态', () => {
-    for (const kind of ['charter', 'decisions', 'weeklies', 'memory']) {
+  it('三种文档里的任何一种打开时，这一行都是选中态', () => {
+    for (const kind of ['charter', 'weeklies', 'memory']) {
       const { container, unmount } = mount({ activeDocs: kind })
       expect(container.querySelector('.docs-row')?.classList.contains('is-active')).toBe(true)
       unmount()

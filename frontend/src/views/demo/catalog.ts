@@ -27,6 +27,9 @@ import {
   CHANGES_EMPTY,
   changesPanelProps,
   CHEESE_LINES,
+  CLOUD_SUPPLY,
+  CLOUD_SUPPLY_UNKNOWN,
+  COMPUTE_DEVICES,
   docPanelProps,
   EXCERPTS,
   FEEDBACK_ROWS,
@@ -62,6 +65,7 @@ import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
+import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
@@ -875,6 +879,34 @@ export const CATALOG: CatalogEntry[] = [
         note: '存不上时说清是保存失败，不是把改动悄悄吞掉。',
         props: docPanelProps({ errorMsg: '保存失败：请求超时', saveStatus: 'dirty' }),
         expect: '保存失败',
+      },
+    ],
+  },
+  {
+    id: 'compute-choice-form',
+    title: 'ComputeChoiceForm',
+    about: '选一台工作电脑：云端或自有设备；云端可自定义规格，先看云端此刻能开的范围。',
+    file: 'src/components/ComputeChoiceForm.vue',
+    component: ComputeChoiceForm,
+    needs: UI,
+    states: [
+      {
+        name: '查到了范围',
+        note: '勾「自定义」后显示可选范围（云端供应与平台允许值的交集）；填超的那一格标红，按钮变灰。数字是示例。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+      {
+        name: '查不到范围',
+        note: '云端没应答时照实说查不到、说原因，不显示任何范围数字，仍可保存，开机时由云端校验。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY_UNKNOWN },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+      {
+        name: '正在查',
+        note: '范围还在路上时按钮不可点，不拿旧数或默认数先顶上。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: null, supplyLoading: true },
+        expect: '自定义 CPU、内存和磁盘',
       },
     ],
   },

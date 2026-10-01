@@ -26,6 +26,7 @@ from app.domain.machine.models import (
     WarmMachine,
 )
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.supply import pick_offering
 from app.domain.project.services import ProjectService
 
 logger = logging.getLogger("cheese.machine.warm")
@@ -409,14 +410,12 @@ class WarmPoolService:
         await self._new()
 
     async def _new(self) -> None:
-        from app.domain.machine.services import MachineService
-
         origin = settings.connector_public_base.rstrip("/")
         if not origin or "localhost" in origin or "127.0.0.1" in origin:
             raise ValidationError(
                 "warm pool requires a reachable connector_public_base"
             )
-        offering = await MachineService(self.session, self.client)._pick_offering()
+        offering = await pick_offering(self.client)
         ref = "cheese-platform-warm-pool"
         customer = await self.client.find_customer(
             ref

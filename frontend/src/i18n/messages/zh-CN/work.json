@@ -289,7 +289,6 @@
         "due": "截止 {date}",
         "noDue": "日期待定"
       },
-      "decisionFrom": "来自「{topic}」",
       "failed": "无法加载这部分内容"
     },
     "accept": {
@@ -375,7 +374,6 @@
       },
       "action": {
         "doc": "查看文档",
-        "decision": "查看决策记录",
         "split": "查看任务",
         "undo": "撤销",
         "milestone": "查看日历",
@@ -434,7 +432,19 @@
       "running": "进行中"
     },
     "checklist": {
-      "updatedAt": "清单更新于 {time}"
+      "updatedAt": "清单更新于 {time}",
+      "compose": "发清单",
+      "newTitle": "新清单",
+      "post": "发送",
+      "stepsLabel": "步骤",
+      "stepsHint": "一行一步",
+      "tooManySteps": "最多 {max} 步",
+      "stepTooLong": "每步最多 {max} 字",
+      "saveFailed": "清单保存失败",
+      "advance": "{step}：{status}",
+      "statusPending": "未开始",
+      "statusInProgress": "进行中",
+      "statusCompleted": "已完成"
     },
     "backToChat": "返回对话",
     "unselected": "选择一个话题",
@@ -1431,9 +1441,21 @@
     "cores": "CPU 核",
     "memory": "内存 GB",
     "disk": "磁盘 GB",
-    "cloudHint": "首次运行时分配，计入云端额度；超出供应范围时会提示调整",
+    "coresUnit": "核",
+    "memoryLabel": "内存",
+    "diskLabel": "磁盘",
+    "noValue": "当前没有可选值",
+    "outOfRange": "超出可选范围",
+    "noRangeFor": "{label}暂无可选值",
+    "supplyLoading": "正在查询云端当前可选范围…",
+    "supplyRange": "可选范围：{range}",
+    "supplyUnknown": "暂时查不到云端可选范围（{reason}）。可以先保存，开机时由云端校验。",
+    "cloudHint": "首次运行时分配，计入云端额度。云端不报告剩余容量，范围内的配置开机时仍可能创建失败。",
     "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
+  },
+  "cloudSupply": {
+    "requestFailed": "请求失败"
   },
   "projectTransfer": {
     "lookupFailed": "没有找到这个账号",

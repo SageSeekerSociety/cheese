@@ -461,14 +461,18 @@ class BlockRepository:
         await self._session.flush()
         return block
 
-    async def current_checklist(self, room_id: uuid.UUID, author: str) -> Block | None:
-        """The newest checklist message ``author`` posted on the room's own line."""
+    async def current_checklist(
+        self, room_id: uuid.UUID, author: str, *, message: uuid.UUID | None = None
+    ) -> Block | None:
+        """The newest checklist message ``author`` posted on the room's own line,
+        or, given ``message``, that checklist on the room's own line whoever
+        wrote it: whether its writer may edit it is the edit's own rule."""
         stmt = (
             select(Block)
             .where(
                 *self._in_place(room_id, None),
                 Block.kind == BlockKind.message,
-                Block.author == author,
+                Block.author == author if message is None else Block.id == message,
                 Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -1229,8 +1233,8 @@ class BlockRepository:
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind
     ) -> list[Block]:
-        """Project-wide blocks of a kind, newest first — e.g. the decision log
-        (kind=decision), each traceable to its source topic via refs (§7.1)."""
+        """Project-wide blocks of a kind, newest first — e.g. the weekly reports
+        (kind=weekly), each traceable to its source topic (§7.1)."""
         stmt = (
             select(Block)
             .where(Block.project_id == project_id, Block.kind == kind)

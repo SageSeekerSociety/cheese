@@ -3,10 +3,13 @@
 
 一个文件两种用法（结论 63）：
 
-* **会话侧**把它当模块读：`PLATFORM_TOOLS` 是平台 MCP 的工具表，`run_platform_tool`
-  执行其中一样。这些动作只要平台，所以机器够不着时它们一样不少。
+* **会话侧**把它当模块读：`PLATFORM_TOOLS` 是三个 harness 都照搬的平台工具表，
+  `run_platform_tool` 执行其中一样。这些动作只要平台，所以机器够不着时它们一样不少。
+  常用的动作各有一样专门的工具；其余每一条成员能调的接口都经表上的
+  `platform_request` 到达——先 `find` 从后端的 OpenAPI 文档里找，再按方法和路径调，
+  鉴权和人一样由路由按角色与成员身份判。
 * **机器上**它是 `cheese` 这条命令：只剩必须在这台机器上作为进程跑的动作——任务
-  目录、同步与恢复、预览、读写工作区文件的转换。
+  目录、同步与恢复、预览、取文件、读写工作区文件的转换。
 
 环境变量（启动器注入）：
   CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
@@ -14,6 +17,8 @@
   CHEESE_PROJECT 当前项目 id
   CHEESE_TOPIC   当前话题 id
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
+  CHEESE_TOKEN   房间凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
+  CHEESE_TURN    当前这一轮的 id，带回去让这一轮写出的块归在一起
 
 例:
   cheese worktree <task_id>                 # 准备任务工作目录,输出路径
@@ -105,7 +110,7 @@ class ToolTable:
     了」。这件事付过三轮（2026-09-13、-14、-15）。
 
     表在这里，它就不再问任何人。表上是**纯平台动作**：它们要的是平台，不是那台机器，
-    所以从会话直接打后端，机器离线时一样不少——对话、记忆、任务卡、验收都在。有两样
+    所以从会话直接打后端，机器离线时一样不少——对话、文档、任务卡、验收都在。有两样
     还要机器上的一份东西：`cheese_doc_set` 读机器上那个文件，`cheese_accept_request`
     先让机器把任务的提交推上去；机器够不着时它们当场说够不着，不等超时。
 
@@ -211,6 +216,9 @@ _ROUTINE_TIMEZONE = _text("时区，默认 Asia/Shanghai")
 #: 关键字，同一份 schema 要过三个 harness 的工具机制。
 TODO_MAX_ITEMS = 30
 TODO_MAX_CHARS = 200
+
+#: What `platform_request` may send. Lowercase in an OpenAPI document's `paths`.
+_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 _CHAT_READ = (
     "只读，不叫醒任何人、不标记已读。文本一页 12000 字、每条预览 1500 字，"
@@ -415,13 +423,6 @@ PLATFORM_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
-            "cheese_decision",
-            "记一条「定了什么、为什么」的决策，别把进度当决策记。"
-            "平台会在对话里出一张卡，不用再说「已记录」。",
-            {"text": _text("决策内容")},
-            ["text"],
-        ),
-        _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
             "to 不填是发给这个房间名册上的人（不含芝士），不是项目里所有人。"
@@ -488,7 +489,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_status",
             "平台状态快照：本轮运行状态、本话题验收卡（含闸门失败输出）、磁盘、排队和"
-            "额度。想知道卡到哪了、闸门为什么红时先看它，别轮询原始 API。",
+            "额度。想知道卡到哪了、闸门为什么红时先看它，别用 platform_request 轮询。",
         ),
         _tool(
             "cheese_library_ls",
@@ -648,11 +649,28 @@ PLATFORM_TOOLS = ToolTable(
             },
             ["run", "status"],
         ),
+        _tool(
+            "platform_request",
+            "平台 API 的其余部分：房间成员在网页上能做、其他平台工具又没有的事"
+            "（给消息加表情、拉人进房间或改角色、回答问到你的选项问题、读自己的收件箱……）"
+            "都从这里调，用的是你的房间凭据，后端按你的角色和成员身份照常检查；"
+            "被拒时返回的就是原因，别换路径绕。"
+            "不知道接口就先只传 find（几个英文词，如 reaction、members、inbox），"
+            "返回匹配接口的方法、路径、说明、参数和请求体字段；什么都不传列出接口分组。"
+            "再传 method、path（查询参数写进 path）和 body 调用，返回后端的 JSON 原文。"
+            "其他平台工具或 cheese 子命令做得了的用它们；取文件用 cheese pull / cheese library get。",
+            {
+                "find": _text("要找的接口，几个英文关键词，空格分隔"),
+                "method": {"type": "string", "enum": list(_HTTP_METHODS)},
+                "path": _text("相对 API 根的路径，如 /topics/<房间 id>/members"),
+                "body": {"type": "object", "description": "JSON 请求体，原样发出"},
+            },
+        ),
     )
 )
 
 #: 要本话题 / 本项目才答得出的那些。缺了就在发出去之前说清楚，不让后端去猜。
-_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {"cheese_fetch"}
+_NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {"cheese_fetch", "platform_request"}
 _NEEDS_PROJECT = frozenset(
     {
         "cheese_milestone",
@@ -784,6 +802,27 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool in _NEEDS_PROJECT and not project:
         raise ValueError("Missing CHEESE_PROJECT")
     task = f"/topics/{topic}/tasks/{args.get('task')}"
+    if tool == "platform_request":
+        method = (args.get("method") or "GET").upper()
+        path = args.get("path") or ""
+        parsed = urllib.parse.urlsplit(path)
+        # The room's credential goes wherever this points, so it may only point
+        # at the platform: a path under the API root, never another host.
+        if (
+            method not in _HTTP_METHODS
+            or not path.startswith("/")
+            or parsed.scheme
+            or parsed.netloc
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "platform_request needs an HTTP method and a relative API path, "
+                "such as /topics/<room id>/members"
+            )
+        plan = {"method": method, "path": path}
+        if args.get("body") is not None:
+            plan["body"] = args["body"]
+        return plan
     if tool == "chat_send":
         body = {
             "content": args["content"],
@@ -878,12 +917,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
         where = urllib.parse.quote(topic)
         return {"method": "GET", "path": f"/projects/{project}/library?topic={where}"}
-    if tool == "cheese_decision":
-        return {
-            "method": "POST",
-            "path": f"/topics/{topic}/decision",
-            "body": {"decision": args["text"]},
-        }
     if tool == "cheese_title":
         path = (
             f"/topics/{topic}/tasks/{args['task']}/title"
@@ -935,14 +968,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "topic_id": topic or None,
                 "payload": {"options": options} if options else {},
             },
-        }
-    if tool == "cheese_tell":
-        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body
-        # 里，由后端校验它确实是这个房间派出的活。
-        return {
-            "method": "POST",
-            "path": f"/topics/{topic}/tell",
-            "body": {"target": args["target"], "content": args["message"]},
         }
     if tool == "cheese_milestone":
         # The room it came from: a room's token authenticates only with its room
@@ -1366,6 +1391,206 @@ def _accept_request(args: dict, host) -> str:
     return "\n".join(lines)
 
 
+def _tell(args: dict, host) -> str:
+    """在一条活的时间线上说一句：和人在卡下面说话走同一条路由。
+
+    说话的是房间的 AI 队友，所以后端只把这句落在那条活上，不叫醒谁。`target` 是
+    id、`<#id>` 或标题；标题只在这个房间的活里找。"""
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    if not topic:
+        raise PlatformToolError("Missing CHEESE_TOPIC")
+    room = urllib.parse.quote(topic, safe="")
+    wanted = args["target"].strip()
+    if wanted.startswith("<#") and wanted.endswith(">"):
+        wanted = wanted[2:-1].strip()
+    try:
+        task_id, title = str(uuid.UUID(wanted)), None
+    except ValueError:
+        listing = host.request(
+            {"method": "GET", "path": f"/topics/{room}/tasks?limit=1"}
+        )
+        tasks = ((listing.get("data") or {}).get("data")) or []
+        exact = [t for t in tasks if (t.get("title") or "").strip() == wanted]
+        loose = exact or [t for t in tasks if wanted in (t.get("title") or "")]
+        if not loose:
+            names = "、".join(t.get("title") or "" for t in tasks) or "（没有）"
+            raise PlatformToolError(
+                f"这个房间的活里没有叫「{wanted}」的。可选的是：{names}"
+            )
+        if len(loose) > 1:
+            names = "、".join(t.get("title") or "" for t in loose)
+            raise PlatformToolError(f"「{wanted}」对上了多条活（{names}），用 id 指明")
+        task_id, title = loose[0]["id"], loose[0].get("title")
+    host.request(
+        {
+            "method": "POST",
+            "path": f"/topics/{room}/tasks/{urllib.parse.quote(task_id)}/messages",
+            "body": {"content": args["message"]},
+        }
+    )
+    return (
+        f"已写在「{title or args['target']}」上。"
+        "没有人被叫醒——做这条活的分身在你自己的会话里，要它动就直接给它发消息。"
+    )
+
+
+#: How many matches `platform_request(find=…)` spells out in full, and how many
+#: more it names by method and path before saying how many it left out.
+_FIND_DETAILED = 12
+_FIND_NAMED = 40
+
+
+def _platform_request(args: dict, host) -> str:
+    """The rest of the platform API, on the room's own credential.
+
+    With a method or a path it is one request and the backend's JSON comes back
+    as written. Without one it is discovery, read from the backend's own OpenAPI
+    document, so the catalogue is whatever this backend serves today and no
+    list here can fall behind it."""
+    if args.get("method") or args.get("path"):
+        plan = request_plan("platform_request", args, host.environ)
+        try:
+            response = host.request(plan)
+        except ValueError as exc:
+            # Every host parses the body as JSON; a download is not JSON.
+            raise PlatformToolError(
+                "这个接口返回的不是 JSON（多半是文件下载）；"
+                "文件用 cheese pull 或 cheese library get 取到机器上。"
+            ) from exc
+        return json.dumps(response, ensure_ascii=False)
+    spec = host.request({"method": "GET", "path": "/openapi.json"})
+    words = (args.get("find") or "").lower().split()
+    where = (
+        f"当前房间 {host.environ.get('CHEESE_TOPIC', '')}，"
+        f"项目 {host.environ.get('CHEESE_PROJECT', '')}。"
+    )
+    return where + "\n" + _api_operations(spec, words)
+
+
+def _api_operations(spec: dict, words: list[str]) -> str:
+    operations = [
+        (method.upper(), path, operation)
+        for path, item in (spec.get("paths") or {}).items()
+        for method, operation in item.items()
+        if method.upper() in _HTTP_METHODS
+    ]
+    if not words:
+        groups: dict[str, int] = {}
+        for _, _, operation in operations:
+            tag = (operation.get("tags") or ["other"])[0]
+            groups[tag] = groups.get(tag, 0) + 1
+        listed = "、".join(f"{tag}({n})" for tag, n in sorted(groups.items()))
+        return (
+            f"共 {len(operations)} 个接口，按分组：{listed}。\n"
+            '按关键词找：platform_request(find="members role")。'
+        )
+
+    def text(operation: dict) -> str:
+        return " ".join(
+            [
+                operation.get("summary") or "",
+                operation.get("description") or "",
+                operation.get("operationId") or "",
+                *(operation.get("tags") or []),
+            ]
+        ).lower()
+
+    # At the start of a word, so `ask` finds the ask routes and not every task.
+    starts = [re.compile(r"(?<![a-z])" + re.escape(w)) for w in words]
+
+    def hits(haystack: str) -> int:
+        return sum(bool(s.search(haystack)) for s in starts)
+
+    found = [
+        (method, path, operation)
+        for method, path, operation in operations
+        if hits(f"{method} {path} {text(operation)}".lower()) == len(starts)
+    ]
+    if not found:
+        return f"没有接口同时含有 {' '.join(words)}；少给几个词或换个说法。"
+    # The words in the path and the summary are the strongest evidence. Among
+    # equals, a route under a room, a project or a message comes first: the room
+    # credential is bound to a project, so those are the ones it can open.
+    found.sort(
+        key=lambda op: (
+            -hits(f"{op[1]} {op[2].get('summary') or ''}".lower()),
+            not op[1].startswith(("/topics/", "/projects/", "/blocks/")),
+        )
+    )
+    shown = [
+        _describe_operation(method, path, operation, spec)
+        for method, path, operation in found[:_FIND_DETAILED]
+    ]
+    rest = found[_FIND_DETAILED:]
+    if rest:
+        shown.append(
+            "还匹配："
+            + "；".join(f"{m} {p}" for m, p, _ in rest[:_FIND_NAMED])
+            + (
+                f"；另有 {len(rest) - _FIND_NAMED} 个，加关键词缩小范围"
+                if len(rest) > _FIND_NAMED
+                else ""
+            )
+        )
+    return "\n\n".join(shown)
+
+
+def _schema_type(schema: dict) -> str:
+    if "$ref" in schema:
+        return schema["$ref"].rsplit("/", 1)[-1]
+    if "enum" in schema:
+        return "|".join(str(v) for v in schema["enum"])
+    for key in ("anyOf", "oneOf", "allOf"):
+        if key in schema:
+            return "|".join(
+                _schema_type(s) for s in schema[key] if s.get("type") != "null"
+            )
+    if schema.get("type") == "array":
+        return f"[{_schema_type(schema.get('items') or {})}]"
+    return schema.get("type") or "any"
+
+
+def _describe_operation(method: str, path: str, operation: dict, spec: dict) -> str:
+    about = " ".join((operation.get("description") or "").split("\n\n")[0].split())
+    if len(about) > 200:
+        about = about[:200] + "…"
+    lines = [f"{method} {path} — {operation.get('summary') or ''}"]
+    if about:
+        lines.append("  " + about)
+    for place in ("path", "query"):
+        params = [
+            p["name"]
+            + ("" if p.get("required") else "?")
+            + f": {_schema_type(p.get('schema') or {})}"
+            for p in operation.get("parameters") or []
+            if p.get("in") == place
+        ]
+        if params:
+            lines.append(f"  {place}: " + ", ".join(params))
+    content = (operation.get("requestBody") or {}).get("content") or {}
+    if "application/json" in content:
+        schema = content["application/json"].get("schema") or {}
+        name = ""
+        if "$ref" in schema:
+            name = schema["$ref"].rsplit("/", 1)[-1]
+            schema = (spec.get("components") or {}).get("schemas", {}).get(name, {})
+        fields = schema.get("properties") or {}
+        required = set(schema.get("required") or ())
+        if fields:
+            lines.append(
+                "  body: "
+                + ", ".join(
+                    f"{key}{'' if key in required else '?'}: {_schema_type(value)}"
+                    for key, value in fields.items()
+                )
+            )
+        else:
+            lines.append("  body: JSON 对象，字段见上面的说明")
+    elif content:
+        lines.append(f"  body: {', '.join(content)}（这个工具发不了，只发 JSON）")
+    return "\n".join(lines)
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -1374,6 +1599,8 @@ _STEPS = {
     "cheese_doc_get": _doc_get,
     "cheese_doc_set": _doc_set,
     "cheese_accept_request": _accept_request,
+    "cheese_tell": _tell,
+    "platform_request": _platform_request,
 }
 
 
@@ -1584,17 +1811,12 @@ _SAY = {
     "cheese_unlock": lambda a, d, e: (
         "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
-    "cheese_tell": lambda a, d, e: (
-        f"已写在「{(d or {}).get('target_title') or a['target']}」上。"
-        "没有人被叫醒——做这条活的分身在你自己的会话里，要它动就直接给它发消息。"
-    ),
     "cheese_milestone": lambda a, d, e: f"已钉里程碑：{a['title']}",
     "cheese_title": lambda a, d, e: (
         f"这条活现在叫「{(d or {}).get('title') or a['text']}」。"
         if a.get("task")
         else f"话题标题已设为：{a['text']}"
     ),
-    "cheese_decision": lambda a, d, e: "已记入决策记录。",
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,
@@ -2636,7 +2858,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "芝士 平台 CLI —— 只放必须在这台机器上作为进程跑的动作:任务目录、同步与"
             "恢复、预览、读写工作区文件的转换。\n"
-            "平台状态(聊天、文档、任务卡、验收、记忆、通知)走会话侧的 cheese_* 工具。\n"
+            "平台状态(聊天、文档、任务卡、验收、通知)走会话侧的平台工具,\n"
+            "其余的平台接口走其中的 platform_request。\n"
             "\n"
             "每个子命令的 --help 是权威的那一份(它和代码同源,不会过期)。"
         ),

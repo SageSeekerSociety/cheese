@@ -24,6 +24,7 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import AiStatus, MachineStatus
 from app.domain.machine.services import MachineService, customer_ref, derive_hostname
+from app.domain.machine.supply import read_supply
 
 pytestmark = pytest.mark.anyio
 
@@ -302,6 +303,67 @@ async def test_provision_rejects_an_unsupported_spec_without_buying_a_machine():
             disk_gb=9999,
         )
     assert client.created == []
+
+
+async def test_provision_names_the_field_and_the_range_it_missed():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    with pytest.raises(ValidationError) as refused:
+        await service.provision(
+            topic_id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            requested_by="andy",
+            cores=4,
+            memory_mb=4096,
+            disk_gb=256,
+        )
+    message = str(refused.value)
+    assert "磁盘" in message and "100" in message
+    assert "CPU" not in message and "内存" not in message
+    assert client.created == []
+
+
+async def test_provision_takes_a_spec_at_the_edge_as_asked():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    await service.provision(
+        topic_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        requested_by="andy",
+        cores=8,
+        memory_mb=16384,
+        disk_gb=100,
+    )
+    [body] = client.created
+    assert (body["cores"], body["memoryMb"], body["diskGb"]) == (8, 16384, 100)
+
+
+async def test_supply_offers_what_both_the_provider_and_the_platform_allow():
+    # MicroCloud would build a 128 MB machine; a platform choice starts at 512 MB.
+    client = FakeMicroCloud(
+        offerings={**OFFERING, "memoryMbMin": 128, "diskGbMax": 128}
+    )
+    supply = await read_supply(client)
+    assert supply["available"] is True
+    assert supply["selectable"]["memory_mb"] == {"min": 512, "max": 16384}
+    assert supply["provider"]["memory_mb"] == {"min": 128, "max": 16384}
+    assert supply["selectable"]["disk_gb"] == {"min": 10, "max": 128}
+    assert supply["capacity_known"] is False
+
+
+async def test_supply_is_unknown_when_the_provider_does_not_answer():
+    client = FakeMicroCloud()
+    client.list_offerings = AsyncMock(side_effect=MicroCloudError("timed out"))
+    supply = await read_supply(client)
+    assert supply["available"] is False
+    assert "timed out" in supply["reason"]
+    assert "selectable" not in supply
+
+
+async def test_supply_is_unknown_when_no_offering_is_granted():
+    supply = await read_supply(FakeMicroCloud(offerings=[]))
+    assert supply["available"] is False
+    assert "selectable" not in supply
 
 
 async def test_provision_bills_the_project_not_the_person():

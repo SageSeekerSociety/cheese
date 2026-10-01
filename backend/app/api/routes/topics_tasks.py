@@ -54,6 +54,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
@@ -257,22 +258,38 @@ async def get_room_task(
     return ok(out)
 
 
+#: How long a note a room's agent leaves on one of its threads may be. A note
+#: adds a requirement; anything longer belongs in the living document, which
+#: both the room and the worker read.
+AGENT_NOTE_CHARS = 4000
+
+
+class TaskMessageIn(BaseModel):
+    content: str = Field(min_length=1, max_length=100000)
+    # Phase-0 handle for a caller with no credential; a verified one wins.
+    author: str | None = Field(default=None, max_length=64)
+
+
 @router.post("/{topic_id}/tasks/{task_id}/messages")
 async def say_on_task(
     topic_id: uuid.UUID,
     task_id: uuid.UUID,
-    body: dict,
+    body: TaskMessageIn,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """在一张卡下面说话 —— 落在这条活的时间线上，房间被叫来转达。
+    """在一张卡下面说话 —— 落在这条活的时间线上。人和房间的 AI 队友走这同一条路由
+    （`cheese_tell`）；谁在说，决定之后发生什么。
 
     A person watching a card cannot reach the 分身 doing it: that worker lives
     inside the room's session and only the room's 芝士 can pass it a message.
-    So this lands what was said WHERE THE WORK IS, and wakes the ROOM to act on
-    it. Nothing is woken on the card — there is no session there to wake.
+    So a person's message lands WHERE THE WORK IS, and wakes the ROOM to act on
+    it. One of the room's agents writing here is that room already: its message
+    is recorded on the card and nobody is woken, because the worker is in its own
+    session and it reaches it directly. Nothing is woken on the card — there is
+    no session there to wake.
 
     Through the room's id for the same reason `/conclude` and `/title` are: a card
     is not a place, so it has no address of its own and no token scoped to it.
@@ -281,17 +298,24 @@ async def say_on_task(
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
         raise NotFoundError(say("taskNotInRoom"))
-    content = (body.get("content") or "").strip()
+    content = body.content.strip()
     if not content:
         raise ValidationError("消息内容不能为空")
     actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
+        fallback_handle=body.author,
         topic_id=place.room_id,
         project_id=place.project_id,
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    members = TopicMemberService(db)
+    relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
+    if not relay_to_parent and len(content) > AGENT_NOTE_CHARS:
+        raise ValidationError(
+            f"留话内容太长（{len(content)} 字符，上限 {AGENT_NOTE_CHARS}）。"
+            "长的东西写进实况文档，那边读得到。"
+        )
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
@@ -303,8 +327,6 @@ async def say_on_task(
         kind=BlockKind.message,
     )
     payload = BlockOut.model_validate(block).model_dump(mode="json")
-    members = TopicMemberService(db)
-    relay_to_parent = not await members.holds_an_agent_seat(place.room, actor.handle)
     if relay_to_parent:
         from app.domain.delivery.agent import record_task_instruction
         from app.domain.delivery.ledger import DeliveryEvent

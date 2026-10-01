@@ -725,7 +725,7 @@ export interface ProjectSearchHits {
     id: string
     room_id: string
     room_title: string
-    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'decision' | 'weekly'
+    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
     author: string
     created_at: string
     /** 说在某件活的卡片里，而不是房间自己的对话里。 */
@@ -751,7 +751,7 @@ export async function searchProject(
 
 /**
  * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
- * `decision`、`weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
+ * `weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
  */
 export async function searchProjectCounted(
   projectId: string,
@@ -1845,7 +1845,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~⑤, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -1900,12 +1900,6 @@ export function addComment(
     method: 'POST',
     body: JSON.stringify({ content, author, anchor, quote }),
   })
-}
-
-// 决策记录 (spec §7.1): the project's decision log. Each entry is a Block whose
-// `topic_id` points back to the source topic where the decision was made.
-export function getProjectDecisions(projectId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/decisions`)
 }
 
 // 周报集 (spec §7.1): the project's weekly reports, newest first. Each Block

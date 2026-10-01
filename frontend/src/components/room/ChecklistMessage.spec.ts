@@ -5,7 +5,7 @@ import type { ChecklistMeta } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChecklistMessage from './ChecklistMessage.vue'
@@ -23,7 +23,14 @@ const list: ChecklistMeta = {
   result: null,
 }
 
-function mount(props: { checklist?: ChecklistMeta; updatedAt: string; edited?: boolean; live?: boolean }) {
+function mount(props: {
+  checklist?: ChecklistMeta
+  updatedAt: string
+  edited?: boolean
+  live?: boolean
+  editable?: boolean
+  onChange?: (items: unknown) => void
+}) {
   return render(ChecklistMessage, {
     props: { checklist: list, edited: false, ...props },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -86,5 +93,30 @@ describe('步骤清单消息', () => {
     const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     expect(view.getByText(`清单更新于 ${clock}`)).toBeTruthy()
     expect(view.getByText('已编辑')).toBeTruthy()
+  })
+
+  // 自己的清单：点一步前面的记号，那一步换到下一个状态，交出去的是改过之后的整份。
+  it('写清单的人点一步的记号，交出整份清单，只有那一步变了', async () => {
+    const onChange = vi.fn()
+    const view = mount({ updatedAt: NOW.toISOString(), editable: true, onChange })
+    await fireEvent.click(view.getByRole('button', { name: /补测试/ }))
+    expect(onChange).toHaveBeenCalledWith([
+      { id: '1', subject: '核实问题', status: 'completed' },
+      { id: '2', subject: '写实现', status: 'in_progress' },
+      { id: '3', subject: '补测试', status: 'in_progress' },
+    ])
+    await fireEvent.click(view.getByRole('button', { name: /写实现/ }))
+    expect(onChange).toHaveBeenLastCalledWith([
+      { id: '1', subject: '核实问题', status: 'completed' },
+      { id: '2', subject: '写实现', status: 'completed' },
+      { id: '3', subject: '补测试', status: 'pending' },
+    ])
+    await fireEvent.click(view.getByRole('button', { name: /核实问题/ }))
+    expect(onChange.mock.lastCall?.[0][0]).toEqual({ id: '1', subject: '核实问题', status: 'pending' })
+  })
+
+  it('别人的清单只能看：没有可点的记号', () => {
+    const view = mount({ updatedAt: NOW.toISOString() })
+    expect(view.queryAllByRole('button')).toHaveLength(0)
   })
 })

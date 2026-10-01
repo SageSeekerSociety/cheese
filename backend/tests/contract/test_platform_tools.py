@@ -73,9 +73,9 @@ CALLS = {
     ),
     "cheese_ready": ({"task": TASK}, "POST", f"/topics/fixture/tasks/{TASK}/ready"),
     "cheese_tell": (
-        {"target": "数据清洗", "message": "口径改了"},
+        {"target": TASK, "message": "口径改了"},
         "POST",
-        "/topics/fixture/tell",
+        f"/topics/fixture/tasks/{TASK}/messages",
     ),
     "cheese_milestone": (
         {"title": "中期汇报"},
@@ -83,7 +83,6 @@ CALLS = {
         "/projects/fixture-project/milestones",
     ),
     "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
-    "cheese_decision": ({"text": "用 CF"}, "POST", "/topics/fixture/decision"),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",
@@ -148,6 +147,15 @@ CALLS = {
         "POST",
         "/routine-runs/run-1/report",
     ),
+    "platform_request": (
+        {
+            "method": "PUT",
+            "path": "/topics/fixture/members/bob",
+            "body": {"role": "admin"},
+        },
+        "PUT",
+        "/topics/fixture/members/bob",
+    ),
 }
 
 #: 要机器上一份东西的那两样：读一个文件、推一条任务分支。
@@ -160,11 +168,10 @@ NEEDS_THE_MACHINE = {
     ),
 }
 
-#: 这条传输自己的五个口子，不是产品动作。
+#: 这条传输自己的四个口子，不是产品动作。
 TRANSPORT = {
     "invoke",
     "permission",
-    "platform_request",
     "send_user_file",
     "project_tools",
 }

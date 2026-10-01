@@ -173,6 +173,7 @@ useCommands(roomCommands)
       <TopicMembers
         v-if="isWorkTopic"
         :topic-id="topic.id"
+        :project-id="topic.project_id"
         :project-members="members"
         :me="me"
         @machine-access="machineNotice = $event"

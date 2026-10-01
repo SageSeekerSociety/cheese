@@ -81,7 +81,7 @@ beforeEach(() => {
   searchProjectCounted.mockImplementation(
     async (_project: string, _q: string, limit: number, paging?: { only: string[]; offset: number }) => ({
       hits: slice(limit, paging),
-      counts: { message: ALL.length, decision: 0, tasks: 0, library: 0 },
+      counts: { message: ALL.length, weekly: 0, tasks: 0, library: 0 },
     })
   )
 })
