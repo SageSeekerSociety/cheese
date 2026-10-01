@@ -1,0 +1,9 @@
+{
+  "form": {
+    "title": "回答问题", "choose": "选择后提交", "correction": "更正答案", "other": "自己填写", "reject": "以上都不是", "answer": "你的回答", "note": "补充说明（可选）", "submit": "提交答案", "submitting": "处理中", "retry": "重试原提交", "refresh": "刷新状态", "correct": "更正", "submitCorrection": "提交更正", "cancel": "取消更正", "revise": "按最新版本修改", "originalOnly": "仅原答者可更正", "waitingFor": "等待 {name} 回答", "unknownAnswerer": "指定回答者"
+  },
+  "history": { "version": "第 {version} 版 · {name}", "unknownTime": "历史作答时间未记录", "previous": "查看此前 {count} 版" },
+  "flow": {
+    "storageError": "无法保存提交记录，暂未发送。恢复浏览器存储后刷新", "draftError": "草稿未保存，当前输入仍保留在页面", "draftSaved": "草稿已存于此浏览器，尚未提交", "missing": "无法读取这道题，刷新后重试", "conflict": "答案版本已更新，原提交未被确认。查看最新答案后再修改", "refreshError": "状态读取失败，输入已保留", "unconfirmed": "提交结果未确认，原内容已保留。可刷新状态或重试原提交", "answerSaved": "答案已提交", "continuationUnknown": "执行者是否收到并继续处理，尚未确认", "groupRequired": "此题属于一组问题，需从整组提交"
+  }
+}

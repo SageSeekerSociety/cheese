@@ -16,13 +16,11 @@
 // markup, and the decisions that belong to the page a panel is rendered from.
 import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
-import { askVersion } from '../lib/blockDisplay'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import {
-  answerOptions,
   ApiError,
   attachmentRawUrl,
   downloadFile,
@@ -51,6 +49,7 @@ import { placeSplitMarkers } from '../lib/splitMarkers'
 import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
 
+import { useAskAnswers } from './useAskAnswers'
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
 
@@ -139,30 +138,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
   }
 
-  // ---- 选项问题 (cheese_ask): buttons under the message; one click answers
-  // and summons 芝士 to continue. Answered state renders for everyone. ----
-  const askBusy = ref<string | null>(null)
-  async function pickOption(m: Block, option: string) {
-    if (askBusy.value) return
-    askBusy.value = m.id
-    try {
-      // 版本号要带：并发时落败的那一个拿 409 而不是把别人那一版盖掉。操作 id 也要
-      // 带：网络抖一下重发，是同一次操作，不是两次作答。
-      const updated = await answerOptions(
-        m.id,
-        { kind: 'option', option, expect_version: askVersion(m), client_op_id: crypto.randomUUID() },
-        AUTHOR,
-      )
-      if (timeline.find(m.id)) {
+  const { askStates, askAction, askViewer } = useAskAnswers({
+    blocks: () => messages.value,
+    replace: (updated) => {
+      if (timeline.find(updated.id)) {
         timeline.replace(updated)
         historyChanges?.set(updated.id, updated)
       }
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '选择失败'
-    } finally {
-      askBusy.value = null
-    }
-  }
+    },
+  })
 
   // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
   // MVP picker: a fixed strip of the 8 most common reactions.
@@ -910,8 +894,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
     connected,
     send,
-    askBusy,
-    pickOption,
+    askStates,
+    askAction,
+    askViewer,
     onReact,
     undoTitle,
     downloadAttachment,

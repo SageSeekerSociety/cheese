@@ -172,8 +172,9 @@ const {
   errorMsg,
   connected,
   send,
-  askBusy,
-  pickOption,
+  askStates,
+  askAction,
+  askViewer,
   onReact,
   setReply,
   undoTitle,
@@ -254,7 +255,7 @@ defineExpose({ send, connected })
         :outbox="outbox"
         :editing-id="editingId"
         :edit-saving="editSaving"
-        :ask-busy="askBusy"
+        :ask-states="askStates"
         :scroll-ref="timelineRefs.scrollRef"
         :content-ref="timelineRefs.contentRef"
         :is-agent-block="isAgentBlock"
@@ -270,7 +271,7 @@ defineExpose({ send, connected })
         :outgoing-state="outgoingState"
         :outbox-edge="outboxEdge"
         :my-name="myName"
-        :viewer="AUTHOR"
+        :viewer="askViewer"
         @scroll="onTimelineScroll"
         @click="onMessagesClick"
         @mouseover="onTimelinePointer"
@@ -285,7 +286,7 @@ defineExpose({ send, connected })
         @open-topic="emit('open-topic', $event)"
         @open-card="emit('open-card', $event)"
         @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
-        @answer="pickOption"
+        @ask-action="askAction"
         @download="downloadAttachment"
         @jump="openAt"
         @avatar-error="onAvatarError"

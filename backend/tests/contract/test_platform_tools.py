@@ -98,7 +98,14 @@ CALLS = {
     "cheese_status": ({}, "GET", "/topics/fixture/status"),
     "cheese_library_ls": ({}, "GET", "/projects/fixture-project/library"),
     "cheese_ask": (
-        {"question": "按哪个口径？", "option": ["旧的", "新的"]},
+        {
+            "questions": [
+                {
+                    "question": "按哪个口径？",
+                    "options": [{"text": "旧的"}, {"text": "新的"}],
+                }
+            ]
+        },
         "POST",
         "/topics/fixture/ask",
     ),
@@ -179,6 +186,19 @@ def _serve(executor):
                 "doc_version": 1,
                 **payload,
             }
+            if self.path == "/topics/fixture/ask":
+                data = {
+                    "group": {
+                        "topic_id": "fixture",
+                        "asked_by": "cheese",
+                        "id": "fixture-group",
+                        "members": ["fixture-id"],
+                        "total": 1,
+                    },
+                    "blocks": [{"id": "fixture-id"}],
+                    "settlement": None,
+                    "receipt": None,
+                }
             self._answer(200, json.dumps({"data": data}).encode())
 
         do_GET = _serve

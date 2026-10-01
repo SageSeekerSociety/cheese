@@ -6,6 +6,8 @@ Implementation target for S and O, fixed 2026-10-01. This specifies the approved
 
 The unique group is `(topic_id, asked_by, group_id)`. `topic_id` is the place identifier on the question Block (a task thread keeps its thread ID). `asked_by` is the authenticated question author's conversation handle, not a display name or an acting-seat token handle. It is addressing data, never an authorization credential.
 
+Creation is agent-only: the authenticated actor must own the original agent seat in this place. The native caller's originating session/work must be validated by the server; body author and body scope cannot impersonate an agent. Human members answer/correct under existing authorization. Human question composers and PR #2331 are excluded from this delivery.
+
 `POST /topics/{topic_id}/ask` receives:
 
 ```json

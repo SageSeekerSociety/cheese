@@ -8,6 +8,7 @@
 // doing. The three animation sets (`arrived` / `older` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
+import type { AskAction, AskFormState } from '../../lib/askPresentation'
 import type { Block, Topic } from '../../cx_types'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
@@ -55,7 +56,7 @@ defineProps<{
   outbox: Outgoing[]
   editingId: string | null
   editSaving: boolean
-  askBusy: string | null
+  askStates?: Record<string, AskFormState>
   /** Bound with `:ref`, so the pane the panel measures is this one. */
   scrollRef: Ref<HTMLElement | null>
   contentRef: Ref<HTMLElement | null>
@@ -87,7 +88,7 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string): void
-  (e: 'answer', block: Block, option: string): void
+  (e: 'ask-action', block: Block, action: AskAction): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
   (e: 'avatar-error', handle: string): void
@@ -108,8 +109,8 @@ const emit = defineEmits<{
 function emitReact(block: Block, emoji: string) {
   emit('react', block, emoji)
 }
-function emitAnswer(block: Block, option: string) {
-  emit('answer', block, option)
+function emitAskAction(block: Block, action: AskAction) {
+  emit('ask-action', block, action)
 }
 function emitOpenFile(path: string, taskId: string | null) {
   emit('open-file', path, taskId)
@@ -245,7 +246,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :refs="refs"
           :viewer="viewer"
           :active="bar.shown && bar.id === m.id"
-          :ask-busy="askBusy === m.id"
+          :ask-state="askStates?.[m.id]"
           :editing="editingId === m.id"
           :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
           :saving="editSaving"
@@ -254,7 +255,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @react="emitReact"
-          @answer="emitAnswer"
+          @ask-action="emitAskAction"
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"
           @avatar-error="emit('avatar-error', $event)"
