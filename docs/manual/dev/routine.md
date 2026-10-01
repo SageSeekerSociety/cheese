@@ -94,7 +94,7 @@ covers:
 
 周期任务那一口钟叫 `sweep`：一轮里跑完 `_fire_schedules` → `_fire_events` → `_settle_open_runs` → `_announce_finished`，有东西被触发才 `dispatch_pending` 去派活。
 
-「项目巡检 / 平台心跳」（`ChatService.run_heartbeat`、`summarize_project`）**今天是停着的**：`api/routes/activities.py` 是一个**不挂任何路由**的模块，那里的 docstring 写着原因和「没有新设计之前不要重新挂上」。实现还在 `ChatService` 里（标着 parked），但没有触发路径。所以今天真正在跑的例行只有周期任务和上面那张巡检清单。
+「一页纸总结」（`ChatService.summarize_project`）**今天是停着的**：`api/routes/activities.py` 是一个**不挂任何路由**的模块，那里的 docstring 写着原因和「没有新设计之前不要重新挂上」。实现还在 `ChatService` 里（标着 parked），但没有触发路径。所以今天真正在跑的例行只有周期任务和上面那张巡检清单。
 
 ## 边界与坑 {#traps}
 
@@ -103,4 +103,3 @@ covers:
 - **暂停不补、恢复不补。** `resume` 从下一个未来时刻接着算（`_activate` 里 `next_after(…, now)`），中间空过的时段不会被回填。
 - **草稿不执行。** `run_now` 对 `draft` 直接报错「还没确认的规则不能执行」；芝士改过的规则会退回草稿，于是也就不跑了。
 - **契约测试看着 `cheese_*` 工具面。** `backend/sandbox/cheese` 里的工具表和后端是两份，双方不一致由 `backend/tests/contract/` 拦下（同一形状的约束见 `MACHINE_PROFILES`）。
-- **缓存别放在巡检里。** `last_heartbeat_at` 之类的字段（`backend/app/domain/project/models.py`）曾是「≤1 次/天/项目」的排程依据，而排程本身已经停了：字段还在，读它之前先确认那条路还活着。

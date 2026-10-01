@@ -2,7 +2,7 @@
 name: chat
 title: 协作聊天
 scenarios: [chat]
-description: Guide the room's lead agent when responding to user messages, including queued messages and messages received during work, sharing progress, or delivering results. Publish through chat; ordinary terminal output, including the final response, is not a chat message. Subagents report to their lead. Heartbeat uses its own notification rules. Use doc-form for durable context and overviews.
+description: Guide the room's lead agent when responding to user messages, including queued messages and messages received during work, sharing progress, or delivering results. Publish through chat; ordinary terminal output, including the final response, is not a chat message. Subagents report to their lead. Use doc-form for durable context and overviews.
 ---
 
 # Chat as a collaborator's timeline
@@ -16,8 +16,7 @@ your own opening message.
 ## When to speak
 
 These timing rules apply when you are the room's lead agent working with a user.
-For a scheduled inspection, follow the heartbeat skill's notification rules;
-for a subagent assignment, return findings to your lead instead of publishing.
+For a subagent assignment, return findings to your lead instead of publishing.
 
 - When a user message needs a response, answer directly if you can. If it needs
   further work, first send one short message stating what you understand and

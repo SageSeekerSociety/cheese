@@ -151,7 +151,6 @@
   "gateCondemned": "检查未完成，审阅已终止",
   "gateCondemnedDetail": "平台未能取得这次检查的结果，通常是后端重启时检查任务随进程丢失。\n这不是检查未通过：检查没有运行完，没有证据表明代码有问题。重新提交审阅即可。",
   "harnessNotDeployed": "本话题选的机器上没有部署 {harness}，本轮没有开始。",
-  "heartbeatDecisionLog": "【巡检决策日志】\n{log}",
   "hintAndServiceWords": "{hint}\n\n服务原话：\n{said}",
   "hostFailureDetail": "连续 {count} 轮因「{title}」失败。\n{then}",
   "hostUnreachable": "本轮未开始，无法连接话题绑定的设备。",

@@ -86,7 +86,7 @@ def resolve_stage(
 def stage_scenario(stage: TopicStage) -> str:
     """阶段 → skill frontmatter 里的 `scenarios:` 标签。
 
-    带 ``stage:`` 前缀，跟已有的场景标签（`accept`/`heartbeat`/…）分开命名空间，
+    带 ``stage:`` 前缀，跟已有的场景标签（`chat`/`doc`/…）分开命名空间，
     这样一个 skill 想同时服务多个阶段只要多写一个标签即可。
     """
     return f"stage:{stage.value}"

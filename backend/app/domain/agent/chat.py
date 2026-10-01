@@ -272,7 +272,6 @@ from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
 ACTIVITY_SKILLS = ["chat", "chat-detail", "activity-digestion", "doc-form"]
-HEARTBEAT_SKILLS = ["heartbeat", "chat", "chat-detail"]
 PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
@@ -616,8 +615,8 @@ class ChatService:
         # second message into a live screen.
         self._seat_locks: dict[tuple[uuid.UUID, str], asyncio.Lock] = {}
         # Room-level locks for the few operations that are nobody's turn:
-        # swapping the room's environment mid-turn, heartbeat and memory
-        # consolidation on the root topic.
+        # swapping the room's environment mid-turn and memory consolidation on
+        # the root topic.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
         # Work currently attributed to each active session. Mid-session delivery
         # captures this id before writing to the lower layer, then stamps the
@@ -2354,8 +2353,8 @@ class ChatService:
         做的是它做不了的那一半：读这个项目的花销和房间记录、把这一轮派到项目默认
         芝士的会话上、把结果收回来。
 
-        **派法和巡检一样**（`platform_work` + `run_turn`，结论 28）：整理是平台自
-        己起的活，跑在这个项目默认芝士的会话上，用它自己的模型。
+        **派法**是 `platform_work` + `run_turn`（结论 28）：整理是平台自己起的活，
+        跑在这个项目默认芝士的会话上，用它自己的模型。
         """
         now = datetime.now(UTC)
         async with self._sessions() as session:
@@ -4793,122 +4792,6 @@ class ChatService:
             "summary": final_text,
             "tools_used": tools_used,
         }
-
-    async def run_heartbeat(self, *, project_id: uuid.UUID) -> dict:
-        """定期巡检 (eval G1): runs the heartbeat under the root topic's serial
-        lock, so a 本体 patrol never races a user's turn on the same topic."""
-        async with self._sessions() as session:
-            project = await ProjectRepository(session).get(project_id)
-            if project is None or project.root_topic_id is None:
-                raise NotFoundError("Project has no root topic")
-            root_topic_id = project.root_topic_id
-        async with self._lock_for(root_topic_id):
-            return await self._run_heartbeat_locked(project_id=project_id)
-
-    async def _run_heartbeat_locked(self, *, project_id: uuid.UUID) -> dict:
-        """芝士 (本体) inspects the project against topic 状态 + 里程碑, then sends
-        graded notifications via the notify tool. Its reasoning is logged as a
-        block in the root topic (施工现场 "为什么催")."""
-        # --- gather context from the project ---
-        async with self._sessions() as session:
-            projects = ProjectRepository(session)
-            topics = TopicRepository(session)
-            milestones = MilestoneRepository(session)
-
-            project = await projects.get(project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-            if project.root_topic_id is None:
-                raise NotFoundError("Project has no root topic")
-
-            all_topics = await topics.list_for_project(project_id)
-            upcoming = await milestones.list_calendar(project_id)
-            root_topic_id = project.root_topic_id
-            compute_id = _resolve_compute_id(
-                project.settings,
-            )
-
-        topic_lines = "\n".join(
-            f"- {t.title} [{t.status.value}] ({t.kind.value})"
-            for t in all_topics
-            if t.kind != TopicKind.root
-        )
-        today = datetime.now(UTC).date()
-
-        def _days_left(m) -> str:
-            if not m.due_date:
-                return "未定"
-            d = (m.due_date.date() - today).days
-            return (
-                f"{m.due_date.date().isoformat()}（剩 {d} 天）"
-                if d >= 0
-                else (f"{m.due_date.date().isoformat()}（已逾期 {-d} 天）")
-            )
-
-        milestone_lines = "\n".join(
-            f"- {m.title} 截止 {_days_left(m)}" for m in upcoming
-        )
-        # Anchor the patrol in time so 芝士 can reason about 临近/拖延 (spec §7.2).
-        context = (
-            f"## 今天\n{today.isoformat()}\n\n"
-            f"## 项目话题\n{topic_lines or '（暂无）'}\n\n"
-            f"## 临近里程碑\n{milestone_lines or '（暂无）'}"
-        )
-
-        system_prompt = build_system_prompt(
-            # 巡检那一轮不注入记忆索引：它不是某个人的会话，这一路没有
-            # 「本轮说话的人」，注入谁的 private 都不对。
-            self._base_prompt,
-            load_skills(HEARTBEAT_SKILLS),
-            None,
-            None,
-            # 记忆那一段也不要：它讲的是「在一个会话里怎么写记忆」，而巡检这一轮
-            # 不落记忆文件，写下来的话也没有下一轮读得到。
-            keeps_memory=False,
-        )
-        prompt = (
-            "现在做一次定期巡检。下面是项目当前状态。请：先在回复里写下你的巡检"
-            "判断和理由（决策日志：看了什么、该催谁/该拆什么/有什么风险），"
-            "然后只对真正需要的事用 cheese_notify 发分级通知（level=silent/light/"
-            "strong，kind=heartbeat），别骚扰。\n\n" + context
-        )
-        provider = self._compute.platform_work(compute_id)
-        runtime = runtime_for(provider)
-        final_text = ""
-        tools_used: list[str] = []
-        async for event in runtime.run_turn(
-            project_id=project_id,
-            topic_id=root_topic_id,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider, root_topic_id))[0],
-        ):
-            if isinstance(event, AgentToolUse):
-                tools_used.append(event.name)
-            elif isinstance(event, AgentResult):
-                final_text = event.text
-
-        # Decision log → a block in the root topic (审计/施工现场).
-        async with self._sessions() as session:
-            landed = landing(
-                EventAbout.project,
-                project_id=project_id,
-                room_id=root_topic_id,
-            )
-            await BlockRepository(session).add(
-                project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
-                author=await self._agent_handle(session, root_topic_id),
-                author_type=AuthorType.participant,
-                content=say("heartbeatDecisionLog", log=final_text),
-                kind=BlockKind.event,
-                meta={"in_room": False},
-            )
-            await session.commit()
-
-        return {"decision_log": final_text, "tools_used": tools_used}
 
     async def summarize_project(self, *, project_id: uuid.UUID) -> dict:
         """一页纸总结 (spec §7.3 / eval F2): 芝士 writes a current, plain-language
