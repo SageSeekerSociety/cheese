@@ -55,7 +55,8 @@ async def run():
     async def noop(*args): pass
     reading = Subscription(ref, Path(sys.argv[3]), remote, noop, noop,
         session_id=sys.argv[8], recipient_handle=sys.argv[6],
-        announce=noop, receipts=chat.confirm_prompt_receipt)
+        announce=noop, receipts=chat.confirm_prompt_receipt,
+        completions=chat.confirm_work_completion)
     try:
         await reading.drain()
         await reading.drain()
@@ -232,6 +233,7 @@ def test_echo_commit_abort_replays_same_identity_in_new_chat_process(
             recipient_handle=identity.recipient_handle,
             announce=noop,
             receipts=chat.confirm_prompt_receipt,
+            completions=chat.confirm_work_completion,
         )
         injected = []
         settlement_task = asyncio.current_task()

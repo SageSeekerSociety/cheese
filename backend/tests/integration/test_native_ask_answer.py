@@ -146,7 +146,7 @@ def test_http_answer_continues_original_native_executor(
             compute=ComputePool([runtime], channel.name),
         )
         app.dependency_overrides[get_chat_service] = lambda: chat
-        if mode == "busy":
+        if not mode.startswith("history-multi"):
             content = headless_contract.do(
                 "Bash",
                 command=(
@@ -166,16 +166,50 @@ def test_http_answer_continues_original_native_executor(
                 lambda frame: (
                     frame["type"] == "error"
                     or (
-                        mode == "busy"
+                        not mode.startswith("history-multi")
                         and frame["type"] == "event_block"
                         and "ASK_HTTP_GATE" in str(frame["block"])
                     )
-                    or (mode != "busy" and frame["type"] == "done")
+                    or (mode.startswith("history-multi") and frame["type"] == "done")
                 ),
             )
             assert observed["type"] != "error", observed
+            if not mode.startswith("history-multi"):
+                assert native_runner.working
+                asked = client.post(
+                    f"/topics/{topic}/ask",
+                    json={
+                        "questions": [
+                            {
+                                "question": "接着执行哪个方案？",
+                                "options": [{"text": "继续"}, {"text": "稍后"}],
+                            }
+                        ],
+                    },
+                    headers={
+                        "X-Cheese-Token": mint_scoped_token(
+                            project_id=str(project_id),
+                            topic_id=str(topic),
+                            agent_handle=handle.agent_handle,
+                        )
+                    },
+                )
+                assert asked.status_code == 200, asked.text
+                group = asked.json()["data"]
+                question = group["blocks"][0]
+                assert question["author"] == handle.agent_handle
+                assert group["group"]["members"] == [question["id"]]
+                assert group["group"]["total"] == 1
+                if mode != "busy":
+                    gate.touch()
+                    completed = _until(
+                        ws, lambda frame: frame["type"] in ("done", "error")
+                    )
+                    assert completed["type"] != "error", completed
         if mode != "busy":
             client.portal.call(settle_turn, chat, topic)
+            if not mode.startswith("history-multi"):
+                gate.unlink()
 
         async def initial_work():
             async with client.test_request_factory() as session:
@@ -417,23 +451,79 @@ def test_http_answer_continues_original_native_executor(
                 assert journal.recall("landed") == landed_before
             finally:
                 journal.close()
-        asked = client.post(
-            f"/topics/{topic}/ask",
-            json={
-                "question": "接着执行哪个方案？",
-                "options": [{"text": "继续"}, {"text": "稍后"}],
-            },
-            headers={
-                "X-Cheese-Token": mint_scoped_token(
-                    project_id=str(project_id),
-                    topic_id=str(topic),
-                    agent_handle=handle.agent_handle,
-                )
-            },
-        )
-        assert asked.status_code == 200, asked.text
-        question = asked.json()["data"]
-        assert question["author"] == handle.agent_handle
+
+        def read_group():
+            response = client.get(
+                f"/topics/asks/{group['group']['id']}",
+                params={
+                    "topic_id": str(topic),
+                    "asked_by": handle.agent_handle,
+                },
+                headers=session_auth_headers("alice"),
+            )
+            assert response.status_code == 200, response.text
+            return response.json()["data"]
+
+        def submit_group(option, client_op_id, expect_version):
+            return client.post(
+                f"/topics/asks/{group['group']['id']}/settle",
+                json={
+                    "topic_id": str(topic),
+                    "asked_by": handle.agent_handle,
+                    "client_op_id": client_op_id,
+                    "expect_version": expect_version,
+                    "answered": [
+                        {
+                            "block_id": question["id"],
+                            "kind": "option",
+                            "option": option,
+                            "client_op_id": client_op_id,
+                            "expect_version": expect_version,
+                        }
+                    ],
+                    "later": [],
+                    "unanswered": [],
+                },
+                headers=session_auth_headers("alice"),
+            )
+
+        def assert_group_state(response, option, client_op_id, version):
+            submitted = response.json()["data"]
+            current = read_group()
+            assert submitted["group"] == current["group"] == group["group"]
+            assert current["settlement"] == submitted["settlement"]
+            assert current["settlement"]["v"] == version
+            assert current["settlement"]["client_op_id"] == client_op_id
+            assert current["settlement"]["answered"] == [question["id"]]
+            block = current["blocks"][0]
+            assert block["id"] == question["id"]
+            assert block["meta"]["ask_origin"] == question["meta"]["ask_origin"]
+            history = block["meta"]["group_settle_log"]
+            expected_operations = [f"http-{mode}"]
+            if version == 2:
+                expected_operations.append(client_op_id)
+            assert [entry["client_op_id"] for entry in history] == expected_operations
+            assert history[-1] == current["settlement"]
+            answers = block["meta"]["answer_log"]
+            assert len(answers) == version
+            assert answers[-1]["option"] == option
+            assert answers[-1]["by"] == "alice"
+            assert answers[-1]["client_op_id"] == client_op_id
+            history_response = client.get(
+                f"/topics/{topic}/history/{question['id']}",
+                headers=session_auth_headers("alice"),
+            )
+            assert history_response.status_code == 200, history_response.text
+            historical = history_response.json()["data"]
+            assert historical["meta"]["answer_log"] == answers
+            assert historical["meta"]["group_settle_log"] == history
+            assert historical["meta"]["ask_origin"] == question["meta"]["ask_origin"]
+
+        created = read_group()
+        assert created["group"] == group["group"]
+        assert created["blocks"][0]["id"] == question["id"]
+        assert created["blocks"][0]["meta"]["answer_log"] == []
+        assert created["settlement"] is None and created["receipt"] is None
         prepared_gate = asyncio.Event()
         prepared_seen = asyncio.Event()
         delayed_writes = []
@@ -518,18 +608,13 @@ def test_http_answer_continues_original_native_executor(
                     await normal_opened.wait()
 
             client.portal.call(start_normal)
-        answer = client.post(
-            f"/topics/blocks/{question['id']}/answer",
-            json={
-                "kind": "option",
-                "option": "继续",
-                "client_op_id": f"http-{mode}",
-                "expect_version": 0,
-            },
-            headers=session_auth_headers("alice"),
-        )
+        answer = submit_group("继续", f"http-{mode}", 0)
         assert answer.status_code == 200, answer.text
-        assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
+        assert (
+            answer.json()["data"]["blocks"][0]["meta"]["answer_log"][-1]["by"]
+            == "alice"
+        )
+        assert_group_state(answer, "继续", f"http-{mode}", 1)
 
         def take_recovery(recovered_chat, recovered_runtime):
             nonlocal chat, runtime
@@ -652,17 +737,12 @@ def test_http_answer_continues_original_native_executor(
                     assert waiting.accepted_at and not waiting.echoed_at
                     held_work = waiting.work_id
                 correction = await asyncio.to_thread(
-                    client.post,
-                    f"/topics/blocks/{question['id']}/answer",
-                    json={
-                        "kind": "option",
-                        "option": "稍后",
-                        "client_op_id": "http-correct-start",
-                        "expect_version": 1,
-                    },
-                    headers=session_auth_headers("alice"),
+                    submit_group, "稍后", "http-correct-start", 1
                 )
                 assert correction.status_code == 200, correction.text
+                await asyncio.to_thread(
+                    assert_group_state, correction, "稍后", "http-correct-start", 2
+                )
                 await get_work_runner().drain(10)
                 assert len(delayed_writes) == 1
                 assert operations.count("send") == initial_sends + 1
@@ -690,17 +770,12 @@ def test_http_answer_continues_original_native_executor(
                     await prepared_seen.wait()
                 assert not chat._hook_work
                 correction = await asyncio.to_thread(
-                    client.post,
-                    f"/topics/blocks/{question['id']}/answer",
-                    json={
-                        "kind": "option",
-                        "option": "稍后",
-                        "client_op_id": "http-correct-race",
-                        "expect_version": 1,
-                    },
-                    headers=session_auth_headers("alice"),
+                    submit_group, "稍后", "http-correct-race", 1
                 )
                 assert correction.status_code == 200, correction.text
+                await asyncio.to_thread(
+                    assert_group_state, correction, "稍后", "http-correct-race", 2
+                )
                 await asyncio.sleep(0.05)
                 assert operations.count("send") == initial_sends
                 prepared_gate.set()
@@ -720,32 +795,23 @@ def test_http_answer_continues_original_native_executor(
                     assert operations.count("steer") == 0, operations
             if mode == "busy":
                 await get_work_runner().drain(10)
-                retry = await asyncio.to_thread(
-                    client.post,
-                    f"/topics/blocks/{question['id']}/answer",
-                    json={
-                        "kind": "option",
-                        "option": "继续",
-                        "client_op_id": f"http-{mode}",
-                        "expect_version": 0,
-                    },
-                    headers=session_auth_headers("alice"),
-                )
+                retry = await asyncio.to_thread(submit_group, "继续", f"http-{mode}", 0)
                 assert retry.status_code == 200, retry.text
+                await asyncio.to_thread(
+                    assert_group_state, retry, "继续", f"http-{mode}", 1
+                )
                 assert operations.count("steer") == 1
                 correction = await asyncio.to_thread(
-                    client.post,
-                    f"/topics/blocks/{question['id']}/answer",
-                    json={
-                        "kind": "option",
-                        "option": "稍后",
-                        "client_op_id": "http-correct",
-                        "expect_version": 1,
-                    },
-                    headers=session_auth_headers("alice"),
+                    submit_group, "稍后", "http-correct", 1
                 )
                 assert correction.status_code == 200, correction.text
-                assert len(correction.json()["data"]["meta"]["answer_log"]) == 2
+                assert (
+                    len(correction.json()["data"]["blocks"][0]["meta"]["answer_log"])
+                    == 2
+                )
+                await asyncio.to_thread(
+                    assert_group_state, correction, "稍后", "http-correct", 2
+                )
                 async with asyncio.timeout(30):
                     while operations.count("steer") != 2:
                         await asyncio.sleep(0.05)
@@ -821,6 +887,7 @@ def test_http_answer_continues_original_native_executor(
                 )
                 assert len(answers) == len(deliveries)
                 for answer_block in answers:
+                    assert answer_block.meta["answer_group"] == group["group"]["id"]
                     owners = [
                         row
                         for row in rows
