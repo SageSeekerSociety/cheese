@@ -25,6 +25,7 @@ of its own instead.
 
 import json
 import re
+from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 
 from app.domain.agent.harness import CLAUDE_CODE
@@ -148,7 +149,7 @@ def _message(record: dict) -> tuple[dict, str | None]:
     return record, f"call:{parent}" if parent else None
 
 
-def bind(record: dict, facts: dict[str, str]) -> dict[str, str]:
+def bind(record: dict, facts: Mapping[str, str]) -> dict[str, str]:
     """The facts this record establishes, given the ones already known.
 
     ``facts`` maps ``spawned:<call id>`` and ``agent:<agent id>`` to the label of
@@ -214,7 +215,7 @@ def bind(record: dict, facts: dict[str, str]) -> dict[str, str]:
 class Assembler:
     """Records in, room events out."""
 
-    def __init__(self, facts: dict[str, str], session_id: str | None = None):
+    def __init__(self, facts: MutableMapping[str, str], session_id: str | None = None):
         self.facts = facts
         self.session_id = session_id
 
