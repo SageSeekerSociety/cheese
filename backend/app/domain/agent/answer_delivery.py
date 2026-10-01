@@ -101,6 +101,10 @@ async def admitted_initial(
             )
             acting = await chat._acting_handle(session, topic_id, agent)
             pending = await seat_has_unfinished_input(session, topic_id, acting)
+            if pending and user_block_id is not None:
+                from app.domain.agent.pending_messages import defer_message
+
+                await defer_message(session, user_block_id)
             await session.commit()
         yield pending
 

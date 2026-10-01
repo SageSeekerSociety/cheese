@@ -18,7 +18,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from functools import lru_cache
 
 from sqlalchemy import select
@@ -1226,7 +1226,7 @@ class AgentWorkRunner:
         `sweep_orphans` with the young-entry guard switched off."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
-    async def resume_lost_messages(self, chat_service) -> int:
+    async def resume_lost_messages(self, chat_service, *, topic_id=None) -> int:
         """Start the turns a previous owner accepted a message for and never
         began. Returns how many turns it started.
 
@@ -1244,95 +1244,9 @@ class AgentWorkRunner:
         turn does, and teammates in one room run side by side, so another
         agent's turn neither picks this message up nor holds it back.
         """
-        from app.domain.agent.models import AgentTurn
-        from app.domain.block.models import (
-            CONSUMED_TURN_META_KEY,
-            Block,
-            BlockKind,
-            consumed_turn,
-            prompt_attempts,
-        )
+        from app.domain.agent.pending_messages import resume_messages
 
-        since = _utcnow() - timedelta(seconds=self.ORPHAN_STALE_S)
-        async with chat_service.session_factory() as session:
-            mentioned = [
-                block
-                for block in await session.scalars(
-                    select(Block)
-                    .where(
-                        Block.created_at >= since,
-                        Block.kind == BlockKind.message,
-                        Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-                    )
-                    .order_by(Block.created_at)
-                )
-                if CONSUMED_TURN_META_KEY in (block.meta or {})
-                and consumed_turn(block) is None
-                and prompt_attempts(block) == 0
-            ]
-            if not mentioned:
-                return 0
-            ids = [block.id for block in mentioned]
-            begun = set(
-                await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
-            )
-            # Whose turns are running, by room. A turn not yet assembled has
-            # no agent (None) and may still turn out to be anybody's.
-            busy: dict[uuid.UUID, set[str | None]] = {}
-            for topic_id, agent_handle in await session.execute(
-                select(AgentTurn.topic_id, AgentTurn.agent_handle).where(
-                    AgentTurn.stopped_at.is_(None)
-                )
-            ):
-                busy.setdefault(topic_id, set()).add(agent_handle)
-            answered = {
-                block.turn_id
-                for block in await session.scalars(
-                    select(Block).where(Block.turn_id.in_(ids), Block.id.not_in(ids))
-                )
-                if (block.meta or {}).get("event_type") not in _WAITING
-            }
-        seats: dict[tuple[uuid.UUID, str | None], Block] = {}
-        for block in mentioned:
-            if block.id in begun or block.id in answered:
-                continue
-            # Accepted by this process while it waited to take over: its turn is
-            # already on its way here, and a second one would race it.
-            if self.turn_pending(block.id):
-                continue
-            seat = ((block.meta or {}).get("agent_recipient") or {}).get("handle")
-            running = busy.get(block.topic_id, set())
-            if (
-                None in running
-                or seat in running
-                or chat_service.has_running_turn(block.topic_id, seat)
-            ):
-                continue
-            seats.setdefault((block.topic_id, seat), block)
-        for (topic_id, _), block in seats.items():
-            recipient = (block.meta or {}).get("agent_recipient") or {}
-            logger.info(
-                "starting the turn a previous backend never began topic=%s block=%s",
-                topic_id,
-                block.id,
-            )
-            self._receive_message(
-                chat_service,
-                topic_id,
-                block.id,
-                addressed=addressed_to_agent(recipient_seat(recipient)),
-                continuation_id=block.id,
-                author=block.author,
-                content=block.content,
-                reply_to=str(block.reply_to) if block.reply_to else None,
-                attachments=None,
-                provision_actor=None,
-                landed_user_block_id=block.id,
-                landed_user_block_ids=[block.id],
-                live_delivery_expected=False,
-                recipient_handle=recipient.get("handle"),
-            )
-        return len(seats)
+        return await resume_messages(self, chat_service, topic_id=topic_id)
 
     async def sweep_orphans(
         self,
@@ -2298,6 +2212,9 @@ class AgentWorkRunner:
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
                 gate.release()
+            from app.domain.agent.pending_messages import nudge_messages
+
+            nudge_messages(chat_service, topic_id)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?

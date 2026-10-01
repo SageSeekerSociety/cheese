@@ -1390,6 +1390,9 @@ class ChatService:
                 },
             )
             await session.commit()
+        from app.domain.agent.pending_messages import nudge_messages
+
+        nudge_messages(self, completion.topic_id)
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
@@ -1864,6 +1867,10 @@ class ChatService:
                     logger.exception(
                         "session recovery failed for topic %s", session.topic_id
                     )
+                else:
+                    from app.domain.agent.pending_messages import nudge_messages
+
+                    nudge_messages(self, session.topic_id)
 
     async def _said(self, session: SessionRef) -> set[str]:
         """What 芝士 has already said in this topic, as the room stores it."""
@@ -1958,6 +1965,9 @@ class ChatService:
             # 同一个时刻也看一眼文档：干过活的房间文档还空着，就请这个队友补上
             # （topic/doc_nudge.py）。
             doc_nudge.nudge(topic_id, self)
+            from app.domain.agent.pending_messages import nudge_messages
+
+            nudge_messages(self, topic_id)
 
     @staticmethod
     def room_is_a_work_room(topic: Topic) -> bool:
