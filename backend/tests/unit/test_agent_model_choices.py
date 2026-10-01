@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
-from app.domain.agent.harness import CODEX, HARNESS_SETTING, PI
+from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESS_SETTING, PI
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent_instance.configuration import model_choices
 from tests.support.stand_in_harness import registered
@@ -43,7 +43,7 @@ def _running(monkeypatch, name: str, **bits: bool) -> None:
     网关那套话的骨架时，列出来的是哪一批」——那件事跟谁答得出四条无关。
     """
     registered(monkeypatch, name, **bits)
-    monkeypatch.setattr(settings, "agent_harness", name)
+    monkeypatch.setattr(settings, "agent_harnesses", [name])
 
 
 @pytest.mark.parametrize(
@@ -144,10 +144,11 @@ def test_a_project_that_switched_harness_is_filtered_by_that_one(monkeypatch):
     monkeypatch.setattr(
         settings, "agent_harness_models", {"codex": ["sonnet", "codex-fixture"]}
     )
-    # 部署跑的是 claude-code，没动它——动的只有一个项目的设置。
+    # 部署偏好的是 claude-code，没动它——动的只有一个项目的设置。
     assert {"sonnet", "codex-fixture"} <= _offered({})
 
     registered(monkeypatch, CODEX, speaks_gateway=False)
+    monkeypatch.setattr(settings, "agent_harnesses", [CLAUDE_CODE, CODEX])
     switched = {HARNESS_SETTING: CODEX}
     assert "sonnet" not in _offered(switched)
     assert "codex-fixture" in _offered(switched)

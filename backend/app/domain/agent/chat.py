@@ -216,6 +216,7 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.turn_speakers import turn_speakers
+from app.domain.agent.work_policy import resolve_compute_id, work_policy
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -395,15 +396,6 @@ _ACTION_LABEL = {
 # HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
 # blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
-
-
-def _resolve_compute_id(project_settings: dict | None, topic=None) -> str | None:
-    """A room keeps its choice; otherwise use the explicit project default."""
-    from app.domain.agent.compute_configs import project_configs, room_choice
-
-    if topic is not None:
-        return room_choice(topic, project_settings).profile
-    return project_configs(project_settings).default.profile
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -1541,30 +1533,8 @@ class ChatService:
             return await cloud_waiting_topics(session, topic_ids)
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
-        """Admission facts the AgentWorkRunner gates on BEFORE running a turn
-        (spec §9.1 算力额度): the owning project, its concurrency ceiling, and
-        whether its compute credits are exhausted. None when the topic doesn't
-        exist (the turn itself will surface the 404)."""
-        async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
-                return None
-            project = await ProjectRepository(session).get(topic.project_id)
-            balance = await ComputeGrantRepository(session).summary(topic.project_id)
-        max_concurrent = settings.max_concurrent_turns
-        override = ((project.settings if project else None) or {}).get(
-            "max_concurrent_turns"
-        )
-        if isinstance(override, int) and override > 0:
-            max_concurrent = override
-        return {
-            "project_id": str(topic.project_id),
-            "max_concurrent_turns": max_concurrent,
-            # A project with no grants is unlimited (spec §4 自治项目不设限).
-            "credits_exhausted": (
-                not balance["unlimited"] and balance["credits_remaining"] <= 0
-            ),
-        }
+        """Admission facts the AgentWorkRunner gates on BEFORE running a turn."""
+        return await work_policy(self._sessions, self._compute, topic_id)
 
     async def _close_open_turns(self, topic_id: uuid.UUID) -> None:
         """End every open interval on this topic. Never raises — a Stop that
@@ -2386,7 +2356,7 @@ class ChatService:
                 session, project_id, tokens_at_start=tokens, now=now
             )
             run_id = run.id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = resolve_compute_id(project.settings)
             agent_handle = await self._agent_handle(session, root_topic_id)
             await session.commit()
         logger.info(
@@ -3911,10 +3881,15 @@ class ChatService:
             overview_doc_text = overview_root.content if overview_root else None
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
-            # 这个参与者的属性。这一轮只解析这一次，往下每一处都读它：会话行的键
-            # 里有骨架，两处各自解析一次就够把一条会话拆成两条。
-            wanted_harness = harness_for(project.settings if project else None)
+            # 骨架是这个项目在这台机器上跑的那一个（结论 28），不是这个参与者的属
+            # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
+            # 各自解析一次就够把一条会话拆成两条。
+            compute_id = resolve_compute_id(
+                project.settings if project else None, topic
+            )
+            wanted_harness, provider = self._compute.choose(
+                project.settings if project else None, compute_id
+            )
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
@@ -4015,19 +3990,11 @@ class ChatService:
             )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
-            compute_id = _resolve_compute_id(
-                project.settings if project else None, topic
-            )
-            # 先问这套部署有没有这个骨架，再过档位策略：策略那一步要解析模型，而一个
-            # 没注册的骨架一个模型都指不到（结论 43），先问它就会以「没有默认模型」
-            # 收场，房间读到的不是真正的原因。
-            provider = self._compute.select(
-                provider_id=compute_id, harness=wanted_harness
-            )
+            # 先问这台机器上有没有可用的骨架，再过档位策略：策略那一步要解析模型，
+            # 而一个没挂上的骨架一个模型都指不到，先问它就会以「没有默认模型」收场，
+            # 房间读到的不是真正的原因。
             if provider is None:
-                # The machine is fine; what this deployment runs is not
-                # deployed on it. Say so rather than starting something else:
-                # a turn taken on another harness is a turn nobody asked for.
+                # The machine is fine; nothing this deployment lists runs on it.
                 return _TurnBail(
                     [
                         {
@@ -4727,7 +4694,7 @@ class ChatService:
             )
             memory = await memory_index(session, project_id, speaker_handles=[author])
             topic_id = topic.id
-            compute_id = _resolve_compute_id(
+            compute_id = resolve_compute_id(
                 project.settings,
             )
             await session.commit()
@@ -4817,7 +4784,7 @@ class ChatService:
             agents = AgentInstanceService(session)
             agent = await agents.for_project(project)
             role = await agents.system_prompt(agent)
-            compute_id = _resolve_compute_id(
+            compute_id = resolve_compute_id(
                 project.settings,
             )
 

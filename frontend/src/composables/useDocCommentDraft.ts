@@ -6,7 +6,7 @@ import { t } from '@/i18n'
 
 type Target = { anchorId: string | null; quote: string }
 type Draft = { target: Target; text: string; revision: number; sending: boolean; error: string | null }
-type TopicDrafts = { active: string | null; drafts: Record<string, Draft> }
+type TopicDrafts = { active: string | null; hidden: boolean; drafts: Record<string, Draft> }
 
 // Shared records survive pane unmounts and keep late receipts tied to their draft.
 const cache = new Map<string, TopicDrafts>()
@@ -15,7 +15,7 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
   const key = `cheese:doc-comments:${JSON.stringify([author, topicId])}`
   const existing = cache.get(key)
   if (existing) return existing
-  let initial: TopicDrafts = { active: null, drafts: {} }
+  let initial: TopicDrafts = { active: null, hidden: false, drafts: {} }
   try {
     const saved = JSON.parse(sessionStorage.getItem(key) || 'null')
     if (saved && typeof saved.drafts === 'object' && saved.drafts !== null) {
@@ -26,6 +26,7 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
         initial.drafts[id] = { target: item.target, text: item.text, revision: 0, sending: false, error: null }
       }
       if (typeof saved.active === 'string' && initial.drafts[saved.active]) initial.active = saved.active
+      initial.hidden = saved.hidden === true
     }
   } catch {
     // A storage failure must not prevent commenting or discard the in-memory draft.
@@ -40,7 +41,7 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
           const drafts = Object.fromEntries(
             Object.entries(initial.drafts).map(([id, d]) => [id, { target: d.target, text: d.text }])
           )
-          sessionStorage.setItem(key, JSON.stringify({ active: initial.active, drafts }))
+          sessionStorage.setItem(key, JSON.stringify({ active: initial.active, hidden: initial.hidden, drafts }))
         } catch {
           /* Keep the draft in memory when storage is unavailable. */
         }
@@ -66,7 +67,9 @@ export function useDocCommentDraft(
     const s = state.value
     return s?.active ? s.drafts[s.active] ?? null : null
   })
-  const draft = computed(() => current.value?.target ?? null)
+  const draft = computed(() => (state.value?.hidden ? null : current.value?.target ?? null))
+  const hasDraft = computed(() => !!current.value)
+  const busy = computed(() => Object.values(state.value?.drafts ?? {}).some((entry) => entry.sending))
   const text = computed({
     get: () => current.value?.text ?? '',
     set: (value: string) => {
@@ -84,10 +87,17 @@ export function useDocCommentDraft(
     const key = JSON.stringify([target.anchorId, target.quote])
     s.drafts[key] ??= { target: { ...target }, text: '', revision: 0, sending: false, error: null }
     s.active = key
+    s.hidden = false
+  }
+  function close() {
+    const s = state.value
+    if (!s || busy.value) return false
+    s.hidden = true
+    return true
   }
   function cancel() {
     const s = state.value
-    if (!s || !s.active || current.value?.sending) return
+    if (!s || !s.active || busy.value) return
     delete s.drafts[s.active]
     s.active = null
   }
@@ -116,5 +126,17 @@ export function useDocCommentDraft(
       entry.sending = false
     }
   }
-  return { draft, text, sending, errorMsg, open, cancel, submit }
+  return {
+    draft,
+    hasDraft,
+    target: computed(() => current.value?.target ?? null),
+    text,
+    sending,
+    busy,
+    errorMsg,
+    open,
+    close,
+    cancel,
+    submit,
+  }
 }

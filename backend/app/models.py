@@ -20,6 +20,7 @@ from app.domain.comments import models as comments  # noqa: F401
 from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
+from app.domain.doc_ai import models as doc_ai  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
@@ -29,6 +30,7 @@ from app.domain.integration import models as integration  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.legal import models as legal  # noqa: F401
 from app.domain.library import models as library  # noqa: F401
+from app.domain.living_doc import models as living_doc  # noqa: F401
 from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
 from app.domain.machine.limits import MachineLimit, TeamMachineLimit  # noqa: F401

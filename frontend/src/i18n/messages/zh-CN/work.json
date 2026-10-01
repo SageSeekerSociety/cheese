@@ -788,9 +788,18 @@
       "write": "写评论",
       "placeholder": "输入评论…",
       "keyHint": "Enter 发送，Shift+Enter 换行",
-      "cancel": "取消",
       "locate": "定位到该段",
-      "anchorChanged": "原段落已改动"
+      "anchorChanged": "原段落已改动",
+      "anchorAmbiguous": "这段引用出现多次，无法确定原选区",
+      "closePanel": "关闭评论栏",
+      "resize": "调整评论栏宽度",
+      "waitForSend": "评论发送中，请等待结果",
+      "closeDraft": "关闭输入",
+      "discardDraft": "丢弃草稿",
+      "resumeDraft": "继续草稿",
+      "unavailable": "当前宿主未提供评论发送接口",
+      "showMore": "展开全文",
+      "showLess": "收起全文"
     },
     "chat": {
       "pickTopic": "选择一个话题开始对话",

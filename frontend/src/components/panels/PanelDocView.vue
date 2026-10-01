@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 文档那一格的**画**：横条、源码模式、飞书式的一栏正文、底下的评论区与两个对话框。
+// 文档那一格的**画**：横条、源码模式、正文、可调整的评论侧栏与两个对话框。
 //
 // 它只凭 props 渲染，不认识接口也不认识路由 —— 正文的读写、评论、节点、自动保存的那
 // 只时钟都在 composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在
@@ -9,19 +9,19 @@ import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
 import type { DocSaveStatus } from '../../lib/docEditState'
 
-import { nextTick, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { topicTitle } from '../../lib/topicState'
 import CodeEditor from '../CodeEditor.vue'
 
-import DocComments from './doc/DocComments.vue'
+import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocFormatToolbar from './doc/DocFormatToolbar.vue'
 import DocSurface from './doc/DocSurface.vue'
 import OverviewAuto from './doc/OverviewAuto.vue'
 
 import { t } from '@/i18n'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     topic: Topic | null
     /** 父层在 AI 动过之后加一：文档那一格据此重读芝士刚写的那一版。 */
@@ -99,10 +99,10 @@ function closeLossyConfirm() {
 
 // 评论区自己是一个组件：列表、折叠、写评论的输入框都在里面。这一层只负责把它开出来 ——
 // 抛上去的那两件事（锚点 + 引文）它自己接，因为 ref 就在这一层。
-const commentsRef = ref<{
-  open: (t: { anchorId: string | null; quote: string }) => void
-  locate: (commentId: string) => void
-} | null>(null)
+const commentsRef = ref<InstanceType<typeof DocCommentPanel> | null>(null)
+const openId = ref<string | null>(null)
+const bodyRef = ref<HTMLElement | null>(null)
+let pulseTimer: ReturnType<typeof setTimeout> | undefined
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
 // doc is clicked, flash the document + scroll it into view — connecting the
@@ -112,14 +112,18 @@ const commentsRef = ref<{
 const pulsing = ref(false)
 
 async function pulse() {
-  document.querySelector('.doc-body')?.scrollTo({ top: 0, behavior: 'smooth' })
+  bodyRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
+  if (pulseTimer) clearTimeout(pulseTimer)
   pulsing.value = false
   await nextTick()
   pulsing.value = true
-  window.setTimeout(() => {
+  pulseTimer = setTimeout(() => {
     pulsing.value = false
   }, 1200)
 }
+onBeforeUnmount(() => {
+  if (pulseTimer) clearTimeout(pulseTimer)
+})
 
 // 正文区的滚动：代码块工具条贴在 <pre> 上，正文一滚它就指错地方了。往上发一次
 // 「滚了」，由拿着编辑器的正文那一半收起来。
@@ -140,6 +144,15 @@ function openComment(payload: { anchorId: string | null; quote: string }) {
 }
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
+}
+watch(
+  () => [props.topic?.id, props.commentAuthor],
+  () => {
+    openId.value = null
+  }
+)
+function quoteState(id: string) {
+  return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
 }
 
 // 组合式函数要的两个口子都长在这一层：它判「这一版和读到的差在哪」，只有这里知道编辑器
@@ -201,11 +214,11 @@ defineExpose({
           <DocFormatToolbar
             v-if="!sourceMode"
             :editor="surfaceRef?.editor ?? null"
-            @keydown="handleDocKeydown"
             :disabled="loading || !editable || editingBlocked"
             :disabled-reason="
               loading ? t('work.room.doc.loading') : !editable || editingBlocked ? t('work.room.doc.readOnly') : ''
             "
+            @keydown="handleDocKeydown"
           />
           <div class="doc-bar" :class="{ 'doc-bar--row': sourceMode }">
             <span v-if="saveStatus === 'loading'" class="t-meta me-2">{{ t('work.room.doc.loading') }}</span>
@@ -243,6 +256,16 @@ defineExpose({
             >
               {{ t('work.room.doc.source') }}
             </v-btn>
+            <v-btn
+              v-if="!sourceMode"
+              icon="mdi-comment-text-outline"
+              size="small"
+              variant="text"
+              :aria-label="t('work.room.comments.title')"
+              :title="t('work.room.comments.title')"
+              :aria-expanded="commentsRef?.opened ?? false"
+              @click="commentsRef?.toggle()"
+            />
             <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
               <template #activator="{ props: menuProps }">
                 <v-btn
@@ -287,75 +310,76 @@ defineExpose({
           />
         </div>
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
-        <div
+        <DocCommentPanel
           v-else
-          class="doc-body overflow-y-auto"
-          :class="{ readonly: !editable }"
-          @focusout="handleBlur"
-          @scroll.passive="onBodyScroll"
+          ref="commentsRef"
+          v-model:open-id="openId"
+          :topic-id="topic?.id ?? null"
+          :author="commentAuthor"
+          :send-comment="sendComment"
+          :comments="comments"
+          :anchor-nodes="anchorNodes"
+          :quote-state="quoteState"
+          @locate-node="highlightNode"
+          @posted="refreshComments"
         >
-          <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
-            <!-- Large document title (Feishu Docs), = the topic title -->
-            <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
-            <!-- 军规 1 banner: this doc uses syntax the visual editor can't
+          <div
+            ref="bodyRef"
+            class="doc-body overflow-y-auto"
+            :class="{ readonly: !editable }"
+            @focusout="handleBlur"
+            @scroll.passive="onBodyScroll"
+          >
+            <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
+              <!-- Large document title (Feishu Docs), = the topic title -->
+              <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
+              <!-- 军规 1 banner: this doc uses syntax the visual editor can't
                fully represent — autosave is paused, source mode is lossless. -->
-            <div v-if="lossy" class="doc-lossy-banner">
-              <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
-              <div class="doc-lossy-banner__text">
-                {{ editingBlocked ? t('work.room.doc.lossyBlocked') : t('work.room.doc.lossy') }}
+              <div v-if="lossy" class="doc-lossy-banner">
+                <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
+                <div class="doc-lossy-banner__text">
+                  {{ editingBlocked ? t('work.room.doc.lossyBlocked') : t('work.room.doc.lossy') }}
+                </div>
+                <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
+                  {{ t('work.room.doc.switchToSource') }}
+                </button>
               </div>
-              <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
-                {{ t('work.room.doc.switchToSource') }}
-              </button>
-            </div>
-            <!-- 正文本身。⌘S 从这一层原样落下去（存不存是取数那一半的事）。 -->
-            <DocSurface
-              ref="surfaceRef"
-              :editable="editable"
-              :loading="loading"
-              :topic-id="topic?.id ?? null"
-              :topic-list="topicList"
-              :live-ref-index="liveRefIndex"
-              :comment-mark-index="commentMarkIndex"
-              :fetch-doc-nodes="fetchDocNodes"
-              :image-src="imageSrc"
-              :pulse="pulse"
-              :scroll-tick="scrollTick"
-              @keydown="handleDocKeydown"
-              @edited="emit('edited')"
-              @open-topic="emit('open-topic', $event)"
-              @mention-click="emit('mention-click', $event)"
-              @open-file="emit('open-file', $event)"
-              @open-comment="openComment"
-              @locate-comment="locateComment"
-              @error="setError"
-            />
+              <!-- 正文本身。⌘S 从这一层原样落下去（存不存是取数那一半的事）。 -->
+              <DocSurface
+                ref="surfaceRef"
+                :editable="editable"
+                :loading="loading"
+                :topic-id="topic?.id ?? null"
+                :topic-list="topicList"
+                :live-ref-index="liveRefIndex"
+                :comment-mark-index="commentMarkIndex"
+                :open-comment-id="openId"
+                :fetch-doc-nodes="fetchDocNodes"
+                :image-src="imageSrc"
+                :pulse="pulse"
+                :scroll-tick="scrollTick"
+                @keydown="handleDocKeydown"
+                @edited="emit('edited')"
+                @open-topic="emit('open-topic', $event)"
+                @mention-click="emit('mention-click', $event)"
+                @open-file="emit('open-file', $event)"
+                @open-comment="openComment"
+                @locate-comment="locateComment"
+                @error="setError"
+              />
 
-            <!-- 总览房间的其余三块（#1889 ②~④）：正文下面、评论区上面。只有根话题
+              <!-- 总览房间的其余三块（#1889 ②~④）紧跟正文。评论在独立侧栏。只有根话题
                  有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
-            <OverviewAuto
-              v-if="topic?.kind === 'root'"
-              :topic="topic"
-              :activity-tick="activityTick"
-              @open-topic="emit('open-topic', $event)"
-              @open-resource="emit('open-resource', $event)"
-            />
-
-            <!-- 飞书 docs 风常驻评论区：所有评论都在文档底部，锚在某一段的带引用 chip。
-                 写评论的输入框也在里面（规则 5：批注归批注，聊天归聊天）；拉取在取数那一
-                 半，因为同一次请求还要喂编辑器里的评论下划线。 -->
-            <DocComments
-              ref="commentsRef"
-              :topic-id="topic?.id ?? null"
-              :author="commentAuthor"
-              :send-comment="sendComment"
-              :comments="comments"
-              :anchor-nodes="anchorNodes"
-              @locate-node="highlightNode"
-              @posted="refreshComments"
-            />
+              <OverviewAuto
+                v-if="topic?.kind === 'root'"
+                :topic="topic"
+                :activity-tick="activityTick"
+                @open-topic="emit('open-topic', $event)"
+                @open-resource="emit('open-resource', $event)"
+              />
+            </div>
           </div>
-        </div>
+        </DocCommentPanel>
       </div>
       <!-- /.doc-stage -->
 
@@ -519,6 +543,16 @@ defineExpose({
 }
 
 /* ---- 军规 1 UI ---- */
+.doc-error-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(560px, calc(100% - 32px));
+  overflow-wrap: anywhere;
+  box-shadow: var(--shadow-2);
+}
 /* Lossy-load banner: a warning, so the warn triple — mark, wash, ink. */
 .doc-lossy-banner {
   display: flex;

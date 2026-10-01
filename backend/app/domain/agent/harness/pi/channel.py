@@ -66,6 +66,10 @@ class PiChannel:
         self.deferred_work = channel.deferred_work
         self.builds_model_env = channel.builds_model_env
 
+    @property
+    def hands_here(self) -> bool:
+        return self.channel.hands_here
+
     def available(self) -> bool:
         return self.channel.available()
 

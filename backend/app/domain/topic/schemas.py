@@ -153,4 +153,5 @@ class DocEditIn(BaseModel):
     # Required, and deliberately so: this doc is only ever written whole, so a
     # writer with no version is a writer about to erase whatever it did not
     # read. Everything that writes here has just read the doc.
-    expected_version: int
+    expected_version: int = Field(ge=0)
+    operation_id: uuid.UUID | None = None

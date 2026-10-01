@@ -84,20 +84,23 @@ function open(topic: Topic) {
 }
 
 describe('总览房间的文档下面', () => {
-  it('根话题把正文之外的四块摆在正文下面', async () => {
+  it('根话题的自动汇总紧跟正文，评论放在独立侧栏', async () => {
     const { container, findByText } = open(ROOT)
 
     await findByText('现在在做什么')
     expect(container.textContent).toContain('给高中生做算法课。')
     expect(container.textContent).toContain('平台自动生成，不可编辑')
-    // 在正文下面、评论区上面：读文档的人顺着读下去，不必先翻过一屏评论。
+    // 自动汇总仍属于正文阅读区；评论侧栏不插进正文的阅读顺序。
     const page = container.querySelector('.doc-page') as HTMLElement
-    const order = ['.doc-editor-wrap', '.overview-auto', '.doc-comments']
-    const positions = order.map((sel) => page.querySelector(sel))
-    expect(
-      positions.every((el) => el !== null),
-      `文档页里少了：${order}`
-    ).toBe(true)
+    const editor = page.querySelector('.doc-editor-wrap')!
+    const overview = page.querySelector('.overview-auto')!
+    expect(editor).not.toBeNull()
+    expect(overview).not.toBeNull()
+    expect(editor.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(page.querySelector('.doc-comments')).toBeNull()
+    const panel = container.querySelector('.doc-comment-panel')!
+    expect(panel.querySelector('.doc-comments')).not.toBeNull()
+    expect(panel.contains(page)).toBe(false)
   })
 
   it('别的房间不挂这一栏 —— 它们的文档说的是房间自己', async () => {
