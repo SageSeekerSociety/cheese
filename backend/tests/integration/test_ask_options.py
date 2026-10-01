@@ -6,7 +6,10 @@ of `{text, explain?}` objects, the answer is an append-only `answer_log`, and
 on the question — not on the request that happens to answer it.
 """
 
+import pytest
+
 from app.core.sandbox_auth import mint_scoped_token
+from tests.ask_fixtures import active_ask, legacy_question
 from tests.integration.conftest import (
     chat_ws_url,
     post_project,
@@ -24,15 +27,27 @@ def _topic(client) -> str:
     return t["id"]
 
 
-def _ask(client, tid: str, **extra) -> dict:
-    body = {
-        "question": "分页方案选哪个？",
-        "options": [{"text": "cursor"}, {"text": "pageStart"}],
-        **extra,
-    }
-    r = client.post(f"/topics/{tid}/ask", json=body)
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
+@pytest.fixture
+def create_question(client, stub_hooks, monkeypatch):
+    def create(tid, **extra):
+        with active_ask(client, stub_hooks, monkeypatch, tid) as headers:
+            response = client.post(
+                f"/topics/{tid}/ask",
+                json={
+                    "questions": [
+                        {
+                            "question": "分页方案选哪个？",
+                            "options": [{"text": "cursor"}, {"text": "pageStart"}],
+                            **extra,
+                        }
+                    ]
+                },
+                headers=headers,
+            )
+            assert response.status_code == 200, response.text
+            return response.json()["data"]["blocks"][0]
+
+    return create
 
 
 def _answer(client, block_id: str, payload: dict, handle: str = "user-1") -> dict:
@@ -47,9 +62,9 @@ def _op(name: str, **extra) -> dict:
     return {"client_op_id": name, "expect_version": 0, **extra}
 
 
-def test_ask_creates_option_message(client):
+def test_ask_creates_option_message(client, create_question):
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = create_question(tid)
     # Authored by THIS topic's 分身, not the shared platform ``cheese`` account.
     assert blk["author"] == room_agent_seat(client, tid)
     assert blk["kind"] == "message"
@@ -64,10 +79,9 @@ def test_ask_creates_option_message(client):
     assert any(b["id"] == blk["id"] for b in blocks)
 
 
-def test_ask_records_the_explanation_it_was_given(client):
+def test_ask_records_the_explanation_it_was_given(client, create_question):
     tid = _topic(client)
-    blk = _ask(
-        client,
+    blk = create_question(
         tid,
         options=[
             {"text": "cursor", "explain": "一条 SQL 走到底"},
@@ -78,7 +92,7 @@ def test_ask_records_the_explanation_it_was_given(client):
     assert blk["meta"]["options"][1]["explain"] == "跳页快"
 
 
-def test_ask_refuses_a_bare_string_option_list(client):
+def test_ask_refuses_a_bare_string_option_list(client, stub_hooks, monkeypatch):
     """`string[]` is the wrong shape, not another way of writing the right one.
 
     A compat branch here would leave `meta.options` with two possible readings
@@ -86,24 +100,20 @@ def test_ask_refuses_a_bare_string_option_list(client):
     predicate and the CLI.
     """
     tid = _topic(client)
-    r = client.post(
-        f"/topics/{tid}/ask",
-        json={"question": "q", "options": ["cursor", "pageStart"]},
-    )
-    assert r.status_code == 422, r.text
+    with active_ask(client, stub_hooks, monkeypatch, tid) as headers:
+        r = client.post(
+            f"/topics/{tid}/ask",
+            json={"questions": [{"question": "q", "options": ["cursor", "pageStart"]}]},
+            headers=headers,
+        )
+        assert r.status_code == 422, r.text
+        assert "对象" in r.text
 
 
-def test_the_question_it_asked_is_not_an_input_it_has_to_read(client):
-    """芝士问出口的那道题落进房间，却不是一条交给它去读的输入。
-
-    署名是房间里芝士那条 handle，轮次号这边填不出来：`cheese ask` 只在
-    CHEESE_TURN 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量（这
-    份用例的 `_ask` 也一样不带）。按「署名是 agent 且落在某一轮里」去算，这道题
-    就成了待读输入：「忘了 @」的补救按钮于是不再答「没有待读的东西」，白开一轮，
-    而那一轮的 prompt 里躺着芝士刚问出口的这道题，它对着自己的问题再答一遍。
-    """
+def test_the_question_it_asked_is_not_an_input_it_has_to_read(client, create_question):
+    """An agent's own question must not become its next unread input."""
     tid = _topic(client)
-    _ask(client, tid)
+    create_question(tid)
 
     summoned = client.post(f"/topics/{tid}/summon", json={"author": "user-1"})
     assert summoned.status_code == 200, summoned.text
@@ -113,31 +123,41 @@ def test_the_question_it_asked_is_not_an_input_it_has_to_read(client):
     }, "它自己问出口的那道题不该把它自己叫起来"
 
 
-def test_ask_rejects_bad_option_counts(client):
+def test_ask_rejects_bad_option_counts(client, stub_hooks, monkeypatch):
     """提问方给 2-3 项，「以上都不是」由界面补，不占名额。"""
     tid = _topic(client)
+    with active_ask(client, stub_hooks, monkeypatch, tid) as headers:
 
-    def ask(count: int) -> int:
-        return client.post(
-            f"/topics/{tid}/ask",
-            json={
-                "question": "q",
-                "options": [{"text": f"o{i}"} for i in range(count)],
-            },
-        ).status_code
+        def ask(count: int) -> int:
+            return client.post(
+                f"/topics/{tid}/ask",
+                json={
+                    "questions": [
+                        {
+                            "question": "q",
+                            "options": [{"text": f"o{i}"} for i in range(count)],
+                        }
+                    ]
+                },
+                headers=headers,
+            ).status_code
 
-    assert ask(1) == 422
-    assert ask(2) == 200
-    assert ask(3) == 200
-    assert ask(4) == 422
-    assert ask(5) == 422
+        assert ask(1) == 422
+        assert ask(2) == 200
+        assert ask(3) == 200
+        assert ask(4) == 422
+        assert ask(5) == 422
 
 
 def test_ask_requires_a_valid_topic_scoped_credential(client):
     tid = _topic(client)
     body = {
-        "question": "选哪个？",
-        "options": [{"text": "a"}, {"text": "b"}],
+        "questions": [
+            {
+                "question": "选哪个？",
+                "options": [{"text": "a"}, {"text": "b"}],
+            }
+        ]
     }
     without_token = client.post(
         f"/topics/{tid}/ask",
@@ -164,7 +184,7 @@ def test_ask_requires_a_valid_topic_scoped_credential(client):
 
 def test_answer_records_choice_and_posts_reply(client):
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = legacy_question(client, tid)
 
     r = _answer(
         client,
@@ -223,20 +243,8 @@ def test_answer_goes_back_to_the_teammate_that_asked(client):
     assert joined.status_code == 200, joined.text
     assert teammate != default
 
-    asked = client.post(
-        f"/topics/{tid}/ask",
-        json={
-            "question": "分页方案选哪个？",
-            "options": [{"text": "cursor"}, {"text": "pageStart"}],
-        },
-        headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=p["id"], topic_id=tid, agent_handle=teammate
-            )
-        },
-    )
-    assert asked.status_code == 200, asked.text
-    blk = asked.json()["data"]
+    # This endpoint still serves persisted non-group questions after the switch.
+    blk = legacy_question(client, tid, seat=teammate)
     assert blk["author"] == teammate
 
     r = _answer(
@@ -258,7 +266,7 @@ def test_answer_goes_back_to_the_teammate_that_asked(client):
 
 def test_answer_rejects_an_option_that_is_not_there(client):
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = legacy_question(client, tid)
     r = _answer(client, blk["id"], _op("op-1", kind="option", option="不存在的"))
     assert r.status_code == 422, r.text
 
@@ -270,7 +278,7 @@ def test_only_the_original_answerer_can_correct(client):
     这个话题的成员」。
     """
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = legacy_question(client, tid)
 
     first = _answer(client, blk["id"], _op("op-1", kind="option", option="cursor"))
     assert first.status_code == 200, first.text
@@ -307,7 +315,7 @@ def test_answer_is_idempotent_per_client_op_id(client):
     但他那一次确实已经落库了，这时该拿 200 而不是 409。
     """
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = legacy_question(client, tid)
 
     body = _op("op-1", kind="option", option="cursor")
     assert _answer(client, blk["id"], body).status_code == 200
@@ -328,7 +336,7 @@ def test_answer_is_idempotent_per_client_op_id(client):
 
 def test_a_stale_expect_version_loses_the_race(client):
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = legacy_question(client, tid)
 
     first = _answer(client, blk["id"], _op("op-1", kind="option", option="cursor"))
     assert first.status_code == 200
@@ -353,13 +361,13 @@ def test_a_free_text_answer_needs_permission_and_fakes_no_option(client):
     note 落库时 `option` 保持 null —— 不为了凑一个合法项去编。
     """
     closed = _topic(client)
-    blk = _ask(client, closed, allow_other=False)
+    blk = legacy_question(client, closed, allow_other=False)
     r = _answer(client, blk["id"], _op("op-1", kind="note", note="走第三条路"))
     assert r.status_code == 422
     assert "自由输入" in r.text
 
     opened = _topic(client)
-    blk = _ask(client, opened, allow_other=True)
+    blk = legacy_question(client, opened, allow_other=True)
     r = _answer(
         client,
         blk["id"],
@@ -375,7 +383,7 @@ def test_a_free_text_answer_needs_permission_and_fakes_no_option(client):
 def test_reject_is_not_written_into_the_options(client):
     """「以上都不是」是界面补的，不是提问方给的选项之一。"""
     tid = _topic(client)
-    blk = _ask(client, tid, reject_option=True)
+    blk = legacy_question(client, tid, reject_option=True)
     r = _answer(client, blk["id"], _op("op-1", kind="reject"))
     assert r.status_code == 200, r.text
     meta = r.json()["data"]["meta"]
@@ -392,7 +400,7 @@ def test_the_answer_wakes_the_seat_once_and_writes_the_text_once(client):
     这里写一份，正文里带着同一个 `delivery_event_id`，两边对得上账。
     """
     tid = _topic(client)
-    blk = _ask(client, tid)
+    blk = legacy_question(client, tid)
     r = _answer(client, blk["id"], _op("op-1", kind="option", option="cursor"))
     assert r.status_code == 200, r.text
 

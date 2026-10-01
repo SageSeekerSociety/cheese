@@ -19,6 +19,7 @@ from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.models import Delivery
 from app.main import app
+from tests.ask_fixtures import legacy_question
 from tests.integration.conftest import post_project, session_auth_headers
 
 
@@ -31,13 +32,7 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
         "/topics",
         json={"project_id": project["id"], "title": "T", "created_by": "user-1"},
     ).json()["data"]["id"]
-    question = client.post(
-        f"/topics/{topic}/ask",
-        json={
-            "question": "Choose the next step",
-            "options": [{"text": "cursor"}, {"text": "pageStart"}],
-        },
-    ).json()["data"]
+    question = legacy_question(client, topic, question="Choose the next step")
     block_id = uuid.UUID(question["id"])
     initial = {
         "author": "user-1",
