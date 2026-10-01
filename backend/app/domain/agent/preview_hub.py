@@ -89,6 +89,7 @@ class PreviewStream:
         self._queued_bytes = 0
         self._closed = False
         self._terminal = False
+        self._close_task: asyncio.Task[None] | None = None
 
     @property
     def close_metadata(self) -> bool:
@@ -134,18 +135,35 @@ class PreviewStream:
         self._machine.forget(self.id)
 
     async def aclose(self, *, cancel: bool = True, payload: bytes = b"") -> None:
-        if self._closed:
+        if not self._closed:
+            terminal = self._terminal
+            self.close()
+            if cancel and not terminal:
+                self._close_task = asyncio.create_task(self._send_close(payload))
+        if self._close_task is None:
             return
-        terminal = self._terminal
-        self.close()
-        if cancel and not terminal:
-            # A StreamingResponse disconnect cancels its AnyIO body scope.
-            # Preserve the bounded wire cancellation after local release.
-            with anyio.CancelScope(shield=True):
+        cancelled = False
+        # AnyIO disconnect scopes and direct asyncio task cancellation are
+        # different paths. Own the bounded write through either, then propagate
+        # direct cancellation only after the wire task has been reaped.
+        with anyio.CancelScope(shield=True):
+            while True:
                 try:
-                    await self.send(wire.OP_CLOSE, payload)
-                except (OSError, RuntimeError, TimeoutError):
-                    pass
+                    await asyncio.shield(self._close_task)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+                    if self._close_task.done():
+                        self._close_task.result()
+                        break
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _send_close(self, payload: bytes) -> None:
+        try:
+            await self.send(wire.OP_CLOSE, payload)
+        except (OSError, RuntimeError, TimeoutError):
+            pass
 
 
 @dataclass

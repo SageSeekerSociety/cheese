@@ -280,6 +280,61 @@ async def test_headers_and_first_bytes_arrive_before_end_and_cancel_is_once():
     assert not machine.streams
 
 
+async def test_task_cancellation_during_close_still_delivers_bounded_cancel():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    accepted = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            started.set()
+            await release.wait()
+            accepted.append(wire.decode(data))
+
+    hub = PreviewHub()
+    machine = hub.attach(uuid.uuid4(), SEAT, Transport())
+    stream = machine.open()
+    closing = asyncio.create_task(stream.aclose())
+    await started.wait()
+    closing.cancel()
+    release.set()
+    result = await asyncio.gather(closing, return_exceptions=True)
+    assert isinstance(result[0], asyncio.CancelledError)
+    assert accepted == [(wire.OP_CLOSE, stream.id, b"")]
+    assert not machine.streams
+
+
+async def test_repeated_cancellation_reaps_one_deadline_bounded_close(monkeypatch):
+    import app.domain.agent.preview_hub as module
+
+    monkeypatch.setattr(module, "SEND_TIMEOUT_S", 0.05)
+    started = asyncio.Event()
+    writes = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            writes.append(wire.decode(data))
+            started.set()
+            await asyncio.Event().wait()
+
+    machine = PreviewHub().attach(uuid.uuid4(), SEAT, Transport())
+    stream = machine.open()
+    closing = asyncio.create_task(stream.aclose())
+    await started.wait()
+    closing.cancel()
+    await asyncio.sleep(0)
+    closing.cancel()
+    another = asyncio.create_task(stream.aclose())
+    results = await asyncio.wait_for(
+        asyncio.gather(closing, another, return_exceptions=True), 1
+    )
+    assert isinstance(results[0], asyncio.CancelledError)
+    assert results[1] is None
+    assert writes == [(wire.OP_CLOSE, stream.id, b"")]
+    assert stream._close_task.done()
+    assert not machine.streams
+
+
 async def test_slow_consumer_is_cancelled_without_blocking_sibling():
     from app.domain.agent.preview_hub import MAX_QUEUED_BYTES
 
