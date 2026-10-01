@@ -63,8 +63,10 @@ from app.api.routes.topics import (
     _actor_in_place,
 )
 from app.core.errors import ValidationError
+from app.domain.block.comment_threads import CommentThreads
 from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
+from app.domain.living_doc.services import DocumentJournal
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -95,7 +97,7 @@ async def list_comments(
     reply_to."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    comments = await BlockRepository(db).list_comments_for_topic(place.room_id)
+    comments = await CommentThreads(db).roots(place.room_id)
     items = [BlockOut.model_validate(c).model_dump(mode="json") for c in comments]
     return ok(page(items, len(items)))
 
@@ -110,6 +112,7 @@ async def add_comment(
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
     doc panel — a human selects text and comments; not cheese-gated."""
     place = await TopicService(db).place_or_404(topic_id)
+    await DocumentJournal(db).lock(place.room_id)
     anchor = (body.get("anchor") or "").strip()
     content = (body.get("content") or "").strip()
     if not content:
@@ -159,6 +162,7 @@ async def add_comment(
         reply_to=reply_to,
         anchor_quote=quote,
     )
+    await CommentThreads(db).capture(comment, current=True)
     payload = BlockOut.model_validate(comment).model_dump(mode="json")
     await db.commit()
     return ok(payload)
