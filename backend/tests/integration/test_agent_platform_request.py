@@ -214,7 +214,7 @@ def test_an_admin_agent_manages_the_roster_as_an_admin_would(client, room):
 
 
 def test_the_agent_reads_its_own_inbox_and_nobody_elses(client, room):
-    pid, _, seat, agent = room
+    pid, tid, seat, agent = room
     sent = client.post(
         f"/projects/{pid}/alerts",
         json={
@@ -222,6 +222,7 @@ def test_the_agent_reads_its_own_inbox_and_nobody_elses(client, room):
             "kind": "change_alert",
             "title": "看一下那条 PR",
             "target_handle": seat,
+            "topic_id": tid,
         },
         headers=session_auth_headers("alice"),
     )
