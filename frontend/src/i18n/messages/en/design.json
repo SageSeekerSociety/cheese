@@ -1,0 +1,13 @@
+{
+  "viewportTools": "Design preview tools",
+  "viewport": "Viewport",
+  "desktop": "Desktop",
+  "tablet": "Tablet",
+  "mobile": "Mobile",
+  "zoomOut": "Zoom out content",
+  "zoomIn": "Zoom in content",
+  "scale": "Display scale",
+  "fit": "Fit viewport",
+  "region": "Select image region",
+  "cancelRegion": "Cancel region selection"
+}

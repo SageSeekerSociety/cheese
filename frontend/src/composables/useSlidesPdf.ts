@@ -126,7 +126,9 @@ export function useSlidesPdf(data: WatchSource<ArrayBuffer | null>) {
       if (!current()) return
       const text = window.document.createElement('div')
       text.className = 'slide-text-layer'
-      text.style.setProperty('--scale-factor', String(scale))
+      text.style.setProperty('--total-scale-factor', String(viewport.scale))
+      text.style.setProperty('--scale-round-x', '1px')
+      text.style.setProperty('--scale-round-y', '1px')
       host.appendChild(text)
       const textLayer = new pdfjs.TextLayer({
         container: text,

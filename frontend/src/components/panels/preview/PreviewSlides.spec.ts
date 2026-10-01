@@ -1,3 +1,4 @@
+import { nextTick, reactive } from 'vue'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -135,6 +136,48 @@ describe('slide reader contract (PDF.js substituted)', () => {
     expect(pageInput(ui).value).toBe('3')
     expect(pdf.requests).toHaveLength(1)
   })
+
+  it('exits presentation from the page field without capturing its arrow keys', async () => {
+    const ui = await loaded()
+    const trigger = ui.getByRole('button', { name: '演示' })
+    trigger.focus()
+    await fireEvent.click(trigger)
+    const field = pageInput(ui)
+    field.focus()
+    await fireEvent.keyDown(field, { key: 'ArrowRight' })
+    expect(field.value).toBe('1')
+    await fireEvent.keyDown(field, { key: 'Escape' })
+    expect(ui.queryByRole('button', { name: '退出演示' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  for (const replacement of [true, false]) {
+    it(`retires pending page text after context ${replacement ? 'replacement' : 'in-place version change'}`, async () => {
+      const context = reactive({ ...identity })
+      const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context } })
+      await waitFor(() => expect(pdf.requests).toHaveLength(1))
+      let finish!: (content: { items: { str: string; hasEOL: boolean }[] }) => void
+      const pending = new Promise<{ items: { str: string; hasEOL: boolean }[] }>((resolve) => {
+        finish = resolve
+      })
+      const doc = documentFixture()
+      const getPage = doc.getPage
+      doc.getPage = async (number: number) => ({ ...(await getPage(number)), getTextContent: () => pending })
+      pdf.requests[0]!.resolve(doc)
+      await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
+      await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
+      expect(ui.getByRole('button', { name: '对整页提问' })).toHaveProperty('disabled', true)
+      if (replacement) await ui.rerender({ context: { ...identity, version: 'v8' } })
+      else {
+        context.version = 'v8'
+        await nextTick()
+      }
+      finish({ items: [{ str: 'retired v7 text', hasEOL: true }] })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await nextTick()
+      expect(ui.emitted().pageContext).toBeUndefined()
+    })
+  }
 
   it('bounds the thumbnail budget even for a thousand pages, and releases offscreen paints', async () => {
     const ui = await loaded(1000)

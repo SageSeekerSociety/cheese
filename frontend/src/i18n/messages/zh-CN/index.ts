@@ -3,6 +3,7 @@ import admin from './admin.json'
 import aiChat from './aiChat.json'
 import apiError from './apiError.json'
 import compute from './compute.json'
+import design from './design.json'
 import editor from './editor.json'
 import featureStats from './featureStats.json'
 import feedback from './feedback.json'
@@ -58,6 +59,7 @@ export default {
   work,
   admin,
   compute,
+  design,
   files,
   project,
   routines,

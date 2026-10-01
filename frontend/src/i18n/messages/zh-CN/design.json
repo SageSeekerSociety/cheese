@@ -1,0 +1,13 @@
+{
+  "viewportTools": "设计预览工具",
+  "viewport": "视口",
+  "desktop": "桌面",
+  "tablet": "平板",
+  "mobile": "手机",
+  "zoomOut": "缩小内容",
+  "zoomIn": "放大内容",
+  "scale": "显示比例",
+  "fit": "适合视口",
+  "region": "选择图片区域",
+  "cancelRegion": "取消区域选择"
+}

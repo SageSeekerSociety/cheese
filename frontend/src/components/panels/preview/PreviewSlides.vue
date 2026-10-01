@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FileSource } from '@/cx_types'
+import type { SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -9,7 +9,6 @@ import SlideThumbRail from './SlideThumbRail.vue'
 
 import { t } from '@/i18n'
 
-export type SlideSource = { topicId: string; path: string; source: FileSource; taskId?: string | null; version: string }
 const props = withDefaults(
   defineProps<{
     data: ArrayBuffer | null
@@ -24,7 +23,7 @@ const props = withDefaults(
 )
 const emit = defineEmits<{
   quote: [payload: { text: string; page: number }]
-  pageContext: [payload: { text: string; page: number; scope: 'page'; context: SlideSource }]
+  pageContext: [payload: SlidePageContext]
   download: []
 }>()
 const root = ref<HTMLElement | null>(null)
@@ -73,12 +72,12 @@ async function presentation() {
 function keyboard(event: KeyboardEvent) {
   const active = window.document.activeElement
   if (!root.value?.contains(active) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-  if (active instanceof HTMLElement && active.closest('input, textarea, select, [contenteditable="true"]')) return
   if (event.key === 'Escape' && presenting.value) {
     event.preventDefault()
     void presentation()
     return
   }
+  if (active instanceof HTMLElement && active.closest('input, textarea, select, [contenteditable="true"]')) return
   if (!ready.value) return
   const page = {
     ArrowRight: current.value + 1,
@@ -125,7 +124,7 @@ async function askPage() {
   }
 }
 watch(
-  [current, revision, fit, size, sheet],
+  [current, revision, fit, size, sheet, presenting, ready],
   () => {
     const host = sheet.value
     if (!host || !ready.value) return
@@ -138,7 +137,14 @@ watch(
   { flush: 'post' }
 )
 watch(
-  [() => props.data, () => props.context],
+  [
+    () => props.data,
+    () => props.context?.topicId,
+    () => props.context?.path,
+    () => props.context?.source,
+    () => props.context?.taskId,
+    () => props.context?.version,
+  ],
   () => {
     current.value = 1
     jump.value = '1'
@@ -368,6 +374,23 @@ onBeforeUnmount(() => {
   color: transparent;
   cursor: text;
   transform-origin: 0 0;
+}
+/* PDF.js 6 TextLayer publishes geometry variables; CSS owns their application. */
+.slides__sheet :deep(.slide-text-layer) {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.slides__sheet :deep(.slide-text-layer > :not(.markedContent)),
+.slides__sheet :deep(.slide-text-layer .markedContent span:not(.markedContent)) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.slides__sheet :deep(.slide-text-layer .markedContent) {
+  display: contents;
 }
 .slides__sheet :deep(.slide-text-layer ::selection) {
   background: var(--accent-wash);
