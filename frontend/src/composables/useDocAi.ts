@@ -39,6 +39,7 @@ export function useDocAi(context: Context) {
   const unknown = shallowRef<Operation | null>(null)
   let epoch = 0
   let disposed = false
+  let restoring = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let controller = new AbortController()
   let actor = myId()
@@ -220,6 +221,7 @@ export function useDocAi(context: Context) {
     cards.value = []
     source.value = null
     selection.value = null
+    restoring = true
     question.value = ''
     error.value = ''
     unknown.value = null
@@ -230,13 +232,14 @@ export function useDocAi(context: Context) {
     } catch (cause) {
       error.value = message(cause)
     }
+    restoring = false
     void refresh()
   }
   watch(context.topic, reset, { immediate: true, flush: 'sync' })
   watch(
     question,
     (value) => {
-      if (actor !== myId()) return
+      if (restoring || actor !== myId()) return
       try {
         localStorage.setItem(`${key()}:draft`, value)
       } catch (cause) {

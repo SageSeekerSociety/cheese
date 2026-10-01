@@ -48,11 +48,13 @@ function inline(line: Line): Unit[] | null {
       } else if (token.type === 'escape') {
         append(token.text, cursor, cursor + token.raw.length)
       } else if (token.type === 'strong' || token.type === 'em' || token.type === 'del') {
+        if (!token.tokens) return false
         const children = token.tokens.map((child) => child.raw).join('')
         const edge = (token.raw.length - children.length) / 2
         if (!Number.isInteger(edge) || token.raw.slice(edge, -edge) !== children || !visit(children, cursor + edge))
           return false
       } else if (token.type === 'link') {
+        if (!token.tokens) return false
         const children = token.tokens.map((child) => child.raw).join('')
         if (!token.raw.startsWith(`[${children}](`) || !visit(children, cursor + 1)) return false
       } else if (token.type === 'codespan') {

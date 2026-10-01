@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { Block } from '../../../cx_types'
+import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -11,6 +12,8 @@ import { t } from '@/i18n'
 const props = defineProps<{
   topicId: string | null
   author?: string
+  threadState?: DocThreadState
+  threadActions?: DocThreadActions
   sendComment?: SendDocComment
   comments: Block[]
   anchorNodes: Block[]
@@ -264,6 +267,8 @@ defineExpose({ open, locate, toggle, close, opened, busy })
         :topic-id="topicId"
         :author="author"
         :send-comment="sendComment"
+        :thread-state="threadState"
+        :thread-actions="threadActions"
         :comments="comments"
         :anchor-nodes="anchorNodes"
         :open-id="openId"

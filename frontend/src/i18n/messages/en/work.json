@@ -186,6 +186,46 @@
     "loading": "Loading resource limits…"
   },
   "room": {
+    "docAi": {
+      "title": "Document AI",
+      "selectionToolbar": "Selection actions",
+      "failed": "Request failed; input retained",
+      "signIn": "Sign in to use document AI",
+      "unverified": "The selection could not be verified against saved source. Save, resolve conflicts, or select supported text again.",
+      "refresh": "Refresh records",
+      "close": "Close AI panel and retain draft",
+      "unknown": "Outcome unknown. Recover the original operation to avoid duplicate requests.",
+      "recover": "Recover operation",
+      "question": "Question or rewrite instructions",
+      "ask": "Ask AI",
+      "propose": "Propose rewrite",
+      "aiProposal": "AI request and proposal",
+      "replacement": "Proposed source replacement",
+      "baseVersion": "Based on document version {version}",
+      "range": "Source UTF-8 bytes {start}–{end}",
+      "humanAccept": "Accept and save as me",
+      "accepted": "Accepted by {actor}, saved as version {version}",
+      "cancel": "Cancel request",
+      "state": {
+        "pending": "Pending",
+        "running": "Generating",
+        "succeeded": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      }
+    },
+    "docLink": {
+      "title": "Link actions",
+      "close": "Close link actions",
+      "url": "Link URL",
+      "save": "Save link",
+      "cancel": "Cancel",
+      "edit": "Edit",
+      "remove": "Remove link",
+      "stale": "Source or link changed; open it again",
+      "invalid": "Unsupported link format",
+      "readonly": "Document is read-only"
+    },
     "noTasks": "No tasks",
     "site": {
       "agents": {
@@ -907,6 +947,23 @@
       "inPast": "This time has already passed",
       "failed": "Could not set the reminder",
       "set": "You will be reminded at {when}"
+    },
+    "docThread": {
+      "title": "Comment thread",
+      "open": "Open",
+      "resolved": "Resolved",
+      "resolve": "Resolve",
+      "reopen": "Reopen",
+      "refresh": "Refresh thread",
+      "historicalAnchor": "Stored document anchor; this is not a current rewrite selection",
+      "reply": "Reply",
+      "placeholder": "Reply to this thread (Ctrl/Cmd+Enter to send)",
+      "send": "Send reply",
+      "reopenToReply": "Reopen this thread before replying",
+      "load": "Load thread",
+      "unknown": "Outcome unknown. Recover the original operation before sending again.",
+      "recover": "Recover original operation",
+      "storage": "Draft storage is unavailable; keep this panel open"
     }
   },
   "board": {

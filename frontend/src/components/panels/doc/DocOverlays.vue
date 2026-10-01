@@ -13,12 +13,16 @@ import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
 import type { Block } from '../../../cx_types'
+import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
+import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
 import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { TextSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
+
+import { captureNewDocLink } from '../../../lib/docLinks'
 
 import DocSlashMenu from './DocSlashMenu.vue'
 
@@ -51,6 +55,8 @@ const emit = defineEmits<{
   (e: 'hover', index: number): void
   /** ＋ 手柄往新块里种了一个「/」：菜单关掉时若是它种的那一个，要收回去。 */
   (e: 'planted'): void
+  (e: 'open-ai', snapshot: DocSelectionSnapshot): void
+  (e: 'open-link', target: DocLinkTarget): void
 }>()
 
 // B4 Feishu-style: a floating "评论" button that appears over a text selection in
@@ -448,26 +454,40 @@ function onEdited() {
   commentCta.value = null
 }
 
+function newLink() {
+  const editor = commentCta.value?.editor
+  const target = editor && captureNewDocLink(editor)
+  if (target) emit('open-link', target)
+}
+function askSelection() {
+  const cta = commentCta.value
+  if (!cta || !(cta.selection instanceof TextSelection) || cta.editor.state.doc !== cta.doc) return
+  emit('open-ai', { editor: cta.editor, doc: cta.doc, from: cta.selection.from, to: cta.selection.to })
+}
 defineExpose({ onHover, onEdited })
 </script>
 
 <template>
   <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
      appears over the selection. Click to comment on that span. -->
-  <button
+  <div
     v-if="commentCta"
     ref="toolbar"
-    type="button"
-    :aria-label="t('work.room.doc.commentOnSelection')"
+    role="toolbar"
+    :aria-label="t('work.room.docAi.selectionToolbar')"
     class="doc-comment-cta"
     :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-    :title="t('work.room.doc.commentOnSelection')"
     @mousedown.prevent
-    @click="commentOnSelection"
   >
-    <v-icon size="14">mdi-comment-plus-outline</v-icon>
-    {{ t('work.room.comments.comment') }}
-  </button>
+    <button type="button" :aria-label="t('work.room.doc.commentOnSelection')" @click="commentOnSelection">
+      <v-icon size="14">mdi-comment-plus-outline</v-icon>
+      {{ t('work.room.comments.comment') }}
+    </button>
+    <button v-if="commentCta.selection instanceof TextSelection" type="button" @click="askSelection">
+      {{ t('work.room.docAi.ask') }}
+    </button>
+    <button type="button" @click="newLink">{{ t('work.room.docLink.title') }}</button>
+  </div>
   <!-- Notion-style slash menu: anchored to the caret (suggestion
      clientRect), wrap-relative like the other overlays. Keyboard
      (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
@@ -554,8 +574,20 @@ defineExpose({ onHover, onEdited })
   min-height: 32px;
   white-space: nowrap;
 }
-.doc-comment-cta:hover {
-  filter: brightness(1.08);
+.doc-comment-cta button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.doc-comment-cta button:hover {
+  background: var(--fill);
+}
+.doc-comment-cta button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Feishu-style left gutter block handles — REAL controls, not decoration.

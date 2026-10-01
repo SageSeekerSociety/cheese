@@ -13,11 +13,14 @@ import type { Editor as CoreEditor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { Block, Topic } from '../../../cx_types'
+import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
+import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
+import { captureDocSelection } from '../../../lib/docAiSelection'
 import {
   commentMarkKey,
   commentQuoteRanges,
@@ -27,11 +30,13 @@ import {
   liveRefKey,
   mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
+import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { docExtensions, docReplaceRange, serializeDoc } from '../../../lib/docMarkdown'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 
 import { alignedDocBlocks } from './docBlocks'
+import DocLinkCallout from './DocLinkCallout.vue'
 import DocOverlays from './DocOverlays.vue'
 
 import { t } from '@/i18n'
@@ -72,6 +77,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** 有人在编辑器里改了东西（装配服务端那一版时不算）。 */
   (e: 'edited'): void
+  (e: 'open-ai', selection: DocSelectionSnapshot | null): void
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
@@ -125,6 +131,32 @@ async function highlightNode(nodeId: string) {
   await flashBlocks(aligned.filter((a) => a.node.id === nodeId).map((a) => a.el))
 }
 
+const linkTarget = shallowRef<DocLinkTarget | null>(null)
+const linkPosition = ref({ top: 0, left: 0 })
+function openLink(target: DocLinkTarget) {
+  const wrap = target.editor.view.dom.closest<HTMLElement>('.doc-editor-wrap')
+  if (!wrap) return
+  const bounds = wrap.getBoundingClientRect()
+  const rect = target.editor.view.coordsAtPos(target.from)
+  linkPosition.value = {
+    top: rect.bottom - bounds.top + 6,
+    left: Math.max(8, Math.min(rect.left - bounds.left, bounds.width - 280)),
+  }
+  linkTarget.value = target
+}
+watch(
+  () => [props.topicId, props.editable],
+  () => {
+    linkTarget.value = null
+  }
+)
+watch(
+  () => props.scrollTick,
+  () => {
+    if (linkTarget.value) openLink(linkTarget.value)
+  }
+)
+
 // Chip clicks in the doc (delegated — decorations are plain spans).
 function onDocClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
@@ -144,10 +176,14 @@ function onDocClick(e: MouseEvent) {
   // EDIT mode a plain click places the caret and ⌘/Ctrl-click opens the link
   // (the editor-standard gesture, same as VS Code / Feishu).
   const a = target?.closest('.doc-editor a[href]') as HTMLAnchorElement | null
-  if (a && props.editable) {
-    if (e.metaKey || e.ctrlKey) {
-      e.preventDefault()
-      window.open(a.href, '_blank', 'noopener')
+  if (a && props.editable && editor.value) {
+    e.preventDefault()
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (safeDocHref(a.getAttribute('href') ?? '')) window.open(a.href, '_blank', 'noopener')
+    } else {
+      const position = editor.value.view.posAtDOM(a, 0)
+      const link = captureDocLink(editor.value, position)
+      if (link) openLink(link)
     }
     return
   }
@@ -418,7 +454,18 @@ function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
 }
 
-defineExpose({ editor, installMarkdown, serializeVisual, highlightTurn, highlightNode, commentQuoteState })
+function captureSelection() {
+  return editor.value ? captureDocSelection(editor.value) : null
+}
+defineExpose({
+  editor,
+  installMarkdown,
+  serializeVisual,
+  highlightTurn,
+  highlightNode,
+  commentQuoteState,
+  captureSelection,
+})
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
 const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
@@ -434,6 +481,13 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
          （v-show），卸了它每换一个话题都要重建一次。 -->
     <LoadingSkeleton v-if="loading" variant="doc" class="doc-skel" />
     <EditorContent v-if="editor" v-show="!loading" :editor="editor" class="doc-editor" />
+    <DocLinkCallout
+      v-if="linkTarget"
+      :target="linkTarget"
+      :top="linkPosition.top"
+      :left="linkPosition.left"
+      @close="linkTarget = null"
+    />
     <!-- 压在正文上的那几块：评论 CTA、slash 菜单、代码块工具条、块手柄。 -->
     <DocOverlays
       ref="overlaysRef"
@@ -444,6 +498,8 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
       @open-comment="emit('open-comment', $event)"
+      @open-ai="emit('open-ai', $event)"
+      @open-link="openLink"
       @error="emit('error', $event)"
       @pick="runSlashItem"
       @hover="onSlashHover"
