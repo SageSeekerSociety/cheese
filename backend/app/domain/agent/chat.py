@@ -784,7 +784,9 @@ class ChatService:
         work_id: uuid.UUID,
         seat_handle: str,
     ) -> AsyncIterator[None]:
-        async with self._seat_lock_for(topic_id, seat_handle):
+        from app.domain.agent.seat_admission import seat_admission
+
+        async with seat_admission(self._seat_lock_for(topic_id, seat_handle)):
             self._mark_turn_active(topic_id, work_id)
             try:
                 yield
@@ -1317,10 +1319,24 @@ class ChatService:
         return min(pending.values()) if pending else None
 
     def _input_registrar(
-        self, effects: InputEffects, *, probe_unread: bool = False
+        self,
+        effects: InputEffects,
+        *,
+        probe_unread: bool = False,
+        fence_delivery: bool = False,
+        parent_session_id: str | None = None,
     ) -> InputRegistrar:
         async def persist(identity: InputIdentity) -> None:
             async with self._sessions() as session:
+                if fence_delivery and effects.delivery_id is not None:
+                    from app.domain.delivery.agent import fence_send
+
+                    await fence_send(
+                        session,
+                        effects.delivery_id,
+                        effects.attempt_id,
+                        parent_session_id=parent_session_id,
+                    )
                 await register_input(session, identity, effects)
                 await session.commit()
             if probe_unread:
@@ -4581,15 +4597,6 @@ class ChatService:
                 harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
-            if delivery_id is not None:
-                from app.domain.delivery.agent import begin_send
-
-                await begin_send(
-                    self._sessions,
-                    delivery_id,
-                    turn_id,
-                    parent_session_id=resume_session_id,
-                )
             ready = await runtime.send(
                 session_ref,
                 prompt_text,
@@ -4606,7 +4613,11 @@ class ChatService:
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
-                register_input=self._input_registrar(effects),
+                register_input=self._input_registrar(
+                    effects,
+                    fence_delivery=delivery_id is not None,
+                    parent_session_id=resume_session_id,
+                ),
                 owes_reply=summoned,
             )
         except InputOutcomeUnconfirmed as exc:

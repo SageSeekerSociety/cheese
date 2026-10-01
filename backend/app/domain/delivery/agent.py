@@ -275,48 +275,49 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
 async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=None):
     """Fence stale queued runners immediately before they contact the receiver."""
     async with sessions() as session:
-        row = await session.scalar(
-            select(Delivery)
-            .where(
-                Delivery.id == delivery_id,
-                Delivery.attempt_id == attempt_id,
-            )
-            .with_for_update()
+        await fence_send(
+            session, delivery_id, attempt_id, parent_session_id=parent_session_id
         )
-        if row is not None and row.task_id is not None:
-            task = await session.get(Task, row.task_id)
-            if (
-                task is None
-                or task.status != TaskStatus.open
-                or task.execution_agent_instance_id != row.agent_instance_id
-                or task.subagent_id != row.payload.get("worker_id")
-                or task.execution_parent_session_id
-                != row.payload.get("parent_session_id")
-                or (
-                    row.payload.get("parent_session_id") is not None
-                    and parent_session_id != row.payload["parent_session_id"]
-                )
-            ):
-                row.state = "failed"
-                row.last_error = (
-                    "The target worker or native parent changed before delivery"
-                )
-                await session.commit()
-                raise ValidationError(row.last_error)
-        result = await session.execute(
-            update(Delivery)
-            .where(
-                Delivery.id == delivery_id,
-                Delivery.attempt_id == attempt_id,
-                Delivery.state == "claimed",
-                Delivery.lease_until > now(),
-            )
-            .values(state="sending")
-            .returning(Delivery.id)
-        )
-        if result.scalar_one_or_none() is None:
-            raise ValidationError("Delivery attempt no longer owns this input")
         await session.commit()
+
+
+async def fence_send(session, delivery_id, attempt_id, *, parent_session_id=None):
+    """Fence in the caller's identity-registration transaction; never commit here."""
+    row = await session.scalar(
+        select(Delivery)
+        .where(Delivery.id == delivery_id, Delivery.attempt_id == attempt_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if row is not None and row.task_id is not None:
+        task = await session.get(Task, row.task_id)
+        if (
+            task is None
+            or task.status != TaskStatus.open
+            or task.execution_agent_instance_id != row.agent_instance_id
+            or task.subagent_id != row.payload.get("worker_id")
+            or task.execution_parent_session_id != row.payload.get("parent_session_id")
+            or (
+                row.payload.get("parent_session_id") is not None
+                and parent_session_id != row.payload["parent_session_id"]
+            )
+        ):
+            raise ValidationError(
+                "The target worker or native parent changed before delivery"
+            )
+    result = await session.execute(
+        update(Delivery)
+        .where(
+            Delivery.id == delivery_id,
+            Delivery.attempt_id == attempt_id,
+            Delivery.state == "claimed",
+            Delivery.lease_until > now(),
+        )
+        .values(state="sending")
+        .returning(Delivery.id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise ValidationError("Delivery attempt no longer owns this input")
 
 
 async def receive_attempt(session, attempt_id, stamp):

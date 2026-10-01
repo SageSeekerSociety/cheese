@@ -2,8 +2,8 @@
 
 from sqlalchemy import select
 
+from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
-from app.domain.delivery.agent import begin_send
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -12,14 +12,34 @@ from app.domain.delivery.input_identity import (
 from app.domain.delivery.models import Delivery
 
 
-async def run_with_answer_offer(chat, topic_id, delivery_id, attempt_id, content, work):
+async def run_with_answer_offer(
+    runner, chat, topic_id, delivery_id, attempt_id, content, work
+):
     entered = False
     try:
-        offered = await offer_answer(chat, topic_id, delivery_id, attempt_id, content)
-        if offered is True or isinstance(offered, InputReconciliationPending):
-            return
-        entered = True
-        await work
+        await runner._wait_to_start()
+        await runner._wait_for_replay(chat, topic_id, attempt_id)
+        async with chat.session_factory() as session:
+            delivery = await session.get(Delivery, delivery_id)
+            is_answer = delivery is not None and "answer_to" in delivery.payload
+            instance_id = delivery.agent_instance_id if is_answer else None
+        if is_answer:
+            seat = await chat._turn_seat_handle(
+                topic_id, recipient_instance_id=instance_id
+            )
+            # Same lock as prompt preparation. Recheck only after an earlier
+            # prompt has installed its work/identity; never send from stale idle.
+            async with seat_admission(chat._seat_lock_for(topic_id, seat)):
+                offered = await offer_answer(
+                    chat, topic_id, delivery_id, attempt_id, content
+                )
+                if offered is True or isinstance(offered, InputReconciliationPending):
+                    return
+                entered = True
+                await work
+        else:
+            entered = True
+            await work
     finally:
         if not entered:
             work.close()
@@ -53,14 +73,7 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
         delivery_id=delivery_id,
         attempt_id=attempt_id,
     )
-    persist = chat._input_registrar(effects, probe_unread=True)
-
-    async def register(identity):
-        # Runtime checks the exact live work before calling this. A false offer
-        # leaves the attempt claimed. Fence the attempt and commit the identity
-        # before external I/O; uncertain outcomes must not start another input.
-        await begin_send(chat.session_factory, delivery_id, attempt_id)
-        await persist(identity)
+    register = chat._input_registrar(effects, probe_unread=True, fence_delivery=True)
 
     try:
         return await chat._compute.deliver(
