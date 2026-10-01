@@ -93,4 +93,4 @@ pin 的版本号只写一处：那份脚本从每份 `Declaration.pinned_version
 
 `Harness` 的字段：`name`、`label`、`subagents`、`capabilities`、`speaks_gateway`、`carries_subscription`。这几个事实写在骨架上而不是模型上——以前是反过来的（每个模型带一张「允许哪些骨架驱动我」的名单），方向错得付出过代价：加一个骨架要改模型目录，拒绝一个组合时报的错还是关于模型的，而模型对这件事什么意见都没有。`speaks_gateway` 说它说不说平台网关自己那套形状（能，就所有模型都能驱动它）；`carries_subscription` 说它能不能承载 Anthropic 订阅凭据——那份凭据只为**一个**骨架铸造。`capabilities` 是可选能力（`Capability`），和四条硬性要求不同，答不出不妨碍注册，只是要它的地方用不了这个骨架；每一项也写一句「怎么做到的」，由同一份 `test_subagent_requirements.py` 核引文。今天只有一项「远端执行」，Claude Code 声明了，pi 还没有（#1106）。
 
-一条活具体用哪个模型由 `backend/app/domain/room_task/binding.py` 的 `resolve()` 定：显式绑在这条活上的 → 队友的 → 调用方给的默认 → 项目主模型，逐个往下；一个都没有就报「当前项目没有可用的默认模型」。Codex 和 pi 没有 MCP，它们把平台工具交到模型手里的方式见[平台工具与会话侧 MCP](/dev/mcp)。
+一条活具体用哪个模型由 `backend/app/domain/room_task/binding.py` 的 `resolve()` 定：显式绑在这条活上的 → 队友的 → 调用方给的默认 → 项目主模型，逐个往下；一个都没有就报「当前项目没有可用的默认模型」。各个骨架怎么把平台工具交到模型手里，见[平台工具与会话侧 MCP](/dev/mcp)。
