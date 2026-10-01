@@ -1,0 +1,22 @@
+{
+  "source": "0bd3975b284dff304b36d2ca4fa1079a1f1661d7",
+  "argv": [
+    ".venv/bin/pytest",
+    "-q",
+    "tests/unit/test_claude_input_protocol.py",
+    "tests/unit/test_claude_legacy_completion.py",
+    "tests/integration/test_legacy_completion_reconciliation.py"
+  ],
+  "cwd": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend",
+  "env": {
+    "TEST_PG_BASE": "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433",
+    "REDIS_URL": "redis://127.0.0.1:6379/12",
+    "CHEESE_CI_SLOT": "ask_s_concurrency",
+    "CHEESE_CI_REDIS_BASE_DB": "12",
+    "PYTHONPATH": "."
+  },
+  "start": "2026-10-01T02:03:22.670600+00:00",
+  "end": "2026-10-01T02:03:35.829452+00:00",
+  "exit": 0,
+  "stdout_sha256": "1742fe75b7262173c228431e73e8b54dc3ab9a68c655a974cb23fd9159c40cd0"
+}
