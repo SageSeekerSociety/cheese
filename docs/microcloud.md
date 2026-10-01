@@ -26,7 +26,9 @@ its built-in AI channels) is in its README and is not repeated here.
 After create, the enrolment sweep (`MachineEnrollmentSweeper`, every
 `MACHINE_ENROLL_INTERVAL_SECONDS` = 10 s) does the rest with no human: refresh machines
 still changing, re-check settled ones every `MICROCLOUD_RECONCILE_INTERVAL_S` (120 s; reads of a
-project's machines report what this sweep last saw and never call MicroCloud), and
+project's machines report what this sweep last saw and never call MicroCloud; a team's
+compute page hears which projects' machines changed on `/api/teams/{id}/live` and
+reads those, instead of polling), and
 enrol every machine that is `running`: mint a device credential, ssh in with
 the bootstrap key, install the connector as a service. Ready leases
 then go to `CloudWakeup`, which delivers the message the room has been holding. The

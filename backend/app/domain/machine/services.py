@@ -738,7 +738,7 @@ class MachineService:
             # downgrade on a blip: it would report a healthy machine as broken.
             # Keep what we last knew; `last_seen_at` says how old that is, and
             # recording the attempt is also what stops a provider outage from
-            # putting a 30s timeout on every read.
+            # sending every sweep back to the same machines.
             now = datetime.now(UTC)
             if settled_before:
                 return await self._repo.touch_seen(machine, when=now)
