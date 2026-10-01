@@ -100,7 +100,7 @@ export interface SiteTurn<T> {
   startedAt: string
   /** 工具调用的条数 —— 芝士说的话不是「一步」。 */
   steps: number
-  /** 首末之差，秒。只有一条时是 0，组头就不显示用时。 */
+  /** 这一轮从开始到最后一条，秒。开始时间不知道时从头一条算；是 0 时组头不显示用时。 */
   seconds: number
 }
 
@@ -111,7 +111,11 @@ interface TurnLike {
   meta?: NarrationMeta | null
 }
 
-export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
+/**
+ * `starts`：轮次 id → 这一轮开始的时刻（毫秒）。一轮的头一步落在准备和模型第一次
+ * 回话之后，从头一步算，「思考中」等的那十几秒就不见了，组头会说这一轮只用了两秒。
+ */
+export function groupByTurn<T extends TurnLike>(blocks: T[], starts: Record<string, number> = {}): SiteTurn<T>[] {
   const turns: SiteTurn<T>[] = []
   for (const block of blocks) {
     const last = turns[turns.length - 1]
@@ -129,7 +133,8 @@ export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
     // 平台自己说的一句（重试、等机器、这一轮失败了）也不是它做的一步：带 `who`
     // 的是平台提示（后端 platform_notices.notice 拼的）。
     turn.steps = turn.entries.filter((b) => !isNarration(b.meta) && b.meta?.who === undefined).length
-    const first = Date.parse(turn.entries[0].created_at)
+    // 平台替一轮写的开场那一行落在这一轮登记之前，所以取两者里早的那个。
+    const first = Math.min(Date.parse(turn.entries[0].created_at), starts[turn.key] ?? Infinity)
     const last = Date.parse(turn.entries[turn.entries.length - 1].created_at)
     turn.seconds = Number.isFinite(first) && Number.isFinite(last) ? Math.max(0, Math.round((last - first) / 1000)) : 0
   }

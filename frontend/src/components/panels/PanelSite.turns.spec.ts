@@ -150,6 +150,34 @@ describe('现场按轮组织', () => {
     expect(container.querySelector('.turn__head')?.textContent).not.toContain('进行中')
   })
 
+  it('组头的用时从这一轮开始算，不从它的头一步算', async () => {
+    // 消息 20:28:00 发出，准备和模型第一次回话用掉 16 秒，头一步 20:28:16 才落下。
+    getTranscript.mockResolvedValue({
+      data: [
+        event('1', 'turn-a', '2026-09-15T20:28:16Z', { tool: 'bash', arg: 'ls' }),
+        event('2', 'turn-a', '2026-09-15T20:28:18Z', { tool: 'read', arg: 'a.py' }),
+      ],
+      total: 2,
+      turn_starts: { 'turn-a': '2026-09-15T20:28:00Z' },
+    })
+    const { container } = render(Site, { props: { topic, active: true }, global: { plugins: [vuetify] } })
+    await waitFor(() => expect(container.querySelector('.turn')).not.toBeNull())
+
+    expect(container.querySelector('.turn__head')?.textContent).toContain('18 秒')
+  })
+
+  it('正在跑的一轮，用时从对话栏知道的开始时间算', async () => {
+    const container = await openSite(
+      [
+        event('1', 'turn-b', '2026-09-15T20:31:00Z', { tool: 'bash', arg: 'ls' }),
+        event('2', 'turn-b', '2026-09-15T20:31:05Z', { tool: 'bash', arg: 'ls' }),
+      ],
+      { working: true, runningTurns: { 'turn-b': Date.parse('2026-09-15T20:30:50Z') } }
+    )
+
+    expect(container.querySelector('.turn__head')?.textContent).toContain('15 秒')
+  })
+
   it('没有活在跑时谁都不说进行中', async () => {
     const container = await openSite([event('1', 'turn-a', '2026-09-15T20:28:00Z', { tool: 'bash', arg: 'ls' })])
 
