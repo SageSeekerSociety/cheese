@@ -2836,16 +2836,16 @@ class AgentWorkRunner:
                         verdict.message,
                         meta=verdict.event_meta,
                     )
-        # The interval ends here. Closing, not deleting: this turn's id is on
-        # every block it produced, and an interval erased at its end is one
-        # nobody can ask about afterwards.
-        #
-        # Failing to close is survivable and must not be reported as the turn
-        # failing — the turn is over and its work landed. What is left open gets
-        # picked up by the next sweep, which sees a delivered prompt and
-        # attaches rather than re-sending it.
-        try:
-            await _close_turns(chat_service.session_factory, [turn_id])
-        except Exception:  # noqa: BLE001 — the turn already finished
-            logger.exception("could not close the interval for turn %s", turn_id)
+        # A session that adopted this exact turn owns its interval's ending.
+        # Returning after input injection is not the native work ending.
+        session_owns_ending = (
+            rec["status"] == "done"
+            and lifecycle["session_owned"]
+            and chat_service.session_took_over(topic_id, turn_id)
+        )
+        if not session_owns_ending:
+            try:
+                await _close_turns(chat_service.session_factory, [turn_id])
+            except Exception:  # noqa: BLE001 — the turn already finished
+                logger.exception("could not close the interval for turn %s", turn_id)
         clear_context("turn", "topic")

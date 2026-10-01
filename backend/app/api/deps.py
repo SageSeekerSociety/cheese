@@ -11,7 +11,7 @@ from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
-from app.domain.agent.compute import build_compute_pool
+from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
@@ -123,7 +123,10 @@ def get_llm_gateway() -> LlmGateway | None:
 
 
 @lru_cache
-def get_chat_service() -> ChatService:
+def get_compute_pool() -> ComputePool:
+    """The harness runtimes this process reads sessions with: the chat service's,
+    and the one a runner's ring wakes. Every runtime's attach checks the work
+    runner's ``owns_sessions`` flag inside its seat lock first (FB-56)."""
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
@@ -139,12 +142,17 @@ def get_chat_service() -> ChatService:
         bind = getattr(runtime, "bind_owns_sessions", None)
         if bind is not None:
             bind(lambda: runner)
+    return pool
+
+
+@lru_cache
+def get_chat_service() -> ChatService:
     return ChatService(
         session_factory=async_session_factory,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
-        compute=pool,
+        compute=get_compute_pool(),
         gateway=get_llm_gateway(),
     )
 
