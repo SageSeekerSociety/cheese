@@ -40,12 +40,20 @@ from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
     MAX_ENROLL_ATTEMPTS,
+    MAX_PROVIDER_ERRORS,
+    PROVIDER_ERROR_WINDOW,
     TRANSITIONAL,
     AiStatus,
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
+from app.domain.machine.progress import (
+    SETTLE_WINDOW,
+    provider_errors,
+    publish_line,
+    startup_progress,
+    tell_machine_replaced,
+)
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.supply import SupplyRange, check_choice, pick_offering
 from app.domain.project.repositories import ProjectRepository
@@ -77,6 +85,19 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
 # waits here, holding no database lock, until the first has recorded the
 # machine. One lock per room ever provisioned, so this stays small.
 _create_locks: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+class CloudKeepsFailing(Exception):
+    """The provider failed every machine the room asked for lately; the
+    message is what the session is told instead of a machine."""
+
+    def __init__(self, failures: int) -> None:
+        minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
+        super().__init__(
+            f"云端工作电脑创建失败：供应方连续 {failures} 次报告错误，"
+            f"每次都已删除出错的机器并换一台重试，仍未成功。"
+            f"{minutes} 分钟内不再自动申请。对话和平台工具仍可用。"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,9 +525,19 @@ class MachineService:
                 await self.refresh(existing)
             if existing.status == MachineStatus.suspended:
                 await self.resume(existing)
+            if existing.status == MachineStatus.error and existing.device_id is None:
+                await self._replace_failed(existing)
+                # The locks were let go around the provider; look again.
+                return await self.ensure_session_machine(
+                    session_id, actor=actor, choice=choice
+                )
             if existing.status not in GONE:
                 return existing
             await self.forget(existing)
+
+        failures = await provider_errors(self._session, topic_id)
+        if failures >= MAX_PROVIDER_ERRORS:
+            raise CloudKeepsFailing(failures)
 
         instance = await self._session.scalar(
             select(AgentInstance).where(
@@ -529,6 +560,22 @@ class MachineService:
             memory_mb=choice.memory_mb,
             disk_gb=choice.disk_gb,
         )
+
+    async def _replace_failed(self, machine: ProjectMachine) -> None:
+        """Let go of a room's machine the provider failed to create.
+
+        It was never enrolled, so none of the room's work is on it. Detaching
+        it is what lets the room ask for another; the provider delete follows
+        with no transaction open, and one it refuses leaves the machine to
+        ``release_left_machines``.
+        """
+        assert machine.topic_id is not None
+        failures = await provider_errors(self._session, machine.topic_id) + 1
+        machine.superseded_at = datetime.now(UTC)
+        line = await tell_machine_replaced(self._session, machine, failures=failures)
+        await self._session.commit()
+        await publish_line(machine.topic_id, line)
+        await self.release_left_machine(machine.id)
 
     async def supersede_session_machine(
         self, session_id: uuid.UUID, *, actor: Actor

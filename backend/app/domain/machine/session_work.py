@@ -48,7 +48,11 @@ from app.domain.machine.models import (
     MachineStatus,
     ProjectMachine,
 )
-from app.domain.machine.services import MachineService, left_unpushed_on
+from app.domain.machine.services import (
+    CloudKeepsFailing,
+    MachineService,
+    left_unpushed_on,
+)
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.services import ProjectService
@@ -1044,11 +1048,15 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             if isinstance(authorized, dict)
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
         )
-        machine = await MachineService(db).ensure_session_machine(
-            session_id,
-            actor=allocation_actor,
-            choice=choice,
-        )
+        try:
+            machine = await MachineService(db).ensure_session_machine(
+                session_id,
+                actor=allocation_actor,
+                choice=choice,
+            )
+        except CloudKeepsFailing as failing:
+            await db.commit()
+            return {"unavailable": str(failing)}
         if not machine.device_id or not hub.is_online(machine.device_id):
             await db.commit()
             return _Preparing(
@@ -1224,7 +1232,12 @@ async def _cloud_progress(db, hub, machine_id) -> str | bool:
         # The allocation changed under us; the next attempt says how.
         return True
     if machine.status == MachineStatus.error:
-        return "云端工作电脑创建失败：供应方报告错误。对话和平台工具仍可用。"
+        if machine.device_id is None:
+            # Failed while being built: the next attempt replaces it, within
+            # the room's limit (``MachineService.ensure_session_machine``).
+            return True
+        # Enrolled, so the room's work may be on it: it is not replaced.
+        return "云端工作电脑出错：供应方报告错误。对话和平台工具仍可用。"
     if machine.status in GONE:
         # Gone upstream: the next attempt forgets it and asks for another.
         return True
