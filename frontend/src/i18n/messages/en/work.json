@@ -186,6 +186,10 @@
     "loading": "Loading resource limits…"
   },
   "room": {
+    "docTools": {
+      "title": "Document tools",
+      "backToDocument": "Back to document"
+    },
     "docAi": {
       "title": "Document AI",
       "selectionToolbar": "Selection actions",
@@ -835,7 +839,6 @@
       "locate": "Go to the paragraph",
       "anchorChanged": "The original paragraph has changed",
       "anchorAmbiguous": "This quote occurs more than once; the original selection cannot be identified",
-      "closePanel": "Close comments panel",
       "resize": "Resize comments panel",
       "waitForSend": "Comment is sending; wait for the result",
       "closeDraft": "Close composer",

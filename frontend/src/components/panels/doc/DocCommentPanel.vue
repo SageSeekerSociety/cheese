@@ -3,7 +3,7 @@ import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { Block } from '../../../cx_types'
 import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 
 import DocComments from './DocComments.vue'
 
@@ -19,18 +19,24 @@ const props = defineProps<{
   anchorNodes: Block[]
   openId: string | null
   quoteState?: (id: string) => 'unique' | 'missing' | 'ambiguous'
+  aiOpened?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'update:openId', id: string | null): void
   (e: 'locate-node', id: string): void
   (e: 'posted'): void
+  (e: 'open-ai'): void
+  (e: 'close-ai'): void
 }>()
 
 const WIDTH_KEY = 'cheese:docs:comments-width'
 const root = ref<HTMLElement | null>(null)
+const dockId = useId()
+const tabs = ref<HTMLElement | null>(null)
 const aside = ref<HTMLElement | null>(null)
 const commentsRef = ref<InstanceType<typeof DocComments> | null>(null)
 const opened = ref(false)
+const activeTool = ref<'comments' | 'ai'>('comments')
 const busy = ref(false)
 const paneWidth = ref(0)
 const preferred = ref(340)
@@ -88,22 +94,45 @@ async function show() {
   return !disposed && captured === context && opened.value
 }
 function close() {
-  if (busy.value) return false
+  if (busy.value && activeTool.value === 'comments') return false
   context++
   finishResize(false)
   opened.value = false
+  if (props.aiOpened) emit('close-ai')
   if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true })
   return true
 }
 function toggle() {
-  if (opened.value) close()
-  else void show()
+  if (opened.value && activeTool.value === 'comments') close()
+  else void showComments()
+}
+async function showComments() {
+  activeTool.value = 'comments'
+  return show()
+}
+async function showAi() {
+  activeTool.value = 'ai'
+  return show()
+}
+function activateAi() {
+  void showAi()
+  if (!props.aiOpened) emit('open-ai')
+}
+function tabKey(event: KeyboardEvent) {
+  if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const next =
+    event.key === 'Home' ? 'ai' : event.key === 'End' ? 'comments' : activeTool.value === 'ai' ? 'comments' : 'ai'
+  if (next === 'ai') activateAi()
+  else void showComments()
+  void nextTick(() => tabs.value?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus())
 }
 async function open(target: { anchorId: string | null; quote: string }) {
-  if (await show()) commentsRef.value?.open(target)
+  if (await showComments()) commentsRef.value?.open(target)
 }
 async function locate(id: string) {
-  if (await show()) commentsRef.value?.locate(id)
+  if (await showComments()) commentsRef.value?.locate(id)
 }
 function onEscape(e: KeyboardEvent) {
   if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
@@ -117,10 +146,19 @@ watch(
     context++
     finishResize(false)
     opened.value = false
+    activeTool.value = 'comments'
     returnFocus = null
     emit('update:openId', null)
   },
   { flush: 'sync' }
+)
+watch(
+  () => props.aiOpened,
+  (value) => {
+    if (value) void showAi()
+    else if (activeTool.value === 'ai') close()
+  },
+  { immediate: true }
 )
 
 type Drag = {
@@ -202,7 +240,7 @@ onBeforeUnmount(() => {
   if (frame) cancelAnimationFrame(frame)
   window.removeEventListener('resize', measure)
 })
-defineExpose({ open, locate, toggle, close, opened, busy })
+defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
 </script>
 
 <template>
@@ -212,9 +250,11 @@ defineExpose({ open, locate, toggle, close, opened, busy })
       v-if="opened && !docked"
       type="button"
       class="doc-comment-scrim"
-      :aria-label="t('work.room.comments.closePanel')"
-      :disabled="busy"
-      :title="busy ? t('work.room.comments.waitForSend') : t('work.room.comments.closePanel')"
+      :aria-label="t('work.room.docTools.backToDocument')"
+      :disabled="busy && activeTool === 'comments'"
+      :title="
+        busy && activeTool === 'comments' ? t('work.room.comments.waitForSend') : t('work.room.docTools.backToDocument')
+      "
       @click="close"
     />
     <aside
@@ -223,9 +263,10 @@ defineExpose({ open, locate, toggle, close, opened, busy })
       class="doc-comment-panel"
       :class="{ 'doc-comment-panel--drawer': !docked }"
       data-comments-panel
+      :data-doc-tool="activeTool"
       :data-comments-drawer="!docked ? '' : undefined"
       :role="docked ? 'complementary' : 'dialog'"
-      :aria-label="t('work.room.comments.title')"
+      :aria-label="activeTool === 'ai' ? t('work.room.docAi.title') : t('work.room.comments.title')"
       tabindex="-1"
       :style="{ width: `${width}px` }"
       @keydown="onEscape"
@@ -248,37 +289,90 @@ defineExpose({ open, locate, toggle, close, opened, busy })
         @keydown="resizeKey"
       />
       <header class="doc-comment-panel__head">
-        <span
+        <div
+          v-if="$slots.ai"
+          ref="tabs"
+          class="doc-tool-tabs"
+          role="tablist"
+          :aria-label="t('work.room.docTools.title')"
+          @keydown="tabKey"
+        >
+          <button
+            :id="`${dockId}-ai-tab`"
+            type="button"
+            role="tab"
+            :aria-selected="activeTool === 'ai'"
+            :aria-controls="`${dockId}-ai-content`"
+            :tabindex="activeTool === 'ai' ? 0 : -1"
+            @click="activateAi"
+          >
+            {{ t('work.room.docAi.title') }}
+          </button>
+          <button
+            :id="`${dockId}-comments-tab`"
+            type="button"
+            role="tab"
+            :aria-selected="activeTool === 'comments'"
+            :aria-controls="`${dockId}-comments-content`"
+            :tabindex="activeTool === 'comments' ? 0 : -1"
+            @click="showComments"
+          >
+            {{ t('work.room.comments.title') }} <span class="t-meta">{{ comments.length }}</span>
+          </button>
+        </div>
+        <span v-else
           >{{ t('work.room.comments.title') }} <span class="t-meta">{{ comments.length }}</span></span
         >
         <button
           type="button"
           class="doc-comment-panel__close"
-          :disabled="busy"
-          :aria-label="t('work.room.comments.closePanel')"
-          :title="busy ? t('work.room.comments.waitForSend') : t('work.room.comments.closePanel')"
+          :disabled="busy && activeTool === 'comments'"
+          :aria-label="t('work.room.docTools.backToDocument')"
+          :title="
+            busy && activeTool === 'comments'
+              ? t('work.room.comments.waitForSend')
+              : t('work.room.docTools.backToDocument')
+          "
           @click="close"
         >
+          {{ t('work.room.docTools.backToDocument') }}
           <v-icon size="18">mdi-close</v-icon>
         </button>
       </header>
-      <DocComments
-        ref="commentsRef"
-        :topic-id="topicId"
-        :author="author"
-        :send-comment="sendComment"
-        :thread-state="threadState"
-        :thread-actions="threadActions"
-        :comments="comments"
-        :anchor-nodes="anchorNodes"
-        :open-id="openId"
-        :quote-state="quoteState"
-        @update:open-id="emit('update:openId', $event)"
-        @busy="busy = $event"
-        @locate-node="emit('locate-node', $event)"
-        @posted="emit('posted')"
-      />
-      <p v-if="busy" role="status" class="doc-comment-panel__status">{{ t('work.room.comments.waitForSend') }}</p>
+      <div
+        :id="`${dockId}-ai-content`"
+        v-show="activeTool === 'ai'"
+        class="doc-tool-content"
+        role="tabpanel"
+        :aria-labelledby="`${dockId}-ai-tab`"
+      >
+        <slot name="ai" />
+      </div>
+      <div
+        :id="`${dockId}-comments-content`"
+        v-show="activeTool === 'comments'"
+        class="doc-tool-content"
+        :role="$slots.ai ? 'tabpanel' : undefined"
+        :aria-labelledby="$slots.ai ? `${dockId}-comments-tab` : undefined"
+      >
+        <DocComments
+          ref="commentsRef"
+          :topic-id="topicId"
+          :author="author"
+          :send-comment="sendComment"
+          :thread-state="threadState"
+          :thread-actions="threadActions"
+          :comments="comments"
+          :anchor-nodes="anchorNodes"
+          :open-id="openId"
+          :quote-state="quoteState"
+          @update:open-id="emit('update:openId', $event)"
+          @busy="busy = $event"
+          @locate-node="emit('locate-node', $event)"
+          @posted="emit('posted')"
+        />
+        <p v-if="busy" role="status" class="doc-comment-panel__status">{{ t('work.room.comments.waitForSend') }}</p>
+      </div>
     </aside>
   </div>
 </template>
@@ -320,11 +414,44 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   color: var(--ink);
   font-size: 14px;
   font-weight: 600;
+  flex: 0 0 auto;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.doc-tool-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.doc-tool-tabs button {
+  padding: 4px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.doc-tool-tabs button[aria-selected='true'] {
+  color: var(--ink);
+  background: var(--fill);
+}
+.doc-tool-tabs button:focus-visible,
+.doc-comment-panel__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.doc-tool-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 .doc-comment-panel__close {
-  display: grid;
-  place-items: center;
-  width: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding-inline: 4px;
   height: 28px;
   border-radius: var(--radius-sm);
   color: var(--muted);

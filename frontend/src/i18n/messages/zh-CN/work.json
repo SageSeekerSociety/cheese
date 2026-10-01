@@ -186,6 +186,10 @@
     "loading": "正在加载资源限制…"
   },
   "room": {
+    "docTools": {
+      "title": "文档工具",
+      "backToDocument": "返回正文"
+    },
     "docAi": {
       "title": "文档 AI",
       "selectionToolbar": "选区操作",
@@ -835,7 +839,6 @@
       "locate": "定位到该段",
       "anchorChanged": "原段落已改动",
       "anchorAmbiguous": "这段引用出现多次，无法确定原选区",
-      "closePanel": "关闭评论栏",
       "resize": "调整评论栏宽度",
       "waitForSend": "评论发送中，请等待结果",
       "closeDraft": "关闭输入",
