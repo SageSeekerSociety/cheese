@@ -50,6 +50,8 @@ At the start of every turn the backend compares a room's running session with th
 
 If the two differ, the backend closes the session and opens a new one on the same room. The runner resumes the room's conversation from its transcript. Closing a session ends everything it is running, so the backend asks the runner first. While the runner reports a turn in progress or any running task (a background command, a subagent or a workflow), the current turn runs on the existing session and the relaunch waits for the first turn that finds nothing running. A runner that does not answer has nothing left to lose and is replaced.
 
+pi's launch carries its runner archive only when the host lacks it. The host keeps the archive under its digest (`runner-<sha256>.pyz` in the seat's state directory); a launch names the digest, and a host without that file answers so and is sent the launch again with the archive.
+
 The resident release (`release.py` `stage`) updates helpers in a session that stays open. It covers only the helpers listed in `RESIDENT`: `proxy.js`, which `/reload-plugins` loads again, and `context_service.py` and `cheese.py`, which only the prompt hook and the reconnected native MCP transport read. Every other helper, including any helper added later, is launch-only and part of the contract.
 
 ## Acceptance
