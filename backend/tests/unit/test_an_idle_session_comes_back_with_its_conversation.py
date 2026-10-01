@@ -22,13 +22,14 @@ from app.domain.agent.harness import Opening
 from app.domain.agent.harness.codex.runner import Runner as CodexRunner
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.driven.runner import reply_owed_path
-from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provider
+from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
 from tests.support.responses_fixture import Responses
+from tests.support.room_machine import NO_MACHINE
 from tests.unit.test_a_person_is_answered_before_anything_else import CHEESE, Backend
 
 FIRST = "The password is PINEAPPLE."
@@ -102,7 +103,8 @@ async def _pi_machine(tmp_path: Path):
             binary=pi_binary(),
             cwd=str(machine),
             env=env,
-            args=PiLaunch(system_prompt="FIXTURE", model="fixture-model").arguments(),
+            args=arguments("fixture-model"),
+            target=NO_MACHINE,
             extension=extension(),
             notice=PLATFORM_NOTICE,
         )

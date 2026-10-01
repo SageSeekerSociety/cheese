@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import time
+import urllib.request
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -29,17 +30,44 @@ J = TypeVar("J", bound=Journal)
 # --- letting an idle session go ------------------------------------------------
 #
 # A session nobody is talking to holds a process on the session machine all the
-# same, and a backend reads every one of them about once a second whether anyone
-# talks to it or not. So reading is not what keeps a session: what it is doing
-# is. With no turn open, nothing of its own still running, no input on its way
-# in and no record written either way for ``IDLE_EXIT_S``, and nothing left that
-# a backend still reading has yet to take, the runner lets it go. Its
-# conversation stays on disk, and the next message starts it again on it
-# (each harness's ``ensure`` resumes what the state directory recorded).
+# same, and a backend goes on reading every one of them whether anyone talks to
+# it or not. So reading is not what keeps a session: what it is doing is. With
+# no turn open, nothing of its own still running, no input on its way in and no
+# record written either way for ``IDLE_EXIT_S``, and nothing left that a backend
+# still reading has yet to take, the runner lets it go. Its conversation stays
+# on disk, and the next message starts it again on it (each harness's
+# ``ensure`` resumes what the state directory recorded).
 
 IDLE_EXIT_S = 600.0
 #: How often the runner looks.
 IDLE_CHECK_S = 5.0
+
+
+# --- telling a backend there is something to read ------------------------------
+#
+# A backend reads a session's journal at its floor while a turn is open and
+# backs off far once none is; what a session writes on its own between turns (a
+# background task finishing, a turn it opened itself) would wait out that
+# back-off. So a record nobody has read yet rings the backend, which reads at
+# once. The ring carries nothing: the read is still what moves records, from its
+# own cursor, so a ring that is lost costs only the wait it would have saved.
+
+#: How often the runner looks for records nobody has read.
+DOORBELL_CHECK_S = 0.2
+#: A backend that read this recently is reading at its floor and needs no ring.
+READING_S = 0.5
+DOORBELL_TIMEOUT_S = 2.0
+
+
+def ring(api: str, token: str) -> None:
+    """Tell the backend this session has records for it; never raises."""
+    request = urllib.request.Request(
+        api.rstrip("/") + "/sandbox/journal-written",
+        method="POST",
+        headers={"X-Cheese-Token": token},
+    )
+    with contextlib.suppress(Exception):
+        urllib.request.urlopen(request, timeout=DOORBELL_TIMEOUT_S).close()
 
 
 def socket_path(state: Path) -> str:
@@ -158,6 +186,7 @@ class Runner(Generic[J]):  # noqa: UP046
         self.read_through = 0
         self.read_at = time.monotonic()
         self.idler: asyncio.Task | None = None
+        self.ringer: asyncio.Task | None = None
 
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
@@ -246,6 +275,21 @@ class Runner(Generic[J]):  # noqa: UP046
         os.chmod(socket_path(self.state), 0o600)
         if self.idle_exit_s:
             self.idler = asyncio.create_task(self._idle())
+        api, token = os.environ.get("CHEESE_API"), os.environ.get("CHEESE_TOKEN")
+        if api and token:
+            self.ringer = asyncio.create_task(self._ring_for_unread(api, token))
+
+    async def _ring_for_unread(self, api: str, token: str) -> None:
+        rung = self.journal.last()
+        while True:
+            await asyncio.sleep(DOORBELL_CHECK_S)
+            last = self.journal.last()
+            if last <= rung:
+                continue
+            rung = last
+            reading = time.monotonic() - self.read_at < READING_S
+            if last > self.read_through and not reading:
+                await asyncio.to_thread(ring, api, token)
 
     # --- letting an idle session go ------------------------------------------
 
@@ -410,9 +454,10 @@ class Runner(Generic[J]):  # noqa: UP046
             await self.listener
 
     async def close(self) -> None:
-        if self.idler is not None:
-            self.idler.cancel()
-            await asyncio.gather(self.idler, return_exceptions=True)
+        for task in (self.idler, self.ringer):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         if self.server is not None:
             self.server.close()
             await self.server.wait_closed()

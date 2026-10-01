@@ -3,7 +3,8 @@
 A repository guards Bash or its files with PreToolUse and PostToolUse hooks in
 `.claude/settings.json`, written for Claude Code's tool names. pi fires no
 hooks, so before each of its tool calls the extension asks the runner, and
-again after it (`platform.ts`). What is driven here is the real runner, over
+again after it (`platform.ts`), and the room's machine runs them. What is
+driven here is the real runner, over
 its socket, in a checkout that carries hooks: the calls a pi session makes are
 asked about the way the extension asks, and run only when the answer allows
 it, the way pi runs them.
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.pi.runner import Runner
+from tests.support.room_machine import room_machine
 from tests.unit.test_pi_runner import call, shim
 
 LOG = 'cat >> "$CLAUDE_PROJECT_DIR/hooks.log"; echo >> "$CLAUDE_PROJECT_DIR/hooks.log"'
@@ -129,12 +131,15 @@ async def _session(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
     """A pi session in `work` making `calls`, each asked about before and after
     the way the extension asks; returns what each call answered."""
     runner = Runner(tmp_path / "state")
+    machine = room_machine(tmp_path / "machine", checkout=work)
+    target = machine.__enter__()
     await runner.start(
         Opening("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
-        cwd=str(work),
+        cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=[],
+        target=target,
     )
     answers = []
     try:
@@ -162,6 +167,7 @@ async def _session(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
             answers.append(("ran", output))
     finally:
         await runner.close()
+        machine.__exit__(None, None, None)
     return answers
 
 
@@ -235,21 +241,28 @@ def test_a_tool_claude_code_has_no_equivalent_for_keeps_its_own_name(tmp_path):
 
     async def ask():
         runner = Runner(tmp_path / "state")
-        await runner.start(
-            Opening("system prompt", None, agent_handle="teammate"),
-            binary=shim(tmp_path),
-            cwd=str(work),
-            env={"PATH": "/usr/bin:/bin"},
-            args=[],
-        )
-        try:
-            return await call(
-                runner.state,
-                "hooks",
-                {"event": "PreToolUse", "tool": tool, "id": "c", "input": {"id": "x"}},
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            await runner.start(
+                Opening("system prompt", None, agent_handle="teammate"),
+                binary=shim(tmp_path),
+                cwd=str(tmp_path),
+                env={"PATH": "/usr/bin:/bin"},
+                args=[],
+                target=target,
             )
-        finally:
-            await runner.close()
+            try:
+                return await call(
+                    runner.state,
+                    "hooks",
+                    {
+                        "event": "PreToolUse",
+                        "tool": tool,
+                        "id": "c",
+                        "input": {"id": "x"},
+                    },
+                )
+            finally:
+                await runner.close()
 
     assert asyncio.run(ask()) == {"input": {"id": "x"}}
     (event,) = [
@@ -332,3 +345,144 @@ def test_an_edit_reaches_the_hooks_as_claude_codes_edit_calls(tmp_path):
     }
     # PostToolUse sees what ran, after the hook's correction.
     assert events[2]["tool_input"]["new_string"] == "the first"
+
+
+def _asked(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
+    """The requests the machine is sent while a session asks about `calls`
+    the way the extension asks, before and after each."""
+
+    async def session():
+        runner = Runner(tmp_path / "state")
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            await runner.start(
+                Opening("system prompt", None, agent_handle="teammate"),
+                binary=shim(tmp_path),
+                cwd=str(tmp_path),
+                env={"PATH": "/usr/bin:/bin"},
+                args=[],
+                target=target,
+            )
+            assert runner.machine is not None
+            asked: list[str] = []
+            control = runner.machine.client.control
+
+            def counted(request, preparing=None):
+                asked.append(request.get("subtype", ""))
+                return control(request, preparing=preparing)
+
+            runner.machine.client.control = counted  # type: ignore[method-assign]
+            answers = []
+            try:
+                for index, (tool, args) in enumerate(calls):
+                    for event in ("PreToolUse", "PostToolUse"):
+                        answers.append(
+                            await call(
+                                runner.state,
+                                "hooks",
+                                {
+                                    "event": event,
+                                    "tool": tool,
+                                    "id": f"c{index}",
+                                    "input": args,
+                                },
+                            )
+                        )
+                return asked, answers
+            finally:
+                await runner.close()
+
+    return asyncio.run(session())
+
+
+def test_a_search_reaches_the_hooks_as_claude_codes_grep_and_glob(tmp_path):
+    """pi's grep and find look through the project on the machine as Claude
+    Code's Grep and Glob do, so a hook written for those sees them."""
+    work = _checkout(tmp_path)
+    _asked(
+        tmp_path / "a",
+        work,
+        [
+            ("grep", {"pattern": "TODO", "ignoreCase": True, "limit": 5}),
+            ("find", {"pattern": "*.py", "path": "src"}),
+            ("ls", {"path": "src"}),
+        ],
+    )
+    before = [e for e in _events(work) if e["hook_event_name"] == "PreToolUse"]
+    assert [(e["tool_name"], e["tool_input"]) for e in before] == [
+        (
+            "Grep",
+            {
+                "pattern": "TODO",
+                "-i": True,
+                "head_limit": 5,
+                "output_mode": "content",
+                "-n": True,
+            },
+        ),
+        ("Glob", {"pattern": "*.py", "path": "src"}),
+        ("ls", {"path": "src"}),
+    ]
+
+
+def test_a_call_no_hook_is_written_for_costs_the_machine_nothing(tmp_path):
+    """Hooks run on the machine, so asking about one is a round trip there. A
+    project with no hooks pays it for no call; one whose hook is for Bash pays
+    it for Bash and for nothing else, and its hook still holds."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    asked, _ = _asked(
+        tmp_path / "a",
+        plain,
+        [("bash", {"command": "echo hi"}), ("read", {"path": "a.md"})],
+    )
+    assert "tool_hooks" not in asked
+
+    guarded = tmp_path / "guarded"
+    (guarded / ".claude").mkdir(parents=True)
+    (guarded / ".claude/guard.py").write_text(GUARD)
+    (guarded / ".claude/settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"{sys.executable} "
+                                    '"$CLAUDE_PROJECT_DIR/.claude/guard.py"',
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    asked, answers = _asked(
+        tmp_path / "b",
+        guarded,
+        [("read", {"path": "a.md"}), ("bash", {"command": "rm -rf doomed"})],
+    )
+    assert asked.count("tool_hooks") == 1
+    assert answers[2] == {"denied": "PROJECT_POLICY: no recursive deletes"}
+
+
+def test_a_deny_rule_is_checked_for_the_tools_it_covers(tmp_path):
+    """A `Read(...)` deny covers editing the path too, as in Claude Code."""
+    work = tmp_path / "room"
+    (work / ".claude").mkdir(parents=True)
+    (work / ".claude/settings.json").write_text(
+        json.dumps({"permissions": {"deny": ["Read(secrets/**)"]}})
+    )
+    asked, answers = _asked(
+        tmp_path / "a",
+        work,
+        [
+            ("bash", {"command": "echo hi"}),
+            ("write", {"path": "secrets/key", "content": "x"}),
+        ],
+    )
+    assert asked.count("tool_hooks") == 1
+    assert "permissions.deny" in answers[2]["denied"]

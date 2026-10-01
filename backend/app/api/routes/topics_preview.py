@@ -77,6 +77,7 @@ async def get_preview(
         # apart. `tunnel_up` without a `url` is 「通道在，应用没在跑」.
         tunnel_up = preview_hub.is_online(topic_id, art.author)
         alive = tunnel_up and await preview_hub.probe(topic_id, art.author)
+        instance = await preview_hub.instance(topic_id, art.author) if alive else None
         return ok(
             {
                 "kind": "app",
@@ -85,6 +86,7 @@ async def get_preview(
                 # Every executable preview stays outside the platform origin.
                 "url": (preview_origin(topic_id) + "/" if alive else None),
                 "tunnel_up": tunnel_up,
+                "instance": instance,
                 "artifact_id": str(art.id),
             }
         )

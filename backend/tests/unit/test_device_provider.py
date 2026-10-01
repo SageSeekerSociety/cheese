@@ -34,7 +34,6 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
-from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.place import seat_dir
 
 
@@ -1574,7 +1573,7 @@ async def test_config_change_waits_for_every_task_the_session_is_running(caplog)
         assert (
             await room.ensure(
                 env={"CHEESE_AGENT_CONFIG": "edited"},
-                launch=PiLaunch(system_prompt="", model="test"),
+                launch=ClaudeLaunch(system_prompt="another prompt"),
             )
             is first
         )

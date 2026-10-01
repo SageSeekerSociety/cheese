@@ -52,7 +52,7 @@ async def test_invited_teammate_is_the_startup_identity(
     device._resolve_device_agent = AsyncMock(
         return_value=("executor", default_id, default_handle)
     )
-    channel = device if harness == "pi" else CentralChannel(device)
+    channel = CentralChannel(device)
     placement = client.portal.call(
         lambda: channel.precheck(
             SessionRef(project_id, room_id, "reviewer", harness=harness),
@@ -61,24 +61,12 @@ async def test_invited_teammate_is_the_startup_identity(
     )
     assert placement.agent_handle == seat
     assert placement.agent_user_id != default_id
-    assert placement.rented is (needs_place and harness == "pi")
-    assert placement.deferred is (needs_place and harness != "pi")
+    assert placement.rented is False
+    assert placement.deferred is needs_place
 
     ref = SessionRef(project_id, room_id, "reviewer", harness=harness)
     opening = Opening(system_prompt="Trial", agent_handle=seat, needs_place=needs_place)
-    if harness == "pi":
-        device.ensure_ready = AsyncMock(
-            return_value=SimpleNamespace(resource_id=room_id)
-        )
-        hub.call_executor = AsyncMock(
-            return_value={"alive": True, "session_id": "trial"}
-        )
-        handle = client.portal.call(lambda: PiChannel(device).ensure(ref, opening))
-        assert handle.agent_handle == seat
-        assert (
-            token_agent_handle(device.ensure_ready.await_args.kwargs["token"]) == seat
-        )
-    elif harness == "codex":
+    if harness in ("pi", "codex"):
         launched = []
 
         @asynccontextmanager
@@ -99,10 +87,14 @@ async def test_invited_teammate_is_the_startup_identity(
         channel.prepare_session = remote_session
         channel._device_api_base = AsyncMock(return_value="http://trial.test")
         hub.exec = AsyncMock(
-            return_value={"exit": 0, "stdout": '{"thread_id":"trial"}'}
+            return_value={
+                "exit": 0,
+                "stdout": '{"thread_id":"trial","session_id":"trial","alive":true}',
+            }
         )
+        harness_channel = PiChannel if harness == "pi" else CodexChannel
         handle = client.portal.call(
-            lambda: CodexChannel(channel, SimpleNamespace()).ensure(ref, opening)
+            lambda: harness_channel(channel, SimpleNamespace()).ensure(ref, opening)
         )
         assert handle.agent_handle == seat
         assert token_agent_handle(launched[0]["token"]) == seat

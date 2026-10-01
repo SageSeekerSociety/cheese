@@ -400,6 +400,8 @@ class PreviewHub:
         headers: list[tuple[str, str]],
         body: bytes = b"",
         timeout: float = STREAM_TIMEOUT_S,
+        instance: str | None = None,
+        inspect_instance: bool = False,
     ) -> PreviewHttpResponse | None:
         """Return at RESP; the caller owns the body and cancellation."""
         stream = self.open_stream(topic_id, seat)
@@ -407,6 +409,10 @@ class PreviewHub:
             return None
         transferred = False
         try:
+            if (
+                instance or inspect_instance
+            ) and "instance-v1" not in stream._machine.capabilities:
+                return None
             await stream.send(
                 wire.OP_REQ,
                 wire.encode_meta(
@@ -414,6 +420,8 @@ class PreviewHub:
                         "method": method,
                         "path": path,
                         "headers": [list(h) for h in headers],
+                        **({"instance": instance} if instance else {}),
+                        **({"inspect_instance": True} if inspect_instance else {}),
                     },
                     body,
                 ),
@@ -473,6 +481,28 @@ class PreviewHub:
         except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
             logger.info("preview buffered response interrupted: %s", exc)
             return None
+        finally:
+            await response.aclose()
+
+    async def instance(self, topic_id: uuid.UUID, seat: str) -> str | None:
+        response = await self.request_stream(
+            topic_id,
+            seat,
+            method="HEAD",
+            path="/",
+            headers=[],
+            inspect_instance=True,
+            timeout=PROBE_TIMEOUT_S,
+        )
+        if response is None:
+            return None
+        try:
+            value = dict(response.headers).get("x-cheese-instance", "")
+            return (
+                value
+                if len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+                else None
+            )
         finally:
             await response.aclose()
 

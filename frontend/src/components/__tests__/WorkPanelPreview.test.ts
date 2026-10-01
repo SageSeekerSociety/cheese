@@ -176,7 +176,7 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     expect(frame?.getAttribute('name')).toBeTruthy()
     expect(HTMLFormElement.prototype.submit).toHaveBeenCalledOnce()
     // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
-    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A', undefined)
     // The named form targets an isolated content origin, so storage can work.
     expect(frame?.getAttribute('sandbox')).toContain('allow-same-origin')
   })
@@ -199,7 +199,11 @@ describe('预览面板：文件读回来了但没有内容', () => {
 
     expect(container.textContent).not.toContain('太大')
     expect(container.querySelector('iframe.preview-frame')).toBeTruthy()
-    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A')
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-A', {
+      artifact_id: 'a1',
+      path: 'report.html',
+      version: undefined,
+    })
   })
 
   it('文件不是文本 → 说的是它读不了，不是它太大', async () => {

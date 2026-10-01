@@ -55,9 +55,6 @@ class CentralChannel(DeviceChannel):
         # 手是执行机的，所以这条通道的供给就是被它包住的那条通道的供给：一台机器
         # 归哪条通道认领，说的是那台机器，不是中心会话机。
         self.supply = executor.supply
-        # 而会话进程不在那台机器上：工具要从中心机再跳一程到执行机。把进程和工作
-        # 区放在同一台机器上的骨架（pi）挂不到这条通道上。
-        self.hands_here = False
 
     def available(self):
         return bool(

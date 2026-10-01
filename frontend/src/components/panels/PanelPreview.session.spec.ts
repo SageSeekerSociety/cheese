@@ -216,7 +216,7 @@ it('ignores a late grant after the panel is gone (a topic switch rebuilds it)', 
       })
   )
   const { unmount } = mount()
-  await waitFor(() => expect(requestPreviewSession).toHaveBeenCalledWith('topic-a'))
+  await waitFor(() => expect(requestPreviewSession).toHaveBeenCalledWith('topic-a', undefined))
   unmount()
   finish({ url: `${url}_cheese/session`, grant: 'old-topic-grant' })
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -458,14 +458,14 @@ it('waits for navigation load rather than treating a grant as readiness', async 
   vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
     submissions.push({ action: this.action, target: this.target, body: '' })
   })
-  const { container, findByRole, queryByRole } = mount()
+  const { container, findByRole, queryByText } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
   expect((await findByRole('status')).textContent).toContain('正在加载新页面')
   const frame = container.querySelector('iframe')!
   await fireEvent.load(frame)
-  expect(queryByRole('status')).toBeTruthy()
+  expect(queryByText(/正在加载新页面/)).toBeTruthy()
   opaqueNavigation(frame)
-  await waitFor(() => expect(queryByRole('status')).toBeNull())
+  await waitFor(() => expect(queryByText(/正在加载新页面/)).toBeNull())
 })
 
 it('keeps the old frame during replacement, rejects failed navigation and ignores its late load', async () => {
@@ -575,13 +575,21 @@ it('ignores a grant from a prior topic without requiring remount', async () => {
       })
   )
   const { rerender } = mountFile('site/index.html')
-  await waitFor(() => expect(requestPreviewSession).toHaveBeenCalledWith('topic-a'))
+  await waitFor(() =>
+    expect(requestPreviewSession).toHaveBeenCalledWith('topic-a', {
+      path: 'site/index.html',
+      version: undefined,
+    })
+  )
   await rerender({ topicId: 'topic-b' })
   await waitFor(() => expect(submissions).toHaveLength(1))
   finish({ url: `${url}_cheese/session`, grant: 'stale-grant' })
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(submissions).toHaveLength(1)
-  expect(requestPreviewSession).toHaveBeenLastCalledWith('topic-b')
+  expect(requestPreviewSession).toHaveBeenLastCalledWith('topic-b', {
+    path: 'site/index.html',
+    version: undefined,
+  })
 })
 
 it.each([false, true])('refreshes changed static content and preserves the same version (large=%s)', async (large) => {
