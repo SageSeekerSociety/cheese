@@ -115,3 +115,23 @@ async def test_a_runner_that_cannot_hold_a_read_is_ensured_on_every_send():
         assert channel.given == [None, None]
     finally:
         await room.close()
+
+
+async def test_a_seat_whose_runner_is_closing_is_ensured_again():
+    """The runner answers the read it holds as it starts to close, while its
+    agent process is still up and its socket still answers. The next send
+    starts the session again rather than being handed a runner on its way out."""
+    channel = Remembering()
+    room = Room(channel)
+    try:
+        await _first_turn(room)
+        runner = channel._session_for(room.topic)
+        runner.closing = True
+        runner.announce()
+        await _REAL_SLEEP(0.3)
+        # Its replacement, for the send that follows.
+        runner.closing = False
+        await _send(room, "and the signup page")
+        assert channel.given == [None, None]
+    finally:
+        await room.close()
