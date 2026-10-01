@@ -27,5 +27,10 @@ RUNTIME_SCRIPT = r"""(() => {
       publish();
     },
   });
+  // The app can load this script after the parent's navigation-load hello.
+  // Request that document's existing session; this is not a readiness signal.
+  window.parent.postMessage({
+    channel: 'cheese-preview-runtime', version: 1, type: 'hello-request',
+  }, __PLATFORM_ORIGIN__);
 })();
 """
