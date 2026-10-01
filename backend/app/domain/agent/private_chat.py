@@ -26,7 +26,11 @@ def scratch_target(
     会话行上读出来交进来。
     """
     return {
-        **target(resource_id, settings.private_chat_executor_image),
+        **target(
+            resource_id,
+            settings.private_chat_executor_image,
+            settings.fetch_dns_over_https,
+        ),
         "device_id": device_id,
         "home": device_home_dir(project_id, resource_id),
     }

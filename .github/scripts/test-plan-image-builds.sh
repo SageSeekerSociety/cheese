@@ -11,7 +11,7 @@ git -C "$test_repo" config user.email test@example.com
 git -C "$test_repo" config user.name test
 executor_dir=backend/app/domain/agent/harness/claude_code/remote_execution
 mkdir -p "$test_repo/backend/app" "$test_repo/backend/sandbox/skills/cheese" \
-  "$test_repo/$executor_dir" \
+  "$test_repo/$executor_dir" "$test_repo/backend/app/domain/fetch" \
   "$test_repo/frontend/src" "$test_repo/cli" "$test_repo/docs" \
   "$test_repo/deploy/office-render" \
   "$test_repo/deploy/browser-render" "$test_repo/deploy/gateway"
@@ -22,7 +22,8 @@ touch "$test_repo/backend/app/main.py" "$test_repo/backend/sandbox/cheese" \
   "$test_repo/deploy/browser-render/server.py" "$test_repo/deploy/gateway/Dockerfile" \
   "$test_repo/backend/sandbox/Dockerfile.private" \
   "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py" \
-  "$test_repo/$executor_dir/mcp_process.py"
+  "$test_repo/$executor_dir/mcp_process.py" "$test_repo/$executor_dir/private_egress.py" \
+  "$test_repo/backend/app/domain/fetch/addresses.py"
 # The legacy workflow builds six images; the two added later have no job yet.
 mkdir -p "$test_repo/.github/workflows"
 add_build_jobs() {
@@ -103,9 +104,11 @@ git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/Dockerfile.private
 assert_plan 'backend=true,sandbox=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 
-for executor_file in runtime.py private.py mcp_process.py; do
+for executor_file in "$executor_dir/runtime.py" "$executor_dir/private.py" \
+  "$executor_dir/mcp_process.py" "$executor_dir/private_egress.py" \
+  backend/app/domain/fetch/addresses.py; do
   git -C "$test_repo" switch -q --detach "$base_sha"
-  commit_path "$executor_dir/$executor_file"
+  commit_path "$executor_file"
   assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 done
 
