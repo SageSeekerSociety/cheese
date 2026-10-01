@@ -179,6 +179,7 @@ class _HookStream(Protocol):
         *,
         opened: bool = False,
         agent_handle: str | None = None,
+        session_id: str | None = None,
     ) -> _HookWorkState | None: ...
 
     async def _work_of_worker(
@@ -226,7 +227,9 @@ class _HookStream(Protocol):
 
     async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool: ...
 
-    async def _close_open_turns(self, topic_id: uuid.UUID) -> None: ...
+    async def _close_open_turns(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None: ...
 
     async def _close_hook_work(
         self, state: _HookWorkState, result: AgentResult

@@ -137,7 +137,11 @@ def get_compute_pool() -> ComputePool:
     pool = build_compute_pool(cloud_channel=cloud)
     runner = get_work_runner()
     for runtime in pool._runtimes():
-        runtime.bind_owns_sessions(lambda: runner)
+        # Structural, like the pool's own probes: a runtime without the
+        # binder has no attach gate to arm (FB-56).
+        bind = getattr(runtime, "bind_owns_sessions", None)
+        if bind is not None:
+            bind(lambda: runner)
     return pool
 
 

@@ -35,6 +35,7 @@ event of its own rather than a line on the step (``AgentToolResult``).
 
 import re
 from datetime import UTC, datetime
+from typing import cast
 
 from app.domain.agent.harness.pi.journal import (
     COMPACTING,
@@ -195,18 +196,22 @@ class Assembler:
                 if isinstance(part, dict) and part.get("type") == "text"
             )
             entry_id = str(entry.get("id") or "")
-            return [
-                AgentUserEntry(
-                    text,
-                    entry_id=entry_id,
-                    pos=self._pos_of(entry_id),
-                    generation=self.generation,
-                    session_id=self.session_id,
-                    harness=self.harness,
-                    attachment=self.attachment,
-                    eid=f"pi:user:{entry_id}",
-                )
-            ]
+            user_entry = cast(
+                list[AgentEvent],
+                [
+                    AgentUserEntry(
+                        text,
+                        entry_id=entry_id,
+                        pos=self._pos_of(entry_id),
+                        generation=self.generation,
+                        session_id=self.session_id,
+                        harness=self.harness,
+                        attachment=self.attachment,
+                        eid=f"pi:user:{entry_id}",
+                    )
+                ],
+            )
+            return user_entry
         if role == "toolResult":
             # What the tool handed back goes onto its step, not onto a line of
             # its own. A FAILURE also marks that step, because the effect of a

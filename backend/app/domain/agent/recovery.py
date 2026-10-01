@@ -9,14 +9,44 @@ calls (`_replay_room`, `_begin_self_started_turn`, the hook-work registry).
 import asyncio
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 from app.domain.agent import death_evidence
 from app.domain.agent.harness import SessionRef
+
+if TYPE_CHECKING:
+    from app.domain.agent.compute import ComputePool
+    from app.domain.agent.hook_stream import _HookWorkState
 
 logger = logging.getLogger(__name__)
 
 
 class SessionRecovery:
+    """The recovery/replay orchestration half of ChatService. The attributes
+    and the two room-side methods are the service's; declared here so the
+    type checker sees the mixin's own contract."""
+
+    if TYPE_CHECKING:
+        _compute: ComputePool
+        _dead_sessions: set[tuple]
+        _hook_work: dict
+        _replays: dict[uuid.UUID, asyncio.Task]
+
+        async def _begin_self_started_turn(
+            self,
+            project_id: uuid.UUID,
+            topic_id: uuid.UUID,
+            turn_id: uuid.UUID,
+            *,
+            opened: bool = False,
+            agent_handle: str | None = None,
+            session_id: str | None = None,
+        ) -> _HookWorkState | None: ...
+
+        async def _replay_room(
+            self, seats: list[SessionRef], *, after: asyncio.Task | None
+        ) -> None: ...
+
     async def recover_sessions(self, device_id: str | None = None) -> int:
         """Listen again to sessions that outlived this process, and start
         landing what they said while nobody was.
