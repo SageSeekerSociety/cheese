@@ -453,8 +453,11 @@ class Runner(runner.Runner[Journal]):
             await asyncio.to_thread(
                 machine.start,
                 command_id,
-                f"exec bash -c {shlex.quote(params['command'])} </dev/null",
+                # As the executor's own Bash runs one for Codex: in the user's
+                # shell, from the snapshot of their profile.
+                f"eval {shlex.quote(params['command'])} </dev/null",
                 cwd=params.get("cwd"),
+                shell=True,
             )
             return {"id": command_id}
         if operation == "read":

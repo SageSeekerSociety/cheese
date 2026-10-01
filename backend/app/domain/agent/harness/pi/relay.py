@@ -74,7 +74,10 @@ def _spawn(command: str, cwd: str) -> tuple[int, int]:
             # `42` buried inside it.
             environment = {**os.environ, "TERM": "dumb"}
             environment["COLUMNS"], environment["LINES"] = str(COLUMNS), str(ROWS)
-            os.execvpe("/bin/sh", ["/bin/sh", "-lc", command], environment)
+            # Not a login shell: this relay was started in the user's shell
+            # after their profile (`jobs.py`), and a login shell would read
+            # /etc/profile again over what that put on PATH.
+            os.execvpe("/bin/sh", ["/bin/sh", "-c", command], environment)
         except BaseException as error:  # noqa: BLE001 — nothing may escape
             try:
                 os.write(2, f"{type(error).__name__}: {error}\n".encode())

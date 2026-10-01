@@ -222,16 +222,19 @@ class Machine:
         *,
         cwd: str | None = None,
         stdin: bytes | None = None,
+        shell: bool = False,
         preparing=None,
     ) -> None:
-        """Start `script` under `/bin/sh` in `cwd` on the machine, its stdout and
-        stderr as one stream, under an id of the caller's."""
+        """Start `script` in `cwd` on the machine, its stdout and stderr as one
+        stream, under an id of the caller's: under `/bin/sh`, or with `shell` in
+        the shell every harness runs the model's commands in — the user's, from
+        the snapshot of their profile (the executor's `bash` kind)."""
         self.take(preparing)
         request = {
             "subtype": "shell",
             "operation": "start",
             "command_id": command_id,
-            "kind": "sh",
+            "kind": "bash" if shell else "sh",
             "body": self.placed(script),
             "cwd": self.placed(cwd or self.workspace),
             "merge": True,

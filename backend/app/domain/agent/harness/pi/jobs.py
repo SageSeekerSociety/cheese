@@ -101,6 +101,9 @@ class Jobs:
                 + " ".join([_fifo(command_id), shlex.quote(cwd), shlex.quote(command)]),
                 cwd=cwd,
                 stdin=script_text("relay").encode(),
+                # In the shell every harness runs the model's commands in, so
+                # the job sees what the user's profile sets up.
+                shell=True,
             )
         except BaseException as error:
             self._finish(directory, -1, f"{type(error).__name__}: {error}")

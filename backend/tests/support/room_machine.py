@@ -7,6 +7,7 @@ reaches it when the machine is local to the client (its `request` command).
 """
 
 import json
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -31,10 +32,15 @@ def room_machine(
     env: dict[str, str] | None = None,
     checkout: Path | None = None,
     mcp_servers: dict[str, dict] | None = None,
+    home: Path | None = None,
+    claude: str | None = None,
 ):
     """A running executor over `checkout` (`root / "room"` unless named), with
     the checkout's stdio MCP servers as the machine found them; the execution
-    target for it."""
+    target for it.
+
+    `home` is the machine's user's home, whose shell profile commands start
+    from; `claude` the build the executor takes that profile's snapshot with."""
     checkout = checkout or root / "room"
     checkout.mkdir(parents=True, exist_ok=True)
     state = root / "executor"
@@ -45,12 +51,18 @@ def room_machine(
                 "workspace": str(checkout),
                 "env": env or {},
                 "mcp_servers": mcp_servers or {},
+                **({"claude": claude} if claude else {}),
             }
         ),
         text=True,
         capture_output=True,
         check=True,
         timeout=30,
+        env=(
+            {**os.environ, "HOME": str(home), "SHELL": "/bin/bash"}
+            if home is not None
+            else None
+        ),
     )
     try:
         yield {
