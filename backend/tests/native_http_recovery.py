@@ -185,9 +185,37 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 (2, "更正", "alice"),
             ]
             if descriptor["mode"] == "http-busy":
-                # Release model completion after RPC acceptance. The gated model
-                # response prevents the queued correction's echo until released.
                 await received(2, accepted_only=True)
+                async with factory() as session:
+                    delivery = await session.scalar(
+                        select(Delivery).where(
+                            Delivery.topic_id == topic,
+                            Delivery.payload["v"].as_integer() == 2,
+                        )
+                    )
+                    assert delivery is not None
+                    inputs = list(
+                        await session.scalars(
+                            select(NativeInput).where(
+                                NativeInput.delivery_id == delivery.id,
+                                NativeInput.attempt_id == delivery.attempt_id,
+                            )
+                        )
+                    )
+                    assert len(inputs) == 1 and inputs[0].accepted_at
+                    target = inputs[0]
+                    Path(descriptor["correction_target"]).write_text(
+                        json.dumps(
+                            {
+                                "delivery_id": str(delivery.id),
+                                "attempt_id": str(target.attempt_id),
+                                "input_id": str(target.input_id),
+                                "work_id": str(target.work_id),
+                                "native_session_id": target.native_session_id,
+                                "recipient_handle": target.recipient_handle,
+                            }
+                        )
+                    )
                 Path(descriptor["gate"]).touch()
             await received(2)
             await settled(3)

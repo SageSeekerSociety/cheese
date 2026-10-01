@@ -76,7 +76,16 @@ class SocketChannel:
         )
         if method in ("send", "steer"):
             status = await self.call(handle, "ping", {})
-            self.input_states.append((method, status["working"]))
+            self.input_states.append(
+                {
+                    "method": method,
+                    "input_id": params.get("input_id"),
+                    "work_id": params.get("work_id"),
+                    "working": status["working"],
+                    "native_work_id": status.get("work_id"),
+                    "session_id": status["session_id"],
+                }
+            )
             assert (method == "steer") == status["working"], status
         self.calls.append(method)
         reader, writer = await asyncio.open_unix_connection(
@@ -214,6 +223,7 @@ async def run(descriptor):
                     "steer": channel.calls.count("steer"),
                     "turns": len(turns),
                     "http": http_result,
+                    "input_states": channel.input_states,
                 }
             ),
             flush=True,

@@ -64,22 +64,14 @@ def test_new_full_service_process_reuses_original_native_executor(
     handle = None
     old = None
     gate = tmp_path / "continue-native"
+    target_path = tmp_path / "correction-input.json"
+    model_trace = None
     if http and busy:
-        import time
+        from tests.native_http_model import continue_until_echo
 
-        def hold_completion(body):
-            # Claude backgrounds a Bash wait when a steer arrives. Hold the
-            # deterministic model response, not its stdin/receipt processing.
-            deadline = time.monotonic() + 60
-            while not gate.exists():
-                assert time.monotonic() < deadline, "HTTP correction gate timed out"
-                time.sleep(0.05)
-            return None
-
-        machine.server.state["actions"] = [
-            headless_contract.directive,
-            hold_completion,
-        ]
+        model_trace = continue_until_echo(
+            machine, headless_contract, lambda: screen, target_path
+        )
 
     class Channel:
         name = "native-socket-fixture"
@@ -216,6 +208,7 @@ def test_new_full_service_process_reuses_original_native_executor(
                 "work": first_work,
                 "native_pid": status["pid"],
                 "gate": str(gate),
+                "correction_target": str(target_path),
                 "blocks": [str(x) for x in ids],
                 "question": question["id"] if question else None,
                 "default_seat": default_seat,
@@ -256,6 +249,8 @@ def test_new_full_service_process_reuses_original_native_executor(
         client.portal.call(replace_backend)
     finally:
         gate.touch()
+        if model_trace is not None and model_trace.exists():
+            print("HTTP_MODEL_BOUNDARIES " + model_trace.read_text(), flush=True)
         if old is not None:
             client.portal.call(before.runtime.stop_listening)
         if screen is not None:
