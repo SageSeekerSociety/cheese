@@ -10,7 +10,7 @@ This stage adds a transactional journal. It does not establish AI request/propos
 
 ## Stored contract
 
-The production writer paths are `usePanelDoc`, `ProjectDocsView → DocEditor`, the agent's specialized `get_document`/`set_document` tools, ordinary HTTP PUT, authenticated restore and project/room brief seeds. They all enter `DocumentWriter` before root content changes. The generic `platform_request` tool also reaches the same HTTP PUT route: it can supply a chosen `expected_version` without the specialized tool's read cache, but cannot bypass backend CAS, raw history or refresh storage. Client-side source-version fencing remains the caller's responsibility.
+The production writer paths are `usePanelDoc`, `ProjectDocsView → DocEditor`, the agent's specialized `cheese_doc_get`/`cheese_doc_set` tools, ordinary HTTP PUT, authenticated restore and project/room brief seeds. They all enter `DocumentWriter` before root content changes. The generic `platform_request` tool also reaches the same HTTP PUT route: it can supply a chosen `expected_version` without the specialized tool's read cache, but cannot bypass backend CAS, raw history or refresh storage. Client-side source-version fencing remains the caller's responsibility.
 
 `living_doc_locks` serializes ordinary writes and operations per canonical room, including absent-document creation. The existing conditional SQL update remains the CAS check. Every new canonical write stores raw content, SHA256 of UTF-8 bytes, version, previous/base versions, actor, optional operation_id and persisted contribution event id in the same transaction as root/node changes.
 
