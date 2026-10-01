@@ -14,8 +14,8 @@ import uuid
 from sqlalchemy import select
 
 from app.api.deps import get_chat_service, get_work_runner
-from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
@@ -287,7 +287,9 @@ class _Deaf(StubChannel):
         return await super().call(handle, method, params)
 
 
-def _seat_teammate(client, project_data: dict, room: str, handle: str, name: str) -> None:
+def _seat_teammate(
+    client, project_data: dict, room: str, handle: str, name: str
+) -> None:
     async def seat() -> None:
         async with client.test_factory() as session:
             mate = await AgentInstanceService(session).create(
@@ -361,12 +363,16 @@ def test_an_unanswered_conversation_is_unknown_not_dead(client):
     # D 的终止由夹具按名声明（机器上确已删除）；B 只聋，什么也没声明。
     after.report_gone(topic, "third", before.sessions[(topic, mate_d)].session_id)
     replaced = _service(client, after)
-    assert client.portal.call(replaced.recover_sessions) == 1, "只有 keeper 答了 ping，B 聋"
+    assert client.portal.call(replaced.recover_sessions) == 1, (
+        "只有 keeper 答了 ping，B 聋"
+    )
     client.portal.call(runner.resume_orphans, replaced)
 
     b_sid = before.sessions[(topic, mate_b)].session_id
     d_sid = before.sessions[(topic, mate_d)].session_id
-    assert not replaced.row_is_dead(topic, "second", b_sid), "ping 失败=unknown，不是 dead"
+    assert not replaced.row_is_dead(topic, "second", b_sid), (
+        "ping 失败=unknown，不是 dead"
+    )
     assert replaced.row_is_dead(topic, "third", d_sid), "点名删除=精确 dead 正对照"
 
     still_open = {
@@ -393,7 +399,6 @@ def test_a_recovered_conversations_old_death_record_is_revoked(client):
         ),
         "the two ordinary turns never finished",
     )
-    keeper = _heard(before, room, "跑一下测试")
     mate_b = _heard(before, room, "编一下文档")
     topic = uuid.UUID(room)
     b_sid = before.sessions[(topic, mate_b)].session_id

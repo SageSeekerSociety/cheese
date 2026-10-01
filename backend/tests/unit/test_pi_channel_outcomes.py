@@ -6,7 +6,6 @@ missing or non-boolean alive, a missing or mismatched id — is unknown. The
 hub double substitutes I/O only; the pointers are real rows in a real
 database."""
 
-import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -121,8 +120,9 @@ async def test_an_offline_machine_and_another_channels_pointer_say_nothing(
     await _place(db_factory, topic, "kb", "state-b", "sid-b")
     # kb 的 pointer 属于另一个 channel：不在本 channel 的权威范围。
     async with db_factory() as session:
-        from app.domain.agent_session.models import AgentSession
         from sqlalchemy import update
+
+        from app.domain.agent_session.models import AgentSession
 
         await session.execute(
             update(AgentSession)
@@ -132,7 +132,11 @@ async def test_an_offline_machine_and_another_channels_pointer_say_nothing(
                     "device_id": DEVICE,
                     "resource_id": "r-kb",
                     "channel": "somebody-else",
-                    "runtime": {"harness": PI, "state": "state-b", "agent_handle": "kb"},
+                    "runtime": {
+                        "harness": PI,
+                        "state": "state-b",
+                        "agent_handle": "kb",
+                    },
                 }
             )
         )

@@ -972,6 +972,7 @@ class ChatService:
                 topic_id=topic_id,
                 content=content,
                 turn_id=turn_id,
+                author=author,
                 user_block_id=user_block_id,
                 is_resume=is_resume,
                 continuation_id=continuation_id,
@@ -1009,6 +1010,7 @@ class ChatService:
                 topic_id=topic_id,
                 content=content,
                 turn_id=turn_id,
+                author=author,
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
@@ -4378,6 +4380,7 @@ class ChatService:
         topic_id: uuid.UUID,
         content: str,
         turn_id: uuid.UUID,
+        author: str,
         user_block_id: uuid.UUID | None,
         is_resume: bool = False,
         continuation_id: uuid.UUID | None = None,
@@ -4505,6 +4508,27 @@ class ChatService:
         nonce = new_nonce()
         prompt_text = f"{prompt_text}\n{nonce}"
         async with self._sessions() as session:
+            # The durable interval opens HERE as well (FB-56): a turn driven
+            # straight into converse — no work runner, no `_execute` — has the
+            # same right to a corpse the sweep can find as a runner-driven
+            # one, and the ledger row below names this interval its parent,
+            # so both land in one commit. `exists_ok` keeps the runner's own
+            # opening authoritative: ON CONFLICT DO NOTHING, and the fields
+            # it computed (resendable with the resume reason) are never
+            # rewritten here.
+            from app.domain.agent.repositories import AgentTurnRepository
+
+            await AgentTurnRepository(session).open(
+                turn_id=turn_id,
+                topic_id=topic_id,
+                continuation_id=continuation_id or turn_id,
+                author=author,
+                content=content,
+                is_resume=is_resume,
+                resendable=bool(content.strip()) and not is_resume,
+                started_at=datetime.now(UTC),
+                exists_ok=True,
+            )
             await record_input(
                 session,
                 turn_id=turn_id,
@@ -4723,6 +4747,26 @@ class ChatService:
                 from app.domain.project.environment_recovery import report_failure
 
                 await report_failure(self, project_id, topic_id, status)
+            # The write never reached the transport, so the Stop consumer's
+            # close_one rightly refuses this interval (undelivered). Its own
+            # coroutine closes it HERE, by id, exactly this one — the same
+            # end the runner's `_execute` gives a runner-driven turn
+            # (FB-56): a pre-handoff failure retires its own interval and
+            # nobody else's.
+            from app.domain.agent.repositories import AgentTurnRepository
+
+            try:
+                async with self._sessions() as session:
+                    await AgentTurnRepository(session).close(
+                        [turn_id], datetime.now(UTC)
+                    )
+                    await session.commit()
+            except Exception:  # noqa: BLE001 — the turn already failed
+                logger.exception(
+                    "could not close the failed turn's interval (topic=%s, turn=%s)",
+                    topic_id,
+                    turn_id,
+                )
             return
         # Internal frame: `send` returned, so the transport accepted
         # the write — which IS delivery (#563, per #487's contract that a
@@ -4735,7 +4779,23 @@ class ChatService:
         # reaches the broker.
         from app.domain.project.environment_recovery import close_recovery
 
+        # Delivery is recorded AT the source (FB-56): the transport accepted
+        # the write, so the interval and its input are stamped delivered in
+        # the same commit — a converse driven without the work runner leaves
+        # the same fact a runner-driven one does, and the Stop that comes
+        # later has a delivered row to close. Monotone, so the runner's own
+        # stamp on the frame below is a no-op second write.
+        from app.domain.agent.turn_inputs import mark_delivered_for_turn
+
         async with self._sessions() as session:
+            from app.domain.agent.repositories import AgentTurnRepository
+
+            await AgentTurnRepository(session).mark_delivered(
+                turn_id, datetime.now(UTC)
+            )
+            await mark_delivered_for_turn(
+                session, turn_id=turn_id, at=datetime.now(UTC)
+            )
             await close_recovery(session, topic_id)
             await session.commit()
         yield {"type": "prompt_delivered"}

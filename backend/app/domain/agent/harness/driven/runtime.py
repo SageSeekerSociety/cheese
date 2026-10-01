@@ -947,7 +947,9 @@ class DrivenRuntime[H: Handle]:
                     ):
                         held.pop(seat, None)
             self._wake(seat)
-        pending = [poll for _, _, poll in targets if poll is not None and not poll.done()]
+        pending = [
+            poll for _, _, poll in targets if poll is not None and not poll.done()
+        ]
         if pending:
             _, stuck = await asyncio.wait(pending, timeout=5)
             for task in stuck:

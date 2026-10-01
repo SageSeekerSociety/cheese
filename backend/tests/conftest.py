@@ -436,12 +436,16 @@ class StubChannel:
             raise DeviceCallError(f"no session for {handle.session.topic_id}")
         return await runner.dispatch(method, params)
 
-    def report_gone(self, topic_id: uuid.UUID, agent_handle: str, session_id: str) -> None:
+    def report_gone(
+        self, topic_id: uuid.UUID, agent_handle: str, session_id: str
+    ) -> None:
         """Declare one conversation terminated — the fixture's own exact
         death evidence, consumed like a real channel's bound terminal answer."""
         self.gone.add((topic_id, agent_handle, session_id))
 
-    def report_back(self, topic_id: uuid.UUID, agent_handle: str, session_id: str) -> None:
+    def report_back(
+        self, topic_id: uuid.UUID, agent_handle: str, session_id: str
+    ) -> None:
         """Retract a declaration: the conversation is here again."""
         self.gone.discard((topic_id, agent_handle, session_id))
 

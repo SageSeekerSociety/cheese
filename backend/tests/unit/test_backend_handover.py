@@ -286,7 +286,9 @@ async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_o
         handle_a = runtime.live[seat_a]
 
         # 第二个座位（无干扰对照）：同一 runtime 上的另一个房间。
-        session_b = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE)
+        session_b = SessionRef(
+            uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE
+        )
         seat_b = (session_b.topic_id, "cheese")
         await runtime.send(
             session_b, "write the docs", Opening(system_prompt=""),
