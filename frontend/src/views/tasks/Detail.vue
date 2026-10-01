@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 题目详情：上面一块是题目名和这一页的主操作，下面是页签。页签内容是子路由
-// （说明 / 启星研导 / 我的提交 / 领取者 / 数据），地址各自不变，点了在原地换内容。
+// （说明 / 我的提交 / 领取者 / 数据），地址各自不变，点了在原地换内容。
 // 内容类页签右边带一栏：我的进度（领了才有）和题目信息；领取者与数据是表格和图表，不带。
 //
 // 领取这条路（实名确认、团队选择、退出）走的是 `useTaskParticipation` 与 `TaskDialogs`：
@@ -10,6 +10,7 @@ import type { TaskSubmissionReview } from '@/types'
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
 import { taskState as taskStateOf } from '@/utils/tasks'
@@ -19,18 +20,14 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TasksApi } from '@/network/api/tasks'
 import { splitOrigin } from '@/views/spaces/model'
 import { LoadingErrorContainer, TaskDialogs } from '@/views/tasks/components'
-import {
-  useAIChat,
-  useTaskData,
-  useTaskManagement,
-  useTaskParticipation,
-  useTeamParticipation,
-} from '@/views/tasks/composables'
+import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
+import { useAssistant } from '@/views/tasks/composables/useAssistant'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -60,11 +57,27 @@ const {
   confirmLeaveSelectedTeam,
   loadJoinedTeams,
 } = useTeamParticipation(taskDataModule)
-// 「启星研导」页签里的对话入口从这里注入（`provide('aiChat')`），对话框在 `TaskDialogs` 里。
-const { selectedContext } = useAIChat()
 const { confirmDeleteTask } = useTaskManagement(taskDataModule)
 
 const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
+
+// ── 问芝士 ─────────────────────────────────────────────────────────────────────
+//
+// 个人芝士在这道题上的面板（#2285）。宽屏停在右边，把页面挤窄；窄屏从底下升起来。
+// 打开面板本身不调用模型，只读这道题上已有的对话。
+
+const { mdAndUp } = useDisplay()
+const assistant = useAssistant(() => taskId.value)
+const asking = ref(false)
+
+function openAssistant() {
+  asking.value = true
+  assistant.load().catch(() => undefined)
+}
+
+function askAssistant(text: string) {
+  assistant.ask(text, t('tasks.assistant.failed'))
+}
 
 // ── 题目本身 ────────────────────────────────────────────────────────────────────
 
@@ -182,10 +195,7 @@ const tabs = computed(() => {
     to: { name: string; params: Record<string, string | number> }
     count?: number
     also?: string[]
-  }[] = [
-    { key: 'brief', label: t('tasks.page.tabs.brief'), to: { name: routeNames.detail, params: params.value } },
-    { key: 'advice', label: t('tasks.page.tabs.advice'), to: { name: routeNames.aiAdvice, params: params.value } },
-  ]
+  }[] = [{ key: 'brief', label: t('tasks.page.tabs.brief'), to: { name: routeNames.detail, params: params.value } }]
   if (joined.value) {
     list.push({
       key: 'mine',
@@ -303,6 +313,10 @@ onMounted(() => {
       </div>
 
       <div class="td__act">
+        <v-btn class="td__ask" variant="outlined" :active="asking" data-testid="task-ask" @click="openAssistant">
+          <span class="td__ask-mark" aria-hidden="true">{{ t('tasks.assistant.mark') }}</span>
+          {{ t('tasks.assistant.ask') }}
+        </v-btn>
         <v-btn
           v-if="submitAction"
           color="primary"
@@ -351,7 +365,7 @@ onMounted(() => {
       </router-link>
     </nav>
 
-    <div class="td__body" :class="{ 'td__body--split': showSide }">
+    <div class="td__body" :class="{ 'td__body--split': showSide && !(asking && mdAndUp) }">
       <div class="td__main">
         <router-view v-slot="{ Component }">
           <component
@@ -365,7 +379,7 @@ onMounted(() => {
         </router-view>
       </div>
       <TaskSide
-        v-if="showSide"
+        v-if="showSide && !(asking && mdAndUp)"
         class="td__side"
         :task="taskData"
         :identity="myIdentity"
@@ -374,6 +388,49 @@ onMounted(() => {
       />
     </div>
   </div>
+
+  <!-- 只在打开时才挂：停靠的抽屉要向页面外框登记自己，关着的时候不占那个位置。 -->
+  <v-navigation-drawer
+    v-if="mdAndUp && asking"
+    :model-value="asking"
+    location="right"
+    width="380"
+    class="td-ask"
+    @update:model-value="(open: boolean) => (asking = open)"
+  >
+    <AssistantPanel
+      :conversations="assistant.conversations.value"
+      :current-id="assistant.current.value"
+      :title="assistant.title.value"
+      :messages="assistant.messages.value"
+      :streaming="assistant.streaming.value"
+      :tool="assistant.tool.value"
+      :notice="assistant.notice.value"
+      :busy="assistant.busy.value"
+      @send="askAssistant"
+      @new="assistant.startNew"
+      @select="assistant.select"
+      @close="asking = false"
+    />
+  </v-navigation-drawer>
+  <v-bottom-sheet v-else-if="!mdAndUp" v-model="asking" class="td-ask-sheet">
+    <div class="td-ask-sheet__body">
+      <AssistantPanel
+        :conversations="assistant.conversations.value"
+        :current-id="assistant.current.value"
+        :title="assistant.title.value"
+        :messages="assistant.messages.value"
+        :streaming="assistant.streaming.value"
+        :tool="assistant.tool.value"
+        :notice="assistant.notice.value"
+        :busy="assistant.busy.value"
+        @send="askAssistant"
+        @new="assistant.startNew"
+        @select="assistant.select"
+        @close="asking = false"
+      />
+    </div>
+  </v-bottom-sheet>
 
   <v-dialog :model-value="reviewing !== null" max-width="860" scrollable @update:model-value="closeReview">
     <TaskSubmissionHistory
@@ -388,14 +445,13 @@ onMounted(() => {
     />
   </v-dialog>
 
-  <!-- 领取/退队/实名/对话那几张对话框：老机器，事件总线上接了它。 -->
+  <!-- 领取/退队/实名那几张对话框：老机器，事件总线上接了它。 -->
   <TaskDialogs
     :task-data="taskData"
     :available-teams="availableTeams"
     :loading-teams="loadingTeams"
     :joined-teams="joinedTeams"
     :selected-leave-team-id="selectedLeaveTeamId"
-    :selected-context="selectedContext"
     :participation-info="participationInfo"
   />
 </template>
@@ -509,8 +565,35 @@ onMounted(() => {
 }
 
 .td__act {
+  display: flex;
   flex: none;
+  gap: 8px;
   padding-top: 2px;
+}
+
+.td__ask-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--inverse-ink);
+  background: linear-gradient(135deg, var(--logo-primary), var(--logo-secondary));
+  border-radius: var(--radius-sm);
+}
+
+.td-ask :deep(.v-navigation-drawer__content) {
+  overflow: hidden;
+}
+
+.td-ask-sheet__body {
+  height: 85dvh;
+  overflow: hidden;
+  background: var(--surface);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
 }
 
 @media (max-width: 600px) {
@@ -519,9 +602,12 @@ onMounted(() => {
     gap: 12px;
   }
 
-  .td__act,
-  .td__act .v-btn {
+  .td__act {
     width: 100%;
+  }
+
+  .td__act .v-btn {
+    flex: 1;
   }
 }
 

@@ -9,6 +9,7 @@ import { nextTick, ref } from 'vue'
 import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
 import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
+import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import { t } from '@/i18n'
 
@@ -168,7 +169,8 @@ defineExpose({ open, locate })
         </div>
       </div>
       <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-        <span class="doc-comments__avatar" :class="{ 'doc-comments__avatar--agent': isAgentHandle(c.author ?? '') }">
+        <CheeseAvatar v-if="isAgentHandle(c.author ?? '')" :size="24" :name="c.author ?? ''" :handle="c.author" />
+        <span v-else class="doc-comments__avatar">
           {{ (c.author || '?').slice(0, 1).toUpperCase() }}
         </span>
         <div class="doc-comments__main">
@@ -354,10 +356,6 @@ defineExpose({ open, locate })
   color: #fff;
   /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
   background: #8a94a3;
-}
-/* AI 队友写的评论：圆角方块（人是圆的，形状照 GitHub 的规则）。 */
-.doc-comments__avatar--agent {
-  border-radius: var(--radius-sm);
 }
 .doc-comments__main {
   flex: 1 1 auto;

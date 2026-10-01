@@ -63,6 +63,12 @@ const candidates = computed(() =>
 )
 
 const movingOut = computed(() => picked.value?.outside === true)
+// 项目在所有者自己名下（所属的是只有他一个人的团队，地址就是他的用户名）：没有团队
+// 名册可挑，只剩直接找人这一条路。
+const ownProject = computed(() => {
+  const project = store.projects.find((p) => p.id === props.projectId)
+  return !!project?.team_handle && project.team_handle === project.owner_handle
+})
 
 // ---- 直接找一个人（用户名或邮箱，精确匹配）--------------------------------
 const query = ref('')
@@ -210,24 +216,28 @@ async function doTransfer() {
   >
     <div class="t-body c-muted">
       {{ t('work.projectTransfer.intro') }}
-      <div v-if="candidates.length === 0" class="t-meta mt-3">{{ t('work.projectTransfer.noCandidates') }}</div>
-      <v-list v-else density="compact" nav class="mt-2 transfer-list">
-        <v-list-item
-          v-for="m in candidates"
-          :key="m.user_handle"
-          :active="picked?.handle === m.user_handle"
-          rounded="lg"
-          @click="pickRow(m)"
-        >
-          <template #prepend>
-            <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
-          </template>
-          <v-list-item-title class="t-body">{{ m.name || m.user_handle }}</v-list-item-title>
-          <v-list-item-subtitle class="t-meta">@{{ m.user_handle }}</v-list-item-subtitle>
-        </v-list-item>
-      </v-list>
+      <template v-if="!ownProject">
+        <div v-if="candidates.length === 0" class="t-meta mt-3">{{ t('work.projectTransfer.noCandidates') }}</div>
+        <v-list v-else density="compact" nav class="mt-2 transfer-list">
+          <v-list-item
+            v-for="m in candidates"
+            :key="m.user_handle"
+            :active="picked?.handle === m.user_handle"
+            rounded="lg"
+            @click="pickRow(m)"
+          >
+            <template #prepend>
+              <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
+            </template>
+            <v-list-item-title class="t-body">{{ m.name || m.user_handle }}</v-list-item-title>
+            <v-list-item-subtitle class="t-meta">@{{ m.user_handle }}</v-list-item-subtitle>
+          </v-list-item>
+        </v-list>
+      </template>
 
-      <div class="t-meta mt-4">{{ t('work.projectTransfer.lookupIntro') }}</div>
+      <div class="t-meta mt-4">
+        {{ ownProject ? t('work.projectTransfer.lookupOwn') : t('work.projectTransfer.lookupTeam') }}
+      </div>
       <v-text-field
         v-model="query"
         autocomplete="off"

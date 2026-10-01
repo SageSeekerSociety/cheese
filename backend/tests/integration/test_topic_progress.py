@@ -14,6 +14,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -65,7 +66,7 @@ def _chat(client, topic_id: str) -> list[dict]:
     """Run one turn, returning every frame it produced."""
     frames: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 hi"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         while True:
             frame = ws.receive_json()
             frames.append(frame)

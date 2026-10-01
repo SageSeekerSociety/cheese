@@ -25,6 +25,7 @@ from tests.conftest import stub_compute, wait_work_idle
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -47,7 +48,7 @@ def _room(client) -> tuple[str, str]:
 def _say(client, room: str, author: str, content: str) -> str:
     """Post a plain message as ``author`` the way the browser does; its id."""
     with client.websocket_connect(chat_ws_url(room, author)) as ws:
-        ws.send_json({"type": "message", "content": content})
+        post_message(client, room, author, {"content": content})
         block_id = ""
         while True:
             frame = ws.receive_json()

@@ -29,8 +29,9 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import MentionMenu from './MentionMenu.vue'
 import OutsideMentionNotice from './OutsideMentionNotice.vue'
+import ReminderDialog from './ReminderDialog.vue'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
@@ -283,6 +284,19 @@ function sendDraft(opts?: { summon?: boolean }) {
   outsidePrompt.noteSent(content)
 }
 
+// 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
+const reminderOpen = ref(false)
+const reminderSetFor = ref<string | null>(null)
+function onReminderSet(at: Date) {
+  const when = new Intl.DateTimeFormat(i18n.global.locale.value, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(at)
+  reminderSetFor.value = t('work.room.reminder.set', { when })
+}
+
 // 发送键亮不亮：有字，或者有东西跟着走。
 const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0)
 
@@ -365,13 +379,19 @@ defineExpose({
         :summon-on="summonOn"
         :summon-ready="summonReady"
         :agent-name="agentName"
+        :can-remind="!!topic"
         @files="emit('files', $event)"
         @toggle-summon="toggleSummon"
+        @remind="reminderOpen = true"
         @send="sendDraft()"
       >
         <template #chips><slot name="composer-chips" /></template>
       </ComposerActions>
     </div>
+    <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
+    <v-snackbar :model-value="reminderSetFor !== null" :timeout="4000" @update:model-value="reminderSetFor = null">
+      {{ reminderSetFor }}
+    </v-snackbar>
   </div>
 </template>
 

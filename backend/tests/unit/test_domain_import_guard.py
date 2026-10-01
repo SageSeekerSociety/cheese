@@ -192,7 +192,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 98 条是守卫扩到这棵树那一刻就在的存量，和上面的领域内债一样入账：还法
         # 是路由改调对方的 service，然后把这里对应的行删掉。
         ("app.api.routes.agent_credential", "app.domain.project.repositories"),
-        ("app.api.routes.ai", "app.domain.llm.repositories"),
         ("app.api.routes.answers", "app.domain.answers.repositories"),
         ("app.api.routes.answers", "app.domain.discussion.repositories"),
         ("app.api.routes.answers", "app.domain.questions.repositories"),
@@ -249,7 +248,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.spaces", "app.domain.task.repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
-        ("app.api.routes.tasks", "app.domain.llm.repositories"),
         ("app.api.routes.tasks", "app.domain.space.repositories"),
         ("app.api.routes.tasks", "app.domain.tag.repositories"),
         ("app.api.routes.tasks", "app.domain.task.repositories"),

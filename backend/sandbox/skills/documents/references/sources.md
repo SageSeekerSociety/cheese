@@ -9,7 +9,8 @@
 ```bash
 SKILL=skills/documents
 [ -d "$SKILL" ] || SKILL="$CLAUDE_CONFIG_DIR/skills/documents"
-uv run --with pdfplumber --with python-docx --with python-pptx --with openpyxl \
+uv run --with pdfplumber --with pymupdf --with python-docx --with python-pptx \
+    --with openpyxl \
     python3 "$SKILL/scripts/read.py" 材料一.pdf 方案.docx 汇报.pptx 预算.xlsx --media 图片
 ```
 
@@ -17,14 +18,19 @@ uv run --with pdfplumber --with python-docx --with python-pptx --with openpyxl \
 和所在章节；演示文稿标「幻灯片 N」，图表把类别和数值列出来；表格按 `工作表!单元格` 列，
 **公式和算出来的值分开写**（`B3 = 2.625 ← 公式 =B2/B1`）。
 
-每份文件最后一节是**「没有读到的部分」**：扫描页、图片里的内容、SmartArt、批注、没有计算
-结果的公式、因为太长被截掉的后半部分。这一节决定了你能说什么：
+**扫描页（整页是图片、没有文字层）会自动渲染成 PNG**，放在 `<文件名>-pages/page-N.png`，
+输出里会写明路径。用 Read 打开这张图读，看到什么说什么；引用时标
+「第 N 页（扫描件，视觉识别）」。认不出的地方就明说认不出，不要按上下文猜——视觉识别
+是概率性的，模糊、歪斜、手写的扫描件会认错。整本扫描件要批量出文字时加 `--ocr`
+（走机器上的 tesseract，没有它会如实说），但 OCR 文字只供对照，**以渲染图为准**。
+
+每份文件最后一节是**「没有读到的部分」**：图片里的内容、SmartArt、批注、没有计算
+结果的公式、因为太长被截掉的后半部分、以及渲染不了或没渲染的扫描页。这一节决定了你能说什么：
 
 - 那里列出的内容，**不能写成「已读」或「文件里说」**。要么补读（`--pages` 读后面的页；
   `--media` 导出的图片用 Read 打开看；公式先 `cheese recalc`），要么在答复里明确说「这部分
   没读到」。
-- 扫描件抽不出文字就是抽不出，不要按上下文猜内容。这一版平台没有 OCR；图片你可以打开看，
-  看到什么说什么，并说明是看图得来的。
+- 扫描页即使渲染出来了，读图读不出的部分照样算没读到。
 - 脚本报「打不开」「找不到」的文件，就是没读——告诉用户是哪一份、为什么。
 
 `.doc/.ppt/.xls` 先 `cheese convert` 升级再读。要改文件时，定位原文仍然用 `office.py text`

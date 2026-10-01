@@ -213,7 +213,6 @@
     "tabs": {
       "label": "题目页签",
       "brief": "说明",
-      "advice": "启星研导",
       "mine": "我的提交",
       "roster": "领取者",
       "data": "数据"
@@ -352,18 +351,6 @@
     "unknownUser": "未知用户",
     "unknownTeam": "未知团队",
     "memberWithId": "{name}（{id}）"
-  },
-  "advice": {
-    "chat": "与 AI 助手对话",
-    "section": {
-      "knowledge": "知识领域 #{n}",
-      "learningPath": "学习路径 #{n}",
-      "methodology": "方法论步骤 #{n}",
-      "teamRole": "团队角色 #{n}"
-    },
-    "generateFailed": "生成建议失败，请重试",
-    "loadFailed": "获取建议失败",
-    "chatTitle": "启星智询 Converse AI"
   },
   "edit": {
     "saveChanges": "保存更改",
@@ -580,18 +567,6 @@
     "reviewCanceled": "取消评审成功",
     "reviewCancelFailed": "取消评审失败"
   },
-  "advicePanel": {
-    "summary": "主题总结",
-    "knowledge": "知识领域",
-    "learningPaths": "学习路径",
-    "methodology": "实践方法论",
-    "teamTips": "团队协作建议",
-    "collaboration": "协作要点：",
-    "disclaimer": "本建议由 AI 生成，仅供参考。请结合实际情况二次验证内容准确性，如有疑问请咨询领域专家。",
-    "analyzing": "AI 正在分析题目，请稍候...",
-    "failed": "获取建议失败：{error}",
-    "estimatedTime": "预计耗时：{time}"
-  },
   "reviewStatus": {
     "pending": "等待评审中",
     "passed": "已通过 {score} 分",
@@ -635,5 +610,30 @@
     "teamSize": "队伍人数：最小 1 人，且上限不能小于下限（选「团队」时这两项才发出去）",
     "participantLimit": "参与人数上限：不填 = 不限；填了就得是 ≥ 1 的整数（删空会被当成填错）",
     "videoUrl": "讲解视频链接：要么不填，要么是一个 https 开头的地址"
+  },
+  "assistant": {
+    "label": "问芝士",
+    "ask": "问芝士",
+    "mark": "芝",
+    "newConversation": "新对话",
+    "conversations": "这道题的对话",
+    "noQuestions": "还没有提问",
+    "listed": "{day} · {n} 个问题",
+    "close": "关闭",
+    "reads": "芝士读过这道题的说明、要求和题目信息，不读附件。",
+    "greeting": "关于这道题有什么想问的，都可以问我。",
+    "placeholder": "问一个关于这道题的问题…",
+    "send": "发送",
+    "hint": "回答由 AI 根据题目生成，可能有误，以题目原文和出题人的说明为准。",
+    "thinking": "正在想…",
+    "readingDocs": "正在查文档…",
+    "readingTasks": "正在看你参与的题…",
+    "today": "今天",
+    "failed": "芝士暂时答不上来，稍后再试。",
+    "starters": {
+      "basics": "做这道题要先会什么？",
+      "start": "从哪里入手比较好？",
+      "hard": "这道题难在哪里？"
+    }
   }
 }

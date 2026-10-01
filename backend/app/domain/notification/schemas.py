@@ -22,7 +22,6 @@ PROJECT_NOTIFICATION_KINDS = (
     NotificationType.CHANGE_ALERT,
     NotificationType.DECISION_REQUEST,
     NotificationType.ACCEPT_REQUEST,
-    NotificationType.HEARTBEAT,
     NotificationType.MENTION,
 )
 

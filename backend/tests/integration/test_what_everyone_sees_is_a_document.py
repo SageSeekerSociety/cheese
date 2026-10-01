@@ -27,6 +27,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     chat_ws_url,
+    post_message,
     post_project,
     registered,
     session_auth_headers,
@@ -63,7 +64,7 @@ def _overview_room(client, project_id: str) -> str:
 def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> None:
     """在这一轮里说一句话，等它跑完。提示词落在 `stub_hooks` 上。"""
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": text})
+        post_message(client, topic_id, "user-1", {"content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

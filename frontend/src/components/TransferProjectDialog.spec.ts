@@ -33,8 +33,10 @@ vi.mock('@/api', async () => {
 
 const refreshMembers = vi.fn()
 const refreshProjects = vi.fn()
+// 项目行：p1 默认挂在共享团队 zhishi 下；自己名下的项目，团队地址就是所有者的用户名。
+const projects: { id: string; team_handle: string; owner_handle: string }[] = []
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshMembers, refreshProjects }),
+  useWorkspaceStore: () => ({ refreshMembers, refreshProjects, projects }),
 }))
 
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
@@ -75,6 +77,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
+  projects.splice(0, projects.length, { id: 'p1', team_handle: 'zhishi', owner_handle: 'alice' })
   setProjectOwner.mockReset().mockResolvedValue({})
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)
@@ -127,6 +130,19 @@ describe('TransferProjectDialog', () => {
     })
     await mount()
     expect(await screen.findByText('暂无可以接手的成员')).toBeTruthy()
+  })
+
+  // 自己名下的项目没有团队名册可挑：不说「团队里没人」，直接让人输入接手人。
+  it('自己名下的项目直接找接手人，不提团队', async () => {
+    projects.splice(0, projects.length, { id: 'p1', team_handle: 'alice', owner_handle: 'alice' })
+    listProjectMembers.mockResolvedValue({
+      data: [{ user_handle: 'alice', name: '爱丽丝', source: 'owner', agent: false }],
+      total: 1,
+    })
+    await mount()
+    expect(await screen.findByText('输入接手人的用户名或邮箱：')).toBeTruthy()
+    expect(screen.queryByText(/团队/)).toBeNull()
+    expect(screen.queryByText('暂无可以接手的成员')).toBeNull()
   })
 
   it('选好人确认之后交给他，并刷新项目行和名册', async () => {

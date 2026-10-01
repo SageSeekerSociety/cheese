@@ -30,8 +30,10 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), us
 
 const refreshMembers = vi.fn()
 const refreshProjects = vi.fn()
+// 名册上「我」这一行是怎么进来的：随团队进来（team），还是被邀请进来的外部成员（external）。
+const members: { user_handle: string; source: string }[] = []
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshMembers, refreshProjects }),
+  useWorkspaceStore: () => ({ refreshMembers, refreshProjects, members }),
 }))
 
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
@@ -67,6 +69,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  setLocale('zh-CN')
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+  members.splice(0, members.length, { user_handle: 'linxia', source: 'team' })
   leaveProject.mockReset().mockResolvedValue({ deleted: true })
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)
@@ -126,6 +131,15 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     mount()
     expect(screen.getByText(/退出的是这个项目，不是团队/)).toBeTruthy()
     expect(screen.queryByText(/退出团队/)).toBeNull()
+  })
+
+  // 被邀请进来的外部成员（包括别人名下项目里的人）本来就不在什么团队里：跟他说「你在
+  // 团队里的身份不变」是一句假话。
+  it('不是随团队进来的人，确认框不提团队', () => {
+    members.splice(0, members.length, { user_handle: 'linxia', source: 'external' })
+    mount()
+    expect(screen.getByText(/你将无法查看这个项目/)).toBeTruthy()
+    expect(screen.queryByText(/团队/)).toBeNull()
   })
 
   it('确认之后退出、刷新、回首页；刷新失败也照样走', async () => {

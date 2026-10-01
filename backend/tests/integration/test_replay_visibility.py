@@ -18,7 +18,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 
 class SilentScreen(StubChannel):
@@ -94,7 +94,7 @@ def _say(client, topic_id: str, text: str) -> None:
     这是 2026-09-27 CI 上两条随机红的成因之一（`-n auto` 并发下更常撞上）：先收到
     上一轮的 `done` 就返回，紧接着读到的 `after.last_prompt` 还是上一轮的样子。"""
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": f"{text} @芝士"})
+        post_message(client, topic_id, "user-1", {"content": f"{text} @芝士"})
         landed = False
         while True:
             frame = ws.receive_json()
@@ -211,7 +211,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         compute=stub_compute(before),
     )
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": f"{first} @芝士"})
+        post_message(client, topic_id, "user-1", {"content": f"{first} @芝士"})
         while True:
             frame = ws.receive_json()
             if frame["type"] == "event_block" and "sleep 600" in str(frame["block"]):

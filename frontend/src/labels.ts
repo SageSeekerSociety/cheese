@@ -4,7 +4,6 @@ export const NOTIF_KIND: Record<string, string> = {
   decision_request: '决策请求',
   change_alert: '变更提醒',
   accept_request: '审阅',
-  heartbeat: '巡检',
 }
 
 export const TOPIC_STATUS: Record<string, string> = {

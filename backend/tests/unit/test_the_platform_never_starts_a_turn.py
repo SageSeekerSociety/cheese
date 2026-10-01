@@ -12,7 +12,7 @@ import inspect
 import pathlib
 import re
 
-from app.api.routes import chat as chat_route
+from app.api.routes.topics_messages import ChatMessageIn
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 APP = pathlib.Path(__file__).resolve().parents[2] / "app"
@@ -108,33 +108,30 @@ def test_the_platform_has_no_kickoff_left():
     assert offenders == []
 
 
-def test_summon_is_not_an_http_or_ws_input():
+def test_summon_is_not_a_message_input():
     """浏览器算出来的那一位不存在了：点名由服务端从正文解析（I13）。
 
-    只查**发到线上的那个帧**：前端内部叫什么随它（组合框自己要知道按钮亮不亮），
-    进了 `WsClientChatMessage` 就是入参。
+    只查**发到线上的那个请求体**：前端内部叫什么随它（组合框自己要知道按钮亮不亮），
+    进了 `ChatMessageBody` 就是入参。
     """
-    ws = inspect.getsource(chat_route)
-    assert 'payload.get("summon"' not in ws
+    assert "summon" not in ChatMessageIn.model_fields
 
     types = (FRONTEND / "cx_types.ts").read_text()
-    start = types.index("export interface WsClientChatMessage {")
-    frame = types[start : types.index("}", start)]
-    assert "summon" not in frame, f"帧的契约里又有 summon：{frame}"
+    start = types.index("export interface ChatMessageBody {")
+    body = types[start : types.index("}", start)]
+    assert "summon" not in body, f"请求体的契约里又有 summon：{body}"
 
     # 查的是**发出去的那个对象有哪些键**，不是某一行怎么拼写的：`summon: true`、
-    # 换个变量名、对象展开，都得一样红。发出去的 payload 里没有这一位，是由
-    # ChatPanelComposer.test.ts 真发一条消息断的。
-    #
-    # 全仓扫而不是盯住某一个文件：这一段在前端搬过家（对话栏拆成组件时进了
-    # `room/composables/useOutbox.ts`），盯文件的写法那次直接抛 ValueError，而它
-    # 真正要防的东西一次都没被查过。顺带，第二处拼帧的地方原本整个在覆盖之外。
+    # 换个变量名、对象展开，都得一样红。全仓扫而不是盯住某一个文件：这一段在前端
+    # 搬过家，盯文件的写法那次直接抛 ValueError，而它真正要防的东西一次都没被查过。
     builds = [
         (path, text[start : text.index("}", start)])
         for path, text in _sources(FRONTEND, (".ts", ".vue"))
-        for start in [text.find(": WsClientChatMessage = {")]
+        for start in [text.find(": ChatMessageBody = {")]
         if start >= 0
     ]
-    assert builds, "前端没有任何一处拼出这个帧了——这条守卫已经查不到东西"
+    assert builds, "前端没有任何一处拼出这个请求体了——这条守卫已经查不到东西"
     for path, literal in builds:
-        assert "summon" not in literal, f"{path} 发送时又往帧上放了 summon：{literal}"
+        assert "summon" not in literal, (
+            f"{path} 发送时又往请求体上放了 summon：{literal}"
+        )

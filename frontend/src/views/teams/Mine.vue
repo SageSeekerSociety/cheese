@@ -39,23 +39,17 @@
 
             <!-- 小队列表 -->
             <v-list v-else class="my-teams-list pa-0">
-              <!-- The personal team (个人 = 单人真团队) arrives first from the
-                   backend and behaves exactly like any other team — click in to
-                   manage its projects and work computers. Only the badge marks it apart. -->
               <v-list-item
                 v-for="team in myTeams"
                 :key="team.id"
                 :title="team.name"
-                :subtitle="team.personal ? t('teams.mine.personalSubtitle') : team.intro"
+                :subtitle="team.intro"
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                 rounded="md"
                 class="my-team-item mb-2"
               >
                 <template #append>
-                  <v-chip v-if="team.personal" size="x-small" variant="tonal" color="primary" class="mr-2">
-                    {{ t('teams.mine.personal') }}
-                  </v-chip>
                   <v-icon icon="mdi-chevron-right" color="on-surface-variant"></v-icon>
                 </template>
               </v-list-item>
@@ -89,7 +83,8 @@ const fetchMyTeams = async () => {
     const {
       data: { teams },
     } = await TeamsApi.getMyTeams()
-    myTeams.value = teams
+    // 自己名下的项目不是一个团队，在侧栏「团队」之上单独一行，不列在这里。
+    myTeams.value = teams.filter((team) => !team.personal)
   } catch (error) {
     console.error('Failed to load my teams:', error)
     loadMyTeamsError.value = true

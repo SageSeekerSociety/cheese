@@ -121,7 +121,6 @@
     "src/views/spaces/detail/analytics/Tasks.vue",
     "src/views/tasks/Detail.vue",
     "src/views/tasks/Edit.vue",
-    "src/views/tasks/detail/AIAdvice.vue",
     "src/views/tasks/detail/Submissions.vue",
     "src/views/tasks/detail/Submit.vue",
     "src/views/teams/Detail.vue",

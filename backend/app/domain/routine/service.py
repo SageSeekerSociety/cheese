@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
     EVENT_ROUTINE_RESULT,
     EVENT_ROUTINE_RUN,
+    EVENT_ROUTINE_STOPPED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
@@ -340,6 +341,118 @@ class RoutineService:
         await self._session.delete(row)
         await self._session.flush()
 
+    async def announce_archived_rooms(self) -> int:
+        """归档是别处做的动作：每次对账扫一遍，哪个房间的话还没说就补上。
+
+        认房间的状态，不认是谁归档的 —— 手工归档、整个项目一起归档、脚本归档
+        走的是同一个答案，话题那一域也就不用认识周期任务。
+
+        规则自己那一行**不动**（结论：取消归档后从下一个时刻继续，
+        ``_fire_schedules`` 一直是按房间状态挑的）。要说的是每个归档了、又还有
+        在跑的规则的房间：房间里落一行「N 条规则已随归档停止」，加上给每条规则
+        主人的一条通知。
+
+        Idempotent per archive episode：房间自己的 ``archived_at`` 印在那行上，
+        已经带着本轮印子的房间跳过 —— 所以取消归档后再归档会再说一次，而手工
+        归档过的房间被项目归档又捎带一遍时不会再被说一次。
+
+        Returns how many rules were announced as stopped.
+        """
+        rooms = list(
+            await self._session.scalars(
+                select(Topic)
+                .where(Topic.status == TopicStatus.archived)
+                .where(
+                    Topic.id.in_(
+                        select(Routine.topic_id).where(
+                            Routine.state == RoutineState.active.value
+                        )
+                    )
+                )
+                # 和这一串里别的几步一样：两个后端进程同时扫，锁住的那间这次跳过，
+                # 下一轮（30 秒后）再补 —— 不然同一段归档会被说两遍。
+                .with_for_update(skip_locked=True)
+            )
+        )
+        from app.domain.notification.services import ProjectNotificationService
+
+        stopped = 0
+        for room in rooms:
+            rules = list(
+                await self._session.scalars(
+                    select(Routine).where(
+                        Routine.topic_id == room.id,
+                        Routine.state == RoutineState.active.value,
+                    )
+                )
+            )
+            if not rules:
+                continue
+            stamp = (room.archived_at or now()).isoformat()
+            already = await self._session.scalar(
+                select(Block.id)
+                .where(
+                    Block.topic_id == room.id,
+                    Block.meta["event_type"].as_string() == EVENT_ROUTINE_STOPPED,
+                    Block.meta["archived_at"].as_string() == stamp,
+                )
+                .limit(1)
+            )
+            if already is not None:
+                continue
+            self._session.add(
+                Block(
+                    id=uuid.uuid4(),
+                    project_id=room.project_id,
+                    topic_id=room.id,
+                    author="system",
+                    author_type=AuthorType.platform,
+                    kind=BlockKind.event,
+                    content=f"{len(rules)} 条规则已随归档停止",
+                    meta={
+                        **notice(
+                            EVENT_ROUTINE_STOPPED,
+                            severity=SEVERITY_INFO,
+                            who=WHO_PLATFORM,
+                            detail="\n".join(f"「{r.title}」" for r in rules),
+                            detail_label="规则",
+                        ),
+                        "routine_ids": [str(r.id) for r in rules],
+                        "archived_at": stamp,
+                    },
+                )
+            )
+            for rule in rules:
+                await ProjectNotificationService(self._session).create(
+                    project_id=rule.project_id,
+                    level=NotificationLevel.light,
+                    kind=NotificationType.CHANGE_ALERT,
+                    title=f"周期任务「{rule.title}」已随话题归档停止",
+                    body=(
+                        f"房间「{room.title}」归档了，这条规则随之停下。"
+                        "取消归档后它会从下一个时刻继续，不用重新设置。"
+                    ),
+                    target_handle=rule.owner_handle,
+                    topic_id=room.id,
+                    payload={"routine_id": str(rule.id)},
+                )
+            stopped += len(rules)
+        await self._session.flush()
+        return stopped
+
+    async def archived_room_ids(self, topic_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """这些房间里哪些归档了，一次查询问完。
+
+        规则的自己那一行不记「房间没了」（归档不写规则），所以列表上的
+        「已随话题归档停止」只能问房间 —— 一条一条问就是每行一次往返。
+        """
+        if not topic_ids:
+            return set()
+        stmt = select(Topic.id).where(
+            Topic.id.in_(topic_ids), Topic.status == TopicStatus.archived
+        )
+        return set((await self._session.scalars(stmt)).all())
+
     async def report(
         self,
         run: RoutineRun,
@@ -388,9 +501,8 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         f"结果保存到：{folder}（用 cheese show 放进房间，文件名带上日期）",
         "",
         "做完后必须交回结果，成功失败都要交：",
-        f'platform_request(method="POST", path="/routine-runs/{run.id}/report", '
-        'body={"status": "succeeded" 或 "failed", "summary": "一两句结果或失败原因",'
-        ' "outputs": ["房间里的结果文件路径"]})',
+        f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
+        'summary="一两句结果或失败原因", outputs=["房间里的结果文件路径"])',
         "没有交回结果的一次执行会被记为失败。",
     ]
     return "\n".join(lines)
@@ -476,6 +588,10 @@ async def _fire(
                 "topicId": str(routine.topic_id),
                 "eventType": EVENT_ROUTINE_RUN,
                 "severity": SEVERITY_INFO,
+                # 这一轮跑的是主人交代的活，所以它读主人的 private 记忆（组装那一
+                # 轮的时候从这一笔投递上认出来）。写在这里而不是规则表上：读的那
+                # 一侧（agent）不认识周期任务这个域，而这一笔它本来就在读。
+                "routineOwner": routine.owner_handle,
             },
             occurred_at=stamp,
         ),
@@ -815,10 +931,18 @@ async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
         triggered = await _fire_events(session)
         await session.commit()
     async with sessions() as session:
+        # 归档是别处做的动作，所以这里每次都问一遍「哪个房间的话还没说」，而不是
+        # 让归档那几条路各自记得来敲这扇门（`announce_archived_rooms`）。
+        stopped = await RoutineService(session).announce_archived_rooms()
         await _settle_open_runs(session)
         await _announce_finished(session)
         await session.commit()
     dispatched = 0
     if scheduled or triggered:
         dispatched = await dispatch_pending(sessions, chat=chat, runner=runner)
-    return {"scheduled": scheduled, "triggered": triggered, "dispatched": dispatched}
+    return {
+        "scheduled": scheduled,
+        "triggered": triggered,
+        "stopped": stopped,
+        "dispatched": dispatched,
+    }

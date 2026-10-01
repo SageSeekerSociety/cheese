@@ -114,6 +114,9 @@
   "sidebar": {
     "resize": "拖动调整宽度"
   },
+  "backTo": {
+    "own": "你名下的项目"
+  },
   "desktopApp": {
     "about": "关于知是",
     "appVersion": "App 版本",
@@ -154,7 +157,6 @@
     "ask": "提问",
     "questionDetail": "问题详情",
     "spaceTasks": "题目",
-    "taskAdvice": "启星研导",
     "taskSubmissions": "我的提交",
     "taskSubmit": "提交",
     "taskParticipants": "领取者",

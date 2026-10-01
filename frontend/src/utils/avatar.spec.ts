@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { avatarColor, avatarHue, avatarInitial } from './avatar'
+import { agentTone, avatarColor, avatarHue, avatarInitial } from './avatar'
 
 /**
  * The avatar background is theme-invariant and always carries white `#fff`
@@ -122,6 +122,17 @@ describe('avatarHue', () => {
       expect(hue).toBeGreaterThanOrEqual(0)
       expect(hue).toBeLessThan(360)
     }
+  })
+})
+
+describe('agentTone', () => {
+  // 一位 AI 队友的底色跟它一辈子：映射一变，每个项目里的队友都会换一身颜色。
+  it('is unchanged for known handles', () => {
+    expect(agentTone('cheese')).toBe(0)
+    expect(agentTone('cheese-7c1e')).toBe(1)
+    expect(agentTone('cheese-1f88')).toBe(2)
+    expect(agentTone('cheese-6e24')).toBe(3)
+    expect(agentTone('cheese-4a60')).toBe(4)
   })
 })
 

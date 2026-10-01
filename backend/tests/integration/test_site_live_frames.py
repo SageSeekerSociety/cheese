@@ -16,7 +16,12 @@ from sqlalchemy import select
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.block.models import Block
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _alice() -> dict:
@@ -86,7 +91,7 @@ def test_a_step_that_failed_reaches_the_socket_as_that_step_restated(
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 转一下"})
+        post_message(client, room, "alice", {"content": "@芝士 转一下"})
         frames = _until(ws, _done)
 
     started = next(
@@ -119,7 +124,7 @@ def test_a_streak_of_retries_is_one_line_that_counts_them(client, stub_hooks):
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 查一下"})
+        post_message(client, room, "alice", {"content": "@芝士 查一下"})
         frames = _until(ws, _done)
     wait_work_idle()
 
@@ -173,7 +178,7 @@ def test_a_retry_that_got_no_response_says_so(client, stub_hooks):
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 查一下"})
+        post_message(client, room, "alice", {"content": "@芝士 查一下"})
         _until(ws, _done)
     wait_work_idle()
 
@@ -203,7 +208,7 @@ def test_a_compaction_says_so_while_it_runs_and_when_it_is_over(client, stub_hoo
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        post_message(client, room, "alice", {"content": "@芝士 接着做"})
         frames = _until(ws, _done)
     wait_work_idle()
 
@@ -246,7 +251,7 @@ def test_a_compaction_that_fails_says_why(client, stub_hooks):
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        post_message(client, room, "alice", {"content": "@芝士 接着做"})
         _until(ws, _done)
     wait_work_idle()
 
@@ -265,7 +270,7 @@ def test_a_turn_that_ends_mid_compaction_does_not_leave_it_running(client, stub_
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        post_message(client, room, "alice", {"content": "@芝士 接着做"})
         _until(ws, _done)
     wait_work_idle()
 
@@ -283,7 +288,7 @@ def test_a_status_record_about_something_else_says_nothing(client, stub_hooks):
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        post_message(client, room, "alice", {"content": "@芝士 接着做"})
         _until(ws, _done)
     wait_work_idle()
 
@@ -315,7 +320,7 @@ def test_a_turn_waiting_for_its_machine_says_so_and_says_when_it_is_back(
     room = _room(client)
     topic = uuid.UUID(room)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 编一下"})
+        post_message(client, room, "alice", {"content": "@芝士 编一下"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
@@ -359,7 +364,7 @@ def test_a_socket_that_joins_mid_turn_learns_when_the_turn_started(client, stub_
     room = _room(client)
     topic = uuid.UUID(room)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 等一下"})
+        post_message(client, room, "alice", {"content": "@芝士 等一下"})
         started = _until(ws, lambda f: f["type"] == "turn_started")[-1]
         with client.websocket_connect(chat_ws_url(room, "alice")) as late:
             active = _until(late, lambda f: f["type"] == "turn_active")[-1]
@@ -389,7 +394,7 @@ def test_what_a_step_printed_is_kept_on_it_capped_and_redacted(client, stub_hook
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 跑测试"})
+        post_message(client, room, "alice", {"content": "@芝士 跑测试"})
         frames = _until(ws, _done)
     wait_work_idle()
 

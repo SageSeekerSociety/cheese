@@ -1,6 +1,5 @@
 import account from './account.json'
 import admin from './admin.json'
-import aiChat from './aiChat.json'
 import apiError from './apiError.json'
 import compute from './compute.json'
 import editor from './editor.json'
@@ -31,7 +30,6 @@ import users from './users.json'
 import work from './work.json'
 
 export default {
-  aiChat,
   global,
   home,
   integrations,

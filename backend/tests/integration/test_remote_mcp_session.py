@@ -434,10 +434,10 @@ def test_the_machine_reports_only_the_servers_it_runs():
 
 
 def _turn(client, room: str, text: str) -> None:
-    from tests.integration.conftest import chat_ws_url
+    from tests.integration.conftest import chat_ws_url, post_message
 
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": text})
+        post_message(client, room, "alice", {"content": text})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

@@ -32,7 +32,6 @@ from app.api.response import ok
 from app.api.routes.admin_common import PlatformAdminDep
 from app.core.config import settings
 from app.core.db import get_db
-from app.domain.llm.llm_client import LLMClient
 from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan
 from app.domain.memory.reads import body_reads
@@ -89,7 +88,7 @@ async def dry_run_migration(
     db: DbSession,
 ):
     """读旧表、问模型、出一份报告。**这一步一个字都不写进新树。**"""
-    service = MemoryMigrationService(db, llm=LLMClient())
+    service = MemoryMigrationService(db)
     row = await service.dry_run(project_id, by=admin)
     await db.commit()
     return ok(_plan_out(row, with_report=True), "报告好了，等复核")

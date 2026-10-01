@@ -42,7 +42,7 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
     upgrade_block_id: str | None = None
     for author, content in DISCUSSION:
         frames = await api.send_chat(
-            topic["id"], content=content, author=author, summon=False
+            topic["id"], content=content, author=author
         )
         for f in frames:
             if f.get("type") == "user_block":

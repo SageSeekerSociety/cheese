@@ -4,6 +4,7 @@
   那份领取被拒绝之后可以。
 - 用题目建项目：个人题要本人领了，团队题要项目挂的那个团队领了。
 - 出题人的领取名单里能看到每人的截止时间和申请理由。
+- 团队题要用团队领：自己名下（只有自己的那个团队）不算团队，既不在可选之列，硬领也被拒。
 """
 
 from __future__ import annotations
@@ -145,6 +146,21 @@ def test_a_person_cannot_claim_a_task_again_through_another_team(
     assert [
         p["memberId"] for p in _participants(api_client, task_id, board["token"])
     ] == [first]
+
+
+def test_one_person_cannot_claim_a_team_task_on_their_own(
+    api_client: TestClient, user_client: UserCreator, board: dict
+):
+    _, token = _member(user_client, api_client, board)
+    resp = api_client.get("/teams/my-teams", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    [own] = [t["id"] for t in resp.json()["data"]["teams"] if t["personal"]]
+    real = _team(api_client, token)
+    task_id = _task(api_client, board, "TEAM")
+
+    assert set(_team_eligibility(api_client, task_id, token)) == {real}
+    assert _claim_as_team(api_client, task_id, own, token).status_code == 400
+    assert _participants(api_client, task_id, board["token"]) == []
 
 
 def test_a_rejected_claim_frees_its_members_to_claim_with_another_team(

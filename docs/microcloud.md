@@ -71,7 +71,9 @@ The pool worker runs separately from ordinary machine enrollment. It resumes
 interrupted creation and claims, retires unused machines after
 `MICROCLOUD_WARM_MAX_AGE_SECONDS`, and waits for provider deletion before replacing
 them. Claimed machines never return to the pool. After five failed cleanup attempts,
-the retained record prevents replacement from hiding an unresolved billed machine.
+the record is kept and never retried, since its machine may still be billed. It does
+not take a place in the pool, but once three such records exist the pool stops
+replacing machines and logs an error until they are resolved at the provider.
 
 This first version prepares the deployment's default offering with `aiMode: none`.
 It does not prepare every cloud specification. Configure a small pool only after the

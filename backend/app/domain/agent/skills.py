@@ -96,7 +96,7 @@ NATIVE_CHAT_GUIDANCE = (
     "编写或更新话题文档时加载 cheese-docs。"
     "能直接回答就发送答案，需要继续处理就先发送你理解的意思和下一步。"
     "排队或执行中追加的用户消息也按此处理。"
-    "巡检遵循 heartbeat 的通知规则，分身向主 agent 回报。\n\n"
+    "分身向主 agent 回报。\n\n"
     + load_skills(["chat"]).replace("doc-form", "cheese-docs")
 )
 

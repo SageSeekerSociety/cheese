@@ -11,7 +11,12 @@ import pytest
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def room(client):
@@ -108,13 +113,26 @@ def test_reply_preserves_reference_and_rejects_another_room(client):
     )
 
 
-def test_only_authenticated_in_scope_agents_can_publish(client, monkeypatch):
+def test_who_writes_decides_what_the_message_is(client, monkeypatch):
+    """One door: an agent seated in the room publishes; a person speaks; an
+    agent credential for another room, or no credential at all, writes nothing."""
     topic, headers = room(client)
     other, _ = room(client)
     monkeypatch.setattr(settings, "authz_enforce_topic_access", False)
-    assert publish(client, topic, {}).status_code == 403
-    assert publish(client, topic, session_auth_headers("alice")).status_code == 403
-    assert publish(client, other, headers).status_code == 403
+    assert publish(client, topic, {}).status_code == 401
+    assert publish(client, other, headers).status_code in (401, 403)
+
+    published = publish(client, topic, headers, "agent words").json()["data"]
+    spoken = publish(client, topic, session_auth_headers("alice"), "person words")
+    assert spoken.status_code == 200, spoken.text
+    said = spoken.json()["data"]
+    assert said["author"] == "alice"
+    assert published["author"] != "alice"
+    history = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+    assert [b["content"] for b in history if b["kind"] == "message"] == [
+        "agent words",
+        "person words",
+    ]
 
 
 @pytest.mark.parametrize("content", ["", "  \n  "])
@@ -127,7 +145,7 @@ def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks)
     topic, _ = room(client)
     stub_hooks.reply = "This terminal output must remain in activity."
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -154,7 +172,7 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
     topic, headers = private_room(client)
     stub_hooks.reply = "这段是终端里的最终答复。"
     with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 帮我记一下偏好"})
+        post_message(client, topic, "user-1", {"content": "@芝士 帮我记一下偏好"})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -203,7 +221,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         turn_id = None
         while True:
             frame = ws.receive_json()
@@ -301,7 +319,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
 
     monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
     with client.websocket_connect(chat_ws_url(topic, speaker)) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        post_message(client, topic, speaker, {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
             if (
@@ -397,7 +415,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     # endpoint's runner lookup attributes nothing.
     monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
+        post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
             if (

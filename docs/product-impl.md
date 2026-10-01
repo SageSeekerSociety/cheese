@@ -83,7 +83,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.1 对话与召唤 @芝士  ✅
 
 - **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；**正文里 @ 了它**它才回复——输入栏的「交给芝士」按钮和 ⌘/Ctrl+Enter 是把那个 @ 写进正文的两个入口，不是另一个开关。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人话题里芝士能分清谁说的，Batch I）。回复一条消息并 @ 它，被回复的那条原文跟着这次回复一起给它：那条往往已经被前一轮读过，不在待读里。
-- **实现**：WebSocket `GET /api/topics/{id}/chat`（`backend/app/api/routes/chat.py`）；一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
+- **实现**：发消息是 `POST /api/topics/{id}/messages`（`backend/app/api/routes/topics_messages.py`），人和 AI 队友走同一条路由，按发送者在这个房间里的席位决定它是人说的话还是队友的发言；房间里落下的东西经 WebSocket `GET /api/topics/{id}/chat`（`backend/app/api/routes/chat.py`）推给所有在看的人，这条 socket 不写任何东西。一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
   帧：`user_block` → `delta`*（流式 token）→ `tool`*（工具调用：原生 Bash/Write/Edit/Read + cheese Skill）→ `assistant_block` → `done`（或 `error`）。
   编排：`ChatService.converse`（`backend/app/domain/agent/chat.py`）：tx1 存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ tx2 存 🔧 事件块 + 芝士消息 + token 用量。每话题一把 `asyncio.Lock` 串行。
 
@@ -106,7 +106,6 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。
 - **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（`AgentRuntime.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
-- **巡检（本体心跳）**：已退役。`POST /api/projects/{id}/heartbeat` 2026-08-12 摘掉（`app/api/routes/activities.py` 留成一个空 router，原因写在原地；`tests/contract/test_parked_bypass_turns.py` 守着它别被挂回来），定时 tick 那一侧跟着 scheduler 包一起删掉（§3.8）。它回来的时候是一份 skill，不是一个钟。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写
 
@@ -205,8 +204,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ## 5. 实现现状总览
 
 - ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)、反馈（中心/详情/我的反馈/管理端 + 芝士提案卡 + 指纹去重与每日配额）。
-- ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = git worktree（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
-- 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取、总览风险板块、改文档对话事件、资源包发放。
+- ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = git worktree（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 走 git。activity/summary/私聊 全路径统一走沙箱+cheese。
+- 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、记忆自动提取、总览风险板块、改文档对话事件、资源包发放。
 - ⛔ **依赖外部基础设施**：会议 ASR。
 
 > 剩余项的精确清单见 spec-align 复审 backlog（`tmp_review/backlog2.md`，工作区临时文件）。开发/测试/UI 迭代流程见 `docs/workflows.md`。
@@ -219,7 +218,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 项目   POST /api/projects · GET /api/projects[/{id}] · GET /{id}/{overview,decisions,private-chat,contributions,summary,usage}
 话题   POST /api/topics · GET /api/topics?project_id= · GET /{id}[/blocks|transcript|children|doc|docs|usage]
        PUT /{id}/doc · POST /{id}/split · POST /{id}/tasks/{task}/{conclude,title} · POST /api/blocks/{id}/upgrade
-对话   WS  /api/topics/{id}/chat?token=<会话 token>（必带；连接即认人，消息里的 author 不作数）
+对话   POST /api/topics/{id}/messages（人和队友同一条；作者取自凭据，请求体里的 author 不作数）
+       WS  /api/topics/{id}/chat?token=<会话 token>（必带；只推送，不收消息）
 验收   POST /api/topics/{id}/accept-card · GET 同路径 · POST /api/accept-cards/{id}/{accept,reject,reassign,revoke}
 通知   GET /api/projects/{id}/{notifications,inbox} · POST /api/projects/{id}/notifications
        POST /api/notifications/{id}/{read,feedback,resolve}
@@ -227,7 +227,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · DELETE .../membership（自己退出） · GET .../{handle}/summary
 机构   POST/GET /api/spaces · GET /spaces/{id}/dashboard · POST/GET /api/spaces/{id}/templates
 任务   POST/GET /api/templates/{id}/tasks · POST/GET/DELETE /api/projects/{id}/tasks[/{task_id}]
-工作区 GET /api/projects/{id}/{files,file,git/log,git/diff} · POST /{id}/{activities,heartbeat,summary}
+工作区 GET /api/projects/{id}/{files,file,git/log,git/diff}
 个人   GET /api/users/{handle}/{profile,topics} · DELETE /api/users/me/understanding/{id} · GET/PUT /api/users/{handle}
 反馈   GET/POST /api/feedback · GET /api/feedback/{meta,counts,mine,{id},{id}/comments} · POST /api/feedback/{read,{id}/comments,{id}/supports}
        管理端 GET/PATCH /api/admin/feedback[/{id}] · POST /api/admin/feedback/{id}/{status,notes}

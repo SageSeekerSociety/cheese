@@ -49,6 +49,8 @@ class EvalBackend:
         # Global sandbox token: lets the runner call cheese-gated write endpoints
         # (e.g. seeding project memory) against ITS OWN backend only.
         self.sandbox_token = secrets.token_hex(24)
+        # Signs the session tokens scenarios speak with (EvalApi.session_token).
+        self.jwt_secret = secrets.token_hex(32)
         self.db_path = run_dir / "eval.db"
         self.workspace_root = run_dir / "workspaces"
         self.log_path = run_dir / "backend.log"
@@ -64,13 +66,12 @@ class EvalBackend:
                 "AGENT_SANDBOX_ENABLED": "false",
                 "WORKSPACE_ROOT": str(self.workspace_root),
                 "SANDBOX_TOKEN": self.sandbox_token,
+                "JWT_SECRET": self.jwt_secret,
                 # Scenarios speak as several different people ("xinyu", "alice",
-                # …) with no login behind them, so their chat sockets carry no
-                # session token and the platform would refuse them. Safe here and
-                # nowhere else: this backend is a throwaway sqlite instance bound
-                # to 127.0.0.1 for one run. Production never sets it — with it on,
-                # any client can post as any handle.
-                "CHAT_WS_ALLOW_ANONYMOUS": "true",
+                # …) who are on no project's roster. Safe here and nowhere else:
+                # this backend is a throwaway sqlite instance bound to 127.0.0.1
+                # for one run.
+                "AUTHZ_ENFORCE_TOPIC_ACCESS": "false",
                 # Never inherit the dev process' request-scoped overrides.
                 "PYTHONPATH": str(BACKEND_DIR),
             }

@@ -356,8 +356,8 @@ class ComputePool:
             await runtime.replay(session, known_texts=known_texts)
 
     def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
-        """The backend for work the PLATFORM starts — the activity digest, the
-        heartbeat patrol, the project summary.
+        """The backend for work the PLATFORM starts — the activity digest and
+        the project summary.
 
         No agent type stands behind these, so there is no harness to honour and
         nothing to refuse: they run on whatever the machine runs. Never None,
