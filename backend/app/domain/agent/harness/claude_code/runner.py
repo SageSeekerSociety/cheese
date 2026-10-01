@@ -588,6 +588,16 @@ class Runner(runner.Runner[Journal]):
         work = self.work if self.working else self.last_work
         if kind == "result" and self.interrupting:
             stamp["interrupted"] = True
+        elif (
+            main
+            and kind == "result"
+            and self.working
+            and self.work is not None
+            and not self.unsolicited
+            and not record.get("is_error")
+        ):
+            stamp["work_completed"] = True
+            stamp["completion_session_id"] = self.session_id
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work is not None:
             owner["work_id"] = work

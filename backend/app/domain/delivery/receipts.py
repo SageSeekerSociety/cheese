@@ -177,6 +177,7 @@ async def complete_work_inputs(
     harness,
     native_session_id,
     work_id,
+    require_registered=False,
 ):
     """Commit consumption and durable release for this exact successful work.
 
@@ -199,6 +200,8 @@ async def complete_work_inputs(
             .execution_options(populate_existing=True)
         )
     )
+    if require_registered and (not rows or any(row.echoed_at is None for row in rows)):
+        raise ValidationError("Native completion has no confirmed registered work")
     owned = {
         uuid.UUID(block)
         for row in rows

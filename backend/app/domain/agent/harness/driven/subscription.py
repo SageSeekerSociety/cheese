@@ -54,7 +54,11 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
 )
-from app.domain.delivery.input_identity import InputReceipt
+from app.domain.delivery.input_identity import (
+    CompletionConsumer,
+    InputReceipt,
+    WorkCompletion,
+)
 
 #: What a record says about a working session, for the liveness rules
 #: (``DrivenRuntime.verdict``): it said something, work moved. A tool starting
@@ -144,12 +148,14 @@ class Subscription[B: Backlog]:
         activity: SeatActivity,
         *,
         receipts: ReceiptConsumer | None = None,
+        completions: CompletionConsumer | None = None,
         pulse: Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
         self.receipts, self.pulse = receipts, pulse
+        self.completions = completions
         # 一轮结束时问一次记忆（见 `MemoryConsumer`）：agent 该写的记忆按规矩写
         # 在回复之前，所以一轮读完就是它写完的时刻。
         self.memory = memory
@@ -201,6 +207,9 @@ class Subscription[B: Backlog]:
         """Native evidence for a specific input, distinct from RPC acceptance."""
         return None
 
+    def completion(self, record: dict) -> WorkCompletion | None:
+        return None
+
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         """What this record says about the turn. The events answer most of it;
         a harness adds what its records say and the vocabulary does not (a tool
@@ -230,12 +239,21 @@ class Subscription[B: Backlog]:
                             if self.receipts is None:
                                 raise RuntimeError("Receipt consumer is not bound")
                             await self.receipts(receipt)
+                        completion = self.completion(entry.record)
+                        if completion is not None:
+                            if self.completions is None:
+                                raise RuntimeError("Completion consumer is not bound")
+                            # Commit durable effects even if the start was landed
+                            # by an earlier process and the runner is now idle.
+                            await self.completions(completion)
                         if entry.age_s >= STALE_S:
                             stale += 1
                         else:
                             try:
                                 delivered += await self._deliver(entry, reader)
                             except Exception:
+                                if completion is not None:
+                                    raise
                                 if not await self.on_disk(
                                     reader.refused,
                                     entry.key,

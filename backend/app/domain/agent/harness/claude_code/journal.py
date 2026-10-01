@@ -62,16 +62,18 @@ class Journal(journal.Journal):
                 self.advance("received", entries[-1]["sequence"])
 
     def expire(self, before: str) -> None:
-        """Expire old output, but keep receipt evidence for absent readers.
+        """Expire old output, keeping echo and completion for absent readers.
 
-        The runner cannot know whether the backend committed settlement. Echoes
-        therefore survive output retention; the backend prunes its landed copy.
+        The runner cannot know whether the backend committed settlement. Evidence
+        therefore survives output retention; the backend prunes its landed copy.
         """
         with self.connection:
             self.connection.execute(
                 f"DELETE FROM {self.table} WHERE recorded_at < ? "
                 f"AND COALESCE(json_extract({self.column}, "
-                "'$.cheese.receipt'), 0) != 1",
+                "'$.cheese.receipt'), 0) != 1 "
+                f"AND COALESCE(json_extract({self.column}, "
+                "'$.cheese.work_completed'), 0) != 1",
                 (before,),
             )
 

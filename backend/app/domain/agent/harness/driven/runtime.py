@@ -32,6 +32,7 @@ from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
+    CompletionConsumer,
     EventConsumer,
     MemoryConsumer,
     Opening,
@@ -194,6 +195,7 @@ class DrivenRuntime[H: Handle]:
         self.consumer: EventConsumer | None = None
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
+        self.completions: CompletionConsumer | None = None
         self.reachability: ReachabilityConsumer | None = None
         # 带下划线，因为它不能和下面那个 `memory()`（这一侧往会话里问一次对账）
         # 同名：`self.memory = None` 会把那个方法盖掉，而 `AgentRuntime` 是
@@ -254,6 +256,9 @@ class DrivenRuntime[H: Handle]:
 
     def bind_receipts(self, consumer: ReceiptConsumer) -> None:
         self.receipts = consumer
+
+    def bind_completions(self, consumer: CompletionConsumer) -> None:
+        self.completions = consumer
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:
         self.unread = probe

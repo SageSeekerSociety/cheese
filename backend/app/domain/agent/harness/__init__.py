@@ -48,7 +48,11 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import InputRegistrar, ReceiptConsumer
+from app.domain.delivery.input_identity import (
+    CompletionConsumer,
+    InputRegistrar,
+    ReceiptConsumer,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
@@ -470,6 +474,10 @@ class AgentRuntime(Protocol):
 
     def bind_receipts(self, consumer: ReceiptConsumer) -> None:
         """Where 「会话真的读到了那条消息」 goes."""
+        ...
+
+    def bind_completions(self, consumer: CompletionConsumer) -> None:
+        """Where exact durable native work completion is committed."""
         ...
 
     def bind_unread_probe(self, probe: UnreadProbe) -> None:

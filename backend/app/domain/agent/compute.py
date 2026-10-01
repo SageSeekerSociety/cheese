@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
         ActivityConsumer,
+        CompletionConsumer,
         EventConsumer,
         InputRegistrar,
         MemoryConsumer,
@@ -263,6 +264,10 @@ class ComputePool:
         side of #539 decision A."""
         for runtime in self._runtimes():
             runtime.bind_receipts(consumer)
+
+    def bind_completions(self, consumer: "CompletionConsumer") -> None:
+        for runtime in self._runtimes():
+            runtime.bind_completions(consumer)
 
     def bind_unread_probe(self, probe: "UnreadProbe") -> None:
         """Give every runtime a way to ask whether anything it was handed is

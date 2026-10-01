@@ -20,7 +20,12 @@ from app.domain.agent.harness import (
 from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog, receive
 from app.domain.agent.harness.driven import subscription
 from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import InputIdentity, InputReceipt
+from app.domain.delivery.input_identity import (
+    CompletionConsumer,
+    InputIdentity,
+    InputReceipt,
+    WorkCompletion,
+)
 
 
 class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
@@ -36,6 +41,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         recipient_handle: str,
         announce: Callable[[], Awaitable[None]],
         receipts: ReceiptConsumer | None = None,
+        completions: CompletionConsumer | None = None,
         pulse: subscription.Pulse | None = None,
         memory: Callable[[], Awaitable[None]] | None = None,
     ):
@@ -46,6 +52,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
             consume,
             activity,
             receipts=receipts,
+            completions=completions,
             pulse=pulse,
             memory=memory,
         )
@@ -89,6 +96,29 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                 uuid.UUID(stamp["receipt_work_id"]),
             ),
             "native_echo",
+        )
+
+    def completion(self, record: dict) -> WorkCompletion | None:
+        stamp = record.get("cheese") or {}
+        if not stamp.get("work_completed"):
+            return None
+        if (
+            record.get("type") != "result"
+            or record.get("is_error")
+            or stamp.get("interrupted")
+            or stamp.get("unsolicited")
+            or stamp.get("completion_session_id") != self.session_id
+            or record.get("session_id") != self.session_id
+            or stamp.get("agent_handle") != self.recipient_handle
+        ):
+            raise ValueError("Native completion has a different or unfinished identity")
+        return WorkCompletion(
+            self.session.project_id,
+            self.session.topic_id,
+            self.recipient_handle,
+            self.session.harness,
+            stamp["completion_session_id"],
+            uuid.UUID(stamp["work_id"]),
         )
 
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:

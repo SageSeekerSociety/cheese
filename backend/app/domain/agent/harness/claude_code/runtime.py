@@ -25,7 +25,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 )
 from app.domain.agent.harness.claude_code.subscription import Subscription
 from app.domain.agent.harness.driven.runtime import DrivenRuntime
-from app.domain.delivery.input_identity import InputReceipt
+from app.domain.delivery.input_identity import InputReceipt, WorkCompletion
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,11 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
                 raise RuntimeError("Receipt consumer is not bound")
             await self.receipts(evidence)
 
+        async def completion(evidence: WorkCompletion) -> None:
+            if self.completions is None:
+                raise RuntimeError("Completion consumer is not bound")
+            await self.completions(evidence)
+
         async def announce() -> None:
             await self.announce(handle.session.topic_id)
 
@@ -98,6 +103,7 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             recipient_handle=handle.agent_handle,
             announce=announce,
             receipts=receipt,
+            completions=completion,
             pulse=self.pulse,
             memory=self._memory_hook(handle.session.topic_id),
         )

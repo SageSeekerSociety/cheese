@@ -236,6 +236,7 @@ from app.domain.delivery.input_identity import (
     InputReceipt,
     InputReconciliationPending,
     InputRegistrar,
+    WorkCompletion,
 )
 from app.domain.delivery.receipts import (
     complete_work_inputs,
@@ -566,6 +567,7 @@ class ChatService:
         self._compute = compute
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
+        self._compute.bind_completions(self.confirm_work_completion)
         self._compute.bind_unread_probe(self.oldest_unread_at)
         self._compute.bind_reachability(self._note_reachability)
         # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
@@ -1359,6 +1361,19 @@ class ChatService:
                 str(receipt.identity.topic_id),
                 {"type": "reaction", "block_id": str(block_id), "reactions": value},
             )
+
+    async def confirm_work_completion(self, completion: WorkCompletion) -> None:
+        """Settle a journaled completion without process-local work context."""
+        async with self._sessions() as session:
+            await complete_work_inputs(
+                session,
+                require_registered=True,
+                **{
+                    field: getattr(completion, field)
+                    for field in WorkCompletion.__dataclass_fields__
+                },
+            )
+            await session.commit()
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""

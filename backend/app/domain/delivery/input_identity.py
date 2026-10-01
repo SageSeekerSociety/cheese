@@ -24,6 +24,16 @@ class InputReceipt:
 
 
 @dataclass(frozen=True)
+class WorkCompletion:
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    recipient_handle: str
+    harness: str
+    native_session_id: str
+    work_id: uuid.UUID
+
+
+@dataclass(frozen=True)
 class InputEffects:
     held_block_ids: tuple[uuid.UUID, ...] = ()
     block_ids: tuple[uuid.UUID, ...] = ()
@@ -53,3 +63,4 @@ class InputOutcomeUnconfirmed(Exception):
 
 InputRegistrar = Callable[[InputIdentity], Awaitable[None]]
 ReceiptConsumer = Callable[[InputReceipt], Awaitable[None]]
+CompletionConsumer = Callable[[WorkCompletion], Awaitable[None]]
