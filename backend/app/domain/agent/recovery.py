@@ -1,0 +1,104 @@
+"""Session recovery after the process changed: listen again to the sessions
+that outlived it, hand their unread tails to the rooms, and fold the round's
+per-conversation death evidence into the durable set (FB-56 legacy③).
+
+The mixin holds the orchestration; ChatService keeps the room-side pieces it
+calls (`_replay_room`, `_begin_self_started_turn`, the hook-work registry).
+"""
+
+import asyncio
+import logging
+import uuid
+
+from app.domain.agent import death_evidence
+from app.domain.agent.harness import SessionRef
+
+logger = logging.getLogger(__name__)
+
+
+class SessionRecovery:
+    async def recover_sessions(self, device_id: str | None = None) -> int:
+        """Listen again to sessions that outlived this process, and start
+        landing what they said while nobody was.
+
+        Two calls to the runtime, and the split is deliberate: ``recover``
+        establishes that we are listening, ``replay`` hands over the tail. What
+        the room already shows is ours to supply; which of the harness's own
+        records are still unlanded is its.
+
+        Returns once every session is listened to and its turn's bookkeeping is
+        back, which is all a turn elsewhere needs. The replays go on in the
+        background, a room at a time (``replaying``): a session that was not
+        read for a day can take longer to replay than this process stays up,
+        and waiting for it held every room's turns, not only its own.
+        """
+        sessions = await self._compute.recover_sessions(device_id)
+        # Death evidence refreshes HERE, recovered sessions or not (FB-56
+        # legacy③): zero handles is exactly the case terminal evidence exists
+        # for. A service without a sessions factory — a contract double —
+        # cannot read the pointers, and cannot means unknown: nothing marks.
+        sessions_factory = getattr(self, "_sessions", None)
+        if sessions_factory is not None:
+            async with sessions_factory() as session:
+                await death_evidence.refresh(
+                    session, self._compute, self._dead_sessions
+                )
+        # One per seat, not per room: teammates in one room run side by side,
+        # and a seat left out here is re-attached but never read again until
+        # somebody next addresses it.
+        unique = {
+            (session.topic_id, session.agent_handle): session for session in sessions
+        }
+        rooms: dict[uuid.UUID, list[SessionRef]] = {}
+        for session in unique.values():
+            # A turn still running there was fed by a process that is gone,
+            # and its result lands here. Without its bookkeeping that result
+            # closes nothing: the batch it answered is never stamped
+            # consumed, and the next turn sends it again.
+            work = self._compute.work_in_flight(
+                session.topic_id, session.agent_handle or None
+            )
+            if work is not None and (session.topic_id, work) not in self._hook_work:
+                try:
+                    found = self._compute.found_conversations(
+                        session.topic_id, session.agent_handle
+                    )
+                    await self._begin_self_started_turn(
+                        session.project_id,
+                        session.topic_id,
+                        work,
+                        opened=True,
+                        agent_handle=session.agent_handle or None,
+                        session_id=next(iter(found)) if len(found) == 1 else None,
+                    )
+                except Exception:  # noqa: BLE001 — one topic cannot block startup
+                    logger.exception(
+                        "session recovery failed for topic %s", session.topic_id
+                    )
+                    continue
+            rooms.setdefault(session.topic_id, []).append(session)
+        for topic_id, seats in rooms.items():
+            # A device reconnecting while its room still replays: the new
+            # replay starts where that one stops, not beside it.
+            replay = asyncio.create_task(
+                self._replay_room(seats, after=self._replays.get(topic_id)),
+                name=f"replay:{topic_id}",
+            )
+            self._replays[topic_id] = replay
+            replay.add_done_callback(self._replayed)
+        return len(unique)
+
+    def _replayed(self, replay: asyncio.Task) -> None:
+        for topic_id, current in list(self._replays.items()):
+            if current is replay:
+                del self._replays[topic_id]
+
+    def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None:
+        """The replay a turn in this room has to wait for, if one is running."""
+        replay = self._replays.get(topic_id)
+        return None if replay is None or replay.done() else replay
+
+    async def replays_settled(self) -> None:
+        """Wait until no room is replaying."""
+        while self._replays:
+            await asyncio.gather(*self._replays.values(), return_exceptions=True)

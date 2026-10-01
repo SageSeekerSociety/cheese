@@ -31,7 +31,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.domain.agent import attachments
+from app.domain.agent import attachments, turn_inputs
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.nonce import nonce_in
@@ -449,6 +449,15 @@ async def _bind_user_entry(
                 at=datetime.now(UTC),
             )
             if row is not None:
+                # The native entry IS consumption proof — acceptance evidence
+                # a caller cancelling after the transport took the write
+                # cannot take away (FB-56 P1): the parent interval and the
+                # input are stamped delivered here, monotone, in the bind's
+                # own transaction. An early Stop then has a delivered row to
+                # close; nothing native is declared ended by it.
+                await turn_inputs.stamp_delivered(
+                    session, turn_id=row.turn_id, at=datetime.now(UTC)
+                )
                 await transition(
                     session,
                     topic_id=topic_id,
