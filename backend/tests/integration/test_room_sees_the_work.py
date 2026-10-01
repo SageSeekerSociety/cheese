@@ -17,7 +17,7 @@ import pytest
 from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
 --- a/backend/app/x.py
@@ -58,7 +58,7 @@ def stub_hooks() -> SubagentScreen:
 
 def _chat(client, topic_id: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws_conn:
-        ws_conn.send_json({"type": "message", "content": "@芝士 hi"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         while ws_conn.receive_json()["type"] not in ("done", "error"):
             pass
 

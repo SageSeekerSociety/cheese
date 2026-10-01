@@ -14,7 +14,7 @@
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, ChatMessageBody, ReactionAgg, RoomTask, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { ChatPanelOptions } from './chatPanelContract'
@@ -33,10 +33,11 @@ import {
   toggleReaction as apiToggleReaction,
   undoTopicTitle,
 } from '../api'
+import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
-import { useOutbox } from '../components/room/composables/useOutbox'
+import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
@@ -233,8 +234,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     close: closeSocket,
     isConnectRefusal,
     retryLater,
-    post: postFrame,
-    replaceStale: replaceStaleSocket,
   } = useRoomSocket({
     topicId: () => topic()?.id,
     onFrame: (frame) => {
@@ -245,9 +244,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // State frames are transient. A doc saved while disconnected may have no
       // remaining turn to replay it; refresh through the panel's conflict guard.
       emit('state-changed', 'doc')
-      flushOutbox() // 断线期间打的字，连上就自己走
+      void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
-    onDrop: () => requeueSending(),
     reconnect: (topicId) => {
       const current = topic()
       if (current?.id === topicId) void loadTopic(current)
@@ -341,14 +339,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
         autoScroll()
         break
       case 'error':
-        if (frame.client_id) {
-          if (failOutgoing(frame.client_id, frame.message)) {
-            turns.settleIfIdle()
-          } else {
-            errorMsg.value = frame.message
-          }
-          return
-        }
         // The socket was refused at connect — the backend closes right after this
         // frame, so latch the reason and stop the reconnect loop from burying it.
         if (isConnectRefusal(frame.code)) {
@@ -565,12 +555,41 @@ export function useChatPanel(opts: ChatPanelOptions) {
     enqueue,
     flush: flushOutbox,
     settle: settleOutbox,
-    fail: failOutgoing,
-    requeueSending,
     retry: retrySend,
     drop: dropSend,
-    cancelTimers: cancelEchoTimers,
-  } = useOutbox({ post: postFrame, connected, onStale: () => replaceStaleSocket() })
+    pause: pauseOutbox,
+  } = useOutbox({
+    send: (item, signal) => {
+      const room = topic()
+      if (!room) return Promise.reject(new DOMException('no room', 'AbortError'))
+      const body: ChatMessageBody = {
+        content: item.content,
+        request_id: item.clientId,
+        reply_to: item.replyTo,
+        attachments: item.atts,
+      }
+      return postChatMessage(room.id, body, signal).catch((error: unknown) => {
+        // 4xx 是后端说了「不」（没权限、房间已归档、内容不合法）；408/429 和别的失败
+        // 都是这一刻的事，发件箱会带同一个 id 再试。
+        if (
+          error instanceof ApiError &&
+          error.status >= 400 &&
+          error.status < 500 &&
+          ![408, 429].includes(error.status)
+        ) {
+          throw new SendRefused(error.message)
+        }
+        throw error
+      })
+    },
+    onDelivered: (block) => {
+      // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
+      if (block.topic_id !== topic()?.id) return
+      delivered.add(block.id)
+      pushBlock(block)
+      autoScroll()
+    },
+  })
 
   function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
     const trimmed = content.trim()
@@ -815,7 +834,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       if (oldId) rememberScroll(oldId)
       if (oldId) {
         composer.rememberComposer(oldId)
-        cancelEchoTimers()
+        pauseOutbox()
       }
       const room = topic()
       if (room) {
@@ -823,6 +842,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // await, so this topic's own draft has to be restored AFTER the call.
         void loadTopic(room, true)
         composer.restoreComposer(id)
+        void flushOutbox() // 上次在这个房间里没送完的，接着送
       } else {
         timeline.show({ blocks: [], hasMore: false })
         closeSocket()

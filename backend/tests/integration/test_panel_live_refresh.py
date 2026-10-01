@@ -26,6 +26,7 @@ from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     chat_ws_url,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -244,7 +245,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     _, topic_id = _room(client)
     seen: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 改一下文档"})
+        post_message(client, topic_id, "alice", {"content": "@芝士 改一下文档"})
         while True:
             frame = ws.receive_json()
             seen.append(frame)
@@ -331,8 +332,8 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
             )
             return sum((row.meta or {}).get("action") == "decision" for row in rows)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 定一下方案"})
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")):
+        post_message(client, topic_id, "alice", {"content": "@芝士 定一下方案"})
         deadline = time.monotonic() + 5
         while asyncio.run(cards()) != 1:
             assert time.monotonic() < deadline, "the running turn announced nothing"

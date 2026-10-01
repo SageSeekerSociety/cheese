@@ -83,7 +83,7 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
     # 1. setup：每场景自己建全新 project/topic（互不污染）
     project = await api.create_project(f"eval-X-{new_id()}", "eval-owner")
     topic = await api.create_topic(project["id"], "话题名", "eval-owner")
-    # 2. steps：真实驱动——WS 发消息（api.send_chat）、REST 调结构接口、
+    # 2. steps：真实驱动——POST 发消息、WS 看房间里落下的帧（api.send_chat）、REST 调结构接口、
     #    api.wait_turn_done() 等后台 turn（结构化 turn 状态，不解析文本）
     # 3. 收证据 + 平台侧确定性断言
     return ScenarioOutcome(

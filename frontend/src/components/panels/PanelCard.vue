@@ -201,7 +201,6 @@ const cardSocket = useRoomSocket({
     }
   },
   onOpen: () => {},
-  onDrop: () => {},
   // 断线期间可能漏掉了几次改动：重读一次，再连回去。
   reconnect(id) {
     void loadChecklist()

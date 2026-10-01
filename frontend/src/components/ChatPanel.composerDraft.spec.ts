@@ -75,7 +75,15 @@ beforeEach(() => {
       removeEventListener() {}
     }
   )
-  vi.stubGlobal('fetch', async (url: string) => ({
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    // 后端连不上：发出去的消息到不了，留在发件箱里。
+    if (init?.method === 'POST' && String(url).endsWith('/messages')) throw new TypeError('Failed to fetch')
+    return answered(url)
+  })
+})
+
+function answered(url: string) {
+  return {
     ok: true,
     status: 200,
     json: async () =>
@@ -86,8 +94,8 @@ beforeEach(() => {
           String(url).includes('/tasks')
           ? { code: 200, data: { data: [], total: 0 } }
           : { code: 200, data: { data: history, total: history.length, has_more: false } },
-  }))
-})
+  }
+}
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
@@ -207,7 +215,7 @@ describe('刷新之后草稿还在', () => {
 })
 
 describe('发出去的消息立刻显示，没送到能重试', () => {
-  it('socket 没开也能打字、也能发——消息进队列，屏幕上立刻有', async () => {
+  it('连不上也能打字、也能发——消息进队列，屏幕上立刻有', async () => {
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
       global: { plugins: [vuetify, i18n] },

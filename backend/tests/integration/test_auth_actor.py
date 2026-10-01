@@ -2,6 +2,8 @@
 resolved from the verified token (not the body), the Phase-0 handle fallback
 still works, and a token-authenticated outsider is denied (越权)."""
 
+import uuid
+
 import pytest
 
 from app.common.auth import verify_access_token
@@ -88,19 +90,21 @@ def test_token_owner_allowed(client):
     assert r.status_code == 200
 
 
-def test_ws_token_pins_message_author(client):
-    """On the chat WS the author comes from the connection's ?token=, so a forged
-    per-message `author` is ignored."""
+def test_token_pins_message_author(client):
+    """A message's author comes from the request's token, so a forged
+    `author` in the body is ignored."""
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/topics/{tid}/chat?token={token}") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hello", "author": "mallory-forged"}
-        )
-        while True:
-            frame = ws.receive_json()
-            if frame["type"] in ("done", "error"):
-                break
+    r = client.post(
+        f"/topics/{tid}/messages",
+        json={
+            "content": "hello",
+            "author": "mallory-forged",
+            "request_id": str(uuid.uuid4()),
+        },
+        headers=_bearer(token),
+    )
+    assert r.status_code == 200, r.text
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     users = [b for b in blocks if b["content"] == "hello"]
     assert users and all(b["author"] == "alice" for b in users)

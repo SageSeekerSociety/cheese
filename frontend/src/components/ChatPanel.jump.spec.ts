@@ -18,6 +18,8 @@ vi.mock('../api', async () => ({
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
   chatWsUrl: () => 'ws://test/chat',
 }))
+// 发出去的那条还在路上：它先以待发的样子出现在最底下。
+vi.mock('../api/messages', () => ({ postChatMessage: vi.fn(() => new Promise(() => {})) }))
 
 import { listBlocks } from '../api'
 

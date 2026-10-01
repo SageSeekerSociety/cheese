@@ -11,7 +11,7 @@ import pytest
 
 from app.domain.agent.harness.channel import startup_refused
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 # What dev's session host recorded for a session relaunched onto a machine the
 # work lease answered 504 for (2026-09-25), paths shortened.
@@ -45,7 +45,7 @@ def _turn(client) -> tuple[str, list[dict]]:
     ).json()["data"]["id"]
     frames = []
     with client.websocket_connect(chat_ws_url(room, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 hi"})
+        post_message(client, room, "user-1", {"content": "@芝士 hi"})
         while (frame := ws.receive_json())["type"] != "done":
             frames.append(frame)
     return room, frames

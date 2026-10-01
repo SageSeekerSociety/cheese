@@ -181,7 +181,10 @@ async def _amain(args: argparse.Namespace) -> int:
     log.info("backend healthy at %s (db=%s)", backend.base_url, backend.db_path)
 
     api = EvalApi(
-        backend.base_url, backend.ws_base_url, sandbox_token=backend.sandbox_token
+        backend.base_url,
+        backend.ws_base_url,
+        sandbox_token=backend.sandbox_token,
+        jwt_secret=backend.jwt_secret,
     )
     ctx = EvalContext(api=api, log=log)
     results: list[ScenarioResult] = []

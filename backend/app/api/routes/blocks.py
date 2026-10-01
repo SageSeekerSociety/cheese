@@ -24,7 +24,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class MessageEditIn(BaseModel):
-    # The same ceiling as sending a message (`ChatPublishIn`).
+    # The same ceiling as sending a message (`ChatMessageIn`).
     content: str = Field(min_length=1, max_length=100000)
 
 

@@ -349,7 +349,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean; code?: string; client_id?: string }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string }
   | { type: 'done' }
   // `agent`：这一轮在哪个座位上跑（块署名的那个 handle）。一间房几个队友并行
   // 在干时，「谁在干活」靠它区分；老后端没有这个字段，界面退回默认名字。
@@ -397,22 +397,21 @@ export interface ChatAttachment {
   mime: string
 }
 
-// WebSocket client -> server frame. 帧上没有「叫不叫芝士」这一位：这条消息点了谁
-// 的名，由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要
-// 叫它，就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
-export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
+// The client sends only the liveness probe on the room's socket; a message is a POST.
+export type WsClientMessage = { type: 'ping' }
 
-export interface WsClientChatMessage {
-  type: 'message'
+// POST /topics/{id}/messages. 请求体上没有「叫不叫芝士」这一位：这条消息点了谁的名，
+// 由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要叫它，
+// 就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
+export interface ChatMessageBody {
   content: string
-  // No `author`: the backend takes it from the socket's ?token=. Sending one
-  // was never authoritative — it was the forgeable field that let an expired
-  // session post as 匿名者 — so the client no longer names itself at all.
+  // No `author`: the backend takes it from the request's token.
+  // 这一次发送的 id（UUID）。重发带同一个 id，落库的还是那一条；后端把它原样戳回
+  // 块的 meta.client_id 上，乐观显示的那一条靠它对上账——靠文本对账是不行的，落库
+  // 那一步会把 @名字 改写成 <@handle>。
+  request_id: string
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
-  // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
-  // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
-  client_id?: string
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----

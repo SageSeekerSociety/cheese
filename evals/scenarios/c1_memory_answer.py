@@ -50,7 +50,6 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
         topic["id"],
         content=QUESTION,
         author="xinyu",
-        summon=True,
         turn_timeout_s=420.0,
     )
     turn = await api.wait_turn_done(topic["id"], timeout_s=30.0)

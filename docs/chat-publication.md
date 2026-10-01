@@ -21,10 +21,12 @@ chat_send(content="The retry check passed.", reply_to="<message-id>")
 `chat_send` is a platform tool on the session host and uses the current room and
 agent credentials. It calls
 `POST /topics/{topic_id}/messages` with `content`, a UUID `request_id`, and an
-optional `reply_to`. The backend verifies the agent and room access, stores the
-message and mention notifications, then broadcasts an `assistant_block`. It does
-not enqueue user input or start another model turn. The response contains the
-stored message and its ID.
+optional `reply_to` — the same route a person's message takes. The backend
+verifies room access; because the caller holds one of the room's agent seats,
+it stores the message as that agent's publication with its mention
+notifications, then broadcasts an `assistant_block`. It does not enqueue user
+input or start another model turn. The response contains the stored message and
+its ID.
 
 If delivery is uncertain, repeat the unchanged request with the returned
 `request_id`, preserving `reply_to`. A retry returns the same stored message;

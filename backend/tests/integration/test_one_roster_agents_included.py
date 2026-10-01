@@ -17,7 +17,12 @@
 """
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 OWNER = "alice"
 
@@ -222,8 +227,8 @@ def test_a_retired_teammate_is_not_offered_as_someone_to_hand_work_to(
     # I13）：帧上没有「叫不叫它」这一位，一句谁也没 @ 的「开始吧」落库之后就到此
     # 为止。点的是这间房落到的那一位，也就是项目的默认队友。
     with client.websocket_connect(chat_ws_url(room, OWNER)) as ws:
-        ws.send_json(
-            {"type": "message", "content": f"@{answering['seat_handle']} 开始吧"}
+        post_message(
+            client, room, OWNER, {"content": f"@{answering['seat_handle']} 开始吧"}
         )
         while True:
             frame = ws.receive_json()
