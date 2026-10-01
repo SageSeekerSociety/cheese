@@ -28,6 +28,7 @@ import {
   pushStash,
 } from '../lib/docEditState'
 import { compareRoundTrip } from '../lib/docMarkdown'
+import { createDocRequestGate } from '../lib/docRequestGate'
 import { myHandle } from '../me'
 
 import { t } from '@/i18n'
@@ -57,6 +58,14 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   // Set when the panel unmounts. Requests still in flight then land on a destroyed
   // editor, so every write after an await checks it.
   let disposed = false
+  const requests = createDocRequestGate()
+  let pendingReload = false
+  let commentSequence = 0
+  const topicDrafts = new Map<string, string[]>()
+
+  function owns(request: ReturnType<typeof requests.begin>) {
+    return !disposed && props.topic?.id === request.topicId && requests.owns(request)
+  }
 
   // ---- 这一篇现在是什么状态 ----
   const editable = ref(true)
@@ -189,8 +198,10 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
 
   // ---- 读 ----
   async function loadComments(tid: string) {
+    const request = requests.begin(tid)
+    const sequence = ++commentSequence
     const [cs, ns] = await Promise.all([getComments(tid), getDocNodes(tid)])
-    if (disposed) return
+    if (!owns(request) || sequence !== commentSequence) return
     comments.value = cs.data
     anchorNodes.value = ns.data
   }
@@ -248,57 +259,67 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     }
   }
 
+  function reconcileSnapshot(block: Block | null) {
+    const full = block?.content ?? ''
+    const plan = planExternalUpdate({ dirty: dirty.value, incoming: full, rawDoc: rawDoc.value })
+    docVersion.value = block?.doc_version ?? 0
+    if (plan === 'install') {
+      installDoc(full)
+      externalDoc.value = null
+      savedAt.value = null
+    } else if (plan === 'conflict') {
+      externalDoc.value = full
+    } else {
+      externalDoc.value = null
+    }
+  }
+
   async function loadDoc(topicId: string) {
+    const request = requests.begin(topicId)
     errorMsg.value = null
     loading.value = true
     try {
       const block = await getDoc(topicId)
-      // The panel may be gone by now (a topic switch rebuilds it): its editor is
-      // destroyed and must not be written to.
-      if (disposed) return
-      installDoc(block?.content ?? '')
-      docVersion.value = block?.doc_version ?? 0
-      dirty.value = false
-      savedAt.value = null
-      // A2 badges + 常驻评论区: refresh nodes/comments for the new doc.
+      if (!owns(request)) return
+      if (saving.value || requests.invalidatedByWrite(request)) {
+        if (saving.value) pendingReload = true
+        else void reloadFromActivity(topicId)
+        return
+      }
+      if (!requests.acceptRead(request, block?.doc_version ?? 0)) return
+      // Check dirty AFTER the await: typing while the initial GET is slow must
+      // have the same protection as typing during an activity refresh.
+      reconcileSnapshot(block)
       void loadComments(topicId).catch(() => {})
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.doc.loadFailed')
+      if (owns(request)) errorMsg.value = e instanceof Error ? e.message : t('work.room.doc.loadFailed')
     } finally {
-      loading.value = false
+      if (owns(request)) loading.value = false
     }
   }
 
-  // Reload triggered by AI activity. Don't clobber unsaved local edits — but
-  // 军规 1: don't silently drop the server's version either. When both sides
-  // moved, hold the incoming content and let the conflict bar decide.
+  // Notifications are hints; a settled GET is the authoritative snapshot.
   async function reloadFromActivity(topicId: string) {
-    // A save in flight makes any snapshot ambiguous: the server may or may not
-    // have our PUT yet, so a difference here proves nothing. Skip; the next
-    // activity tick compares against a settled rawDoc.
-    if (saving.value) return
+    if (disposed || props.topic?.id !== topicId) return
+    if (saving.value) {
+      pendingReload = true
+      return
+    }
+    const request = requests.begin(topicId)
     try {
       const block = await getDoc(topicId)
-      if (disposed || saving.value) return
-      const full = block?.content ?? ''
-      const plan = planExternalUpdate({ dirty: dirty.value, incoming: full, rawDoc: rawDoc.value })
-      // Whatever we do with the content, this IS the server's version now — the
-      // conflict bar's 「用我的版本覆盖」 has to be able to win, and it can only
-      // win against the version it is looking at.
-      docVersion.value = block?.doc_version ?? 0
-      if (plan === 'install') {
-        installDoc(full)
-        externalDoc.value = null
-        savedAt.value = null
-      } else if (plan === 'conflict') {
-        externalDoc.value = full
-      } else {
-        externalDoc.value = null
+      if (!owns(request)) return
+      if (saving.value || requests.invalidatedByWrite(request)) {
+        if (saving.value) pendingReload = true
+        else void reloadFromActivity(topicId)
+        return
       }
-      // A2 badges + 常驻评论区: refresh alongside the doc content.
+      if (!requests.acceptRead(request, block?.doc_version ?? 0)) return
+      reconcileSnapshot(block)
+      loading.value = false
       void loadComments(topicId).catch(() => {})
     } catch {
-      // Silent: activity-driven refresh is best-effort.
+      // Silent: activity-driven refresh is best-effort, with no retry loop.
     }
   }
 
@@ -332,7 +353,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
 
   async function save(force = false) {
     const topic = props.topic
-    if (!topic || saving.value) return
+    if (!topic || disposed || loading.value || saving.value) return
     // Lossy visual save needs explicit confirmation (源码模式 is the safe path).
     if (lossy.value && !sourceMode.value && !force) {
       lossyConfirmOpen.value = true
@@ -343,41 +364,52 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
       dirty.value = false
       return
     }
+    const request = requests.beginWrite(topic.id)
+    const expectedVersion = docVersion.value
     saving.value = true
     errorMsg.value = null
     try {
-      const saved = await putDoc(topic.id, full, AUTHOR, docVersion.value)
-      docVersion.value = saved.doc_version ?? docVersion.value + 1
-      rawDoc.value = full
-      lastSavedMarkdown.value = splitDuplicateTitle(full).body
-      if (!sourceMode.value) sourceDraft.value = full
-      savedAt.value = Date.now()
-      // Lost-update guard: an edit that landed WHILE this save was in flight
-      // (e.g. a code-block language pick right after typing) must not have its
-      // dirty flag wiped by our completion — compare against what we actually
-      // shipped, and re-queue if the doc moved on.
-      if (currentFullMarkdown() === full) {
-        dirty.value = false
-      } else {
-        dirty.value = true
-        queueAutosave()
+      const saved = await putDoc(topic.id, full, AUTHOR, expectedVersion)
+      if (!owns(request)) return
+      if (!requests.acceptWrite(request, saved.doc_version ?? 0)) {
+        pendingReload = true
+        return
       }
-      // A confirmed lossy overwrite: what's on disk now IS the editor's view.
-      if (force) lossy.value = false
-      // Our version is the file now — the conflict (if any) is resolved.
+      const unchanged = currentFullMarkdown() === full
+      const canonical = saved.content
+      // The receipt, not the submitted draft, establishes the persisted base.
+      // Do not install it over text typed while PUT was in flight.
+      docVersion.value = saved.doc_version ?? expectedVersion
+      if (unchanged && canonical !== full) installDoc(canonical)
+      else {
+        rawDoc.value = canonical
+        lastSavedMarkdown.value = splitDuplicateTitle(canonical).body
+        if (!sourceMode.value) sourceDraft.value = canonical
+      }
+      savedAt.value = Date.now()
+      dirty.value = !unchanged && currentFullMarkdown() !== canonical
+      if (dirty.value) queueAutosave()
+      if (force && canonical === full) lossy.value = false
       externalDoc.value = null
     } catch (e) {
+      if (!owns(request)) return
+      // A failed response may follow a committed write. Reconcile once without
+      // replaying the PUT; a 409 uses the existing explicit conflict surface.
+      pendingReload = true
       if (e instanceof ApiError && e.status === 409) {
-        // 芝士 wrote the doc since this panel read it. The activity poll is
-        // best-effort — it can miss the window entirely — so this is the only
-        // moment the clobber is certainly catchable. Neither side wins by
-        // default: show the same conflict bar and let the person choose.
+        pendingReload = false
         await showConflictWithServerDoc(topic.id)
       } else {
         errorMsg.value = e instanceof Error ? e.message : t('work.room.doc.saveFailed')
       }
     } finally {
-      saving.value = false
+      if (owns(request)) {
+        saving.value = false
+        if (pendingReload) {
+          pendingReload = false
+          void reloadFromActivity(topic.id)
+        }
+      }
     }
   }
 
@@ -385,13 +417,14 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   // edits are untouched (still dirty, still in the editor); the bar's two buttons
   // are the only ways out, exactly as when the activity poll spots the same thing.
   async function showConflictWithServerDoc(topicId: string) {
+    const request = requests.begin(topicId)
     try {
       const block = await getDoc(topicId)
-      if (disposed) return
+      if (!owns(request) || !requests.acceptRead(request, block?.doc_version ?? 0)) return
       docVersion.value = block?.doc_version ?? 0
       externalDoc.value = block?.content ?? ''
     } catch {
-      errorMsg.value = t('work.room.doc.changedElsewhere')
+      if (owns(request)) errorMsg.value = t('work.room.doc.changedElsewhere')
     }
   }
 
@@ -550,7 +583,40 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
   }
 
-  if (props.topic) void loadDoc(props.topic.id)
+  watch(
+    () => props.topic?.id ?? null,
+    (id, previousId) => {
+      // A surviving panel can change topics without unmounting. Each topic's
+      // draft stack remains recoverable only in that topic, never in its neighbor.
+      if (previousId) {
+        const stack = dirty.value ? pushStash(pendingEdits.value, currentFullMarkdown()) : pendingEdits.value
+        topicDrafts.set(previousId, stack)
+      }
+      pendingEdits.value = id ? topicDrafts.get(id) ?? [] : []
+      requests.select(id)
+      pendingReload = false
+      if (autosaveTimer) clearTimeout(autosaveTimer)
+      saving.value = false
+      loading.value = false
+      dirty.value = false
+      savedAt.value = null
+      errorMsg.value = null
+      externalDoc.value = null
+      rawDoc.value = ''
+      titlePrefix.value = ''
+      lastSavedMarkdown.value = ''
+      sourceDraft.value = ''
+      sourceMode.value = false
+      lossy.value = false
+      lossyConfirmOpen.value = false
+      docVersion.value = 0
+      comments.value = []
+      anchorNodes.value = []
+      installMarkdown('')
+      if (id) void loadDoc(id)
+    },
+    { immediate: true }
+  )
 
   // AI activity: soft reload (respects unsaved edits).
   watch(

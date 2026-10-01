@@ -87,6 +87,17 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((ok) => {
+    resolve = ok
+  })
+  return { promise, resolve }
+}
+async function settle() {
+  for (let i = 0; i < 12; i++) await Promise.resolve()
+}
+
 function open(props: Record<string, unknown> = {}) {
   return render(Doc, {
     props: { topic, activityTick: 0, topicList: [], ...props },
@@ -159,5 +170,54 @@ describe('文档读进来', () => {
       '我的话'
     )
     expect(view.container.querySelector('.doc-prose')?.textContent).not.toContain('芝士换掉的一段')
+  })
+
+  it('a slow initial GET cannot replace a newer activity snapshot', async () => {
+    const initial = deferred<Block>()
+    mocks.getDoc.mockReturnValueOnce(initial.promise).mockResolvedValue(doc('新版\n', 3))
+    const view = open()
+    await view.rerender({ topic, activityTick: 1 })
+    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('新版'))
+    initial.resolve(doc('旧版\n', 1))
+    await settle()
+    expect(view.container.querySelector('.doc-prose')?.textContent).toContain('新版')
+    expect(view.container.querySelector('.doc-prose')?.textContent).not.toContain('旧版')
+  })
+
+  it('local input made while GET is pending remains beside the incoming conflict', async () => {
+    mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
+    const view = open()
+    await waitFor(() => expect(mocks.editor).not.toBeNull())
+    const refresh = deferred<Block>()
+    mocks.getDoc.mockReturnValueOnce(refresh.promise)
+    await view.rerender({ topic, activityTick: 1 })
+    mocks.editor!.commands.insertContent('请求中输入')
+    refresh.resolve(doc('远端新版\n', 2))
+    await waitFor(() => expect(view.container.querySelector('.doc-notice--conflict')).not.toBeNull())
+    expect(view.container.querySelector('.doc-prose')?.textContent).toContain('请求中输入')
+  })
+
+  it('topic identity fences pending content and comments without requiring unmount', async () => {
+    const initial = deferred<Block>()
+    mocks.getDoc.mockReturnValueOnce(initial.promise).mockResolvedValue(doc('新话题正文\n', 1))
+    const view = open()
+    const nextTopic = { ...topic, id: 't2', title: '新话题' }
+    await view.rerender({ topic: nextTopic, activityTick: 0 })
+    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('新话题正文'))
+    initial.resolve(doc('旧话题正文\n', 9))
+    await settle()
+    expect(view.container.querySelector('.doc-prose')?.textContent).not.toContain('旧话题正文')
+    expect(mocks.getComments.mock.calls.every(([id]) => id === 't2')).toBe(true)
+  })
+
+  it('unmounting before the initial GET settles prevents follow-up requests', async () => {
+    const initial = deferred<Block>()
+    mocks.getDoc.mockReturnValueOnce(initial.promise)
+    const view = open()
+    view.unmount()
+    initial.resolve(doc('迟到正文\n', 1))
+    await settle()
+    expect(mocks.getComments).not.toHaveBeenCalled()
+    expect(mocks.getDocNodes).not.toHaveBeenCalled()
   })
 })
