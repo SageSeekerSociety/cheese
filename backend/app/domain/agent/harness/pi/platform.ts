@@ -264,8 +264,8 @@ function placeTheSession(pi: any, spec: Manifest) {
 //
 // pi's read, write, edit, ls and find are pi's — their schemas, their limits,
 // their output — built on the file operations below, each of which is one
-// request to the runner and one command on the machine (`search.py` for a look
-// through the checkout). A path the model gives is resolved against the
+// request to the runner and one call the machine's executor answers itself
+// (`machine_files.py`). A path the model gives is resolved against the
 // workspace, as pi resolves it against its own directory.
 
 function files(spec: Manifest) {

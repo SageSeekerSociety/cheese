@@ -1,27 +1,84 @@
-"""Looking through the checkout on the room's machine, for pi's ls, find and grep.
+"""The machine's files, for a session whose tools take them one operation at
+a time: pi's read, write, edit, ls, find and grep (`pi/platform.ts`).
 
-pi's own tools stat and list a directory with Node, and search with the fd and
-ripgrep it downloads beside itself; on the session host all of those would look
-at the wrong computer (`platform.ts`). This runs on the machine instead, the way
-`repository.py` does: standard library only, the request as its one argument,
-the answer printed as JSON. A search uses the machine's ripgrep when it has one,
-as pi's would, and otherwise walks what git does not ignore and matches with
-`re`. Either way the answer is in the shape pi's tools format, so the model sees
+pi's own tools are built on injected file operations — read these bytes,
+does this path exist, list this directory — and on the room's machine each is
+one call here, answered by this executor in its own process: no shell started,
+no command to read back. Any path the executor's account can reach, as Claude
+Code's Read and Write reach any; a relative one is the workspace's.
+
+A search uses the machine's ripgrep when it has one, as pi's grep and find
+would, and otherwise walks what git does not ignore and matches with `re`.
+Either way the answer is in the shape pi's tools format, so the model sees
 their output unchanged.
+
+Shipped beside `runtime.py` (`RELEASE_FILES`), standard library only, and run
+by Pythons as old as 3.9.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 
 #: What pi's find leaves out wherever it searches.
 SKIPPED = ("node_modules", ".git")
+
+#: The most one read brings back. pi reads a file whole and then cuts it to
+#: what the model is shown; a file past this is refused rather than carried.
+READ_LIMIT = 32 * 1024 * 1024
+
+#: What a file's first bytes say it is, for the image types pi hands a model
+#: as an image rather than as text (pi's own read does the same sniffing).
+IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def read(path: str) -> dict:
+    with open(path, "rb") as file:
+        data = file.read(READ_LIMIT + 1)
+    if len(data) > READ_LIMIT:
+        return {"error": f"{path} 超过 {READ_LIMIT // (1024 * 1024)} MB，读不进来"}
+    return {"data": base64.b64encode(data).decode()}
+
+
+def access(path: str, write: bool) -> dict:
+    if not os.path.exists(path):
+        return {"error": f"ENOENT: no such file or directory, access '{path}'"}
+    if not os.access(path, os.R_OK | (os.W_OK if write else 0)):
+        return {"error": f"EACCES: permission denied, access '{path}'"}
+    return {}
+
+
+def image(path: str) -> dict:
+    with open(path, "rb") as file:
+        head = file.read(16)
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return {"type": "image/webp"}
+    for magic, kind in IMAGE_MAGIC:
+        if head.startswith(magic):
+            return {"type": kind}
+    return {"type": None}
+
+
+def write(path: str, data: str) -> dict:
+    with open(path, "wb") as file:
+        file.write(base64.b64decode(data))
+    return {}
+
+
+def mkdir(path: str) -> dict:
+    os.makedirs(path, exist_ok=True)
+    return {}
 
 
 def stat(path: str) -> dict:
@@ -116,7 +173,11 @@ def files(root: str) -> list[str]:
         for directory, names, filenames in os.walk(root):
             names[:] = [n for n in names if n not in SKIPPED]
             for name in filenames:
-                listed.append(os.path.relpath(os.path.join(directory, name), root))
+                listed.append(
+                    os.path.relpath(os.path.join(directory, name), root).replace(
+                        os.sep, "/"
+                    )
+                )
         return sorted(listed)
     return sorted(
         name.removeprefix("./")
@@ -167,7 +228,11 @@ def grep(request: dict) -> dict:
     lines_of: dict[str, list[str]] = {}
     matches = []
     for name, number, text in found["matches"]:
-        shown = os.path.relpath(name, path) if directory else os.path.basename(name)
+        shown = (
+            os.path.relpath(name, path).replace(os.sep, "/")
+            if directory
+            else os.path.basename(name)
+        )
         if directory and shown.startswith(".."):
             shown = os.path.basename(name)
         if context == 0 and text is not None:
@@ -285,21 +350,30 @@ def _scan(request: dict, limit: int) -> dict:
     return {"matches": matches, "limited": False}
 
 
-def answer(request: dict) -> dict:
+def answer(request: dict, root: str = ".") -> dict:
+    """One operation; `{"error": ...}` says why it could not be done."""
     operation = request["operation"]
+    path = os.path.join(root, request["path"])
+    request = {**request, "path": path}
     try:
+        if operation == "read":
+            return read(path)
+        if operation == "access":
+            return access(path, bool(request.get("write")))
+        if operation == "image":
+            return image(path)
+        if operation == "write":
+            return write(path, request["data"])
+        if operation == "mkdir":
+            return mkdir(path)
         if operation == "stat":
-            return stat(request["path"])
+            return stat(path)
         if operation == "list":
-            return listing(request["path"])
+            return listing(path)
         if operation == "glob":
-            return glob(request["pattern"], request["path"], int(request["limit"]))
+            return glob(request["pattern"], path, int(request["limit"]))
         if operation == "grep":
             return grep(request)
     except OSError as error:
-        return {"error": f"{error.strerror or error}: {request.get('path')}"}
-    raise ValueError(f"Unknown search: {operation}")
-
-
-if __name__ == "__main__":
-    print(json.dumps(answer(json.loads(sys.argv[1]))))
+        return {"error": f"{error.strerror or error}: {path}"}
+    raise ValueError(f"Unknown file operation: {operation}")

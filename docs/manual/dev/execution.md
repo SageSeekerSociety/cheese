@@ -57,7 +57,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 
 ## 租约：用的时候才要 {#lease}
 
-- **只有真的要动手的调用才去要手**：`invoke` / `mcp` / `project_tools`，以及 `control` 里 `subtype=shell` 且 `operation=start`。启动引导、上下文发现、只用平台的工具都不进这条路。读一个正在跑的命令也不需要。
+- **只有真的要动手的调用才去要手**：`invoke` / `mcp` / `project_tools`，以及 `control` 里 `subtype=shell` 且 `operation=start`、`subtype=tool_hooks`、`subtype=files`（pi 的文件操作）。启动引导、上下文发现、只用平台的工具都不进这条路。读一个正在跑的命令也不需要。
 - 要手的动作是 `lease_path` 上一个 `POST`：平台先等有界的一段时间让机器准备，客户端再问到期限为止。拿到之后把机器名、代际写进配置，把凭据写进 `token_file`、目标写进 `target_file`（原子替换），并关掉旧连接。返回的是「这次的手跟之前是不是同一个租约」（`changed_lease`）——换了租约、且配了 `target_file` 时，会先把上下文树与仓库指令读回来，然后**主动抛一个错**，让调用方先读新可用仓库的说明再发下一个工具。
 - 换成新机器时工作区路径会重写：`file_path` / `path` / `notebook_path` / `command` / `body` / `cwd` 里原来的工作区前缀换成新的。**丢应答的调用不重放**（注释写得很直白：重连只给下一次调用用，这一次绝不重放）。
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。

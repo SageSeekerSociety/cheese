@@ -168,6 +168,45 @@ async def test_files_are_written_and_read_on_the_machine(tmp_path, machine):
         assert "ON THE MACHINE" in told(model.requests[2])
 
 
+async def test_a_file_tool_is_one_call_per_operation_and_starts_no_command(
+    tmp_path, machine
+):
+    """pi's read and edit reach the machine once per file operation they are
+    built on, answered by the executor itself: nothing is run there for them."""
+    checkout = Path(machine["workspace"])
+    (checkout / "notes.md").write_text("old line\n")
+    route = script(
+        ("read", {"path": "notes.md"}),
+        ("edit", {"path": "notes.md", "edits": [{"oldText": "old", "newText": "new"}]}),
+    )
+    async with pi(tmp_path, machine, route) as (runner, model, _):
+        assert runner.machine is not None
+        asked: list[str] = []
+        control = runner.machine.client.control
+
+        def counted(request, preparing=None):
+            asked.append(f"{request.get('subtype')}:{request.get('operation')}")
+            return control(request, preparing=preparing)
+
+        runner.machine.client.control = counted  # type: ignore[method-assign]
+        await turn(runner, model, "看看笔记，再改一下", 3)
+
+        assert (checkout / "notes.md").read_text() == "new line\n"
+        assert "old line" in told(model.requests[1])
+        # Before anything, once for the machine: the project's hook settings.
+        first = asked.index("files:access")
+        assert asked[:first] == ["shell:start", "shell:read"]
+        # read: access, image, read; edit: access, read, write.
+        assert asked[first:] == [
+            "files:access",
+            "files:image",
+            "files:read",
+            "files:access",
+            "files:read",
+            "files:write",
+        ]
+
+
 async def test_a_question_takes_no_machine_and_work_takes_one(
     tmp_path, machine, monkeypatch
 ):

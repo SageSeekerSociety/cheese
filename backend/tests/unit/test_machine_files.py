@@ -1,12 +1,15 @@
-"""pi's find and grep, as they look through a checkout on the room's machine
-(`pi/search.py`): what the machine has ripgrep for, it finds the same without."""
+"""The machine's files as pi's tools take them from its executor
+(`remote_execution/machine_files.py`). A search finds the same whether or not
+the machine has ripgrep."""
 
 import shutil
 import subprocess
 
 import pytest
 
-from app.domain.agent.harness.pi import search
+from app.domain.agent.harness.claude_code.remote_execution import (
+    machine_files as search,
+)
 
 
 @pytest.fixture(params=["ripgrep", "no ripgrep"])

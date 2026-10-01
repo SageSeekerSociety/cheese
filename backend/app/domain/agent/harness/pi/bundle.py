@@ -29,7 +29,6 @@ def build() -> bytes:
             # Run on the room's machine, read from the archive as source.
             "domain/agent/harness/pi/repository.py",
             "domain/agent/harness/pi/project_skills.py",
-            "domain/agent/harness/pi/search.py",
             "domain/agent/harness/pi/relay.py",
             "domain/agent/harness/pi/subagents.py",
             # How a subagent's prompt names the card its work lands on, read

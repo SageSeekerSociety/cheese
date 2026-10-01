@@ -3,9 +3,10 @@
 pi runs on the central session host, beside the room's other sessions, and the
 project is on the room's machine. pi's own tools take their file and process
 operations as injected ``Operations`` (``platform.ts``, #1106); each one
-arrives at the runner as one request and leaves here as one command on the
-machine, through the client every other harness's tools use
-(``RemoteClient``). That client takes the room's machine the first time an
+arrives at the runner as one request and leaves here as one call to the
+machine's executor, through the client every other harness's tools use
+(``RemoteClient``): a file operation the executor answers itself (``files``),
+a command one it runs. That client takes the room's machine the first time an
 operation needs one and never before, so a question that touches no file never
 waits for a machine.
 
@@ -28,23 +29,10 @@ from pathlib import Path
 
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE, RemoteClient
 
-#: The most one file read brings back. pi reads a file whole and then cuts it to
-#: what the model is shown; a file past this is refused rather than carried.
-READ_LIMIT = 32 * 1024 * 1024
-
 #: How long one read of a running command waits for more output: well under the
 #: executor's own bound for a read (`COMMAND_READ_WAIT_S`), so an abort or a
 #: timeout is noticed within it.
 READ_WAIT_S = 2.0
-
-#: What a file's first bytes say it is, for the image types pi hands a model
-#: as an image rather than as text (pi's own read does the same sniffing).
-IMAGE_MAGIC = (
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-)
 
 #: The arguments of a call that name a path or a command, in the names a hook
 #: reads them under (`hooks.shown`).
@@ -53,6 +41,14 @@ PATH_ARGUMENTS = ("file_path", "path", "notebook_path", "command")
 #: What the session hears the first time it reaches the machine, when it was
 #: started before there was one: the repository's own instructions are read
 #: before anything is done in it, as on the other harnesses (`RemoteClient`).
+#: What a pi room hears when the machine's executor predates the file
+#: operations its tools are built on. Bootstrap upgrades an executor when it
+#: is idle (`bootstrap.prepared`), so this lasts until its running work ends.
+OLD_EXECUTOR = (
+    "执行机上的执行服务还是旧版本，不支持这项文件操作。"
+    "它会在手头的任务跑完、空闲下来后自动升级，升级后再试。"
+)
+
 WORK_READY = (
     "工作电脑已经就绪，这次操作没有执行。先读下面这个仓库自己的说明，"
     "再重新发起这次操作：\n\n"
@@ -135,6 +131,9 @@ class Machine:
         # The project's settings as `has_hooks` last read them.
         self.settings: list | None = None
         self.settings_generation: object = None
+        # The lease whose executor was found to take file operations (`files`),
+        # as a one-item tuple: a machine with no generation is still checked.
+        self.files_checked: tuple | None = None
 
     # --- where things are ------------------------------------------------------
 
@@ -302,68 +301,50 @@ class Machine:
 
     # --- files ----------------------------------------------------------------
 
+    def files(self, operation: str, path: str, **more) -> dict:
+        """One of the file operations pi's tools are built on, answered by the
+        machine's executor itself (`remote_execution/machine_files.py`): one
+        call, no command started. Raises `OSError` with what it said when the
+        operation could not be done."""
+        self.take()
+        lease = (self.client.config.get("generation"),)
+        if self.files_checked != lease:
+            capabilities = self.client.call("ping").get("capabilities") or []
+            if "machine_files" not in capabilities:
+                raise OSError(OLD_EXECUTOR)
+            self.files_checked = lease
+        answer = self.client.control(
+            {
+                "subtype": "files",
+                "operation": operation,
+                "path": self.placed(path),
+                **more,
+            }
+        )
+        if "error" in answer:
+            raise OSError(answer["error"])
+        if "paths" in answer:
+            # Found relative to where the session looked, so each is spelled
+            # as the session spells it: not the machine's own checkout when it
+            # sees a placeholder, nor the machine's copy of its skills.
+            answer["paths"] = [posixpath.join(path, found) for found in answer["paths"]]
+        return answer
+
     def read_file(self, path: str) -> bytes:
         here = self.local(path)
         if here is not None:
             return here.read_bytes()
-        spelled = _quote(path)
-        data = self._check(
-            f'[ -e {spelled} ] || {{ echo "ENOENT: no such file or directory, '
-            f"open '{path}'\"; exit 2; }}; exec head -c {READ_LIMIT + 1} -- {spelled}"
-        )
-        if len(data) > READ_LIMIT:
-            raise OSError(f"{path} 超过 {READ_LIMIT // (1024 * 1024)} MB，读不进来")
-        return data
+        return base64.b64decode(self.files("read", path)["data"])
 
     def access(self, path: str, *, write: bool = False) -> None:
         if not write and self.local(path) is not None:
             return
-        spelled = _quote(path)
-        writable = f" && [ -w {spelled} ]" if write else ""
-        self._check(
-            f'[ -e {spelled} ] || {{ echo "ENOENT: no such file or directory, '
-            f"access '{path}'\"; exit 2; }}; [ -r {spelled} ]{writable} || "
-            f"{{ echo \"EACCES: permission denied, access '{path}'\"; exit 13; }}"
-        )
+        self.files("access", path, write=write)
 
     def image_type(self, path: str) -> str | None:
-        here = self.local(path)
-        head = (
-            here.read_bytes()[:16]
-            if here is not None
-            else self._check(f"exec head -c 16 -- {_quote(path)}")
-        )
-        if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-            return "image/webp"
-        for magic, kind in IMAGE_MAGIC:
-            if head.startswith(magic):
-                return kind
-        return None
-
-    def write_file(self, path: str, data: bytes) -> None:
-        self._check(f"cat > {_quote(path)}", stdin=data)
-
-    def mkdir(self, path: str) -> None:
-        self._check(f"mkdir -p -- {_quote(path)}")
-
-    def search(self, request: dict) -> dict:
-        """One of the looks through the checkout pi's ls, find and grep are
-        built on (`search.py`), run on the machine."""
-        output = self._check(
-            f"exec python3 - {_quote(json.dumps(request))}",
-            stdin=script_text("search").encode(),
-        )
-        answer = json.loads(output)
-        if "error" in answer:
-            raise OSError(answer["error"])
-        if "paths" in answer:
-            # Found relative to where the session asked, so a path is spelled
-            # as the session spells it: not the machine's own checkout when
-            # the session sees a placeholder, nor its copy of the skills.
-            answer["paths"] = [
-                posixpath.join(request["path"], found) for found in answer["paths"]
-            ]
-        return answer
+        if self.local(path) is not None:
+            return None  # the platform's skills and pi's own output: text
+        return self.files("image", path)["type"]
 
     # --- what the project says -------------------------------------------------
 

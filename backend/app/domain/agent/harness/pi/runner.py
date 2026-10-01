@@ -416,8 +416,9 @@ class Runner(runner.Runner[Journal]):
     # --- the machine, for pi's own tools ---------------------------------------
 
     async def files(self, params: dict) -> dict:
-        """One of the file operations pi's read, write and edit are built on
-        (`platform.ts`), on the room's machine."""
+        """One of the file operations pi's own tools are built on
+        (`platform.ts`), on the room's machine; the few files the session
+        keeps on this host are read here (`Machine.local`)."""
         assert self.machine is not None
         machine, path = self.machine, params["path"]
         operation = params["operation"]
@@ -431,16 +432,8 @@ class Runner(runner.Runner[Journal]):
             return {}
         if operation == "image":
             return {"type": await asyncio.to_thread(machine.image_type, path)}
-        if operation == "write":
-            data = base64.b64decode(params["data"])
-            await asyncio.to_thread(machine.write_file, path, data)
-            return {}
-        if operation == "mkdir":
-            await asyncio.to_thread(machine.mkdir, path)
-            return {}
-        if operation in ("stat", "list", "glob", "grep"):
-            return await asyncio.to_thread(machine.search, params)
-        raise ValueError(f"Unknown file operation: {operation}")
+        more = {k: v for k, v in params.items() if k not in ("operation", "path")}
+        return await asyncio.to_thread(machine.files, operation, path, **more)
 
     async def shell(self, params: dict) -> dict:
         """pi's shell, as its bash runs it (`platform.ts`): a command started on
