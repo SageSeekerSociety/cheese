@@ -1,23 +1,27 @@
 <script setup lang="ts">
-// 文档底部的常驻评论区（飞书 docs 风）：所有评论都在这儿，锚在某一段的带一颗引用
-// chip，点它回到那一段；页级评论平铺。
-//
-// 它从 PanelDoc 里搬出来，是因为规则 5 之后它自足了：写评论的输入框长在这里，发和
-// 收都在这里，外面只需要知道「有人点了某一段」和「刚发了一条」。评论的**拉取**仍
-// 归宿主 —— 同一次请求还要喂编辑器里的下划线装饰，拆开会变成两次请求两份真相。
+// Paragraph quote chips locate their document node; whole-document comments have no anchor.
+// The host fetches comments once for this list and the editor's underline decorations.
+import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { Block } from '../../../cx_types'
 
-import { nextTick, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { addComment } from '../../../api'
+import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
+import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
-import { myHandle } from '../../../me'
+import CheeseAvatar from '../../CheeseAvatar.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string | null
+  author?: string
+  sendComment?: SendDocComment
   comments: Block[]
   /** The doc's paragraphs, so an anchored comment can name the one it points at. */
   anchorNodes: Block[]
+  openId?: string | null
+  quoteState?: (id: string) => 'unique' | 'missing' | 'ambiguous'
 }>()
 
 const emit = defineEmits<{
@@ -25,19 +29,117 @@ const emit = defineEmits<{
   (e: 'locate-node', nodeId: string): void
   /** A comment was posted — the host re-fetches (it also feeds the underlines). */
   (e: 'posted'): void
+  (e: 'update:openId', id: string | null): void
+  (e: 'busy', busy: boolean): void
 }>()
 
-const AUTHOR = myHandle()
+const {
+  draft,
+  hasDraft,
+  target,
+  busy,
+  close,
+  text,
+  sending,
+  errorMsg,
+  open: openDraft,
+  cancel,
+  submit,
+} = useDocCommentDraft(
+  () => props.topicId,
+  () => props.author ?? '',
+  (...args) =>
+    props.sendComment ? props.sendComment(...args) : Promise.reject(new Error(t('work.room.comments.unavailable'))),
+  () => emit('posted')
+)
 
 // 页级评论折叠态 (Feishu-style, collapsed head keeps the doc quiet).
 const folded = ref(false)
+const root = ref<HTMLElement | null>(null)
+const localOpenId = ref<string | null>(null)
+const expanded = ref(new Set<string>())
+const overflowing = ref(new Set<string>())
+let observer: ResizeObserver | null = null
+let disposed = false
+const activeId = () => (props.openId === undefined ? localOpenId.value : props.openId)
+function draftTarget() {
+  return target.value ?? { anchorId: null, quote: '' }
+}
+watch(busy, (value) => emit('busy', value), { immediate: true, flush: 'sync' })
+function select(id: string) {
+  localOpenId.value = id
+  emit('update:openId', id)
+}
+function locateAnchor(comment: Block) {
+  if (!comment.reply_to || !commentAnchor(comment)) return
+  select(comment.id)
+  emit('locate-node', comment.reply_to)
+}
+function cardClick(e: MouseEvent, id: string) {
+  if (e.defaultPrevented || !(e.target instanceof Element)) return
+  if (e.target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return
+  const selection = root.value?.ownerDocument.getSelection()
+  if (selection && !selection.isCollapsed && selection.anchorNode && root.value?.contains(selection.anchorNode)) return
+  select(id)
+}
+function cardKey(e: KeyboardEvent, id: string) {
+  if (e.target !== e.currentTarget || e.defaultPrevented || e.isComposing || e.repeat) return
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  select(id)
+}
+function expandBody(id: string) {
+  const next = new Set(expanded.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expanded.value = next
+}
+function measureBodies() {
+  const next = new Set<string>()
+  root.value?.querySelectorAll<HTMLElement>('[data-comment-body]').forEach((el) => {
+    const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 22.4
+    if (el.scrollHeight > line * 16 + 1) next.add(el.dataset.commentBody!)
+  })
+  overflowing.value = next
+}
+async function observeBodies() {
+  await nextTick()
+  if (disposed) return
+  observer?.disconnect()
+  root.value?.querySelectorAll<HTMLElement>('[data-comment-body]').forEach((el) => observer?.observe(el))
+  measureBodies()
+}
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') observer = new ResizeObserver(measureBodies)
+  void observeBodies()
+})
+watch(
+  () => [props.comments, props.openId, localOpenId.value, folded.value],
+  () => void observeBodies(),
+  { deep: true }
+)
+watch(
+  () => [props.topicId, props.author],
+  () => {
+    localOpenId.value = null
+    expanded.value = new Set()
+  }
+)
+onBeforeUnmount(() => {
+  disposed = true
+  observer?.disconnect()
+})
+function quoteStatus(c: Block) {
+  if (!c.reply_to || !commentAnchor(c)) return 'missing'
+  return c.anchor_quote ? props.quoteState?.(c.id) ?? 'missing' : 'unique'
+}
 
 // A short label for a doc node, used as the anchor-chip fallback when a comment
 // has no quoted span. The node's own content is either AI- or human-authored
 // text; we only ever truncate it for display (never to derive semantics).
 function nodeLabel(content: string): string {
-  const t = content.replace(/^#+\s*/, '').trim()
-  return t.length > 22 ? t.slice(0, 22) + '…' : t || '（空段落）'
+  const label = content.replace(/^#+\s*/, '').trim()
+  return label.length > 22 ? label.slice(0, 22) + '…' : label || t('work.room.comments.emptyParagraph')
 }
 /** The paragraph a comment points at (or null for a whole-doc comment). */
 function commentAnchor(c: Block): Block | null {
@@ -47,50 +149,27 @@ function commentAnchor(c: Block): Block | null {
 // ---- 写评论 ----
 // 批注归批注，聊天归聊天: this input used to be the workspace's shared chat box,
 // silently retargeted by selecting text. It lives where the comments are now.
-const draft = ref<{ anchorId: string | null; quote: string } | null>(null)
-const text = ref('')
-const sending = ref(false)
-const errorMsg = ref<string | null>(null)
 const input = ref<{ focus?: () => void } | null>(null)
 
 function open(target: { anchorId: string | null; quote: string }) {
   folded.value = false
-  draft.value = target
-  text.value = ''
-  errorMsg.value = null
-  void nextTick(() => input.value?.focus?.())
-}
-
-function cancel() {
-  draft.value = null
-  text.value = ''
-}
-
-async function submit() {
-  const tid = props.topicId
-  const target = draft.value
-  const body = text.value.trim()
-  if (!tid || !target || !body || sending.value) return
-  sending.value = true
-  errorMsg.value = null
-  try {
-    await addComment(tid, body, AUTHOR, target.anchorId ?? undefined, target.quote)
-    cancel()
-    emit('posted')
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '评论失败'
-  } finally {
-    sending.value = false
-  }
+  openDraft(target)
+  const topic = props.topicId,
+    author = props.author
+  void nextTick(() => {
+    if (!disposed && topic === props.topicId && author === props.author) input.value?.focus?.()
+  })
 }
 
 function onKey(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Escape') {
     e.preventDefault()
-    cancel()
+    e.stopPropagation()
+    close()
     return
   }
-  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   void submit()
 }
@@ -98,11 +177,14 @@ function onKey(e: KeyboardEvent) {
 // 下划线点回来的那一跳：卡片在这个组件的 DOM 里，所以展开和高亮也归这里。
 function locate(commentId: string) {
   folded.value = false
+  select(commentId)
+  const topic = props.topicId
   void nextTick(() => {
-    const card = document.querySelector(`[data-comment-card="${commentId}"]`)
+    if (disposed || topic !== props.topicId) return
+    const card = Array.from(root.value?.querySelectorAll<HTMLElement>('[data-comment-card]') ?? []).find(
+      (el) => el.dataset.commentCard === commentId
+    )
     card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    card?.classList.add('comment-card--pulse')
-    window.setTimeout(() => card?.classList.remove('comment-card--pulse'), 1600)
   })
 }
 
@@ -110,32 +192,31 @@ defineExpose({ open, locate })
 </script>
 
 <template>
-  <div class="doc-comments">
+  <div ref="root" class="doc-comments">
     <!-- Collapsible head; ONE 写评论 action, and it opens the input
        that lives right here — 批注归批注，聊天归聊天. -->
     <div class="doc-comments__head">
       <button
         type="button"
         class="doc-comments__fold"
-        :title="folded ? '展开评论' : '收起评论'"
+        :title="folded ? t('work.room.comments.expand') : t('work.room.comments.collapse')"
         @click="folded = !folded"
       >
         <v-icon size="15" class="c-faint">
           {{ folded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
         </v-icon>
         <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
-        评论
+        {{ t('work.room.comments.title') }}
         <span v-if="comments.length" class="doc-comments__count">
           {{ comments.length }}
         </span>
       </button>
-      <v-spacer />
       <v-btn
         icon="mdi-plus"
         size="x-small"
         variant="text"
         color="on-surface-variant"
-        title="写评论"
+        :title="t('work.room.comments.write')"
         @click="open({ anchorId: null, quote: '' })"
       />
     </div>
@@ -143,7 +224,7 @@ defineExpose({ open, locate })
       <!-- 写评论: anchored to a paragraph when it came from a
          selection, page-level when it came from the ＋. -->
       <div v-if="draft" class="comment-draft">
-        <div v-if="draft.quote" class="comment-draft__quote">
+        <div v-if="draft.quote" class="comment-draft__quote" dir="auto">
           <v-icon size="13" class="c-faint">mdi-format-quote-close</v-icon>
           {{ draft.quote }}
         </div>
@@ -159,27 +240,65 @@ defineExpose({ open, locate })
           density="compact"
           autofocus
           class="comment-draft__input"
-          placeholder="输入评论…"
-          title="Enter 发送，Shift+Enter 换行"
+          :placeholder="t('work.room.comments.placeholder')"
+          :title="t('work.room.comments.keyHint')"
           @keydown="onKey"
         />
         <div v-if="errorMsg" class="comment-draft__error">{{ errorMsg }}</div>
         <div class="d-flex align-center ga-2 justify-end">
-          <v-btn size="small" variant="text" :disabled="sending" @click="cancel"> 取消 </v-btn>
+          <v-btn
+            size="small"
+            variant="text"
+            :disabled="busy"
+            :title="busy ? t('work.room.comments.waitForSend') : ''"
+            @click="close"
+          >
+            {{ t('work.room.comments.closeDraft') }}
+          </v-btn>
+          <v-btn
+            size="small"
+            variant="text"
+            :disabled="busy"
+            :title="busy ? t('work.room.comments.waitForSend') : ''"
+            @click="cancel"
+          >
+            {{ t('work.room.comments.discardDraft') }}
+          </v-btn>
           <v-btn
             size="small"
             color="primary"
             variant="flat"
             :loading="sending"
-            :disabled="!text.trim()"
+            :disabled="sending || !text.trim() || !sendComment"
+            :title="!sendComment ? t('work.room.comments.unavailable') : ''"
             @click="submit"
           >
-            评论
+            {{ t('work.room.comments.comment') }}
           </v-btn>
         </div>
       </div>
-      <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-        <span class="doc-comments__avatar">
+      <button
+        v-if="!draft && hasDraft"
+        type="button"
+        class="doc-comments__resume"
+        @click="openDraft({ ...draftTarget() })"
+      >
+        {{ t('work.room.comments.resumeDraft') }}
+      </button>
+      <article
+        v-for="c in comments"
+        :key="c.id"
+        class="doc-comments__item"
+        :data-comment-card="c.id"
+        :class="{ 'is-active': activeId() === c.id }"
+        tabindex="0"
+        :aria-expanded="activeId() === c.id"
+        :aria-label="`${c.author ?? ''} · ${relTime(c.created_at)}`"
+        @click="cardClick($event, c.id)"
+        @keydown="cardKey($event, c.id)"
+      >
+        <CheeseAvatar v-if="isAgentHandle(c.author ?? '')" :size="24" :name="c.author ?? ''" :handle="c.author" />
+        <span v-else class="doc-comments__avatar">
           {{ (c.author || '?').slice(0, 1).toUpperCase() }}
         </span>
         <div class="doc-comments__main">
@@ -195,15 +314,46 @@ defineExpose({ open, locate })
             v-if="c.reply_to && commentAnchor(c)"
             type="button"
             class="doc-comments__chip"
-            title="定位到该段"
-            @click="emit('locate-node', c.reply_to!)"
+            :title="t('work.room.comments.locate')"
+            dir="auto"
+            @click="locateAnchor(c)"
           >
             {{ c.anchor_quote || nodeLabel(commentAnchor(c)!.content) }}
           </button>
-          <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">原段落已改动</div>
-          <div class="doc-comments__text">{{ c.content }}</div>
+          <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">
+            {{ t('work.room.comments.anchorChanged') }}
+          </div>
+          <div
+            v-if="c.anchor_quote && quoteStatus(c) !== 'unique' && c.reply_to && commentAnchor(c)"
+            class="doc-comments__stale"
+          >
+            {{
+              t(
+                quoteStatus(c) === 'ambiguous'
+                  ? 'work.room.comments.anchorAmbiguous'
+                  : 'work.room.comments.anchorChanged'
+              )
+            }}
+          </div>
+          <div
+            class="doc-comments__text"
+            :class="{ 'is-expanded': expanded.has(c.id) }"
+            :data-comment-body="c.id"
+            dir="auto"
+          >
+            {{ c.content }}
+          </div>
+          <button
+            v-if="activeId() === c.id && overflowing.has(c.id)"
+            type="button"
+            class="doc-comments__resume"
+            :aria-expanded="expanded.has(c.id)"
+            @click="expandBody(c.id)"
+          >
+            {{ t(expanded.has(c.id) ? 'work.room.comments.showLess' : 'work.room.comments.showMore') }}
+          </button>
         </div>
-      </div>
+      </article>
     </template>
   </div>
 </template>
@@ -289,10 +439,10 @@ defineExpose({ open, locate })
 
 /* 飞书 docs 风常驻评论区 at the bottom of the document column. */
 .doc-comments {
-  max-width: 720px;
-  margin: 40px auto 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 12px 0 0;
 }
 /* 写评论的输入框，长在评论区里。区块靠留白和一层浅底分出来，不用卡片也不用左条纹。 */
 .comment-draft {
@@ -320,6 +470,8 @@ defineExpose({ open, locate })
 }
 .doc-comments__head {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   font-size: 13px;
@@ -327,6 +479,19 @@ defineExpose({ open, locate })
   color: var(--muted);
   margin-bottom: 12px;
 }
+.doc-comments__fold {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.doc-comments__head > .v-btn {
+  flex: 0 0 auto;
+}
+
 .doc-comments__count {
   font-size: 12px;
   font-weight: 600;
@@ -339,7 +504,7 @@ defineExpose({ open, locate })
   display: flex;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--line-2);
+  border: 1px solid transparent;
   border-radius: var(--radius-lg);
   background: var(--surface);
   margin-bottom: 8px;
@@ -354,15 +519,8 @@ defineExpose({ open, locate })
   flex: 0 0 auto;
   font-size: 0.7rem;
   font-weight: 700;
-  /* 搬迁保留原样。这一对字面色其实站不住脚 —— 它引用的是 avatarColor() 那条
-     豁免（算出来的定色底 + 定色墨），但这个 #8a94a3 不是算出来的，就是一个字面
-     灰。同一处缺陷在 TopicView 的 .mention-avatar 上已经按 var(--surface) /
-     var(--muted) 修过（顺带把对比度从 2.9:1 提到 5.0:1）。这一轮是纯搬迁，不夹带
-     修改；这两行留给「现场 + 预览打磨」那张卡。 */
-  /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
-  color: #fff;
-  /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
-  background: #8a94a3;
+  color: var(--muted);
+  background: var(--fill);
 }
 .doc-comments__main {
   flex: 1 1 auto;
@@ -391,9 +549,9 @@ defineExpose({ open, locate })
 .doc-comments__chip {
   display: block;
   max-width: 100%;
-  text-align: left;
+  text-align: start;
   border: none;
-  border-left: 2px solid var(--line-2);
+  border-inline-start: 2px solid var(--line-2);
   background: var(--fill);
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
@@ -404,14 +562,58 @@ defineExpose({ open, locate })
   color: var(--muted);
   cursor: pointer;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-comments__chip:hover {
   background: rgba(var(--v-theme-primary), 0.13);
 }
 /* The anchor node no longer exists — the paragraph was edited away. */
+.doc-comments__item {
+  cursor: pointer;
+}
+.doc-comments__item:hover {
+  background: var(--fill);
+}
+.doc-comments__item.is-active {
+  border-color: var(--line-2);
+  background: var(--fill);
+}
+.doc-comments__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.doc-comments__text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.is-active .doc-comments__text {
+  display: block;
+  max-height: 25.6em;
+  -webkit-line-clamp: unset;
+}
+.is-active .doc-comments__text.is-expanded {
+  max-height: none;
+}
+.doc-comments__resume {
+  margin: 4px 0;
+  color: var(--accent-ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.comment-draft__quote {
+  border-inline-start: 2px solid var(--line-2);
+  padding-inline-start: 8px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 .doc-comments__stale {
   font-size: 12px;
   color: var(--faint);

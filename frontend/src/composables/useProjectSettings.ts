@@ -31,6 +31,7 @@ import {
   setForgeAttribution,
   setUpstream,
 } from '@/api'
+import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { explainAccountLinkFailure, explainRepoInstallFailure, findGithubAccountConnection } from '@/lib/githubAccount'
 import { myId } from '@/me'
@@ -63,9 +64,16 @@ export function useProjectSettings(projectId: () => string) {
     attribution.value?.requester_coauthor == null ? 'default' : attribution.value.requester_coauthor ? 'on' : 'off'
   )
   const attributionItems = computed(() => [
-    { title: `跟随系统默认（${attribution.value?.deployment_default ? '开启' : '关闭'}）`, value: 'default' },
-    { title: '开启', value: 'on' },
-    { title: '关闭', value: 'off' },
+    {
+      title: t('work.projectSettings.repoFlow.followDefault', {
+        state: attribution.value?.deployment_default
+          ? t('work.projectSettings.repoFlow.on')
+          : t('work.projectSettings.repoFlow.off'),
+      }),
+      value: 'default',
+    },
+    { title: t('work.projectSettings.repoFlow.on'), value: 'on' },
+    { title: t('work.projectSettings.repoFlow.off'), value: 'off' },
   ])
 
   async function saveAttribution(choice: string) {
@@ -74,7 +82,7 @@ export function useProjectSettings(projectId: () => string) {
     try {
       attribution.value = await setForgeAttribution(projectId(), choice === 'default' ? null : choice === 'on')
     } catch (e) {
-      attributionError.value = e instanceof Error ? e.message : '保存失败，请重试'
+      attributionError.value = e instanceof Error ? e.message : t('work.projectSettings.repoFlow.saveFailed')
     } finally {
       attributionSaving.value = false
     }
@@ -107,7 +115,7 @@ export function useProjectSettings(projectId: () => string) {
     const userId = myId()
     if (!userId) {
       githubAccountLoadState.value = 'error'
-      githubAccountLoadError.value = '未登录'
+      githubAccountLoadError.value = t('work.projectSettings.repoFlow.notSignedIn')
       return
     }
     githubAccountLoadState.value = 'loading'
@@ -117,7 +125,7 @@ export function useProjectSettings(projectId: () => string) {
       githubAccountConn.value = findGithubAccountConnection(connections)
       githubAccountLoadState.value = 'loaded'
     } catch (e) {
-      githubAccountLoadError.value = e instanceof Error ? e.message : '加载连接状态失败'
+      githubAccountLoadError.value = e instanceof Error ? e.message : t('work.projectSettings.githubAccount.loadFailed')
       githubAccountLoadState.value = 'error'
     }
   }
@@ -135,7 +143,10 @@ export function useProjectSettings(projectId: () => string) {
       })
     } catch (e) {
       if (e instanceof SudoCancelledError) return
-      githubAccountNotice.value = { type: 'error', text: e instanceof Error ? e.message : '断开 GitHub 账号失败' }
+      githubAccountNotice.value = {
+        type: 'error',
+        text: e instanceof Error ? e.message : t('work.projectSettings.repoFlow.disconnectFailed'),
+      }
     } finally {
       disconnectingGithubAccount.value = false
     }
@@ -154,7 +165,7 @@ export function useProjectSettings(projectId: () => string) {
       forgeConnection.value = forge
       attribution.value = credit
     } catch (e) {
-      error.value = e instanceof Error ? e.message : '加载设置失败'
+      error.value = e instanceof Error ? e.message : t('work.projectSettings.repoFlow.loadFailed')
     } finally {
       loading.value = false
     }
@@ -167,7 +178,10 @@ export function useProjectSettings(projectId: () => string) {
       const r = await setUpstream(projectId(), upstreamUrl.value.trim())
       upstreamUrl.value = r.url ?? ''
     } catch (e) {
-      githubRepoNotice.value = { type: 'error', text: e instanceof Error ? e.message : '保存上游仓库失败' }
+      githubRepoNotice.value = {
+        type: 'error',
+        text: e instanceof Error ? e.message : t('work.projectSettings.repoFlow.upstreamSaveFailed'),
+      }
     } finally {
       savingUpstream.value = false
     }
@@ -183,7 +197,10 @@ export function useProjectSettings(projectId: () => string) {
       const res = await apiConnectGithubRepo(projectId())
       if (res.connected) {
         forgeConnection.value = await getForgeConnection(projectId())
-        githubRepoNotice.value = { type: 'success', text: `已连接 ${res.repo}` }
+        githubRepoNotice.value = {
+          type: 'success',
+          text: t('work.projectSettings.githubRepo.connected', { repo: res.repo }),
+        }
         connectingGithubRepo.value = false
         return
       }
@@ -191,10 +208,13 @@ export function useProjectSettings(projectId: () => string) {
         if (goAuthorize(res.install_url)) connectingGithubRepo.value = false
         return
       }
-      githubRepoNotice.value = { type: 'error', text: '连接失败：后端没有返回安装链接' }
+      githubRepoNotice.value = { type: 'error', text: t('work.projectSettings.repoFlow.noInstallUrl') }
       connectingGithubRepo.value = false
     } catch (e) {
-      githubRepoNotice.value = { type: 'error', text: e instanceof Error ? e.message : '连接 GitHub 仓库失败' }
+      githubRepoNotice.value = {
+        type: 'error',
+        text: e instanceof Error ? e.message : t('work.projectSettings.repoFlow.connectRepoFailed'),
+      }
       connectingGithubRepo.value = false
     }
   }
@@ -207,7 +227,10 @@ export function useProjectSettings(projectId: () => string) {
       const { url } = await getGithubAccountAuthorizeUrl(projectId())
       if (goAuthorize(url)) connectingGithubAccount.value = false
     } catch (e) {
-      githubAccountNotice.value = { type: 'error', text: e instanceof Error ? e.message : '获取授权链接失败' }
+      githubAccountNotice.value = {
+        type: 'error',
+        text: e instanceof Error ? e.message : t('work.projectSettings.repoFlow.authUrlFailed'),
+      }
       connectingGithubAccount.value = false
     }
   }
@@ -223,9 +246,12 @@ export function useProjectSettings(projectId: () => string) {
     const reason = route.query.reason as string | undefined
     if (install === 'success') {
       const repo = route.query.repo as string | undefined
-      githubRepoNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
+      githubRepoNotice.value = {
+        type: 'success',
+        text: t('work.projectSettings.repoFlow.repoConnected', { repo: repo ?? '' }).trim(),
+      }
     } else if (install === 'pending') {
-      githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准' }
+      githubRepoNotice.value = { type: 'info', text: t('work.projectSettings.repoFlow.installPending') }
     } else if (install === 'error') {
       githubRepoNotice.value = {
         type: 'error',
@@ -235,7 +261,7 @@ export function useProjectSettings(projectId: () => string) {
         }),
       }
     } else if (account === 'success') {
-      githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号' }
+      githubAccountNotice.value = { type: 'success', text: t('work.projectSettings.repoFlow.accountConnected') }
     } else if (account === 'error') {
       githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
     }

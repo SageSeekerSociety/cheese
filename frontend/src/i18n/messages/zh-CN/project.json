@@ -1,0 +1,110 @@
+{
+  "leave": {
+    "title": "退出项目？",
+    "body": "你将无法查看这个项目，已有的消息和记录会保留。再次受邀后可以回到这个项目。",
+    "bodyTeam": "你将无法查看这个项目，已有的消息和记录会保留。退出的是这个项目，不是团队——你在团队里的身份不变，团队里别的项目照常。再次受邀后可以回到这个项目。",
+    "confirm": "退出",
+    "failed": "退出失败"
+  },
+  "artifacts": {
+    "rename": "重命名",
+    "mergeInto": "合并到…",
+    "delete": "删除",
+    "notDelivered": "尚未交付",
+    "version": "第 {version} 版",
+    "renameFailed": "未能改名",
+    "mergeFailed": "未能合并",
+    "deleteFailed": "未能删除",
+    "empty": "暂无产物",
+    "actionsOf": "{name} 的操作",
+    "collapse": "收起",
+    "expand": "展开其余 {count} 项",
+    "nameLabel": "名字",
+    "mergeTitle": "合并《{name}》",
+    "mergeLabel": "合并到",
+    "mergeHint": "《{name}》的版本记录归入所选的那一项，它不再单独列出",
+    "merge": "合并",
+    "deleteTitle": "删除《{name}》",
+    "deleteBody": "删除后它不再列在这里，已完成的交付记录保留"
+  },
+  "calendar": {
+    "loadFailed": "加载日历失败",
+    "tbd": "待定",
+    "noDate": "日期待定",
+    "overdue": "已过期 {count} 天",
+    "dueToday": "今天截止",
+    "daysLeft": "还剩 {count} 天",
+    "upcoming": "即将到来",
+    "noUpcoming": "暂无即将到来的里程碑",
+    "due": "截止 {date}",
+    "done": "已完成"
+  },
+  "connect": {
+    "missingCode": "缺少设备码，请从命令行打开的链接进入",
+    "failed": "审批失败",
+    "eyebrow": "设备连接",
+    "title": "批准这台设备",
+    "intro": "这台机器请求接入芝士，成为归你所有的设备。批准后，芝士就可以把任务派到它上面运行。",
+    "noCode": "链接里没有设备码，请从 {command} 打开的地址进入",
+    "signInFirst": "请先登录，再批准这台设备归你所有",
+    "signIn": "去登录",
+    "code": "设备码",
+    "nameLabel": "设备名称",
+    "namePlaceholder": "例如：andy-macbook",
+    "approve": "批准并绑定到我",
+    "done": "设备已连接",
+    "bound": "设备「{name}」已绑定到你",
+    "finishing": "命令行里的 {command} 会接着完成接入，设备随即保持在线、接受任务",
+    "viewDevices": "查看设备"
+  },
+  "archived": {
+    "loadFailed": "加载失败",
+    "unarchiveFailed": "取消归档失败",
+    "refresh": "刷新",
+    "empty": "暂无已归档的项目",
+    "on": "归档于 {date}",
+    "unarchive": "取消归档"
+  },
+  "open": {
+    "signIn": "登录",
+    "retry": "重试",
+    "preview": {
+      "failed": "预览打开失败",
+      "title": "打开预览",
+      "membersOnly": "这个预览仅项目成员可访问，请先登录",
+      "opening": "正在打开预览"
+    },
+    "site": {
+      "failed": "网站打开失败",
+      "title": "打开网站",
+      "membersOnly": "这个网站仅项目成员可访问，请先登录",
+      "opening": "正在打开网站"
+    }
+  },
+  "docs": {
+    "kind": {
+      "charter": "章程",
+      "weeklies": "周报集",
+      "memory": "记忆"
+    },
+    "loadFailed": "加载失败",
+    "history": "修改记录",
+    "askInRoom": "去项目房间请它写",
+    "saving": "保存中…",
+    "saved": "已保存",
+    "unsaved": "未保存",
+    "charterHint": "改了就等于给芝士下指令",
+    "memoryEmpty": "暂无记忆",
+    "memoryHint": "对话里说「记住……」，或它自己判断重要时，会写进这里",
+    "memoryUser": "个人记忆",
+    "memoryProject": "项目记忆",
+    "memoryDelete": "删除这条记忆",
+    "charterPlaceholder": "芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。",
+    "noCharter": "这个项目还没有可编辑的章程文档",
+    "fromTopic": "来自话题",
+    "weekliesEmpty": "暂无周报",
+    "weekliesHint": "在项目房间里 {'@'} 芝士，说「写一份这周的项目周报」，它写完会记到这里",
+    "goToRoom": "去项目房间",
+    "recordedOn": "{date} 记录"
+  }
+}

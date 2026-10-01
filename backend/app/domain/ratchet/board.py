@@ -31,11 +31,51 @@ from typing import Any
 _DIRECTIONS = {"down", "up"}
 _NOT_COLLECTED = "not_collected"
 
+# The gate judges changed files; board.size measures the whole tree.
+# A zero diff count does not mean the repository has no oversized files.
+_SIZE_CHECK_ID = "file-sizes"
+
+
+def _tree_size(payload: Any) -> dict[str, Any] | None:
+    """The tree-wide size numbers out of the collector's own board, or None.
+
+    None rather than zeros, for the same reason every other number here is optional: a
+    collection whose board could not be measured has no answer to 「树上超了多少」, and
+    drawing 0 would claim the tree is clean.
+    """
+    if not isinstance(payload, dict):
+        return None
+    board = payload.get("board")
+    size = board.get("size") if isinstance(board, dict) else None
+    if not isinstance(size, dict):
+        return None
+    offenders, excess = size.get("offenders"), size.get("excess_lines")
+    if not _is_int(offenders) or not _is_int(excess):
+        return None
+    per_cap = size.get("per_cap")
+    caps = [
+        {
+            "prefix": prefix,
+            "cap": row.get("cap"),
+            "judged": row.get("judged"),
+            "over_cap": row.get("over_cap"),
+            "excess_lines": row.get("excess_lines"),
+        }
+        for prefix, row in (per_cap.items() if isinstance(per_cap, dict) else [])
+        if isinstance(row, dict)
+    ]
+    return {"offenders": offenders, "excess_lines": excess, "caps": caps}
+
 
 def _iso(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.astimezone(UTC).isoformat()
     return value if isinstance(value, str) else None
+
+
+def _is_int(value: Any) -> bool:
+    """A count, and not a bool. `True` is an `int` in python and is not a count."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _check_records(row: Any) -> list[dict[str, Any]]:
@@ -202,27 +242,31 @@ def build_board(
                 if isinstance(record.get("stale"), list):
                     latest_stale[check_id] = record["stale"]
 
+    # Use only the latest tree measurement; missing data must remain unknown.
+    tree = _tree_size(getattr(rows[0], "payload", None) if rows else None)
+
     for check_id, points in series.items():
         info = meta.get(check_id, {"area": "未分区", "better": None})
         last = points[-1] if points else {}
         # The exemptions that no longer match anything, newest list wins: they
         # are a fact about the current tree, not a series.
         stale = latest_stale.get(check_id, [])
-        areas.setdefault(info["area"], []).append(
-            {
-                "id": check_id,
-                "area": info["area"],
-                "better": info["better"],
-                "direction": _direction(points, info["better"]),
-                "status": last.get("status", _NOT_COLLECTED),
-                "actual": last.get("actual"),
-                "frozen": last.get("frozen"),
-                "stale": stale,
-                "stale_count": last.get("stale_count"),
-                "rule_fingerprint": last.get("rule_fingerprint"),
-                "points": points,
-            }
-        )
+        entry = {
+            "id": check_id,
+            "area": info["area"],
+            "better": info["better"],
+            "direction": _direction(points, info["better"]),
+            "status": last.get("status", _NOT_COLLECTED),
+            "actual": last.get("actual"),
+            "frozen": last.get("frozen"),
+            "stale": stale,
+            "stale_count": last.get("stale_count"),
+            "rule_fingerprint": last.get("rule_fingerprint"),
+            "points": points,
+        }
+        if check_id == _SIZE_CHECK_ID:
+            entry["tree"] = tree
+        areas.setdefault(info["area"], []).append(entry)
 
     newest = rows[0] if rows else None
     return {

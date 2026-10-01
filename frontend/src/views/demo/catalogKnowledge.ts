@@ -70,8 +70,8 @@ export const KNOWLEDGE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '三个筛选都挂着',
-        note: '类型那一栏给的是中文名（`RESOURCE_TYPE_OPTIONS`），请求里要的 type code 由页翻（`resourceTypeCode`）—— 所以这里和下拉的文案是同一张表。',
-        props: knowledgeToolbarProps({ searchQuery: '设计', typeFilter: '文件', tagFilter: '前端' }),
+        note: '类型那一栏的值就是类型码（`RESOURCE_TYPE_OPTIONS`），显示名由件按界面语言翻（`knowledgeTypeLabel`）—— 请求里直接用这个值。',
+        props: knowledgeToolbarProps({ searchQuery: '设计', typeFilter: 'MATERIAL', tagFilter: '前端' }),
         expect: '上传资料',
       },
       {
@@ -94,7 +94,7 @@ export const KNOWLEDGE_ENTRIES: CatalogEntry[] = [
         name: '一条都没有',
         note: '没筛过时说「先去聊天里放点东西进来」：这一档没有可点的东西，所以不给按钮。',
         props: { hasFilters: false },
-        expect: '在频道聊天中添加有价值的内容到知识库',
+        expect: '在对话中把有价值的内容加入知识库',
       },
       {
         name: '筛空了',

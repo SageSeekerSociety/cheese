@@ -18,6 +18,7 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames } from '@/lib/agentNames'
+import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicPhase, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -259,18 +260,17 @@ function handleStateChanged(resource: string) {
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
-  else activityTick.value += 1 // doc / decision / milestone / notify → reload
+  else activityTick.value += 1 // doc / milestone / notify → reload
 }
 
-// An action card's button → open the relevant view (§3.1.1 控件). 决策记录 has
-// exactly ONE address now (`docs/decisions`, a child of this project frame) —
-// it used to be a separate full page here and an in-place swap in the sidebar,
-// so the same words led to two different places.
+// An action card's button → open the relevant view (§3.1.1 控件).
 async function handleOpenResource(resource: string, turnId?: string) {
-  if (resource === 'decision') {
-    void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
-  } else if (resource === 'milestone') {
+  if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
+  } else if (resource === 'site') {
+    // 对话里在动的那个头像：它此刻在干什么，去现场看。
+    focusMode.value = false
+    onPanelTab('site')
   } else if (resource === 'changes') {
     // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
     focusMode.value = false
@@ -325,6 +325,12 @@ async function loadMemberNames() {
   }
 }
 void loadMemberNames()
+// 名册抽屉里加了人、移了人，这份跟着重拉：刚请进来的队友在「现场」那一格也要叫得出名字。
+onUnmounted(
+  onTopicRosterChange((topicId) => {
+    if (topicId === props.topicId) void loadMemberNames()
+  })
+)
 
 // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
 // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
@@ -341,8 +347,8 @@ void openPlace()
     <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
       <v-progress-circular v-if="resolving" indeterminate color="primary" />
       <div v-else class="text-center">
-        <div class="t-body c-muted">这个话题不存在</div>
-        <div class="t-meta mt-1">它可能已被删除，或不属于这个项目</div>
+        <div class="t-body c-muted">{{ t('work.topic.notFound') }}</div>
+        <div class="t-meta mt-1">{{ t('work.topic.notFoundHint') }}</div>
       </div>
     </div>
 
@@ -387,7 +393,7 @@ void openPlace()
         <div
           v-if="mdAndUp && !focusMode"
           class="pane-resizer"
-          title="拖动调整宽度，双击复位"
+          :title="t('work.topic.resize')"
           @mousedown.prevent="startPaneDrag"
           @dblclick="store.setChatPct(50)"
         />

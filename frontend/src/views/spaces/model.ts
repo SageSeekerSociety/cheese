@@ -5,8 +5,6 @@
 /** 一张邀请码现在的状态。库里只有次数与期限，两者都能让一张码失效。 */
 export interface InviteCodeStatus {
   key: 'usable' | 'expired' | 'exhausted'
-  label: string
-  color: string
 }
 
 /**
@@ -19,12 +17,12 @@ export function inviteCodeStatus(
   now: number = Date.now()
 ): InviteCodeStatus {
   if (code.expiresAt !== null && code.expiresAt <= now) {
-    return { key: 'expired', label: '已过期', color: 'warning' }
+    return { key: 'expired' }
   }
   if (code.maxUses !== null && code.maxUses > 0 && code.useCount >= code.maxUses) {
-    return { key: 'exhausted', label: '已用尽', color: 'error' }
+    return { key: 'exhausted' }
   }
-  return { key: 'usable', label: '可用', color: 'success' }
+  return { key: 'usable' }
 }
 
 /** 还能用的第一张；没有就是 `null`（不拿一张废码顶上）。列表按建码时间排，所以

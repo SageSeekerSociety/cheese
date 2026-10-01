@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.textfile import text_payload
 
 
@@ -105,7 +106,7 @@ def read_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, digest: str) -
         raise ValidationError("不是一个修订")
     target = _revision_root(project_id, room_id) / digest
     if not target.is_file():
-        raise NotFoundError("这一版的内容不在了")
+        raise NotFoundError(say("revisionContentGone"))
     return target.read_bytes()
 
 
@@ -150,7 +151,7 @@ def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -
         if not target.is_file():
             # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
             # 地址没错，是东西不在了。
-            raise ValidationError("这份资料已经不在资料库里")
+            raise ValidationError(say("libraryFileGone"))
         return text_payload(target, path)
     return read_room_text_file(project_id, room_id, path)
 
@@ -187,13 +188,13 @@ def write_library_file(project_id: uuid.UUID, name: str, data: bytes) -> str:
         except FileExistsError:
             continue
         return candidate
-    raise ValidationError(f"同名文件太多：{name}")
+    raise ValidationError(say("tooManySameNameFiles", name=name))
 
 
 def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
     target = _safe_path(library_root(project_id), path)
     if not target.is_file():
-        raise NotFoundError("资料库里没有这份文件")
+        raise NotFoundError(say("libraryFileNotFound"))
     return target.read_bytes()
 
 
@@ -212,7 +213,7 @@ def keep_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> Non
     """替换之前，把现在这一份挪进历史目录：替换不是删除，旧的那一份还在。"""
     source = _safe_path(library_root(project_id), name)
     if not source.is_file():
-        raise NotFoundError("资料库里没有这份文件")
+        raise NotFoundError(say("libraryFileNotFound"))
     target = _history_root(project_id) / str(record_id) / PurePosixPath(name).name
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(source.read_bytes())
@@ -222,7 +223,7 @@ def overwrite_library_file(project_id: uuid.UUID, name: str, data: bytes) -> Non
     """用新的字节替换这个名字下的那一份。先写到旁边再换过去，读的人不会读到半份。"""
     target = _safe_path(library_root(project_id), name)
     if not target.is_file():
-        raise NotFoundError("资料库里没有这份文件")
+        raise NotFoundError(say("libraryFileNotFound"))
     staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}")
     staging.write_bytes(data)
     staging.replace(target)
@@ -247,7 +248,7 @@ def delete_library_file(project_id: uuid.UUID, name: str) -> None:
     这一份没有了——在它的位置上摆一份别的东西，才是把读者读到的内容换掉。"""
     target = _safe_path(library_root(project_id), name)
     if not target.is_file():
-        raise NotFoundError("资料库里没有这份文件")
+        raise NotFoundError(say("libraryFileNotFound"))
     target.unlink()
 
 
@@ -315,7 +316,7 @@ def read_artifact_snapshot(
     if not target.is_file():
         # 交付物落地之前递的那些卡：清单上有这一版，字节从来没有过。说清是哪一
         # 种，别让它读起来像文件丢了。
-        raise NotFoundError("这一版没有留存文件")
+        raise NotFoundError(say("artifactVersionNoFile"))
     return target.read_bytes()
 
 

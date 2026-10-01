@@ -24,6 +24,11 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 // Monaco does not load under happy-dom (and is not what is under test): stand in
 // a textarea that speaks the same v-model / @save contract.
 vi.mock('../CodeEditor.vue', () => ({
@@ -54,7 +59,7 @@ vi.mock('../../api', async () => {
           title: name,
           status: 'open',
           branch_name: `task/${name}`,
-          presentation: { column: 'building', display_status: '运行中' },
+          presentation: { column: 'building', phrase: 'running' },
           blocks: [],
         })),
         total: 2,
@@ -100,7 +105,7 @@ function mountPanel(id: string) {
   return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0 },
     global: {
-      plugins: [vuetify],
+      plugins: [vuetify, i18n],
     },
   })
 }
@@ -117,7 +122,7 @@ function mountSwitchable(id: string) {
     },
     template: '<WorkPanel :key="topic.id" :topic="topic" :activity-tick="0" />',
   })
-  return render(Page, { props: { topic: topic(id) }, global: { plugins: [vuetify] } })
+  return render(Page, { props: { topic: topic(id) }, global: { plugins: [vuetify, i18n] } })
 }
 
 /** Let the panel's chained awaits (list → read) settle. */
@@ -334,14 +339,14 @@ describe('文件面板', () => {
           blocks: [],
           created_at: '2026-09-09T00:00:00Z',
           updated_at: '2026-09-09T00:00:00Z',
-          presentation: { column: 'done', display_status: '已完成' },
+          presentation: { column: 'done', phrase: 'accepted' },
         },
       ],
       total: 1,
     })
     await fromMenu(container, '刷新')
     await flush()
-    expect(container.querySelector('.source-status')?.textContent).toBe('已完成 · 只读')
+    expect(container.querySelector('.source-status')?.textContent).toBe('已采纳 · 只读')
     expect(editor(container)!.readOnly).toBe(true)
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     await fireEvent.update(editor(container)!, 'late edit')
@@ -768,7 +773,7 @@ describe('task file navigation', () => {
           title: 'Only task',
           status: 'open',
           branch_name: 'task/single',
-          presentation: { column: 'building', display_status: '进行中' },
+          presentation: { column: 'building', phrase: 'running' },
           blocks: [],
         },
       ],

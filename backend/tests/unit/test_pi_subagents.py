@@ -27,8 +27,8 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness import Opening
-from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provider
 from app.domain.agent.harness.pi.events import Assembler
+from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
@@ -40,8 +40,9 @@ from app.domain.agent.service import (
     AgentToolResult,
 )
 from app.domain.room_task.thread_label import thread_label
+from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
-from tests.unit.test_a_person_is_answered_before_anything_else import pi_binary
+from tests.support.room_machine import room_machine
 
 PARENT = "parent-model"
 LABEL = thread_label(uuid.UUID("4f1c2a9b-8d7e-4c1f-a0b3-c5d6e7f80912"))
@@ -182,22 +183,23 @@ async def pi(tmp_path: Path, route, *, default: str = "child-default"):
         "CHEESE_TOKEN": "session-token",
     }
     runner = Runner(tmp_path / "state")
-    launch = PiLaunch(system_prompt="FIXTURE", model=PARENT)
-    try:
-        await runner.start(
-            Opening(system_prompt="FIXTURE", model=PARENT, agent_handle="cheese"),
-            binary=pi_binary(),
-            cwd=str(work),
-            env=env,
-            args=launch.arguments(),
-            extension=extension(),
-            notice=PLATFORM_NOTICE,
-        )
-        yield Session(runner, model, admission)
-    finally:
-        await runner.close()
-        model.close()
-        admission.close()
+    with room_machine(tmp_path / "machine") as target:
+        try:
+            await runner.start(
+                Opening(system_prompt="FIXTURE", model=PARENT, agent_handle="cheese"),
+                binary=pi_binary(),
+                cwd=str(work),
+                env=env,
+                args=arguments(PARENT),
+                target=target,
+                extension=extension(),
+                notice=PLATFORM_NOTICE,
+            )
+            yield Session(runner, model, admission)
+        finally:
+            await runner.close()
+            model.close()
+            admission.close()
 
 
 def child_says(body: dict) -> dict | None:

@@ -9,6 +9,7 @@
 
 import type { Block } from '../cx_types'
 
+import { noticeText } from './noticeText'
 import { TOOL_LABELS, toolLabel } from './toolLabels'
 
 import { t } from '@/i18n'
@@ -99,7 +100,7 @@ export interface SiteTurn<T> {
   startedAt: string
   /** 工具调用的条数 —— 芝士说的话不是「一步」。 */
   steps: number
-  /** 首末之差，秒。只有一条时是 0，组头就不显示用时。 */
+  /** 这一轮从开始到最后一条，秒。开始时间不知道时从头一条算；是 0 时组头不显示用时。 */
   seconds: number
 }
 
@@ -110,7 +111,11 @@ interface TurnLike {
   meta?: NarrationMeta | null
 }
 
-export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
+/**
+ * `starts`：轮次 id → 这一轮开始的时刻（毫秒）。一轮的头一步落在准备和模型第一次
+ * 回话之后，从头一步算，「思考中」等的那十几秒就不见了，组头会说这一轮只用了两秒。
+ */
+export function groupByTurn<T extends TurnLike>(blocks: T[], starts: Record<string, number> = {}): SiteTurn<T>[] {
   const turns: SiteTurn<T>[] = []
   for (const block of blocks) {
     const last = turns[turns.length - 1]
@@ -128,7 +133,8 @@ export function groupByTurn<T extends TurnLike>(blocks: T[]): SiteTurn<T>[] {
     // 平台自己说的一句（重试、等机器、这一轮失败了）也不是它做的一步：带 `who`
     // 的是平台提示（后端 platform_notices.notice 拼的）。
     turn.steps = turn.entries.filter((b) => !isNarration(b.meta) && b.meta?.who === undefined).length
-    const first = Date.parse(turn.entries[0].created_at)
+    // 平台替一轮写的开场那一行落在这一轮登记之前，所以取两者里早的那个。
+    const first = Math.min(Date.parse(turn.entries[0].created_at), starts[turn.key] ?? Infinity)
     const last = Date.parse(turn.entries[turn.entries.length - 1].created_at)
     turn.seconds = Number.isFinite(first) && Number.isFinite(last) ? Math.max(0, Math.round((last - first) / 1000)) : 0
   }
@@ -164,7 +170,7 @@ export function eventVerb(b: Block): string {
   // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
   // tool 仍然如实记着真正跑的是哪个工具。
   if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
-  const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
+  const first = (noticeText(b).split('\n')[0] || '').replace(/^🔧\s*/, '')
   return Object.hasOwn(TOOL_LABELS, first) ? toolLabel(first) : first
 }
 
@@ -175,8 +181,9 @@ export function eventArg(b: Block): string {
     return stack.split('\n')[0].trim() || page
   }
   if (b.meta?.tool) return b.meta.arg ?? ''
-  const nl = b.content.indexOf('\n')
-  return nl >= 0 ? b.content.slice(nl + 1).trim() : ''
+  const text = noticeText(b)
+  const nl = text.indexOf('\n')
+  return nl >= 0 ? text.slice(nl + 1).trim() : ''
 }
 
 // 这一步挂了没有。后端只在挂了的时候写这个字段，所以「没有」就是「没挂」。

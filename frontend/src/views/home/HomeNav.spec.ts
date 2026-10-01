@@ -128,21 +128,21 @@ describe('首页目录', () => {
     expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
   })
 
-  it('个人团队展开后没有「成员」，团队操作里也没有「邀请成员」', async () => {
-    const personal = { ...team('andy', '个人', 'OWNER'), personal: true }
-    getMyTeams.mockResolvedValue({ data: { teams: [personal, team('crew', '知是开发组', 'OWNER')] } })
+  // 自己名下的项目不是一个团队：以自己的昵称单独一行，在「团队」小标题之上；
+  // 展开后没有「成员」，也没有团队的 ⋯ 操作。
+  it('自己名下在「团队」之上单独一行，没有成员页，也没有团队操作', async () => {
+    const own = { ...team('andy', '林夏', 'OWNER'), personal: true }
+    getMyTeams.mockResolvedValue({ data: { teams: [own, team('crew', '知是开发组', 'OWNER')] } })
     await mount('/teams/andy')
     await waitFor(() =>
       expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/knowledge', '/teams/andy/compute']))
     )
     expect(hrefs()).not.toContain('/teams/andy/members')
 
-    const [personalMenu, sharedMenu] = screen.getAllByLabelText('团队操作')
-    await fireEvent.click(personalMenu!)
-    await screen.findByText('编辑团队资料')
-    expect(screen.queryByText('邀请成员')).toBeNull()
-    await fireEvent.click(sharedMenu!)
-    await screen.findByText('邀请成员')
+    const text = document.body.textContent ?? ''
+    expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))
+    expect(text.indexOf('团队')).toBeLessThan(text.indexOf('知是开发组'))
+    expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
   })
 
   it('空间点了就进那个空间', async () => {

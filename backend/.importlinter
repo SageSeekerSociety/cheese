@@ -200,7 +200,6 @@ ignore_imports =
     app.api.routes.project_environment -> app.domain.topic.models
     app.api.routes.project_skills -> app.domain.block.models
     app.api.routes.project_skills -> app.domain.project_skill.models
-    app.api.routes.projects -> app.domain.block.models
     app.api.routes.projects -> app.domain.project.models
     app.api.routes.projects_agents -> app.domain.agent_instance.models
     app.api.routes.recruitment -> app.domain.team.models
@@ -262,7 +261,7 @@ ignore_imports =
     app.domain.agent.harness.claude_code.channel -> app.domain.agent.central_provider
     app.domain.agent.harness.claude_code.session_launch -> app.domain.agent.harness.claude_code.device_launch
     app.domain.agent.harness.codex.channel -> app.domain.agent.central_provider
-    app.domain.agent.harness.pi.channel -> app.domain.agent.device_provider
+    app.domain.agent.harness.pi.channel -> app.domain.agent.central_provider
     app.domain.agent.machine_launcher -> app.domain.agent.harness.launch
     app.domain.agent.private_chat -> app.domain.agent.device_provider
     app.domain.agent.private_chat -> app.domain.agent.harness.claude_code

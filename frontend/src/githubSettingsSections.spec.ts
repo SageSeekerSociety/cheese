@@ -21,15 +21,16 @@ const settings = (name: string) => readFileSync(join(SRC, `components/settings/$
 /** The markup between a `<span class="page-section-title">TITLE</span>` and the
  *  end of its `<section>` — i.e. one settings section's body. Since the split
  *  (#2143) each section is its own component, so scan the component files. */
-function section(title: string): string {
+function section(key: string): string {
   for (const file of [settings('GithubAccountSettings'), settings('GithubRepoSettings')]) {
-    const head = `<span class="page-section-title">${title}</span>`
+    // 标题从词条库取：`githubAccount.title` 是「连接 GitHub 账号」，`githubRepo.title` 是「连接 GitHub 仓库」。
+    const head = `<span class="page-section-title">{{ t('work.projectSettings.${key}.title') }}</span>`
     const start = file.indexOf(head)
     if (start === -1) continue
     const end = file.indexOf('</section>', start)
     return file.slice(start, end === -1 ? undefined : end)
   }
-  throw new Error(`section 「${title}」 not found`)
+  throw new Error(`section 「${key}」 not found`)
 }
 
 /** The page's binding block for one component tag: `<Tag` through its `/>`.
@@ -49,14 +50,14 @@ describe('the GitHub settings sections', () => {
     const account = binding('GithubAccountSettings')
     expect(account).toContain('githubAccountNotice')
     expect(account).not.toContain('githubRepoNotice')
-    expect(section('连接 GitHub 账号')).toContain('notice')
+    expect(section('githubAccount')).toContain('notice')
   })
 
   it('shows the 仓库 flow outcome in the 仓库 section', () => {
     const repo = binding('GithubRepoSettings')
     expect(repo).toContain('githubRepoNotice')
     expect(repo).not.toContain('githubAccountNotice')
-    expect(section('连接 GitHub 仓库')).toContain('notice')
+    expect(section('githubRepo')).toContain('notice')
   })
 
   it('has no shared notice ref left to regress into', () => {

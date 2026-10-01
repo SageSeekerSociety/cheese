@@ -24,7 +24,7 @@ vi.mock('@/api', async () => {
 import { demoRouter } from './demoRouter'
 import DemoView from './DemoView.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const View = DemoView as unknown as Component
 
@@ -49,7 +49,7 @@ describe('DemoView', () => {
     const [path, search = ''] = url.split('?')
     return render(View, {
       props: { path, search: search ? `?${search}` : '' },
-      global: { plugins: [createVuetify({ components, directives }), createPinia(), demoRouter()] },
+      global: { plugins: [createVuetify({ components, directives }), createPinia(), demoRouter(), i18n] },
     })
   }
 

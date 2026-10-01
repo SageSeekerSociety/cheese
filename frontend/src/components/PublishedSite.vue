@@ -19,6 +19,7 @@ import { computed, ref, watch } from 'vue'
 
 import { ApiError, getProjectSite, publishProjectSite } from '@/api'
 import UserRef from '@/components/common/UserRefLink.vue'
+import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{ projectId: string }>()
@@ -96,9 +97,9 @@ async function publish() {
       // 已采纳的版本在这中间变了。把新的读回来摆在人眼前，再发布是他下一次点击的
       // 事——替他决定发哪一版，等于替他决定发了什么。
       await load()
-      if (props.projectId === projectId) publishError.value = '项目已采纳的版本变了，确认之后再发布'
+      if (props.projectId === projectId) publishError.value = t('work.publishedSite.revisionChanged')
     } else {
-      publishError.value = error instanceof Error ? error.message : '未能发布'
+      publishError.value = error instanceof Error ? error.message : t('work.publishedSite.publishFailed')
     }
   } finally {
     if (props.projectId === projectId) publishing.value = false
@@ -132,7 +133,7 @@ watch(
       >
         {{ info.site.url }}
       </a>
-      <span v-else class="site-row__url t-body c-muted">暂无已发布的网站</span>
+      <span v-else class="site-row__url t-body c-muted">{{ t('work.publishedSite.none') }}</span>
       <v-btn
         v-if="info.can_publish"
         class="site-row__act"
@@ -143,7 +144,7 @@ watch(
         :loading="publishing"
         @click="asking = true"
       >
-        {{ info.site ? '发布更新' : '发布' }}
+        {{ info.site ? t('work.publishedSite.update') : t('work.publishedSite.publish') }}
       </v-btn>
     </div>
     <p v-if="info.site" class="site-row__when t-meta c-faint">
@@ -155,13 +156,15 @@ watch(
     <!-- 发布。按下去之前要看清的是两件事：发的是哪一版，发的是哪个入口。 -->
     <v-dialog :model-value="asking" max-width="440" @update:model-value="asking = false">
       <v-card>
-        <v-card-title class="t-dialog-title">{{ info.site ? '发布更新' : '发布网站' }}</v-card-title>
+        <v-card-title class="t-dialog-title">{{
+          info.site ? t('work.publishedSite.update') : t('work.publishedSite.publishSite')
+        }}</v-card-title>
         <v-card-text>
           <p v-if="info.unavailable_reason" role="status" class="t-body c-muted">{{ info.unavailable_reason }}</p>
-          <p v-else-if="!info.candidates.length" class="t-body c-muted">项目已采纳的版本里没有可发布的网站</p>
+          <p v-else-if="!info.candidates.length" class="t-body c-muted">{{ t('work.publishedSite.noCandidates') }}</p>
           <template v-else>
             <p class="t-body mb-4">
-              发布项目已采纳的版本
+              {{ t('work.publishedSite.publishRevision') }}
               <code v-if="info.source_revision" :title="info.source_revision">
                 {{ info.source_revision.slice(0, 8) }}
               </code>
@@ -172,23 +175,23 @@ watch(
               autocomplete="off"
               :items="candidates"
               :disabled="publishing"
-              label="网站入口"
+              :label="t('work.publishedSite.entry')"
               variant="outlined"
               density="compact"
               hide-details
             />
             <p v-else-if="selected" class="t-body">
-              网站入口：<code>{{ selected.entry_file }}</code>
+              {{ t('work.publishedSite.entryIs') }}<code>{{ selected.entry_file }}</code>
             </p>
-            <p v-if="isCurrent" class="t-meta c-faint mt-4">线上的就是已采纳的这一版</p>
-            <p v-else class="t-meta c-faint mt-4">发布之后网站持续可访问，后续修改需要再发布一次</p>
+            <p v-if="isCurrent" class="t-meta c-faint mt-4">{{ t('work.publishedSite.isCurrent') }}</p>
+            <p v-else class="t-meta c-faint mt-4">{{ t('work.publishedSite.stays') }}</p>
           </template>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="asking = false">取消</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="asking = false">{{ t('global.cancel') }}</v-btn>
           <v-btn variant="text" color="primary" :disabled="!canPublish" :loading="publishing" @click="publish">
-            发布
+            {{ t('work.publishedSite.publish') }}
           </v-btn>
         </v-card-actions>
       </v-card>

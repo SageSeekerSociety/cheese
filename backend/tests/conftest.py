@@ -529,7 +529,8 @@ class StubChannel:
 
         Played on the runner's own loop, whichever thread the test scripts it
         from — the runner's journal belongs to that loop's thread, and the
-        reader waiting there is woken so it lands without being asked.
+        reader waiting there is woken the way a runner's ring wakes it, so it
+        lands without being asked.
         """
         session = self._session_for(topic_id, agent)
         record.setdefault("uuid", str(uuid.uuid4()))
@@ -537,7 +538,7 @@ class StubChannel:
 
         def play() -> None:
             session.observe(dict(record))
-            self.runtime._wake((topic_id, session.session_agent))
+            self.runtime.wake(topic_id, session.session_agent)
 
         if threading.get_ident() == session.thread:
             play()
@@ -847,6 +848,19 @@ def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
+    """A launched session keeps its temporary files under the system's
+    `/var/tmp`, which outlives the test that launched it. Each test gets a
+    directory of its own instead; the one test that removes a room through the
+    shipped cleanup program puts the real one back."""
+    from app.domain.agent import machine_launcher
+
+    monkeypatch.setattr(
+        machine_launcher, "SESSION_TMP", str(tmp_path_factory.mktemp("var-tmp"))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_background_doc_nudge(monkeypatch) -> None:
     """轮末的文档提醒（`topic/doc_nudge.py`）在后台睡几秒再起一轮：测试里它要么
     赶上一个已经关掉的事件循环，要么真的替某个测试房间起一轮没人要的 agent 轮次。
@@ -1043,6 +1057,28 @@ def stub_project_forge(monkeypatch, tmp_path):
                     }
                 )
             return {"tree": tree, "truncated": False}
+        if route.startswith("/contents/"):
+            # No ref named: the default branch, as GitHub and Forgejo answer.
+            name = route.removeprefix("/contents/")
+            listed = git_store.git(repo, "ls-tree", "-l", "main", "--", name)
+            if not listed.strip():
+                return None
+            metadata, _ = listed.rstrip("\n").split("\t", 1)
+            mode, kind, oid, size = metadata.split()
+            if kind == "tree":
+                return []
+            if mode == "120000":
+                return {"type": "symlink", "path": name}
+            data = subprocess.check_output(
+                ["git", "-C", str(repo), "cat-file", "blob", oid]
+            )
+            return {
+                "type": "file",
+                "path": name,
+                "size": int(size),
+                "encoding": "base64",
+                "content": base64.b64encode(data).decode(),
+            }
         if route.startswith("/git/blobs/"):
             oid = route.removeprefix("/git/blobs/")
             data = subprocess.check_output(
@@ -1079,6 +1115,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
+    monkeypatch.setattr(forge, "repository_data", repository_data)
     monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
     monkeypatch.setattr(forge_files, "status_client", status_client)
 
@@ -1142,7 +1179,7 @@ def client(
         with TestClient(app) as c:
             # The cheese write-API is token-gated (app.main.cheese_token_gate); send
             # the secret on every test request so contract tests exercising those
-            # endpoints (doc/split/decision/...) aren't rejected with 401.
+            # endpoints (doc/split/weekly/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]
@@ -1971,6 +2008,57 @@ def seed_space(client: TestClient, name: str = "信院") -> int:
 
     _asyncio.run(_seed())
     return holder["id"]
+
+
+def seed_claim(
+    client: TestClient,
+    task_id: int,
+    *,
+    handle: str | None = None,
+    team_id: int | None = None,
+    approved: int = 2,
+) -> None:
+    """A claim on ``task_id``: by ``handle`` for an individual task, by
+    ``team_id`` for a team one. Pending (``approved=2``) unless told otherwise;
+    ``ApproveType.APPROVED == 0``.
+
+    A project can only be built from a task someone has claimed, so every test
+    that makes one from a task claims it first — through the DB, because the
+    claim itself is not what those tests are about.
+    """
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.task.models import TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    assert (handle is None) != (team_id is None), "a claim is by a person or a team"
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            member_id = team_id
+            if handle is not None:
+                users = UserRepository(session)
+                user = await users.get_by_username(handle)
+                if user is None:
+                    user = await users.create_user(
+                        username=handle, email=f"{handle}@example.com"
+                    )
+                member_id = user.id
+            now = datetime.now(UTC)
+            session.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=member_id,
+                    is_team=team_id is not None,
+                    approved=approved,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    _asyncio.run(_seed())
 
 
 def seed_task_with_protocol(

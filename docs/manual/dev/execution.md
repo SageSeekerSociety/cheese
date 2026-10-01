@@ -57,7 +57,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 
 ## 租约：用的时候才要 {#lease}
 
-- **只有真的要动手的调用才去要手**：`invoke` / `mcp` / `project_tools`，以及 `control` 里 `subtype=shell` 且 `operation=start`。启动引导、上下文发现、只用平台的工具都不进这条路。读一个正在跑的命令也不需要。
+- **只有真的要动手的调用才去要手**：`invoke` / `mcp` / `project_tools`，以及 `control` 里 `subtype=shell` 且 `operation=start`、`subtype=tool_hooks`、`subtype=files`（pi 的文件操作）。启动引导、上下文发现、只用平台的工具都不进这条路。读一个正在跑的命令也不需要。
 - 要手的动作是 `lease_path` 上一个 `POST`：平台先等有界的一段时间让机器准备，客户端再问到期限为止。拿到之后把机器名、代际写进配置，把凭据写进 `token_file`、目标写进 `target_file`（原子替换），并关掉旧连接。返回的是「这次的手跟之前是不是同一个租约」（`changed_lease`）——换了租约、且配了 `target_file` 时，会先把上下文树与仓库指令读回来，然后**主动抛一个错**，让调用方先读新可用仓库的说明再发下一个工具。
 - 换成新机器时工作区路径会重写：`file_path` / `path` / `notebook_path` / `command` / `body` / `cwd` 里原来的工作区前缀换成新的。**丢应答的调用不重放**（注释写得很直白：重连只给下一次调用用，这一次绝不重放）。
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。
@@ -77,12 +77,11 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 
 - 机器主人自己的 `~/.claude` 与平台无关：那是他的凭据、设置和全部会话记录，这里不写、不搬、不删。卸载只走足迹根目录。
 - 有六个程序 import 不到这个模块，各自带着一份抄本（环境运行器、清理脚本、执行器引导、会话转移、`backend/sandbox/cheese`、Go 写的连接器）；`backend/tests/unit/test_footprint_root.py` 把它们钉在这一份上。
-- 能力位：`HANDS_HERE`（`hands_here`）说的是一个**物理事实**——这份手就是跑会话进程的那台机器，工具不再经执行器跳一程。上游读能力位、不读类名（结论 24）：按类名维护的能力表，注定是「写下它那天恰好有这个本事的通道」的清单，而 `isinstance(c, DeviceChannel)` 那种写法读起来像能力规则、实际上恒为真。今天这张表上只有这一位，因为只有这一件事上游真的在问：`compute.py` 读它决定哪些通道上挂得住 pi（把进程和工作区放同一台机器的那种骨架）。多出来的能力位跟着真正实现它的 PR 一起出生。
 
 ## 环境与工具的发放 {#toolchain}
 
 - `environment_runner.py` 是一个标准库程序，在被选中的执行边界里跑：装依赖前先拿锁（`flock`，Windows 上走 `remote-execution/portable.py` 的原语），防止两个安装器同时开工；`exec` 的那一刻把锁放掉，之后 agent 的复用由 tmux 管。
-- `toolchain.py` 是**版本与摘要的唯一一处**：typst `0.15.1`、pandoc `3.11`、uv `0.12.15`、fj `0.6.0-cheese.2`、gh `2.62.0`、Windows 的 Python `3.13.13` 与 git `2.55.0.windows.5`，字体按 commit 钉住（`_SANS_COMMIT` / `_SERIF_COMMIT`）。摘要写在这里而不是下载脚本里的原因也在文件里：typst 0.15.1 与 pandoc 3.11 根本没有发布校验和资产（2026-09-16 记的）。
+- `toolchain.py` 是**版本与摘要的唯一一处**：typst `0.15.1`、pandoc `3.11`、uv `0.12.15`、fj `0.6.0-cheese.2`、gh `2.62.0`、ripgrep `15.2.0`（pi 的 grep、find 在执行机上搜索用它）、Windows 的 Python `3.13.13` 与 git `2.55.0.windows.5`，字体按 commit 钉住（`_SANS_COMMIT` / `_SERIF_COMMIT`）。摘要写在这里而不是下载脚本里的原因也在文件里：typst 0.15.1 与 pandoc 3.11 根本没有发布校验和资产（2026-09-16 记的）。
 - `capability/matrix.py` 按 harness 声明行为，不留空格（I6），连还没进注册表的 harness 也写进去，版本常数也钉在里面。
 
 ## 边界与坑 {#traps}

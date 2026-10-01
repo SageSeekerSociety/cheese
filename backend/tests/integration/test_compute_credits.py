@@ -15,7 +15,7 @@ import time
 import pytest
 
 from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 # A Claude Code session reports no usage of its own: the metering proxy logs
 # each model response it carried, and that log is what burns credits. Each
@@ -152,7 +152,7 @@ def _run_turn(client, topic_id: str, meter=None) -> list[dict]:
     it; a refused turn never reached the model, so it is not metered."""
     frames: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "u1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好"})
+        post_message(client, topic_id, "u1", {"content": "@芝士 你好"})
         while True:
             frame = ws.receive_json()
             frames.append(frame)

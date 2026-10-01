@@ -225,3 +225,72 @@ it('suspends and resumes the same machine through its project', async () => {
   expect(await view.findByRole('button', { name: '休眠' })).toBeTruthy()
   vi.restoreAllMocks()
 })
+
+function mountWith(machines: Record<string, ProjectMachine[]>) {
+  vi.mocked(listProjectMachines).mockImplementation(
+    async (projectId) => ({ data: machines[projectId] ?? [] }) as Awaited<ReturnType<typeof listProjectMachines>>
+  )
+  return render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives }), i18n],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
+    },
+  })
+}
+
+const settled = {
+  id: 'm-settled',
+  project_id: 'p2',
+  hostname: 'settled',
+  status: 'running',
+  ai_status: 'ready',
+  device_id: 'device-two',
+} as ProjectMachine
+const starting = {
+  id: 'm-starting',
+  project_id: 'p1',
+  hostname: 'starting',
+  status: 'starting',
+  ai_status: 'provisioning',
+} as ProjectMachine
+
+function visibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
+it('while a machine is starting, asks again only about the project it belongs to', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const view = mountWith({ p1: [starting], p2: [settled] })
+    expect(await view.findByText('starting')).toBeTruthy()
+    vi.mocked(listProjectMachines).mockClear()
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    await vi.waitFor(() => expect(listProjectMachines).toHaveBeenCalled())
+    expect(vi.mocked(listProjectMachines).mock.calls.map(([id]) => id)).toEqual(['p1'])
+    expect(view.getByText('settled')).toBeTruthy()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('does not ask while the page is hidden, and asks as soon as it is shown again', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const view = mountWith({ p1: [starting] })
+    expect(await view.findByText('starting')).toBeTruthy()
+    visibility('hidden')
+    vi.mocked(listProjectMachines).mockClear()
+
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(listProjectMachines).not.toHaveBeenCalled()
+
+    visibility('visible')
+    await vi.waitFor(() => expect(listProjectMachines).toHaveBeenCalledWith('p1'))
+  } finally {
+    visibility('visible')
+    vi.useRealTimers()
+  }
+})

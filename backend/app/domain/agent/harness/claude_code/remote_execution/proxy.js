@@ -143,6 +143,25 @@ async function sendUserFile($, tool_use_id, args) {
   return told(JSON.parse(response.content[0].text));
 }
 
+// The build runs a Bash call itself, and its shell prefix sends the command
+// to the machine, so no executor call carries it past the project's
+// `permissions.deny` as it carries the file tools (`runtime.py` `execute`);
+// and the build never loads the project's settings to check them itself. So
+// the machine that holds the project checks it first, by the same rules pi's
+// and Codex's calls meet (`project_hooks.run` with `fire` false).
+async function refused($, tool_use_id, tool, args) {
+  try {
+    const response = await $.mcp.call("native", "permission", {
+      id: tool_use_id, session_id: await $.session.id(), tool, args,
+    });
+    if (response.isError) return { deny: JSON.stringify(response.content) };
+    const outcome = JSON.parse(response.content[0].text);
+    return outcome.deny ? told(outcome) : null;
+  } catch (error) {
+    return { deny: "Remote execution failed: " + String(error) };
+  }
+}
+
 // A person's message the session has not answered yet (`driven/runner.py`,
 // which decides what owes an answer, what answers it and what the refusal
 // says). The runner names the file in CHEESE_REPLY_OWED (spelled out at the
@@ -195,7 +214,7 @@ export function register(on) {
     if (tool === "Agent" && args.isolation) {
       return { deny: `Agent isolation "${args.isolation}" is unavailable here because the project lives on the work machine; omit isolation, since the subagent's file and shell tools already run there. Only when the work is itself a deliverable to track and review, create it with \`cheese_task\`, prepare its directory with \`cheese worktree <id>\`, and give the subagent that directory.` };
     }
-    if (tool === "mcp__native__platform_request" || platformTools.has(tool)) {
+    if (platformTools.has(tool)) {
       try {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
           ...args, id: tool_use_id, session_id: await $.session.id(),
@@ -210,8 +229,8 @@ export function register(on) {
         // empty string is not harmless padding: a provider that validates text
         // content rejects the WHOLE request over it (Moonshot's Anthropic
         // endpoint answers 400 "Invalid request: text content is empty"), and
-        // the block then stays in the conversation — so one platform_request,
-        // whose receipt is always `{"stdout": body, "stderr": ""}`, would wedge
+        // the block then stays in the conversation — so one platform tool,
+        // whose receipt is always `{"stdout": text, "stderr": ""}`, would wedge
         // every later turn in that room.
         const result = [outcome.result.stdout, outcome.result.stderr]
           .filter((text) => typeof text === "string" && text !== "")
@@ -290,6 +309,10 @@ export function register(on) {
           return { deny: "Remote MCP failed: " + String(error) };
         }
       }
+    }
+    if (tool === "Bash") {
+      const denied = await refused($, tool_use_id, tool, args);
+      if (denied) return denied;
     }
     return next(e);
   });

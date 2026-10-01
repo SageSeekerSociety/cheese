@@ -111,7 +111,9 @@ jobs:
   # default from 23.6, and the alternative is carrying an experimental flag
   # that exists only to say so.
   extension:
-    runs-on: ubuntu-latest
+    # A merge-queue run takes this job on the cheese-ci pool, so it does not
+    # wait behind pull-request runs for one of the hosted runners.
+    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -238,7 +240,7 @@ jobs:
 
       - name: Ensure required test tools
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof tmux zsh
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof ripgrep tmux zsh
           # Tests that launch a room's session need its namespace.
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
 
@@ -309,6 +311,7 @@ jobs:
           tools="$RUNNER_TEMP/harness-tools/node_modules/.bin"
           echo "$tools" >> "$GITHUB_PATH"
           echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
           "$tools/claude" --version
           "$tools/codex" --version
           # pi is not an npm package here: the build a room runs is the
@@ -391,7 +394,9 @@ jobs:
     name: Backend coverage complete
     needs: [lint, test]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    # A merge-queue run takes this job on the cheese-ci pool, so it does not
+    # wait behind pull-request runs for one of the hosted runners.
+    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

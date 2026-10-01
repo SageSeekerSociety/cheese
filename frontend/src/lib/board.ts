@@ -10,7 +10,9 @@
 // 表回答「有哪些活、它们各是什么状态」，板回答「现在轮到谁」。同一个客观事实——
 // 比如快检红了——下一步在平台手上就落 `delivering`，在人手上就落 `needs_you`。
 
-import type { BoardColumn } from '@/cx_types'
+import type { BoardColumn, BoardPhrase } from '@/cx_types'
+
+import i18n, { t } from '@/i18n'
 
 export interface BoardColumnSpec {
   key: BoardColumn
@@ -19,16 +21,15 @@ export interface BoardColumnSpec {
   cls: string
 }
 
-const COLUMN_LABEL: Record<BoardColumn, string> = {
-  building: '施工中',
-  delivering: '交付中',
-  needs_you: '待处理',
-  done: '已完成',
-  archived: '已归档',
+// 列名按当前语言现取，不存成常量：切换语言后要跟着变。
+export function columnLabel(column: BoardColumn): string {
+  return t(`work.board.column.${column}`)
 }
 
-export function columnLabel(column: BoardColumn): string {
-  return COLUMN_LABEL[column]
+/** 卡面上那一句，按当前语言现取。后端给的是码（`presentation.phrase`）；这一版
+ *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。 */
+export function phraseLabel(phrase: BoardPhrase): string {
+  return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN') ? t(`work.board.phrase.${phrase}`) : phrase
 }
 
 /** 色点的 class。列色是这套界面里唯一说「该谁动」的颜色，所以看板、房间总览、侧栏
@@ -60,7 +61,9 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
  *  也不在：活不归档（只有房间会），一条活永远落不到那一列。 */
 export const BOARD_COLUMNS: BoardColumnSpec[] = (['building', 'delivering', 'needs_you'] as const).map((key) => ({
   key,
-  label: COLUMN_LABEL[key],
+  get label() {
+    return columnLabel(key)
+  },
   cls: columnDotClass(key),
 }))
 
@@ -110,6 +113,6 @@ export function boardColumnCounts(
     counts.set(task.presentation.column, (counts.get(task.presentation.column) ?? 0) + 1)
   }
   return (['needs_you', 'building', 'delivering'] as const)
-    .map((key) => ({ key, label: COLUMN_LABEL[key], count: counts.get(key) ?? 0 }))
+    .map((key) => ({ key, label: columnLabel(key), count: counts.get(key) ?? 0 }))
     .filter((column) => column.count > 0)
 }

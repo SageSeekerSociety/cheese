@@ -6,11 +6,13 @@
 import type { ThemePreference } from '@/theme'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
-export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links'
+export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links' | 'updates'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */
   titleBar?: 'overlay' | 'native'
+  /** The app's own version, e.g. "0.1.42". */
+  version?: string
   can?: DesktopAbility[]
 }
 
@@ -84,20 +86,78 @@ export function desktopBadge(count: number): void {
     .catch(() => {})
 }
 
-/** Calls `open` with a path in this web app when the app is asked to show one: a clicked notification, the tray menu. */
-export function onDesktopOpenPage(open: (path: string) => void): () => void {
+/** Calls `handle` with each `event` the app sends this page; the returned function stops. */
+function onDesktopEvent<T>(event: string, handle: (payload: T) => void): () => void {
   const events = app() ? tauri()?.event : undefined
   if (!events) return () => {}
   let stop: (() => void) | null = null
   let stopped = false
   events
-    .listen<string>('open-page', ({ payload }) => open(payload))
+    .listen<T>(event, ({ payload }) => handle(payload))
     .then((unlisten) => (stopped ? unlisten() : (stop = unlisten)))
     .catch(() => {})
   return () => {
     stopped = true
     stop?.()
   }
+}
+
+/** Calls `open` with a path in this web app when the app is asked to show one: a clicked notification, the tray menu. */
+export function onDesktopOpenPage(open: (path: string) => void): () => void {
+  return onDesktopEvent('open-page', open)
+}
+
+// The app keeps itself current (desktop/src-tauri/src/updates.rs): it looks for
+// a new version at launch, every few hours and when asked, downloads it, and
+// installs it when the person clicks 重启以完成更新 or once the window is out
+// of sight. An app from before it said so still updates, only out of sight.
+
+/** The app's own version; null in an app from before it said. */
+export function desktopAppVersion(): string | null {
+  return app()?.version ?? null
+}
+
+/** Where the app's own update stands, as desktop/src-tauri/src/updates.rs reports it. */
+export type DesktopUpdateStatus =
+  | { state: 'idle' | 'checking' | 'latest' | 'failed' }
+  | { state: 'downloading' | 'ready'; version: string }
+
+/** Null in a browser and in an app that cannot say. */
+export async function desktopUpdateStatus(): Promise<DesktopUpdateStatus | null> {
+  if (!desktopCan('updates')) return null
+  return ((await tauri()?.core?.invoke('update_status')) as DesktopUpdateStatus | undefined) ?? null
+}
+
+/** Looks for a new version now; resolves with where that leaves the update. */
+export async function checkDesktopUpdates(): Promise<DesktopUpdateStatus | null> {
+  if (!desktopCan('updates')) return null
+  return ((await tauri()?.core?.invoke('check_for_updates')) as DesktopUpdateStatus | undefined) ?? null
+}
+
+/** Installs the downloaded update and restarts the app. Rejects with "connecting"
+ *  while this computer is being connected, which a restart would cut off. */
+export async function restartDesktopToUpdate(): Promise<void> {
+  if (!desktopCan('updates')) return
+  await tauri()?.core?.invoke('restart_to_update')
+}
+
+export function onDesktopUpdateStatus(handle: (status: DesktopUpdateStatus) => void): () => void {
+  return desktopCan('updates') ? onDesktopEvent('update-status', handle) : () => {}
+}
+
+/** The app menu's "About Cheese" or "Check for Updates…" (macOS). */
+export function onDesktopShowAbout(handle: () => void): () => void {
+  return desktopCan('updates') ? onDesktopEvent('show-about', handle) : () => {}
+}
+
+/** Opens `url` (a path on this site or a full address) in the person's browser
+ *  rather than in the app's window. False where the app cannot: the caller then
+ *  leaves the link as it is. */
+export function openInBrowser(url: string): boolean {
+  if (!desktopCan('links')) return false
+  // The app opens every new window in the browser.
+  window.open(new URL(url, window.location.origin).href, '_blank')
+  return true
 }
 
 /** Whether the app opens by itself, out of sight, when the person logs in to this computer. */

@@ -37,6 +37,7 @@ from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
@@ -110,6 +111,19 @@ class ActorResolver:
         the same credential presents — the preview tunnel is keyed by exactly
         this claim."""
         return token_agent_handle(self._cheese_token) if self._cheese_token else None
+
+    def on_the_dev_credential(self, actor: Actor) -> bool:
+        """Was the bare global sandbox token the ONLY thing that admitted this
+        request — nobody resolved, no roster to ask?
+
+        That token is the trusted-single-host override: ``authorize_topic`` and
+        ``authorize_project`` let it through without resolving anybody, so a
+        route just admitted on it has no participant whose seat could be
+        checked. The ``actor`` half matters: callers send it on EVERY request in
+        dev (a test client, the CLI), so its presence alone says nothing — what
+        is asked here is whether it is also all there was.
+        """
+        return not actor.authenticated and is_global_sandbox_token(self._cheese_token)
 
     async def resolve(
         self,
@@ -338,9 +352,9 @@ class ActorResolver:
                 raise ForbiddenError("不能查看或操作别人的通知")
             return actor.handle
         if self._bearer:
-            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+            raise AuthenticationRequiredError(say("sessionExpired"))
         if wanted is not None or not allow_anonymous:
-            raise AuthenticationRequiredError("访问个人通知需要先登录")
+            raise AuthenticationRequiredError(say("notificationsSignIn"))
         return "anonymous"
 
     def reject_failed_credential(self, actor: Actor) -> None:
@@ -368,7 +382,7 @@ class ActorResolver:
         what a stale bearer alongside it says.
         """
         if not actor.authenticated and self._bearer:
-            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+            raise AuthenticationRequiredError(say("sessionExpired"))
 
     async def require_verified_caller(
         self, *, project_id: uuid.UUID | None = None, topic_id: uuid.UUID | None = None
@@ -391,7 +405,7 @@ class ActorResolver:
         if actor.authenticated:
             return actor
         if self._bearer:
-            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+            raise AuthenticationRequiredError(say("sessionExpired"))
         if is_global_sandbox_token(self._cheese_token):
             return actor
         raise AuthenticationRequiredError("需要登录或有效的沙箱 token")
@@ -519,7 +533,7 @@ class ActorResolver:
             actor, project_id=project_id, topic_id=topic_id
         ):
             _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
-            raise ForbiddenError("你不是这个话题的成员，无权在此操作")
+            raise ForbiddenError(say("topicMemberOnly"))
 
     async def can_access_topic(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
@@ -631,9 +645,9 @@ class ActorResolver:
         if await self._is_project_member(project_id, actor.handle):
             return
         if await ProjectRepository(self._session).get(project_id) is None:
-            raise NotFoundError("项目不存在")
+            raise NotFoundError(say("projectNotFound"))
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
-        raise ForbiddenError("你不是这个项目的成员，无权查看")
+        raise ForbiddenError(say("projectMemberOnly"))
 
     async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
         """Require a verified caller who may see this 赛题.
@@ -672,13 +686,13 @@ class ActorResolver:
         ).can_view_task(task=task, user_id=user_id):
             return
         _log.info("task_access_denied", handle=actor.handle, task=task_id)
-        raise ForbiddenError("你不是这道赛题的相关人员，无权查看")
+        raise ForbiddenError(say("challengeViewForbidden"))
 
     async def authorize_team(self, actor: Actor, *, team_id: int) -> None:
         """Require a verified member of this team.
 
         A team's project list is not a directory: it carries every project's
-        ``id``, and the id is the key to that project's roster, decisions and
+        ``id``, and the id is the key to that project's roster, documents and
         usage. So listing somebody else's team leaks whatever those routes
         expose, which is why this guard sits alongside ``authorize_project``
         rather than being folded into a milder "is anyone logged in" check.
@@ -693,7 +707,7 @@ class ActorResolver:
         if await self._is_team_member(team_id, actor.handle):
             return
         _log.info("team_access_denied", handle=actor.handle, team=team_id)
-        raise ForbiddenError("你不是这个团队的成员，无权查看")
+        raise ForbiddenError(say("teamMemberOnly"))
 
     async def _is_team_member(self, team_id: int, handle: str) -> bool:
         """Team membership is keyed by user id while every other authorization

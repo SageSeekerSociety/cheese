@@ -228,9 +228,12 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
 the CLI boot e2e and remote-execution acceptance. The organisation is on the
-Free plan, whose documented limit is 20 concurrent hosted jobs, but this public
-repository is not held to it: on 2026-09-28 Required CI alone had 41 hosted
-runners busy at once, and hosted jobs waited 1.2 minutes at the 90th percentile.
+Free plan, whose documented limit is 20 concurrent hosted jobs; what this
+repository actually gets is about 40 (on 2026-09-30 running hosted jobs held at
+39-42 whenever others were waiting). Pull-request runs use most of it, so a
+merge-queue run takes its `scope`, `CI required`, `Backend coverage complete`,
+guards, docs and pi-extension jobs on this pool instead, and waits for no hosted
+runner between its stages.
 The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box

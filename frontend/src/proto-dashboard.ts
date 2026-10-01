@@ -12,7 +12,7 @@ import './style.css'
 import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 
-import { installPreviewFetch } from './proto-feedback-fixtures'
+import { installPreviewFetch } from './proto-preview-transport'
 import Shell from './proto-shell.vue'
 
 import i18n from '@/i18n'

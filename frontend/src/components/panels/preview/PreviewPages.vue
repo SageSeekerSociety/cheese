@@ -12,6 +12,8 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdf
 
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import { t } from '@/i18n'
+
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
 const props = defineProps<{
@@ -123,7 +125,10 @@ function showPageFailure(slot: PageSlot, e: unknown) {
   if (!slot.el) return
   const box = document.createElement('div')
   box.className = 'pv-error'
-  box.textContent = `第 ${slot.number} 页无法显示：${e instanceof Error ? e.message : '渲染失败'}`
+  box.textContent = t('work.room.preview.pageFailed', {
+    page: slot.number,
+    error: e instanceof Error ? e.message : t('work.room.preview.renderFailed'),
+  })
   slot.el.replaceChildren(box)
 }
 
@@ -169,7 +174,7 @@ async function open(data: ArrayBuffer) {
     observe()
   } catch (e) {
     if (mine !== loadGeneration) return
-    failure.value = e instanceof Error ? e.message : '无法打开这个文档'
+    failure.value = e instanceof Error ? e.message : t('work.room.preview.docOpenFailed')
   } finally {
     if (mine === loadGeneration) loading.value = false
   }
@@ -250,7 +255,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-else-if="failure" class="pv__state pv__state--text">
       <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>无法显示这个文档</div>
+      <div>{{ t('work.room.preview.docCantDisplay') }}</div>
       <div class="t-meta mt-1">{{ failure }}</div>
     </div>
     <div

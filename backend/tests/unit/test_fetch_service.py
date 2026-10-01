@@ -234,7 +234,7 @@ async def test_distillation_asks_for_the_model_this_deployment_runs(monkeypatch)
 
     await fetch_route.read_url(
         fetch_route.FetchIn(url="https://example.com/x", prompt="q"),
-        SimpleNamespace(resolve=AsyncMock()),
+        SimpleNamespace(require_verified_caller=AsyncMock()),
     )
 
     assert seen["distill"][2] == "the-model-we-run"

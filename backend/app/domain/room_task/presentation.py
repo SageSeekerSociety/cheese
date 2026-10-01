@@ -35,18 +35,63 @@
 
 import enum
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
+
+# `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
+# 只给 block / review 开了窄读出口，room_task 这边的活行仍按原样交到路由手上，由
+# `facts_for_task` 就地折成纯值。这一层只读它的属性、不顺着它查库，所以它没有把
+# session 带出去；等 room_task 也有了 `queries.py`，这里换成那份纯值即可。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:
+    # 本领域内的消费者手上是 `AcceptCard` 那一行，它是这一层唯一需要按名字说出来的
+    # 形状 —— 只在 `CardSignals` 的并集里出现，所以放在 TYPE_CHECKING 下：这一层是
+    # 纯的，导入它只为签名，运行时一行都不碰。
     from app.domain.review.models import AcceptCard
+
+
+class CardSignals(Protocol):
+    """一张卡能被折成 `CardFacts` 的五个信号 —— 折卡的人只读这五个，不多不少。
+
+    这是一份**结构**契约，不是某一种形状：`AcceptCard` 那一行满足它，别的领域从窄
+    读出口交出来的纯值也满足它，两边都不必把自己交出来给这一层当类型。刻意这么写
+    而不是把对方那个类标进签名 —— 标注一个类型就是 `room_task` 指向那个领域的一条
+    边，而这一层与 `review` 之间已经有两条类型边（`review.models`、
+    `review.notes`，都冻结在 `.importlinter` 里）。C3 要的是无环：再加一条，环就回
+    来了，而「加一条豁免让它绿」不是解法，是把那条规矩让掉。契约式写法下，对方换
+    成什么形状都行，只要这五个读得出来。
+
+    声明成 property 而不是普通属性是有意的：pyright 对只读属性按**协变**比对，所以
+    `AcceptStatus`（`str` 的子类）能满足 `status: str`，`RailCard` 的 `dict` 也能满足
+    `Mapping[str, object]`；写成可变属性就必须一模一样，两边都过不去。
+
+    五个正好是 `facts_for_card` 读的那五个。多一个字段，这里就多一条「对方必须记得
+    改」的绳子；少一个，那一格就折不出来。
+    """
+
+    @property
+    def status(self) -> str: ...
+
+    @property
+    def note_code(self) -> NoteCode | None: ...
+
+    @property
+    def merge_state(self) -> Mapping[str, object] | None: ...
+
+    @property
+    def decided_by(self) -> str | None: ...
+
+    @property
+    def auto_merge_armed_by(self) -> str | None: ...
+
 
 #: 一行说自己 `running`、却已经这么久没有任何动静 —— 那就不能说它在跑。
 #:
@@ -84,7 +129,7 @@ class Column(enum.StrEnum):
 class Building(enum.StrEnum):
     """还没递出交付。"""
 
-    running = "运行中"
+    running = "running"
     #: 活才有：这条活上有人动过手，但此刻没有人在做它，也还没递出交付 —— 做了一半
     #: 停在原地。和「待开工」分开，是因为「有人碰过、停下来了」和「从来没人碰过」
     #: 对看的人是两件事：前者的下一步多半是接着做，后者是决定要不要开。
@@ -92,56 +137,59 @@ class Building(enum.StrEnum):
     #: 判据只有 `TaskFacts.has_progress` 一条，而它读的是**平台看得见的痕迹**（草稿
     #: PR / 工作树），所以这一格不是「有人在上面干活」的证据 —— 那是「运行中」的
     #: 活。主 agent 自己动手的那条路，平台今天看不见过程，只看得见留下的东西。
-    started = "已动工"
+    started = "started"
     #: 活才有：没有人在做它，而且它上面一点痕迹都没有。还没派出去、排着队等空位，
     #: 都是这一格：下一步是有人动手。
-    not_started = "待开工"
+    not_started = "not_started"
     #: 活才有：做它的分身已经交回了结论，在等房间把卡递出去。和「待开工」分开，
     #: 是因为东西已经做出来了，看的人不该以为还没人碰过它。
-    returned = "已交回"
+    returned = "returned"
     #: 房间才有：这一轮说完了，在等下一句话。活不用这个词：它放在「施工中」这一列
     #: 里读起来像自相矛盾。
-    idle = "空闲"
+    idle = "idle"
     #: 房间才有：还没开工。活没有草稿态。
-    draft = "草稿"
+    draft = "draft"
     #: 说在跑，但没有任何东西最近确认过。和「空闲」分开，是因为一条隧道断掉的活
     #: 和一条真的没人找它的活，对看的人意味着完全相反的下一步。
-    lost = "失联"
+    lost = "lost"
 
 
 class Delivering(enum.StrEnum):
     """下一步在平台/芝士手上，人不用动。"""
 
-    gate_running = "检查运行中"
-    awaiting_checks = "等待检查"
-    fixing_checks = "修复检查"
+    gate_running = "gate_running"
+    awaiting_checks = "awaiting_checks"
+    fixing_checks = "fixing_checks"
     #: 撞了合并冲突，芝士已经被派去解 —— `NoteCode.merge_conflict` 在写，
     #: 合并态 DIRTY 也落在这里，所以这一格是点得亮的，不是空契约。
-    resolving_conflict = "解决冲突"
+    resolving_conflict = "resolving_conflict"
     #: 合并态 BEHIND（strict）：平台自己在 update-branch，人不用动。
-    updating_branch = "平台更新分支"
+    updating_branch = "updating_branch"
 
 
 class NeedsYou(enum.StrEnum):
     """下一步在人手上。"""
 
-    checks_failed = "检查未通过"
-    awaiting_review = "待审阅"
-    bounced = "已退回"
+    checks_failed = "checks_failed"
+    awaiting_review = "awaiting_review"
+    bounced = "bounced"
     #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
     #: 其余几格都是一轮结束之后的状态。
-    awaiting_answer = "待回答"
+    awaiting_answer = "awaiting_answer"
 
 
 class Done(enum.StrEnum):
-    accepted = "已采纳"
-    closed = "已关闭"
+    accepted = "accepted"
+    closed = "closed"
 
 
 class Archived(enum.StrEnum):
-    archived = "已归档"
+    archived = "archived"
 
 
+#: 短语的值是码，不是字：卡面上那句话由读者的屏幕按他选的语言画
+#: （前端词条 `work.board.phrase.<码>`）。一个看板同时被说不同语言的人看，所以
+#: 后端说「是哪一句」，不替任何人挑语言。
 Phrase = Building | Delivering | NeedsYou | Done | Archived
 
 #: 短语 → 它属于哪一列。**唯一**一处把两者关联起来的地方。
@@ -162,18 +210,18 @@ COLUMN_PHRASES: dict[Column, frozenset[str]] = {
 
 @dataclass(frozen=True, slots=True)
 class Presentation:
-    """可以直接画出来的一格：哪一列，卡面写什么。"""
+    """可以直接画出来的一格：哪一列，卡面写哪一句（短语的码）。"""
 
     column: Column
-    display_status: str
+    phrase: str
 
     def as_dict(self) -> dict[str, str]:
-        return {"column": str(self.column), "display_status": self.display_status}
+        return {"column": str(self.column), "phrase": self.phrase}
 
 
 def _show(phrase: Phrase) -> Presentation:
     """列不是挑出来的，是从短语查出来的 —— 见模块开头。"""
-    return Presentation(column=_COLUMN_OF[type(phrase)], display_status=phrase.value)
+    return Presentation(column=_COLUMN_OF[type(phrase)], phrase=phrase.value)
 
 
 # —— 事实 ——————————————————————————————————————————————————————
@@ -253,7 +301,17 @@ class RoomFacts:
     awaiting_answer: bool = False
 
 
-def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
+def facts_for_card(card: "AcceptCard | CardSignals | None") -> CardFacts | None:
+    """这张卡要读的几位，折成纯值。`None` 是「这条活上没有卡」，不是一张空卡。
+
+    收两种形状是因为卡有两处来源：领域内的人手上是 `AcceptCard` 那一行，HTTP 路由
+    手上是 `review` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多
+    查一行。这一层只读 `status` / `note_code` / `merge_state` / `decided_by` /
+    `auto_merge_armed_by` 五个属性（`CardSignals`），两种形状都长得出来，所以折出来
+    的 `CardFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了这件事）。
+    `merge_state` 的形状也不假设：不是 `dict`（`None`、或者镜像还没写过）就当空镜像
+    读，所以 `Mapping` 也收。
+    """
     if card is None:
         return None
     mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
@@ -270,7 +328,7 @@ def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
 
 def facts_for_task(
     task: Task,
-    card: "AcceptCard | None" = None,
+    card: "AcceptCard | CardSignals | None" = None,
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,

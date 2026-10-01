@@ -42,6 +42,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import notes
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -149,7 +150,7 @@ async def close_cards_for_archived_topic(
             task_id=landed.task_id,
             author="cheese",
             author_type=AuthorType.platform,
-            content=f"话题归档，平台停止跟进 PR #{card.pr_number}",
+            content=say("archiveStoppedFollowing", pr=card.pr_number),
             kind=BlockKind.event,
             meta={
                 "platform": True,
@@ -157,11 +158,11 @@ async def close_cards_for_archived_topic(
                     EVENT_ACCEPT_STOPPED,
                     severity=SEVERITY_WARN,
                     who=WHO_HUMAN,
-                    detail=(
-                        f"{card.pr_url or '无链接'}\n"
-                        "这个 PR 未合并，平台不会自动关闭它，需要人决定是否关闭。"
+                    detail=say(
+                        "archiveStoppedFollowingDetail",
+                        url=card.pr_url or say("prNoLink"),
                     ),
-                    detail_label="下一步",
+                    detail_label=say("labelNextStep"),
                 ),
             },
         )

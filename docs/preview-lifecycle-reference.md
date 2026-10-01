@@ -1,0 +1,56 @@
+# Preview lifecycle implementation map
+
+Reference ZIPs were downloaded from the project library on 2026-10-01. Exact size, SHA256, ZIP CRC and extraction paths were verified before reading. The desktop bundles were read, not executed; their private runtime/backend services were not restored.
+
+| Reference                                         |   Bytes | SHA256                                                           |
+| ------------------------------------------------- | ------: | ---------------------------------------------------------------- |
+| claude-desktop-2.16120.0-deep-reference.zip       | 2236176 | ce548ef3dc78a9b105c04e40e163bec2a70b102930f1e27290fb6a87ebfb7f6e |
+| codex-desktop-26.928.2636.0-preview-reference.zip | 4722690 | ea5e7b48987d76793bf2b77bd32602c565ec2e0f2fefe1fd905c3e3181896ecb |
+| cheese-doc-ai-handoff-20261001.zip                |   54113 | 6c3a892d7527d39159c5a0097e7d0bf61e0111efe335d47aa727fce2162989c9 |
+
+## Source to product
+
+| Source evidence                                                                                                           | Product boundary                                            | Checkpoint                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CC frame-shell `up` 4092–4137 separates incoming and usable outgoing frames                                               | `usePanelPreview.ts`, `PanelPreviewView.vue`                | Preserve unchanged named HTML context using a known topic/path/version identity. Keeping DOM is not a backend resource snapshot. Incoming/outgoing frames now stage replacement, retain the last observed loaded context on failure, and label its metadata identity. |
+| CC `ip` 4075–4083 binds origin and contentWindow; handoff generation checks 4676–4703                                     | Composable lifecycle and future controlled runtime messages | Topic/path changes invalidate old reads and grants even without component remount. Runtime ready messages must bind origin, source, frame generation; not yet introduced.                                                                                             |
+| CC load/ready/reveal 4530–4546 and 5082–5129; Codex main M03 96398–96510                                                  | Metadata, authorization, navigation and runtime observation | Authorization is not page ready. Navigation load/error observation rejects readable about:blank and stale frame ids; arbitrary sites cannot be required to emit desktop private ready messages.                                                                       |
+| Codex W 96–146 checks claims and mount generation before deferred detach; H 59–96 bootstraps hidden host without painting | Panel visibility and cleanup                                | Keep unchanged context; do not transplant native Electron/Owl APIs.                                                                                                                                                                                                   |
+| Codex A 204650–204902 stages, awaits attachment/viewport, restores outgoing host on cancel                                | Incoming page replacement                                   | Separate pending/displayed identities; native 100ms timeout is not an HTML network budget. Implemented with a 30-second visible-time navigation budget and explicit retry.                                                                                            |
+| Codex main M06/M07 rejects late managed navigation/history restoration                                                    | Topic/file changes and retry targeting                      | Late grant cannot post into another topic. Full history restore is not implemented or verified.                                                                                                                                                                       |
+| C named HTML repro, formal component plus API/form substitutes                                                            | Owning `PanelPreview.session.spec.ts`                       | Same-v1 silent update, changed-v2/unknown version controls, different path and late topic grant are covered here.                                                                                                                                                     |
+
+## Test boundary
+
+The owning session suite mounts the real PanelPreview → usePanelPreview → PanelPreviewView chain. API results and HTMLFormElement.submit are substituted. It verifies grant/form intent, frame context retention and stale-operation rejection, not real content-domain navigation, cookies or backend availability.
+
+Before the identity fix, the owning suite with regressions had 20 passes and 2 failures: same-version named HTML acquired a second grant; a topic change without remount did not load the new topic. The changed/unknown version controls passed. Browser input/scroll, runtime readiness, narrow panes, transport cancellation and deployed images are separate outstanding verification work.
+
+## Independent review follow-up
+
+The reviewer locked f63083d4 and reported 49 passes / 2 failures in the four owning suites, plus two independent component regressions and a visibility-budget regression. RequiredCI run 36792262752 frontend job 110148081364 failed the hardcoded-Chinese ratchet. That head remains draft and must not merge.
+
+Downloaded review archives were verified against supplied size/SHA256 and ZIP CRC:
+
+- `preview-handoff-f63083d4-review-evidence.zip`: 8075 bytes, `276d7f21cab9c0c719036383e3d5587abe8e93f9b65dd79560b5b89335ee9d7e`.
+- `preview-visible-budget-f63083d4-review.zip`: 6645 bytes, `b9356d4f6ef12b659b87d60e9bdcd4fb54186b64a0bc680db0474c08d744b5e2`.
+
+The owning suites now include canceled v2 reactivation while displaying v1, retained app unavailability, failure followed by unchanged/new metadata controls, and a no-interval hidden-time sequence. Reuse is based on displayed/incoming identity, not a separate POST-success cache. Failed targets stop automatic navigation attempts but do not stop metadata discovery. Version labels explicitly mean metadata at read time, without a content-domain server precondition. New strings use the existing English/Chinese catalogs; no baseline is relaxed.
+
+The budget test uses the real composable and visibilitychange listener with clock/interval substitutes. It does not prove actual browser suspension. Poll and WorkPanel tests supply opaque navigation-load substitutes instead of letting blank frames time out. No product-tree generated logs are retained. Eleven original logs, including the initial typecheck OOM and the successful 3GB retry receipt, were copied byte-for-byte to an external evidence archive: `preview-host-raw-evidence.zip`, 9435 bytes, SHA256 `a8eaad523bf6b9ad2799620681121d4e2aaadb4dfc67adabdc944c4da09c2c25`. The room holds `preview-host-raw-evidence.html` with the full ZIP embedded. Verbatim UTF-8 `.md` copies are also published with `preview-raw-log-manifest.md`, which identifies commands/exits not retained in each original. Empty compiler stdout is recorded without manufacturing a nonempty log.
+
+## Caller and browser follow-up
+
+Exact head 544ad50b RequiredCI run 36794781556/frontend job 110156034710 failed three WorkPanel caller tests. The connection-unavailable and app-unresponsive explanations are restored in both retained-page and no-frame failures; their original assertions remain. The known-static positive fixture includes version v1 and an opaque modeled load, retaining DOM equality and one POST; an unknown-version negative control requires a replacement and second POST. The affected WorkPanel and session suites passed 42/42 locally; the i18n count remains 125/125. A displayed static file's new-tab action now uses its displayed path when newer metadata refers to a different file. Live default-launch wording says “open the latest preview”: when a failed static replacement retains an app frame, the default launch can resolve the latest static artifact. The owning suite includes this cross-kind regression and an unchanged-app positive control; no fixed-instance promise is made.
+
+`e2e/preview-lifecycle.mjs` mounts the formal owning component via `preview-lifecycle-fixture.ts`. Chromium 153.0.8010.12 observed same iframe/input/scroll/focus and one POST for known-version silent updates; a rejected v2 grant retained v1 with a visible explanation; explicit retry and manual refresh each performed another real form POST/navigation. Narrow 320px right-pane screenshots use actual Vuetify light/dark themes inside a fixture layout, not the full production WorkPanel. APIs are substituted, while the local content origin and HTTP navigation are real. This does not verify real JWT/cookie authorization, deployment, browser suspension, controlled runtime readiness, fixed instances or resource snapshots. Generated screenshots, JSON and PDF belong outside the product repository.
+
+## Unsupported-kind follow-up
+
+The independent 4bde9419 review archive `preview-unsupported-kind-4bde9419-review.zip` was verified at 27841 bytes, SHA256 `4abb3bd53c347b4fbd26159e171e64544e34b79be8a22721eaddf8a4537029c9`. A loaded app followed by `weights.bin` with null text and binary metadata left the old iframe visible without the new target or explanation. The owning regression failed before the fix, while the first-open binary control passed (1 failed / 1 passed / 34 skipped). The unsupported-kind branch now resets the frame host so the existing non-text state and that file's new-window address are visible; image and document dispatch are unchanged.
+
+The head-specific `preview-lifecycle-4bde9419.pdf` is published in the room. The reviewer inspected all three pages and found the light/dark 320px pane, input, retained-page error and retry readable. This report predates the unsupported-kind fix and is not browser evidence for that fix. Exact 4bde RequiredCI run 36799121062 succeeded; branch CI is not merge or deployment proof. Helper/hub/relay changes continue separately on `codex/preview-transport-rebuild` and are not part of this frontend PR.
+
+## Ownership
+
+Starting main: d322374275756ffc081e5cc41eb0da3695026ee7. Docs PR2300 and its machine40 worktree are untouched. Open PR1413 owns ArtifactVersionPreview/ProjectArtifactView and office rendering; open PR1207 owns documentBytes/fileKind and office rendering. Both share frontend/api.ts; this checkpoint does not edit those paths. Right-hand panel positioning, tabs, scene coupling, source/download/history, content-domain authorization POST and iframe sandbox are retained.

@@ -24,6 +24,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.block.notice_text import with_keys
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
@@ -128,6 +129,9 @@ class BlockRepository:
             and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
+        # A platform sentence carries its key; the reader's screen renders it
+        # in the reader's language (`notice_text.py`).
+        meta = with_keys(meta, content=content)
         block = Block(
             project_id=project_id,
             topic_id=topic_id,
@@ -435,7 +439,7 @@ class BlockRepository:
         if block is None:
             return None
         block.content = content
-        block.meta = {**(block.meta or {}), **meta}
+        block.meta = with_keys({**(block.meta or {}), **meta}, content=content)
         await self._session.flush()
         return block
 
@@ -457,14 +461,18 @@ class BlockRepository:
         await self._session.flush()
         return block
 
-    async def current_checklist(self, room_id: uuid.UUID, author: str) -> Block | None:
-        """The newest checklist message ``author`` posted on the room's own line."""
+    async def current_checklist(
+        self, room_id: uuid.UUID, author: str, *, message: uuid.UUID | None = None
+    ) -> Block | None:
+        """The newest checklist message ``author`` posted on the room's own line,
+        or, given ``message``, that checklist on the room's own line whoever
+        wrote it: whether its writer may edit it is the edit's own rule."""
         stmt = (
             select(Block)
             .where(
                 *self._in_place(room_id, None),
                 Block.kind == BlockKind.message,
-                Block.author == author,
+                Block.author == author if message is None else Block.id == message,
                 Block.meta[CHECKLIST_META_KEY].as_string().is_not(None),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -1228,8 +1236,8 @@ class BlockRepository:
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind
     ) -> list[Block]:
-        """Project-wide blocks of a kind, newest first — e.g. the decision log
-        (kind=decision), each traceable to its source topic via refs (§7.1)."""
+        """Project-wide blocks of a kind, newest first — e.g. the weekly reports
+        (kind=weekly), each traceable to its source topic (§7.1)."""
         stmt = (
             select(Block)
             .where(Block.project_id == project_id, Block.kind == kind)

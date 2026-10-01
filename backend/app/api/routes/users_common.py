@@ -37,6 +37,7 @@ import logging
 
 from app.common.auth import SudoPurpose
 from app.core.errors import InternalServerError, SudoRequiredError
+from app.domain.block.notice_text import say
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,6 @@ async def _spend_sudo_ticket(
         spent = await claim(_SUDO_TICKET_SCOPE, claims.jti)
     except SingleUseUnavailableError:
         logger.exception("sudo: cannot claim ticket uid=%s", user_id)
-        raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
+        raise InternalServerError(say("securityCheckUnavailable")) from None
     if not spent:
         raise SudoRequiredError("Re-authentication required for this operation")

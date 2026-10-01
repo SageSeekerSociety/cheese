@@ -7,8 +7,8 @@
 所以两件事一起做：房间与任务进「待处理 · 待回答」，同时通知发起这一轮的人。芝士
 是代他执行这件事的，这个问题也只有他能回答。
 
-判据是 #1084 定的那一条，不新增存储：**最近一条提问消息没有 `answered`**，且此后
-没人给过回应。回应有三条出路：被问的人点了选项（`answered`）、他直接打字回了一句、
+判据是 #1084 定的那一条，不新增存储：**最近一条提问消息没有 `answer_log` 作答记录**，
+且此后没人给过回应。回应有三条出路：被问的人点了选项（追加作答记录）、他直接打字回了一句、
 或者**芝士自己又接着说了一句**（#2046：芝士问完没等人答就自己把活做完又发了几条
 进展，房间却一直停在「待回答」）。第三条只管芝士自己问出口的题 —— 人问的那道题，
 芝士在不在房间里说话都与它无关。
@@ -92,7 +92,13 @@ def _agent_says(client, room: str, text: str) -> None:
 def _answer(client, block_id: str, option: str = "按部门") -> None:
     r = client.post(
         f"/topics/blocks/{block_id}/answer",
-        json={"option": option, "author": "alice"},
+        json={
+            "kind": "option",
+            "option": option,
+            "author": "alice",
+            "client_op_id": str(uuid.uuid4()),
+            "expect_version": 0,
+        },
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -122,7 +128,7 @@ def test_an_unanswered_question_puts_the_room_in_the_waiting_column(client):
 
     shown = _shown(client, pid, room)
     assert shown["column"] == "needs_you"
-    assert shown["display_status"] == NeedsYou.awaiting_answer
+    assert shown["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_answering_it_takes_the_room_back_out(client):
@@ -145,7 +151,7 @@ def test_a_second_question_after_an_answered_one_still_counts(client):
 
     _ask(client, room, "那按项目的口径要不要含外包")
 
-    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
@@ -160,11 +166,11 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
     _open_turn(client, room)
 
     _agent_ask(client, room)
-    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
     _agent_says(client, room, "找到根因了，改完推上去了")
 
-    assert _shown(client, pid, room)["display_status"] != NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] != NeedsYou.awaiting_answer
 
 
 def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
@@ -179,7 +185,7 @@ def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
     _ask(client, room)
     _agent_says(client, room, "我先把能查的查了")
 
-    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_the_person_who_started_the_turn_hears_the_question(client):

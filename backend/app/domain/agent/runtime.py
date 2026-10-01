@@ -27,6 +27,12 @@ from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
 from app.domain.agent import dispatch_log
+from app.domain.agent.admission import (
+    HOST_BUSY_META,
+    QUEUED_META,
+    queued_text,
+    wait_for_host,
+)
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
@@ -50,6 +56,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
+from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
@@ -468,8 +475,10 @@ class AgentWorkRunner:
         first_output_timeout_s: float = 300.0,
         credential_expiry_of: Callable[[uuid.UUID], int | None] | None = None,
         credential_expired_fuse_s: float = 15.0,
+        host_has_room: Callable[[uuid.UUID], Awaitable[bool]] | None = None,
     ) -> None:
         self._broker = broker
+        self._host_has_room = host_has_room
         self._message_locks: dict[tuple[uuid.UUID, str | None], asyncio.Lock] = {}
         self._timeout = turn_timeout_s
         # 冷启动看门狗: how long a turn may produce NOTHING before it is called
@@ -844,8 +853,8 @@ class AgentWorkRunner:
         performed be recognised as done — see domain.idempotency.keys.
 
         ``on_done`` fires when this turn's task finishes, whatever the outcome.
-        It exists for callers that COALESCE work onto a running turn (母子传话,
-        `domain.topic.relay`) and therefore need the moment the topic is free
+        It exists for callers that COALESCE work onto a running turn and
+        therefore need the moment the topic is free
         again; it is not an error channel and never sees the result. It runs on
         the event loop as a done-callback, so it must not block and must not
         raise — an exception there would only reach the loop's handler.
@@ -1389,18 +1398,14 @@ class AgentWorkRunner:
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                f"上一轮 {round(age_s / 60)} 分钟没有任何输出，已强制停止",
+                say("turnWedged", minutes=round(age_s / 60)),
                 notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
                     # 平台不再自动重试 —— 要有人看一眼、再 @ 它。
                     who=WHO_HUMAN,
-                    detail=(
-                        "已完成的改动都在工作区里。平台不会自动重试，"
-                        "因为重试会回到刚刚出问题的机器。"
-                        "检查过后可以重试，会从中断处继续。"
-                    ),
-                    detail_label="详细说明",
+                    detail=say("turnWedgedDetail"),
+                    detail_label=say("labelDetails"),
                     retryable=True,
                 ),
             )
@@ -1590,18 +1595,14 @@ class AgentWorkRunner:
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                f"{len(unknown)} 次工具调用没有返回结果，平台不会自动重试",
+                say("dispatchUnknown", count=len(unknown)),
                 notice(
                     EVENT_DISPATCH_UNKNOWN,
                     severity=SEVERITY_WARN,
                     # 平台到头了：做没做过只有那台机器知道，而它已经不说话了。
                     who=WHO_HUMAN,
-                    detail=(
-                        "这些调用已经发出，但机器没有返回结果，所以只有那台机器"
-                        f"知道它们是否执行过：{waiting}。自动重发可能把已经生效的"
-                        "改动再做一遍。确认之后可以重试，会从那里继续。"
-                    ),
-                    detail_label="详细说明",
+                    detail=say("dispatchUnknownDetail", calls=waiting),
+                    detail_label=say("labelDetails"),
                     retryable=True,
                 ),
             )
@@ -1620,19 +1621,14 @@ class AgentWorkRunner:
             stale = age_s > self.ORPHAN_STALE_S
             # 平台提示统一契约: 房间里一行 `text`，展开才看的长文进 meta.detail。
             text = (
-                f"消息未送达，已等待 {round(age_s / 60)} 分钟"
+                say("messageUndeliveredStale", minutes=round(age_s / 60))
                 if stale
-                else "上一次重发被平台重启打断，消息未送达"
+                else say("resendInterrupted")
             )
             detail = (
-                "没有迹象表明消息已经送达。它等待的时间太久，"
-                "自动重发可能已经不合适。"
-                "需要继续的话可以重试，之前的消息会一起带上。"
+                say("messageUndeliveredStaleDetail")
                 if stale
-                else (
-                    "重发只进行一次，不会连续自动重试。已完成的改动都在工作区里，"
-                    "需要继续的话可以重试，会从中断处继续。"
-                )
+                else say("resendInterruptedDetail")
             )
             await self._post_orphan_event(
                 chat_service,
@@ -1644,7 +1640,7 @@ class AgentWorkRunner:
                     # 平台不再自动做任何事了 —— 这条要人来。
                     who=WHO_HUMAN,
                     detail=detail,
-                    detail_label="详细说明",
+                    detail_label=say("labelDetails"),
                     retryable=True,
                 ),
             )
@@ -1695,11 +1691,11 @@ class AgentWorkRunner:
 
     # The re-send opener's wording (#316): name the platform as the cause —
     # "被部署中断" — never "AI 服务返回错误" for a failure the deploy made.
-    RESEND_REASON = "上一轮被平台部署中断，消息未送达，已重新发送"
+    RESEND_REASON = say("resendAfterDeploy")
 
     #: Same contract for the other platform-caused silence: the room's tools
     #: vanished mid-turn, so 芝士 answered where nobody could hear it.
-    TOOLS_REASON = "上一轮平台工具连接中断，回复没有发到房间，已恢复并重新发送"
+    TOOLS_REASON = say("resendAfterToolsLost")
 
     async def _recover_silent_turn(
         self,
@@ -1719,7 +1715,7 @@ class AgentWorkRunner:
         await self._post_orphan_event(
             chat_service,
             topic_id,
-            "平台工具连接中断，刚才的回复没有发到房间，已恢复并正在重新发送",
+            say("toolsRecovered"),
             self._TOOLS_RECOVERED_META,
         )
         # 重新投递，不是新起一轮：收件人还是上一条消息点的那个席位，平台只是把没送
@@ -1792,29 +1788,13 @@ class AgentWorkRunner:
         )
         logger.info("scheduled orphan re-send for topic %s in %.0fs", topic_id, after_s)
 
-    # Platform copy for the queue event — structured, never 芝士's own words.
-    @staticmethod
-    def _queued_text(ahead: int) -> str:
-        if ahead <= 0:
-            return "项目同时运行的轮次已满，本轮正在排队"
-        return f"项目同时运行的轮次已满，本轮正在排队，前面还有 {ahead} 个"
-
     #: 工具断了是平台的事，平台自己接回来并重发；房间里的人不用动手。
     _TOOLS_RECOVERED_META = notice(
         EVENT_TOOLS_RECOVERED,
         severity=SEVERITY_WARN,
         who=WHO_PLATFORM,
-        detail="只重新发送一次。上一轮的回复留在执行会话里，没有发到房间。",
-        detail_label="说明",
-    )
-
-    #: 排队不是故障：平台自己会往前推，没人需要动手。
-    _QUEUED_META = notice(
-        EVENT_TURN_QUEUED,
-        severity=SEVERITY_INFO,
-        who=WHO_PLATFORM,
-        detail="前面的轮次结束就自动开跑，不用重发。",
-        detail_label="接下来会发生什么",
+        detail=say("toolsRecoveredDetail"),
+        detail_label=say("labelNote"),
     )
 
     #: How long a turn waits for its room's replay before the room is told.
@@ -1825,8 +1805,8 @@ class AgentWorkRunner:
         EVENT_TURN_QUEUED,
         severity=SEVERITY_INFO,
         who=WHO_PLATFORM,
-        detail="接回来就自动开跑，不用重发。",
-        detail_label="接下来会发生什么",
+        detail=say("catchingUpDetail"),
+        detail_label=say("labelWhatHappensNext"),
     )
 
     async def _wait_for_replay(
@@ -1850,7 +1830,7 @@ class AgentWorkRunner:
                     chat_service,
                     topic_id,
                     turn_id,
-                    "正在接回这个房间断线期间的会话记录，本轮稍后开始",
+                    say("catchingUp"),
                     meta=self._CATCHING_UP_META,
                 )
 
@@ -1884,6 +1864,7 @@ class AgentWorkRunner:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
         - credits exhausted → ("reject", None): the caller refuses the turn.
+        - its session starts on a session host with no memory for it → wait.
         - project concurrency full → queue on the project semaphore (FIFO),
           after posting a visible "排队中" system event. Returns ("ok", sem)
           with the ACQUIRED semaphore (caller must release).
@@ -1900,6 +1881,13 @@ class AgentWorkRunner:
         if policy["credits_exhausted"]:
             logger.info("turn %s rejected: credits exhausted", turn_id)
             return "reject", None
+        await wait_for_host(
+            self._host_has_room if policy.get("on_session_host") else None,
+            topic_id,
+            lambda text: self._post_event(
+                chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
+            ),
+        )
         key = policy["project_id"]
         sem = self._project_sems.get(key)
         if sem is None:
@@ -1911,8 +1899,8 @@ class AgentWorkRunner:
                 chat_service,
                 topic_id,
                 turn_id,
-                self._queued_text(ahead),
-                meta=self._QUEUED_META,
+                queued_text(ahead),
+                meta=QUEUED_META,
             )
             logger.info("turn %s queued (project=%s ahead=%s)", turn_id, key, ahead)
         self._project_waiting[key] = self._project_waiting.get(key, 0) + 1
@@ -2668,26 +2656,17 @@ class AgentWorkRunner:
                 )
                 rec["detail"] = "no first output"
                 # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
-                text = (
-                    f"本轮 {round(self._first_output_timeout_s)} 秒内没有任何输出，"
-                    "平台不会自动重试。"
-                )
+                text = say("noFirstOutput", seconds=round(self._first_output_timeout_s))
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
                     # 工作电脑没起来，平台不再自动重试 —— 要有人看一眼。
                     who=WHO_HUMAN,
-                    detail=(
-                        f"{round(self._first_output_timeout_s)} 秒内没有模型输出，"
-                        "也没有工具调用，按工作电脑没有启动处理。"
-                        "常见原因：模型订阅凭据过期（需要在主机上重新认证）、"
-                        "沙箱容器无法创建、磁盘已满，或者无法连接模型。"
-                        "任务没有开始，所以没有已完成的改动。"
-                        "平台不会自动重试，因为重试会遇到同一个没有启动的环境。"
-                        "需要有人检查工作电脑（容器、磁盘、模型连接），"
-                        "修复后可以重试。"
+                    detail=say(
+                        "noFirstOutputDetail",
+                        seconds=round(self._first_output_timeout_s),
                     ),
-                    detail_label="原因",
+                    detail_label=say("labelReason"),
                     retryable=True,
                 )
             block = None
@@ -2752,17 +2731,13 @@ class AgentWorkRunner:
                 # 平台认不出来的失败当作缺陷信号，不当瞬时故障 —— 重试只会把同一个
                 # bug 再触发一遍（2026-09-04 一个 NotFoundError 被连着自动重跑，
                 # 把一个正在进行的 hackathon 房间刷了屏）。发一次，交给人。
-                text = "本轮意外中断，平台不会自动重试"
+                text = say("turnCrashed")
                 event_meta = notice(
                     EVENT_TURN_FAILED,
                     severity=SEVERITY_ERROR,
                     who=WHO_HUMAN,
-                    detail=(
-                        "已完成的改动都在。这类失败通常是平台缺陷，重试可能再次"
-                        "触发，所以平台不会自动重试。需要有人查看日志定位问题，"
-                        "修复后可以重试，会从中断处继续。"
-                    ),
-                    detail_label="详细说明",
+                    detail=say("turnCrashedDetail"),
+                    detail_label=say("labelDetails"),
                     retryable=True,
                 )
             block = None

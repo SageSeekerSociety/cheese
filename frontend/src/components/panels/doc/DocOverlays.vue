@@ -11,15 +11,18 @@
 // slash 菜单的**状态**也住在上面（那套建议插件的回调是在建编辑器时接的），这里只负责画。
 import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
+import type { Selection } from '@tiptap/pm/state'
 import type { Block } from '../../../cx_types'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
+import { TextSelection } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 
-import { contentBlocks } from './docBlocks'
 import DocSlashMenu from './DocSlashMenu.vue'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -59,91 +62,214 @@ interface CommentCta {
   left: number
   quote: string
   nodeIndex: number
+  editor: CoreEditor
+  doc: PMNode
+  selection: Selection
+  topicId: string
 }
-const commentCta = ref<CommentCta | null>(null)
-
-function updateCommentCta(ed: CoreEditor) {
-  const sel = ed.state.selection
-  if (sel.empty || !props.editable) {
+const commentCta = shallowRef<CommentCta | null>(null)
+const toolbar = ref<HTMLElement | null>(null)
+let dismissed: { editor: CoreEditor; doc: PMNode; selection: Selection } | null = null
+let frame = 0
+let disposed = false
+let requestId = 0
+let bound: CoreEditor | null = null
+let observer: ResizeObserver | null = null
+function wrapOf(ed: CoreEditor) {
+  return ed.view.dom.closest<HTMLElement>('.doc-editor-wrap')
+}
+function sameSelection(ed: CoreEditor) {
+  return dismissed?.editor === ed && dismissed.doc === ed.state.doc && dismissed.selection.eq(ed.state.selection)
+}
+function positionCta() {
+  const cta = commentCta.value
+  if (!cta || disposed) return
+  const ed = cta.editor
+  if (ed.isDestroyed || ed.state.doc !== cta.doc || props.topicId !== cta.topicId) {
     commentCta.value = null
     return
   }
-  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
-  if (!wrap) return
-  let quote: string
-  let startCoords: { top: number; left: number }
-  let endRight: number
-  let nodeIndex: number
-  try {
-    if (sel instanceof CellSelection) {
-      // TableKit: dragging across cells yields a CellSelection, not a
-      // TextSelection. Its from/to are cell-boundary positions — textBetween
-      // and coordsAtPos on them give garbage (empty quote / border coords),
-      // which is what broke commenting inside tables. Read the selected CELLS
-      // instead: quote = their text, coords = the anchor/head cells' insides,
-      // and the paragraph anchor = the table's own top-level node index.
-      const parts: string[] = []
-      sel.forEachCell((cell) => {
-        const t = cell.textContent.trim()
-        if (t) parts.push(t)
-      })
-      quote = parts.join(' ')
-      const a = ed.view.coordsAtPos(sel.$anchorCell.pos + 1)
-      const h = ed.view.coordsAtPos(sel.$headCell.pos + 1)
-      startCoords = a.top < h.top || (a.top === h.top && a.left <= h.left) ? a : h
-      endRight = Math.max(a.right, h.right)
-      nodeIndex = sel.$anchorCell.index(0)
-    } else {
-      quote = ed.state.doc.textBetween(sel.from, sel.to, ' ').trim()
-      startCoords = ed.view.coordsAtPos(sel.from)
-      endRight = ed.view.coordsAtPos(sel.to).right
-      // depth-0 index = the top-level block the selection starts in (inside a
-      // table cell this still resolves to the table's index — correct anchor).
-      nodeIndex = sel.$from.index(0)
-    }
-  } catch {
-    // coordsAtPos can throw on transient positions mid-edit; just hide the CTA.
+  const wrap = wrapOf(ed),
+    body = wrap?.closest<HTMLElement>('.doc-body') ?? wrap
+  if (!wrap || !body) {
     commentCta.value = null
     return
+  }
+  const wr = wrap.getBoundingClientRect(),
+    br = body.getBoundingClientRect()
+  const sidebar = wrap.closest('.doc-reading')?.querySelector<HTMLElement>('[data-comments-panel]')
+  const sr = sidebar && getComputedStyle(sidebar).display !== 'none' ? sidebar.getBoundingClientRect() : null
+  const left = Math.max(0, br.left),
+    top = Math.max(0, br.top)
+  const right = Math.min(window.innerWidth, br.right, sr && sr.width > 0 ? sr.left : br.right)
+  const bottom = Math.min(window.innerHeight, br.bottom)
+  const tw = toolbar.value?.offsetWidth || 96,
+    th = toolbar.value?.offsetHeight || 32
+  if (right - left < tw + 8 || bottom - top < th + 8) {
+    commentCta.value = null
+    return
+  }
+  try {
+    const sel = cta.selection
+    const a = ed.view.coordsAtPos(sel instanceof CellSelection ? sel.$anchorCell.pos + 1 : sel.from)
+    const h = ed.view.coordsAtPos(sel instanceof CellSelection ? sel.$headCell.pos + 1 : sel.to)
+    if (Math.max(a.bottom, h.bottom) < top || Math.min(a.top, h.top) > bottom) {
+      commentCta.value = null
+      return
+    }
+    const x = Math.max(left + 4, Math.min((a.left + h.right) / 2 - tw / 2, right - tw - 4))
+    const above = Math.min(a.top, h.top) - th - 6
+    const y = Math.max(top + 4, Math.min(above >= top + 4 ? above : Math.max(a.bottom, h.bottom) + 6, bottom - th - 4))
+    commentCta.value = { ...cta, left: x - wr.left, top: y - wr.top }
+  } catch {
+    commentCta.value = null
+  }
+}
+function schedulePosition() {
+  if (frame || disposed) return
+  frame = requestAnimationFrame(() => {
+    frame = 0
+    positionCta()
+  })
+}
+function updateCommentCta(ed: CoreEditor) {
+  const sel = ed.state.selection
+  if (sel.empty || !props.editable || !ed.isEditable || !props.topicId || sameSelection(ed)) {
+    commentCta.value = null
+    return
+  }
+  let quote: string
+  let nodeIndex: number
+  if (sel instanceof CellSelection) {
+    const parts: string[] = []
+    sel.forEachCell((cell) => {
+      const text = cell.textContent.trim()
+      if (text) parts.push(text)
+    })
+    quote = parts.join(' ')
+    nodeIndex = sel.$anchorCell.index(0)
+  } else {
+    if (!(sel instanceof TextSelection)) {
+      commentCta.value = null
+      return
+    }
+    quote = ed.state.doc.textBetween(sel.from, sel.to, ' ').trim()
+    nodeIndex = sel.$from.index(0)
   }
   if (!quote) {
     commentCta.value = null
     return
   }
-  const wrapRect = wrap.getBoundingClientRect()
+  dismissed = null
   commentCta.value = {
-    top: startCoords.top - wrapRect.top - 38,
-    left: Math.min(endRight, startCoords.left + 240) - wrapRect.left,
+    top: 0,
+    left: 0,
     quote,
     nodeIndex,
+    editor: ed,
+    doc: ed.state.doc,
+    selection: sel,
+    topicId: props.topicId,
   }
+  positionCta()
+  schedulePosition()
 }
-
-// 「有没有选中」只有编辑器知道，所以订阅接在它身上，而不是让上面每次手选都来喊一声。
-// 编辑器是建好之后才递进来的（useEditor 在挂载时才建），所以这里跟到它为止。
 const onSelectionUpdate = ({ editor }: { editor: CoreEditor }) => updateCommentCta(editor)
-let bound: CoreEditor | null = null
+const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+  if (transaction.docChanged) onEdited()
+}
+function escapeSelection(e: KeyboardEvent) {
+  if (
+    e.key !== 'Escape' ||
+    e.defaultPrevented ||
+    e.isComposing ||
+    !commentCta.value ||
+    codeLangOpen.value ||
+    props.slashMenu
+  )
+    return
+  const wrap = bound && wrapOf(bound)
+  if (!(e.target instanceof Node) || !wrap?.contains(e.target)) return
+  dismissed = { editor: commentCta.value.editor, doc: commentCta.value.doc, selection: commentCta.value.selection }
+  commentCta.value = null
+  e.preventDefault()
+  e.stopPropagation()
+}
 function bindEditor(ed?: CoreEditor | null) {
   if (bound === ed) return
-  if (bound) bound.off('selectionUpdate', onSelectionUpdate)
-  bound = ed ?? null
-  if (bound) bound.on('selectionUpdate', onSelectionUpdate)
-}
-watch(() => props.editor, bindEditor, { immediate: true })
-onBeforeUnmount(() => {
-  if (bound) bound.off('selectionUpdate', onSelectionUpdate)
-})
-
-async function commentOnSelection() {
-  const ed = props.editor
-  const cta = commentCta.value
-  if (!ed || !props.topicId || !cta) return
-  const nodes = await props.fetchDocNodes()
-  // Same filler-tolerant alignment as split/highlight. Falls back to a
-  // whole-doc comment if the structure can't be mapped.
-  const anchor =
-    cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length ? null : nodes[cta.nodeIndex].id
+  requestId++
+  bound?.off('selectionUpdate', onSelectionUpdate)
+  bound?.off('transaction', onTransaction)
+  observer?.disconnect()
   commentCta.value = null
+  dismissed = null
+  bound = ed ?? null
+  if (bound) {
+    bound.on('selectionUpdate', onSelectionUpdate)
+    bound.on('transaction', onTransaction)
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(schedulePosition)
+      const wrap = wrapOf(bound)
+      const pane = wrap?.closest('.doc-reading') ?? wrap
+      if (pane) observer.observe(pane)
+      const body = wrap?.closest('.doc-body')
+      if (body) observer.observe(body)
+      const sidebar = pane?.querySelector('[data-comments-panel]')
+      if (sidebar) observer.observe(sidebar)
+    }
+  }
+}
+watch(() => props.editor, bindEditor, { immediate: true, flush: 'post' })
+watch(
+  () => [props.editable, props.topicId],
+  () => {
+    requestId++
+    commentCta.value = null
+    dismissed = null
+  },
+  { flush: 'sync' }
+)
+document.addEventListener('scroll', schedulePosition, true)
+window.addEventListener('resize', schedulePosition)
+document.addEventListener('keydown', escapeSelection, true)
+onBeforeUnmount(() => {
+  disposed = true
+  requestId++
+  bound?.off('selectionUpdate', onSelectionUpdate)
+  bound?.off('transaction', onTransaction)
+  observer?.disconnect()
+  if (frame) cancelAnimationFrame(frame)
+  document.removeEventListener('scroll', schedulePosition, true)
+  window.removeEventListener('resize', schedulePosition)
+  document.removeEventListener('keydown', escapeSelection, true)
+})
+async function commentOnSelection() {
+  const cta = commentCta.value
+  if (!cta || !props.editable || !cta.editor.isEditable) return
+  const id = ++requestId
+  dismissed = { editor: cta.editor, doc: cta.doc, selection: cta.selection }
+  commentCta.value = null
+  let nodes: Block[]
+  try {
+    nodes = await props.fetchDocNodes()
+  } catch (e) {
+    if (!disposed && id === requestId)
+      emit('error', e instanceof Error ? e.message : t('work.room.comments.postFailed'))
+    return
+  }
+  if (
+    disposed ||
+    id !== requestId ||
+    props.editor !== cta.editor ||
+    props.topicId !== cta.topicId ||
+    cta.editor.isDestroyed ||
+    cta.editor.state.doc !== cta.doc
+  )
+    return
+  const blocks = Array.from(wrapOf(cta.editor)?.querySelectorAll<HTMLElement>('.ProseMirror > *') ?? [])
+  while (blocks.length && blocks[blocks.length - 1].tagName === 'P' && !blocks[blocks.length - 1].textContent?.trim())
+    blocks.pop()
+  const anchor = cta.nodeIndex >= nodes.length || nodes.length !== blocks.length ? null : nodes[cta.nodeIndex].id
   emit('open-comment', { anchorId: anchor, quote: cta.quote })
 }
 
@@ -232,7 +358,7 @@ watch(
 )
 
 function currentCodeLang(): string {
-  return codeCopyPre?.getAttribute('data-language') || '语言'
+  return codeCopyPre?.getAttribute('data-language') || t('work.room.doc.language')
 }
 
 function setCodeBlockLang(lang: string) {
@@ -269,7 +395,7 @@ async function copyCodeBlock() {
       if (codeCopy.value) codeCopy.value = { ...codeCopy.value, done: false }
     }, 1200)
   } catch {
-    emit('error', '复制失败')
+    emit('error', t('work.room.doc.copyFailed'))
   }
 }
 
@@ -316,6 +442,9 @@ function addBlockBelow() {
 /** 正文在光标底下换了（人工编辑，或者装进来的一版）：这个按钮指着的段落已经不是
  *  原来那一段了，收回去。装配服务端那一版时上面不会喊这一声。 */
 function onEdited() {
+  requestId++
+  if (props.editor)
+    dismissed = { editor: props.editor, doc: props.editor.state.doc, selection: props.editor.state.selection }
   commentCta.value = null
 }
 
@@ -327,15 +456,17 @@ defineExpose({ onHover, onEdited })
      appears over the selection. Click to comment on that span. -->
   <button
     v-if="commentCta"
+    ref="toolbar"
     type="button"
+    :aria-label="t('work.room.doc.commentOnSelection')"
     class="doc-comment-cta"
     :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-    title="评论选中内容"
+    :title="t('work.room.doc.commentOnSelection')"
     @mousedown.prevent
     @click="commentOnSelection"
   >
     <v-icon size="14">mdi-comment-plus-outline</v-icon>
-    评论
+    {{ t('work.room.comments.comment') }}
   </button>
   <!-- Notion-style slash menu: anchored to the caret (suggestion
      clientRect), wrap-relative like the other overlays. Keyboard
@@ -369,7 +500,7 @@ defineExpose({ onHover, onEdited })
       type="button"
       class="doc-codecopy"
       :class="{ 'doc-codecopy--done': codeCopy.done }"
-      :title="codeCopy.done ? '已复制' : '复制代码'"
+      :title="codeCopy.done ? t('work.room.doc.copied') : t('work.room.doc.copyCode')"
       @mousedown.prevent
       @click="copyCodeBlock"
     >
@@ -391,14 +522,14 @@ defineExpose({ onHover, onEdited })
     <button
       type="button"
       class="doc-handle__btn doc-handle__add"
-      title="在下方插入块"
+      :title="t('work.room.doc.insertBelow')"
       draggable="false"
       @dragstart.stop.prevent
       @click="addBlockBelow"
     >
       <v-icon size="15">mdi-plus</v-icon>
     </button>
-    <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
+    <span class="doc-handle__btn doc-handle__grip" :title="t('work.room.doc.dragToReorder')">
       <v-icon size="15">mdi-drag-vertical</v-icon>
     </span>
   </DragHandle>
@@ -415,11 +546,12 @@ defineExpose({ onHover, onEdited })
   padding: 3px 10px;
   border-radius: 8px;
   font-size: 12px;
-  color: rgb(var(--v-theme-on-primary));
-  background: rgb(var(--v-theme-primary));
+  color: var(--ink);
+  background: var(--surface);
   box-shadow: var(--shadow-2);
   cursor: pointer;
-  border: none;
+  border: 1px solid var(--line);
+  min-height: 32px;
   white-space: nowrap;
 }
 .doc-comment-cta:hover {

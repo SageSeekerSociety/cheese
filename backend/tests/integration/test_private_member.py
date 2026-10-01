@@ -3,6 +3,7 @@
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -48,7 +49,7 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     # **不打 @**：私聊是两席的房间，对面那一席是 agent，说话就是对着它说的。那一位
     # 以前是浏览器算好发上来的，现在由服务端自己认（I13）。
     with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "设个偏好"})
+        post_message(client, private["id"], "user-1", {"content": "设个偏好"})
         frames = []
         while True:
             f = ws.receive_json()
@@ -132,7 +133,7 @@ def test_a_dm_between_two_people_summons_nobody(client, bearer):
     ).json()["data"]
 
     with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "只说给 alice 听"})
+        post_message(client, private["id"], "user-1", {"content": "只说给 alice 听"})
         frames = []
         while True:
             f = ws.receive_json()

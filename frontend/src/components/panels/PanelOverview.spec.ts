@@ -7,7 +7,7 @@
  * 那张卡长什么样（那由 PanelCard.spec.ts 管）。
  */
 import { fireEvent, render } from '@testing-library/vue'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./PanelCard.vue', () => ({
   default: {
@@ -23,6 +23,11 @@ vi.mock('./PanelDoc.vue', () => ({ default: { name: 'PanelDocStub', template: '<
 vi.mock('./TaskProgress.vue', () => ({ default: { name: 'TaskProgressStub', template: '<div />' } }))
 
 import PanelOverview from './PanelOverview.vue'
+
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
 
 describe('总览里的卡透出来的事件', () => {
   it('「审阅」原样透出去', async () => {

@@ -7,10 +7,12 @@ none is set -- how it should be rendered, and, for an app, whether the tunnel an
 the app behind it are actually up; `GET .../preview/file` reads the bytes, from
 the room's current artifact or from the `path` a `<&path>` chip in a message names.
 
-What stays behind, and why. `_actor_in_place`, `_ARTIFACT_MIME`,
-`_clean_artifact_path` and `DbSession` are defined in topics.py and read by its own
-handlers too, so they stay and this module imports them. `BlockRepository` is the
-one name read here that topics.py merely imports -- and it is imported from
+Where the shared names went. `_actor_in_place` and `DbSession` are still defined in
+topics.py and read by its own handlers too, so they stay and this module imports
+them; the two room-file rules this module read from there, `ARTIFACT_MIME` and
+`clean_artifact_path`, now live in `app.domain.project.room_files`.
+`BlockRepository` is the one name read here that topics.py merely imports -- and it
+is imported from
 topics.py rather than from `app.domain.block.repositories` on purpose. The guard
 in `tests/unit/test_domain_import_guard.py` ratchets (route module, repository
 module) pairs, and a direct import would add a line to that ratchet: a move must
@@ -41,16 +43,11 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.api.routes.topics import (
-    _ARTIFACT_MIME,
-    BlockRepository,
-    DbSession,
-    _actor_in_place,
-    _clean_artifact_path,
-)
+from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
 from app.core.errors import NotFoundError
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.library import service as library
+from app.domain.project.room_files import ARTIFACT_MIME, clean_artifact_path
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -72,7 +69,7 @@ async def get_preview(
         return ok(None)
     from app.api.preview_host import preview_origin
 
-    if art.mime_type == _ARTIFACT_MIME["app"]:
+    if art.mime_type == ARTIFACT_MIME["app"]:
         # Knocked on LIVE, through the tunnel, every time the panel asks. A
         # declared preview is not a running one: the agent's dev server exits,
         # the machine goes offline, the helper's token ages out — and each of
@@ -80,6 +77,7 @@ async def get_preview(
         # apart. `tunnel_up` without a `url` is 「通道在，应用没在跑」.
         tunnel_up = preview_hub.is_online(topic_id, art.author)
         alive = tunnel_up and await preview_hub.probe(topic_id, art.author)
+        instance = await preview_hub.instance(topic_id, art.author) if alive else None
         return ok(
             {
                 "kind": "app",
@@ -88,6 +86,7 @@ async def get_preview(
                 # Every executable preview stays outside the platform origin.
                 "url": (preview_origin(topic_id) + "/" if alive else None),
                 "tunnel_up": tunnel_up,
+                "instance": instance,
                 "artifact_id": str(art.id),
             }
         )
@@ -128,10 +127,10 @@ async def preview_file(
     if path:
         return ok(
             library.read_attachment_text(
-                place.project_id, topic_id, _clean_artifact_path(path)
+                place.project_id, topic_id, clean_artifact_path(path)
             )
         )
     art = await BlockRepository(db).latest_artifact(place.room_id)
-    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
+    if art is None or art.mime_type == ARTIFACT_MIME["app"]:
         raise NotFoundError("No file preview")
     return ok(library.read_room_text_file(place.project_id, topic_id, art.content))

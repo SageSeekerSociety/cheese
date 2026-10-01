@@ -81,6 +81,7 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent_instance.configuration import model_choices
+from app.domain.block.notice_text import say
 from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
@@ -163,7 +164,7 @@ async def save_default_model(
         if chosen is None:
             values.pop(key, None)
         elif chosen not in valid:
-            raise ValidationError(f"当前项目无法使用模型 {chosen!r}，请选择可用模型")
+            raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
         else:
             values[key] = chosen
     project.settings = values
@@ -264,8 +265,7 @@ async def save_compute_configs(
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
     await validate_choice(db, project_id, body.default)
-    if body.default.profile == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(project_id, actor)
+    await MachineService(db).admit_choice(project_id, actor, body.default)
     values = dict(project.settings or {})
     values.pop("compute_profile", None)
     values["compute_configs"] = body.model_dump()

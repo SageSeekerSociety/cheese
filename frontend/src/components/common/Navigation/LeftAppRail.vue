@@ -42,6 +42,7 @@
             v-tooltip="{ text: userMenu.nickname.value, disabled: userMenu.menuOpen.value }"
             class="cursor-pointer mb-4"
             size="32"
+            rounded="circle"
             :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
             v-bind="props"
           >
@@ -74,7 +75,7 @@
         <template #prepend>
           <v-icon icon="mdi-login" size="20" />
         </template>
-        登录
+        {{ t('account.signIn.submit') }}
       </v-btn>
     </template>
   </v-navigation-drawer>
@@ -89,6 +90,7 @@ import RailItem from './RailItem.vue'
 import { NavBarProps, NavGenericItem } from './types'
 import UserMenuCard from './UserMenuCard.vue'
 
+import { t } from '@/i18n'
 import { type DropEdge, dropTargetAt } from '@/lib/projectOrder'
 
 const navBarProps = withDefaults(defineProps<NavBarProps>(), {
@@ -202,6 +204,13 @@ const userMenu = useUserMenu()
     &::-webkit-scrollbar {
       display: none;
     }
+  }
+
+  // 首页那一格的未读点和件数角标往右上角外探 2px / 4px。这一段和下面的项目
+  // 列表一样会裁掉溢出的东西，而它的上沿就贴着标题栏：不留出角标探出去的那
+  // 4px，点的顶上就被削平一条。项目列表那一段有 8px 的上下内边距，所以一直没事。
+  .v-navigation-drawer__prepend {
+    padding-top: 4px;
   }
 
   .app-rail-item {

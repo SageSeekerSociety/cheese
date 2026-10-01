@@ -18,6 +18,7 @@ subscription keeps from what its records say (``subscription.marks_of``).
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -29,7 +30,7 @@ from typing import Protocol
 import httpx
 
 from app.core.errors import ValidationError
-from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     Backlog,
@@ -57,6 +58,7 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
+from app.domain.block.notice_text import say
 from app.domain.delivery.input_identity import (
     InputIdentity,
     InputOutcomeUnconfirmed,
@@ -66,14 +68,20 @@ from app.domain.delivery.input_identity import (
 
 # Every read of a room's journal is a call to its device, and an idle room
 # answers it with nothing. Read at the floor while there is anything to read;
-# let the wait grow towards the ceiling once the journal has gone quiet.
+# let the wait grow towards the ceiling once the journal has gone quiet. The
+# ceiling is a safety net, not how a quiet room hears its session: a runner
+# rings for records nobody has read (``driven.runner``), which wakes the read.
 READ_FLOOR_S = 0.1
-READ_CEILING_S = 1.0
+READ_CEILING_S = 30.0
 # How long a runner may go unanswered while a turn is open before the turn is
 # called dead. Longer than the connection owner takes to come back after a
 # release, and than a device takes to reconnect after a network blip: those
 # are waited out, and a runner that is still there answers again.
 RUNNER_GONE_S = 120.0
+# How often a room with no turn open looks again for a runner that is not there.
+# A runner lets a session that has sat idle go (``driven.runner``), and nobody is
+# waiting on it: the next message starts it again, and wakes this read at once.
+IDLE_GONE_READ_S = 60.0
 # Output this recent means the session is talking right now. Talking without a
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
@@ -468,6 +476,14 @@ class DrivenRuntime[H: Handle]:
         if event := self.woken.get(seat):
             event.set()
 
+    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Read this seat now, if this runtime reads it at all."""
+        seat = (topic_id, agent_handle)
+        if seat not in self.subscriptions:
+            return False
+        self._wake(seat)
+        return True
+
     async def _wait(self, seat: Seat, delay: float) -> None:
         event = self.woken.setdefault(seat, asyncio.Event())
         try:
@@ -518,6 +534,18 @@ class DrivenRuntime[H: Handle]:
                 # up yet (a cold one can take about a minute) or its home is gone.
                 # Either way the next read is what tells, and the machine's
                 # own words are the fact worth writing down, once.
+                if seat not in self.work and not isinstance(exc, DeviceNotReady):
+                    # Nothing open: the runner let an idle session go.
+                    if not waiting:
+                        waiting = True
+                        self.logger.info(
+                            "%s runner gone with no turn open topic=%s: %s",
+                            self.records,
+                            topic,
+                            exc,
+                        )
+                    await self._wait(seat, IDLE_GONE_READ_S)
+                    continue
                 if not waiting:
                     waiting = True
                     self.logger.warning(
@@ -564,8 +592,8 @@ class DrivenRuntime[H: Handle]:
                 # is due immediately. A room nobody is talking to costs a call
                 # every 100ms for an empty page, and the cost is per room:
                 # eleven of them idling held a core between them. Sending wakes
-                # the wait, so nothing a person does is served at the
-                # backed-off rate.
+                # the wait, and so does the runner's ring, so neither a person
+                # nor the session is served at the backed-off rate.
                 if delivered or seat in self.work:
                     delay = READ_FLOOR_S
                 else:
@@ -633,7 +661,11 @@ class DrivenRuntime[H: Handle]:
             work,
             AgentResult(
                 text=(
-                    f"{self.label} 的运行程序连续 {RUNNER_GONE_S:.0f} 秒没有应答"
+                    say(
+                        "runnerUnresponsive",
+                        harness=self.label,
+                        seconds=f"{RUNNER_GONE_S:.0f}",
+                    )
                     if out_of_reach
                     else f"{self.label} session process exited"
                 ),
@@ -656,8 +688,10 @@ class DrivenRuntime[H: Handle]:
         if previous and opening.agent_handle != previous.agent_handle:
             # A different teammate is taking this seat over; the conversation
             # that belonged to the last one does not carry over to them. Other
-            # seats in the same room are not this call's business.
-            await self.interrupt(session)
+            # seats in the same room are not this call's business. A runner
+            # that let its idle session go has nothing to interrupt.
+            with contextlib.suppress(DeviceCallError):
+                await self.interrupt(session)
             await self.close(session)
         handle = await self.channel.ensure(session, opening)
         await self._attach(handle)
@@ -901,7 +935,10 @@ class DrivenRuntime[H: Handle]:
     async def close(self, session: SessionRef) -> None:
         seat = self._seat_of(session)
         if subscription := self.subscriptions.get(seat):
-            await subscription.drain()
+            # Nothing more is read from a runner that is not there; what it
+            # left is read when its session is next started.
+            with contextlib.suppress(DeviceCallError):
+                await subscription.drain()
         await self._detach(seat)
 
     async def recover(self, device_id=None) -> list[SessionRef]:

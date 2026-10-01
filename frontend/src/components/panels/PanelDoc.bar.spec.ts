@@ -16,12 +16,20 @@ vi.mock('../../api', async () => {
   return {
     ...actual,
     getDoc: (...a: unknown[]) => getDoc(...a),
+    putDoc: vi.fn(async (_id: string, content: string) => ({ content, doc_version: 2 })),
     getComments: vi.fn(async () => ({ data: [], total: 0 })),
     getDocNodes: vi.fn(async () => ({ data: [], total: 0 })),
   }
 })
 
+import { putDoc } from '../../api'
+
 import PanelDoc from './PanelDoc.vue'
+
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
 
 const Doc = PanelDoc as unknown as Component
 
@@ -54,6 +62,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  vi.mocked(putDoc).mockClear()
   getDoc.mockReset()
   getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: '第一段\n', doc_version: 1 } as unknown as Block)
 })
@@ -80,6 +89,31 @@ async function fromMenu(container: Element, name: string) {
 }
 
 describe('文档横条', () => {
+  it('formats loaded content through the real panel editor and blocks formatting in read-only mode', async () => {
+    const { container } = await mountDoc()
+    await fireEvent.click(screen.getByRole('button', { name: /^标题 1$/ }))
+    await waitFor(() => expect(container.querySelector('.doc-prose h1')?.textContent).toBe('第一段'))
+    await fromMenu(container, '设为只读')
+    await fireEvent.click(screen.getByRole('button', { name: /^标题 2$/ }))
+    expect(container.querySelector('.doc-prose h1')?.textContent).toBe('第一段')
+    expect(container.querySelector('.doc-prose h2')).toBeNull()
+  })
+
+  it.each(['ctrlKey', 'metaKey'])('saves dirty content exactly once from the toolbar with %s+S', async (modifier) => {
+    const { container } = await mountDoc()
+    const heading = screen.getByRole('button', { name: /^标题 1$/ })
+    await fireEvent.click(heading)
+    await waitFor(() => expect(bar(container).textContent).toContain('编辑中'))
+    expect(putDoc).not.toHaveBeenCalled()
+    // Dispatch before focus/blur can save: this exercises the toolbar's own handler.
+    const event = new KeyboardEvent('keydown', { key: 's', [modifier]: true, bubbles: true, cancelable: true })
+    heading.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    await waitFor(() => expect(putDoc).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(putDoc).mock.calls[0]?.[1]).toBe('# 第一段\n\n')
+    await waitFor(() => expect(bar(container).textContent).toContain('已保存'))
+  })
+
   it('平常这一条上没有只读和源码两颗按钮', async () => {
     const { container } = await mountDoc()
 

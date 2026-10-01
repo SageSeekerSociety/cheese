@@ -7,7 +7,8 @@
 //
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
-import type { Block } from '../../cx_types'
+import type { Block, TodoItem } from '../../cx_types'
+import type { FaceState } from '../../lib/agentFace'
 import type { AskAction, AskFormState } from '../../lib/askPresentation'
 
 import { computed } from 'vue'
@@ -54,6 +55,12 @@ const props = defineProps<{
   active?: boolean
   askBusy?: boolean
   askState?: AskFormState
+  /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
+  live?: boolean
+  /** 这一条的头像是这位队友最近出现的那个，它正在干活（或刚干完）：头像的表情。 */
+  face?: FaceState | null
+  /** 头像在动时，悬停看到的那一句（现场顶上那一行）。 */
+  faceLabel?: string | null
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
@@ -69,6 +76,11 @@ const props = defineProps<{
   saving?: boolean
 }>()
 
+// 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
+const personLabel = computed(() =>
+  props.faceLabel ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceLabel }) : props.authorName
+)
+
 const emit = defineEmits<{
   (e: 'open-file', path: string, taskId: string | null): void
   (e: 'open-topic', id: string): void
@@ -83,6 +95,8 @@ const emit = defineEmits<{
   (e: 'edit'): void
   (e: 'save-edit', text: string): void
   (e: 'cancel-edit'): void
+  /** 自己的清单改了一步：改过之后的整份。 */
+  (e: 'checklist', block: Block, items: TodoItem[]): void
 }>()
 
 // 作者改过它：正文后面标一句「已编辑」。
@@ -147,8 +161,20 @@ async function onAgentTextClick(e: MouseEvent) {
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
-      <template v-if="runStart">
-        <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" />
+      <!-- 头像和名字点下去和正文里的 @chip 一样：去这个人的成员页。点击由房间委派
+           （useChatPanel 的 onMessagesClick 认 data-handle），去处只有一处定义。 -->
+      <!-- 队友在干活时，它在动的这个头像点下去是去「现场」看它在干什么（data-site），
+           名字照旧去成员页。 -->
+      <button
+        v-if="runStart"
+        type="button"
+        class="im-person"
+        :data-handle="block.author"
+        :data-site="faceLabel ? '' : undefined"
+        :aria-label="personLabel"
+        :title="personLabel"
+      >
+        <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" :state="face ?? null" />
         <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
            底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
            变的只有色块里的字。 -->
@@ -162,7 +188,7 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(block.author) }">
           {{ avatarInitial(authorName) }}
         </div>
-      </template>
+      </button>
       <!-- 续话没有名字那一行，时间在悬停时出现在头像列里，和正文第一行对齐。 -->
       <span v-else-if="!outgoing" class="im-gutter-time">{{ time }}</span>
     </div>
@@ -172,14 +198,14 @@ async function onAgentTextClick(e: MouseEvent) {
 
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
-        <span class="im-name">{{ authorName }}</span>
+        <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
         <ExternalTag v-if="external && !isAgent" />
         <span class="im-time">{{ time }}</span>
       </div>
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
-        回复 {{ parentName }}：{{ replySnippet(parent, refs) }}
+        {{ t('work.room.composer.replyTo', { name: parentName, text: replySnippet(parent, refs) }) }}
       </button>
       <!-- 图片输入: an attachment block renders as the image itself
          (click opens the original in a new tab). 字节在 AttachmentImage
@@ -191,7 +217,7 @@ async function onAgentTextClick(e: MouseEvent) {
         prepend-icon="mdi-file-document-outline"
         append-icon="mdi-download-outline"
         class="text-none im-file-link"
-        :title="`下载 ${artifactName(block)}`"
+        :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
         @click="emit('download', block)"
       >
         <span class="text-truncate">{{ artifactName(block) }}</span>
@@ -205,7 +231,7 @@ async function onAgentTextClick(e: MouseEvent) {
         v-else-if="block.kind === 'artifact'"
         type="button"
         class="im-artifact"
-        :title="`打开 ${artifactName(block)}`"
+        :title="t('work.room.message.openFile', { name: artifactName(block) })"
         @click="emit('open-file', block.content, block.task_id ?? null)"
       >
         <span class="att-face im-artifact__face">
@@ -229,6 +255,9 @@ async function onAgentTextClick(e: MouseEvent) {
         :checklist="checklist"
         :updated-at="block.meta?.edited_at ?? block.created_at"
         :edited="edited"
+        :live="!!live"
+        :editable="mine && !outgoing"
+        @change="emit('checklist', block, $event)"
       />
       <template v-else-if="isAgent">
         <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
@@ -274,7 +303,7 @@ async function onAgentTextClick(e: MouseEvent) {
         "
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        {{ block.upgraded_to_task_id ? '已转为任务' : '已转为话题' }}
+        {{ block.upgraded_to_task_id ? t('work.room.message.upgradedToTask') : t('work.room.message.upgradedToTopic') }}
       </button>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
@@ -285,7 +314,7 @@ async function onAgentTextClick(e: MouseEvent) {
           type="button"
           class="rx-chip"
           :class="{ 'rx-chip--mine': r.authors.includes(viewer) }"
-          :title="r.authors.join('、')"
+          :title="r.authors.join(t('work.room.roster.listSeparator'))"
           @click="emit('react', block, r.emoji)"
         >
           <span class="rx-emoji">{{ r.emoji }}</span>

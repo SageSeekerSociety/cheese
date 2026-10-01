@@ -8,6 +8,7 @@ from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
     chat_ws_url,
     join_project_team,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -69,7 +70,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert r.json()["data"]["total"] == 0
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好芝士"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 你好芝士"})
         frames = _drain_until_done(ws)
 
     # Slack-style: no token deltas — the turn announces itself and terminal
@@ -120,12 +121,12 @@ def test_blocks_empty_then_populated_after_chat(client):
 def test_session_id_persisted_for_resume(client):
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 hi"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         _drain_until_done(ws)
 
     # Second turn should resume with the captured session id.
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 again"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 again"})
         _drain_until_done(ws)
 
 
@@ -139,7 +140,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     """
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 开工"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 开工"})
         _drain_until_done(ws)
 
     doc = "# 目标\n\n做推荐\n\n## 验收标准\n\nRecall@10 > 0.15\n"
@@ -157,7 +158,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
         )
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 接着做"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 接着做"})
         _drain_until_done(ws)
 
     said = stub_hooks.last_prompt
@@ -169,7 +170,7 @@ def test_a_doc_edit_between_turns_reaches_the_next_turns_prompt(client, stub_hoo
     assert "Recall@10 > 0.25" not in said
     # And having been read, it is not said again.
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 继续"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 继续"})
         _drain_until_done(ws)
     assert "实况文档已被" not in (stub_hooks.last_prompt or "")
 
@@ -229,7 +230,7 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
     asyncio.run(_seed())
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 技术栈是什么"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 技术栈是什么"})
         _drain_until_done(ws)
 
     prompt = stub_hooks.last_system_prompt
@@ -242,17 +243,20 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
 
 def test_empty_content_rejected(client):
     _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "   "})
-        frame = ws.receive_json()
-        assert frame["type"] == "error"
+    r = client.post(
+        f"/topics/{topic_id}/messages",
+        json={"content": "   ", "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers("user-1"),
+    )
+    assert r.status_code == 422
+    assert client.get(f"/topics/{topic_id}/blocks").json()["data"]["total"] == 0
 
 
 def test_message_without_summon_does_not_invoke_cheese(client):
     """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "队友我们今晚开会"})
+        post_message(client, topic_id, "user-1", {"content": "队友我们今晚开会"})
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
@@ -275,16 +279,16 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
         headers=session_auth_headers("alice"),
     )
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "先随便说一句"})
+        post_message(client, topic_id, "alice", {"content": "先随便说一句"})
         quiet = _drain_until_done(ws)
         assert [f["type"] for f in quiet] == ["user_block", "done"]  # 芝士 quiet
 
     with client.websocket_connect(chat_ws_url(topic_id, "bob")) as ws:
-        ws.send_json({"type": "message", "content": "再补一句"})
+        post_message(client, topic_id, "bob", {"content": "再补一句"})
         _drain_until_done(ws)
 
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 芝士看看"})
+        post_message(client, topic_id, "alice", {"content": "@芝士 芝士看看"})
         _drain_until_done(ws)
 
     prompt = stub_hooks.last_prompt or ""
@@ -298,12 +302,17 @@ def test_a_reply_brings_the_message_it_answers(stub_hooks, client):
     # 进 prompt，否则「按这条改」到了芝士那里没有「这条」。
     _, topic_id = _create_project_and_topic(client, owner="alice")
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "B 组第 7 行录错了，应该是 0.42"})
+        post_message(
+            client, topic_id, "alice", {"content": "B 组第 7 行录错了，应该是 0.42"}
+        )
         parent = _drain_until_done(ws)[0]["block"]
-        ws.send_json({"type": "message", "content": "@芝士 先看看"})
+        post_message(client, topic_id, "alice", {"content": "@芝士 先看看"})
         _drain_until_done(ws)
-        ws.send_json(
-            {"type": "message", "content": "@芝士 按这条改", "reply_to": parent["id"]}
+        post_message(
+            client,
+            topic_id,
+            "alice",
+            {"content": "@芝士 按这条改", "reply_to": parent["id"]},
         )
         _drain_until_done(ws)
 
@@ -327,7 +336,7 @@ def test_debug_turns_records_lifecycle(client):
     timings, tool counts) without grepping logs."""
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好"})
+        post_message(client, topic_id, "user-1", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

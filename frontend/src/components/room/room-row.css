@@ -55,9 +55,10 @@
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  border-radius: var(--radius-md);
+  /* 人是圆的，AI 队友是超椭圆（CheeseAvatar）。 */
+  border-radius: var(--radius-pill);
 }
-/* 真头像：同一个 28px 方槽，图片裁进去，不撑变消息行。 */
+/* 真头像：同一个 28px 圆槽，图片裁进去，不撑变消息行。 */
 .im-avatar--photo {
   object-fit: cover;
   background: var(--fill);
@@ -95,6 +96,18 @@
   align-items: baseline;
   gap: 8px;
   margin-bottom: 2px;
+}
+/* 头像和名字是按钮（点了去成员页），但长得和原来一样：只在悬停时给名字一条下划线。 */
+.im-person {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.im-name.im-person:hover {
+  text-decoration: underline;
 }
 .im-name {
   font-size: 13px;

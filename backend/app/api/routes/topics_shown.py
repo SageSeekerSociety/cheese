@@ -13,22 +13,23 @@ of them in the project's 资料库), plus the two names only these three read --
 `_reject_unreachable_app` and `_PREVIEW_ATTACH_WAIT_S`, the grace window it gives a
 machine's tunnel.
 
-What stays behind, and why. `record_shown` (what actually writes the card) stays in
-topics.py: `room_files.py` writes through it too, and a helper two groups read stays
-where both read it -- the shape `topics_attachments.py` uses for
-`_clean_artifact_path` and `artifact_kind_for`, which stay for the same reason, along
-with `_source_bytes` and `_bind_source_task` (read by `topics_attachments.py`,
-`topics_documents.py`, `topics_preview.py` and `tests/forgejo/test_live.py`).
-`_ARTIFACT_MIME` and `MAX_ARTIFACT_BYTES` stay there as well, read here and by those
-three modules, and are imported from topics.py. Moving any of them here would mean
-topics.py importing this module back -- a cycle, and topics.py imports nothing from
-any `topics_*` module today. `BlockRepository` is imported from topics.py rather than
-from `app.domain.block.repositories` on purpose, the shape `topics_side_routes.py`
-uses, for the same reason: the guard in `tests/unit/test_domain_import_guard.py`
-ratchets (route module, repository module) pairs, and topics.py still reads
-`BlockRepository` in a dozen handlers, so this move adds no exemption to any
-boundary. Nothing here imports an `app.domain.*.models` module, so `.importlinter`
-and its C2 baseline do not move either.
+Where the shared names went. The four room-file rules -- `ARTIFACT_MIME`,
+`MAX_ARTIFACT_BYTES`, `artifact_kind_for` and `clean_artifact_path` -- now live in
+`app.domain.project.room_files`, their own group there, and `record_shown` became
+`add_shown_block` in `app.domain.block.shown` (it writes the block; the broadcast
+stays with each caller, so a caller keeps its own order and its own commit). The
+source read (`_source_bytes`) and the binding check (`_bind_source_task`) went to
+their own homes -- `app.api.routes.topics_file_sources.source_bytes` (API read
+orchestration) and `TaskService.require_source_in_room` in `app.domain.room_task`,
+which is a rule about a task, not about HTTP. None of them is read from topics.py
+any more.
+`BlockRepository` is still imported from topics.py rather than from
+`app.domain.block.repositories`, the shape `topics_side_routes.py` uses: the guard
+in `tests/unit/test_domain_import_guard.py` ratchets (route module, repository
+module) pairs, and topics.py still reads `BlockRepository` in a dozen handlers, so
+reading it through topics.py adds no exemption to any boundary. Nothing here
+imports an `app.domain.*.models` module, so `.importlinter` and its C2 baseline do
+not move either.
 
 Ordering. This module sorts after `topics.py` and after every other `topics_*`
 module (`_` > `.`, and `shown` > `preview`), so its three paths mount later in the
@@ -53,20 +54,19 @@ import uuid
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_broker
 from app.api.response import ok, page
-from app.api.routes.topics import (
-    _ARTIFACT_MIME,
-    MAX_ARTIFACT_BYTES,
-    BlockRepository,
-    DbSession,
-    _actor_in_place,
-    _clean_artifact_path,
-    artifact_kind_for,
-    record_shown,
-)
+from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
 from app.core.errors import ValidationError
 from app.domain.agent.preview_hub import preview_hub
+from app.domain.block.shown import add_shown_block
 from app.domain.project import room_files
+from app.domain.project.room_files import (
+    ARTIFACT_MIME,
+    MAX_ARTIFACT_BYTES,
+    artifact_kind_for,
+    clean_artifact_path,
+)
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -131,11 +131,11 @@ async def show_in_room(
         path = (body.get("path") or "app").strip()[:120]
         await _reject_unreachable_app(topic_id, author)
     else:
-        path = _clean_artifact_path(body.get("path") or "")
+        path = clean_artifact_path(body.get("path") or "")
     as_ = declared or artifact_kind_for(path)
-    mime = _ARTIFACT_MIME.get(as_)
+    mime = ARTIFACT_MIME.get(as_)
     if mime is None:
-        allowed = "、".join(_ARTIFACT_MIME)
+        allowed = "、".join(ARTIFACT_MIME)
         raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # A remote machine's file is not in the backend worktree until published.
@@ -178,7 +178,19 @@ async def show_in_room(
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
         )
-    return ok(await record_shown(db, place, path, author=author, mime=mime))
+    block = await add_shown_block(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=path,
+        author=author,
+        mime=mime,
+    )
+    payload = block.model_dump(mode="json")
+    await get_broker().publish(
+        str(place.room_id), {"type": "assistant_block", "block": payload}
+    )
+    return ok(payload)
 
 
 @router.get("/{topic_id}/shown")
@@ -198,7 +210,7 @@ async def list_shown(
         {
             "path": block.content,
             "mime": block.mime_type,
-            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
+            "kind": "app" if block.mime_type == ARTIFACT_MIME["app"] else "file",
             "shown_at": block.created_at.isoformat(),
         }
         for block in shown
@@ -224,7 +236,7 @@ async def save_shown_to_library(
         db,
         project_id=place.project_id,
         room_id=place.room_id,
-        path=_clean_artifact_path(str(body.get("path") or "")),
+        path=clean_artifact_path(str(body.get("path") or "")),
         by=actor.handle,
     )
     await db.commit()

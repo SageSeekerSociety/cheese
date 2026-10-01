@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { filterSlashItems, SLASH_ITEMS } from './docSlashMenu'
+
+import { setLocale } from '@/i18n'
+
+beforeEach(() => setLocale('zh-CN'))
 
 function keys(query: string): string[] {
   return filterSlashItems(query).map((i) => i.key)

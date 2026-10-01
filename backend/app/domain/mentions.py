@@ -3,10 +3,10 @@
 Chat replies have long had this backstop (chat.py): a friendly "@名字 /
 @handle / @话题名" is deterministically rewritten into the structured token
 (<@handle> / <#id>) so it renders as a clickable chip and notifies. Docs,
-decisions, and returned conclusions render through the same token-aware
+weekly reports, and returned conclusions render through the same token-aware
 pipelines but used to skip the rewrite — a doc saying "@张衡" stayed plain
 text. This module hosts the shared rewrite so ALL those write paths (PUT doc,
-decision, return-conclusion, chat reply) canonicalize identically.
+weekly, return-conclusion, chat reply) canonicalize identically.
 
 Notification title/body are rendered as plain text in the UI (no token
 decoration), so they are deliberately NOT canonicalized — a raw token there

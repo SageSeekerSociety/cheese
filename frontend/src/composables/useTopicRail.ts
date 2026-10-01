@@ -26,6 +26,7 @@ import {
   visibleRows,
 } from '../lib/topicTree'
 
+import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 侧栏要画的东西全在父级的这几个 props 里；这一层不自己取数。 */
@@ -277,7 +278,7 @@ export function useTopicRail(source: TopicRailSource) {
     { key: 'mine', label: '', head: false, count: 0, unread: 0, open: true, rows: mineTree.value },
     {
       key: 'others',
-      label: '其他话题',
+      label: t('work.sidebar.others'),
       head: othersCount.value > 0,
       count: othersCount.value,
       unread: othersUnread.value,
@@ -295,12 +296,12 @@ export function useTopicRail(source: TopicRailSource) {
 
   // 行的折叠开关 hover 那一句：收着的时候要说清里面有什么（展开之后就不必了）。
   function toggleTitle(row: VisibleRow<Topic>): string {
-    if (!row.collapsed) return '收起'
-    if (row.hiddenStalled) return '展开：里面有话题出了故障'
-    if (row.hiddenAwaits) return '展开：里面有待处理的事项'
-    if (row.hiddenRunning) return `展开：${agentName.value}正在里面工作`
-    if (row.hiddenMerging) return '展开：里面有已采纳的改动在等合并'
-    return '展开'
+    if (!row.collapsed) return t('work.sidebar.collapse')
+    if (row.hiddenStalled) return t('work.sidebar.expandStalled')
+    if (row.hiddenAwaits) return t('work.sidebar.expandAwaits')
+    if (row.hiddenRunning) return t('work.sidebar.expandRunning', { agent: agentName.value })
+    if (row.hiddenMerging) return t('work.sidebar.expandMerging')
+    return t('work.sidebar.expand')
   }
 
   return {

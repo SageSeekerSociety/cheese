@@ -162,3 +162,28 @@ export function avatarColor(seed?: string | null): string {
   if (!s) return hexAt(0, 0)
   return backgroundForHue(hueFromString(s))
 }
+
+/**
+ * AI 队友头像（CheeseAvatar）的底色有几档：style.css 里的 `--agent-tone-0` …
+ * `--agent-tone-4`，两套主题各一组。
+ */
+export const AGENT_TONES = 5
+
+/**
+ * 一个 AI 队友的底色落在哪一档，按 handle 算。一个项目里的几个队友脸一样，靠这个
+ * 颜色分开。和 avatarHue 一样，这个映射不能再变：变了，每个队友都会换一身颜色。
+ */
+export function agentTone(seed?: string | null): number {
+  const s = (seed ?? '').trim()
+  return s ? hueFromString(s) % AGENT_TONES : 0
+}
+
+/**
+ * 团队、空间、项目的头像画成圆角方块，圆角约为边长的四分之一：
+ * 20px 的是 5px，48px 的是 12px。都用一个固定值的话，小的看着像圆、大的看着像直角。
+ * 人是圆的，AI 队友是超椭圆（CheeseAvatar），都不用这个。
+ */
+export function squareRadius(size: string | number): string {
+  const px = Number.parseFloat(String(size))
+  return `${Math.round((Number.isFinite(px) ? px : 32) / 4)}px`
+}

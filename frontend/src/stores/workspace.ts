@@ -21,6 +21,7 @@ import {
   upgradeBlock,
 } from '@/api'
 import { ApiError, isProjectArchivedError } from '@/api'
+import { t } from '@/i18n'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { externalHandles } from '@/lib/externalMembers'
 import { myHandle } from '@/me'
@@ -70,7 +71,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 界面上称呼项目 AI 队友用的名字。项目可以给它改名，所以任何一处都不能写死「芝士」；
   // 名册还没到时才退回「芝士」。房间里有自己的 AI 席位时，对话里读的是房间名册
   // （`useRoomRoster`），这里给的是项目默认那一位，供拿不到房间名册的地方用。
-  const agentName = computed(() => members.value.find((m) => m.agent && m.project_default)?.name || '芝士')
+  const agentName = computed(
+    () => members.value.find((m) => m.agent && m.project_default)?.name || t('shell.agentDefaultName')
+  )
   // 同一位的 handle：句子里提到它时画成可点的 @chip（UserRef），点了去它的成员页。
   const agentHandle = computed(() => members.value.find((m) => m.agent && m.project_default)?.user_handle ?? null)
   const loadingTopics = ref(false)
@@ -235,7 +238,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       projects.value = (await listProjects()).data
     } catch (e) {
-      reportError(e, '加载项目失败')
+      reportError(e, t('shell.workspaceErrors.loadProject'))
     } finally {
       projectsSettled.value = true
     }
@@ -310,7 +313,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
       // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
       if (epoch !== projectEpoch || projectId.value !== id || noteAccess(e)) return
-      reportError(e, '加载话题失败')
+      reportError(e, t('shell.workspaceErrors.loadTopics'))
     } finally {
       if (epoch === projectEpoch && projectId.value === id) loadingTopics.value = false
     }
@@ -337,7 +340,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       await unarchiveProject(id)
     } catch (e) {
-      error.value = e instanceof Error ? e.message : '取消归档失败'
+      error.value = e instanceof Error ? e.message : t('shell.workspaceErrors.unarchive')
       return false
     }
     // 回到清单里了；清单先刷，否则 openProject 会以为这是另一个项目。
@@ -442,7 +445,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       applyTopic(await setTopicTitle(topicId, title))
     } catch (e) {
-      reportError(e, '重命名失败')
+      reportError(e, t('shell.workspaceErrors.rename'))
     }
   }
 
@@ -451,7 +454,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       applyTopic(await undoTopicTitle(topicId, eventId))
     } catch (e) {
-      reportError(e, '撤销失败')
+      reportError(e, t('shell.workspaceErrors.undo'))
     }
   }
 
@@ -466,7 +469,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       }
       void refreshTopics()
     } catch (e) {
-      reportError(e, '归档失败')
+      reportError(e, t('shell.workspaceErrors.archive'))
     }
   }
 
@@ -481,7 +484,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       }
       void refreshTopics()
     } catch (e) {
-      reportError(e, '取消归档失败')
+      reportError(e, t('shell.workspaceErrors.unarchive'))
     }
   }
 
@@ -494,15 +497,16 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid) return null
     const epoch = projectEpoch
     try {
-      // Untitled by default — the title is derived from the first message.
-      const topic = await createTopic(pid, title.trim() || '新话题')
+      // Untitled when nothing was typed: the backend stores its placeholder and
+      // flags it (`title_source`), and every screen names it in its own language.
+      const topic = await createTopic(pid, title.trim() || undefined)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)
       void refreshTopics()
       return topic
     } catch (e) {
-      if (epoch === projectEpoch) reportError(e, '创建话题失败')
+      if (epoch === projectEpoch) reportError(e, t('shell.workspaceErrors.createTopic'))
       return null
     }
   }
@@ -517,7 +521,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const kind = 'room_id' in made ? 'card' : 'room'
       return { kind, id: made.id }
     } catch (e) {
-      reportError(e, '转为话题失败')
+      reportError(e, t('shell.workspaceErrors.convertToTopic'))
       return null
     }
   }

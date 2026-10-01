@@ -95,10 +95,6 @@ class Project(UuidPk, Timestamps, Base):
     intent: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Free-form policy: branch protection approvals, notify level, etc.
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
-    # When the 本体 last ran a heartbeat — used to schedule ≤1 patrol/day/project.
-    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
     # Set while the owner has archived the project: it leaves every member's
     # project list, every write to it is refused (``ProjectArchivedError``), and
     # its rooms are archived with it so nothing keeps running. NULL = in use.

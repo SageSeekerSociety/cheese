@@ -14,6 +14,7 @@ import { copyLink, linkOf } from '@/commands/copy'
 import { paletteAsk } from '@/commands/palette/state'
 import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
+import { phraseLabel } from '@/lib/board'
 import { topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -24,7 +25,7 @@ function badgeOf(topic: Topic): PaletteItem['badge'] {
   const shown = topic.presentation
   if (shown)
     return {
-      text: shown.display_status,
+      text: phraseLabel(shown.phrase),
       tone: shown.column === 'needs_you' ? 'warn' : shown.column === 'done' ? 'ok' : undefined,
     }
   if (topic.awaits_me) return { text: t('navigation.palette.awaiting'), tone: 'warn' }

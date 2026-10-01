@@ -21,6 +21,11 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 const getPreview = vi.fn()
 const readPreviewFile = vi.fn()
 const requestPreviewSession = vi.fn()
@@ -72,6 +77,11 @@ function setHidden(hidden: boolean) {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.useFakeTimers()
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+    const frame = document.querySelector(`iframe[name="${this.target}"]`)!
+    Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null })
+    queueMicrotask(() => frame.dispatchEvent(new Event('load')))
+  })
   getPreview.mockResolvedValue(artifact())
   readPreviewFile.mockResolvedValue({
     path: 'report.html',

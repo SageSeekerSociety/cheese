@@ -10,13 +10,13 @@
 // 顺序和名字与那边一字不差：同一个词在两个地方指同一件事，人才不用在脑子里翻译。
 //
 // 每行一条活：色点 +「第 N 件：做什么」+ 小字写状态短语和负责人。屏幕上每一个状态
-// 词都是后端算好的 `presentation.display_status`，这一段一个都不推。
+// 词都是后端算好的 `presentation.phrase`，这一段一个都不推。
 import type { Block, BoardColumn, RoomTask, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
 import { listRoomTasks } from '../../api'
-import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../lib/board'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, phraseLabel } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
@@ -67,7 +67,7 @@ async function load() {
     rows.value = payload.data
     emit('count', payload.data.length)
   } catch {
-    errorMsg.value = '任务列表加载失败'
+    errorMsg.value = t('work.room.taskProgress.loadFailed')
   } finally {
     loading.value = false
   }
@@ -133,10 +133,14 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
   <section class="task-progress">
     <button type="button" class="task-progress__head" :aria-expanded="open" @click="open = !open">
       <v-icon size="16">{{ open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-      <span class="task-progress__title t-body">看板</span>
+      <span class="task-progress__title t-body">{{ t('work.room.taskProgress.title') }}</span>
       <span class="task-progress__tally">
         <template v-if="rows.length">
-          {{ rows.length }} 件<template v-if="needsYouCount">，{{ needsYouCount }} 件待处理</template>
+          {{ t('work.room.taskProgress.count', { count: rows.length })
+          }}<template v-if="needsYouCount"
+            >{{ t('work.room.taskProgress.sep')
+            }}{{ t('work.room.taskProgress.needsYou', { count: needsYouCount }) }}</template
+          >
         </template>
         <template v-else-if="!loading && !errorMsg">{{ t('work.room.noTasks') }}</template>
       </span>
@@ -152,7 +156,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
           <div v-else-if="errorMsg" class="px-3 py-2 t-body c-muted">{{ errorMsg }}</div>
 
           <div v-else-if="!rows.length" class="px-3 py-2">
-            <div class="t-meta c-muted">暂无任务</div>
+            <div class="t-meta c-muted">{{ t('work.room.noTasks') }}</div>
           </div>
 
           <template v-else>
@@ -169,12 +173,14 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
                   <button type="button" class="task-row" @click="emit('open-card', row.id)">
                     <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                     <span class="task-row__text">
-                      <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
+                      <span class="task-row__line1 t-body">
+                        {{ t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: row.title }) }}</span
+                      >
                       <span class="task-row__line2 t-meta">
-                        <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                        <span class="task-row__state">{{ phraseLabel(row.presentation.phrase) }}</span>
                         <span class="task-row__sep">·</span>
                         <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
-                        <span v-else class="c-faint">暂无负责人</span>
+                        <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
                         <span class="task-row__sep">·</span>
                         <span>{{ relTime(lastActivity(row)) }}</span>
                       </span>
@@ -202,12 +208,14 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
                   <button type="button" class="task-row task-row--done" @click="emit('open-card', row.id)">
                     <span class="board-dot" :style="columnDotStyle(row.presentation.column)" aria-hidden="true" />
                     <span class="task-row__text">
-                      <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
+                      <span class="task-row__line1 t-body">
+                        {{ t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: row.title }) }}</span
+                      >
                       <span class="task-row__line2 t-meta">
-                        <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                        <span class="task-row__state">{{ phraseLabel(row.presentation.phrase) }}</span>
                         <span class="task-row__sep">·</span>
                         <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
-                        <span v-else class="c-faint">暂无负责人</span>
+                        <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
                       </span>
                     </span>
                   </button>

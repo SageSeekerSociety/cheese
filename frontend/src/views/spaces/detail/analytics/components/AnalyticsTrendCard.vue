@@ -4,17 +4,13 @@
       <div>
         <h3>{{ title }}</h3>
       </div>
-      <div class="trend-card__summary">{{ total }} / {{ pointCount }} 个时间点</div>
+      <div class="trend-card__summary t-num">
+        {{ t('spaces.analytics.chart.summary', { total, points: pointCount }) }}
+      </div>
     </div>
 
     <div v-if="pointCount" class="trend-card__chart">
       <svg viewBox="0 0 420 180" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="trendFill" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="rgba(25,118,210,0.34)" />
-            <stop offset="100%" stop-color="rgba(25,118,210,0.02)" />
-          </linearGradient>
-        </defs>
         <polyline class="trend-line trend-line--area" :points="areaPath" />
         <polyline class="trend-line trend-line--stroke" :points="linePath" />
       </svg>
@@ -24,12 +20,7 @@
       </div>
     </div>
 
-    <v-empty-state
-      v-else
-      icon="mdi-chart-timeline-variant"
-      title="暂无趋势数据"
-      text="当前筛选范围内没有趋势点可展示。"
-    />
+    <p v-else class="chart-empty">{{ t('spaces.analytics.chart.noTrend') }}</p>
   </v-card>
 </template>
 
@@ -37,11 +28,14 @@
 import type { AnalyticsTimeSeriesPoint } from '@/network/api/spaces/types'
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   title: string
   points?: AnalyticsTimeSeriesPoint[] | null
 }>()
+
+const { t, locale } = useI18n()
 
 const normalizedPoints = computed(() => props.points || [])
 const pointCount = computed(() => normalizedPoints.value.length)
@@ -69,43 +63,47 @@ const areaPath = computed(() => {
 
 const firstLabel = computed(() => {
   const point = normalizedPoints.value[0]
-  return point ? new Date(point.bucket).toLocaleDateString('zh-CN') : ''
+  return point ? new Date(point.bucket).toLocaleDateString(locale.value) : ''
 })
 const lastLabel = computed(() => {
   const point = normalizedPoints.value.at(-1)
-  return point ? new Date(point.bucket).toLocaleDateString('zh-CN') : ''
+  return point ? new Date(point.bucket).toLocaleDateString(locale.value) : ''
 })
 </script>
 
-<style scoped lang="scss">
+<style scoped>
 .trend-card {
   padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .trend-card__header {
   display: flex;
   gap: 16px;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 18px;
+  align-items: baseline;
+  margin-bottom: 12px;
 }
 
 h3 {
   margin: 0;
-  font-size: 1rem;
+  color: var(--ink);
+  font-size: 14px;
   font-weight: 600;
+  line-height: var(--lh-14);
 }
 
-.trend-card__summary {
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  font-size: 0.82rem;
+.trend-card__summary,
+.trend-card__footer {
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
 }
 
 .trend-card__chart svg {
   width: 100%;
-  height: 180px;
+  height: 160px;
 }
 
 .trend-line {
@@ -113,21 +111,27 @@ h3 {
 }
 
 .trend-line--area {
-  fill: rgba(var(--v-theme-primary), 0.08);
+  fill: var(--fill-2);
 }
 
 .trend-line--stroke {
-  stroke: rgba(var(--v-theme-primary), 0.95);
-  stroke-width: 3;
+  stroke: var(--muted);
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .trend-card__footer {
   display: flex;
   justify-content: space-between;
-  margin-top: 10px;
-  color: rgba(var(--v-theme-on-surface), 0.56);
-  font-size: 0.82rem;
+  margin-top: 8px;
+}
+
+.chart-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 </style>

@@ -7,23 +7,23 @@ import { useRouter } from 'vue-router'
 
 import { useCachedResource } from '@/composables/useCachedResource'
 
-import { deleteMemory, getProject, getProjectDecisions, getProjectWeeklies, listMemory } from '../api'
+import { deleteMemory, getProject, getProjectWeeklies, listMemory } from '../api'
 import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
 import { useCommands } from '@/commands'
 import AppPage from '@/components/common/AppPage.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 import { markdown, sanitizeRendered } from '@/lib/markdown'
 
-// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
+// 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
 // is a route parameter, not a route NAME: as three separate named routes this
 // page could be reached two different ways (a sidebar swap and a full-page push)
 // that led to two different places under the same words.
-type Kind = 'charter' | 'decisions' | 'weeklies' | 'memory'
-const KINDS: readonly Kind[] = ['charter', 'decisions', 'weeklies', 'memory']
+type Kind = 'charter' | 'weeklies' | 'memory'
+const KINDS: readonly Kind[] = ['charter', 'weeklies', 'memory']
 
 defineOptions({ name: 'ProjectDocsView' })
 
@@ -37,8 +37,8 @@ const router = useRouter()
 
 const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
 
-// 四种文档的切换住在这一页里，不在侧栏——它们是一份文档的四个面，占不起侧栏
-// 四行黄金位。切换仍然是一次 router.push：一 kind 一址的承诺不变，所以每一个
+// 三种文档的切换住在这一页里，不在侧栏——它们是一份文档的三个面，占不起侧栏
+// 三行黄金位。切换仍然是一次 router.push：一 kind 一址的承诺不变，所以每一个
 // tab 都能收藏、能分享、刷新回到同一页。
 function openKind(next: unknown) {
   const k = String(next) as Kind
@@ -46,20 +46,13 @@ function openKind(next: unknown) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: k } })
 }
 
-const TITLES: Record<Kind, string> = {
-  charter: '章程',
-  decisions: '决策记录',
-  weeklies: '周报集',
-  memory: '记忆',
-}
 interface DocsPayload {
   rootTopicId: string | null
-  decisions: Block[]
   weeklies: Block[]
   memoryEntries: MemoryEntryOut[]
 }
 
-// 一个 kind 一份缓存：四个 tab 是四份不同的文档，来回点不该各转一次圈。
+// 一个 kind 一份缓存：三个 tab 是三份不同的文档，来回点不该各转一次圈。
 const { data, loading, error } = useCachedResource(
   () => `docs:${props.projectId}:${kind.value}`,
   async (): Promise<DocsPayload> => {
@@ -67,13 +60,10 @@ const { data, loading, error } = useCachedResource(
     const payload: DocsPayload = {
       // DocEditor loads/persists the doc itself once rootTopicId is set.
       rootTopicId: project.root_topic_id ?? null,
-      decisions: [],
       weeklies: [],
       memoryEntries: [],
     }
-    if (kind.value === 'decisions') {
-      payload.decisions = (await getProjectDecisions(props.projectId)).data
-    } else if (kind.value === 'memory') {
+    if (kind.value === 'memory') {
       payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
     } else if (kind.value === 'weeklies') {
       // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
@@ -84,13 +74,12 @@ const { data, loading, error } = useCachedResource(
   }
 )
 
-const decisions = computed<Block[]>(() => data.value?.decisions ?? [])
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
 // 章程的保存失败是「刚才那一下没成」，跟「这一页加载不出来」分开报。
 const saveError = ref<string | null>(null)
 const errorMessage = computed<string | null>(
-  () => saveError.value ?? (error.value ? error.value.message || '加载失败' : null)
+  () => saveError.value ?? (error.value ? error.value.message || t('project.docs.loadFailed') : null)
 )
 
 function renderMarkdown(text: string): string {
@@ -149,8 +138,13 @@ function fmtDay(iso: unknown): string {
   if (typeof iso !== 'string' || !iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
-  const ymd = `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
-  return d.getUTCFullYear() === new Date().getUTCFullYear() ? ymd : `${d.getUTCFullYear()}年${ymd}`
+  const sameYear = d.getUTCFullYear() === new Date().getUTCFullYear()
+  return new Intl.DateTimeFormat(i18n.global.locale.value, {
+    year: sameYear ? undefined : 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(d)
 }
 function weeklyWindow(w: Block): string {
   const since = fmtDay(w.meta?.since)
@@ -176,13 +170,19 @@ useCommands(() => {
   if (!room) return []
   if (kind.value === 'charter')
     return [
-      { id: 'docs.history', title: '修改记录', icon: 'mdi-history', header: { primary: true }, to: topicTo(room) },
+      {
+        id: 'docs.history',
+        title: t('project.docs.history'),
+        icon: 'mdi-history',
+        header: { primary: true },
+        to: topicTo(room),
+      },
     ]
   if (kind.value === 'weeklies' && weeklies.value.length > 0)
     return [
       {
         id: 'docs.askInRoom',
-        title: '去项目房间请它写',
+        title: t('project.docs.askInRoom'),
         icon: 'mdi-message-arrow-right-outline',
         header: { primary: true },
         to: topicTo(room),
@@ -196,11 +196,11 @@ useCommands(() => {
   <AppPage :title="t('navigation.project.docs')">
     <!-- 没有状态时不给这一格：手机上页头只为状态画（AppPage），空着也画会留一条白带。 -->
     <template v-if="kind === 'charter' && (saving || savedAt || charterDirty)" #meta>
-      <span v-if="saving">保存中…</span>
+      <span v-if="saving">{{ t('project.docs.saving') }}</span>
       <span v-else-if="savedAt" class="d-inline-flex align-center ga-1">
-        <span class="status-dot status-dot--ok" />已保存
+        <span class="status-dot status-dot--ok" />{{ t('project.docs.saved') }}
       </span>
-      <span v-else-if="charterDirty">未保存</span>
+      <span v-else-if="charterDirty">{{ t('project.docs.unsaved') }}</span>
     </template>
     <div class="mb-6">
       <v-tabs
@@ -211,9 +211,9 @@ useCommands(() => {
         class="docs-tabs"
         @update:model-value="openKind"
       >
-        <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ TITLES[k] }}</v-tab>
+        <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ t(`project.docs.kind.${k}`) }}</v-tab>
       </v-tabs>
-      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">改了就等于给芝士下指令</p>
+      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">{{ t('project.docs.charterHint') }}</p>
     </div>
 
     <div v-if="loading" class="d-flex justify-center py-10">
@@ -229,8 +229,8 @@ useCommands(() => {
       <template v-if="kind === 'memory'">
         <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
           <v-icon size="28" class="text-disabled mb-2">mdi-brain</v-icon>
-          <div>暂无记忆</div>
-          <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里</div>
+          <div>{{ t('project.docs.memoryEmpty') }}</div>
+          <div class="text-caption mt-1">{{ t('project.docs.memoryHint') }}</div>
         </div>
         <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
           <div class="d-flex align-start ga-3 pa-3">
@@ -240,7 +240,8 @@ useCommands(() => {
             <div class="flex-grow-1">
               <div class="memory-card__content">{{ e.content }}</div>
               <div class="t-meta c-muted mt-1">
-                {{ e.scope === 'user' ? '个人记忆' : '项目记忆' }} · {{ relTime(e.created_at) }}
+                {{ e.scope === 'user' ? t('project.docs.memoryUser') : t('project.docs.memoryProject') }} ·
+                {{ relTime(e.created_at) }}
               </div>
             </div>
             <v-btn
@@ -249,7 +250,7 @@ useCommands(() => {
               variant="text"
               color="medium-emphasis"
               class="memory-card__del"
-              title="删除这条记忆"
+              :title="t('project.docs.memoryDelete')"
               @click="removeMemory(e.id)"
             />
           </div>
@@ -268,46 +269,13 @@ useCommands(() => {
             v-if="rootTopicId"
             :topic-id="rootTopicId"
             :editable="true"
-            placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
+            :placeholder="t('project.docs.charterPlaceholder')"
             @saving="onCharterSaving"
             @saved="onCharterSaved"
             @dirty="onCharterDirty"
             @error="onCharterError"
           />
-          <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
-        </div>
-      </template>
-
-      <!-- ===== 决策记录 ===== -->
-      <template v-else-if="kind === 'decisions'">
-        <div v-if="decisions.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-          <div>暂无决策记录</div>
-          <div class="text-caption mt-1">芝士在协作中定下关键决策时会记到这里</div>
-        </div>
-        <div v-else class="d-flex flex-column ga-3">
-          <!-- 一条决策是列表里真正可拿起的对象（有自己的日期、正文和「来自
-                 话题」入口），所以卡片形态保留。左侧那条 3px 竖条删掉：区块强调
-                 不用左条纹，卡片自己的 --line 描边已经把边界说清楚了。 -->
-          <v-card v-for="d in decisions" :key="d.id" class="decision-card">
-            <div class="pa-4">
-              <div class="d-flex align-center ga-2 mb-2">
-                <v-icon size="17" class="c-faint"> mdi-clipboard-text-clock-outline </v-icon>
-                <span class="t-meta">{{ fmtDate(d.created_at) }}</span>
-                <v-spacer />
-                <v-btn
-                  v-if="d.topic_id"
-                  :to="topicTo(d.topic_id)"
-                  size="x-small"
-                  variant="text"
-                  color="medium-emphasis"
-                  append-icon="mdi-arrow-top-right"
-                >
-                  来自话题
-                </v-btn>
-              </div>
-              <div class="md-content text-body-2" v-html="renderMarkdown(d.content)" />
-            </div>
-          </v-card>
+          <div v-else class="text-medium-emphasis text-body-2 py-2">{{ t('project.docs.noCharter') }}</div>
         </div>
       </template>
 
@@ -317,8 +285,8 @@ useCommands(() => {
                也没有任何定期的东西，那句话是句承诺而不是一句描述。现在周报真的
                由芝士写，所以要说清的是**怎么让它写**，不是它已经在写了。 -->
         <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-          <div>暂无周报</div>
-          <div class="text-caption mt-1">在项目房间里 @ 芝士，说「写一份这周的项目周报」，它写完会记到这里</div>
+          <div>{{ t('project.docs.weekliesEmpty') }}</div>
+          <div class="text-caption mt-1">{{ t('project.docs.weekliesHint') }}</div>
           <v-btn
             v-if="rootTopicId"
             :to="topicTo(rootTopicId)"
@@ -327,18 +295,18 @@ useCommands(() => {
             class="mt-2 text-none"
             append-icon="mdi-arrow-right"
           >
-            去项目房间
+            {{ t('project.docs.goToRoom') }}
           </v-btn>
         </div>
         <!-- 一份周报是一份读的东西，不是一行导航：它有自己的窗口、自己的正文，
-               还有「写在哪」。所以整卡摊开，和决策记录同一套语法。 -->
+               还有「写在哪」。所以整卡摊开。 -->
         <div v-else class="d-flex flex-column ga-3">
           <v-card v-for="w in weeklies" :key="w.id" class="weekly-card">
             <div class="pa-4">
               <div class="d-flex align-center ga-2 mb-2">
                 <v-icon size="17" class="c-faint">mdi-calendar-week-outline</v-icon>
                 <span class="t-body" style="font-weight: 500">{{ weeklyWindow(w) }}</span>
-                <span class="t-meta">{{ fmtDate(w.created_at) }} 记录</span>
+                <span class="t-meta">{{ t('project.docs.recordedOn', { date: fmtDate(w.created_at) }) }}</span>
                 <v-spacer />
                 <v-btn
                   v-if="w.topic_id"
@@ -348,7 +316,7 @@ useCommands(() => {
                   color="medium-emphasis"
                   append-icon="mdi-arrow-top-right"
                 >
-                  来自话题
+                  {{ t('project.docs.fromTopic') }}
                 </v-btn>
               </div>
               <div class="md-content text-body-2" v-html="renderMarkdown(w.content)" />
@@ -361,7 +329,7 @@ useCommands(() => {
 </template>
 
 <style scoped>
-/* 四种文档的切换带。它以前是侧栏里四行常驻的一级导航，占着黄金位养的却是四个
+/* 几种文档的切换带。它以前是侧栏里几行常驻的一级导航，占着黄金位养的却是
    二级页面；收成这一条 tab 带之后，侧栏只留一行「项目文档」。 */
 .docs-tabs {
   border-bottom: 1px solid var(--line);
@@ -373,14 +341,8 @@ useCommands(() => {
   padding: 4px 0 40px;
 }
 
-/* 决策记录: 一条决策 = 一个对象，卡片保留（描边来自全局 VCard 默认的
+/* 周报集: 一份周报 = 一个对象，卡片保留（描边来自全局 VCard 默认的
    flat + border=thin，没有阴影）。 */
-.decision-card {
-  /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
-  overflow: hidden;
-}
-
-/* 周报集: 和决策记录一样是一份一份的对象，卡片保留。 */
 .weekly-card {
   /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
   overflow: hidden;

@@ -6,6 +6,7 @@ covers:
   - .github/workflows/required-ci.yml
   - .github/scripts/required-ci.py
   - .github/scripts/required-ci-paths.json
+  - .github/workflows/ci-fast.yml
   - .github/workflows/build.yml
   - .github/workflows/deploy-dev.yml
   - .github/workflows/deploy-prod.yml
@@ -33,6 +34,7 @@ covers:
 | mcp | `mcp-contract.yml` | Claude Code 构建契约 |
 | remote | `remote-execution.yml` | 远端执行验收 |
 | docs | `docs.yml` | 文档站构建：链接与锚点、每页的类型/摘要/涉及代码、参考页生成器 |
+| cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
 
 最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。
 
@@ -42,7 +44,7 @@ covers:
 title: 勾几行路径，看这套检查选了什么
 note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
 source: ci-scope
-expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs
+expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs, cifast
 paths:
   - path: docs/manual/dev/ci.md
     label: 改文档
@@ -81,9 +83,9 @@ scenarios:
 
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-`Required CI` 选中的套件全部用 GitHub 托管的 `ubuntu-latest`，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个公开仓库实际不受它约束：2026-09-28 光 `Required CI` 就同时占了 41 台托管 runner，托管 job 排队的 90 分位是 1.2 分钟。
+`Required CI` 选中的套件全部用 GitHub 托管的 `ubuntu-latest`，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。组织是 Free 计划，文档写的托管并发上限是 20 个 job，这个仓库实际能用到约 40 个（2026-09-30 有 job 排队时，同时在跑的托管 job 一直停在 39 到 42 个），大部分被 PR 的 run 占着。所以合并队列的 run 把 `scope`、`CI required`、`Backend coverage complete`、guards、文档构建、ci:fast 黑盒测试和 pi 扩展测试放到 `cheese-ci` 池上跑，各阶段之间不用再排托管 runner。
 
-自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
+除了上面这几个合并队列的 job，自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
 
 ## 合并之后 {#after-merge}
 

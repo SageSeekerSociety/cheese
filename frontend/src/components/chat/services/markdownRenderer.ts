@@ -6,6 +6,8 @@ import Prism from 'prismjs'
 
 import markedKatex from './katexExt'
 
+import { t } from '@/i18n'
+
 function escapeHtml(text: string): string {
   return text.replace(
     /[&<>"']/g,
@@ -21,7 +23,7 @@ function escapeHtml(text: string): string {
 }
 
 export function renderMarkdownError(text: string): string {
-  return `<p class="text-error">渲染错误: ${escapeHtml(text)}</p>`
+  return `<p class="text-error">${escapeHtml(t('editor.renderError', { text }))}</p>`
 }
 
 /**

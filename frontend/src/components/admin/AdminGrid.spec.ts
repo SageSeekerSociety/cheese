@@ -182,7 +182,7 @@ describe('管理台表格壳', () => {
     // 匹配得到。第一版就是按类选的，症状是**骨架有内边距、真行没有**：数据到货那
     // 一刻整张表重排，骨架存在的唯一理由当场作废。而且 jsdom 没有布局引擎，
     // 这件事在单测里量不出来，只能这样钉源码。**别改回按类选。**
-    expect(rule('.agrid__body :deep(td)')).toContain('padding: 8px 12px')
+    expect(rule('.agrid__body :deep(td)')).toContain('padding: 12px 16px')
     expect(rule('.agrid__body :deep(td)')).toContain('border-bottom')
     expect(rule('.agrid__body :deep(tr:hover)')).toContain('background: var(--fill)')
     expect(src).not.toContain('agrid__cell')

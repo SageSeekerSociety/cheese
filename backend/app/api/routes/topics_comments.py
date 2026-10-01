@@ -12,7 +12,7 @@ What moves, verbatim: `GET /topics/{topic_id}/docs` (the living doc's
 structured node tree, B1 spec §5, in document order) and
 `GET`/`POST /topics/{topic_id}/comments` (段落评论, eval B4: inline comments,
 each anchored to a doc node via `reply_to`, plus the write side that lands one
-and hands it to the room's agent). They are one group because they are two
+without starting a room-agent turn). They are one group because they are two
 halves of one surface -- the tree the comment panel draws and the comments that
 hang off it: the read side of the doc panel's annotations.
 
@@ -50,12 +50,10 @@ the same prefix and tags, is all it takes.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.api.routes.topics import (
     AuthorType,
@@ -65,11 +63,11 @@ from app.api.routes.topics import (
     _actor_in_place,
 )
 from app.core.errors import ValidationError
-from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.block.comment_threads import CommentThreads
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
+from app.domain.living_doc.services import DocumentJournal
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -99,7 +97,7 @@ async def list_comments(
     reply_to."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    comments = await BlockRepository(db).list_comments_for_topic(place.room_id)
+    comments = await CommentThreads(db).roots(place.room_id)
     items = [BlockOut.model_validate(c).model_dump(mode="json") for c in comments]
     return ok(page(items, len(items)))
 
@@ -110,12 +108,11 @@ async def add_comment(
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
     doc panel — a human selects text and comments; not cheese-gated."""
     place = await TopicService(db).place_or_404(topic_id)
+    await DocumentJournal(db).lock(place.room_id)
     anchor = (body.get("anchor") or "").strip()
     content = (body.get("content") or "").strip()
     if not content:
@@ -123,11 +120,21 @@ async def add_comment(
     repo = BlockRepository(db)
     reply_to: uuid.UUID | None = None
     if anchor:
-        node = await repo.get(uuid.UUID(anchor))
-        # `task_id` too: a card's blocks sit under the same `topic_id`, so
-        # checking only the room would let a comment anchor onto one of them.
-        if node is None or node.topic_id != place.room_id or node.task_id is not None:
-            raise ValidationError("锚点不是本话题的文档块")
+        try:
+            anchor_id = uuid.UUID(anchor)
+        except ValueError as exc:
+            raise ValidationError(say("commentAnchorNotInDoc")) from exc
+        node = await repo.get(anchor_id)
+        root = await repo.doc_root(place.room_id)
+        if (
+            node is None
+            or root is None
+            or node.topic_id != place.room_id
+            or node.task_id is not None
+            or node.kind != BlockKind.doc_node
+            or node.struct_parent != root.id
+        ):
+            raise ValidationError(say("commentAnchorNotInDoc"))
         reply_to = node.id
     # B4 Feishu-style: the exact selected span, kept for display next to the
     # comment. Bounded so a runaway selection can't bloat the row.
@@ -155,29 +162,7 @@ async def add_comment(
         reply_to=reply_to,
         anchor_quote=quote,
     )
+    await CommentThreads(db).capture(comment, current=True)
     payload = BlockOut.model_validate(comment).model_dump(mode="json")
-    await db.commit()  # the comment must be visible before the turn reads it
-    # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
-
-    members = TopicMemberService(db)
-    if not await members.holds_an_agent_seat(place.room, actor.handle):
-        where = f"「{quote[:80]}」" if quote else "整篇"
-        said = f"在实况文档 {where} 处评论：{content}"
-        seat = await members.addressable_agent_handle(place.room_id)
-        runner.submit(
-            chat,
-            place.room_id,
-            author="system",
-            content=(
-                f"{author} {said}\n"
-                "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
-            ),
-            addressed=addressed_to_agent(seat),
-            nudge_event=(
-                f"{author} 评论了文档，已交给 <@{seat}>"
-                if seat
-                else f"{author} 评论了文档"
-            ),
-            provision_actor=actor,
-        )
+    await db.commit()
     return ok(payload)

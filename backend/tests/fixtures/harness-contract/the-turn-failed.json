@@ -33,6 +33,9 @@
           "api_error_status": 401
         }
       ]
+    },
+    "pi": {
+      "difference": "refusal-in-provider-words"
     }
   },
   "events": [

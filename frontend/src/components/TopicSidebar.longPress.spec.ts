@@ -13,7 +13,12 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { setLocale } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。
+beforeEach(() => setLocale('zh-CN'))
 
 const archiveTopic = vi.hoisted(() => vi.fn(async (id: string) => ({ id, status: 'archived' })))
 vi.mock('@/api', async (original) => ({ ...(await original<object>()), archiveTopic }))

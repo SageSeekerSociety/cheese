@@ -17,7 +17,7 @@ from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
-from app.domain.llm.llm_client import LLMResponse
+from app.domain.gateway_chat import Completion, Usage
 from app.domain.memory.files import MemoryFileScope, prefix_of
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.migration_service import MemoryMigrationService
@@ -55,26 +55,23 @@ class _Model:
     的时候每一批只看得到自己那几条旧记忆，批数和内容都是这一层的形状。
     """
 
-    def __init__(self, decisions: list[dict], *, configured: bool = True) -> None:
-        self.is_configured = configured
+    model = "fake-migration-model"
+
+    def __init__(self, decisions: list[dict]) -> None:
         self.decisions = decisions
         self.asked: list[str] = []
 
-    async def get_completion(
+    async def complete(
         self,
         *,
+        system: str,
         prompt: str,
-        system_prompt: str = "",
-        model_type: str | None = None,
+        timeout: float,
         json_response: bool = False,
-        timeout: float | None = None,
-    ) -> LLMResponse:
+    ) -> Completion:
         self.asked.append(prompt)
-        return LLMResponse(
-            content=json.dumps({"decisions": self.decisions}, ensure_ascii=False),
-            total_tokens=0,
-            prompt_tokens=0,
-            completion_tokens=0,
+        return Completion(
+            json.dumps({"decisions": self.decisions}, ensure_ascii=False), Usage()
         )
 
 
@@ -149,7 +146,7 @@ async def test_the_report_comes_before_any_write(business_db_factory):
                 )
             ]
         )
-        plan = await MemoryMigrationService(session, llm=model).dry_run(
+        plan = await MemoryMigrationService(session, chat=model).dry_run(
             project.id, by="alice"
         )
         await session.commit()
@@ -170,7 +167,7 @@ async def test_a_project_with_nothing_left_to_move_has_no_report(business_db_fac
     async with business_db_factory() as session:
         project = await _project(session)
         with pytest.raises(BadRequestError):
-            await MemoryMigrationService(session, llm=_Model([])).dry_run(
+            await MemoryMigrationService(session, chat=_Model([])).dry_run(
                 project.id, by="alice"
             )
 
@@ -180,7 +177,8 @@ async def test_without_a_model_there_is_no_report(business_db_factory):
     async with business_db_factory() as session:
         project = await _project(session)
         await _old(session, project, "一条旧记忆")
-        service = MemoryMigrationService(session, llm=_Model([], configured=False))
+        # No gateway to mint a key on, so no model to ask.
+        service = MemoryMigrationService(session)
         with pytest.raises(BadRequestError):
             await service.dry_run(project.id, by="alice")
 
@@ -209,7 +207,7 @@ async def test_a_plan_that_breaks_the_hard_rules_is_refused_whole(
             ]
         )
         with pytest.raises(BadRequestError):
-            await MemoryMigrationService(session, llm=model).dry_run(
+            await MemoryMigrationService(session, chat=model).dry_run(
                 project.id, by="alice"
             )
         await session.commit()
@@ -229,7 +227,7 @@ async def test_only_the_named_reviewer_says_yes(business_db_factory):
         entry = await _old(session, project, "一条旧记忆")
         plan = await MemoryMigrationService(
             session,
-            llm=_Model([_decision(f"entry:{entry.id}", "discard", "过时了")]),
+            chat=_Model([_decision(f"entry:{entry.id}", "discard", "过时了")]),
         ).dry_run(project.id, by="alice")
         service = MemoryMigrationService(session)
 
@@ -252,7 +250,7 @@ async def test_nothing_lands_before_the_yes(business_db_factory):
         entry = await _old(session, project, "发版前先跑一遍 make e2e")
         plan = await MemoryMigrationService(
             session,
-            llm=_Model(
+            chat=_Model(
                 [
                     _decision(
                         f"entry:{entry.id}",
@@ -349,7 +347,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
                 ),
             ]
         )
-        service = MemoryMigrationService(session, llm=model)
+        service = MemoryMigrationService(session, chat=model)
         plan = await service.dry_run(project.id, by="alice")
         project_id = project.id
         assert plan.suggestions[0]["target"] == "CLAUDE.md"
@@ -396,7 +394,7 @@ async def test_saying_yes_twice_changes_nothing(business_db_factory):
         entry = await _old(session, project, "一条旧记忆")
         service = MemoryMigrationService(
             session,
-            llm=_Model([_decision(f"entry:{entry.id}", "discard", "过时了")]),
+            chat=_Model([_decision(f"entry:{entry.id}", "discard", "过时了")]),
         )
         plan = await service.dry_run(project.id, by="alice")
         await service.approve(plan.id, by=settings.memory_migration_reviewer)
@@ -446,7 +444,7 @@ async def test_a_second_report_does_not_move_what_already_moved(business_db_fact
                 ),
             ]
         )
-        service = MemoryMigrationService(session, llm=model)
+        service = MemoryMigrationService(session, chat=model)
         plan = await service.dry_run(project.id, by="alice")
         await service.approve(plan.id, by=settings.memory_migration_reviewer)
         await session.commit()
@@ -461,7 +459,7 @@ async def test_a_second_report_does_not_move_what_already_moved(business_db_fact
     async with business_db_factory() as session:
         # 两条都搬过了：没有还没搬过的旧记忆，也就没有第二份报告。
         with pytest.raises(BadRequestError):
-            await MemoryMigrationService(session, llm=_Model([])).dry_run(
+            await MemoryMigrationService(session, chat=_Model([])).dry_run(
                 project.id, by="alice"
             )
         # 树还是那两份，没长出第二份同名的东西。
@@ -478,7 +476,7 @@ async def _one_file_plan(business_db_factory, *, handle: str = "alice"):
         entry = await _old(session, project, "发版前先跑一遍 make e2e")
         service = MemoryMigrationService(
             session,
-            llm=_Model(
+            chat=_Model(
                 [
                     _decision(
                         f"entry:{entry.id}",

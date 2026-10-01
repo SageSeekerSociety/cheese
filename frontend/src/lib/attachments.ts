@@ -4,6 +4,7 @@ import type { ChatAttachment } from '../cx_types'
 import { ref } from 'vue'
 
 import { attachLibraryFile, uploadAttachment } from '../api'
+import { t } from '../i18n'
 
 const MAX_PENDING = 9
 
@@ -49,11 +50,11 @@ export function usePendingAttachments(
     try {
       for (const f of all) {
         if (pending.value.length >= MAX_PENDING) {
-          onError?.('每条消息最多添加 9 个附件')
+          onError?.(t('work.room.attachments.tooMany'))
           break
         }
         if (f.size > 10 * 1024 * 1024) {
-          onError?.(`${f.name} 超过 10MB，无法上传`)
+          onError?.(t('work.room.attachments.tooLarge', { name: f.name }))
           continue
         }
         // Take the slot BEFORE the upload, so the strip has a frame to draw
@@ -87,7 +88,7 @@ export function usePendingAttachments(
         if (at >= 0) pending.value.splice(at, 1, attachment)
       }
     } catch (e) {
-      onError?.(e instanceof Error ? e.message : '文件上传失败')
+      onError?.(e instanceof Error ? e.message : t('work.room.attachments.uploadFailed'))
     } finally {
       uploading.value = false
     }
@@ -98,7 +99,7 @@ export function usePendingAttachments(
     const topicId = getTopicId()
     if (!topicId) return
     if (pending.value.length >= MAX_PENDING) {
-      onError?.('每条消息最多添加 9 个附件')
+      onError?.(t('work.room.attachments.tooMany'))
       return
     }
     const name = libraryPath.split('/').pop() || libraryPath
@@ -119,7 +120,7 @@ export function usePendingAttachments(
       attachment = await attachLibraryFile(topicId, libraryPath)
     } catch (e) {
       drop()
-      onError?.(e instanceof Error ? e.message : '添加文件失败')
+      onError?.(e instanceof Error ? e.message : t('work.room.attachments.addFailed'))
       return
     }
     if (getTopicId() !== topicId) {

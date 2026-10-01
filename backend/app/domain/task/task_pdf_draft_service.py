@@ -6,24 +6,23 @@ import pathlib
 import re
 import shutil
 import tempfile
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
 import pymupdf4llm
 
 from app.core.config import settings
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, QuotaExceededError, SystemBusyError
 from app.core.storage import (
     compute_file_hash,
     generate_storage_key,
     get_storage_backend,
 )
-from app.domain.llm.llm_client import (
-    LLMAPIError,
-    LLMClient,
-    LLMConnectionError,
-    LLMTimeoutError,
-)
+from app.domain.gateway_chat import GatewayCallError, GatewayChat, Usage
+from app.domain.service_keys import KeySpec, service_key
+from app.domain.usage.personal import PersonalCredits, Rates
 
 logger = logging.getLogger(__name__)
 
@@ -46,19 +45,44 @@ class UploadedIllustration:
     file_hash: str
 
 
+def task_draft_key_spec() -> KeySpec:
+    """The gateway key drafts are made on. No budget of its own: each preview
+    is paid for from the publisher's personal credits."""
+    return KeySpec(
+        name="task-draft-gateway-key",
+        alias="task-draft",
+        model=settings.task_draft_model,
+        budget_usd=None,
+        rpm=120,
+    )
+
+
+RateTable = Mapping[str, tuple[float, float, float, float]]
+_NOT_OPEN = "从 PDF 生成草稿暂未开放，稍后再试。"
+
+
 class TaskPdfDraftService:
-    """Generate task payload from a PDF document via LLM."""
+    """Generate task payload from a PDF document via the model on ``chat``.
+
+    ``spent`` adds up every call the model answered, drafts or not: a page whose
+    answer could not be read still cost its tokens, and whoever asked pays for
+    them.
+    """
 
     def __init__(
         self,
         *,
-        llm_client: LLMClient | None = None,
+        chat: GatewayChat,
+        rate_table: RateTable | None = None,
         timeout_seconds: float | None = None,
         max_pages: int | None = None,
         max_concurrency: int | None = None,
     ) -> None:
-        self._llm_client = llm_client or LLMClient()
-        self._timeout_seconds = timeout_seconds or settings.openai_pdf_timeout_seconds
+        self._chat = chat
+        self._rate_table = rate_table
+        self.spent = Usage()
+        self.model = chat.model
+        self._timeout_seconds = timeout_seconds or settings.task_draft_timeout_s
         self._max_pages = (
             max_pages if max_pages is not None else settings.pdf_import_max_pages
         )
@@ -67,6 +91,54 @@ class TaskPdfDraftService:
             if max_concurrency is not None
             else settings.pdf_import_max_concurrency
         )
+
+    @classmethod
+    async def on_gateway(
+        cls, db: Any, rate_table: RateTable | None
+    ) -> "TaskPdfDraftService":
+        key = await service_key(db, task_draft_key_spec())
+        if key is None:
+            raise SystemBusyError(_NOT_OPEN)
+        return cls(
+            rate_table=rate_table,
+            chat=GatewayChat(
+                key,
+                settings.task_draft_model,
+                max_tokens=settings.task_draft_max_tokens,
+            ),
+        )
+
+    @asynccontextmanager
+    async def charged_to(self, db: Any, user_id: int) -> AsyncIterator[None]:
+        """Admit a preview the user asked for, then charge what it spent.
+
+        Every page the model answered was paid for, drafts or not; the charge
+        is committed on the way out so a preview that fails afterwards still
+        leaves it.
+        """
+        rates = Rates.of(self.model, self._rate_table)
+        if rates is None:
+            raise SystemBusyError(_NOT_OPEN)
+        credits = PersonalCredits(db)
+        balance = await credits.balance(user_id)
+        if balance.credits_remaining <= 0:
+            raise QuotaExceededError(balance.exhausted_message())
+        try:
+            yield
+        finally:
+            spent = self.spent
+            if spent.total_tokens:
+                await credits.charge(
+                    user_id,
+                    model=self.model,
+                    rates=rates,
+                    input_tokens=spent.prompt_tokens,
+                    output_tokens=spent.completion_tokens,
+                    cache_read_tokens=spent.cache_read_tokens,
+                    cache_write_tokens=spent.cache_write_tokens,
+                    kind="task_pdf_draft",
+                )
+            await db.commit()
 
     @staticmethod
     def pick_template(
@@ -291,26 +363,19 @@ class TaskPdfDraftService:
         normalized_text = text.strip()
         if not normalized_text:
             raise BadRequestError("PDF content is empty or unreadable")
-        if not self._llm_client.is_configured:
-            raise BadRequestError("LLM is not configured")
-
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(text=normalized_text, template=template)
 
         try:
-            response = await self._llm_client.get_completion(
+            response = await self._chat.complete(
+                system=system_prompt,
                 prompt=user_prompt,
-                system_prompt=system_prompt,
-                model_type="reasoning",
                 json_response=True,
                 timeout=self._timeout_seconds,
             )
-        except LLMTimeoutError as exc:
+        except GatewayCallError as exc:
             raise BadRequestError(str(exc)) from exc
-        except LLMConnectionError as exc:
-            raise BadRequestError(str(exc)) from exc
-        except LLMAPIError as exc:
-            raise BadRequestError(str(exc)) from exc
+        self.spent += response.usage
 
         parsed = self._parse_llm_json(response.content)
         candidates = self._extract_task_candidates(parsed)
@@ -326,7 +391,7 @@ class TaskPdfDraftService:
             for candidate in candidates
         ]
 
-        return payloads, response.total_tokens
+        return payloads, response.usage.total_tokens
 
     async def generate_task_payload_from_text(
         self,

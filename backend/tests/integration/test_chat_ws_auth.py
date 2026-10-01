@@ -1,28 +1,35 @@
-"""The chat WebSocket must never invent an author.
+"""The chat WebSocket must never invent an author, and never write at all.
 
 Field incident: a user's session token expired while a local agent was working
 on their behalf. The socket kept accepting messages, the agent kept seeing
 `user_block`/`done` frames, and the whole batch landed on the platform under
 匿名者 — the sending side never saw an error. Two separate defects made that
-possible, and both are asserted here against real HTTP/WS + real blocks:
+possible:
 
 1. a token that fails verification was treated as "no token" and downgraded to
    an anonymous actor, instead of failing the connection;
 2. an unauthenticated socket took `author` from the message body, so any client
    could post as any handle.
 
-The connect check has exactly three exits — `auth_required`, `auth_expired`,
-`forbidden` — and every one of them is pinned below, because the client latches
-on the code: one the frontend does not recognise is indistinguishable from a
-dropped connection, so it reconnects forever and buries the reason.
+The socket no longer carries messages at all — a message is a POST to
+`/topics/{id}/messages`, authenticated per request — so the second defect has
+nowhere left to live. The connect check still has exactly three exits —
+`auth_required`, `auth_expired`, `forbidden` — and every one of them is pinned
+below, because the client latches on the code: one the frontend does not
+recognise is indistinguishable from a dropped connection, so it reconnects
+forever and buries the reason.
 """
 
-import pytest
+import uuid
 
-from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, session_token
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_project,
+    session_auth_headers,
+    session_token,
+)
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
@@ -39,7 +46,8 @@ def _blocks(client, topic_id: str) -> list[dict]:
 
 
 def test_expired_token_is_refused_not_downgraded(client):
-    """The incident itself: an expired token must close the socket, not post."""
+    """The incident itself: an expired token must close the socket, and a
+    message sent with it must not land."""
     _, tid = _project_topic(client, owner="alice")
     stale = session_token("alice", ttl_s=-60)
 
@@ -47,10 +55,13 @@ def test_expired_token_is_refused_not_downgraded(client):
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_expired"
-        with pytest.raises(Exception):  # noqa: B017 - any close/receive failure
-            ws.send_json({"type": "message", "content": "偷偷发一条"})
-            ws.receive_json()
 
+    sent = client.post(
+        f"/topics/{tid}/messages",
+        json={"content": "偷偷发一条", "request_id": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {stale}"},
+    )
+    assert sent.status_code == 401
     assert _blocks(client, tid) == []
 
 
@@ -64,19 +75,23 @@ def test_garbage_token_is_refused(client):
     assert _blocks(client, tid) == []
 
 
-def test_tokenless_socket_cannot_post_as_anyone(client):
+def test_tokenless_caller_cannot_post_as_anyone(client):
     """No token at all → refused, so `author` in the body can't be forged."""
     _, tid = _project_topic(client, owner="alice")
     with client.websocket_connect(f"/topics/{tid}/chat") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_required"
-        with pytest.raises(Exception):  # noqa: B017 - any close/receive failure
-            ws.send_json(
-                {"type": "message", "content": "我是 alice", "author": "alice"}
-            )
-            ws.receive_json()
 
+    sent = client.post(
+        f"/topics/{tid}/messages",
+        json={
+            "content": "我是 alice",
+            "author": "alice",
+            "request_id": str(uuid.uuid4()),
+        },
+    )
+    assert sent.status_code == 401
     assert _blocks(client, tid) == []
 
 
@@ -94,23 +109,27 @@ def test_authenticated_non_member_is_refused_as_forbidden(client):
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "forbidden"
-        with pytest.raises(Exception):  # noqa: B017 - any close/receive failure
-            ws.send_json({"type": "message", "content": "我也来说两句"})
-            ws.receive_json()
 
+    sent = client.post(
+        f"/topics/{tid}/messages",
+        json={"content": "我也来说两句", "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers("mallory"),
+    )
+    assert sent.status_code == 403
     assert _blocks(client, tid) == []
 
 
-def test_authenticated_socket_still_posts(client):
-    """The fix must not cost the real path: a member's token posts as themself."""
+def test_the_socket_writes_nothing(client):
+    """A message frame on the socket is refused, not stored: the one way a
+    message enters a room is the POST everyone uses."""
     _, tid = _project_topic(client, owner="alice")
     with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "hello", "author": "mallory"})
-        while ws.receive_json()["type"] not in ("done", "error"):
-            pass
-
-    posted = [b for b in _blocks(client, tid) if b["content"] == "hello"]
-    assert posted and all(b["author"] == "alice" for b in posted)
+        ws.send_json({"type": "message", "content": "hello"})
+        frame = ws.receive_json()
+        assert frame["type"] == "error"
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+    assert _blocks(client, tid) == []
 
 
 def test_a_member_socket_answers_the_liveness_ping(client):
@@ -121,30 +140,6 @@ def test_a_member_socket_answers_the_liveness_ping(client):
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
     assert _blocks(client, tid) == []
-
-
-def test_anonymous_escape_hatch_never_covers_a_bad_token(client, monkeypatch):
-    """`chat_ws_allow_anonymous` re-opens the tokenless harness path only.
-
-    A socket that presented a credential we could not verify stays refused — the
-    downgrade that caused the incident is not something an operator can switch
-    back on by mistake.
-    """
-    monkeypatch.setattr(settings, "chat_ws_allow_anonymous", True)
-    _, tid = _project_topic(client, owner="alice")
-
-    with client.websocket_connect(f"/topics/{tid}/chat") as ws:
-        ws.send_json({"type": "message", "content": "harness", "author": "harness"})
-        while ws.receive_json()["type"] not in ("done", "error"):
-            pass
-    assert [b["author"] for b in _blocks(client, tid) if b["content"] == "harness"] == [
-        "harness"
-    ]
-
-    stale = session_token("alice", ttl_s=-60)
-    with client.websocket_connect(f"/topics/{tid}/chat?token={stale}") as ws:
-        frame = ws.receive_json()
-    assert frame["code"] == "auth_expired"
 
 
 def test_a_peer_that_drops_under_a_send_ends_the_socket_quietly(client, monkeypatch):
@@ -179,35 +174,25 @@ def test_a_peer_that_drops_under_a_send_ends_the_socket_quietly(client, monkeypa
     assert _blocks(client, tid) == []
 
 
-@pytest.mark.parametrize("failure", ["business", "unexpected"])
-def test_message_failure_identifies_the_message_and_keeps_socket_usable(
-    client, monkeypatch, failure
-):
+def test_a_refused_message_says_why(client, monkeypatch):
+    """A message the platform refuses comes back with the reason, so the sender's
+    copy can show it instead of waiting for an echo that will never come."""
     from app.core.errors import ForbiddenError
     from app.domain.agent.runtime import InProcessBroker
 
     _, tid = _project_topic(client, owner="alice")
 
     async def fail(*args, **kwargs):
-        if failure == "business":
-            raise ForbiddenError("房间已关闭")
-        raise RuntimeError("private diagnostic")
+        raise ForbiddenError("房间已关闭")
 
     monkeypatch.setattr(InProcessBroker, "receive_message", fail)
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "hello", "client_id": "pending-1"})
-        frame = ws.receive_json()
-        while frame["type"] != "error":
-            frame = ws.receive_json()
-        assert frame["client_id"] == "pending-1"
-        assert frame["code"] == (
-            "ForbiddenError" if failure == "business" else "message_receive_failed"
-        )
-        assert "private diagnostic" not in frame["message"]
-        if failure == "business":
-            assert frame["message"] == "房间已关闭"
-        ws.send_json({"type": "ping"})
-        assert ws.receive_json()["type"] == "pong"
+    sent = client.post(
+        f"/topics/{tid}/messages",
+        json={"content": "hello", "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers("alice"),
+    )
+    assert sent.status_code == 403
+    assert sent.json()["error"]["message"] == "房间已关闭"
 
 
 def _card(client, room_id: str) -> str:

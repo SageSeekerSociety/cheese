@@ -20,7 +20,6 @@ import base64
 import json
 import os
 import shlex
-import shutil
 import socket
 import subprocess
 import sys
@@ -45,13 +44,14 @@ from app.domain.agent.harness.driven.runner import (
     REPLY_OWED,
     socket_path,
 )
-from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provider
+from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
-from tests.pinned_claude import claude_binary
+from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
 from tests.support.responses_fixture import Responses
+from tests.support.room_machine import room_machine
 
 BACKEND = Path(__file__).resolve().parents[2]
 SCRIPTS = BACKEND.parent / "scripts/remote_execution"
@@ -96,7 +96,13 @@ class Backend:
                     self.rfile.read(int(self.headers.get("Content-Length", "0")))
                     or b"{}"
                 )
-                if self.path == "/execution":
+                if self.path == "/execution" and executor_state is None:
+                    # Claude Code's own Bash runs here, with no machine behind
+                    # it; the one thing its session asks the machine first is
+                    # whether the project's deny rules refuse the call, and
+                    # this project has none.
+                    result = {"args": body["params"]["args"]}
+                elif self.path == "/execution":
                     result = runtime.request(
                         executor_state, body["method"], body.get("params")
                     )
@@ -429,7 +435,7 @@ async def codex(tmp_path: Path, steps: list):
                 },
                 "opening": {"system_prompt": "FIXTURE"},
                 "mcp_servers": [],
-                "binary": shutil.which("codex"),
+                "binary": codex_binary(),
                 "cwd": str(workspace),
             },
             "codex_config": model.config(),
@@ -471,13 +477,6 @@ async def codex(tmp_path: Path, steps: list):
 # --- pi ------------------------------------------------------------------------
 
 
-def pi_binary() -> str:
-    found = os.environ.get("CHEESE_TEST_PI") or shutil.which("pi")
-    if not found:
-        raise RuntimeError("CHEESE_TEST_PI must point to the pinned pi build")
-    return found
-
-
 @asynccontextmanager
 async def pi(tmp_path: Path, steps: list):
     """The pi runner over the pinned build, with the platform extension."""
@@ -499,7 +498,6 @@ async def pi(tmp_path: Path, steps: list):
     config.mkdir()
     (config / "models.json").write_text(provider(model.url, "fixture-model"))
     machine = tmp_path / "work"
-    machine.mkdir()
     env = {
         "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(tmp_path),
@@ -508,35 +506,42 @@ async def pi(tmp_path: Path, steps: list):
         "PI_TELEMETRY": "0",
         **backend.room_env(),
     }
-    # The runner runs the platform's tools in its own process, as on a machine.
+    # The runner runs the platform's tools in its own process, as on the host.
     saved = {key: os.environ.get(key) for key in env}
     os.environ.update(env)
     runner = PiRunner(tmp_path / "state")
-    launch = PiLaunch(system_prompt="FIXTURE", model="fixture-model")
-    try:
-        await runner.start(
-            Opening(
-                system_prompt="FIXTURE", model="fixture-model", agent_handle="cheese"
-            ),
-            binary=pi_binary(),
-            cwd=str(machine),
-            env=env,
-            args=launch.arguments(),
-            extension=extension(),
-            notice=PLATFORM_NOTICE,
-        )
-        session = Session(machine, model.requests, runner.dispatch)
-        session.backend = backend
-        yield session
-    finally:
-        await runner.close()
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        model.close()
-        backend.close()
+    here = tmp_path / "session-host"
+    here.mkdir()
+    with room_machine(
+        tmp_path / "machine", env={"PATH": env["PATH"]}, checkout=machine
+    ) as target:
+        try:
+            await runner.start(
+                Opening(
+                    system_prompt="FIXTURE",
+                    model="fixture-model",
+                    agent_handle="cheese",
+                ),
+                binary=pi_binary(),
+                cwd=str(here),
+                env=env,
+                args=arguments("fixture-model"),
+                target=target,
+                extension=extension(),
+                notice=PLATFORM_NOTICE,
+            )
+            session = Session(machine, model.requests, runner.dispatch)
+            session.backend = backend
+            yield session
+        finally:
+            await runner.close()
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            model.close()
+            backend.close()
 
 
 HARNESSES = [claude_code, codex, pi]

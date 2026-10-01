@@ -16,6 +16,17 @@
 
 真正「文件本身就是源」的那条路走正常交付：芝士 在任务分支上改、递卡、人采纳合并，
 二进制从那个口进 git，不从这个按钮进。
+
+## 规则与来源
+
+房间里的文件从哪来、叫什么算合法，是这一组规则，而不是某一条路由的内部：
+`ARTIFACT_MIME` 说一种渲染类型对应哪个 mime，`artifact_kind_for` 从扩展名推类型，
+`clean_artifact_path` 拦住越界路径，`MAX_ARTIFACT_BYTES` 是它们共用的上限。
+
+规则和来源分开：**规则**（这里）是纯函数和常量，谁读都行、不需要 session；**来源**
+（字节从哪个仓库读出来 —— 房间自己的、某个任务分支的、资料库的）认 `db` 和
+项目/房间/任务的寻址方式，是 API 侧的读编排，留在 `app/api/routes` 那边。两边读同
+一份 `clean_artifact_path`，路径合法与否只有一个答案。
 """
 
 import asyncio
@@ -34,6 +45,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -72,13 +84,13 @@ async def save_to_library(
     await announce(
         session,
         place_id=room_id,
-        content=f"{name} 已存进资料库",
+        content=say("librarySaved", name=name),
         meta=notice(
             EVENT_LIBRARY_SAVED,
             severity=SEVERITY_INFO,
             who=WHO_HUMAN,
-            detail=f"{by} 把这个房间里的 {leaf} 留进了资料库，每个房间都引用得到",
-            detail_label="保存到资料库",
+            detail=say("librarySavedDetail", actor=by, file=leaf),
+            detail_label=say("labelSaveToLibrary"),
         ),
     )
     return name
@@ -146,7 +158,7 @@ async def save_room_file(
         and not own_earlier_save
     ):
         raise ConflictError(
-            "这份文件在你读取之后被人改过，先取最新的一版再改",
+            say("fileChangedSinceRead"),
             data={"path": path, "version": now_version, "base_version": base_version},
         )
     if latest is None and before is not None:
@@ -279,7 +291,7 @@ async def revision_or_404(
 ) -> RoomFileRevision:
     row = await session.get(RoomFileRevision, revision_id)
     if row is None or row.room_id != room_id:
-        raise NotFoundError("没有这一版")
+        raise NotFoundError(say("versionNotFound"))
     return row
 
 
@@ -328,3 +340,82 @@ def revision_out(row: RoomFileRevision) -> dict:
         "editor_key": row.editor_key,
         "created_at": row.created_at.isoformat(),
     }
+
+
+# 芝士 → UI rendering (spec §9.1): an artifact is a file the AI explicitly points
+# at + how to render it. The type comes from the tool call, never from parsing
+# prose. MVP renders html/svg in the preview window; more types are additive.
+ARTIFACT_MIME = {
+    "html": "text/html",
+    "svg": "image/svg+xml",
+    # A deliverable is not always a web page. A room that writes a report, a
+    # budget or a deck produces one of these, and until the platform accepted
+    # them the only way to hand one over was to describe where it sat in the
+    # worktree — which the person in the room cannot open.
+    "pdf": "application/pdf",
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    "pptx": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    ),
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "md": "text/markdown",
+    "csv": "text/csv",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
+    # lives on, reached over the preview tunnel that machine dialled out. HOW to
+    # run it — and on which port — is the agent's judgment; the platform only
+    # carries what answers there.
+    "app": "application/x-cheesex-app",
+}
+
+#: Which artifact kind a filename implies, when the caller named none.
+#:
+#: Asking the agent to restate in a flag what the extension already says is a
+#: rule it can get wrong, and the wrong answer here is silent: `report.docx`
+#: declared as html reaches the panel as a mis-typed blob rather than an error.
+#: An unknown extension still falls back to html, which is what every caller
+#: predating this table sent.
+_ARTIFACT_KIND_BY_SUFFIX = {
+    ".html": "html",
+    ".htm": "html",
+    ".svg": "svg",
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".pptx": "pptx",
+    ".xlsx": "xlsx",
+    ".md": "md",
+    ".markdown": "md",
+    ".csv": "csv",
+    ".png": "png",
+    ".jpg": "jpg",
+    ".jpeg": "jpg",
+    ".gif": "gif",
+    ".webp": "webp",
+}
+
+#: Ceiling on a published artifact, matching the chat attachment limit below —
+#: both are "a file a person will open in this room", and a report that is too
+#: big to send as an attachment is too big to publish as a deliverable.
+MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+
+
+def artifact_kind_for(path: str) -> str:
+    """The kind `path`'s extension implies; `html` when it implies none."""
+    suffix = path.rsplit("/", 1)[-1]
+    dot = suffix.rfind(".")
+    return _ARTIFACT_KIND_BY_SUFFIX.get(suffix[dot:].lower() if dot > 0 else "", "html")
+
+
+def clean_artifact_path(raw: str) -> str:
+    """A workspace-relative pointer — reject absolute paths, traversal, and .git.
+    The file itself is read later via the guarded workspace reader."""
+    path = (raw or "").strip()
+    if not path:
+        raise ValidationError(say("pathEmpty"))
+    parts = path.split("/")
+    if path.startswith("/") or ".." in parts or ".git" in parts:
+        raise ValidationError(say("pathMustBeRelative"))
+    return path

@@ -1,0 +1,16 @@
+{
+  "capturedAt": "2026-09-30T13:27:16.362Z",
+  "previewBase": "http://127.0.0.1:5210/feedback-proto.html",
+  "bundleLastModified": "Wed, 30 Sep 2026 13:18:56 GMT",
+  "route": "#/admin/spaces",
+  "doors": [],
+  "net": [],
+  "dom": {
+    "hasLongSampleTitle": true,
+    "hasLongSampleIntro": true,
+    "hasErrorText": false,
+    "hasRetryButton": false,
+    "applicantCount": 3,
+    "bodyChars": 389
+  }
+}

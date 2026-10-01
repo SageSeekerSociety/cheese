@@ -14,7 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -59,6 +59,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   history = []
   agentName = '芝士'
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
@@ -112,7 +114,7 @@ describe('AI 说的话署谁的名', () => {
     history = [{ ...aiMsg('mention-late', `<@${SEAT}> 请整理方案`), author_type: 'participant', author: 'me' }]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: false },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(container.querySelector('.im-text .mention')?.textContent).toBe(`@${SEAT}`)
@@ -126,7 +128,7 @@ describe('AI 说的话署谁的名', () => {
     history = [aiMsg('a', '看过了')]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -141,7 +143,7 @@ describe('AI 说的话署谁的名', () => {
     history = [aiMsg('a', '当时是我说的', 'cheese-0badc0ffee11')]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -154,7 +156,7 @@ describe('AI 说的话署谁的名', () => {
     history = [aiMsg('a', '看过了')]
     const { container, rerender } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())).toContain('芝士')
@@ -197,7 +199,7 @@ describe('AI 说的话署谁的名', () => {
           { user_handle: 'cheese-onduty', role: 'member', name: '接班', agent: true, project_default: true },
         ],
       },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -221,9 +223,24 @@ describe('AI 说的话署谁的名', () => {
     history = [aiMsg('a', '看过了')]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     expect(Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())).toContain('芝士')
+  })
+})
+
+// 头像和名字点下去，和正文里点那个人的 @chip 一样：交给上一层去开他的成员页。
+describe('点消息上的头像和名字', () => {
+  it('头像和名字都通向说话的那个人', async () => {
+    history = [aiMsg('a', '看过了')]
+    const { container, emitted } = render(Panel, {
+      props: { topic: topicOf('t1'), showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await settle()
+    ;(container.querySelector('[data-mid="a"] .im-gutter button') as HTMLElement).click()
+    ;(container.querySelector('[data-mid="a"] .im-name') as HTMLElement).click()
+    expect(emitted()['mention-click']).toEqual([[SEAT], [SEAT]])
   })
 })

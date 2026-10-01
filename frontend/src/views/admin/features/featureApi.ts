@@ -90,6 +90,65 @@ export interface DocsAssistantReport {
   unanswered: UnansweredQuestion[]
 }
 
+/** 智能命名那一页的形状（`/admin/feature-stats/topic-naming`）。
+ *
+ *  两个来源，都不新增埋点：钱来自网关那把**命名专用密钥**（命名跑在后台，不在谁的
+ *  回合里），动作来自 `topic_titles` —— 标题每次真的被改都会在那里留一行。
+ *
+ *  **网关那几个数可以是 `null`**：读不到网关时它们是「没读到」，页面画长破折号，不画
+ *  0（0 读作「这个窗口没花钱」，是另一个意思）。`cost.source` 就是这一格读到了没有。
+ *  库里那几个数永远是真的。 */
+export interface TopicNamingNumbers {
+  /** `success_rate` 是网关的口径（请求打到模型并回来了），不是「命名成功率」——模型
+   *  回了个不能用的答案在网关眼里也是成功。一个请求都没有时它是 `null`。 */
+  calls: { value: number | null; failed: number | null; success_rate: number | null }
+  tokens: {
+    value: number | null
+    prompt: number | null
+    completion: number | null
+    cache_read: number | null
+  }
+  cost: {
+    usd: number | null
+    /** `gateway` = 网关自己记的账；`no-key` = 网关答了话、上面没有那把命名密钥；
+     *  `unavailable` = 读不到网关。后两种上面那几个数都是 null：一个是「密钥不
+     *  存在」，一个是「没读到」，两句得分开说，都不能画成 0。 */
+    source: 'gateway' | 'no-key' | 'unavailable'
+    /** 那把密钥的额度与它自己记的花费：额度用完网关就会拒，命名会静默停下。
+     *  `key_spend_usd` 跟的是**网关的额度周期（`budget_duration`），不是这一页选
+     *  的窗口**，所以它和周期一起画 —— dev 上它比 7 天窗口的花费小一个量级。 */
+    budget_usd: number | null
+    budget_duration: string | null
+    key_spend_usd: number | null
+  }
+  /** 平台自动写的标题，按阶段分（首次 / 校准 / 跟随）。 */
+  renames: { value: number; name: number; calibrate: number; follow: number }
+  /** 人写的标题，按原因分（改标题 / 撤销自动改名）。`value` 就是这两个格子的和：
+   *  认不出的原因不进任何一格，也不进总数。 */
+  person_edits: { value: number; rename: number; undo: number }
+  /** `named` = 窗口里被自动命名过的房间数（比例的分母）；没有分母时 `share` 是 null。 */
+  overridden: { value: number; named: number; share: number | null }
+}
+
+export interface TopicNamingTrendPoint {
+  date: string
+  /** 那天平台自动写了几个标题。 */
+  auto: number
+  /** 那天人改了几个标题。 */
+  person: number
+}
+
+export interface TopicNamingReport {
+  id: string
+  title: string
+  summary: string
+  days: number
+  start: string
+  end: string
+  numbers: TopicNamingNumbers
+  trend: TopicNamingTrendPoint[]
+}
+
 export type FeatureDays = 7 | 30 | 90
 
 export function getFeatureCatalogue(): Promise<{ features: FeatureCatalogueEntry[] }> {
@@ -104,4 +163,8 @@ export function getFeatureReport<T>(featureId: string, days: FeatureDays): Promi
 
 export function getDocsAssistantReport(days: FeatureDays): Promise<DocsAssistantReport> {
   return getFeatureReport<DocsAssistantReport>('docs-assistant', days)
+}
+
+export function getTopicNamingReport(days: FeatureDays): Promise<TopicNamingReport> {
+  return getFeatureReport<TopicNamingReport>('topic-naming', days)
 }

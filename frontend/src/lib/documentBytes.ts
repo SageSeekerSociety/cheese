@@ -6,9 +6,10 @@
 // 各写一遍的表现是同一份文档在两处显示得不一样。
 import type { FileSource } from '../cx_types'
 
-import { ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
-import { previewDocumentPdf, previewFileBytes, PreviewRendererUnavailable } from '../api'
+import { previewDocumentPdfSnapshot, previewFileBytes, PreviewRendererUnavailable } from '../api'
+import { t } from '../i18n'
 
 import { NEEDS_CONVERSION, suffixOf } from './fileKind'
 
@@ -29,41 +30,91 @@ export interface DocumentSource {
   enabled?: () => boolean
 }
 
+export interface DocumentIdentity {
+  topicId: string
+  path: string
+  taskId: string | null
+  source: FileSource
+  version: string | null
+}
+
+export interface DocumentSnapshot {
+  bytes: ArrayBuffer
+  identity: Readonly<DocumentIdentity>
+  sourceVersion: string | null
+}
+
+export function sameDocumentIdentity(left: DocumentIdentity, right: DocumentIdentity): boolean {
+  return (
+    left.topicId === right.topicId &&
+    left.path === right.path &&
+    left.taskId === right.taskId &&
+    left.source === right.source &&
+    left.version === right.version
+  )
+}
+
 export function useDocumentBytes(source: DocumentSource) {
-  const bytes = ref<ArrayBuffer | null>(null)
+  const snapshot = shallowRef<DocumentSnapshot | null>(null)
+  const bytes = computed(() => snapshot.value?.bytes ?? null)
   const loading = ref(false)
   const error = ref('')
   /** 这个部署没有文档转换服务。和「这个文件转不了」是两件事：换个文件也一样。 */
   const rendererMissing = ref(false)
   let generation = 0
   let loadedKey = ''
+  let disposed = false
 
-  async function load() {
+  function capture() {
     const tid = source.topicId()
     const path = source.path()
-    const task = source.task?.() ?? null
-    const fileSource = source.source?.() ?? 'live'
-    if (!tid || !path || (source.enabled && !source.enabled())) return
-    const key = `${tid}:${task ?? ''}:${fileSource}:${path}:${source.version() ?? ''}:${source.nonce?.() ?? 0}`
-    if (key === loadedKey && bytes.value) return
+    if (!tid || !path || (source.enabled && !source.enabled())) return null
+    const identity: DocumentIdentity = {
+      topicId: tid,
+      path,
+      taskId: source.task?.() ?? null,
+      source: source.source?.() ?? 'live',
+      version: source.version(),
+    }
+    const key = JSON.stringify([identity, source.nonce?.() ?? 0])
+    return { identity, key }
+  }
+
+  async function load() {
+    const captured = capture()
+    if (!captured || disposed) return
+    if (captured.key === loadedKey && snapshot.value) return
     const mine = ++generation
+    const current = () => !disposed && mine === generation && capture()?.key === captured.key
     loading.value = true
     error.value = ''
     rendererMissing.value = false
     try {
-      const got = NEEDS_CONVERSION.has(suffixOf(path))
-        ? await previewDocumentPdf(tid, path, task, fileSource)
-        : await previewFileBytes(tid, path, task, fileSource)
-      if (mine !== generation) return
-      bytes.value = got
-      loadedKey = key
+      const { identity } = captured
+      let got: { bytes: ArrayBuffer; sourceVersion: string | null }
+      if (NEEDS_CONVERSION.has(suffixOf(identity.path))) {
+        got = await previewDocumentPdfSnapshot(identity.topicId, identity.path, identity.taskId, identity.source)
+      } else {
+        const original = await previewFileBytes(identity.topicId, identity.path, identity.taskId, identity.source)
+        if (!current()) return
+        const digest = globalThis.crypto?.subtle ? await globalThis.crypto.subtle.digest('SHA-256', original) : null
+        const sourceVersion = digest
+          ? Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0'))
+              .join('')
+              .slice(0, 16)
+          : null
+        got = { bytes: original, sourceVersion }
+      }
+      if (!current()) return
+      snapshot.value = { bytes: got.bytes, identity: captured.identity, sourceVersion: got.sourceVersion }
+      loadedKey = captured.key
     } catch (e) {
-      if (mine !== generation) return
+      if (!current()) return
       // 保留已经在屏幕上的那一份。刷新失败时把它清掉，读者失去的是一份本来好好的
       // 文档，换来一句错误——而这份文档仍然是这个文件最新的可见状态。
       loadedKey = ''
       rendererMissing.value = e instanceof PreviewRendererUnavailable
-      error.value = e instanceof Error ? e.message : '无法显示这个文件'
+      error.value = e instanceof Error ? e.message : t('files.preview.cannotShow')
     } finally {
       if (mine === generation) loading.value = false
     }
@@ -71,9 +122,11 @@ export function useDocumentBytes(source: DocumentSource) {
 
   function forget() {
     generation += 1
-    bytes.value = null
+    snapshot.value = null
+    loading.value = false
     loadedKey = ''
     error.value = ''
+    rendererMissing.value = false
   }
 
   watch([source.topicId, source.path, source.task ?? (() => null), source.source ?? (() => 'live')], forget, {
@@ -82,6 +135,7 @@ export function useDocumentBytes(source: DocumentSource) {
 
   watch(
     [
+      source.topicId,
       source.path,
       source.version,
       source.task ?? (() => null),
@@ -90,14 +144,22 @@ export function useDocumentBytes(source: DocumentSource) {
       source.enabled ?? (() => true),
     ],
     () => {
+      generation += 1
+      loading.value = false
       if (source.enabled && !source.enabled()) {
         forget()
         return
       }
       void load()
     },
-    { immediate: true }
+    { immediate: true, flush: 'sync' }
   )
 
-  return { bytes, loading, error, rendererMissing, load, forget }
+  onBeforeUnmount(() => {
+    disposed = true
+    generation += 1
+    loading.value = false
+  })
+
+  return { bytes, snapshot, loading, error, rendererMissing, load, forget }
 }

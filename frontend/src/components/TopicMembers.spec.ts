@@ -87,7 +87,7 @@ const settle = async () => {
 
 async function openRoster() {
   const utils = render(Roster, {
-    props: { topicId: 't1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
+    props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
     global: { plugins: [createVuetify({ components, directives })] },
   })
   await settle()
@@ -97,14 +97,14 @@ async function openRoster() {
 }
 
 const CLOUD: ComputeChoice = {
-  name: '云端 · 标准配置',
+  name: null,
   profile: 'cloud',
   device_id: null,
   cores: null,
   memory_mb: null,
   disk_gb: null,
 }
-const LAB: ComputeChoice = { ...CLOUD, name: '自有设备 · 自动选择', profile: 'device', device_id: null }
+const LAB: ComputeChoice = { ...CLOUD, profile: 'device', device_id: null }
 
 function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProfile {
   return {
@@ -287,7 +287,7 @@ describe('名册上这个话题的工作电脑', () => {
       })
     )
     const { emitted } = render(Roster, {
-      props: { topicId: 't1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
+      props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
       global: { plugins: [createVuetify({ components, directives })] },
     })
     await settle()

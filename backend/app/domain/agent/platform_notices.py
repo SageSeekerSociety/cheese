@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Final
 
 from app.domain.block.models import AGENT_NOTICE_META_KEY
+from app.domain.block.notice_text import notice_keys, say
 from app.domain.memory.files import rejected_path
 
 # --- severity ---------------------------------------------------------------
@@ -165,6 +166,9 @@ EVENT_ROUTINE_RUN: Final = "routine_run"
 EVENT_ROUTINE_RESULT: Final = "routine_result"
 #: 芝士起草了一条周期任务/触发规则，等人确认后才会执行。
 EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
+#: 房间归档了，它里面还在执行的规则随之停下。规则自己的状态不变（取消归档后从下一
+#: 个时刻继续），所以这一行说的是房间带走了什么，不是规则被改成了什么。
+EVENT_ROUTINE_STOPPED: Final = "routine_stopped"
 #: AI 服务的一次请求失败了，会话正在按它自己的退避重试。重试期间房间里没有任何
 #: 输出，不说一声就和「在想」分不出来。同一段连续的重试只占一行，次数原地更新。
 EVENT_API_RETRY: Final = "api_retry"
@@ -245,6 +249,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ROUTINE_RUN,
         EVENT_ROUTINE_RESULT,
         EVENT_ROUTINE_PROPOSED,
+        EVENT_ROUTINE_STOPPED,
         EVENT_API_RETRY,
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
@@ -284,19 +289,20 @@ def notice(
         "detail": detail,
         "detail_label": detail_label,
         **({"retryable": True} if retryable else {}),
+        **notice_keys(detail=detail, detail_label=detail_label),
     }
 
 
 def delivery_fallback_notice() -> tuple[str, dict]:
     """The single room-visible error for live-delivery fallback."""
     return (
-        "消息未能送达进行中的会话，已加入队列",
+        say("deliveryFallback"),
         notice(
             EVENT_DELIVERY_FALLBACK,
             severity=SEVERITY_ERROR,
             who=WHO_PLATFORM,
-            detail="消息已保存，平台会按队列继续处理，不需要重发。",
-            detail_label="说明",
+            detail=say("deliveryFallbackDetail"),
+            detail_label=say("labelNote"),
         ),
     )
 
@@ -322,17 +328,25 @@ def memory_changed_notice(
     了、下一轮再写一遍同一版，而每一轮都会被盖回去。
     """
     rejected = rejected or {}
-    parts = [f"{where}记忆：{summary}" if summary else f"{where}记忆"]
+    line = (
+        say("memoryChanged", where=where, summary=summary)
+        if summary
+        else say("memoryChangedBare", where=where)
+    )
     if refused:
-        parts.append("有改动被平台这一份盖回来了，重读再写")
+        line = say("wideJoin", first=line, second=say("memoryRefused"))
     if rejected:
-        parts.append(f"{len(rejected)} 条超出长度上限，没有写入")
+        line = say(
+            "wideJoin",
+            first=line,
+            second=say("memoryRejected", count=len(rejected)),
+        )
     meta = notice(
         EVENT_MEMORY_CHANGED,
         severity=SEVERITY_INFO,
         who=WHO_PLATFORM,
         detail=diff or None,
-        detail_label="改动",
+        detail_label=say("labelChanges"),
     )
     for_agent = []
     if refused:
@@ -341,7 +355,7 @@ def memory_changed_notice(
         for_agent.append(memory_rejected_notice(where=where, reasons=rejected))
     if for_agent:
         meta[AGENT_NOTICE_META_KEY] = "\n\n".join(for_agent)
-    return "　".join(parts), meta
+    return line, meta
 
 
 def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:

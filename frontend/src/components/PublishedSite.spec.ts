@@ -17,6 +17,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import PublishedSite from './PublishedSite.vue'
 
 import { ApiError } from '@/api'
+import { setLocale } from '@/i18n'
+
+// 断言按中文写；测试环境默认是英文界面。
+beforeEach(() => setLocale('zh-CN'))
 
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),

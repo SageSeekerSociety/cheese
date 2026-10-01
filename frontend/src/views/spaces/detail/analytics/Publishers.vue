@@ -1,45 +1,48 @@
 <template>
-  <div class="analytics-section">
-    <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">出题人分析</h2>
-      </div>
-
-      <div class="section-toolbar__actions">
-        <v-select
-          v-model="sortByModel"
-          autocomplete="off"
-          :items="sortByItems"
-          label="排序字段"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-          class="sort-field"
+  <div class="an-section">
+    <div class="an-bar">
+      <v-select
+        v-model="sortByModel"
+        autocomplete="off"
+        :items="sortByItems"
+        :prefix="t('spaces.analytics.sortBy')"
+        :aria-label="t('spaces.analytics.sortBy')"
+        density="compact"
+        hide-details
+        variant="outlined"
+      />
+      <v-select
+        v-model="sortOrderModel"
+        autocomplete="off"
+        :items="options.sortOrder.value"
+        :aria-label="t('spaces.analytics.sortOrder.label')"
+        density="compact"
+        hide-details
+        variant="outlined"
+        class="an-bar__narrow"
+      />
+      <div class="an-bar__end">
+        <AnalyticsExportButton
+          section="publishers"
+          :space-id="spaceId"
+          :filters="filters"
+          :label="t('spaces.analytics.publishers.export')"
         />
-        <v-select
-          v-model="sortOrderModel"
-          autocomplete="off"
-          :items="sortOrderItems"
-          label="排序方向"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-          class="sort-field"
-        />
-        <AnalyticsExportButton section="publishers" :space-id="spaceId" :filters="filters" label="导出出题人视图" />
       </div>
     </div>
 
-    <div v-if="rankings.length" class="ranking-strip">
-      <v-card v-for="item in rankings" :key="item.title" flat rounded="lg" class="ranking-card">
-        <div class="ranking-card__title">{{ item.title }}</div>
-        <div class="ranking-card__name">{{ item.name }}</div>
-        <div class="ranking-card__meta">{{ item.meta }}</div>
-      </v-card>
-    </div>
+    <AnalyticsStatStrip v-if="rankings.length">
+      <AnalyticsMetricCard
+        v-for="item in rankings"
+        :key="item.label"
+        :label="item.label"
+        :value="item.name"
+        :description="item.meta"
+      />
+    </AnalyticsStatStrip>
 
-    <v-card flat rounded="xl" class="table-card mt-4">
-      <v-data-table :headers="headers" :items="publishers" :loading="loading" density="comfortable" items-per-page="10">
+    <div class="an-table">
+      <v-data-table :headers="headers" :items="publishers" :loading="loading" density="compact" items-per-page="10">
         <template #[`item.taskCount`]="{ item }">{{ formatCount(item.taskCount) }}</template>
         <template #[`item.participantCount`]="{ item }">{{ formatCount(item.participantCount) }}</template>
         <template #[`item.avgParticipantsPerTask`]="{ item }">{{ item.avgParticipantsPerTask.toFixed(1) }}</template>
@@ -48,10 +51,10 @@
         }}</template>
         <template #[`item.successRate`]="{ item }">{{ formatPercent(item.successRate) }}</template>
         <template #[`item.lastTaskCreatedAt`]="{ item }">
-          {{ item.lastTaskCreatedAt ? new Date(item.lastTaskCreatedAt).toLocaleDateString('zh-CN') : '-' }}
+          {{ item.lastTaskCreatedAt ? formatDate(item.lastTaskCreatedAt) : '-' }}
         </template>
       </v-data-table>
-    </v-card>
+    </div>
   </div>
 </template>
 
@@ -59,15 +62,21 @@
 import type { SpaceAnalyticsPublisherMetrics } from '@/network/api/spaces/types'
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
+import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
+import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
+import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
-import { formatCount, formatPercent } from './helpers'
+import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
 import { SpacesApi } from '@/network/api/spaces'
 
+const { t } = useI18n()
+const options = useAnalyticsOptions()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
@@ -97,7 +106,7 @@ const load = async () => {
     publishers.value = data.publishers
   } catch (error) {
     console.error('load analytics publishers failed', error)
-    toast.error('加载出题人分析失败')
+    toast.error(t('spaces.analytics.publishers.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -111,40 +120,34 @@ watch(
   { immediate: true }
 )
 
-const headers = [
-  { title: '出题人', key: 'publisherName', value: 'publisherName' },
-  { title: '题目数', key: 'taskCount', value: 'taskCount', align: 'center' as const },
-  { title: '报名主体', key: 'participantCount', value: 'participantCount', align: 'center' as const },
-  {
-    title: '审核通过报名',
-    key: 'approvedParticipantCount',
-    value: 'approvedParticipantCount',
-    align: 'center' as const,
-  },
-  { title: '提交主体', key: 'submittedParticipantCount', value: 'submittedParticipantCount', align: 'center' as const },
-  {
-    title: '成功主体',
-    key: 'successfulParticipantCount',
-    value: 'successfulParticipantCount',
-    align: 'center' as const,
-  },
-  { title: '平均每题报名', key: 'avgParticipantsPerTask', value: 'avgParticipantsPerTask', align: 'center' as const },
-  { title: '提交转化率', key: 'submissionConversionRate', value: 'submissionConversionRate', align: 'center' as const },
-  { title: '成功率', key: 'successRate', value: 'successRate', align: 'center' as const },
-  { title: '最近发题', key: 'lastTaskCreatedAt', value: 'lastTaskCreatedAt', align: 'center' as const },
-]
+const COLUMNS = [
+  'publisherName',
+  'taskCount',
+  'participantCount',
+  'approvedParticipantCount',
+  'submittedParticipantCount',
+  'successfulParticipantCount',
+  'avgParticipantsPerTask',
+  'submissionConversionRate',
+  'successRate',
+  'lastTaskCreatedAt',
+] as const
 
-const sortByItems = [
-  { title: '题目数', value: 'taskCount' },
-  { title: '报名主体数', value: 'participantCount' },
-  { title: '成功率', value: 'successRate' },
-  { title: '最近发题时间', value: 'lastTaskCreatedAt' },
-]
+const headers = computed(() =>
+  COLUMNS.map((key, index) => ({
+    title: t(`spaces.analytics.publishers.col.${key}`),
+    key,
+    value: key,
+    align: index === 0 ? ('start' as const) : ('center' as const),
+  }))
+)
 
-const sortOrderItems = [
-  { title: '降序', value: 'desc' },
-  { title: '升序', value: 'asc' },
-]
+const sortByItems = computed(() =>
+  (['taskCount', 'participantCount', 'successRate', 'lastTaskCreatedAt'] as const).map((value) => ({
+    title: t(`spaces.analytics.publishers.sort.${value}`),
+    value,
+  }))
+)
 
 const rankings = computed(() => {
   if (!publishers.value.length) return []
@@ -154,96 +157,22 @@ const rankings = computed(() => {
 
   return [
     {
-      title: '最活跃出题人',
+      label: t('spaces.analytics.publishers.rank.mostTasks'),
       name: byTask?.publisherName || '-',
-      meta: `${formatCount(byTask?.taskCount)} 个题目`,
+      meta: t('spaces.analytics.publishers.rank.tasks', { n: formatCount(byTask?.taskCount) }),
     },
     {
-      title: '最高成功率',
+      label: t('spaces.analytics.publishers.rank.bestRate'),
       name: byRate?.publisherName || '-',
       meta: formatPercent(byRate?.successRate),
     },
     {
-      title: '最强吸引力',
+      label: t('spaces.analytics.publishers.rank.mostClaims'),
       name: byParticipant?.publisherName || '-',
-      meta: `${formatCount(byParticipant?.participantCount)} 个报名主体`,
+      meta: t('spaces.analytics.publishers.rank.claims', { n: formatCount(byParticipant?.participantCount) }),
     },
   ]
 })
 </script>
 
-<style scoped lang="scss">
-.analytics-section {
-  display: flex;
-  flex-direction: column;
-}
-
-.section-toolbar {
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 18px;
-}
-
-.section-toolbar__title {
-  margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
-}
-
-.section-toolbar__actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.sort-field {
-  min-width: 160px;
-}
-
-.ranking-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.ranking-card,
-.table-card {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.ranking-card {
-  padding: 16px;
-  background-color: rgba(var(--v-theme-surface), 1);
-}
-
-.ranking-card__title {
-  color: rgba(var(--v-theme-on-surface), 0.56);
-  margin-bottom: 12px;
-}
-
-.ranking-card__name {
-  font-size: 1.2rem;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-
-.ranking-card__meta {
-  color: rgba(var(--v-theme-on-surface), 0.56);
-}
-
-.table-card {
-  overflow: hidden;
-}
-
-@media (max-width: 960px) {
-  .section-toolbar {
-    flex-direction: column;
-  }
-
-  .ranking-strip {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="./analytics.css"></style>

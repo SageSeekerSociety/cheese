@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.domain.agent import execution, private_chat
+from app.domain.agent.admission import SESSION_MEMORY_ENV, session_memory_max
 from app.domain.agent.device_provider import (
     DeviceChannel,
 )
@@ -54,9 +55,6 @@ class CentralChannel(DeviceChannel):
         # 手是执行机的，所以这条通道的供给就是被它包住的那条通道的供给：一台机器
         # 归哪条通道认领，说的是那台机器，不是中心会话机。
         self.supply = executor.supply
-        # 而会话进程不在那台机器上：工具要从中心机再跳一程到执行机。把进程和工作
-        # 区放在同一台机器上的骨架（pi）挂不到这条通道上。
-        self.hands_here = False
 
     def available(self):
         return bool(
@@ -247,6 +245,10 @@ class CentralChannel(DeviceChannel):
             raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
+        # Every room's session shares this machine's kernel: each runs under a
+        # cap, so one cannot take the others down with it (#1544).
+        if memory_max := session_memory_max(center):
+            values[SESSION_MEMORY_ENV] = memory_max
         # The machine this session already holds, once its lease is ready.
         lease = (place.lease if place else None) if precheck.deferred else None
         leased = (

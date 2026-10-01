@@ -100,17 +100,13 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     # 这个项目里根本不是一个能用的模型，列出来只会让绑上它的那条活在派出去的那
     # 一刻才失败。
     #
-    # 问 ``harness_for`` 而不是 ``deployment_harness``：轮次组装（``chat.py`` 的
-    # ``_assemble_turn``）和克隆（``topic/services.py`` 的 ``clone_from``）都按项
-    # 目答，这里再按部署答一遍就是同一个问题的第二个答法。一套部署跑 claude-code、
-    # 某个项目设置成 codex 时，轮次真跑在 codex 上，而目录会按 claude-code 的能力
-    # 位筛——订阅别名是最直接的一类——于是 ``binding.resolve`` 挑得出一个 codex 指
-    # 不到的模型绑上去，正好是这一筛要防的那件事。
-    # 这个项目指向的骨架这套部署没注册（结论 43）时，它没有一个能用的模型：它的
-    # 轮次在开始时就会在房间里说「没有部署」，目录跟着说同一件事——空的。
-    running = HARNESSES.get(harness_for(project_settings))
-    if running is None:
-        return []
+    # 问 ``harness_for``：轮次组装（``chat.py`` 的 ``_assemble_turn``）和克隆
+    # （``topic/services.py`` 的 ``clone_from``）都按项目答，这里只按部署答就是同
+    # 一个问题的第二个答法。一套部署列了 claude-code 和 pi、某个项目指定了 pi 时，轮次真
+    # 跑在 pi 上，而目录会按 claude-code 的能力位筛——订阅别名是最直接的一类——于
+    # 是 ``binding.resolve`` 挑得出一个 pi 指不到的模型绑上去，正好是这一筛要防的
+    # 那件事。
+    running = HARNESSES[harness_for(project_settings)]
     choices = [item for item in choices if _drives(running, item)]
     # Mark the available selection for presentation. Runtime callers pass the
     # saved value explicitly to binding.resolve so an unavailable selection is

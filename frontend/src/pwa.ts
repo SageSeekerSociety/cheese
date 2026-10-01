@@ -5,25 +5,29 @@
  * config in vite.config.ts (`registerType: 'prompt'`, `injectRegister: false`
  * — we register here so nothing is injected into index.html twice).
  *
- * **更新是我们问、用户点，不是自动刷新**（2026-09-17 改的）。原来用
- * `registerType: 'autoUpdate'`：新 worker 一激活，插件就直接
- * `window.location.reload()`（见 node_modules/vite-plugin-pwa/dist/client/build/
- * register.js 里 activated 那一段），开着的页面在用户眼皮底下刷新——正在打的
- * 一段话没了。现在新 worker 停在 waiting，这里把「有新版本」交给界面
- * （components/common/UpdateBanner.vue），用户点「立即更新」才 skipWaiting 并刷新。
+ * **新版本在下一次跳转时换上，不打断正在看的这一页，也不问人。**
  *
- * 关掉提示不等于放弃更新：新 worker 一直在 waiting，下次打开页面会再报一次。
- * 所以「稍后」只是这一次的稍后。
+ * - 不在原地刷新：插件的默认做法是新 worker 一接管就 `window.location.reload()`，
+ *   开着的页面在人眼皮底下刷新，还在路上、没落库的消息会丢（发件箱有意不落盘，
+ *   见 lib/composerDrafts.ts）。所以新 worker 下好后停在 waiting。
+ * - 也不弹提示让人点：草稿已经落盘，换版本本身不丢东西，没有什么需要人来决定。
+ * - 换在下一次应用内跳转上：新版本在等时，把这次跳转换成一次整页加载。单页跳转
+ *   本来就会扔掉当前页的临时状态，所以整页加载不多丢任何东西。整页加载之前先
+ *   让新 worker 接管、等它真的接管了再走（`takeWaitingWorker`）：还是旧 worker
+ *   接着的话，导航那一下只要网络失败，它就拿缓存里的**旧** index.html 顶上
+ *   （vite.config.ts 里那条 NetworkOnly 的 precacheFallback），页面又回到旧版，
+ *   而旧版要的代码块服务器上已经没有了。
+ * - 同一个浏览器里别的标签页：新 worker 一接管，它们也收到通知。它们不刷新，只记下
+ *   「已经过期」，各自下一次跳转时整页加载。
  *
- * 这个文件里的 ref 是应用级单例，和 AccountService 同一套写法。
+ * 代价是一个一直不点任何东西的页面会一直停在旧版本上，直到下一次点击。
  */
-import { ref } from 'vue'
+import type { Router } from 'vue-router'
+
 import { registerSW } from 'virtual:pwa-register'
 
-/** 新版本已经下载完成、等着接管。界面据此显示更新提示条。 */
-export const updateReady = ref(false)
-
-let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
+/** 新版本已下载、等着接管；或者别的标签页已经换上了新版本。下一次跳转整页加载。 */
+let stale = false
 
 /**
  * 主动问一次「有没有新版本」。
@@ -46,31 +50,65 @@ function checkForUpdate() {
   })
 }
 
-export function registerPwa(): void {
-  updateServiceWorker = registerSW({
+const TAKEOVER_WAIT_MS = 3000
+
+function within<T>(ms: number, work: Promise<T>): Promise<T | undefined> {
+  return Promise.race([work, new Promise<undefined>((resolve) => window.setTimeout(() => resolve(undefined), ms))])
+}
+
+/**
+ * 有新版本在等的话，让它接管这一页，并等到它真的接管了才返回。
+ *
+ * 整页加载前调它：接管之后，导航就算退回缓存，缓存里也已经是新版的 index.html。
+ * 最多等几秒——等不到就照旧加载，宁可再落一次旧版，也不把人卡在一次点击上。
+ * `check` 为真时先问一次服务器有没有新版：代码块 404 那条路上，这一页可能还
+ * 不知道新版已经发了。
+ */
+export async function takeWaitingWorker({ check = false } = {}): Promise<void> {
+  const container = navigator.serviceWorker
+  if (!container) return
+  const registration = swRegistration ?? (await within(TAKEOVER_WAIT_MS, container.getRegistration()))
+  if (!registration) return
+  if (check && !registration.waiting)
+    await within(
+      TAKEOVER_WAIT_MS,
+      registration.update().catch(() => undefined)
+    )
+  const waiting = registration.waiting
+  if (!waiting) return
+  const taken = new Promise<void>((resolve) =>
+    container.addEventListener('controllerchange', () => resolve(), { once: true })
+  )
+  // workbox 生成的 sw.js 认这条消息（registerType: 'prompt' 时它不自己 skipWaiting）。
+  waiting.postMessage({ type: 'SKIP_WAITING' })
+  await within(TAKEOVER_WAIT_MS, taken)
+}
+
+export function registerPwa(router: Router): void {
+  registerSW({
     immediate: true,
     onNeedRefresh() {
-      updateReady.value = true
+      stale = true
+    },
+    // 新 worker 接管了这一页（这一页或别的标签页让它接管的）。不刷新，见文件头。
+    onNeedReload() {
+      stale = true
     },
     onRegisteredSW(_swUrl, registration) {
       swRegistration = registration ?? null
       if (!registration) return
       window.setInterval(checkForUpdate, CHECK_INTERVAL_MS)
-      // 切回这个标签页时问一次：人回来了，正是告诉他「有新版本」的时候。
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') checkForUpdate()
       })
     },
   })
-}
-
-/** 用户点了「立即更新」：让新 worker 接管，接管完成会刷新这一页。 */
-export async function applyUpdate(): Promise<void> {
-  updateReady.value = false
-  await updateServiceWorker?.(true)
-}
-
-/** 用户点了「稍后」：只收起这条提示。新 worker 继续在 waiting 里等着。 */
-export function dismissUpdate(): void {
-  updateReady.value = false
+  // 首次导航（`from` 没有匹配的路由）本来就是整页加载出来的；只换 hash 或 query
+  // 的跳转不算离开这一页。
+  router.beforeEach(async (to, from) => {
+    if (!stale || from.matched.length === 0 || to.path === from.path) return
+    await takeWaitingWorker()
+    window.location.assign(router.resolve(to).href)
+    return false
+  })
 }

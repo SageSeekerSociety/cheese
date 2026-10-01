@@ -23,7 +23,9 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from app.domain.fetch import guard
 from app.domain.fetch.extract import substantive_length, to_markdown
+from app.domain.fetch.guard import NotPublic
 
 #: Enough prose that a rung can stop climbing: the page clearly carried an
 #: article. Below it the ladder keeps trying, because a thin result is usually a
@@ -87,12 +89,14 @@ async def rung_markdown_native(url: str, timeout: float = 12.0) -> Attempt:
         candidates.append(
             (urljoin(f"{parsed.scheme}://{parsed.netloc}", "/llms.txt"), {})
         )
-    async with httpx.AsyncClient(
+    async with guard.client(
         timeout=timeout, follow_redirects=True, headers={"User-Agent": _BROWSER_UA}
     ) as client:
         for candidate, headers in candidates:
             try:
                 r = await client.get(candidate, headers=headers)
+            except NotPublic:
+                raise
             except Exception:
                 continue
             if r.status_code != 200:
@@ -130,12 +134,14 @@ async def rung_plain_http(url: str, timeout: float = 20.0) -> Attempt:
     loop = asyncio.get_running_loop()
     start = loop.time()
     try:
-        async with httpx.AsyncClient(
+        async with guard.client(
             timeout=timeout,
             follow_redirects=True,
             headers={"User-Agent": _BROWSER_UA, "Accept": _MARKDOWN_ACCEPT},
         ) as client:
             r = await client.get(url)
+    except NotPublic:
+        raise
     except Exception as exc:  # noqa: BLE001 — every failure here is just a miss
         return Attempt(
             "plain-http",
@@ -163,16 +169,37 @@ async def rung_impersonated(url: str, timeout: float = 25.0) -> Attempt:
     loop = asyncio.get_running_loop()
     start = loop.time()
 
-    def _get() -> tuple[int, str]:
+    def _get(target: str, address: str) -> tuple[int, str, str | None]:
+        from curl_cffi import CurlOpt
         from curl_cffi import requests as cffi
 
-        r = cffi.get(url, impersonate="chrome", timeout=timeout)
-        return r.status_code, r.text
+        host, port = guard._target(target)
+        r = cffi.get(
+            target,
+            impersonate="chrome",
+            timeout=timeout,
+            # Redirects are followed below, one checked hop at a time, and each
+            # connection goes to the address that was checked for its host.
+            allow_redirects=False,
+            curl_options={CurlOpt.RESOLVE: [f"{host}:{port}:{address}".encode()]},
+        )
+        location = r.headers.get("location") if 300 <= r.status_code < 400 else None
+        return r.status_code, r.text, location
+
+    async def _follow() -> tuple[int, str]:
+        target = url
+        for _hop in range(guard.MAX_REDIRECTS + 1):
+            address = await guard.check(target)
+            status, body, location = await asyncio.to_thread(_get, target, address)
+            if location is None:
+                return status, body
+            target = urljoin(target, location)
+        return 310, ""
 
     try:
-        status, body = await asyncio.wait_for(
-            asyncio.to_thread(_get), timeout=timeout + 5
-        )
+        status, body = await asyncio.wait_for(_follow(), timeout=timeout + 5)
+    except NotPublic:
+        raise
     except Exception as exc:  # noqa: BLE001
         return Attempt(
             "impersonated",

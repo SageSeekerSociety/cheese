@@ -5,7 +5,7 @@ import type { ChecklistMeta } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChecklistMessage from './ChecklistMessage.vue'
@@ -23,7 +23,14 @@ const list: ChecklistMeta = {
   result: null,
 }
 
-function mount(props: { checklist?: ChecklistMeta; updatedAt: string; edited?: boolean }) {
+function mount(props: {
+  checklist?: ChecklistMeta
+  updatedAt: string
+  edited?: boolean
+  live?: boolean
+  editable?: boolean
+  onChange?: (items: unknown) => void
+}) {
   return render(ChecklistMessage, {
     props: { checklist: list, edited: false, ...props },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -51,6 +58,23 @@ describe('步骤清单消息', () => {
     expect(row(view, '核实问题').className).toContain('is-completed')
   })
 
+  // 队友还在推进时，正在做的那一步换成一颗在动的星；这一轮停了（或是更早的一张），
+  // 就只剩静止的 ✱——没有在发生的事，就不该动。
+  it('队友正在推进时，正在做的那一步在动；别的步骤不动', () => {
+    const view = mount({ updatedAt: NOW.toISOString(), live: true })
+    expect(row(view, '写实现').classList).toContain('is-live')
+    expect(row(view, '写实现').querySelector('.mdi-asterisk')).toBeNull()
+    expect(row(view, '写实现').querySelector('svg')).not.toBeNull()
+    expect(row(view, '补测试').classList).not.toContain('is-live')
+    expect(row(view, '核实问题').classList).not.toContain('is-live')
+  })
+
+  it('停下来的清单不动', () => {
+    const view = mount({ updatedAt: NOW.toISOString(), live: false })
+    expect(row(view, '写实现').classList).not.toContain('is-live')
+    expect(row(view, '写实现').querySelector('.mdi-asterisk')).not.toBeNull()
+  })
+
   it('做完时下面接一句结果', () => {
     const view = mount({ checklist: { ...list, result: '接口改好了，测试全过' }, updatedAt: NOW.toISOString() })
     expect(view.getByText('接口改好了，测试全过')).toBeTruthy()
@@ -69,5 +93,30 @@ describe('步骤清单消息', () => {
     const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     expect(view.getByText(`清单更新于 ${clock}`)).toBeTruthy()
     expect(view.getByText('已编辑')).toBeTruthy()
+  })
+
+  // 自己的清单：点一步前面的记号，那一步换到下一个状态，交出去的是改过之后的整份。
+  it('写清单的人点一步的记号，交出整份清单，只有那一步变了', async () => {
+    const onChange = vi.fn()
+    const view = mount({ updatedAt: NOW.toISOString(), editable: true, onChange })
+    await fireEvent.click(view.getByRole('button', { name: /补测试/ }))
+    expect(onChange).toHaveBeenCalledWith([
+      { id: '1', subject: '核实问题', status: 'completed' },
+      { id: '2', subject: '写实现', status: 'in_progress' },
+      { id: '3', subject: '补测试', status: 'in_progress' },
+    ])
+    await fireEvent.click(view.getByRole('button', { name: /写实现/ }))
+    expect(onChange).toHaveBeenLastCalledWith([
+      { id: '1', subject: '核实问题', status: 'completed' },
+      { id: '2', subject: '写实现', status: 'completed' },
+      { id: '3', subject: '补测试', status: 'pending' },
+    ])
+    await fireEvent.click(view.getByRole('button', { name: /核实问题/ }))
+    expect(onChange.mock.lastCall?.[0][0]).toEqual({ id: '1', subject: '核实问题', status: 'pending' })
+  })
+
+  it('别人的清单只能看：没有可点的记号', () => {
+    const view = mount({ updatedAt: NOW.toISOString() })
+    expect(view.queryAllByRole('button')).toHaveLength(0)
   })
 })

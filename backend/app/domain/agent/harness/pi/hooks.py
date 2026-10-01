@@ -1,11 +1,11 @@
-"""The project's tool hooks around pi's calls, under the names the hooks know.
+"""The project's tool hooks around pi's own calls, under the names the hooks know.
 
 A repository writes `PreToolUse` and `PostToolUse` hooks in `.claude/settings.json`
-for plain Claude Code, which fires them around every tool call. pi fires none
-and has no executor to fire them, so its runner runs them, by the rules the
-executor follows (`app/domain/agent/project_hooks.py`): around the MCP calls it
-makes itself (`mcp.py`), and around pi's own tools when the extension asks
-before and after each call (`platform.ts`).
+for plain Claude Code, which fires them around every tool call. pi fires none, so
+the extension asks before and after each of its own calls (`platform.ts`), and
+the room's machine runs them by the executor's own rules — the machine holds the
+project, its settings and whatever the hooks run. The project's MCP calls have
+theirs run around them by the same executor (`mcp.py`).
 
 A hook's matcher and its `tool_input` are written against Claude Code's tools.
 On Codex nothing is renamed, because the executor serves Codex its tools under
@@ -16,11 +16,11 @@ pi runs it. A tool with no equivalent keeps its own name.
 """
 
 import asyncio
-from pathlib import Path
 
-from app.domain.agent import project_hooks
 
-Denied = project_hooks.Denied
+class Denied(PermissionError):
+    """A hook blocked the call. The message is the hook's reason."""
+
 
 #: pi's tool -> (Claude Code's tool, pi's argument keys that Claude Code names
 #: differently, what Claude Code's input carries that pi's does not). The
@@ -33,10 +33,23 @@ AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
     "bash_start": ("Bash", {"label": "description"}, {"run_in_background": True}),
     "read": ("Read", {"path": "file_path"}, {}),
     "write": ("Write", {"path": "file_path"}, {}),
+    "grep": (
+        "Grep",
+        {"ignoreCase": "-i", "context": "-C", "limit": "head_limit"},
+        {"output_mode": "content", "-n": True},
+    ),
+    "find": ("Glob", {}, {}),
     # The extension's subagent tool (`platform.ts`) takes Claude Code's `Agent`
     # arguments under the name that build used to give it.
     "Task": ("Agent", {}, {}),
 }
+
+
+#: pi's calls that run on the room's machine (`platform.ts`): the ones that
+#: take it, hooks and all. A subagent or a job already started does not.
+REACH_THE_MACHINE = frozenset(
+    {"read", "write", "edit", "ls", "find", "grep", "bash", "bash_start", "bash_write"}
+)
 
 
 def shown(tool: str, args: dict) -> list[tuple[str, dict]]:
@@ -94,34 +107,48 @@ async def run(
     args: dict,
     *,
     call_id: str,
-    root: str,
+    machine,
     cwd: str | None,
-    env: dict[str, str],
-    session_id: str,
     result: object = None,
 ) -> dict:
-    """Run the project's `event` hooks for one pi call to `tool`; return the
-    arguments it proceeds with, in pi's shape. Raises `Denied` when a hook
-    blocks it, or any part of it."""
-    calls = shown(tool, args)
+    """Run the project's `event` hooks for one pi call to `tool` on the room's
+    machine (`Machine.hooks`); return the arguments it proceeds with, in pi's
+    shape. Raises `Denied` when a hook blocks it, or any part of it."""
+    if not machine.taken and tool not in REACH_THE_MACHINE:
+        # The project's hooks are the machine's; a session that has not
+        # needed it yet has none to run, as a Claude Code room before its
+        # machine fires none.
+        return args
+    # Taken first: the paths the hooks read are the machine's own, and the
+    # first call that reaches it may be told to read the repository first.
+    await asyncio.to_thread(machine.take)
+    shown_as = shown(tool, args)
+    # A call no hook or deny rule is written for goes straight on: asking the
+    # machine about it would be a round trip there for nothing.
+    if not any(
+        [
+            await asyncio.to_thread(machine.has_hooks, event, name)
+            for name, _ in shown_as
+        ]
+    ):
+        return args
+    calls = [(name, machine.spelled(seen)) for name, seen in shown_as]
     updated = []
     for index, (name, seen) in enumerate(calls):
-        updated.append(
-            await asyncio.to_thread(
-                project_hooks.run,
-                event,
-                name,
-                seen,
-                # One id per call the hooks see, so a hook pairing its
-                # PreToolUse with its PostToolUse pairs each edit's.
-                call_id=call_id if len(calls) == 1 else f"{call_id}.{index}",
-                root=root,
-                cwd=cwd if cwd and Path(cwd).is_dir() else root,
-                env=env,
-                session_id=session_id,
-                result=result,
-            )
+        answer = await asyncio.to_thread(
+            machine.hooks,
+            event,
+            name,
+            seen,
+            # One id per call the hooks see, so a hook pairing its PreToolUse
+            # with its PostToolUse pairs each edit's.
+            call_id=call_id if len(calls) == 1 else f"{call_id}.{index}",
+            cwd=cwd,
+            result=result,
         )
-    if all(after is seen for after, (_, seen) in zip(updated, calls, strict=True)):
+        if "denied" in answer:
+            raise Denied(answer["denied"])
+        updated.append(answer.get("args", seen))
+    if all(after == seen for after, (_, seen) in zip(updated, calls, strict=True)):
         return args
     return taken(tool, updated)

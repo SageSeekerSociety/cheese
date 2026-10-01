@@ -40,6 +40,7 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => null }))
 
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
+import i18n, { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 function mergeState(): MergeStateInfo {
@@ -99,7 +100,7 @@ async function mountWith(cards: AcceptCard[], topicStatus = 'active') {
   const vuetify = createVuetify({ components, directives })
   const utils = render(TopicAcceptCard, {
     props: { topicId: 't1', topicStatus },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await flush()
   return utils
@@ -130,6 +131,8 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   approveCard.mockReset()

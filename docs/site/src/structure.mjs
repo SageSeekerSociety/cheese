@@ -20,7 +20,7 @@ export const SECTIONS = [
 export const DEV = [
   ['导读', ['overview', 'turn', 'delivery']],
   ['会话与骨架', ['session', 'harness', 'context', 'ref-prompt', 'memory', 'skills', 'mcp', 'remote-mcp', 'cli']],
-  ['模型与计费', ['llm', 'metering-proxy', 'gateway', 'admission', 'billing']],
+  ['模型与计费', ['llm', 'metering-proxy', 'gateway', 'admission', 'billing', 'assistant']],
   ['机器与执行', ['machines', 'execution', 'preview', 'sites', 'local-fs', 'cleanup']],
   ['交付与成果', ['tasks', 'accept', 'forge', 'documents', 'library', 'boards']],
   ['协作', ['teams', 'spaces', 'notifications', 'feedback', 'routine', 'integrations']],

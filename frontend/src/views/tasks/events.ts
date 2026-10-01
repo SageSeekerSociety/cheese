@@ -10,7 +10,6 @@ export interface TaskEvents {
   'privacy-dialog-open': boolean // 隐私声明对话框开关状态
   'team-selection-dialog-open': boolean // 队伍选择对话框开关状态
   'leave-team-dialog-open': boolean // 退出队伍对话框开关状态
-  'chat-dialog-open': { status: boolean; question?: string } // AI聊天对话框开关状态
 
   // 用户操作事件
   'join-clicked': undefined // 点击加入按钮
@@ -21,7 +20,6 @@ export interface TaskEvents {
   'cancel-privacy': undefined // 取消隐私声明
   'privacy-agreed-change': boolean // 隐私同意状态变化
   'set-from-submit': boolean // 设置来自提交状态
-  'clear-context': undefined // 清除AI对话上下文
 
   // 业务流程事件
   'verify-form-submit': undefined // 提交验证表单

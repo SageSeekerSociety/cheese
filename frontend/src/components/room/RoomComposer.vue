@@ -13,23 +13,31 @@
 // 发送）、以及把拖进来的东西交给房间（#2143）。@ 补全的状态机在
 // `composables/useRoomMentionPicker.ts`，菜单、待发条和动作行各自是一件只管画的
 // 东西（`MentionMenu.vue` / `ComposerChipRow.vue` / `ComposerActions.vue`）。
+import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
 
 import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
+import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
+import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import MentionMenu from './MentionMenu.vue'
+import OutsideMentionNotice from './OutsideMentionNotice.vue'
+import ReminderDialog from './ReminderDialog.vue'
+
+import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
-  mentionPool: { handle: string; label: string; agent: boolean; external?: boolean }[]
+  mentionPool: MentionPoolEntry[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
   topicList: Topic[]
   /** 这个房间交给的那位 AI 队友。名册还没到时是 null，两个召唤入口都关着。 */
@@ -44,7 +52,11 @@ const props = defineProps<{
   attsUploading: boolean
   /** 这条消息回复的是哪一条，读出来的样子（「回复 谁：说了什么」）。不回复时是 null。 */
   replyLabel?: string | null
+  /** 发一张自己的清单；不给就没有这个入口。 */
+  postChecklist?: (steps: string[]) => Promise<boolean>
 }>()
+
+const checklistOpen = ref(false)
 
 const emit = defineEmits<{
   /** 发这一条。附件由房间补上——它才知道此刻待发条里有什么。 */
@@ -107,6 +119,15 @@ const {
 function pickActiveMention(): boolean {
   return picker.pickActive()
 }
+
+// 发出去的那条 @ 了不在话题里的人：输入框上方说一句，能管名册的人顺手拉进来。
+const outsidePrompt = useOutsideMentionPrompt({
+  topic: () => props.topic,
+  mentionPool: () => props.mentionPool,
+  me: myHandle,
+})
+const { outside: outsideMentioned, names: outsideNames, canAdd: canAddOutside } = outsidePrompt
+const { busy: addingOutside, error: addOutsideError } = outsidePrompt
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
@@ -203,7 +224,12 @@ coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.val
 
 function onComposerKey(e: KeyboardEvent) {
   // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
-  if (e.key === 'Escape' && mentionLevel.value === 'library') {
+  // ← 也是；`@` 后面什么都没打时的退格也是——那一下要是删掉了 `@`，整个菜单就没了，
+  // 人只是想回上一级。输入法选字时这几个键是给输入法的。
+  const back =
+    e.key === 'Escape' ||
+    ((e.key === 'ArrowLeft' || (e.key === 'Backspace' && picker.query.value === '')) && !isImeKey(e))
+  if (back && mentionLevel.value === 'library') {
     e.preventDefault()
     picker.backToRoot()
     return
@@ -260,6 +286,20 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
+  outsidePrompt.noteSent(content)
+}
+
+// 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
+const reminderOpen = ref(false)
+const reminderSetFor = ref<string | null>(null)
+function onReminderSet(at: Date) {
+  const when = new Intl.DateTimeFormat(i18n.global.locale.value, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(at)
+  reminderSetFor.value = t('work.room.reminder.set', { when })
 }
 
 // 发送键亮不亮：有字，或者有东西跟着走。
@@ -292,6 +332,16 @@ defineExpose({
       :enter-sends="enterSends"
       @pick="picker.pick"
       @hover="picker.hover"
+      @back="picker.backToRoot"
+    />
+    <OutsideMentionNotice
+      v-if="outsideMentioned.length"
+      :names="outsideNames"
+      :can-add="canAddOutside"
+      :busy="addingOutside"
+      :error="addOutsideError"
+      @add="outsidePrompt.add"
+      @dismiss="outsidePrompt.dismiss"
     />
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
@@ -319,11 +369,7 @@ defineExpose({
         density="comfortable"
         class="composer-input"
         :placeholder="hint"
-        :title="
-          enterSends
-            ? `Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给${agentName}，可直接粘贴图片`
-            : '可直接粘贴图片'
-        "
+        :title="enterSends ? t('work.room.composer.keysHint', { name: agentName }) : t('work.room.composer.pasteHint')"
         @keydown="onComposerKey"
         @paste="emit('paste', $event)"
         @compositionstart="onCompositionStart"
@@ -338,13 +384,22 @@ defineExpose({
         :summon-on="summonOn"
         :summon-ready="summonReady"
         :agent-name="agentName"
+        :can-checklist="!!postChecklist"
+        :can-remind="!!topic"
         @files="emit('files', $event)"
+        @checklist="checklistOpen = true"
         @toggle-summon="toggleSummon"
+        @remind="reminderOpen = true"
         @send="sendDraft()"
       >
         <template #chips><slot name="composer-chips" /></template>
       </ComposerActions>
+      <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
     </div>
+    <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
+    <v-snackbar :model-value="reminderSetFor !== null" :timeout="4000" @update:model-value="reminderSetFor = null">
+      {{ reminderSetFor }}
+    </v-snackbar>
   </div>
 </template>
 

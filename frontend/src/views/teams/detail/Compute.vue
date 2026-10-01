@@ -28,6 +28,8 @@ type CloudMachine = ProjectMachine & { projectName: string }
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
+// 自己名下（只有自己的那个团队）不说「团队」：说到归属的几句各有一份。
+const scope = computed(() => (teamData.value?.personal ? 'own' : 'team'))
 
 const devices = ref<MyDevice[]>([])
 const myDevices = ref<MyDevice[]>([])
@@ -49,34 +51,37 @@ const cloudDeviceIds = computed(
 )
 const selfHostedDevices = computed(() => devices.value.filter((device) => !cloudDeviceIds.value.has(device.device_id)))
 const onlineCount = computed(() => selfHostedDevices.value.filter((device) => device.online).length)
-const cloudMoving = computed(() =>
-  cloudMachines.value.some(
-    (machine) =>
-      ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
-        machine.status
-      ) ||
-      ['provisioning', 'unknown'].includes(machine.ai_status) ||
-      (machine.status === 'running' &&
-        machine.ai_status === 'ready' &&
-        !machine.device_id &&
-        machine.enroll_attempts < machine.enroll_max_attempts)
+function moving(machine: CloudMachine): boolean {
+  return (
+    ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
+      machine.status
+    ) ||
+    ['provisioning', 'unknown'].includes(machine.ai_status) ||
+    (machine.status === 'running' &&
+      machine.ai_status === 'ready' &&
+      !machine.device_id &&
+      machine.enroll_attempts < machine.enroll_max_attempts)
   )
-)
-
-const statusLabel: Record<ProjectMachine['status'], string> = {
-  provisioning: '正在创建',
-  starting: '正在启动',
-  running: '运行中',
-  suspending: '正在休眠',
-  suspended: '已休眠',
-  resuming: '正在恢复',
-  stopping: '正在停止',
-  stopped: '已停止',
-  deleting: '正在释放',
-  deleted: '已释放',
-  error: '操作失败',
-  unknown: '状态未知',
 }
+const cloudMoving = computed(() => cloudMachines.value.some(moving))
+// Only the projects with a machine still changing are asked again: a team with
+// thirty projects asked every one of them each time, from every open tab.
+const movingProjects = computed(() => new Set(cloudMachines.value.filter(moving).map((m) => m.project_id)))
+
+const statusLabel = computed<Record<ProjectMachine['status'], string>>(() => ({
+  provisioning: t('teams.compute.status.provisioning'),
+  starting: t('teams.compute.status.starting'),
+  running: t('teams.compute.status.running'),
+  suspending: t('teams.compute.status.suspending'),
+  suspended: t('teams.compute.status.suspended'),
+  resuming: t('teams.compute.status.resuming'),
+  stopping: t('teams.compute.status.stopping'),
+  stopped: t('teams.compute.status.stopped'),
+  deleting: t('teams.compute.status.deleting'),
+  deleted: t('teams.compute.status.deleted'),
+  error: t('teams.compute.status.error'),
+  unknown: t('teams.compute.status.unknown'),
+}))
 
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback
@@ -90,7 +95,7 @@ async function loadCloud() {
         const result = await listProjectMachines(project.id)
         return result.data.map((machine) => ({ ...machine, projectName: project.name }))
       } catch (cause) {
-        const message = errorMessage(cause, '加载云端机器失败')
+        const message = errorMessage(cause, t('teams.compute.loadCloudFailed'))
         if (message.includes('not configured')) {
           configured = false
           return []
@@ -119,7 +124,7 @@ async function load() {
     projects.value = projectList.data
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '加载团队工作电脑失败')
+    error.value = errorMessage(cause, t('teams.compute.loadFailed'))
   } finally {
     loading.value = false
     schedulePoll()
@@ -128,9 +133,29 @@ async function load() {
 
 async function refreshCloud() {
   try {
-    await loadCloud()
+    const asked = movingProjects.value
+    const fresh = new Map(
+      await Promise.all(
+        projects.value
+          .filter((project) => asked.has(project.id))
+          .map(
+            async (project) =>
+              [
+                project.id,
+                (await listProjectMachines(project.id)).data.map((machine) => ({
+                  ...machine,
+                  projectName: project.name,
+                })),
+              ] as const
+          )
+      )
+    )
+    cloudMachines.value = projects.value.flatMap(
+      (project) => fresh.get(project.id) ?? cloudMachines.value.filter((m) => m.project_id === project.id)
+    )
+    quotas.value = await getTeamResourceQuotas(teamId.value)
   } catch (cause) {
-    error.value = errorMessage(cause, '刷新云端机器状态失败')
+    error.value = errorMessage(cause, t('teams.compute.refreshFailed'))
   } finally {
     schedulePoll()
   }
@@ -139,7 +164,13 @@ async function refreshCloud() {
 function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
-  if (cloudMoving.value) pollTimer = setTimeout(refreshCloud, 5000)
+  // A page nobody is looking at does not ask; it looks again when it is shown.
+  if (cloudMoving.value && document.visibilityState !== 'hidden') pollTimer = setTimeout(refreshCloud, 5000)
+}
+
+function onVisibility() {
+  if (document.visibilityState === 'visible' && cloudMoving.value) void refreshCloud()
+  else schedulePoll()
 }
 
 async function addMachine(device: MyDevice) {
@@ -149,35 +180,35 @@ async function addMachine(device: MyDevice) {
     await registerDeviceForTeam(device.device_id, teamId.value)
     await load()
   } catch (cause) {
-    error.value = errorMessage(cause, '添加机器失败')
+    error.value = errorMessage(cause, t('teams.compute.addMachineFailed'))
   } finally {
     busy.value = null
   }
 }
 
 async function removeMachine(device: MyDevice) {
-  if (!window.confirm(`确定把「${device.name}」移出这个团队吗？`)) return
+  if (!window.confirm(t(`teams.compute.${scope.value}.removeDeviceConfirm`, { name: device.name }))) return
   busy.value = device.device_id
   error.value = null
   try {
     await unregisterDeviceFromTeam(device.device_id, teamId.value)
     await load()
   } catch (cause) {
-    error.value = errorMessage(cause, '移出机器失败')
+    error.value = errorMessage(cause, t('teams.compute.removeMachineFailed'))
   } finally {
     busy.value = null
   }
 }
 
 async function destroyCloud(machine: CloudMachine) {
-  if (!window.confirm(`确定释放云端机器「${machine.hostname}」吗？释放后数据不可恢复。`)) return
+  if (!window.confirm(t('teams.compute.destroyConfirm', { hostname: machine.hostname }))) return
   busy.value = machine.id
   error.value = null
   try {
     await deleteProjectMachine(machine.project_id, machine.id)
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '释放云端机器失败')
+    error.value = errorMessage(cause, t('teams.compute.destroyFailed'))
   } finally {
     busy.value = null
     schedulePoll()
@@ -185,10 +216,7 @@ async function destroyCloud(machine: CloudMachine) {
 }
 
 async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume') {
-  if (
-    operation === 'suspend' &&
-    !window.confirm(`休眠「${machine.hostname}」？磁盘会保留；LXC 恢复时进程重新启动，VM 恢复原进程。请先保存工作。`)
-  )
+  if (operation === 'suspend' && !window.confirm(t('teams.compute.suspendConfirm', { hostname: machine.hostname })))
     return
   busy.value = machine.id
   error.value = null
@@ -196,17 +224,24 @@ async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume
     await changeProjectMachinePower(machine.project_id, machine.id, operation)
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, operation === 'suspend' ? '休眠失败' : '恢复失败')
+    error.value = errorMessage(
+      cause,
+      operation === 'suspend' ? t('teams.compute.suspendFailed') : t('teams.compute.resumeFailed')
+    )
   } finally {
     busy.value = null
     schedulePoll()
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibility)
+  void load()
+})
 watch(teamId, load)
 watch(cloudMoving, schedulePoll)
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibility)
   if (pollTimer) clearTimeout(pollTimer)
 })
 </script>
@@ -216,7 +251,7 @@ onBeforeUnmount(() => {
     <div class="mb-5 d-flex align-start flex-wrap ga-3">
       <div>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          团队的云端额度和自有设备。项目给新 AI 队友设默认工作电脑，房间里可以给每个 AI 队友更换。
+          {{ t(`teams.compute.${scope}.subtitle`) }}
         </p>
       </div>
     </div>
@@ -231,51 +266,61 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <section v-if="quotas" class="compute-section mb-7">
-        <h3 class="text-subtitle-1 font-weight-medium mb-3">配额与用量</h3>
+        <h3 class="text-subtitle-1 font-weight-medium mb-3">{{ t('teams.compute.quotaSection') }}</h3>
         <v-row>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">团队云端机器</div>
-              <div class="text-h6">{{ quotas.machines.used }} / {{ quotas.machines.limit }} 台</div>
+              <div class="text-body-2 mb-2">{{ t(`teams.compute.${scope}.machines`) }}</div>
+              <div class="text-h6">
+                {{ t('teams.compute.machineQuotaCount', { used: quotas.machines.used, limit: quotas.machines.limit }) }}
+              </div>
               <v-progress-linear
                 class="my-3"
                 :model-value="Math.min(100, (quotas.machines.used / quotas.machines.limit) * 100)"
                 :color="quotaFull ? 'warning' : 'primary'"
               />
-              <div class="text-caption text-medium-emphasis">所有项目共享；停止机器仍占用名额，释放后归还</div>
+              <div class="text-caption text-medium-emphasis">{{ t('teams.compute.machinesSharedHint') }}</div>
             </v-card>
           </v-col>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">团队 tokens 额度</div>
-              <div v-if="quotas.credits.unlimited" class="text-h6">未设置上限</div>
+              <div class="text-body-2 mb-2">{{ t(`teams.compute.${scope}.creditsTitle`) }}</div>
+              <div v-if="quotas.credits.unlimited" class="text-h6">{{ t('teams.compute.creditsUnlimited') }}</div>
               <template v-else>
-                <div class="text-h6">剩余 {{ quotas.credits.credits_remaining.toLocaleString() }} 额度</div>
+                <div class="text-h6">
+                  {{
+                    t('teams.compute.creditsRemaining', { count: quotas.credits.credits_remaining.toLocaleString() })
+                  }}
+                </div>
                 <div class="text-body-2 my-2">
-                  已使用 {{ quotas.credits.credits_used.toLocaleString() }} /
-                  {{ quotas.credits.credits_total.toLocaleString() }} 额度
+                  {{
+                    t('teams.compute.creditsUsed', {
+                      used: quotas.credits.credits_used.toLocaleString(),
+                      total: quotas.credits.credits_total.toLocaleString(),
+                    })
+                  }}
                 </div>
               </template>
               <div class="text-caption text-medium-emphasis mt-2">
-                所有项目共享；1 额度 = {{ quotas.credits.tokens_per_credit.toLocaleString() }} tokens，使用后扣减
+                {{ t('teams.compute.creditsSharedHint', { per: quotas.credits.tokens_per_credit.toLocaleString() }) }}
               </div>
             </v-card>
           </v-col>
         </v-row>
-        <p class="text-caption text-medium-emphasis mt-3 mb-2">额度由平台或发放方调整；机构定向额度仅供指定项目使用</p>
+        <p class="text-caption text-medium-emphasis mt-3 mb-2">{{ t('teams.compute.creditsFootnote') }}</p>
         <v-table v-if="quotas.projects.length" density="comfortable">
           <thead>
             <tr>
-              <th>项目</th>
-              <th>占用云端机器</th>
-              <th>累计 tokens</th>
-              <th>定向额度剩余</th>
+              <th>{{ t('teams.compute.projectCol') }}</th>
+              <th>{{ t('teams.compute.machinesUsedCol') }}</th>
+              <th>{{ t('teams.compute.tokensUsedCol') }}</th>
+              <th>{{ t('teams.compute.restrictedCreditsCol') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="project in quotas.projects" :key="project.id">
               <td>{{ project.name }}</td>
-              <td>{{ project.machines_used }} 台</td>
+              <td>{{ t('teams.compute.machinesUsed', project.machines_used) }}</td>
               <td>{{ project.total_tokens.toLocaleString() }}</td>
               <td>{{ project.restricted_credits_remaining.toLocaleString() }}</td>
             </tr>
@@ -286,18 +331,18 @@ onBeforeUnmount(() => {
       <section class="compute-section mb-7">
         <div class="section-heading mb-3">
           <div>
-            <h3 class="text-subtitle-1 font-weight-medium">云端机器</h3>
-            <p class="text-caption text-medium-emphasis mb-0">团队各项目的云端机器，费用记在所属项目</p>
+            <h3 class="text-subtitle-1 font-weight-medium">{{ t('teams.compute.cloudSection') }}</h3>
+            <p class="text-caption text-medium-emphasis mb-0">{{ t(`teams.compute.${scope}.cloudSubtitle`) }}</p>
           </div>
         </div>
 
         <v-alert v-if="!cloudConfigured" type="info" variant="tonal" density="comfortable">
-          当前部署尚未接入云端；自有设备仍可正常使用
+          {{ t('teams.compute.cloudNotConfigured') }}
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
           <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
           <div>
-            <div class="text-body-2 font-weight-medium">暂无云端机器</div>
+            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.cloudEmpty') }}</div>
           </div>
         </div>
         <v-row v-else>
@@ -327,19 +372,26 @@ onBeforeUnmount(() => {
                 </v-chip>
               </div>
               <div class="machine-meta">
-                <span>{{ machine.cores }} 核</span>
-                <span>{{ Math.round(machine.memory_mb / 1024) }} GB 内存</span>
-                <span>{{ machine.disk_gb }} GB 磁盘</span>
+                <span>{{ t('teams.compute.cores', machine.cores) }}</span>
+                <span>{{ t('teams.compute.memory', { size: Math.round(machine.memory_mb / 1024) }) }}</span>
+                <span>{{ t('teams.compute.disk', { size: machine.disk_gb }) }}</span>
               </div>
-              <div class="text-caption text-medium-emphasis mt-2">费用归属：{{ machine.projectName }}</div>
-              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">地址：{{ machine.ip }}</div>
+              <div class="text-caption text-medium-emphasis mt-2">
+                {{ t('teams.compute.billedTo', { project: machine.projectName }) }}
+              </div>
+              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">
+                {{ t('teams.compute.address', { ip: machine.ip }) }}
+              </div>
               <div class="text-caption mt-1" :class="machine.device_id ? 'text-success' : 'text-medium-emphasis'">
                 {{
                   machine.device_id
-                    ? '已接入'
+                    ? t('teams.compute.enrolled')
                     : machine.enroll_error
-                      ? `接入失败（${machine.enroll_attempts}/${machine.enroll_max_attempts}）`
-                      : '等待自动接入'
+                      ? t('teams.compute.enrollFailed', {
+                          attempts: machine.enroll_attempts,
+                          max: machine.enroll_max_attempts,
+                        })
+                      : t('teams.compute.enrollPending')
                 }}
               </div>
               <v-alert v-if="machine.enroll_error" type="error" variant="tonal" density="compact" class="mt-3">
@@ -353,7 +405,7 @@ onBeforeUnmount(() => {
                   :disabled="busy !== null"
                   @click="changePower(machine, machine.status === 'running' ? 'suspend' : 'resume')"
                 >
-                  {{ machine.status === 'running' ? '休眠' : '恢复' }}
+                  {{ machine.status === 'running' ? t('teams.compute.suspend') : t('teams.compute.resume') }}
                 </v-btn>
                 <v-btn
                   size="small"
@@ -363,7 +415,7 @@ onBeforeUnmount(() => {
                   :disabled="['suspending', 'resuming'].includes(machine.status)"
                   @click="destroyCloud(machine)"
                 >
-                  释放
+                  {{ t('teams.compute.release') }}
                 </v-btn>
               </div>
             </v-card>
@@ -374,12 +426,14 @@ onBeforeUnmount(() => {
       <section class="compute-section">
         <div class="section-heading mb-3">
           <div>
-            <h3 class="text-subtitle-1 font-weight-medium">自有设备</h3>
-            <p class="text-caption text-medium-emphasis mb-0">把成员已接入的机器注册给团队，工作树与数据留在机器上。</p>
+            <h3 class="text-subtitle-1 font-weight-medium">{{ t('teams.compute.selfHostedSection') }}</h3>
+            <p class="text-caption text-medium-emphasis mb-0">{{ t(`teams.compute.${scope}.selfHostedSubtitle`) }}</p>
           </div>
           <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" variant="outlined" prepend-icon="mdi-plus">添加自有设备</v-btn>
+              <v-btn v-bind="menuProps" variant="outlined" prepend-icon="mdi-plus">{{
+                t('teams.compute.addDevice')
+              }}</v-btn>
             </template>
             <v-list density="compact" min-width="280">
               <v-list-item
@@ -393,11 +447,15 @@ onBeforeUnmount(() => {
                   <v-icon :color="device.online ? 'success' : 'grey'" size="12" class="mr-2">mdi-circle</v-icon>
                 </template>
               </v-list-item>
-              <v-list-item v-if="!addable.length && myDevices.length" disabled title="你的设备都已在这个团队中" />
+              <v-list-item
+                v-if="!addable.length && myDevices.length"
+                disabled
+                :title="t(`teams.compute.${scope}.allDevicesAdded`)"
+              />
               <v-list-item
                 v-if="!myDevices.length"
                 :to="{ name: 'UserSettingsDevices' }"
-                title="先在「设置 → 设备」中接入电脑"
+                :title="t('teams.compute.goToMyDevices')"
               >
                 <template #prepend><v-icon size="18" class="mr-2">mdi-laptop-account</v-icon></template>
               </v-list-item>
@@ -408,13 +466,13 @@ onBeforeUnmount(() => {
         <div v-if="!selfHostedDevices.length" class="empty-panel">
           <v-icon size="38" class="empty-panel-icon">mdi-laptop-off</v-icon>
           <div>
-            <div class="text-body-2 font-weight-medium">还没有自有设备</div>
-            <div class="text-caption text-medium-emphasis">接入后，团队内所有项目都可以使用。</div>
+            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.selfHostedEmptyTitle') }}</div>
+            <div class="text-caption text-medium-emphasis">{{ t(`teams.compute.${scope}.selfHostedEmptyHint`) }}</div>
           </div>
         </div>
         <template v-else>
           <div class="text-caption text-medium-emphasis mb-3">
-            {{ selfHostedDevices.length }} 台机器 · {{ onlineCount }} 台在线
+            {{ t('teams.compute.deviceSummary', { count: selfHostedDevices.length, online: onlineCount }) }}
           </div>
           <v-row>
             <v-col v-for="device in selfHostedDevices" :key="device.device_id" cols="12" sm="6" lg="4">
@@ -428,14 +486,16 @@ onBeforeUnmount(() => {
                     :class="device.online ? 'text-success font-weight-medium' : 'text-medium-emphasis'"
                   >
                     <span class="status-dot" :class="device.online ? 'status-dot--on' : ''" />
-                    {{ device.online ? '在线' : '离线' }}
+                    {{ device.online ? t('teams.compute.online') : t('teams.compute.offline') }}
                   </span>
                 </div>
                 <div class="text-caption text-medium-emphasis machine-id">{{ device.device_id }}</div>
                 <div v-if="!device.team_ids.includes(teamId)" class="mt-2 device-user">
                   {{
                     t('work.deviceInUse.attached', {
-                      projects: (device.attached_projects ?? []).map((project) => project.name).join('、'),
+                      projects: (device.attached_projects ?? [])
+                        .map((project) => project.name)
+                        .join(t('teams.compute.listSeparator')),
                     })
                   }}
                 </div>
@@ -448,7 +508,7 @@ onBeforeUnmount(() => {
                     color="primary"
                   >
                     <v-icon start size="12">mdi-monitor-eye</v-icon>
-                    运行中 · @{{ screen.agent_handle }}
+                    {{ t('teams.compute.screenRunning', { handle: screen.agent_handle }) }}
                   </v-chip>
                 </div>
                 <div
@@ -475,7 +535,7 @@ onBeforeUnmount(() => {
                     :loading="busy === device.device_id"
                     @click="removeMachine(device)"
                   >
-                    移出团队
+                    {{ t(`teams.compute.${scope}.remove`) }}
                   </v-btn>
                 </div>
               </v-card>

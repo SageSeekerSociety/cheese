@@ -10,7 +10,7 @@ from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
-from app.domain.agent.compute import build_compute_pool
+from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
@@ -114,8 +114,9 @@ def get_llm_gateway() -> LlmGateway | None:
 
 
 @lru_cache
-def get_chat_service() -> ChatService:
-    gateway = get_llm_gateway()
+def get_compute_pool() -> ComputePool:
+    """The harness runtimes this process reads sessions with: the chat service's,
+    and the one a runner's ring wakes."""
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
@@ -123,13 +124,18 @@ def get_chat_service() -> ChatService:
         ensure_topic_cloud=_ensure_topic_cloud,
         read_topic_cloud=_read_topic_cloud,
     )
+    return build_compute_pool(cloud_channel=cloud)
+
+
+@lru_cache
+def get_chat_service() -> ChatService:
     return ChatService(
         session_factory=async_session_factory,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(cloud_channel=cloud),
-        gateway=gateway,
+        compute=get_compute_pool(),
+        gateway=get_llm_gateway(),
     )
 
 
@@ -191,6 +197,7 @@ def get_cloud_wakeup() -> CloudWakeup:
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
         from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
+        from app.domain.block.notice_text import say
 
         block = await chat.post_system_event(
             topic_id,
@@ -200,11 +207,8 @@ def get_cloud_wakeup() -> CloudWakeup:
                 "state": "failed",
                 "severity": SEVERITY_ERROR,
                 "who": WHO_HUMAN,
-                "detail": (
-                    "这条消息还在，平台不会自动换一台机器。"
-                    "可以在项目设置里查看这台设备的状态，处理后重试。"
-                ),
-                "detail_label": "下一步",
+                "detail": say("cloudProvisioningFailedDetail"),
+                "detail_label": say("labelNextStep"),
                 "retryable": True,
             },
         )
@@ -235,6 +239,7 @@ def get_work_runner() -> AgentWorkRunner:
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
     # the device hub's live screen state (in-memory, cheap); a topic on the local
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
+    from app.domain.agent.admission import HostMemory
     from app.domain.agent.device_provider import topic_credential_expiry
 
     runner = AgentWorkRunner(
@@ -242,6 +247,7 @@ def get_work_runner() -> AgentWorkRunner:
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
+        host_has_room=HostMemory().has_room,
     )
     runner.subscribe_messages()
     return runner

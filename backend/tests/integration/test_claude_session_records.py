@@ -21,7 +21,12 @@ from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, session_token
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_token,
+)
 
 
 def _bearer(handle: str) -> dict:
@@ -96,7 +101,7 @@ def test_a_tool_that_failed_marks_its_step_with_what_it_said(client, stub_hooks)
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 转一下文档"})
+        post_message(client, room, "alice", {"content": "@芝士 转一下文档"})
         frames = _until_done(ws)
     assert frames[-1]["type"] == "done", frames[-1]
     _wait_work_idle()
@@ -143,7 +148,7 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     room = _room(client)
     topic = uuid.UUID(room)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 看一下"})
+        post_message(client, room, "alice", {"content": "@芝士 看一下"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and f["block"]["content"] == "在看",
@@ -181,7 +186,7 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     room = _room(client)
     topic = uuid.UUID(room)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 跑一下测试"})
+        post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "make test" in str(f["block"]),
@@ -260,7 +265,7 @@ def test_a_sub_threads_work_lands_on_its_card(client, stub_hooks):
 
     stub_hooks.emit_turn = turn
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 开干"})
+        post_message(client, room, "alice", {"content": "@芝士 开干"})
         frames = _until_done(ws)
     assert frames[-1]["type"] == "done", frames[-1]
     _wait_work_idle()
@@ -296,7 +301,7 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
     stub_hooks.emit_turn = turn
     room = _room(client)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 编一下"})
+        post_message(client, room, "alice", {"content": "@芝士 编一下"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
@@ -337,7 +342,7 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 睡一会"})
+        post_message(client, room, "alice", {"content": "@芝士 睡一会"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
@@ -388,7 +393,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 睡一会"})
+        post_message(client, room, "alice", {"content": "@芝士 睡一会"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
@@ -425,7 +430,7 @@ def test_a_message_joins_the_turn_the_next_backend_picked_up(client):
     topic, room, _ = _picked_up_by_a_new_backend(client)
 
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 顺便把闹钟关了"})
+        post_message(client, room, "alice", {"content": "@芝士 顺便把闹钟关了"})
         _until_done(ws)
 
     async def turns() -> int:
@@ -490,7 +495,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     old = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@Opus 睡一会"})
+        post_message(client, room, "alice", {"content": "@Opus 睡一会"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
@@ -515,7 +520,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     # A message to the teammate joins the recovered turn — it must not start
     # a second turn beside the teammate's own.
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@Opus 接着睡"})
+        post_message(client, room, "alice", {"content": "@Opus 接着睡"})
         _until_done(ws)
 
     async def turns() -> int:

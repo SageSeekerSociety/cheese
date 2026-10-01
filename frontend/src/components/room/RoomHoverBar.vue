@@ -69,12 +69,12 @@ async function copy() {
         type="button"
         class="hover-bar__act rx-toggle"
         :class="{ 'hover-bar__act--on': pickerOpen }"
-        title="添加表情"
+        :title="t('work.room.message.react')"
         @click="emit('toggle-picker', block.id)"
       >
         <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
       </button>
-      <button type="button" class="hover-bar__act" title="回复" @click="emit('reply', block)">
+      <button type="button" class="hover-bar__act" :title="t('work.room.message.reply')" @click="emit('reply', block)">
         <v-icon size="15">mdi-reply-outline</v-icon>
       </button>
       <button
@@ -94,7 +94,12 @@ async function copy() {
       >
         <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
       </button>
-      <button type="button" class="hover-bar__act" title="转为话题" @click="emit('upgrade', block.id)">
+      <button
+        type="button"
+        class="hover-bar__act"
+        :title="t('work.room.message.upgrade')"
+        @click="emit('upgrade', block.id)"
+      >
         <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
       </button>
       <!-- MVP emoji picker: the 8 common reactions, Slack-style. 从那颗按钮下面长

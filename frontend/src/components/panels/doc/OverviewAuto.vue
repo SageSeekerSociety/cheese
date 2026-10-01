@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// 总览的其余四块（#1889 ②~⑤）—— 排在文档正文下面，不在编辑器里。
+// 总览的其余三块（#1889 ②~④）—— 排在文档正文下面，不在编辑器里。
 //
-// 项目总览是五块：①「项目是什么」是文档正文，人 / AI 队友写；②~⑤ 由平台从话题、
-// 决策卡、里程碑、结论现拼。在这之前，这四块只进 AI 队友的提示词，人翻开总览文档
-// 只看得到五分之一——而「这个项目现在在做什么」正是人打开总览要看的东西。
+// 项目总览是四块：①「项目是什么」是文档正文，人 / AI 队友写；②~④ 由平台从话题、
+// 里程碑、结论现拼。在这之前，这三块只进 AI 队友的提示词，人翻开总览文档只看得到
+// 一小部分——而「这个项目现在在做什么」正是人打开总览要看的东西。
 //
 // 它给的是「去哪看」，不是一段死文字：每一条都点得动，去它自己的那一头——话题进那
-// 个房间，决策进项目的决策记录，里程碑进日历。所以每一条都带着自己的 id。
+// 个房间，里程碑进日历。所以每一条都带着自己的 id。
 //
 // 两个读者，一份来源：注入提示词的那份 markdown 和这里读的是后端同一次取数
 // （`TopicService.overview_auto_data`），所以人和 AI 队友读到的不会各说各的。
@@ -24,7 +24,7 @@ import { t } from '@/i18n'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    /** 每有一轮动静就加一：话题状态、决策卡、里程碑都可能变了。 */
+    /** 每有一轮动静就加一：话题状态、里程碑都可能变了。 */
     activityTick?: number
   }>(),
   { activityTick: 0 }
@@ -34,10 +34,10 @@ const emit = defineEmits<{
   /** 一条话题：进那个房间。 */
   (e: 'open-topic', topicId: string): void
   /**
-   * 决策 / 里程碑各有自己的一页，不在这间房里——交给拿着路由的那一层
+   * 里程碑有自己的一页，不在这间房里——交给拿着路由的那一层
    * （`TopicView.handleOpenResource`），面板自己不导航。
    */
-  (e: 'open-resource', resource: 'decision' | 'milestone'): void
+  (e: 'open-resource', resource: 'milestone'): void
 }>()
 
 const blocks = ref<OverviewAutoBlock[]>([])
@@ -89,7 +89,6 @@ function dueLabel(due: string | null): string {
 // 两个话题条目可能同名，所以 key 用 id；id 是后端来的，理论上一定在。
 function keyOf(item: OverviewAutoItem, index: number): string {
   if (item.kind === 'topic') return `t-${item.topic_id}`
-  if (item.kind === 'decision') return `d-${item.block_id ?? index}`
   return `m-${item.milestone_id ?? index}`
 }
 
@@ -104,13 +103,13 @@ function open(item: OverviewAutoItem) {
     emit('open-topic', item.topic_id)
     return
   }
-  emit('open-resource', item.kind === 'decision' ? 'decision' : 'milestone')
+  emit('open-resource', 'milestone')
 }
 </script>
 
 <template>
   <section v-if="blocks.length || failed" class="overview-auto">
-    <!-- 拿不到就照实说，不装作这四块本来就没有：这一栏正是「项目全局」唯一的
+    <!-- 拿不到就照实说，不装作这三块本来就没有：这一栏正是「项目全局」唯一的
          落点，静默消失的后果和人从没读到它一样。 -->
     <div v-if="failed" class="overview-auto__failed">
       <span class="t-body c-muted">{{ t('work.room.overviewAuto.failed') }}</span>
@@ -129,7 +128,7 @@ function open(item: OverviewAutoItem) {
           <button type="button" class="auto-item" @click="open(item)">
             <span class="auto-item__row">
               <span v-if="item.kind === 'milestone'" class="status-dot" :class="milestoneDot(item.status)" />
-              <span class="auto-item__title">{{ item.kind === 'decision' ? item.text : item.title }}</span>
+              <span class="auto-item__title">{{ item.title }}</span>
               <span v-if="item.kind === 'milestone'" class="auto-item__meta">
                 {{ milestoneLabel(item.status) }} · {{ dueLabel(item.due) }}
               </span>
@@ -139,9 +138,6 @@ function open(item: OverviewAutoItem) {
                  一件事，挤在一行里两句话会互相盖住。 -->
             <span v-if="item.kind === 'topic' && item.conclusion" class="auto-item__sub">
               {{ item.conclusion }}
-            </span>
-            <span v-else-if="item.kind === 'decision' && item.topic_title" class="auto-item__sub">
-              {{ t('work.room.overviewAuto.decisionFrom', { topic: item.topic_title }) }}
             </span>
           </button>
         </li>

@@ -62,6 +62,40 @@ describe('groupByTurn', () => {
 
     expect(turns[0].steps).toBe(1)
   })
+
+  it('counts a turn from when it started, not from its first step', () => {
+    // 消息 20:28:00 发出，准备加上模型第一次回话用了 16 秒，头一步 20:28:16 才落下。
+    const started = Date.parse('2026-09-15T20:28:00Z')
+    const turns = groupByTurn([block('1', 't1', '2026-09-15T20:28:16Z'), block('2', 't1', '2026-09-15T20:28:18Z')], {
+      t1: started,
+    })
+
+    expect(turns[0].seconds).toBe(18)
+  })
+
+  it('a single step still says how long the turn took', () => {
+    const turns = groupByTurn([block('1', 't1', '2026-09-15T20:28:16Z')], { t1: Date.parse('2026-09-15T20:28:00Z') })
+
+    expect(turns[0].seconds).toBe(16)
+  })
+
+  it('counts from the first entry when the start is unknown', () => {
+    const turns = groupByTurn([block('1', 't1', '2026-09-15T20:28:16Z'), block('2', 't1', '2026-09-15T20:28:18Z')], {
+      other: Date.parse('2026-09-15T20:00:00Z'),
+    })
+
+    expect(turns[0].seconds).toBe(2)
+  })
+
+  it('an opening line written before the turn began still counts', () => {
+    // 平台发起的一轮：开场那一行先落下，这一轮才登记开始。
+    const turns = groupByTurn(
+      [block('1', 't1', '2026-09-15T20:28:00Z', { who: 'system' }), block('2', 't1', '2026-09-15T20:28:30Z')],
+      { t1: Date.parse('2026-09-15T20:28:01Z') }
+    )
+
+    expect(turns[0].seconds).toBe(30)
+  })
 })
 
 describe('isNarration', () => {

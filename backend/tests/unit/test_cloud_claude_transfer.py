@@ -1,5 +1,6 @@
 """Execute enrollment with local SSH/SCP transports and a verified-cache fixture."""
 
+import asyncio
 import os
 
 import pytest
@@ -86,7 +87,48 @@ async def test_failed_ssh_stops_before_running_bootstrap(tmp_path, monkeypatch):
     ssh.write_text("#!/bin/sh\nexit 255\n")
     ssh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setattr(enrollment, "SSH_READY_WAIT_S", 0.3)
+    monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.05)
     with pytest.raises(enrollment.EnrollmentError, match="Claude transfer failed"):
         await enrollment.run_bootstrap(
             ip="guest", login_user="cheese", private_key="test", script="exit 0"
         )
+
+
+async def test_a_machine_whose_ssh_comes_up_late_enrolls_in_one_attempt(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "guest"
+    (home / ".cheese/claude/versions").mkdir(parents=True)
+    pin = home / ".cheese/claude/versions" / enrollment.CLAUDE_PINNED_VERSION
+    pin.write_text("#!/bin/sh\n")
+    pin.chmod(0o755)
+    up = tmp_path / "sshd-up"
+    ssh = tmp_path / "ssh"
+    # Like a guest MicroCloud already reports running: ssh cannot connect yet.
+    ssh.write_text(
+        f"""#!/bin/bash
+if ! test -e "{up}"; then
+  echo "ssh: connect to host guest port 22: Connection timed out"
+  exit 255
+fi
+for last; do :; done
+export HOME="{home}"
+if [ "$last" = 'bash -l -s' ]; then exec /bin/bash -s; fi
+exec /bin/bash -c "$last"
+"""
+    )
+    ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.1)
+
+    async def sshd_starts():
+        await asyncio.sleep(0.5)
+        up.touch()
+
+    starting = asyncio.create_task(sshd_starts())
+    output = await enrollment.run_bootstrap(
+        ip="guest", login_user="cheese", private_key="test", script="echo Connected."
+    )
+    await starting
+    assert output == "Connected."

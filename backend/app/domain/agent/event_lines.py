@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass
 
 from app.domain.agent.tool_preview import SHELL_TOOLS, ToolPreview, cheese_subcommand
+from app.domain.block.notice_text import say
 
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as
@@ -194,8 +195,8 @@ def _subagent_event_text(description: str, result: str) -> str:
     if len(summary) > _SUBAGENT_RESULT_MAX:
         summary = summary[:_SUBAGENT_RESULT_MAX] + "…"
     head = " ".join(description.split())[:80]
-    verb = f"分身查完了：{head}" if head else "分身查完了"
-    return f"{verb}\n{summary}" if summary else verb
+    verb = say("subagentDoneAbout", task=head) if head else say("subagentDone")
+    return say("subagentDoneSummary", verb=verb, summary=summary) if summary else verb
 
 
 def _subagent_result_meta(name: str, description: str, result: str) -> dict:
@@ -278,12 +279,12 @@ def _format_change_summary(files: list[dict]) -> str:
     """现场 line for a turn's changes: a headline plus the paths it touched."""
     added = sum(f["added"] for f in files)
     removed = sum(f["removed"] for f in files)
-    head = f"这一轮改了 {len(files)} 个文件（+{added} -{removed}）"
-    listed = [f["path"] for f in files[:_CHANGE_FILES_LISTED]]
-    rest = len(files) - len(listed)
+    head = say("changeSummary", count=len(files), added=added, removed=removed)
+    listed = " · ".join(f["path"] for f in files[:_CHANGE_FILES_LISTED])
+    rest = len(files) - min(len(files), _CHANGE_FILES_LISTED)
     if rest > 0:
-        listed.append(f"…另 {rest} 个")
-    return f"{head}\n{' · '.join(listed)}" if listed else head
+        return say("changeSummaryFilesMore", head=head, files=listed, rest=rest)
+    return say("changeSummaryFiles", head=head, files=listed) if listed else head
 
 
 def _change_summary_meta(changeset: _Changeset) -> dict:

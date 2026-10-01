@@ -134,7 +134,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (platformLane.value || needsPr.value) return null
     if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
     const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
-    return ['现在采纳不会合并', ...why].join('：')
+    return [t('topic.accept.notMergingNow'), ...why].join(t('topic.accept.separator'))
   })
 
   // 绿了自动合 (#718)：项目允许、且卡正停在 blocked/behind（规则还没满足）时才有
@@ -313,7 +313,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     try {
       await downloadFile(cardDeliverableUrl(card.id), filename)
     } catch (e) {
-      deliverableError.value = e instanceof Error ? e.message : '下载失败'
+      deliverableError.value = e instanceof Error ? e.message : t('files.downloadFailed')
     } finally {
       deliverableBusy.value = false
     }
@@ -328,7 +328,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await approveCard(card.id, AUTHOR)
       await loadAcceptCard(true)
     } catch (e) {
-      store.reportError(e, '批准失败')
+      store.reportError(e, t('topic.accept.approveFailed'))
     } finally {
       acceptBusy.value = false
     }
@@ -348,7 +348,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await reassignCard(card.id, handle)
       await loadAcceptCard()
     } catch (e) {
-      store.reportError(e, '改由他人审阅失败')
+      store.reportError(e, t('topic.accept.reassignFailed'))
     } finally {
       acceptBusy.value = false
     }
@@ -361,11 +361,11 @@ export function useAcceptCard(props: AcceptCardHost) {
     try {
       const updated = await acceptCard(card.id, AUTHOR, card.merge_state.head_sha)
       if (updated.status === 'conflict') {
-        store.error = `与主分支冲突，未能合并。${store.agentName}正在处理，完成后可以重新采纳`
+        store.error = t('topic.accept.conflict', { agent: store.agentName })
       }
       await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
     } catch (e) {
-      store.reportError(e, needsPr.value ? '创建 PR 失败' : '采纳失败')
+      store.reportError(e, needsPr.value ? t('topic.accept.createPrFailed') : t('topic.accept.acceptFailed'))
       // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
       // 否则人只能对着同一张旧卡再点一次，再被拒一次。
       await loadAcceptCard(true)
@@ -382,7 +382,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await revokeCard(card.id, AUTHOR)
       await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
     } catch (e) {
-      store.reportError(e, '撤回采纳失败')
+      store.reportError(e, t('topic.accept.undoFailed'))
     } finally {
       acceptBusy.value = false
     }
@@ -398,7 +398,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       forceMergeReason.value = ''
       await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
     } catch (e) {
-      store.reportError(e, '采纳失败')
+      store.reportError(e, t('topic.accept.acceptFailed'))
       await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
     } finally {
       acceptBusy.value = false
@@ -414,7 +414,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await setAutoMerge(card.id, !!enabled, card.merge_state.head_sha)
       await loadAcceptCard(true)
     } catch (e) {
-      store.reportError(e, '设置自动合并失败')
+      store.reportError(e, t('topic.accept.autoMergeFailed'))
       await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
     } finally {
       acceptBusy.value = false
@@ -431,7 +431,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       rejectNote.value = ''
       await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
     } catch (e) {
-      store.reportError(e, '退回失败')
+      store.reportError(e, t('topic.accept.returnFailed'))
     } finally {
       acceptBusy.value = false
     }
@@ -447,7 +447,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       voidNote.value = ''
       await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
     } catch (e) {
-      store.reportError(e, '作废失败')
+      store.reportError(e, t('topic.accept.voidFailed'))
     } finally {
       acceptBusy.value = false
     }

@@ -6,6 +6,7 @@ import type { Team } from '@/types'
 
 import { computed, ref } from 'vue'
 
+import { squareRadius } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -43,7 +44,7 @@ async function submit() {
   <v-card class="pa-6" max-width="560" width="100%" rounded="lg" flat border>
     <div class="t-eyebrow c-muted mb-4">{{ t('work.teamProfile.eyebrow') }}</div>
     <div class="d-flex align-center mb-4">
-      <v-avatar size="56" color="surface-variant">
+      <v-avatar size="56" :rounded="false" :style="{ borderRadius: squareRadius(56) }" color="surface-variant">
         <v-img :src="getAvatarUrl(team.avatarId)" alt="" />
       </v-avatar>
       <div class="ml-4">

@@ -23,15 +23,17 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
 from app.domain.delivery.models import TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.topic.models import Topic
 from app.domain.user.services import user_by_handle
 
-DELIVERED_AS_ASKED = "你请平台在这个时刻把它递给你"
+DELIVERED_AS_ASKED = say("timedDelivery")
 
 
 def _utcnow() -> datetime:
@@ -80,6 +82,80 @@ async def deliver_at(
     return row
 
 
+async def _hand_to_agent(session: AsyncSession, row: TimedDelivery) -> None:
+    """An agent reads its room: the delivery lands there as a platform line, and
+    the ledger hands the same event to the agent's seat."""
+    session.add(
+        Block(
+            id=row.id,
+            project_id=row.project_id,
+            topic_id=row.topic_id,
+            author="system",
+            author_type=AuthorType.platform,
+            kind=BlockKind.event,
+            content=DELIVERED_AS_ASKED,
+            # A row, not `BlockRepository.add`: the key is recorded here.
+            meta=with_keys(
+                notice(
+                    EVENT_TIMED_DELIVERY,
+                    severity=SEVERITY_INFO,
+                    who=WHO_CHEESE,
+                    detail=row.content,
+                    detail_label=say("labelTimedDeliveryNote"),
+                ),
+                content=DELIVERED_AS_ASKED,
+            ),
+        )
+    )
+    assert row.agent_instance_id is not None
+    await record_agent(
+        session,
+        _event(row, content=row.content),
+        topic_id=row.topic_id,
+        instance_id=row.agent_instance_id,
+        content=row.content,
+    )
+
+
+async def _hand_to_person(session: AsyncSession, row: TimedDelivery) -> None:
+    """A person's reminder reaches their own inbox (and push), and nobody else.
+
+    It does not land in the room. The timeline is read by everyone in the room
+    and says 「你」 to each of them; a reminder someone set for themselves is
+    theirs alone, the way a reminder in any chat app is. The notification links
+    back to the room it was set in.
+    """
+    assert row.receiver_id is not None
+    said = say("reminder", text=row.content)
+    topic = await session.get(Topic, row.topic_id)
+    event = _event(
+        row,
+        content=str(said),
+        message=said.descriptor(),
+        **({"topicTitle": topic.title} if topic is not None else {}),
+    )
+    ledger = Ledger(session)
+    pending = await ledger.record_mailbox(event, row.recipient_handle, row.receiver_id)
+    if pending is not None:
+        await ledger.send([pending], build_notification_event_handler(session))
+
+
+def _event(row: TimedDelivery, *, content: str, **extra: object) -> DeliveryEvent:
+    return DeliveryEvent(
+        id=row.id,
+        type=NotificationType.ROOM_NOTICE,
+        payload={
+            "projectId": str(row.project_id),
+            "topicId": str(row.topic_id),
+            "content": content,
+            "eventType": EVENT_TIMED_DELIVERY,
+            "severity": SEVERITY_INFO,
+            **extra,
+        },
+        occurred_at=row.due_at,
+    )
+
+
 async def deliver_due(
     sessions: SessionFactory, *, chat, runner, limit: int = 100
 ) -> dict[str, int]:
@@ -117,54 +193,10 @@ async def deliver_due(
                     row.receiver_id = person.id
             row.event_id = row.id
             row.materialized_at = stamp
-            session.add(
-                Block(
-                    id=row.id,
-                    project_id=row.project_id,
-                    topic_id=row.topic_id,
-                    author="system",
-                    author_type=AuthorType.platform,
-                    kind=BlockKind.event,
-                    content=DELIVERED_AS_ASKED,
-                    meta=notice(
-                        EVENT_TIMED_DELIVERY,
-                        severity=SEVERITY_INFO,
-                        who=WHO_CHEESE,
-                        detail=row.content,
-                        detail_label="你当时写下的",
-                    ),
-                )
-            )
-            event = DeliveryEvent(
-                id=row.id,
-                type=NotificationType.ROOM_NOTICE,
-                payload={
-                    "projectId": str(row.project_id),
-                    "topicId": str(row.topic_id),
-                    "content": row.content,
-                    "eventType": EVENT_TIMED_DELIVERY,
-                    "severity": SEVERITY_INFO,
-                },
-                occurred_at=row.due_at,
-            )
             if row.agent_instance_id is not None:
-                await record_agent(
-                    session,
-                    event,
-                    topic_id=row.topic_id,
-                    instance_id=row.agent_instance_id,
-                    content=row.content,
-                )
+                await _hand_to_agent(session, row)
             else:
-                assert row.receiver_id is not None
-                ledger = Ledger(session)
-                pending = await ledger.record_mailbox(
-                    event, row.recipient_handle, row.receiver_id
-                )
-                if pending is not None:
-                    await ledger.send(
-                        [pending], build_notification_event_handler(session)
-                    )
+                await _hand_to_person(session, row)
             materialized += 1
         await session.commit()
     # Post-commit dispatch is optional for recovery: every scan also claims older

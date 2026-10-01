@@ -93,7 +93,8 @@ USAGE_LOG = Path(os.environ.get("CHEESE_USAGE_LOG", "/var/log/cheese/usage.jsonl
 # 0 disables the backstop cap. Set per deployment from the subscription's ceiling.
 TOKEN_CAP = int(os.environ.get("CHEESE_TOKEN_CAP", "0"))
 CAP_WINDOW_S = int(os.environ.get("CHEESE_CAP_WINDOW_S", str(5 * 3600)))
-# Shared with the backend (SANDBOX_TOKEN): verifies the caller's scoped token.
+# Shared with the backend (SANDBOX_TOKEN): verifies the caller's scoped token,
+# and is the proxy's own credential towards the backend.
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
 ALLOW_HEADER_ATTR = os.environ.get("CHEESE_ALLOW_HEADER_ATTR", "") == "1"
 ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
@@ -121,7 +122,12 @@ CREDENTIAL = PlatformCredential(
         )
     )
 )
-ADMISSION = AdmissionGate(ADMISSION_URL, cache_s=ADMISSION_CACHE_S)
+# The proxy's own credential rides every admission call: only a caller holding
+# it is handed a gateway project's key (the session's bearer names the room,
+# and a session must never hold that key).
+ADMISSION = AdmissionGate(
+    ADMISSION_URL, cache_s=ADMISSION_CACHE_S, credential=SCOPED_SECRET
+)
 
 # The platform's ChatGPT accounts, one directory per name. See ChatGPTAccounts.
 CHATGPT_ACCOUNTS = ChatGPTAccounts(

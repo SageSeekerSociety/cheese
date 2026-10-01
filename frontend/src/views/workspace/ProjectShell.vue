@@ -94,7 +94,7 @@ const hasError = computed<boolean>({
       <component :is="Component" :key="current.params.topicId" />
     </router-view>
 
-    <v-snackbar v-model="hasError" color="error" timeout="4000" location="bottom">
+    <v-snackbar v-model="hasError" timeout="4000" location="bottom">
       {{ store.error }}
     </v-snackbar>
   </div>

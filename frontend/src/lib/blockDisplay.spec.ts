@@ -1,8 +1,15 @@
 import type { Block } from '@/cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { askAnswered, askOptions, askVersion, replySnippet } from './blockDisplay'
+
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 function said(author: string, content: string): Block {
   return {

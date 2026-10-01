@@ -38,6 +38,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import Event
 from app.domain.project import artifacts
 from app.domain.review import notes, pr_signals
@@ -155,13 +156,13 @@ async def _announce_filed(
         session,
         place_id=topic.id,
         task_id=task.id,
-        content=(f"《{artifact}》已提交，待 {card.reviewer_handle} 审阅"),
+        content=say("cardFiled", artifact=artifact, reviewer=card.reviewer_handle),
         meta=notice(
             EVENT_CARD_FILED,
             severity=SEVERITY_INFO,
             who=WHO_HUMAN,
             detail=detail or None,
-            detail_label="改动",
+            detail_label=say("labelChanges"),
         ),
         points_at=Event(
             reviewers=(card.reviewer_handle,),
@@ -188,16 +189,21 @@ async def _announce_new_artifact(
     await announce(
         session,
         place_id=topic.id,
-        content=f"这次交付新建了产物《{name}》，此前项目里没有这一项",
+        content=say("artifactDeclared", name=name),
         meta=notice(
             EVENT_ARTIFACT_DECLARED,
             severity=SEVERITY_WARN,
             who=WHO_HUMAN,
-            detail="\n".join(
-                f"《{a.name}》" + (f" 第 {a.version} 版" if a.version else " 尚未交付")
-                for a in listed
+            detail=say(
+                "lines",
+                items=[
+                    say("artifactVersion", name=a.name, version=a.version)
+                    if a.version
+                    else say("artifactUndelivered", name=a.name)
+                    for a in listed
+                ],
             ),
-            detail_label="项目现在的产物清单",
+            detail_label=say("labelArtifactList"),
         ),
     )
 
@@ -213,15 +219,13 @@ async def _notify_ready(session: AsyncSession, card: AcceptCard, topic: Topic) -
         session,
         card,
         topic,
-        f"PR #{card.pr_number} 可以合并了，等 {card.reviewer_handle} 采纳",
+        say("acceptReady", pr=card.pr_number, reviewer=card.reviewer_handle),
         meta=notice(
             EVENT_ACCEPT_READY,
             severity=SEVERITY_INFO,
             who=WHO_HUMAN,
-            detail=(
-                f"这个 PR 满足项目的合并规则，采纳即当场合并。\n{card.pr_url or ''}"
-            ),
-            detail_label="下一步",
+            detail=say("acceptReadyDetail", url=card.pr_url or ""),
+            detail_label=say("labelNextStep"),
         ),
     )
     ledger.record(pr_signals.NudgeKind.ready, signature)
@@ -260,18 +264,13 @@ async def _note_needs_human(
         session,
         card,
         topic,
-        f"PR #{card.pr_number} 平台不会自动合并",
+        say("mergeWithheld", pr=card.pr_number),
         meta=notice(
             EVENT_MERGE_WITHHELD,
             severity=SEVERITY_WARN,
             who=WHO_HUMAN,
-            detail=(
-                f"{reason}。\n{why}\n"
-                "可以人工放行（平台会记下是谁、在什么时候、当时的检查状态），"
-                "在 GitHub 上合并，或者作废这次审阅。"
-                f"\n{card.pr_url}"
-            ),
-            detail_label="原因",
+            detail=say("mergeWithheldDetail", reason=reason, why=why, url=card.pr_url),
+            detail_label=say("labelReason"),
         ),
     )
 

@@ -17,6 +17,7 @@ from app.core.domain_errors import (
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import SpaceRepository, SpaceUserRankRepository
+from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.models import (
     Task,
     TaskMembership,
@@ -36,6 +37,7 @@ from app.domain.task.submission_state import (
     refresh_completion_status,
     refresh_completion_status_for_submission,
 )
+from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
 
 
@@ -58,6 +60,14 @@ class TaskService:
 
     async def get_task(self, task_id: int) -> Task | None:
         return await self._repo.get_by_id(task_id)
+
+    @classmethod
+    def of(cls, session: AsyncSession) -> "TaskService":
+        return cls(TaskRepository(session=session))
+
+    async def list_joined(self, user_id: int, *, limit: int = 30) -> Sequence[Task]:
+        """The tasks ``user_id`` takes part in, across every space."""
+        return await self._repo.list_joined(user_id, limit=limit)
 
     async def enumerate_tasks(
         self,
@@ -192,6 +202,35 @@ class TaskMembershipService:
             task_id=task_id, member_id=member_id
         )
 
+    async def has_live_claim(
+        self, *, task: Task, user_id: int, team_id: int | None
+    ) -> bool:
+        """Whether a project built from ``task`` has a claim behind it.
+
+        An individual task is claimed by the person; a team task by the team the
+        project belongs to. A claim is live unless it was rejected or withdrawn,
+        so a pending application counts: its workspace is opened at claim time.
+        """
+        if task.submitter_type == 1:
+            if team_id is None:
+                return False
+            membership = await self._repo.get_by_task_and_member(
+                task_id=task.id,  # type: ignore[arg-type]
+                member_id=team_id,
+            )
+            if membership is None or not membership.is_team:
+                return False
+        else:
+            membership = await self._repo.get_user_membership(
+                task_id=task.id,  # type: ignore[arg-type]
+                user_id=user_id,
+            )
+        return (
+            membership is not None
+            and membership.deleted_at is None
+            and membership.approved != 1
+        )
+
     async def create_membership(
         self,
         *,
@@ -239,6 +278,25 @@ class TaskMembershipService:
         ):
             raise BadRequestError("Member already participating in this task.")
 
+        # 一个人一道题只领一次：团队来领时，队里不能有人已经通过别的团队领了它。
+        if is_team and approved != 1:
+            already = await members_claiming_through_another_team(
+                self._repo._session,
+                task_id=task.id,  # type: ignore[arg-type]
+                team_id=member_id,
+            )
+            if already:
+                raise BadRequestError(
+                    "A member of this team has already claimed this task "
+                    "through another team."
+                )
+
+        # 一个人不是团队：只有自己的那个团队不能领团队题，一个人去领个人题。
+        if is_team:
+            team = await self._repo._session.get(Team, member_id)
+            if team is not None and team.personal_owner_user_id is not None:
+                raise BadRequestError("A team task is claimed by a team, not a person.")
+
         # requireRealName：简化为只校验提交者本人
         if task.require_real_name and self._realname_repo is not None and approved == 0:
             has_identity = await self._realname_repo.has_identity(member_id)
@@ -257,6 +315,7 @@ class TaskMembershipService:
             updated_at=now,
             deadline=deadline,
             deleted_at=None,
+            pitch=(apply_reason or "").strip(),
         )
         return await self._repo.save(membership)
 
@@ -540,6 +599,23 @@ class TaskMembershipService:
                         "message": "This team is already participating in this task.",
                     }
                 )
+
+            # 一个人一道题只领一次：队里有人已经通过别的团队领了，这个团队就不能再领。
+            if existing is None or existing.approved == 1:
+                already = await members_claiming_through_another_team(
+                    self._repo._session,
+                    task_id=task.id,  # type: ignore[arg-type]
+                    team_id=team_id,
+                )
+                if already:
+                    reasons.append(
+                        {
+                            "code": "MEMBER_ALREADY_PARTICIPATING",
+                            "message": "A member of this team has already claimed "
+                            "this task through another team.",
+                            "details": {"userIds": already},
+                        }
+                    )
 
             if task.min_team_size is not None and team_size < task.min_team_size:
                 reasons.append(
@@ -1167,3 +1243,19 @@ class TaskSubmissionReviewService:
             user_id=submission.submitter_id,
             task_rank=task_rank,
         )
+
+
+async def claim_backs_project(
+    session: AsyncSession, *, task_id: int, user_id: int, team_id: int | None
+) -> bool:
+    """Whether a project may be built from ``task_id`` for this person and team.
+
+    The entry point for other domains, so they need not wire the task
+    repositories themselves. A task that does not exist is a 404.
+    """
+    task = await TaskService(TaskRepository(session=session)).get_task(task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    return await TaskMembershipService(
+        TaskMembershipRepository(session=session)
+    ).has_live_claim(task=task, user_id=user_id, team_id=team_id)

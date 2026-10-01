@@ -12,16 +12,15 @@ sees its own layout before delivering it (`POST .../documents/convert`); and the
 tracked changes in a `.docx` are listed (`GET .../documents/revisions`) and
 decided (`POST .../documents/revisions`) without Word.
 
-What stays behind, and why. `_clean_artifact_path`, `_source_bytes`,
-`_bind_source_task` and `MAX_ARTIFACT_BYTES` are read by these four routes but not
-only by them: the shown/room-file handlers that stay read the first, the
-attachment routes that moved in the previous slice read the middle two, and
-`room_files.py` already imports `_clean_artifact_path` from topics.py. A helper
-another group reads does not belong to this one, so it stays and this module
-imports it -- the shape `admin_models.py` uses for `DbSession`. `_row_numbers` and
-`_document_bytes` are the opposite case: nothing outside these four routes names
-them, so they move with them. That is also why there is no import cycle:
-`topics.py` imports nothing from this module.
+Where the shared names went. The names these four routes read from topics.py now
+have homes of their own: `clean_artifact_path` and `MAX_ARTIFACT_BYTES` are the
+room-file rules in `app.domain.project.room_files`, `source_bytes` is the API
+read-orchestration helper in `app.api.routes.topics_file_sources`, and the binding
+check became `TaskService.require_source_in_room`. `DbSession` and `_actor_in_place`
+are still imported from topics.py, the shape `admin_models.py` uses for `DbSession`.
+`_row_numbers` and `_document_bytes` are the opposite case: nothing outside these
+four routes names them, so they move with them. None of the new homes imports this
+module, so there is no cycle.
 
 The domain imports named only here leave topics.py with them -- the three
 `app.domain.documents` modules, `content_version`, and the `ConflictError` /
@@ -51,16 +50,11 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.api.routes.topics import (
-    MAX_ARTIFACT_BYTES,
-    DbSession,
-    _actor_in_place,
-    _bind_source_task,
-    _clean_artifact_path,
-    _source_bytes,
-)
+from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
+from app.domain.block.notice_text import exception_text, say
 from app.domain.documents.convert import (
     ConvertFailed,
     ConvertUnavailable,
@@ -80,6 +74,8 @@ from app.domain.documents.spreadsheet import (
 )
 from app.domain.library import service as library
 from app.domain.project import room_files
+from app.domain.project.room_files import MAX_ARTIFACT_BYTES, clean_artifact_path
+from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
 
@@ -106,14 +102,14 @@ async def recalc_spreadsheet(
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    path = _clean_artifact_path(body.get("path") or "")
+    path = clean_artifact_path(body.get("path") or "")
     raw = _document_bytes(body, place.project_id, topic_id, path)
     try:
         book, bad = await recalculate(raw, path, settings.office_render_endpoint)
     except SpreadsheetRecalcUnavailable as exc:
-        raise SystemBusyError(str(exc)) from exc
+        raise SystemBusyError(exception_text(exc)) from exc
     except SpreadsheetRecalcFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return ok(
         {
             "path": path,
@@ -139,15 +135,15 @@ async def convert_document(
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    path = _clean_artifact_path(body.get("path") or "")
+    path = clean_artifact_path(body.get("path") or "")
     target = str(body.get("to") or "").strip()
     raw = _document_bytes(body, place.project_id, topic_id, path)
     try:
         made = await convert(raw, path, target, settings.office_render_endpoint)
     except ConvertUnavailable as exc:
-        raise SystemBusyError(str(exc)) from exc
+        raise SystemBusyError(exception_text(exc)) from exc
     except ConvertFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return ok(
         {
             "path": upgraded_name(path, target.lower().lstrip(".")),
@@ -179,16 +175,16 @@ async def list_document_revisions(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    clean = _clean_artifact_path(path)
+    clean = clean_artifact_path(path)
     if task is not None:
-        await _bind_source_task(db, topic_id, task)
-    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
+        await TaskService(db).require_source_in_room(topic_id, task)
+    raw = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     except RevisionsFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     return ok(
         {
             "path": clean,
@@ -224,12 +220,12 @@ async def decide_document_revisions(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    clean = _clean_artifact_path(body.get("path") or "")
+    clean = clean_artifact_path(body.get("path") or "")
     if library.library_name(clean) is not None:
         # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
-        raise ValidationError("项目资料里的原件不能修改，可以基于它新建一份")
+        raise ValidationError(say("libraryOriginalReadOnly"))
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
@@ -238,20 +234,20 @@ async def decide_document_revisions(
     source = body.get("task")
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
-        await _bind_source_task(db, topic_id, task)
-    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task)
+        await TaskService(db).require_source_in_room(topic_id, task)
+    raw = await source_bytes(db, topic.project_id, topic_id, clean, task)
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
-            "文件已被修改，这份清单基于旧内容，刷新后重试",
+            say("revisionListStale"),
             data={"path": clean, "version": actual},
         )
     try:
         made, left = decide(raw, clean, accept=accept, reject=reject)
     except RevisionsUnsupported as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     except RevisionsFailed as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError(exception_text(exc)) from exc
     if task is not None:
         from app.domain.repository.forge_files import ProjectFiles
 

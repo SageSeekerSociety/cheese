@@ -5,6 +5,8 @@
 //
 // 只有还没接上仓库的 GitHub 项目看得到这一块 —— 那个条件（项目的仓库形态）是页面的
 // 判断，所以由页面决定挂不挂它。
+import { t } from '@/i18n'
+
 defineOptions({ name: 'UpstreamRepoSettings' })
 
 defineProps<{
@@ -23,7 +25,7 @@ const emit = defineEmits<{
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
-      <span class="page-section-title">GitHub 仓库地址</span>
+      <span class="page-section-title">{{ t('work.projectSettings.upstream.title') }}</span>
     </div>
     <div class="page-section-body">
       <div class="d-flex align-center" style="gap: 8px">
@@ -33,15 +35,17 @@ const emit = defineEmits<{
           density="compact"
           variant="outlined"
           hide-details
-          placeholder="https://github.com/组织或用户名/仓库名"
+          :placeholder="t('work.projectSettings.upstream.placeholder')"
           style="flex: 1"
           @update:model-value="emit('update:url', $event)"
           @keydown.enter="emit('save')"
         />
-        <v-btn size="small" color="primary" variant="tonal" :loading="saving" @click="emit('save')"> 保存 </v-btn>
+        <v-btn size="small" color="primary" variant="tonal" :loading="saving" @click="emit('save')">
+          {{ t('work.projectSettings.upstream.save') }}
+        </v-btn>
       </div>
       <p class="t-body c-faint mt-2 settings-hint">
-        填写要连接的 GitHub 仓库地址并保存，再点击下方“连接 GitHub 仓库”。连接后，代码与 PR 都保留在该仓库。
+        {{ t('work.projectSettings.upstream.hint') }}
       </p>
     </div>
   </section>

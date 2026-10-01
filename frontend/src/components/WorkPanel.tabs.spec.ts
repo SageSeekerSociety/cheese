@@ -1,9 +1,13 @@
-// 工作面板的 tab 栏：四格永远都在，打开房间时挑哪一格由房间所处的阶段说，但只挑
+// 工作面板的 tab 栏：那几格永远都在，打开房间时挑哪一格由房间所处的阶段说，但只挑
 // 有东西可看的那一格。
 //
 // 这一份钉的是两件以前出过错的事：一格时有时无，同一个房间两次打开 tab 栏不一样
 // 长；和待验收的房间没有改动文件时（项目还没接仓库），一进来就落在「改动」那一格
 // 的报错上。
+//
+// 第五格「定时与触发」和另外四格的来路不同（它由 `workPanelTabs` 接在共用表后面，
+// 不在那条栏和文档演示共用的表里），所以它是不是真在这条栏上、地址点名它时能不能
+// 打开，也在这里钉一次。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -13,12 +17,28 @@ import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 const workSummary = vi.fn()
 
 vi.mock('../api', () => ({
   getPreview: vi.fn(async () => null),
   getTopicWorkSummary: (...a: unknown[]) => workSummary(...a),
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
+}))
+
+// 这一格在下面被 stub 掉所以不渲染，但模块还是要被求值一次；不 mock 它的话，它会
+// 从上面那个假 `../api` 里找 `request`，找不到。
+vi.mock('../api/routines', () => ({
+  listProjectRoutines: vi.fn(async () => ({ data: [], total: 0 })),
+  getRoutine: vi.fn(),
+  createRoutine: vi.fn(),
+  updateRoutine: vi.fn(),
+  routineAction: vi.fn(),
+  deleteRoutine: vi.fn(),
 }))
 
 import WorkPanel from './WorkPanel.vue'
@@ -58,8 +78,14 @@ function mount(props: Record<string, unknown> = {}) {
   return render(Panel, {
     props: { topic, activityTick: 0, ...props },
     global: {
-      plugins: [vuetify],
-      stubs: { PanelOverview: true, PanelSite: true, PanelChanges: true, PanelPreview: true },
+      plugins: [vuetify, i18n],
+      stubs: {
+        PanelOverview: true,
+        PanelSite: true,
+        PanelChanges: true,
+        PanelPreview: true,
+        RoutinePanelHost: true,
+      },
     },
   })
 }
@@ -69,10 +95,23 @@ function selected(container: Element): string {
 }
 
 describe('tab 栏', () => {
-  it('一个还没跑过的房间也是四格，顺序不变', async () => {
+  it('一个还没跑过的房间也是这几格，顺序不变', async () => {
     const { findAllByRole } = mount()
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['总览', '现场', '改动', '预览'])
+    expect(labels).toEqual(['总览', '现场', '改动', '预览', '定时与触发'])
+  })
+
+  // 「定时与触发」永远有得看：没有规则时那一格是「还没有规则，点新建」，不是一个
+  // 「暂无」。所以它不跟着 summary 变浅。
+  it('「定时与触发」不是一格空的', async () => {
+    const { findByRole } = mount()
+    const routines = await findByRole('tab', { name: /定时与触发/ })
+    expect(routines.classList.contains('tabbar__tab--empty')).toBe(false)
+  })
+
+  it('地址点名「定时与触发」：开在那一格', async () => {
+    const { container } = mount({ tab: 'routines' })
+    await waitFor(() => expect(selected(container)).toBe('定时与触发'))
   })
 
   it('没东西的那一格字是浅的，有东西的不是', async () => {

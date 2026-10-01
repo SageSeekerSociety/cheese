@@ -1,8 +1,15 @@
 import type { MergeStateInfo, MergeStateWord, MergeWho } from '../cx_types'
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { mergeBadgeOf, visibleReasons } from './mergeState'
+
+import { setLocale } from '@/i18n'
+
+// These assertions read the Chinese copy.
+beforeEach(() => {
+  setLocale('zh-CN')
+})
 
 function ms(state: MergeStateWord, who: MergeWho, over: Partial<MergeStateInfo> = {}): MergeStateInfo {
   return {

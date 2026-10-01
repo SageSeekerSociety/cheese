@@ -41,14 +41,14 @@ class FetchIn(BaseModel):
 
 @router.post("/fetch", summary="Read a URL for an agent")
 async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
-    # Any caller the platform already authenticates may read a public page;
-    # there is no per-resource permission to check because no resource of ours
-    # is being touched. The topic still has to be passed: a scoped sandbox token
-    # only verifies against the scope it was minted for, so leaving it out made
-    # every sandbox call fail with "Agent credential is invalid or expired".
-    await actor.resolve(
-        fallback_handle=None, topic_id=body.topic, project_id=body.project
-    )
+    # A signed-in person or an agent's scoped token; never anonymous. The
+    # backend reads from inside the platform's network, so an open fetch is an
+    # open door into it for anyone on the internet — `guard` keeps the reads to
+    # public addresses, and this keeps the door itself shut to strangers. There
+    # is no per-resource permission beyond that: no resource of ours is touched.
+    # The topic still has to be passed: a scoped sandbox token only verifies
+    # against the scope it was minted for.
+    await actor.require_verified_caller(topic_id=body.topic, project_id=body.project)
 
     distill = None
     if settings.anthropic_base_url and settings.anthropic_auth_token:

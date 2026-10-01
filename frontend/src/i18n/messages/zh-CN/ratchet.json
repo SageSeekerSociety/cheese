@@ -4,8 +4,7 @@
     "subtitle": "架构还债进度：每道检查现在是多少、冻结了多少、比起点好了还是差了"
   },
   "action": {
-    "refresh": "刷新",
-    "refreshing": "拉取中…"
+    "refresh": "刷新"
   },
   "prov": {
     "collected": "采集提交",
@@ -85,9 +84,14 @@
     "harnessBoundary": "测试骨架边界",
     "isPrivateReadPoints": "私有读取点",
     "fileSizes": "文件规模",
+    "fileSizesScope": "只判这次改过的文件",
     "vueTsc": "Vue 类型检查",
     "stylelintTokens": "样式令牌",
     "palette": "调色板"
+  },
+  "tree": {
+    "line": "整棵树上 {offenders} 个文件超限，一共超了 {lines} 行",
+    "unknown": "这次采集没有量整棵树的规模"
   },
   "pull": {
     "done": "CI 上有 {listed} 份工件，新存了 {stored} 次，{already} 次已经存过",

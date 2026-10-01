@@ -18,7 +18,11 @@ from app.domain.agent.harness import (
     ReceiptConsumer,
     SessionRef,
 )
-from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog, receive
+from app.domain.agent.harness.claude_code.backlog import (
+    ClaudeCodeBacklog,
+    Known,
+    receive,
+)
 from app.domain.agent.harness.claude_code.history import landed_results
 from app.domain.agent.harness.claude_code.legacy import (
     LegacyEvidenceIncomplete,
@@ -68,6 +72,8 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         self.recipient_handle = recipient_handle
         self.announce = announce
         self.input_protocol = input_protocol
+        # Read from the mirror on the first pass, on the mirror's thread.
+        self.known: Known | None = None
 
     async def reconcile_history(self) -> None:
         """Repair old NULL completion facts without replaying landed room output.
@@ -120,11 +126,15 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                 await self.completions(completion)
 
     async def receive(self) -> None:
-        if await receive(self.path, self.call, self.on_disk):
+        if self.known is None:
+            self.known = await self.on_disk(Known.read, self.path)
+        if await receive(self.path, self.call, self.on_disk, self.known):
             await self.announce()
 
     def reader(self) -> ClaudeCodeBacklog:
-        return ClaudeCodeBacklog(self.path, self.session_id)
+        if self.known is None:
+            self.known = Known.read(self.path)
+        return ClaudeCodeBacklog(self.path, self.session_id, self.known.facts)
 
     def starts_turn(self, record: dict, reader: ClaudeCodeBacklog) -> bool:
         return bool((record.get("cheese") or {}).get("turn_start"))

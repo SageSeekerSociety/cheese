@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.integration import mail
 from app.domain.integration.feishu import FeishuClient, FeishuSettings
 from app.domain.integration.mail import IntegrationError, MailSettings
@@ -168,7 +169,7 @@ def feishu_settings(row: Integration, app: FeishuApp | None = None) -> FeishuSet
         app_secret = unseal_app(app).get("app_secret") or ""
         domain = app.domain
     else:
-        raise ValidationError("管理员还没配置飞书应用，暂时不能连接飞书")
+        raise ValidationError(say("feishuAppNotConfigured"))
     return FeishuSettings(
         app_id=app_id,
         app_secret=app_secret,
@@ -292,13 +293,13 @@ def refuse_internal_host(host: str, what: str) -> None:
     try:
         infos = socket.getaddrinfo(host, None)
     except OSError as exc:
-        raise ValidationError(f"找不到{what} {host}") from exc
+        raise ValidationError(say("hostNotFound", what=what, host=host)) from exc
     for info in infos:
         address = ipaddress.ip_address(info[4][0])
         if address in FAKE_IP_RANGE:
             real = _real_addresses(host)
             if not real:
-                raise ValidationError(f"查不到{what} {host} 的真实地址，暂时不能使用")
+                raise ValidationError(say("hostUnresolvable", what=what, host=host))
             for actual in real:
                 _refuse_if_internal(host, actual, what)
             continue
@@ -307,7 +308,7 @@ def refuse_internal_host(host: str, what: str) -> None:
 
 def _refuse_if_internal(host: str, address: IPAddress, what: str) -> None:
     if not address.is_global or address.is_multicast:
-        raise ValidationError(f"{what} {host} 指向内网地址，不能使用")
+        raise ValidationError(say("hostInternal", what=what, host=host))
 
 
 def guard_mail_hosts(config: dict) -> None:
@@ -315,9 +316,9 @@ def guard_mail_hosts(config: dict) -> None:
     if settings.integration_allow_private_hosts:
         return
     if config.get("security") == "plain":
-        raise ValidationError("邮件服务器必须用 SSL 或 STARTTLS 加密连接")
+        raise ValidationError(say("mailServerNeedsEncryption"))
     for key in ("imap_host", "smtp_host"):
-        refuse_internal_host(str(config.get(key) or ""), "邮件服务器")
+        refuse_internal_host(str(config.get(key) or ""), say("nounMailServer"))
 
 
 class IntegrationService:
@@ -338,7 +339,7 @@ class IntegrationService:
     ) -> Integration:
         row = await self._session.get(Integration, integration_id)
         if row is None or row.owner_user_id != owner_user_id:
-            raise NotFoundError("没有这个连接")
+            raise NotFoundError(say("integrationNotFound"))
         return row
 
     async def granted(self, project_id: uuid.UUID) -> list[Integration]:
@@ -424,7 +425,7 @@ class IntegrationService:
         """
         app = await FeishuAppService(self._session).current()
         if app is None:
-            raise ValidationError("管理员还没配置飞书应用，暂时不能连接飞书")
+            raise ValidationError(say("feishuAppNotConfigured"))
         for row in await self.owned(owner_user_id):
             if row.provider == "feishu" and not row.config.get("app_id"):
                 return row
@@ -585,13 +586,13 @@ class IntegrationService:
     async def get_draft(self, draft_id: uuid.UUID) -> MailDraft:
         draft = await self._session.get(MailDraft, draft_id)
         if draft is None:
-            raise NotFoundError("没有这封草稿")
+            raise NotFoundError(say("mailDraftNotFound"))
         return draft
 
     async def send(self, draft: MailDraft, *, owner_user_id: int, by: str) -> dict:
         row = await self.get_owned(draft.integration_id, owner_user_id)
         if draft.status != "drafted":
-            raise ValidationError(f"这封草稿已经是「{draft.status}」状态，不能再发")
+            raise ValidationError(say("mailDraftNotSendable", status=draft.status))
         files: list[tuple[str, bytes]] = []
         assert draft.topic_id is not None
         for item in draft.attachments:
@@ -599,9 +600,7 @@ class IntegrationService:
                 draft.project_id, draft.topic_id, item["path"]
             )
             if hashlib.sha256(data).hexdigest() != item["sha256"]:
-                raise ValidationError(
-                    f"附件「{item['name']}」在起草之后被改过，发出去的会和你确认的不一样；请让芝士重新起草"
-                )
+                raise ValidationError(say("mailAttachmentChanged", name=item["name"]))
             files.append((item["name"], data))
         message = self._message(row, draft, files)
         try:
@@ -636,7 +635,7 @@ class IntegrationService:
     async def discard(self, draft: MailDraft, *, owner_user_id: int) -> MailDraft:
         row = await self.get_owned(draft.integration_id, owner_user_id)
         if draft.status != "drafted":
-            raise ValidationError("只能放弃还没发送的草稿")
+            raise ValidationError(say("mailDraftDiscardUnsentOnly"))
         folder = row.config.get("drafts_folder")
         if folder:
             await self._mail(row, mail.remove_by_message_id, folder, draft.message_id)

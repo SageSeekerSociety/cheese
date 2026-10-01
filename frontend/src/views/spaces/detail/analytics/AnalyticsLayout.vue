@@ -1,41 +1,39 @@
 <template>
-  <v-container fluid class="analytics-layout">
-    <AnalyticsHero :filters="filters" />
-
+  <div class="analytics-layout">
     <AnalyticsFilterBar
       v-model="draftFilters"
-      class="mt-4"
       :category-items="categoryItems"
       @apply="applyFilters"
       @reset="handleReset"
       @apply-preset="applyPreset"
     />
 
-    <div class="mt-4">
+    <div class="analytics-layout__body">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
           <component :is="Component" />
         </transition>
       </router-view>
     </div>
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">
 import type { SpaceAnalyticsQueryState } from './utils'
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import AnalyticsFilterBar from './components/AnalyticsFilterBar.vue'
-import AnalyticsHero from './components/AnalyticsHero.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import { formatUtcDate, inferAnalyticsGroupBy } from './utils'
 
 import { useSpaceStore } from '@/stores/space'
 
+const { t } = useI18n()
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { categories, currentSpaceId } = storeToRefs(spaceStore)
@@ -53,7 +51,7 @@ watch(
 )
 
 const categoryItems = computed(() => [
-  { title: '全部分类', value: null },
+  { title: t('spaces.analytics.filter.allCategories'), value: null },
   ...categories.value.filter((item) => !item.archivedAt).map((item) => ({ title: item.name, value: item.id })),
 ])
 
@@ -100,27 +98,22 @@ watch(
 )
 </script>
 
-<style scoped lang="scss">
+<style scoped>
 .analytics-layout {
-  padding: 16px;
+  padding: 16px 16px 48px;
+}
+
+.analytics-layout__body {
+  margin-top: 24px;
 }
 
 .fade-enter-active,
 .fade-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+  transition: opacity var(--dur-quick) var(--ease-standard);
 }
 
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
-  transform: translateY(8px);
-}
-
-@media (max-width: 960px) {
-  .analytics-layout {
-    padding: 12px;
-  }
 }
 </style>

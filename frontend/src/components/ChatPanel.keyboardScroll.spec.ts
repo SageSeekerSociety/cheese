@@ -33,6 +33,8 @@ vi.mock('@/api', async () => {
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const topic: Topic = {
   id: 'keyboard-scroll-topic',
   project_id: 'p1',
@@ -110,7 +112,7 @@ async function mount() {
   const vuetify = createVuetify({ components, directives })
   const view = render(ChatPanel, {
     props: { topic, topicList: [topic] },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await flush()
   const pane = view.container.querySelector('[data-testid="chat-scroll"]') as HTMLElement
@@ -118,6 +120,8 @@ async function mount() {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.clearAllMocks()
   FakeResizeObserver.instances = []
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)

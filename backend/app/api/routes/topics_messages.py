@@ -1,4 +1,4 @@
-"""The room's outgoing messages: publish, ask, note, and the summon they cause.
+"""Room messages, sister-thread notes, and the summons they cause.
 
 Eleventh slice of `app/api/routes/topics.py` (arch review C-backend.md section
 3.3), after `topics_attachments.py` (#2171), `topics_documents.py` +
@@ -11,23 +11,21 @@ that only ratchets down; this slice takes it to 1,939.
 What moves, verbatim:
 
   POST /topics/{topic_id}/messages   (operation_id="chat-publish")
-  POST /topics/{topic_id}/ask
   POST /topics/{topic_id}/note
 
-plus `ChatPublishIn` (the body schema of the first) and `_summon_the_named`
+plus `ChatMessageIn` (the body schema of the first) and `_summon_the_named`
 (the helper the first calls). They are one group because they are one
-direction of the conversation -- what the room says OUTWARD: an agent-authored
-message, the @-mentions that message then wakes through `_summon_the_named`, a
-one-click option question 芝士 asks in the chat, and a note to a sister thread
-of the same handle. Each writes a line and hands it to whoever is meant to
+direction of the conversation -- what is said INTO the room: a message from a
+person or an agent, the @-mentions an agent's message wakes through
+`_summon_the_named`, and a note to a sister thread of the same handle.
+Each writes a line and hands it to whoever is meant to
 read it; none of them reads the room's history back.
 
-What stays behind, and why. `POST /{topic_id}/deliveries` and
-`POST /{topic_id}/summon` stay: the first is the DELIVERY half of the ask
-family (定时投递 -- the platform hands it over later), the second is the
-general "wake an agent now" door that is not a message at all, and both read
-helpers that a dozen staying handlers share. `_actor_in_place` (identity, then
-the room's roster), `DbSession`, `TopicService`, `TopicMemberService`,
+What stays behind, and why. `POST /{topic_id}/summon` stays: it is the
+general "wake an agent now" door that is not a message at all, and it reads
+helpers that a dozen staying handlers share. (`POST /{topic_id}/deliveries`,
+定时投递, has its own module, `topics_deliveries.py`.) `_actor_in_place`
+(identity, then the room's roster), `DbSession`, `TopicService`, `TopicMemberService`,
 `ChatService`, `AgentWorkRunner`, `project_refs_text`, `BlockRepository`,
 `BlockOut`, `AuthorType` and `BlockKind` keep their home in topics.py and are
 imported in: staying handlers read all of them, and the two ratchets read the
@@ -39,29 +37,23 @@ imported from topics.py for the second ratchet: the guard in
 `tests/unit/test_domain_import_guard.py` counts (route module, repository
 module) pairs, and that pair still belongs to topics.py.
 
-`AgentTurnRepository` is the one that moves rather than stays, and it moves
-the PAIR rather than the import site: `ask_options` is its only reader in
-topics.py, so it follows the code here and its `_EXEMPT` line is
-re-attributed to this module -- the same debt with a new initiator, the shape
-#2197 took for `app.domain.machine.repositories` and #2215 for
-`app.domain.notification.models`. No pair is added and none is dropped.
+Question groups have their own routes in `topics_asks.py`. This module no
+longer reads `AgentTurnRepository`; its former repository exemption is removed.
 
 The three function-level imports that travel with the code --
 `app.domain.delivery.mention` and `app.domain.delivery.agent` inside
 `_summon_the_named`, `app.domain.delivery.note` inside `leave_a_note` -- are
 api -> domain, which the layer contract allows downward, and none of them
 reaches a `.models` module, so C2 is untouched. Nothing here imports another
-domain's models directly, and no repository PAIR is added or dropped -- the one
-that travels is the re-attributed `AgentTurnRepository` above -- so no contract
-grows and `boundary_baseline.py --dry-run` reports what it reported on `main`.
+domain's models directly, and no repository PAIR is added.
 
 Ordering. Discovery walks `app.api.routes` in filename order, so this module
 sorts after `topics_compute.py` and `topics_documents.py` and before
 `topics_preview.py` (`compute` < `documents` < `messages` < `preview`). Its
-three routes therefore mount later in the route table than they did inside
+two routes therefore mount later in the route table than they did inside
 topics.py. No route registered before them -- in topics.py or in the modules
-mounted between -- has a parameter where `messages`, `ask` or `note` sits, so
-none of the three loses its first full match; resolving every path in the
+mounted between -- has a parameter where `messages` or `note` sits, so
+neither loses its first full match; resolving every path in the
 table confirms each still reaches the handler it did before, now under
 `app.api.routes.topics_messages`.
 
@@ -86,7 +78,11 @@ from app.api.routes.topics import (
     DbSession,
     _actor_in_place,
 )
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    ValidationError,
+)
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.platform_notices import (
@@ -96,42 +92,90 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.block.notice_text import say
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-class ChatPublishIn(BaseModel):
-    content: str = Field(min_length=1, max_length=100000)
+#: How many uploaded files one message carries. A larger selection keeps its
+#: first nine, as the composer always has, rather than refusing the message.
+ATTACHMENTS_PER_MESSAGE = 9
+
+
+class ChatAttachmentIn(BaseModel):
+    """A file uploaded beforehand (`POST /topics/{id}/attachments`), by path."""
+
+    path: str = Field(min_length=1)
+    mime: str = ""
+
+
+class ChatMessageIn(BaseModel):
+    content: str = Field(default="", max_length=100000)
     request_id: uuid.UUID
     reply_to: uuid.UUID | None = None
+    attachments: list[ChatAttachmentIn] = Field(default_factory=list)
 
 
 @router.post("/{topic_id}/messages", operation_id="chat-publish")
-async def publish_chat_message(
+async def send_chat_message(
     topic_id: uuid.UUID,
-    body: ChatPublishIn,
+    body: ChatMessageIn,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """Publish an agent-authored message. It starts no turn of its own; a
-    teammate it @-mentions gets one, the same as when a person names it."""
+    """The one door a message enters a room by, for people and agents alike.
+
+    The seat decides what the message is. From one of the room's agents it is a
+    publication: it lands in that agent's own turn and starts none of its own.
+    From anyone else it is a person speaking: it is the input a turn answers,
+    so whoever it addresses is woken or handed it mid-turn. Either way a
+    teammate it @-mentions gets a turn, the same as when a person names it.
+
+    `request_id` makes a retry safe: the same id returns the message already
+    stored instead of posting it twice.
+    """
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
-    )
+    actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
-        raise ForbiddenError("An authenticated agent must publish this message")
-    # 先授权，再问席位。两道都是 403，顺序不改任何调用者看到的结果；改的是代价：
-    # 席位那一问要读花名册、把 handle 换成用户行、再查 agent 绑定，而这条路由是
-    # 每条消息都走的。没权限进这个房间的调用者不必先替我们付这几次查询。
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        raise AuthenticationRequiredError("Sign in to send a message")
+    members = TopicMemberService(db)
+    if await members.holds_an_agent_seat(place.room, actor.handle):
+        return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
+    if actor.via == "cheese":
+        # An agent credential whose seat in this room was revoked. The seat is
+        # the grant, so it may not go on writing here under a person's rules.
+        raise ForbiddenError("An agent must hold a seat in this room to write here")
+    content = body.content.strip()
+    attachments = [
+        {"path": a.path, "mime": a.mime}
+        for a in body.attachments[:ATTACHMENTS_PER_MESSAGE]
+    ]
+    if not content and not attachments:
+        raise ValidationError("请输入消息或添加附件")
+    # The turn a person's message starts is named after the block it anchors.
+    anchor_id = await get_broker().receive_message(
+        chat,
+        place.room_id,
+        author=actor.handle,
+        content=content,
+        reply_to=str(body.reply_to) if body.reply_to else None,
+        attachments=attachments,
+        provision_actor=actor,
+        client_id=str(body.request_id),
     )
-    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
-        raise ForbiddenError("An authenticated agent must publish this message")
+    stored = await BlockRepository(db).get(anchor_id)
+    return ok(BlockOut.model_validate(stored).model_dump(mode="json"))
+
+
+async def _publish_as_agent(
+    chat: ChatService, place, body: ChatMessageIn, author: str, db
+) -> dict | None:
+    """An agent's message: attributed to its live turn, never the start of one."""
+    if body.attachments:
+        raise ValidationError("An agent shares a file with `cheese show`, not here")
     content = body.content.strip()
     if not content:
         raise ValidationError("content must not be blank")
@@ -157,17 +201,17 @@ async def publish_chat_message(
         roster=None,
         topic_refs=[],
         publish=True,
-        author=actor.handle,
+        author=author,
         publication_id=str(body.request_id),
     )
     await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
+        str(place.room_id), {"type": "assistant_block", "block": payload}
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     if payload is not None:
-        await _summon_the_named(chat, runner, place, payload, actor.handle)
-    return ok(payload)
+        await _summon_the_named(chat, runner, place, payload, author)
+    return payload
 
 
 async def _summon_the_named(
@@ -196,16 +240,15 @@ async def _summon_the_named(
             fused = await announce(
                 session,
                 place_id=place.room_id,
-                content="AI 队友之间的点名本小时已到上限，这次没有叫醒对方",
+                content=say("mentionFused"),
                 meta=notice(
                     EVENT_MENTION_FUSED,
                     severity=SEVERITY_WARN,
                     who=WHO_PLATFORM,
-                    detail=(
-                        f"同一个话题里，AI 队友点名每小时最多叫起 "
-                        f"{AGENT_MENTIONS_PER_HOUR} 轮，防止互相点名停不下来。"
-                        f"这次没叫醒：{'、'.join(summoned.fused)}。"
-                        "人点名不受这个限制。"
+                    detail=say(
+                        "mentionFusedDetail",
+                        limit=AGENT_MENTIONS_PER_HOUR,
+                        names="、".join(summoned.fused),
                     ),
                 ),
             )

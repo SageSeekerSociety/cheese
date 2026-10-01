@@ -126,14 +126,24 @@ case "$1" in
 esac
 SH
 
-# uv only answers the harness pins; the harness builds are prebuilt below.
-printf '#!/usr/bin/env bash\necho 2.1.282 0.154.0\n' >"$stub/uv"
+# uv only answers the harness pins and where the pi archive is cached; the
+# harness builds, pi included, are prebuilt below.
 tools="$sandbox/tools"
+pi_archive="$tools/pi-dist/pi-test.tar.gz"
+cat >"$stub/uv" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+    *pi-dist*) echo "$pi_archive" ;;
+    *) echo 2.1.282 0.154.0 ;;
+esac
+SH
 harness="$tools/harness/claude-code-2.1.282-codex-0.154.0/node_modules/.bin"
-mkdir -p "$harness"
+pi_dir="${pi_archive%.tar.gz}/pi"
+mkdir -p "$harness" "$pi_dir"
 printf '#!/usr/bin/env bash\necho "2.1.282 (Claude Code)"\n' >"$harness/claude"
 printf '#!/usr/bin/env bash\necho 0.154.0\n' >"$harness/codex"
-chmod +x "$stub"/* "$harness"/*
+printf '#!/usr/bin/env bash\necho 0.85.1\n' >"$pi_dir/pi"
+chmod +x "$stub"/* "$harness"/* "$pi_dir/pi"
 
 # --- helpers -----------------------------------------------------------------
 free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }

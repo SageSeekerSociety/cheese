@@ -442,6 +442,58 @@ def test_a_word_report_is_converted_so_a_browser_can_show_it(client, monkeypatch
     assert r.headers["content-type"] == "application/pdf"
     # The file's own bytes go to the renderer, not a path it cannot reach.
     assert seen["data"] == raw
+    from app.domain.textfile import content_version
+
+    assert r.headers["x-cheese-source-version"] == content_version(raw)
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_pdf_source_version_binds_the_bytes_read_before_conversion(client, monkeypatch):
+    import base64
+
+    from app.api.routes import topics_attachments
+    from app.domain.library import service as library
+    from app.domain.textfile import content_version
+
+    pid, tid = _topic(client)
+    path = "deck.pptx"
+    original = b"PK\x03\x04source A"
+    replacement = b"PK\x03\x04source B"
+    shown = client.post(
+        f"/topics/{tid}/shown",
+        json={"path": path, "content_b64": base64.b64encode(original).decode()},
+    )
+    assert shown.status_code == 200, shown.text
+    seen: list[bytes] = []
+    reads: list[bytes] = []
+    original_reader = topics_attachments.source_bytes
+
+    async def read_once(*args, **kwargs):
+        data = await original_reader(*args, **kwargs)
+        reads.append(data)
+        return data
+
+    async def fake_render(data, path, endpoint, timeout=90.0):
+        seen.append(data)
+        if len(seen) == 1:
+            library.write_room_file(uuid.UUID(pid), uuid.UUID(tid), path, replacement)
+        return b"%PDF-1.7 same converted output"
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://renderer:8901")
+    monkeypatch.setattr(topics_attachments, "source_bytes", read_once)
+    monkeypatch.setattr(topics_attachments, "render_to_pdf", fake_render)
+    first = client.get(f"/topics/{tid}/attachments/pdf", params={"path": path})
+    assert first.status_code == 200, first.text
+    assert first.content == b"%PDF-1.7 same converted output"
+    assert first.headers["x-cheese-source-version"] == content_version(original)
+    assert first.headers["cache-control"] == "no-store"
+    second = client.get(f"/topics/{tid}/attachments/pdf", params={"path": path})
+    assert second.status_code == 200, second.text
+    assert second.content == first.content
+    assert second.headers["x-cheese-source-version"] == content_version(replacement)
+    assert second.headers["cache-control"] == "no-store"
+    assert seen == [original, replacement]
+    assert reads == [original, replacement]
 
 
 def test_a_spreadsheet_is_never_sent_for_conversion(client):

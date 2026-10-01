@@ -14,19 +14,32 @@ import type { MaterialType } from '@/types/materials'
 
 import dayjs from 'dayjs'
 
-/** 工具栏「资料类型」那一栏的选项。中文名，请求里要的是 `resourceTypeCode`。 */
-export const RESOURCE_TYPE_OPTIONS = ['文本', '文件', '链接', '代码片段']
+import i18n, { t } from '@/i18n'
 
-/** 上传对话框里那四档，连同各自的图标语义（图标在 `uploadTypeIcon` 里）。 */
-export const KNOWLEDGE_TYPE_OPTIONS: { text: string; value: KnowledgeType }[] = [
-  { text: '文件', value: 'MATERIAL' },
-  { text: '文本', value: 'TEXT' },
-  { text: '链接', value: 'LINK' },
-  { text: '代码片段', value: 'CODE' },
-]
+/** 工具栏「资料类型」那一栏的选项：类型码本身就是请求里要的值，显示名走 `knowledgeTypeLabel`。 */
+export const RESOURCE_TYPE_OPTIONS: KnowledgeType[] = ['TEXT', 'MATERIAL', 'LINK', 'CODE']
+
+/** 上传对话框里那四档（图标在 `uploadTypeIcon` 里，显示名走 `knowledgeTypeLabel`）。 */
+export const KNOWLEDGE_TYPE_OPTIONS: KnowledgeType[] = ['MATERIAL', 'TEXT', 'LINK', 'CODE']
+
+/** 四档类型在筛选和上传里的显示名。 */
+export function knowledgeTypeLabel(type: KnowledgeType): string {
+  switch (type) {
+    case 'MATERIAL':
+      return t('teams.knowledge.typeFile')
+    case 'TEXT':
+      return t('teams.knowledge.typeText')
+    case 'LINK':
+      return t('teams.knowledge.typeLink')
+    case 'CODE':
+      return t('teams.knowledge.typeCode')
+    default:
+      return t('teams.knowledge.unknownType')
+  }
+}
 
 /** 代码片段那一档的编程语言表。 */
-export const LANGUAGE_OPTIONS = [
+const LANGUAGE_OPTIONS = [
   { text: 'JavaScript', value: 'javascript' },
   { text: 'TypeScript', value: 'typescript' },
   { text: 'HTML', value: 'html' },
@@ -38,23 +51,11 @@ export const LANGUAGE_OPTIONS = [
   { text: 'Ruby', value: 'ruby' },
   { text: 'PHP', value: 'php' },
   { text: 'Shell', value: 'shell' },
-  { text: '其他', value: 'plaintext' },
 ]
 
-/** 筛选下拉里的中文名翻回类型码。认不出来的当文本 —— 和服务端那一套一致。 */
-export function resourceTypeCode(typeName: string): KnowledgeType {
-  switch (typeName) {
-    case '文件':
-      return 'MATERIAL'
-    case '文本':
-      return 'TEXT'
-    case '链接':
-      return 'LINK'
-    case '代码片段':
-      return 'CODE'
-    default:
-      return 'TEXT'
-  }
+/** 编程语言表，连同末尾那一档「其他」（它的名字随界面语言变）。 */
+export function languageOptions(): { text: string; value: string }[] {
+  return [...LANGUAGE_OPTIONS, { text: t('teams.knowledge.languageOther'), value: 'plaintext' }]
 }
 
 /** 资料的类型图标。材料还要看它是哪一路（图 / 视频 / 音频 / 文档）。 */
@@ -86,33 +87,23 @@ export function resourceTypeIcon(type: KnowledgeType, materialType?: MaterialTyp
   }
 }
 
-/** 类型的中文名。和图标一样，材料看的是哪一路。 */
+/** 类型的显示名。和图标一样，材料看的是哪一路。 */
 export function resourceTypeName(type: KnowledgeType, materialType?: MaterialType): string {
   if (type === 'MATERIAL') {
     switch (materialType) {
       case 'file':
-        return '文档'
+        return t('teams.knowledge.typeDocument')
       case 'image':
-        return '图片'
+        return t('teams.knowledge.typeImage')
       case 'video':
-        return '视频'
+        return t('teams.knowledge.typeVideo')
       case 'audio':
-        return '音频'
+        return t('teams.knowledge.typeAudio')
       default:
-        return '文件'
+        return t('teams.knowledge.typeFile')
     }
   }
-
-  switch (type) {
-    case 'TEXT':
-      return '文本'
-    case 'LINK':
-      return '链接'
-    case 'CODE':
-      return '代码片段'
-    default:
-      return '未知类型'
-  }
+  return knowledgeTypeLabel(type)
 }
 
 /** 上传对话框里那四档的图标。和 `resourceTypeIcon` 不是同一张表：这里没有材料。 */
@@ -138,7 +129,13 @@ export function formatDay(timestamp: number): string {
 
 /** 详情里那一行「添加时间」：要年份，要分钟。 */
 export function formatDetailDate(timestamp: number): string {
-  return dayjs(timestamp).format('YYYY年MM月DD日 HH:mm')
+  return new Date(timestamp).toLocaleString(i18n.global.locale.value, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 /** 原始讨论里那句话的时间。今天只给时刻，本周给星期，更久以前给日期。 */
@@ -151,7 +148,7 @@ export function formatMessageTime(timestamp: number): string {
     return messageTime.format('HH:mm')
   } else if (now.diff(messageTime, 'day') === 1) {
     // 昨天
-    return `昨天 ${messageTime.format('HH:mm')}`
+    return t('teams.knowledge.yesterday', { time: messageTime.format('HH:mm') })
   } else if (now.diff(messageTime, 'day') < 7) {
     // 本周
     return messageTime.format('ddd HH:mm')

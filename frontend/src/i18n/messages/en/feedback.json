@@ -46,7 +46,6 @@
     },
     "error": {
       "title": "Couldn't load the queue",
-      "desc": "Check your connection and try again.",
       "retry": "Retry"
     },
     "filtered": {
@@ -128,7 +127,6 @@
     },
     "error": {
       "title": "Couldn't load the table",
-      "desc": "Check your connection and try again.",
       "retry": "Retry"
     },
     "filtered": {
@@ -543,6 +541,12 @@
     "suggestion": "Suggestion",
     "other": "Other"
   },
+  "priority": {
+    "low": "Low",
+    "normal": "Normal",
+    "high": "High",
+    "urgent": "Urgent"
+  },
   "source": {
     "user": "From a user",
     "agent": "Found by an agent"
@@ -585,7 +589,7 @@
     "submitted": "Submitted",
     "progress": "You can follow its progress in the feedback center.",
     "view": "View this feedback",
-    "confirm": "I've confirmed this looks like a platform problem, not the way you're using it",
+    "byline": "{name} thinks this is a platform problem, not the way you're using it",
     "userSaid": "What you said at the time",
     "why": "Why (and why this isn't the way you're using it)",
     "logs": "Logs",
@@ -728,5 +732,19 @@
       "restored": "Restored your unfinished draft",
       "discard": "Discard draft"
     }
+  },
+  "errors": {
+    "listLoadFailed": "Couldn’t load feedback",
+    "loadMoreFailed": "Couldn’t load more",
+    "mineLoadFailed": "Couldn’t load My feedback",
+    "openFailed": "Couldn’t open this feedback",
+    "actionFailed": "Something went wrong",
+    "commentSendFailed": "Couldn’t send the comment",
+    "commentsLoadFailed": "Couldn’t load comments",
+    "repliesLoadFailed": "Couldn’t load replies",
+    "deleteFailed": "Couldn’t delete",
+    "submitFailed": "Couldn’t submit",
+    "queueLoadFailed": "Couldn’t load the queue",
+    "dashboardLoadFailed": "Couldn’t load the dashboard"
   }
 }

@@ -14,7 +14,7 @@
     "save": "Save",
     "saved": "Saved",
     "saveFailed": "Could not save",
-    "loadFailed": "Could not load",
+    "loadFailed": "Lark integration failed to load",
     "retry": "Retry",
     "configured": "Configured",
     "notConfigured": "Not configured",

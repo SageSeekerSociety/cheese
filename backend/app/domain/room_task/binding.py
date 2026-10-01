@@ -6,6 +6,7 @@ from app.core.errors import ValidationError
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.configuration import model_choices
+from app.domain.block.notice_text import say
 from app.domain.room_task.models import Task
 
 
@@ -65,13 +66,11 @@ def resolve(
             (choice for choice in choices.values() if choice["default"]), None
         )
         if default is None:
-            raise ValidationError("当前项目没有可用的默认模型，请检查模型服务")
+            raise ValidationError(say("noDefaultModel"))
         return WorkBinding(model=default["id"], supply=default["supply"], effort=effort)
     chosen = choices.get(bound)
     if chosen is None:
-        raise ValidationError(
-            f"这个任务绑定的模型 {bound!r} 在当前项目中不可用，需要重新选择"
-        )
+        raise ValidationError(say("taskModelUnavailable", model=repr(bound)))
     return WorkBinding(model=chosen["id"], supply=chosen["supply"], effort=effort)
 
 

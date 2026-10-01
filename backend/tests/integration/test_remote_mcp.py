@@ -10,6 +10,7 @@ room's session.
 import asyncio
 import json
 import logging
+import time
 import uuid
 from urllib.parse import parse_qs, urlsplit
 
@@ -371,3 +372,115 @@ def test_a_state_is_spent_once(client, upstream):
     assert "mcp_result" in first.headers["location"]
     replay = client.get("/mcp/oauth/callback?" + query, follow_redirects=False)
     assert "mcp_error" in replay.headers["location"]
+
+
+# --- reading `.mcp.json` --------------------------------------------------------
+
+
+def _session_servers(client, pid) -> set[str]:
+    """Every server a session in the project is told about, usable or not."""
+    from app.domain.remote_mcp import service
+
+    async def ask():
+        async with client.test_request_factory() as session:
+            found = await service.session_servers(session, pid, None)
+            return {*found.usable, *found.unusable}
+
+    return client.portal.call(ask)
+
+
+def _commit_servers(pid, servers: dict) -> None:
+    repo = git_store.ensure_repo(pid)
+    (repo / ".mcp.json").write_text(json.dumps({"mcpServers": servers}))
+    git_store.git(repo, "commit", "-qam", "Change MCP servers")
+
+
+def _forge_answering(monkeypatch, answer):
+    """The forge, with `answer` standing in for its reply about `.mcp.json`."""
+    from app.domain.project import forge
+
+    real = forge.repository_data
+
+    async def repository_data(project_id, session, path="", **kwargs):
+        if path.startswith("/contents/"):
+            return await answer(lambda: real(project_id, session, path, **kwargs))
+        return await real(project_id, session, path, **kwargs)
+
+    monkeypatch.setattr(forge, "repository_data", repository_data)
+
+
+def test_a_session_does_not_wait_on_the_forge_for_a_list_it_has_read(
+    client, upstream, monkeypatch
+):
+    pid = _project(client, upstream)
+    assert _session_servers(client, pid) == {"tracker", "search"}
+    # Every earlier read is out of date from here on.
+    monkeypatch.setattr(declared, "_FRESH_S", 0)
+    _commit_servers(pid, {"wiki": {"type": "http", "url": f"{upstream.base}/mcp"}})
+
+    async def slow(read):
+        await asyncio.sleep(3)
+        return await read()
+
+    _forge_answering(monkeypatch, slow)
+
+    started = time.monotonic()
+    assert _session_servers(client, pid) == {"tracker", "search"}
+    assert time.monotonic() - started < 1.5
+
+    deadline = time.monotonic() + 10
+    while _session_servers(client, pid) != {"wiki"}:
+        assert time.monotonic() < deadline, "the committed change never arrived"
+        time.sleep(0.2)
+
+
+def test_a_session_keeps_its_servers_while_the_forge_is_down(
+    client, upstream, monkeypatch
+):
+    pid = _project(client, upstream)
+    assert _session_servers(client, pid) == {"tracker", "search"}
+    monkeypatch.setattr(declared, "_FRESH_S", 0)
+
+    async def down(_read):
+        raise httpx.ConnectError("forge unreachable")
+
+    _forge_answering(monkeypatch, down)
+
+    for _ in range(3):
+        assert _session_servers(client, pid) == {"tracker", "search"}
+        time.sleep(0.2)
+
+
+def test_the_settings_page_shows_a_committed_change_at_once(client, upstream):
+    pid = _project(client, upstream)
+    assert set(_servers(client, pid)) == {"tracker", "search"}
+    _commit_servers(pid, {"wiki": {"type": "http", "url": f"{upstream.base}/mcp"}})
+
+    assert set(_servers(client, pid)) == {"wiki"}
+
+
+@pytest.mark.parametrize(
+    ("committed", "problem"),
+    [(None, "missing"), ("directory", "missing"), ("{not json", "invalid")],
+)
+def test_what_the_default_branch_holds_decides_the_answer(
+    client, upstream, committed, problem
+):
+    response = post_project(
+        client, json={"name": "P"}, headers=session_auth_headers("alice")
+    )
+    pid = uuid.UUID(response.json()["data"]["id"])
+    repo = git_store.ensure_repo(pid)
+    if committed == "directory":
+        (repo / ".mcp.json").mkdir()
+        (repo / ".mcp.json" / "servers.json").write_text("{}")
+    elif committed is not None:
+        (repo / ".mcp.json").write_text(committed)
+    if committed is not None:
+        git_store.git(repo, "add", ".mcp.json")
+        git_store.git(repo, "commit", "-qm", "Add .mcp.json")
+
+    found = client.get(
+        f"/projects/{pid}/mcp/servers", headers=session_auth_headers("alice")
+    ).json()["data"]
+    assert found == {"servers": [], "problem": problem}

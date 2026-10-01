@@ -62,7 +62,6 @@ from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
-    COMPUTE_CLOUD,
     COMPUTE_DEVICE,
     MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
@@ -71,6 +70,7 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
+from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
@@ -113,7 +113,7 @@ async def get_topic_compute_profile(
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
-            choice.name = named.name if named else "自有设备"
+            choice.name = named.name if named else None
     # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
     # machine. 一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里的会话看的
     # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
@@ -293,7 +293,7 @@ async def set_topic_compute_profile(
     # now and waits for that exact box. The automatic option keeps the old rule and
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
-        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
+        raise ValidationError(say("computeKindUnavailable", name=repr(name)))
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
 
@@ -301,7 +301,7 @@ async def set_topic_compute_profile(
     if device_id is not None:
         scoped_devices = await device_service.list_devices_for_project(topic.project_id)
         if device_id not in {device.device_id for device in scoped_devices}:
-            raise ValidationError("设备不属于当前项目")
+            raise ValidationError(say("deviceNotInProject"))
 
     # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
     # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
@@ -357,8 +357,7 @@ async def set_topic_compute_profile(
     # "cloud")` 一句 401 撞死在这里，连那条「等项目主人点头」的提议都长不出来——
     # 而那条提议正是 Cloud 这一档该有的产物（结论 23）。变成提议的那一次没有花任
     # 何人的钱，该点头的人就是项目主人本人。
-    if name == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(topic.project_id, actor)
+    await MachineService(db).admit_choice(topic.project_id, actor, choice)
 
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——

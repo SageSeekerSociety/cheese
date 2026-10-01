@@ -109,6 +109,26 @@ def _create_task(api_client: TestClient, board: dict, *, name: str) -> int:
     return resp.json()["data"]["task"]["id"]
 
 
+def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) -> None:
+    """``user`` 领了这道题：题目过审、人进了这门课，再领题。用题目建项目要先领题。"""
+    approved = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert approved.status_code == 200, approved.text
+    joined = api_client.post(
+        f"/spaces/{board['space_id']}/members",
+        json={"userId": user.user_id},
+        headers=_auth(board["creator_token"]),
+    )
+    assert joined.status_code in (201, 409), joined.text
+    claimed = api_client.post(
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+    )
+    assert claimed.status_code in (200, 201), claimed.text
+
+
 # --- 1. 管理员读得到成员项目里的对话 -------------------------------------------
 
 
@@ -127,6 +147,7 @@ def test_a_board_admin_reads_the_conversations_of_its_students_projects(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
+    _claim(api_client, board, task_id, student, student_token)
     project = post_project(
         api_client,
         json={
@@ -167,6 +188,7 @@ def test_a_plain_member_of_the_board_is_not_a_teacher(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
+    _claim(api_client, board, task_id, student, student_token)
     project = post_project(
         api_client,
         json={
@@ -202,6 +224,7 @@ def test_removing_a_board_admin_shuts_the_door_immediately(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
+    _claim(api_client, board, task_id, student, student_token)
     project = post_project(
         api_client,
         json={

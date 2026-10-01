@@ -2,6 +2,9 @@
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useDesktopApp } from '@/composables/useDesktopApp'
+
+import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
 import AccountService from '@/services/account'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -28,14 +31,27 @@ const { t } = useI18n()
 
 const hasUnread = computed(() => store.counts.unread > 0)
 
+const inApp = inDesktopApp()
+const { aboutOpen } = useDesktopApp()
+
+const DOCS = '/docs/'
+
+// 文档站在 app 的窗口里没有回来的路（窗口没有返回键），所以 app 里交给浏览器打开，
+// 和 app 对站外链接的处理一样；打不开浏览器的旧 app 照旧在窗口里跳过去。
+function openDocs() {
+  if (!openInBrowser(DOCS)) window.location.assign(DOCS)
+}
+
 /** 菜单项。管理后台那一项**只在服务端说我是管理员时**出现 —— 读的是 `/feedback/meta`
  *  的回答，不是前端按 handle 猜的。反馈管理员落在队列上，只是平台管理员的落在看板上：
  *  队列不归他。 */
 const items = computed(() => {
   // 使用文档是 nginx 直接发的静态站（/docs/），不在这个应用的路由里，所以走 href
   // 整页跳转而不是 `to`：交给路由器只会落到应用自己的 404。
-  const all: { key: string; label: string; to?: string; href?: string }[] = [
-    { key: 'docs', href: '/docs/', label: t('navigation.feedback.docs') },
+  const all: { key: string; label: string; to?: string; href?: string; click?: () => void }[] = [
+    inApp
+      ? { key: 'docs', click: openDocs, label: t('navigation.feedback.docs') }
+      : { key: 'docs', href: DOCS, label: t('navigation.feedback.docs') },
     { key: 'center', to: '/feedback', label: t('navigation.feedback.center') },
     { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
   ]
@@ -45,7 +61,9 @@ const items = computed(() => {
     all.push({ key: 'admin', to: '/admin/dashboard', label: t('navigation.feedback.admin') })
   }
   // 「了解知是」讲的是这个产品，不是「我」，所以住在这里而不在用户菜单里。
-  all.push({ key: 'about', to: '/about', label: t('publicSite.aboutCheese') })
+  // 桌面 app 里它是「关于」：app 和网页的版本、检查更新；推广页只在浏览器里开。
+  if (inApp) all.push({ key: 'about', click: () => (aboutOpen.value = true), label: t('navigation.desktopApp.about') })
+  else all.push({ key: 'about', to: '/about', label: t('publicSite.aboutCheese') })
   return all
 })
 
@@ -88,8 +106,8 @@ watch(loggedIn, refresh, { immediate: true })
       </v-btn>
     </template>
 
-    <v-list class="menu-list" nav density="compact" min-width="160">
-      <v-list-item v-for="item in items" :key="item.key" :to="item.to" :href="item.href">
+    <v-list min-width="160">
+      <v-list-item v-for="item in items" :key="item.key" :to="item.to" :href="item.href" @click="item.click?.()">
         <v-list-item-title>{{ item.label }}</v-list-item-title>
       </v-list-item>
     </v-list>

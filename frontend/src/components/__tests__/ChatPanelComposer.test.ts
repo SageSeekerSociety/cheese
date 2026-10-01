@@ -16,7 +16,10 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
+
+// 发出去的消息走 POST（`postChatMessage`），这里把每一次的请求体记下来。
+const sent = vi.hoisted(() => [] as { payload: string }[])
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -51,9 +54,23 @@ vi.mock('../../api', async () => {
   }
 })
 
-import ChatPanel from '../ChatPanel.vue'
+vi.mock('../../api/messages', () => ({
+  postChatMessage: vi.fn(async (topicId: string, body: { content: string; request_id: string }) => {
+    sent.push({ payload: JSON.stringify(body) })
+    return {
+      id: body.request_id,
+      topic_id: topicId,
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+      content: body.content,
+      meta: { client_id: body.request_id },
+      created_at: new Date().toISOString(),
+    }
+  }),
+}))
 
-const sent: { payload: string }[] = []
+import ChatPanel from '../ChatPanel.vue'
 
 function topic(id = 'topic-A'): Topic {
   return {
@@ -87,7 +104,7 @@ function mountPanel(slots: Record<string, () => unknown> = {}, topicId?: string)
   return render(ChatPanel, {
     props: { topic: topic(topicId), showComposer: true, hideHeader: true, members },
     slots,
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 
@@ -121,8 +138,7 @@ beforeAll(() => {
       disconnect() {}
     }
   }
-  // 一个会「连上」的假 socket，这样输入栏不是 disabled 状态，而且发出去的东西
-  // 能被读到——这条用例问的正是「发出去的那条消息带没带 @芝士」。
+  // 一个会「连上」的假 socket：房间的推送从这里来，输入栏也因此不是 disabled 状态。
   ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = class {
     static OPEN = 1
     readyState = 1
@@ -131,13 +147,13 @@ beforeAll(() => {
       setTimeout(() => this.onopen?.(), 0)
     }
     close() {}
-    send(payload: string) {
-      sent.push({ payload })
-    }
+    send() {}
   }
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.clearAllMocks()
   sent.length = 0
 })
@@ -717,7 +733,7 @@ describe('对话栏自己的输入栏', () => {
         // 项目名册上也没有芝士那一行——这个房间此刻确实不知道它是谁。
         members: [{ user_handle: 'alice', name: 'Alice', role: 'lead' }],
       },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await flush()
 

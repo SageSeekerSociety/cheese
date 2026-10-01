@@ -46,7 +46,8 @@ vi.mock('@/api', async () => {
 //
 // 例外是侧栏那五个分区名（`navigation.admin.*`）：下面「三块都在」「选中项带
 // aria-current」两条是按**分区名**认链接的，键原样返回它们就认不出来了 —— 所以 mock
-// 单把这五个键翻回它们画的词，其余照旧。
+// 单把这五个键翻回它们画的词，其余照旧。门口那两句（确认权限中 / 不是管理员）也一样：
+// 下面按它们认这一帧画的是哪一种。
 const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.queue': '队列',
   'navigation.admin.dashboard': '看板',
@@ -54,6 +55,8 @@ const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.spaces': '空间申请',
   'navigation.admin.members': '成员',
   'navigation.admin.integrations': '飞书应用',
+  'admin.layout.checking': '正在确认权限…',
+  'admin.layout.deniedTitle': '这一页是管理员后台',
 }
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -61,6 +64,11 @@ vi.mock('vue-i18n', async () => {
 })
 
 import AdminLayout from './AdminLayout.vue'
+
+import { setLocale } from '@/i18n'
+
+// 这组用例读的是中文界面上的字。
+setLocale('zh-CN')
 
 /** 子页用替身：这一组问的是壳画不画它，不是它自己长什么样。队列那个带一个输入框，
  *  用来验「光标在输入框里时全局键不算」这条守卫。 */
@@ -190,7 +198,9 @@ describe('外壳上的全局键', () => {
   })
 
   it('`G` 之后 `Q` 换到队列，当前那一项带 aria-current', async () => {
+    getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: true, hot_min_items: 5 })
     const { findByText, router } = await mountAt('/admin/dashboard')
+    await findByText('看板')
     await findByText('看板内容')
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g' }))

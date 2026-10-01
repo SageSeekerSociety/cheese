@@ -139,7 +139,7 @@ describe('棘轮页的取数层', () => {
 
   it('读失败之后刷新成功，上一屏的错误不再盖着已经拿到的内容', async () => {
     get.mockRejectedValueOnce(new Error('boom'))
-    const { findByText, getByText, queryByText } = mount()
+    const { findByText, getByText, getByLabelText, queryByText } = mount()
 
     expect(await findByText('ratchet.state.loadFailed')).toBeTruthy()
 
@@ -147,7 +147,10 @@ describe('棘轮页的取数层', () => {
       ...BOARD,
       refresh: { repo: BOARD.repo, listed: 12, stored: 1, already_stored: 11, unreadable: 0, failed: 0, error: '' },
     })
-    await fireEvent.click(getByText('ratchet.action.refresh'))
+    // 刷新是页头那枚图标按钮：字在 `aria-label` 上，没有一个文本节点可找。按**可访问名**
+    // 找它 —— 这也正是读屏软件找它的方式。全后台页头的工具区都是这个形态
+    // （`AdminSpacesPage` / `AdminMembersPage` 同款）。
+    await fireEvent.click(getByLabelText('ratchet.action.refresh'))
 
     // 手上已经有整页数据了——「读不出来」那一支必须消失，否则屏幕上的内容被一
     // 句过期的错继续盖着。
@@ -170,9 +173,9 @@ describe('棘轮页的取数层', () => {
         error: 'GitHub 403',
       },
     })
-    const { findByText, queryByText } = mount()
+    const { findByText, findByLabelText, queryByText } = mount()
 
-    await fireEvent.click(await findByText('ratchet.action.refresh'))
+    await fireEvent.click(await findByLabelText('ratchet.action.refresh'))
 
     expect(await findByText('ratchet.pull.failed {"error":"GitHub 403"}')).toBeTruthy()
     expect(queryByText('ratchet.state.loadFailed')).toBeNull()
@@ -199,9 +202,9 @@ describe('棘轮页的取数层', () => {
   it('刷新整个请求挂掉时说「请求本身失败了」，已经画好的内容留着', async () => {
     get.mockResolvedValueOnce(BOARD)
     refresh.mockRejectedValueOnce(new Error('network down'))
-    const { findByText, queryByText } = mount()
+    const { findByText, findByLabelText, queryByText } = mount()
 
-    await fireEvent.click(await findByText('ratchet.action.refresh'))
+    await fireEvent.click(await findByLabelText('ratchet.action.refresh'))
 
     expect(await findByText('ratchet.pull.unreachable')).toBeTruthy()
     expect(queryByText('ratchet.state.loadFailed')).toBeNull()

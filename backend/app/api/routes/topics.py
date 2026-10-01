@@ -21,11 +21,7 @@ from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import (
-    ForbiddenError,
-    NotFoundError,
-    ValidationError,
-)
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.runtime import (
@@ -40,8 +36,9 @@ from app.domain.block.models import (
     AuthorType,
     Block,
     BlockKind,
-    agent_notice,
+    checklist_text,
 )
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import instance_for_seat, record_agent
@@ -49,7 +46,6 @@ from app.domain.delivery.ledger import DeliveryEvent, event_id_for
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
-from app.domain.library import service as library
 from app.domain.mentions import canonicalize_refs
 from app.domain.notification.models import NotificationType
 from app.domain.project.repositories import ProjectRepository
@@ -66,9 +62,7 @@ from app.domain.room_task.services import (
     TaskService,
 )
 from app.domain.topic import naming
-from app.domain.topic.doc_checks import living_doc_warnings
 from app.domain.topic.models import Topic, TopicKind
-from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -77,9 +71,7 @@ from app.domain.topic.repositories import (
 )
 from app.domain.topic.schemas import (
     CheckResultIn,
-    DocEditIn,
     LockIn,
-    RelayIn,
     SplitIn,
     TopicCreate,
     TopicOut,
@@ -557,7 +549,7 @@ async def list_topic_blocks(
             or cursor.task_id is not None
             or cursor.kind in BlockRepository.NON_TIMELINE
         ):
-            raise NotFoundError("游标消息不存在")
+            raise NotFoundError(say("cursorMessageNotFound"))
         return cursor
 
     older_than = await cursor_of(before)
@@ -885,6 +877,9 @@ class ProgressIn(BaseModel):
     # request a list belongs to is the agent's call: it sets this when someone
     # brings it a new one.
     new: bool = False
+    # Edit this checklist of the writer's rather than their newest: a person
+    # ticks a step on whichever of their lists they are looking at.
+    message: uuid.UUID | None = None
     # One line on what landed, written when the work is done; shown under the
     # list in the same message. Same ceiling as an item.
     result: (
@@ -895,21 +890,6 @@ class ProgressIn(BaseModel):
     ) = None
 
 
-# The step markers of the checklist message's text. The room draws its own
-# icons from `meta.checklist`; this text is what every other reader gets — the
-# agent reading the history, a copy, a notification preview.
-_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
-
-
-def _checklist_text(items: list[dict], result: str | None) -> str:
-    """The checklist as the message's text: one line per step, and the result
-    line under it once there is one."""
-    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
-    if result:
-        lines += ["", f"✅ {result}"]
-    return "\n".join(lines)
-
-
 @router.put("/{topic_id}/progress")
 async def write_topic_progress(
     topic_id: uuid.UUID,
@@ -918,60 +898,68 @@ async def write_topic_progress(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """`todo_write`: the agent's whole checklist (进度层), and its message.
+    """A member's whole checklist as their message: `todo_write` for an agent,
+    the composer's checklist for a person. The first write posts it, later
+    ones edit the writer's own current list (or the one ``message`` names)
+    through the edit every author has; ``new`` posts another. Whole-list
+    replace, so the message says exactly what its writer last said.
 
-    Whole-list replace, so what is stored is exactly what the agent last said,
-    never a merge of two plans. The stored list is what 总览 shows and what the
-    room's next turn is handed back.
-
-    In the room the list is an ordinary message by the agent. The first call
-    posts it; later calls edit the agent's current checklist message through
-    the same edit every author has (`domain/block/editing`); ``new`` posts a
-    fresh one.
-
-    With ``task`` it is that card's 分身 writing, and the list is the card's:
-    stored under the card and pushed on the card's channel, the same channel its
-    attributed events go to (`chat.py`), leaving the room's own list and
-    conversation alone.
-
-    A platform tool, so it reaches here the same way from every harness.
+    Only a writer seated as one of the room's agents also stores the list as
+    the room's progress (进度层): that is the plan the room's next turn is
+    handed back as its own, and what 总览 shows. A person's list stored there
+    would hand the agent somebody else's plan. With ``task`` a 分身 is writing
+    its card's list: stored under the card, pushed on the card's channel, and
+    nothing posted in the room — the worker's plan, so it takes the same seat.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
-    if not actor.authenticated:
-        raise ForbiddenError("An authenticated agent must write this checklist")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
-        raise ForbiddenError("An authenticated agent must write this checklist")
+    if not actor.authenticated:
+        # The global development token opens the room but is nobody, and a
+        # message needs an author.
+        raise ForbiddenError("Sign in to write a checklist")
+    plans_the_turn = await TopicMemberService(db).holds_an_agent_seat(
+        place.room, actor.handle
+    )
     if body.task is not None:
+        if not plans_the_turn:
+            raise ForbiddenError("A card's checklist is written by its worker")
         task = await TaskRepository(db).get(body.task)
         if task is None or task.room_id != place.room_id:
             raise NotFoundError("Task not found in this room")
+    if body.new and body.message is not None:
+        raise ValidationError("message and new cannot both be given")
+    current = None
+    if body.task is None and not body.new:
+        current = await BlockRepository(db).current_checklist(
+            place.room_id, actor.handle, message=body.message
+        )
+        if current is None and body.message is not None:
+            raise NotFoundError("Checklist not found in this room")
+        if current is not None and current.author != actor.handle:
+            raise ForbiddenError("Only the author can edit this message")
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
     ]
     runner = get_work_runner()
-    work = runner.live_work_for_topic(place.room_id)
-    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    await TopicProgressRepository(db).save(
-        place.room_id, items, task_id=body.task, turn_id=turn_id
-    )
-    await db.commit()
+    turn_id = None
+    if plans_the_turn:
+        work = runner.live_work_for_topic(place.room_id)
+        turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
+        await TopicProgressRepository(db).save(
+            place.room_id, items, task_id=body.task, turn_id=turn_id
+        )
+        await db.commit()
     if body.task is not None:
         await get_broker().publish(str(body.task), {"type": "todo", "items": items})
         return ok({"items": items})
-    text = _checklist_text(items, body.result)
+    text = checklist_text(items, body.result)
     checklist = {"items": items, "result": body.result}
-    current = (
-        None
-        if body.new
-        else await BlockRepository(db).current_checklist(place.room_id, actor.handle)
-    )
     if current is not None:
         message = await edit_message(
             db,
@@ -994,7 +982,9 @@ async def write_topic_progress(
         topic_refs=[],
         publish=True,
         author=actor.handle,
-        own_output=True,
+        # An agent's list is its own output; a person's is said to the room and
+        # waits to be read like anything else they post.
+        own_output=plans_the_turn,
         extra_meta={CHECKLIST_META_KEY: checklist},
     )
     assert message is not None  # a publication with no eid never deduplicates
@@ -1006,35 +996,15 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.get("/{topic_id}/doc")
-async def get_topic_doc(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """This place's single living doc (spec §2.2 docs-out).
-
-    Two levels exist and both are real: a room's document is the shared picture,
-    a thread's is that one piece of work's brief and then its status. They are
-    told apart by the id in the path.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    doc = await TopicService(db).get_doc(topic_id)
-    if doc is None:
-        return ok(None)
-    return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
-
-
 @router.get("/{topic_id}/overview")
 async def get_topic_overview(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """总览房间的自动区（#1889）：②~⑤，结构化，给文档面板正文下方那一栏。
+    """总览房间的自动区（#1889）：②~④，结构化，给文档面板正文下方那一栏。
 
-    总览文档是五块：① 写在文档正文里，②~⑤ 由平台现拼。注入 agent 提示词的
+    总览文档是四块：① 写在文档正文里，②~④ 由平台现拼。注入 agent 提示词的
     那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
     逐个点击的结构化条目。
 
@@ -1046,122 +1016,6 @@ async def get_topic_overview(
     await _actor_in_place(resolver, place)
     blocks = await topics.overview_auto(topic_id)
     return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
-
-
-@router.put("/{topic_id}/doc")
-async def edit_topic_doc(
-    topic_id: uuid.UUID,
-    body: DocEditIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
-    """改文档即指令 (eval B2): edit the living doc; emits a conversation event.
-
-    Conditional on ``expected_version``: this doc has no partial write, so a
-    save based on a version that is no longer current is refused with 409
-    rather than quietly erasing whatever landed in between.
-
-    A person's edit is also pushed into whatever turn is running right now.
-    改文档即指令 has always been true of the NEXT turn — the doc is read at the
-    top of one — and false of the turn already in progress, which went on
-    working from the version it started with and would then set that version
-    back. What gets pushed is the version number and a line about what moved,
-    never the text: the doc is one `cheese_doc_get` away, and a document
-    injected mid-turn displaces the work instead of informing it."""
-    # A thread has a doc of its own — its brief, and then how the work is
-    # going — and `edit_doc` has always written by place. Only this handler
-    # still refused to name one, so `cheese_doc_set` 404ed for every 分身 doing
-    # the work while `cheese_doc_get` right above answered fine.
-    place = await TopicService(db).place_or_404(topic_id)
-    # actor 在信任边界注入: prefer the verified token, fall back to body.author.
-    # The token is scoped to the place; the roster is the room's.
-    actor = await resolver.resolve(
-        fallback_handle=body.author,
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    # Same backstop as chat replies: friendly "@名字 / @话题名" → structured
-    # token, so refs in the doc render as clickable chips (docs used to skip
-    # this and stayed plain text).
-    content = await canonicalize_refs(
-        db, place.project_id, body.content, exclude_topic_id=place.room_id
-    )
-    doc, notice = await TopicService(db).edit_doc(
-        topic_id=topic_id,
-        content=content,
-        author=actor.handle,
-        expected_version=body.expected_version,
-        author_type=AuthorType.participant,
-    )
-    # Publish only committed edits: connected teammates can immediately read
-    # the new document and the same persisted contribution record.
-    await db.commit()
-    broker = get_broker()
-    if notice is not None:
-        await broker.publish(
-            str(place.room_id),
-            {
-                "type": "event_block",
-                "block": BlockOut.model_validate(notice).model_dump(mode="json"),
-            },
-        )
-    await announce_stale(place.room_id, "doc")
-    if topic_id == place.room_id:
-        # A rewritten goal is the clearest sign a room changed direction.
-        naming.nudge(place.room_id, "signal")
-    if notice is not None and (line := agent_notice(notice)):
-        # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
-        # new one by the time it does — same ordering as the comment route.
-        # What it says was written where the document moved (`edit_doc`), so the
-        # running turn and the next one are told the same thing; naming `notice`
-        # is what lets the receipt stamp it consumed instead of it being said
-        # twice.
-        await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
-    # 写入检查（#1889 第 3 条）：**照样写入**，只把「哪里不像状态」跟着响应
-    # 带回去，让写它的人当场改。拦下来是错的——让人先猜格式再写字，比一条警告
-    # 贵得多；而只写进日志的警告等于没写（没人读日志，写它的人也不在那儿）。
-    return ok(
-        BlockOut.model_validate(doc).model_dump(mode="json"),
-        warnings=living_doc_warnings(content),
-    )
-
-
-@router.post("/{topic_id}/deliveries")
-async def ask_for_a_delivery(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """定时投递（结论 17）：请平台在某个时刻把这条递给请求者自己。
-
-    收件人不在正文里，因为这条原语只有一个收件人规则——**就是请求它的那个参与者**。
-    给别人设闹钟是另一件事，而那件事没有人要过。
-    """
-    from app.domain.delivery.timer import deliver_at
-
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    recipient = actor.handle
-    if not actor.authenticated:
-        recipient = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        )
-    raw = (body.get("at") or "").strip()
-    try:
-        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        raise ValidationError("at 要是一个 ISO-8601 时刻") from None
-    row = await deliver_at(
-        db,
-        when=when,
-        event=body.get("content") or "",
-        recipient=recipient,
-        topic_id=topic_id,
-        project_id=place.project_id,
-    )
-    return ok({"id": str(row.id), "at": when.isoformat(), "to": recipient})
 
 
 @router.post("/{topic_id}/summon")
@@ -1220,9 +1074,9 @@ async def summon_agent(
         # 因此恰好有它一个，这一轮才跑得起来。
         addressed=addressed_to_agent(seat),
         nudge_event=(
-            f"<@{actor.handle}> 把之前的消息交给了 <@{seat}>"
+            say("pendingHandedTo", actor=f"<@{actor.handle}>", seat=f"<@{seat}>")
             if seat
-            else f"<@{actor.handle}> 交出了之前的消息"
+            else say("pendingHandedOver", actor=f"<@{actor.handle}>")
         ),
         provision_actor=actor,
     )
@@ -1262,7 +1116,7 @@ async def answer_options(
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
-        raise NotFoundError("问题不存在")
+        raise NotFoundError(say("optionQuestionNotFound"))
 
     # 1. 先鉴权。`body["author"]` 只是寻址的退路，不参与授权 —— 见
     # `ActorResolver` 的 docstring：legacy authorship fallback does not
@@ -1411,56 +1265,6 @@ async def mint_webhook_token(
     return ok({"token": token})
 
 
-@router.post("/{topic_id}/decision")
-async def record_decision(
-    topic_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese_decision` tool."""
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    decision = (body.get("decision") or "").strip()
-    if not decision:
-        raise ValidationError("decision 不能为空")
-    decision = await canonicalize_refs(
-        db, place.project_id, decision, exclude_topic_id=place.room_id
-    )
-    # 重发幂等 (④): inside a re-sent turn, the same decision text is the
-    # same decision — a re-sent 芝士 re-recording it must not stack a second
-    # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
-    # and no dedup: pressing the button twice means it twice.
-    continuation = get_work_runner().continuation_for(topic_id)
-    key = action_key(continuation, "decision", decision) if continuation else None
-    if key is not None and not await idem.claim(
-        db, key, action="decision", scope_id=str(topic_id)
-    ):
-        prior = await idem.stored_result(db, key)
-        return ok(prior or {"skipped": True})
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=topic_id,  # the place; `add` splits it
-        author=(
-            actor.handle
-            if actor.authenticated
-            else await TopicMemberService(db).resolve_agent_handle(
-                topic_id, room_id=place.room_id
-            )
-        ),
-        author_type=AuthorType.participant,
-        content=decision,
-        kind=BlockKind.decision,
-        refs=[str(topic_id)],
-    )
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    if key is not None:
-        await idem.record_result(db, key, out)
-    await db.commit()
-    await announce_stale(place.room_id, "decision")
-    return ok(out)
-
-
 def _parse_moment(raw: object) -> datetime | None:
     """一个可选的 ISO-8601 时刻；空串和缺席是一回事。"""
     if not isinstance(raw, str) or not raw.strip():
@@ -1496,7 +1300,7 @@ async def record_weekly(
     的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
     列 —— 它是这一条记录的属性，没有第二处会读它。
 
-    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去，和决策记录一样。
+    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -1507,7 +1311,7 @@ async def record_weekly(
     report = await canonicalize_refs(
         db, place.project_id, report, exclude_topic_id=place.room_id
     )
-    # 重发幂等 (④)，和决策记录同一个道理：一轮重新送达时，同一份正文是同一份
+    # 重发幂等 (④)：一轮重新送达时，同一份正文是同一份
     # 周报，不能垒出第二行。轮次之外（人在界面上点）没有 continuation，也就没有
     # 去重 —— 点两次就是两次。
     continuation = get_work_runner().continuation_for(topic_id)
@@ -1839,186 +1643,3 @@ async def clone_topic_from(
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
-
-
-@router.post("/{topic_id}/tell")
-async def tell_topic(
-    topic_id: uuid.UUID,
-    body: RelayIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """留话给一条活: write one message onto a thread this room dispatched
-    (`cheese_tell`). See `app.domain.topic.relay` for why the comments endpoint
-    could not be this channel, and why nothing is woken.
-
-    `topic_id` is the SENDER — the place whose turn is speaking, which is what
-    the per-turn token in `_CHEESE_WRITE_PATHS` is scoped to. The receiver rides
-    in the body and is resolved against the threads that sender dispatched: an
-    id in the URL says "who is talking", never "which resource is this".
-    """
-    sender = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, sender)
-    service = TopicRelayService(db)
-    target = await service.resolve_target(sender=sender, target=body.target)
-    # Friendly "@名字 / @话题名" → structured tokens BEFORE the message lands on
-    # the thread, so chips render and @mentions notify over there.
-    content = await canonicalize_refs(
-        db, sender.project_id, body.content, exclude_topic_id=target.id
-    )
-    block = await service.relay(sender=sender, target=target, content=content)
-    out = BlockOut.model_validate(block).model_dump(mode="json")
-    await db.commit()
-    # The room is where a person is watching; a thread's message shows up there
-    # too, under its thread.
-    await get_broker().publish(
-        str(target.room_id), {"type": "assistant_block", "block": out}
-    )
-    return ok(
-        {
-            "block": out,
-            "target_topic_id": str(target.id),
-            "target_title": target.title,
-        }
-    )
-
-
-# 芝士 → UI rendering (spec §9.1): an artifact is a file the AI explicitly points
-# at + how to render it. The type comes from the tool call, never from parsing
-# prose. MVP renders html/svg in the preview window; more types are additive.
-_ARTIFACT_MIME = {
-    "html": "text/html",
-    "svg": "image/svg+xml",
-    # A deliverable is not always a web page. A room that writes a report, a
-    # budget or a deck produces one of these, and until the platform accepted
-    # them the only way to hand one over was to describe where it sat in the
-    # worktree — which the person in the room cannot open.
-    "pdf": "application/pdf",
-    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    "pptx": (
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    ),
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "md": "text/markdown",
-    "csv": "text/csv",
-    "png": "image/png",
-    "jpg": "image/jpeg",
-    "gif": "image/gif",
-    "webp": "image/webp",
-    # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
-    # lives on, reached over the preview tunnel that machine dialled out. HOW to
-    # run it — and on which port — is the agent's judgment; the platform only
-    # carries what answers there.
-    "app": "application/x-cheesex-app",
-}
-
-#: Which artifact kind a filename implies, when the caller named none.
-#:
-#: Asking the agent to restate in a flag what the extension already says is a
-#: rule it can get wrong, and the wrong answer here is silent: `report.docx`
-#: declared as html reaches the panel as a mis-typed blob rather than an error.
-#: An unknown extension still falls back to html, which is what every caller
-#: predating this table sent.
-_ARTIFACT_KIND_BY_SUFFIX = {
-    ".html": "html",
-    ".htm": "html",
-    ".svg": "svg",
-    ".pdf": "pdf",
-    ".docx": "docx",
-    ".pptx": "pptx",
-    ".xlsx": "xlsx",
-    ".md": "md",
-    ".markdown": "md",
-    ".csv": "csv",
-    ".png": "png",
-    ".jpg": "jpg",
-    ".jpeg": "jpg",
-    ".gif": "gif",
-    ".webp": "webp",
-}
-
-#: Ceiling on a published artifact, matching the chat attachment limit below —
-#: both are "a file a person will open in this room", and a report that is too
-#: big to send as an attachment is too big to publish as a deliverable.
-MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
-
-
-def artifact_kind_for(path: str) -> str:
-    """The kind `path`'s extension implies; `html` when it implies none."""
-    suffix = path.rsplit("/", 1)[-1]
-    dot = suffix.rfind(".")
-    return _ARTIFACT_KIND_BY_SUFFIX.get(suffix[dot:].lower() if dot > 0 else "", "html")
-
-
-def _clean_artifact_path(raw: str) -> str:
-    """A workspace-relative pointer — reject absolute paths, traversal, and .git.
-    The file itself is read later via the guarded workspace reader."""
-    path = (raw or "").strip()
-    if not path:
-        raise ValidationError("path 不能为空")
-    parts = path.split("/")
-    if path.startswith("/") or ".." in parts or ".git" in parts:
-        raise ValidationError("path 必须是工作区相对路径")
-    return path
-
-
-async def _bind_source_task(
-    db: AsyncSession, room_id: uuid.UUID, task: uuid.UUID
-) -> None:
-    """Refuse a card that is not this room's: a source is not a free-form id."""
-    work = await TaskRepository(db).get(task)
-    if work is None or work.room_id != room_id or work.branch_name is None:
-        raise NotFoundError("Task not found")
-
-
-async def _source_bytes(
-    db: AsyncSession,
-    project_id: uuid.UUID,
-    room_id: uuid.UUID,
-    path: str,
-    task: uuid.UUID | None,
-    source: Literal["live", "committed"] = "live",
-) -> bytes:
-    """One of this room's files, from whichever store holds it.
-
-    A room keeps what it delivered outside git; a card keeps what it is still
-    writing, on its own branch; the project's 资料库 keeps what someone gave it,
-    and `library/<名字>` says so in the path itself. All three are 「这个房间的
-    文件」 to a reader, so the viewers take the source as a parameter instead of
-    each being wired to one store — that wiring is why a document on a branch
-    had no view but a raw binary diff.
-    """
-    if task is not None or source == "committed":
-        if library.library_name(path) is not None:
-            raise ValidationError("资料库里的文件不属于某个任务分支")
-        from app.domain.repository.forge_files import ProjectFiles
-
-        data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
-        return data
-    return library.read_attachment(project_id, room_id, path)
-
-
-async def record_shown(
-    db: AsyncSession, place: Place, path: str, *, author: str, mime: str | None = None
-) -> dict:
-    """List a room file among what the room has on show, and tell open clients.
-
-    What `cheese show` does after writing the file; a file a person creates in
-    the room (a copy, a new one from a template) is on show the same way."""
-    block = await BlockRepository(db).add(
-        project_id=place.project_id,
-        topic_id=place.room_id,
-        author=author,
-        author_type=AuthorType.participant,
-        content=path,
-        kind=BlockKind.artifact,
-        mime_type=mime or _ARTIFACT_MIME[artifact_kind_for(path)],
-        refs=[path],
-    )
-    payload = BlockOut.model_validate(block).model_dump(mode="json")
-    # Live, like a published message: the reader is usually in the room while
-    # 芝士 works, and the card has to appear then, not on the next reload.
-    await get_broker().publish(
-        str(place.room_id), {"type": "assistant_block", "block": payload}
-    )
-    return payload

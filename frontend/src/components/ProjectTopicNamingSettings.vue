@@ -7,6 +7,8 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getTopicNaming, setTopicNaming } from '../api'
 
+import { t } from '@/i18n'
+
 // 话题命名：平台自动给话题起名、方向变了再改（默认），还是全由人来起名。
 // 两档都不碰人定过的名字——那是每个话题自己的锁，只能由人再改一次，解不开。
 // 行为见后端 topic/naming.py。选中即保存：两个选项、没有要一起提交的别的字段。
@@ -19,14 +21,13 @@ const busy = ref(false)
 const OPTIONS: { value: TopicNamingMode; title: string; detail: string }[] = [
   {
     value: 'auto',
-    title: '智能命名',
-    detail:
-      '第一句话后自动起名，第一轮结束后校准一次；之后话题方向明显变了才会改名，改名会在话题里留一条可撤销的记录。',
+    title: t('work.projectSettings.topicNaming.autoTitle'),
+    detail: t('work.projectSettings.topicNaming.autoDetail'),
   },
   {
     value: 'manual',
-    title: '手动命名',
-    detail: '平台不再自动起名，新话题保持「新话题」，直到有人手动改名。',
+    title: t('work.projectSettings.topicNaming.manualTitle'),
+    detail: t('work.projectSettings.topicNaming.manualDetail'),
   },
 ]
 
@@ -35,7 +36,7 @@ async function load() {
   try {
     state.value = await getTopicNaming(props.projectId)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载话题命名设置失败'
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.topicNaming.loadFailed')
   }
 }
 
@@ -46,7 +47,7 @@ async function choose(mode: TopicNamingMode | null) {
   try {
     state.value = await setTopicNaming(props.projectId, mode)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存话题命名设置失败'
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.topicNaming.saveFailed')
   } finally {
     busy.value = false
   }
@@ -59,10 +60,15 @@ watch(() => props.projectId, load)
 
 <template>
   <div>
-    <p class="t-body c-muted mb-4">人手动改过名字的话题，无论选哪一档都不会被自动改。</p>
+    <p class="t-body c-muted mb-4">{{ t('work.projectSettings.topicNaming.intro') }}</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
-      <div class="naming-options" role="radiogroup" aria-label="话题命名" data-testid="topic-naming-mode">
+      <div
+        class="naming-options"
+        role="radiogroup"
+        :aria-label="t('work.projectSettings.topicNaming.label')"
+        data-testid="topic-naming-mode"
+      >
         <button
           v-for="o in OPTIONS"
           :key="o.value"
@@ -82,9 +88,11 @@ watch(() => props.projectId, load)
         </button>
       </div>
       <p v-if="!state.available && state.mode === 'auto'" class="t-caption c-muted mt-2">
-        这个部署还没有接模型网关，暂时由 AI 队友在第一轮里起名。
+        {{ t('work.projectSettings.topicNaming.fallback') }}
       </p>
-      <p v-if="!state.can_manage" class="t-caption c-muted mt-2">只有项目管理员可以修改。</p>
+      <p v-if="!state.can_manage" class="t-caption c-muted mt-2">
+        {{ t('work.projectSettings.topicNaming.readOnly') }}
+      </p>
     </template>
   </div>
 </template>

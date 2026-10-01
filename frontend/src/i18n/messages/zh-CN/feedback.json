@@ -46,7 +46,6 @@
     },
     "error": {
       "title": "队列加载失败",
-      "desc": "检查网络后重试。",
       "retry": "重试"
     },
     "filtered": {
@@ -128,7 +127,6 @@
     },
     "error": {
       "title": "表格加载失败",
-      "desc": "检查网络后重试。",
       "retry": "重试"
     },
     "filtered": {
@@ -543,6 +541,12 @@
     "suggestion": "建议",
     "other": "其他"
   },
+  "priority": {
+    "low": "低",
+    "normal": "普通",
+    "high": "高",
+    "urgent": "紧急"
+  },
   "source": {
     "user": "用户提交",
     "agent": "Agent 发现"
@@ -585,7 +589,7 @@
     "submitted": "已提交",
     "progress": "反馈中心里能看到它的进展。",
     "view": "查看这条反馈",
-    "confirm": "我确认这里更像是平台问题，而不是你的使用方式",
+    "byline": "{name} 认为这是平台的问题，不是你的用法",
     "userSaid": "你当时说的",
     "why": "判断依据（为什么这不是你的使用方式）",
     "logs": "日志",
@@ -728,5 +732,19 @@
       "restored": "已恢复上次没写完的草稿",
       "discard": "丢弃草稿"
     }
+  },
+  "errors": {
+    "listLoadFailed": "反馈列表加载失败",
+    "loadMoreFailed": "加载更多失败",
+    "mineLoadFailed": "「我的反馈」加载失败",
+    "openFailed": "这条反馈打不开",
+    "actionFailed": "操作失败",
+    "commentSendFailed": "评论发送失败",
+    "commentsLoadFailed": "评论加载失败",
+    "repliesLoadFailed": "回复加载失败",
+    "deleteFailed": "删除失败",
+    "submitFailed": "提交失败",
+    "queueLoadFailed": "管理队列加载失败",
+    "dashboardLoadFailed": "看板加载失败"
   }
 }

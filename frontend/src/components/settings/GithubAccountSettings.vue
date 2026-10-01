@@ -2,6 +2,7 @@
 import type { CallbackNotice, GithubAccountLoadState } from '@/composables/useProjectSettings'
 import type { OAuthConnectionInfo } from '@/cx_types'
 
+import { t } from '@/i18n'
 import { isGithubAccountTokenExpired } from '@/lib/githubAccount'
 import { relTime } from '@/lib/relTime'
 
@@ -40,7 +41,7 @@ const emit = defineEmits<{
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-account-box-outline</v-icon>
-      <span class="page-section-title">连接 GitHub 账号</span>
+      <span class="page-section-title">{{ t('work.projectSettings.githubAccount.title') }}</span>
     </div>
     <div class="page-section-body">
       <!-- The 账号 flow's own outcome, in the 账号 section. -->
@@ -58,15 +59,19 @@ const emit = defineEmits<{
       <!-- 加载中 -->
       <div v-if="state === 'loading'" class="d-flex align-center" style="gap: 8px">
         <v-progress-circular indeterminate size="16" width="2" color="primary" />
-        <span class="t-body c-muted">正在加载连接状态…</span>
+        <span class="t-body c-muted">{{ t('work.projectSettings.githubAccount.loading') }}</span>
       </div>
 
       <!-- 请求失败: never fall through to the "未连接" look, that would lie -->
       <div v-else-if="state === 'error'" class="d-flex align-center flex-wrap" style="gap: 8px">
         <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-        <span class="t-body text-error settings-row-label">{{ loadError ?? '加载连接状态失败' }}</span>
+        <span class="t-body text-error settings-row-label">{{
+          loadError ?? t('work.projectSettings.githubAccount.loadFailed')
+        }}</span>
         <v-spacer />
-        <v-btn size="small" variant="text" @click="emit('retry')">重试</v-btn>
+        <v-btn size="small" variant="text" @click="emit('retry')">{{
+          t('work.projectSettings.githubAccount.retry')
+        }}</v-btn>
       </div>
 
       <!-- 已连接 -->
@@ -74,13 +79,17 @@ const emit = defineEmits<{
         <div class="d-flex align-center flex-wrap" style="gap: 8px">
           <v-icon size="18" color="success">mdi-check-circle</v-icon>
           <span class="t-body settings-row-label">
-            已连接 <strong>{{ conn.login ?? conn.providerUserId }}</strong>
-            <span v-if="conn.connectedAt" class="c-faint settings-hint"> （{{ relTime(conn.connectedAt) }}连接） </span>
+            {{ t('work.projectSettings.githubAccount.connected', { login: conn.login ?? conn.providerUserId }) }}
+            <span v-if="conn.connectedAt" class="c-faint settings-hint">
+              {{ t('work.projectSettings.githubAccount.connectedAt', { when: relTime(conn.connectedAt) }) }}
+            </span>
           </span>
           <v-spacer />
-          <v-btn size="small" variant="tonal" :loading="connecting" @click="emit('connect')"> 重新连接 </v-btn>
+          <v-btn size="small" variant="tonal" :loading="connecting" @click="emit('connect')">
+            {{ t('work.projectSettings.githubAccount.reconnect') }}
+          </v-btn>
           <v-btn size="small" variant="text" color="error" :loading="disconnecting" @click="emit('disconnect')">
-            断开
+            {{ t('work.projectSettings.githubAccount.disconnect') }}
           </v-btn>
         </div>
         <v-alert
@@ -90,21 +99,21 @@ const emit = defineEmits<{
           variant="tonal"
           class="mt-2"
         >
-          GitHub 授权已过期，暂时无法以你的身份创建 PR。请点击“重新连接”刷新授权。
+          {{ t('work.projectSettings.githubAccount.expired') }}
         </v-alert>
       </template>
 
       <!-- 未连接 -->
       <div v-else class="d-flex align-center flex-wrap" style="gap: 8px">
-        <span class="t-body c-muted">暂无关联账号</span>
+        <span class="t-body c-muted">{{ t('work.projectSettings.githubAccount.none') }}</span>
         <v-spacer />
         <v-btn size="small" color="primary" variant="tonal" :loading="connecting" @click="emit('connect')">
-          连接 GitHub 账号
+          {{ t('work.projectSettings.githubAccount.connect') }}
         </v-btn>
       </div>
 
       <p class="t-body c-faint mt-2 settings-hint">
-        用于识别你的提交署名，并以你的身份创建 GitHub PR。这与登录用的 GitHub 授权相互独立，可以连接不同的账号。
+        {{ t('work.projectSettings.githubAccount.hint') }}
       </p>
     </div>
   </section>

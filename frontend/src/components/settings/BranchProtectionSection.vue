@@ -4,6 +4,8 @@ import type { BranchProtection, BranchProtectionPatch } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
+
 // 分支保护 (#718) 的那一块模板：平台侧的合并规则，照 GitHub 分支保护那一页的顺序
 // 排。拆自 `views/ProjectSettingsView.vue`（#2143）。
 //
@@ -61,31 +63,31 @@ const bpBusy = computed(() => props.saving !== null)
   <section class="page-section">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-shield-outline</v-icon>
-      <span class="page-section-title">分支保护</span>
+      <span class="page-section-title">{{ t('work.projectSettings.merge.title') }}</span>
     </div>
     <div class="page-section-body">
       <!-- 加载中 -->
       <div v-if="state === 'loading'" class="d-flex align-center" style="gap: 8px">
         <v-progress-circular indeterminate size="16" width="2" color="primary" />
-        <span class="t-body c-muted">正在加载分支保护规则…</span>
+        <span class="t-body c-muted">{{ t('work.projectSettings.merge.loading') }}</span>
       </div>
 
       <!-- 加载失败 -->
       <div v-else-if="state === 'error'" class="d-flex align-center" style="gap: 8px">
         <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
-        <span class="t-body text-error">{{ loadError ?? '加载分支保护规则失败' }}</span>
+        <span class="t-body text-error">{{ loadError ?? t('work.projectSettings.merge.loadFailed') }}</span>
         <v-spacer />
-        <v-btn size="small" variant="text" @click="emit('retry')">重试</v-btn>
+        <v-btn size="small" variant="text" @click="emit('retry')">{{ t('work.projectSettings.merge.retry') }}</v-btn>
       </div>
 
       <template v-else-if="bp">
         <!-- GitHub 已开保护: 顶行提示 + 同名规则灰掉；查不到状态只说明，不灰 -->
         <div v-if="bp.github_protection.enforced" class="bp-github-note">
           <v-icon size="16" class="c-muted">mdi-github</v-icon>
-          <span>GitHub 已在执行以下规则</span>
+          <span>{{ t('work.projectSettings.merge.githubEnforced') }}</span>
         </div>
         <p v-else-if="bp.github_protection.status === 'unknown'" class="t-body c-faint settings-hint">
-          暂时查不到 GitHub 侧的保护状态，以下规则按平台配置执行
+          {{ t('work.projectSettings.merge.githubUnknown') }}
         </p>
 
         <v-alert v-if="error" type="error" density="compact" closable @click:close="emit('clear-error')">
@@ -95,20 +97,24 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 1. 合并前必须通过的检查 -->
         <div class="bp-row bp-row--stack">
           <div class="bp-main">
-            <div class="bp-label">合并前必须通过的检查</div>
-            <div class="bp-hint c-faint">点名的检查全部通过才能合并；填了路径范围的检查只在改到对应文件时要求</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.checks') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.checksHint') }}</div>
           </div>
-          <div v-if="bp.required_checks.length === 0" class="bp-hint c-muted">暂无必须通过的检查</div>
+          <div v-if="bp.required_checks.length === 0" class="bp-hint c-muted">
+            {{ t('work.projectSettings.merge.checksNone') }}
+          </div>
           <div v-for="(c, i) in bp.required_checks" :key="`${c.name}-${i}`" class="bp-check">
             <span class="bp-check-name">{{ c.name }}</span>
-            <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{ c.paths.join('、') }}</span>
-            <span v-else class="bp-check-paths c-faint">所有文件</span>
+            <span v-if="c.paths?.length" class="bp-check-paths c-muted">{{
+              c.paths.join(t('work.projectSettings.merge.pathSeparator'))
+            }}</span>
+            <span v-else class="bp-check-paths c-faint">{{ t('work.projectSettings.merge.allFiles') }}</span>
             <v-spacer />
             <v-btn
               icon
               size="x-small"
               variant="text"
-              title="移除这条检查"
+              :title="t('work.projectSettings.merge.removeCheck')"
               :disabled="ghEnforced || bpBusy"
               @click="emit('remove-check', i)"
             >
@@ -122,7 +128,7 @@ const bpBusy = computed(() => props.saving !== null)
               density="compact"
               variant="outlined"
               hide-details
-              placeholder="检查名"
+              :placeholder="t('work.projectSettings.merge.checkName')"
               style="flex: 1"
               :disabled="ghEnforced || bpBusy"
               @update:model-value="emit('update:checkName', $event)"
@@ -134,7 +140,7 @@ const bpBusy = computed(() => props.saving !== null)
               density="compact"
               variant="outlined"
               hide-details
-              placeholder="路径范围，如 backend/**，可留空"
+              :placeholder="t('work.projectSettings.merge.checkPaths')"
               style="flex: 1"
               :disabled="ghEnforced || bpBusy"
               @update:model-value="emit('update:checkPaths', $event)"
@@ -148,7 +154,7 @@ const bpBusy = computed(() => props.saving !== null)
               :loading="saving === 'required_checks'"
               @click="emit('add-check')"
             >
-              添加
+              {{ t('work.projectSettings.merge.add') }}
             </v-btn>
           </div>
         </div>
@@ -156,8 +162,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 2. strict -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">合并前分支必须跟上 main</div>
-            <div class="bp-hint c-faint">开启后落后的分支由平台先更新再合并</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.strict') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.strictHint') }}</div>
           </div>
           <v-switch
             density="compact"
@@ -173,8 +179,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 3. dismiss_stale -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">新提交作废已有的采纳</div>
-            <div class="bp-hint c-faint">这里推送代码的通常是芝士，新的提交需要重新采纳，所以默认开启</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.dismissStale') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.dismissStaleHint') }}</div>
           </div>
           <v-switch
             density="compact"
@@ -190,8 +196,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 4. auto_merge_allowed（平台自己的概念，不随 GitHub 灰掉） -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">允许自动合并</div>
-            <div class="bp-hint c-faint">开启后，被规则拦住的采纳可以选择在检查全部通过时自动合并</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.autoMerge') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.autoMergeHint') }}</div>
           </div>
           <v-switch
             density="compact"
@@ -207,8 +213,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 5. override_handles -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">人工放行的人</div>
-            <div class="bp-hint c-faint">检查未过时可以放行合并的人；留空时是项目 owner 和 lead</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.override') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.overrideHint') }}</div>
           </div>
           <v-select
             autocomplete="off"
@@ -218,7 +224,7 @@ const bpBusy = computed(() => props.saving !== null)
             multiple
             chips
             closable-chips
-            placeholder="owner 和 lead"
+            :placeholder="t('work.projectSettings.merge.overridePlaceholder')"
             style="max-width: 320px"
             :items="memberItems"
             :model-value="bp.override_handles ?? []"
@@ -231,8 +237,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 6. approvals_required -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">需要几个人批准</div>
-            <div class="bp-hint c-faint">采纳数达到这个数量才会合并</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.approvals') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.approvalsHint') }}</div>
           </div>
           <v-text-field
             :model-value="approvalsDraft"
@@ -253,8 +259,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 7. merge_method（只读附注） -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">合并方式</div>
-            <div class="bp-hint c-faint">绑定 GitHub 的项目从仓库设置读取，这里不可修改</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.mergeMethod') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.mergeMethodHint') }}</div>
           </div>
           <span class="bp-check-name">{{ bp.merge_method }}</span>
         </div>
@@ -262,8 +268,8 @@ const bpBusy = computed(() => props.saving !== null)
         <!-- 8. default_reviewer（平台自己的概念，不随 GitHub 灰掉） -->
         <div class="bp-row">
           <div class="bp-main">
-            <div class="bp-label">任务默认 reviewer</div>
-            <div class="bp-hint c-faint">派任务没有指定 reviewer 时用这个人</div>
+            <div class="bp-label">{{ t('work.projectSettings.merge.defaultReviewer') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.defaultReviewerHint') }}</div>
           </div>
           <v-select
             autocomplete="off"

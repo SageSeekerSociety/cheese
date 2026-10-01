@@ -71,14 +71,15 @@ function rateTitle(row: ModelRow): string {
         </tr>
       </template>
 
-      <!-- 读不到网关：一条平静的说明画在列头下面，重试就在旁边。接口失败和
-       「网关没配管理密钥」在这里合成**一处** —— 对读的人是同一个结果：
-       这张表读不出来。 -->
+      <!-- 读不到网关：中性标题说清是哪一段，服务端原话（或网关为什么不可用）落到说明行，
+       重试就在旁边。接口失败和「网关没配管理密钥」在这里合成**一处** —— 对读的人是同一个
+       结果：这张表读不出来。原话当标题会被长句撑得不像标题。 -->
       <template #error>
         <AdminEmptyState
           compact
           tone="error"
-          :title="props.error ?? props.gatewayDetail"
+          :title="t('models.table.loadFailed')"
+          :desc="props.error || props.gatewayDetail || undefined"
           :action="t('models.page.retry')"
           @action="emit('retry')"
         />

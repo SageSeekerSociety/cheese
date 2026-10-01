@@ -1,19 +1,38 @@
+import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
+
 import { t } from '@/i18n'
 import { desktopCan } from '@/lib/desktopApp'
 
-/** 个人设置的几块。桌面上是左边那条侧栏，手机上是内容上方的一排标签，同一份清单。
+/** 个人设置的目录：桌面上是浮层左边那一列，手机上是打开设置先看到的那一页。
  *  「通用」只在桌面 app 里有：那里是这台电脑上的 app 自己的设置。 */
-export const SETTINGS_SECTIONS = [
-  { label: () => t('account.profile.title'), route: { name: 'UserSettingsProfile' }, icon: 'mdi-account' },
-  { label: () => t('account.settings.realName'), route: { name: 'UserSettingsRealName' }, icon: 'mdi-account-card' },
-  { label: () => t('account.security.title'), route: { name: 'UserSettingsSecurity' }, icon: 'mdi-lock' },
-  { label: () => t('account.settings.devices'), route: { name: 'UserSettingsDevices' }, icon: 'mdi-laptop' },
-  {
-    label: () => t('account.settings.connections'),
-    route: { name: 'UserSettingsConnections' },
-    icon: 'mdi-link-variant',
-  },
-  ...(desktopCan('autostart')
-    ? [{ label: () => t('account.settings.general'), route: { name: 'UserSettingsGeneral' }, icon: 'mdi-tune-variant' }]
-    : []),
-]
+export function settingsGroups(): SettingsGroup[] {
+  const item = (name: string, label: string, icon: string) => ({ key: name, label, icon, to: { name } })
+  return [
+    {
+      key: 'account',
+      title: t('account.settings.groups.account'),
+      items: [
+        item('UserSettingsProfile', t('account.profile.title'), 'mdi-account'),
+        item('UserSettingsRealName', t('account.settings.realName'), 'mdi-account-card'),
+        item('UserSettingsSecurity', t('account.security.title'), 'mdi-lock'),
+      ],
+    },
+    {
+      key: 'devices',
+      title: t('account.settings.groups.devices'),
+      items: [
+        item('UserSettingsDevices', t('account.settings.devices'), 'mdi-laptop'),
+        item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant'),
+      ],
+    },
+    ...(desktopCan('autostart')
+      ? [
+          {
+            key: 'app',
+            title: t('account.settings.groups.app'),
+            items: [item('UserSettingsGeneral', t('account.settings.general'), 'mdi-tune-variant')],
+          },
+        ]
+      : []),
+  ]
+}

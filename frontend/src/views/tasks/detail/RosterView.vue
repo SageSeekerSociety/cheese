@@ -54,7 +54,9 @@
                   :disabled="!row.hasDetails"
                   @click="expanded = expanded === row.id ? null : row.id"
                 >
-                  <span class="rs__avatar">{{ row.name.slice(0, 1) }}</span>
+                  <span class="rs__avatar" :class="{ 'rs__avatar--team': row.teamSize }">{{
+                    row.name.slice(0, 1)
+                  }}</span>
                   <span class="rs__name">{{ row.name }}</span>
                   <small v-if="row.teamSize" class="rs__small">{{
                     t('tasks.roster.teamSize', { n: row.teamSize })
@@ -108,7 +110,7 @@
                   >
                     {{ t('tasks.roster.view') }}
                   </v-btn>
-                  <v-menu v-if="row.approved === 'APPROVED'" location="bottom end">
+                  <AdaptiveMenu v-if="row.approved === 'APPROVED'" :actions="rowActions(row)">
                     <template #activator="{ props: menu }">
                       <v-btn
                         v-bind="menu"
@@ -118,10 +120,7 @@
                         :aria-label="t('tasks.roster.more')"
                       />
                     </template>
-                    <v-list density="compact">
-                      <v-list-item :title="t('tasks.roster.setDeadline')" @click="openDeadline(row)" />
-                    </v-list>
-                  </v-menu>
+                  </AdaptiveMenu>
                 </div>
               </td>
             </tr>
@@ -224,6 +223,7 @@
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
 import type {
   Task,
   TaskMembership,
@@ -235,6 +235,8 @@ import type {
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
+
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
@@ -303,7 +305,9 @@ function realNameLine(info: TaskParticipantRealNameInfo): string {
 function memberName(member: TaskTeamParticipantMemberSummary): string {
   if (props.taskData?.requireRealName && member.realNameInfo?.realName) {
     const id = member.realNameInfo.studentId
-    return id ? `${member.realNameInfo.realName}（${id}）` : member.realNameInfo.realName
+    return id
+      ? t('tasks.roster.memberWithId', { name: member.realNameInfo.realName, id })
+      : member.realNameInfo.realName
   }
   return member.name
 }
@@ -414,6 +418,17 @@ function confirmReject() {
 const deadlineOpen = ref(false)
 const deadlineValue = ref('')
 const minDeadline = computed(() => dayjs().format('YYYY-MM-DDTHH:mm'))
+
+function rowActions(row: Row): MenuAction[] {
+  return [
+    {
+      key: 'deadline',
+      label: t('tasks.roster.setDeadline'),
+      icon: 'mdi-calendar-clock-outline',
+      onSelect: () => openDeadline(row),
+    },
+  ]
+}
 
 function openDeadline(row: Row) {
   selected.value = row
@@ -550,6 +565,10 @@ function saveDeadline() {
   color: var(--text);
   font-size: 11px;
 }
+/* 团队来领的那一行不是一个人：圆角方块（形状照 GitHub 的规则，人才是圆的）。 */
+.rs__avatar--team {
+  border-radius: var(--radius-sm);
+}
 
 .rs__small,
 .rs__chev,
@@ -609,6 +628,11 @@ function saveDeadline() {
 
 .rs__member + .rs__member::before {
   content: '、';
+}
+
+/* 顿号只在中文里是列表分隔符；英文界面用逗号。<html lang> 随界面语言切换。 */
+:lang(en) .rs__member + .rs__member::before {
+  content: ', ';
 }
 
 .rs__sr {

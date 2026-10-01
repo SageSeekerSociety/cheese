@@ -78,7 +78,6 @@ const {
   advance,
   state,
   copy,
-  listError,
   runAction,
   scoped,
   hasPrev,
@@ -92,7 +91,7 @@ const {
 </script>
 
 <template>
-  <div class="qpage">
+  <div class="qpage admin-page">
     <!-- 宽屏的详情是**整页接管**（§4.4：200 导航 + 440 左栏 + 760 右栏）。队列行本身
          就要 1100px，两个并排在任何常见视口里都塞不下 —— 塞得下的那种宽度下，
          `AdminQueueDetail` 自己那条 1280 媒体查询又已经把它拆成两栏了。 -->
@@ -109,7 +108,7 @@ const {
     />
 
     <template v-else>
-      <div class="qpage__inner">
+      <div class="qpage__inner admin-page__col page-container--admin">
         <AdminQueueHeader
           :unread="unread"
           :view="view"
@@ -151,7 +150,6 @@ const {
               :desc="copy.desc"
               :action="copy.action"
               :tone="state === 'error' ? 'error' : 'neutral'"
-              :raw="state === 'error' ? listError : null"
               @action="runAction"
             />
           </template>
@@ -183,7 +181,6 @@ const {
               :desc="copy.desc"
               :action="copy.action"
               :tone="state === 'error' ? 'error' : 'neutral'"
-              :raw="state === 'error' ? listError : null"
               @action="runAction"
             />
           </template>
@@ -233,15 +230,13 @@ const {
 /* 内容列锁 1440（--page-w-admin）：16 + 4 + 12 + F + 16 + 116 + 16 + 88 + 16 +
    B + 20 = 1440，即 F = 1156 − B（B 是 max-content 的推进按钮，56–84 → F ≈ 1072–1100）。
    F 的下限仍是 740：可用区不足时整行在 `.qlist` 里横着滚，窄屏行为和 1100 时代一致。
-   居中而不是靠左：这一页的右边没有东西，靠左会让不同视口下的行宽差出一截。 */
+   居中而不是靠左：这一页的右边没有东西，靠左会让不同视口下的行宽差出一截。
+
+   列宽、居中和断点这一层由后台共用骨架给（`.admin-page__col` + `page-container--admin`，
+   见 `src/style.css`）：八页各写一份的结果是发丝线的长度每页都不一样。这里只留队列
+   自己的那一条 —— 这一列要跟着页面一起长高，所以是 `flex: 1 1 auto`。 */
 .qpage__inner {
-  display: flex;
   flex: 1 1 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  min-height: 0;
-  margin: 0 auto;
 }
 
 /* 无效按键的闪底。0.2s（§7.7 的「出现 / 消失」那一档），中性色 —— 一次落空的按键

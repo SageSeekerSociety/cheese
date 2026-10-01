@@ -1,0 +1,161 @@
+/* 数据六格共用的写法：一行紧凑控件、一张带细边框的表、一块带细边框的卡。
+   每一页用 <style scoped src="./analytics.css"> 引进来。 */
+
+.an-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.an-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+/* 这一格自己的筛选：和页头下那一行同样的紧凑控件，名字写在框里（prefix），不浮在边上。 */
+.an-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.an-bar > .v-input {
+  flex: 0 1 200px;
+  min-width: 160px;
+}
+
+.an-bar > .an-bar__narrow {
+  flex: 0 1 110px;
+  min-width: 100px;
+}
+
+.an-bar :deep(.v-field) {
+  font-size: 13px;
+}
+
+.an-bar :deep(.v-text-field__prefix),
+.an-bar :deep(.v-field__prefix) {
+  color: var(--muted);
+}
+
+.an-bar__end {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.an-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+  transition: border-color var(--dur-quick) var(--ease-standard);
+}
+
+.an-toggle:hover {
+  border-color: var(--faint);
+}
+
+.an-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.an-toggle--on {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* 表：表头不折行，列放不下时整张表横着滚，而不是把「提交转化率」挤成三行。 */
+.an-table {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.an-table :deep(.v-table__wrapper) {
+  overflow-x: auto;
+}
+
+.an-table :deep(th) {
+  color: var(--muted) !important;
+  font-size: 12px;
+  font-weight: 600 !important;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+}
+
+.an-table :deep(td) {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 第一列是名字（题目、出题人），可以换行，但给它留够宽度。 */
+.an-table :deep(td:first-child) {
+  min-width: 200px;
+  white-space: normal;
+}
+
+.an-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.an-card__title {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+}
+
+.an-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.an-state {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.an-state::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+  content: '';
+}
+
+.an-state--ok {
+  color: var(--ok-ink);
+}
+
+.an-state--ok::before {
+  background: var(--ok);
+}
+
+.an-state--danger {
+  color: var(--danger-ink);
+}
+
+.an-state--danger::before {
+  background: var(--danger);
+}

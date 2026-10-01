@@ -6,8 +6,10 @@
 // Office 文档浏览器画不了，`read(true)` 要的是服务端转好的 PDF。
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import DesignImage from '@/components/panels/preview/DesignImage.vue'
 import PreviewPages from '@/components/panels/preview/PreviewPages.vue'
 import PreviewSheet from '@/components/panels/preview/PreviewSheet.vue'
+import PreviewSlides from '@/components/panels/preview/PreviewSlides.vue'
 import { t } from '@/i18n'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, suffixOf } from '@/lib/fileKind'
 
@@ -77,9 +79,10 @@ onBeforeUnmount(() => {
     <p v-if="loading" class="file-preview__note t-body c-muted" role="status">{{ t('work.library.previewLoading') }}</p>
     <p v-else-if="error" class="file-preview__note t-body c-danger" role="alert">{{ error }}</p>
     <template v-else-if="data">
-      <PreviewPages v-if="view === 'pages'" :data="data" />
+      <PreviewSlides v-if="['pptx', 'ppt', 'odp'].includes(suffix)" :data="data" :title="filename" />
+      <PreviewPages v-else-if="view === 'pages'" :data="data" />
       <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="suffix === 'csv' ? 'csv' : 'workbook'" />
-      <img v-else-if="imageUrl" :src="imageUrl" :alt="filename" class="file-preview__image" />
+      <DesignImage v-else-if="imageUrl" :src="imageUrl" :alt="filename" :identity="source" />
       <pre v-else-if="text !== null" class="file-preview__text t-body">{{ text }}</pre>
       <p v-else class="file-preview__note t-body c-muted">{{ t('work.library.downloadOnly') }}</p>
     </template>

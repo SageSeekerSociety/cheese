@@ -1,0 +1,27 @@
+{
+  "eyebrow": "Market",
+  "title": "Matching and resources",
+  "loadFailed": "Couldn't load the market",
+  "tabs": {
+    "tasks": "Challenge matching",
+    "pools": "Models and work computers"
+  },
+  "tasksIntro": "Organizations publish {challenges} to the market; teams {apply} with their own projects. Once an application is accepted, the project is linked to the challenge and its resources and terms take effect right away.",
+  "tasksIntroChallenges": "challenges",
+  "tasksIntroApply": "apply",
+  "poolsIntro": "These are the {models} and {computers} a project can use. Defaults are covered by the platform and work out of the box; devices you connect yourself are listed here too.",
+  "aiModels": "AI models",
+  "aiModelsHint": "The model each conversation uses",
+  "workComputers": "Work computers",
+  "workComputersHint": "Machines that run tasks",
+  "default": "Default",
+  "available": "Available in projects",
+  "unavailable": "Not available yet",
+  "tier": {
+    "default": "Default · included",
+    "included": "Included",
+    "testing": "Beta",
+    "byo": "Bring your own credentials",
+    "premium": "Premium"
+  }
+}

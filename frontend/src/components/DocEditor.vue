@@ -18,6 +18,8 @@ import { ApiError, chatWsUrl, getDoc, putDoc } from '../api'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { myHandle } from '../me'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     // The topic whose living doc we edit (章程 = the project's root topic).
@@ -117,7 +119,7 @@ async function loadDoc(topicId: string) {
     conflict.value = false
     dirty.value = false
   } catch (e) {
-    emit('error', e instanceof Error ? e.message : '加载文档失败')
+    emit('error', e instanceof Error ? e.message : t('work.room.doc.loadFailed'))
   } finally {
     if (props.topicId === topicId) loading.value = false
   }
@@ -166,9 +168,9 @@ async function save() {
       // save the PERSON asks for is an overwrite they chose.
       conflict.value = true
       await adoptServerVersion(topicId)
-      emit('error', '文档在别处被改过了，这次保存没写进去。按 ⌘S 用你现在这份覆盖')
+      emit('error', t('work.room.doc.conflictOverwrite'))
     } else {
-      emit('error', e instanceof Error ? e.message : '保存失败')
+      emit('error', e instanceof Error ? e.message : t('work.room.doc.saveFailed'))
     }
   } finally {
     saving.value = false
@@ -310,14 +312,14 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="doc-handle__btn doc-handle__add"
-          title="在下方插入块"
+          :title="t('work.room.doc.insertBelow')"
           draggable="false"
           @dragstart.stop.prevent
           @click="addBlockBelow"
         >
           <v-icon size="15">mdi-plus</v-icon>
         </button>
-        <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
+        <span class="doc-handle__btn doc-handle__grip" :title="t('work.room.doc.dragToReorder')">
           <v-icon size="15">mdi-drag-vertical</v-icon>
         </span>
       </DragHandle>

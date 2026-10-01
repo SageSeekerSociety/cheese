@@ -8,6 +8,7 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { listAwaitingMe } from '@/api'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
+import { phraseLabel } from '@/lib/board'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
 import { useWorkspaceStore } from '@/stores/workspace'
 import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
@@ -103,7 +104,7 @@ function linkTo(item: WaitingItem) {
           {{ item.taskTitle || item.topicTitle }}
         </v-list-item-title>
         <v-list-item-subtitle class="inbox-item__meta">
-          {{ t(REASON[item.reason]) }} · {{ item.displayStatus }} · {{ item.projectName }}
+          {{ t(REASON[item.reason]) }} · {{ phraseLabel(item.phrase) }} · {{ item.projectName }}
         </v-list-item-subtitle>
       </v-list-item>
     </v-list>

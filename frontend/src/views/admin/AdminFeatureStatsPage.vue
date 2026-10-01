@@ -28,7 +28,9 @@ const { t } = useI18n()
 
 const features = ref<FeatureCatalogueEntry[]>([])
 const loading = ref(true)
-const failed = ref(false)
+/** 读失败时是**服务端原话**（原话取不到就空串）；`null` 表示没失败。
+ *  两件事必须分开存：失败但原话为空时，界面仍要给出错态，不能落进「暂无功能页」那个空态。 */
+const loadError = ref<string | null>(null)
 
 /** 服务端的顺序就是目录的顺序（它是「有哪些目的地」的唯一来源），这里不重排。 */
 const rows = computed(() =>
@@ -45,13 +47,14 @@ const rows = computed(() =>
 
 async function load() {
   loading.value = true
-  failed.value = false
+  loadError.value = null
   try {
     features.value = (await getFeatureCatalogue()).features
-  } catch {
+  } catch (e) {
     // 读失败**不是**「还没有功能页」：两句话，两个画面（否则接口挂了会被读成一切正常）。
+    // 原话存下来作说明行 —— 不用一句固定话把原因吞掉，失败未必是网络。
     features.value = []
-    failed.value = true
+    loadError.value = e instanceof Error && e.message ? e.message : ''
   } finally {
     loading.value = false
   }
@@ -61,70 +64,60 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="afs">
-    <AdminPageHeader :title="t('featureStats.page.title')" :sub="t('featureStats.page.subtitle')" />
+  <div class="afs admin-page">
+    <div class="afs__inner admin-page__col page-container--admin">
+      <AdminPageHeader :title="t('featureStats.page.title')" :sub="t('featureStats.page.subtitle')" />
 
-    <div class="afs__inner page-container--admin">
-      <p class="afs__floor t-meta-read">{{ t('featureStats.page.noNumbers') }}</p>
+      <div class="afs__body admin-page__body">
+        <p class="afs__floor t-meta-read">{{ t('featureStats.page.noNumbers') }}</p>
 
-      <div v-if="loading" class="afs__list">
-        <span v-for="n in 3" :key="n" class="afs__bone" />
+        <div v-if="loading" class="afs__list">
+          <span v-for="n in 3" :key="n" class="afs__bone" />
+        </div>
+
+        <AdminEmptyState
+          v-else-if="loadError !== null"
+          :title="t('featureStats.page.loadFailed')"
+          :desc="loadError || undefined"
+          :action="t('featureStats.page.retry')"
+          tone="error"
+          @action="load"
+        />
+
+        <AdminEmptyState v-else-if="rows.length === 0" :title="t('featureStats.page.empty')" />
+
+        <ul v-else class="afs__list">
+          <li v-for="row in rows" :key="row.id" class="afs__item">
+            <RouterLink v-if="row.to" :to="row.to" class="afs__link">
+              <span class="afs__name">{{ row.title }}</span>
+              <span class="afs__desc">{{ row.summary }}</span>
+              <span class="afs__go" aria-hidden="true">→</span>
+            </RouterLink>
+            <div v-else class="afs__link afs__link--dim">
+              <span class="afs__name">{{ row.title }}</span>
+              <span class="afs__desc">{{ row.summary }}</span>
+              <span class="afs__soon t-meta-read">{{ t('featureStats.page.notBuilt') }}</span>
+            </div>
+          </li>
+        </ul>
       </div>
-
-      <AdminEmptyState
-        v-else-if="failed"
-        :title="t('featureStats.page.loadFailed')"
-        :action="t('featureStats.page.retry')"
-        tone="error"
-        @action="load"
-      />
-
-      <AdminEmptyState v-else-if="rows.length === 0" :title="t('featureStats.page.empty')" />
-
-      <ul v-else class="afs__list">
-        <li v-for="row in rows" :key="row.id" class="afs__item">
-          <RouterLink v-if="row.to" :to="row.to" class="afs__link">
-            <span class="afs__name">{{ row.title }}</span>
-            <span class="afs__desc">{{ row.summary }}</span>
-            <span class="afs__go" aria-hidden="true">→</span>
-          </RouterLink>
-          <div v-else class="afs__link afs__link--dim">
-            <span class="afs__name">{{ row.title }}</span>
-            <span class="afs__desc">{{ row.summary }}</span>
-            <span class="afs__soon t-meta-read">{{ t('featureStats.page.notBuilt') }}</span>
-          </div>
-        </li>
-      </ul>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 滚动归这一页自己领（同 `AdminDashboardPage` 的 `.ad`）：外壳只给高度和宽度。 */
+/* 骨架三层（画布 + 1440 那一列 + 正文）由 `.admin-page` / `__col` / `__body` 给。
+   以前这一页是「根上 `padding: 0 24px` + 页头负 margin 抵掉」，于是页头那道发丝线比
+   列宽多出 24px，和卡片的两端对不上；现在页头住进 1440 那一列，三者同一条竖线。 */
 .afs {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  padding: 0 24px 24px;
-  overflow-y: auto;
-}
-
-/* 页头自带 24px 内边距，而这一页的滚动区外面还有一圈，用负 margin 抵掉。 */
-.afs :deep(.aph) {
-  margin: 0 -24px;
-}
-
-/* 1440 那一列居中。`container-type`：下面的断点是**容器查询**（同 `AdminDashboardPage`：
-   侧栏能手折，折出来的宽度视口媒体查询看不见，断点要看的是这一格有多宽）。 */
-.afs__inner {
-  margin: 0 auto;
-  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 「这一页只列功能」那句话是**口径**，不是装饰：放在列表上面一行，读完标题就读到它。
    常驻不收起（它防的误读是「这里怎么没数字」，而这个问题每个人第一次都会问）。 */
 .afs__floor {
-  margin: 16px 0 0;
+  margin: 0;
   color: var(--muted);
 }
 
@@ -132,7 +125,7 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 12px 0 0;
+  margin: 16px 0 0;
   padding: 0;
   list-style: none;
 }
@@ -148,7 +141,8 @@ onMounted(load)
   grid-template-columns: 160px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: baseline;
-  padding: 14px 16px;
+  padding: 20px 24px;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   color: inherit;
@@ -157,8 +151,8 @@ onMounted(load)
 
 /* 可点的那一行：指针、hover 底色、Tab 顺序三样都有（`<a>` 自带的 Tab 与指针）。 */
 @media (hover: hover) and (pointer: fine) {
-  .afs__link:hover {
-    background: var(--surface);
+  .afs__link:not(.afs__link--dim):hover {
+    background: var(--fill);
   }
 }
 

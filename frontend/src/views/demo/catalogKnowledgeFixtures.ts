@@ -16,7 +16,7 @@
  * `catalogQueueFixtures.ts` 同一个理由。条目本身在 `catalogKnowledge.ts`，那边的
  * `CatalogEntry` 是 type-only 引用。
  */
-import type { Knowledge, KnowledgeContentData, User } from '@/types'
+import type { Knowledge, KnowledgeContentData, KnowledgeType, User } from '@/types'
 
 import { RESOURCE_TYPE_OPTIONS } from '@/lib/knowledgeFormat'
 
@@ -167,7 +167,7 @@ export const DETAIL_ORIGINAL_MESSAGE = {
 export function knowledgeToolbarProps(
   over: {
     searchQuery?: string | null
-    typeFilter?: string | null
+    typeFilter?: KnowledgeType | null
     tagFilter?: string | null
     viewMode?: string
     availableTags?: string[]
@@ -175,7 +175,7 @@ export function knowledgeToolbarProps(
 ) {
   return {
     searchQuery: null as string | null,
-    typeFilter: null as string | null,
+    typeFilter: null as KnowledgeType | null,
     tagFilter: null as string | null,
     viewMode: 'grid',
     resourceTypes: RESOURCE_TYPE_OPTIONS,

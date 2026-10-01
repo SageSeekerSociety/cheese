@@ -7,6 +7,7 @@ from urllib.parse import quote
 import httpx
 
 from app.core.config import settings
+from app.core.forge_http import forge_client
 from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPrError,
@@ -28,9 +29,7 @@ class ForgejoClient:
 
     async def request(self, method, path, *, token, params=None, json=None):
         try:
-            async with httpx.AsyncClient(
-                transport=self.transport, timeout=30
-            ) as client:
+            async with forge_client(transport=self.transport, timeout=30) as client:
                 return await client.request(
                     method,
                     self.api_base + path,

@@ -1,5 +1,7 @@
 import type { InjectionKey } from 'vue'
 
+import { t } from '@/i18n'
+
 // 发题页右栏那张「提交前」清单的规则表，以及表单把它当前的状态交上来的那条注入键。
 //
 // 这张卡**不自己发明规则**：下面每一条都是真发题表单实际会拦的条件，逐条对着
@@ -67,8 +69,11 @@ export interface PublishChecksValues {
   [field: string]: unknown
 }
 
-interface PublishCheckRule extends PublishCheck {
-  /** 这条出自哪个文件的哪一行 —— 与 `text` 一样是这份规则表的一部分。 */
+interface PublishCheckRule {
+  id: string
+  /** 清单上那句话的词条键；报上去时按当前界面语言译成 `text`。 */
+  key: string
+  /** 这条出自哪个文件的哪一行 —— 与 `key` 一样是这份规则表的一部分。 */
   source: string
   /** 现在**违反**了没有。与 zod 同一口径：不 trim、不猜、只看它真怎么算。 */
   violated(values: PublishChecksValues): boolean
@@ -87,7 +92,7 @@ function optionalMinOne(value: unknown): boolean {
 const RULES: PublishCheckRule[] = [
   {
     id: 'name',
-    text: '标题：必填，最多 100 个字',
+    key: 'tasks.publishChecks.name',
     // TaskForm.vue:736 `name: z.string().min(1).max(100)`
     // （后端 `CreateTaskRequest.name: str` 只要求有这一项，100 字是前端这一层的事）
     source: 'components/tasks/TaskForm.vue:736',
@@ -95,21 +100,21 @@ const RULES: PublishCheckRule[] = [
   },
   {
     id: 'submitterType',
-    text: '参与者类型：必选一个（个人 / 团队）',
+    key: 'tasks.publishChecks.submitterType',
     // TaskForm.vue:737 `submitterType: z.enum(['USER', 'TEAM'])`
     source: 'components/tasks/TaskForm.vue:737',
     violated: (values) => values.submitterType !== 'USER' && values.submitterType !== 'TEAM',
   },
   {
     id: 'rank',
-    text: '题目难度：必选一个（初级 / 中级 / 高级）',
+    key: 'tasks.publishChecks.rank',
     // TaskForm.vue:741 `rank: z.number().int().min(1).max(3)`
     source: 'components/tasks/TaskForm.vue:741',
     violated: (values) => !(isInt(values.rank) && values.rank >= 1 && values.rank <= 3),
   },
   {
     id: 'categoryId',
-    text: '所属分类：必选一个（这块板的分类）',
+    key: 'tasks.publishChecks.categoryId',
     // TaskForm.vue:743 `categoryId: z.number().int().min(1, '请选择所属分类')`
     // 后端按这个 id 找分类，找不到/已归档/已删除都会退回来（tasks.py:899-936）。
     source: 'components/tasks/TaskForm.vue:743',
@@ -117,7 +122,7 @@ const RULES: PublishCheckRule[] = [
   },
   {
     id: 'defaultDeadline',
-    text: '领取后默认天数：要填一个整数',
+    key: 'tasks.publishChecks.defaultDeadline',
     // TaskForm.vue:740 `defaultDeadline: z.number().int().default(30)`
     // （不填走默认 30；清空这个输入框拿到的是 `''`，不是整数，表单会拦）
     source: 'components/tasks/TaskForm.vue:740',
@@ -125,7 +130,7 @@ const RULES: PublishCheckRule[] = [
   },
   {
     id: 'teamSize',
-    text: '队伍人数：最小 1 人，且上限不能小于下限（选「团队」时这两项才发出去）',
+    key: 'tasks.publishChecks.teamSize',
     // TaskForm.vue:744-745 `minTeamSize/maxTeamSize: z.number().int().min(1).optional()`
     // 与 TaskForm.vue:767-770 那条 `.refine(max >= min)`（口径是「两个都填了才比」，
     // 0 当没填）—— 表单只在「团队」时把这两项发给后端，但 zod 这一层是不分类型的。
@@ -140,7 +145,7 @@ const RULES: PublishCheckRule[] = [
   },
   {
     id: 'participantLimit',
-    text: '参与人数上限：不填 = 不限；填了就得是 ≥ 1 的整数（删空会被当成填错）',
+    key: 'tasks.publishChecks.participantLimit',
     // TaskForm.vue:747 `participantLimit: z.number().int().min(1).optional().nullable()`
     // 初始值是 `null`（TaskForm.vue:789），所以「不填 = 不限」是真的；但把输入框里的
     // 数字删掉拿到的是 `''`（`.number` 对空串原样留着），那既不是 `null` 也不是整数，
@@ -151,7 +156,7 @@ const RULES: PublishCheckRule[] = [
   },
   {
     id: 'videoUrl',
-    text: '讲解视频链接：要么不填，要么是一个 https 开头的地址',
+    key: 'tasks.publishChecks.videoUrl',
     // TaskForm.vue:751-763 `.refine(v => !v || new URL(v).protocol === 'https:', { message: '请输入有效的 HTTPS 链接' })`
     // （表单后面还会为「不是 B 站链接」问一句要不要继续存 —— 那是**问一句**，不是拦，
     //  所以不在这张清单里）
@@ -171,5 +176,5 @@ const RULES: PublishCheckRule[] = [
 
 /** 现在拦着你的那几条，按表单里从上到下的次序。全过就是空数组。 */
 export function evaluatePublishChecks(values: PublishChecksValues): PublishCheck[] {
-  return RULES.filter((rule) => rule.violated(values)).map((rule) => ({ id: rule.id, text: rule.text }))
+  return RULES.filter((rule) => rule.violated(values)).map((rule) => ({ id: rule.id, text: t(rule.key) }))
 }

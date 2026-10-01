@@ -733,6 +733,24 @@ class RemoteClient:
             return {"value": value}
         return receipt
 
+    def permission(self, payload, args, preparing=None):
+        """Only the project's `permissions.deny`, read on the room's machine,
+        for a call the build is about to run itself and whose hooks it fires
+        itself, never having loaded the project's settings: a Claude Code
+        room's Bash (`proxy.js`). Returns what `call("invoke", …)` does."""
+        answer = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PreToolUse",
+                "tool": payload["tool"],
+                "args": args,
+                "request_id": payload["id"],
+                "fire": False,
+            },
+            preparing=preparing,
+        )
+        return {"error": answer["denied"]} if "denied" in answer else {"value": {}}
+
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
@@ -773,8 +791,12 @@ class RemoteClient:
                 and (params or {}).get("subtype") == "shell"
                 and (params or {}).get("operation") == "start"
             )
-            # A project's hooks run on the machine that holds the project.
-            or (method == "control" and (params or {}).get("subtype") == "tool_hooks")
+            # A project's hooks run on the machine that holds the project, and
+            # its files are there (pi's tools take them one at a time).
+            or (
+                method == "control"
+                and (params or {}).get("subtype") in ("tool_hooks", "files")
+            )
         ):
             # Only a requested execution operation acquires hands. Bootstrap,
             # context discovery and a platform-only tool never enter this path.
@@ -798,7 +820,7 @@ class RemoteClient:
                         )
             if params and method == "control":
                 params = dict(params)
-                for field in ("body", "cwd"):
+                for field in ("body", "cwd", "path"):
                     if isinstance(params.get(field), str):
                         params[field] = params[field].replace(
                             original_workspace, workspace

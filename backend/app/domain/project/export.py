@@ -207,7 +207,6 @@ async def create_archive(
                     [
                         BlockKind.doc,
                         BlockKind.doc_node,
-                        BlockKind.decision,
                         BlockKind.weekly,
                     ]
                 ),

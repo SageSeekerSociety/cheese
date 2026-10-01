@@ -16,7 +16,12 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.delivery import mention
 from app.domain.delivery.models import Delivery
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _room_with_two_agents(client):
@@ -145,8 +150,11 @@ def test_a_person_naming_two_agents_wakes_both(client, stub_hooks):
     project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
     arrivals = _record_arrivals(stub_hooks)
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json(
-            {"type": "message", "content": f"<@{cheese}> <@{reviewer}> 一起看一下"}
+        post_message(
+            client,
+            room_id,
+            "alice",
+            {"content": f"<@{cheese}> <@{reviewer}> 一起看一下"},
         )
         while ws.receive_json()["type"] not in ("done", "error"):
             pass

@@ -1,59 +1,68 @@
 <template>
-  <div class="analytics-section">
-    <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">题目分析</h2>
+  <div class="an-section">
+    <div class="an-bar">
+      <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
+      <v-select
+        v-model="sortByModel"
+        autocomplete="off"
+        :items="sortByItems"
+        :prefix="t('spaces.analytics.sortBy')"
+        :aria-label="t('spaces.analytics.sortBy')"
+        density="compact"
+        hide-details
+        variant="outlined"
+      />
+      <v-select
+        v-model="sortOrderModel"
+        autocomplete="off"
+        :items="options.sortOrder.value"
+        :aria-label="t('spaces.analytics.sortOrder.label')"
+        density="compact"
+        hide-details
+        variant="outlined"
+        class="an-bar__narrow"
+      />
+      <button
+        type="button"
+        class="an-toggle"
+        :class="{ 'an-toggle--on': hasPendingApprovalModel }"
+        :aria-pressed="hasPendingApprovalModel"
+        @click="togglePendingApproval"
+      >
+        <v-icon size="16">{{ hasPendingApprovalModel ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline' }}</v-icon>
+        {{ t('spaces.analytics.tasks.pendingClaims') }}
+      </button>
+      <button
+        type="button"
+        class="an-toggle"
+        :class="{ 'an-toggle--on': hasPendingReviewModel }"
+        :aria-pressed="hasPendingReviewModel"
+        @click="togglePendingReview"
+      >
+        <v-icon size="16">{{ hasPendingReviewModel ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline' }}</v-icon>
+        {{ t('spaces.analytics.tasks.pendingReviews') }}
+      </button>
+      <div class="an-bar__end">
+        <AnalyticsExportButton
+          section="tasks"
+          :space-id="spaceId"
+          :filters="filters"
+          :label="t('spaces.analytics.tasks.export')"
+        />
       </div>
-
-      <AnalyticsExportButton section="tasks" :space-id="spaceId" :filters="filters" label="导出题目清单" />
     </div>
 
-    <v-card flat rounded="lg" class="toolbar-card">
-      <div class="toolbar-grid">
-        <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
-        <v-select
-          v-model="sortByModel"
-          autocomplete="off"
-          :items="sortByItems"
-          label="排序字段"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-        <v-select
-          v-model="sortOrderModel"
-          autocomplete="off"
-          :items="sortOrderItems"
-          label="排序方向"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-      </div>
-
-      <div class="toolbar-chips">
-        <v-chip :variant="hasPendingApprovalModel ? 'flat' : 'outlined'" color="warning" @click="togglePendingApproval">
-          待审核报名
-        </v-chip>
-        <v-chip :variant="hasPendingReviewModel ? 'flat' : 'outlined'" color="error" @click="togglePendingReview">
-          待评审提交
-        </v-chip>
-      </div>
-    </v-card>
-
-    <v-card flat rounded="lg" class="table-card mt-4">
-      <v-data-table :headers="headers" :items="tasks" :loading="loading" density="comfortable" items-per-page="10">
+    <div class="an-table">
+      <v-data-table :headers="headers" :items="tasks" :loading="loading" density="compact" items-per-page="10">
         <template #[`item.publisher`]="{ item }">{{ item.publisher?.name || '-' }}</template>
         <template #[`item.category`]="{ item }">{{ item.category?.name || '-' }}</template>
         <template #[`item.approved`]="{ item }">
-          <v-chip size="small" :color="approvalColor(item.approved)" variant="tonal">{{
-            approvalText(item.approved)
-          }}</v-chip>
+          <span class="an-state" :class="approvalTone(item.approved)">{{
+            t(`spaces.analytics.distribution.${item.approved}`)
+          }}</span>
         </template>
-        <template #[`item.createdAt`]="{ item }">{{ new Date(item.createdAt).toLocaleDateString('zh-CN') }}</template>
-        <template #[`item.deadline`]="{ item }">
-          {{ item.deadline ? new Date(item.deadline).toLocaleDateString('zh-CN') : '-' }}
-        </template>
+        <template #[`item.createdAt`]="{ item }">{{ formatDate(item.createdAt) }}</template>
+        <template #[`item.deadline`]="{ item }">{{ item.deadline ? formatDate(item.deadline) : '-' }}</template>
         <template #[`item.participantCount`]="{ item }">{{ formatCount(item.participantCount) }}</template>
         <template #[`item.pendingParticipantApprovalCount`]="{ item }">{{
           formatCount(item.pendingParticipantApprovalCount)
@@ -64,24 +73,28 @@
         }}</template>
         <template #[`item.successRate`]="{ item }">{{ formatPercent(item.successRate) }}</template>
       </v-data-table>
-    </v-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { SpaceAnalyticsTask } from '@/network/api/spaces/types'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
+import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
-import { formatCount, formatPercent } from './helpers'
+import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
 import { SpacesApi } from '@/network/api/spaces'
 
+const { t } = useI18n()
+const options = useAnalyticsOptions()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
@@ -129,7 +142,7 @@ const load = async () => {
     tasks.value = data.tasks
   } catch (error) {
     console.error('load analytics tasks failed', error)
-    toast.error('加载题目分析失败')
+    toast.error(t('spaces.analytics.tasks.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -143,94 +156,38 @@ watch(
   { immediate: true }
 )
 
-const sortByItems = [
-  { title: '创建时间', value: 'createdAt' },
-  { title: '报名主体数', value: 'participantCount' },
-  { title: '成功率', value: 'successRate' },
-  { title: '待评审数', value: 'pendingReviewCount' },
-]
+const sortByItems = computed(() =>
+  (['createdAt', 'participantCount', 'successRate', 'pendingReviewCount'] as const).map((value) => ({
+    title: t(`spaces.analytics.tasks.sort.${value}`),
+    value,
+  }))
+)
 
-const sortOrderItems = [
-  { title: '降序', value: 'desc' },
-  { title: '升序', value: 'asc' },
-]
+const COLUMNS = [
+  'taskName',
+  'publisher',
+  'category',
+  'approved',
+  'createdAt',
+  'deadline',
+  'participantCount',
+  'pendingParticipantApprovalCount',
+  'pendingReviewCount',
+  'submissionConversionRate',
+  'successRate',
+] as const
 
-const headers = [
-  { title: '题目', key: 'taskName', value: 'taskName' },
-  { title: '出题人', key: 'publisher', value: 'publisher', align: 'center' as const },
-  { title: '分类', key: 'category', value: 'category', align: 'center' as const },
-  { title: '审批状态', key: 'approved', value: 'approved', align: 'center' as const },
-  { title: '创建时间', key: 'createdAt', value: 'createdAt', align: 'center' as const },
-  { title: '截止时间', key: 'deadline', value: 'deadline', align: 'center' as const },
-  { title: '报名主体', key: 'participantCount', value: 'participantCount', align: 'center' as const },
-  {
-    title: '待审核报名',
-    key: 'pendingParticipantApprovalCount',
-    value: 'pendingParticipantApprovalCount',
-    align: 'center' as const,
-  },
-  { title: '待评审', key: 'pendingReviewCount', value: 'pendingReviewCount', align: 'center' as const },
-  { title: '提交转化率', key: 'submissionConversionRate', value: 'submissionConversionRate', align: 'center' as const },
-  { title: '成功率', key: 'successRate', value: 'successRate', align: 'center' as const },
-]
+const headers = computed(() =>
+  COLUMNS.map((key, index) => ({
+    title: t(`spaces.analytics.tasks.col.${key}`),
+    key,
+    value: key,
+    align: index === 0 ? ('start' as const) : ('center' as const),
+  }))
+)
 
-const approvalText = (value: string) => {
-  if (value === 'APPROVED') return '已通过'
-  if (value === 'DISAPPROVED') return '未通过'
-  return '待审核'
-}
-
-const approvalColor = (value: string) => {
-  if (value === 'APPROVED') return 'success'
-  if (value === 'DISAPPROVED') return 'error'
-  return 'warning'
-}
+const approvalTone = (value: string) =>
+  value === 'APPROVED' ? 'an-state--ok' : value === 'DISAPPROVED' ? 'an-state--danger' : ''
 </script>
 
-<style scoped lang="scss">
-.section-toolbar {
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 18px;
-}
-
-.section-toolbar__title {
-  margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
-}
-
-.toolbar-card,
-.table-card {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.toolbar-card {
-  padding: 18px;
-}
-
-.toolbar-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.toolbar-chips {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-
-@media (max-width: 960px) {
-  .section-toolbar {
-    flex-direction: column;
-  }
-
-  .toolbar-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="./analytics.css"></style>

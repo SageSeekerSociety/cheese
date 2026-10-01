@@ -25,8 +25,10 @@ const props = withDefaults(
     title?: string
     /** 桌面菜单相对激活器的位置。 */
     location?: 'bottom end' | 'bottom start' | 'top end' | 'top start'
+    /** 右键打开时鼠标的位置：给了就弹在这一点上，而不是挂在激活器下面。 */
+    point?: [number, number] | null
   }>(),
-  { title: undefined, location: 'bottom end' }
+  { title: undefined, location: 'bottom end', point: null }
 )
 
 defineSlots<{
@@ -52,22 +54,26 @@ const sheetActivator = () => ({
 </script>
 
 <template>
-  <v-menu v-if="mdAndUp" v-model="open" :location="props.location" :offset="8">
+  <v-menu
+    v-if="mdAndUp"
+    v-model="open"
+    :target="props.point ?? undefined"
+    :location="props.point ? 'bottom start' : props.location"
+    :offset="props.point ? 2 : 8"
+  >
     <template #activator="{ props: activator }">
       <slot name="activator" :props="activator" />
     </template>
-    <v-list class="menu-list" nav density="compact" min-width="160">
+    <v-list min-width="160">
       <v-list-item
         v-for="action in props.actions"
         :key="action.key"
         :to="action.to"
+        :prepend-icon="action.icon"
         :disabled="action.disabled || action.loading"
         :class="{ 'adaptive-menu__item--danger': action.danger }"
         @click="chooseOnDesktop(action)"
       >
-        <template #prepend>
-          <v-icon size="18" class="adaptive-menu__icon" aria-hidden="true">{{ action.icon }}</v-icon>
-        </template>
         <v-list-item-title>{{ action.label }}</v-list-item-title>
         <template v-if="action.badge" #append>
           <span class="adaptive-menu__badge">{{ action.badge }}</span>
@@ -84,10 +90,6 @@ const sheetActivator = () => ({
 </template>
 
 <style scoped>
-.adaptive-menu__icon {
-  margin-inline-end: 12px;
-  color: var(--muted);
-}
 .adaptive-menu__badge {
   margin-inline-start: 12px;
   color: var(--accent);
@@ -95,8 +97,10 @@ const sheetActivator = () => ({
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.adaptive-menu__item--danger :deep(.v-list-item-title),
-.adaptive-menu__item--danger .adaptive-menu__icon {
+/* 行的长相（图标、字号、悬停）是每个 v-menu 都有的那一套（style.css）；这里只把
+   不可撤销的那一行染成 --danger-ink。类名写两遍压过那一套里同特异度的颜色。 */
+.adaptive-menu__item--danger :deep(.v-list-item-title.v-list-item-title),
+.adaptive-menu__item--danger :deep(.v-list-item__prepend > .v-icon) {
   color: var(--danger-ink);
 }
 </style>

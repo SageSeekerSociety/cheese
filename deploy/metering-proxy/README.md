@@ -33,7 +33,10 @@ decision rather than something pinned into the sandbox's launch environment:
 
 The backend decides (`POST /llm/admission` answers both "may it run" and "where
 does it go"); this proxy only carries it out. That is why a project can change
-supply without restarting its agent. Fail-open has a direction: an unreachable
+supply without restarting its agent. The proxy asks with the session's scoped
+token, which names the room, and with its own credential (`CHEESE_SCOPED_SECRET`
+as `X-Cheese-Token`): the backend hands a gateway project's key only to a caller
+presenting that credential, since the session holds the same scoped token. Fail-open has a direction: an unreachable
 control plane falls back to the subscription — the destination this proxy has
 always had — never to a gateway whose per-project key it would not hold.
 

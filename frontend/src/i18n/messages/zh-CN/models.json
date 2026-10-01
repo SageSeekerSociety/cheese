@@ -65,7 +65,8 @@
       "delete": "删除",
       "block": "停用",
       "unblock": "启用"
-    }
+    },
+    "loadFailed": "模型加载失败"
   },
   "price": {
     "input": "输入",
@@ -185,7 +186,8 @@
       "field": "上限（美元）",
       "hint": "默认刹车值由额度折出（{derived}）；填一个数会立刻覆盖它并落到网关，留空则清除覆盖。",
       "clear": "清除覆盖"
-    }
+    },
+    "loadFailed": "额度加载失败"
   },
   "audit": {
     "empty": "暂无操作记录",
@@ -228,6 +230,7 @@
         "extraHeaders": "额外请求头",
         "other": "其它字段"
       }
-    }
+    },
+    "loadFailed": "最近操作加载失败"
   }
 }

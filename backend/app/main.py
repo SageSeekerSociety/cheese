@@ -246,6 +246,21 @@ async def lifespan(_: FastAPI):
             ),
             sessions=async_session_factory,
         )
+        from app.domain.agent.runtime import get_broker
+        from app.domain.living_doc.delivery import drain_refreshes
+
+        jobs.append(
+            background.PeriodicRunner(
+                "document refresh delivery",
+                5,
+                lambda: drain_refreshes(async_session_factory, get_broker().publish),
+            )
+        )
+        from app.api.doc_ai_runtime import scan_document_ai
+
+        jobs.append(
+            background.PeriodicRunner("document AI requests", 5, scan_document_ai)
+        )
         runs = JobRuns(async_session_factory)
         try:
             last_runs = await runs.load(
@@ -294,10 +309,15 @@ async def lifespan(_: FastAPI):
         name="gateway model catalogue",
     )
 
+    from app.core.forge_http import reuse_forge_connections
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
 
-    async with reuse_connections(), reuse_s3_connections():
+    async with (
+        reuse_connections(),
+        reuse_s3_connections(),
+        reuse_forge_connections(),
+    ):
         try:
             yield
         finally:
@@ -469,15 +489,10 @@ register_all_permissions()
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
-    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
-    # the receiver is in the body and is checked against the threads that room
-    # dispatched — this gate can only prove "some agent of this project", because
-    # a project-scoped credential reaches every topic of it.
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
-    # 同 handle 便条与定时投递：两条都只有 agent 会调，收件人都由平台算出来（便条
-    # 比席位，投递就是请求者自己），所以正文里没有一个「发给谁」可以被冒名。
+    # 同 handle 便条：只有 agent 会调，收件人由平台比席位算出来，所以正文里没有一个
+    # 「发给谁」可以被冒名。定时投递不在这里：房间里的人也设提醒（Bearer），这道闸
+    # 看不见；路由自己把门（`ask_for_a_delivery`）。
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/note$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/deliveries$")),
     # Task bind/title/close/readiness/delivery routes are shared by human and
     # agent executors. They authorize the room and task in the route itself;
     # adding them here would incorrectly restrict them to agent credentials.
@@ -644,6 +659,10 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
             **who,
         )
     response.headers["X-Request-ID"] = rid
+    # 服务器自己花了多久：从进这个中间件到处理器交回响应（流式响应的正文不在内）。
+    # 浏览器开发者工具的 Timing 页会显示它，一个慢请求才分得清是慢在服务器还是
+    # 慢在路上；只有总耗时的话，两者看起来一模一样。
+    response.headers["Server-Timing"] = f"app;dur={ms}"
     return response
 
 

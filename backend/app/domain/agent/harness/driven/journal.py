@@ -60,6 +60,13 @@ class Journal:
             )
         ]
 
+    def last(self) -> int:
+        """The newest record's sequence, 0 while there is none."""
+        (last,) = self.connection.execute(
+            f"SELECT MAX(sequence) FROM {self.table}"
+        ).fetchone()
+        return last or 0
+
     def advance(self, key: str, through: int) -> None:
         """Move a sequence cursor forward, never back.
 

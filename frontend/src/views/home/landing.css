@@ -50,32 +50,6 @@
   display: inline-flex;
   flex: none;
   color: var(--ink);
-  white-space: nowrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.brand-mark {
-  width: 26px;
-  height: 26px;
-  background: var(--ink);
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-}
-
-.brand-word {
-  font-family: var(--font-display);
-  font-size: 23px;
-  font-weight: 700;
-  line-height: var(--lh-23);
-  letter-spacing: -0.02em;
-}
-
-.brand-cn {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
 }
 
 .site-nav {
@@ -874,13 +848,9 @@
 }
 
 /* A phone is too narrow for the lockup and both buttons at their full padding.
-   The lockup keeps its shape (`.brand` never shrinks, so 知是 never stacks into a
-   column); the buttons and gaps give up the room instead. */
+   The lockup keeps its shape (`.brand` never shrinks); the buttons and gaps give
+   up the room instead. */
 @media (width <= 420px) {
-  .brand {
-    gap: 6px;
-  }
-
   .site-actions {
     gap: 8px;
   }
@@ -895,14 +865,8 @@
 }
 
 @media (width <= 374px) {
-  .brand-mark {
-    width: 22px;
-    height: 22px;
-  }
-
-  .brand-word {
-    font-size: 18px;
-    line-height: var(--lh-18);
+  .brand {
+    --brand-h: 22px;
   }
 }
 

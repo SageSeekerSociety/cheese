@@ -51,7 +51,8 @@
       "dark": "Dark"
     },
     "archivedProjects": "Archived projects",
-    "download": "Download apps"
+    "download": "Download apps",
+    "usePhone": "Use on your phone"
   },
   "shell": {
     "close": "Close",
@@ -93,7 +94,6 @@
     "projectDocs": "Project documents",
     "library": "Library",
     "comment": "Comment",
-    "decision": "Decision",
     "copyLink": "Copy link to this page",
     "verbOpen": "Open",
     "verbRun": "Run",
@@ -112,5 +112,59 @@
   },
   "sidebar": {
     "resize": "Drag to resize"
+  },
+  "backTo": {
+    "own": "your projects"
+  },
+  "desktopApp": {
+    "about": "About Cheese",
+    "appVersion": "App version",
+    "webVersion": "Web version",
+    "earlierVersion": "An earlier version",
+    "devBuild": "Development build",
+    "check": "Check for updates",
+    "checking": "Checking for updates…",
+    "downloading": "Downloading version {version}…",
+    "latest": "You're up to date",
+    "failed": "Couldn't check for updates. Try again later.",
+    "ready": "Version {version} is ready",
+    "readyHint": "Or close the window and it installs in the background",
+    "restart": "Restart to update",
+    "busyConnecting": "This computer is still connecting. Restart once it's done.",
+    "restartFailed": "Couldn't finish the update. Try again later.",
+    "updatesItself": "New versions install on their own while the window is closed",
+    "changelog": "What's new",
+    "website": "Visit the website",
+    "close": "Close",
+    "phoneTitle": "Use on your phone",
+    "phoneScan": "Scan with your phone, then add it to your Home Screen"
+  },
+  "pages": {
+    "terms": "Terms of service",
+    "feedbackDetail": "Feedback details",
+    "adminModels": "Models",
+    "adminMembers": "Members",
+    "openPreview": "Open preview",
+    "openSite": "Open site",
+    "connect": "Connect a device",
+    "market": "Market",
+    "notFound": "Page not found",
+    "teamsExplore": "Discover teams",
+    "teamsMine": "My teams",
+    "teamsPending": "Requests and invitations",
+    "questions": "Q&A",
+    "ask": "Ask a question",
+    "questionDetail": "Question",
+    "spaceTasks": "Tasks",
+    "taskSubmissions": "My submissions",
+    "taskSubmit": "Submit",
+    "taskParticipants": "Participants",
+    "taskData": "Data",
+    "taskEdit": "Edit task",
+    "spaceAnalytics": "Analytics",
+    "projectWorkspace": "Project workspace",
+    "dm": "Direct message",
+    "artifact": "Artifact",
+    "member": "Member"
   }
 }

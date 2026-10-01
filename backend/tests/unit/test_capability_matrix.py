@@ -155,7 +155,7 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
         HARNESS_PACKAGE / "claude_code/remote_execution/bootstrap.py",
         HARNESS_PACKAGE / "claude_code/remote_execution/private.py",
         HARNESS_PACKAGE / "codex/host.py",
-        HARNESS_PACKAGE / "pi/device_launch.py",
+        HARNESS_PACKAGE / "pi/launch.py",
         HARNESS_PACKAGE / "claude_code/behaviour.py",
         HARNESS_PACKAGE / "codex/behaviour.py",
         HARNESS_PACKAGE / "pi/behaviour.py",

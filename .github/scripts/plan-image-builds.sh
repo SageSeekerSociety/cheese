@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Decide which Docker contexts changed since the last fully successful image
-# build. Output is compatible with GITHUB_OUTPUT. An explicit BASE_SHA skips
-# the GitHub lookup, including an empty value for the first successful build.
+# Decide which Docker contexts changed since the nearest commit whose images
+# are all in the registry. Output is compatible with GITHUB_OUTPUT. An
+# explicit BASE_SHA skips the registry lookup, including an empty value for
+# the first build.
 set -euo pipefail
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
@@ -9,47 +10,90 @@ base_sha="${BASE_SHA:-}"
 current_sha="${CURRENT_SHA:-HEAD}"
 event_name="${EVENT_NAME:-push}"
 ref_type="${REF_TYPE:-branch}"
+search_limit="${BASELINE_SEARCH_LIMIT:-200}"
+retry_wait="${REGISTRY_RETRY_WAIT_SECONDS:-5}"
 
-# A failed lookup leaves the baseline unknown. Stop before scheduling builds;
-# only an exhausted history without a success establishes a bootstrap.
-# Any successful build of this branch is a baseline, a manual one included: a
-# workflow_dispatch build rebuilds every image under its own commit's tag. When
-# the last push baseline has lost an image tag, a manual build is the only way
-# back, so a lookup that ignored it kept every later push failing on the same
-# missing tag.
-if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; then
-  # The server's success filter has returned older runs while its completed
-  # list included newer successes. Select the conclusion from that list.
-  for page in {1..10}; do
-    if ! runs="$(gh api \
-        "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=completed&per_page=100&page=$page" \
-        --jq '.workflow_runs | if type != "array" then error("workflow_runs must be an array") else .[] | [.conclusion, .head_sha] | @tsv end')"; then
-      echo "::error::Could not query the previous successful image build; rerun this job when the API is available" >&2
-      exit 1
+# Every image this workflow publishes, by the name of its registry path. Its
+# build job is `build-<name>`, and its output flag is the name with `_`.
+images=(backend sandbox frontend office-render browser-render gateway
+  metering-proxy private-executor)
+
+# The tag the image built from <sha> is published under: build.yml tags
+# metering-proxy with the full sha and every other image with the first seven
+# characters (deploy/image-tag.sh).
+image_tag() {
+  if [[ "$1" == metering-proxy ]]; then
+    printf '%s\n' "$2"
+  else
+    printf '%s\n' "${2:0:7}"
+  fi
+}
+
+# Whether the build workflow at a commit has a job for an image. A baseline
+# whose workflow never built an image has no manifest of it to promote. No
+# `grep -q`: it exits at the first match, and under pipefail the SIGPIPE that
+# gives `git show` would read as "not built".
+builds_image() {
+  git show "$2:.github/workflows/build.yml" 2>/dev/null \
+    | grep "^  build-$1:" >/dev/null
+}
+
+# 0 when the registry holds the image's tag for a commit, 1 when it answers
+# that the tag does not exist, 2 when it does not answer either way.
+registry_has() {
+  local ref err attempt
+  ref="$IMAGE_ROOT/$1:$(image_tag "$1" "$2")"
+  for attempt in 1 2 3; do
+    if err="$(docker buildx imagetools inspect "$ref" 2>&1 >/dev/null)"; then
+      return 0
     fi
-    [[ -n "$runs" ]] || break
-    count=0
-    while IFS=$'\t' read -r conclusion sha; do
-      if [[ -z "$conclusion" || ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-        echo "::error::Invalid completed build record; cannot determine the image baseline" >&2
+    [[ "$err" != *": not found"* ]] || return 1
+    sleep $((attempt * retry_wait))
+  done
+  echo "::error::Could not read $ref from the registry: $err" >&2
+  return 2
+}
+
+# The baseline is the nearest earlier commit on this branch whose images are
+# all in the registry, since promotion copies exactly those tags forward. The
+# registry is asked rather than the list of workflow runs: that list has
+# answered from snapshots weeks old, and every image then rebuilt against a
+# baseline from weeks before. Any build that published a full set counts, a
+# manual one included, and a commit whose build is still running or failed
+# part way is passed over.
+if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; then
+  : "${IMAGE_ROOT:?IMAGE_ROOT must name the registry path the images are published under}"
+  candidates=""
+  if git rev-parse -q --verify "${current_sha}^" >/dev/null; then
+    candidates="$(git rev-list --first-parent --max-count="$search_limit" "${current_sha}^")"
+  fi
+  examined=0
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    examined=$((examined + 1))
+    complete=true
+    for image in "${images[@]}"; do
+      builds_image "$image" "$candidate" || continue
+      status=0
+      registry_has "$image" "$candidate" || status=$?
+      if [[ "$status" -eq 1 ]]; then
+        complete=false
+        break
+      elif [[ "$status" -ne 0 ]]; then
         exit 1
       fi
-      count=$((count + 1))
-      if [[ "$conclusion" == success ]]; then
-        base_sha="$sha"
-        break
-      fi
-    done <<< "$runs"
-    [[ -z "$base_sha" ]] || break
-    # A short page establishes that there is no earlier successful build.
-    [[ "$count" -eq 100 ]] || break
-    # GitHub limits filtered workflow searches to 1,000 results. Reaching
-    # that limit leaves older history unknown, so it cannot mean bootstrap.
-    if [[ "$page" -eq 10 ]]; then
-      echo "::error::No successful build in the first 1,000 completed runs; image baseline is unknown" >&2
-      exit 1
+    done
+    if [[ "$complete" == true ]]; then
+      base_sha="$candidate"
+      break
     fi
-  done
+  done <<< "$candidates"
+  # Only reaching the first commit establishes that nothing was ever built.
+  # Running out of the search leaves the baseline unknown.
+  if [[ -z "$base_sha" && "$examined" -ge "$search_limit" ]]; then
+    echo "::error::None of the last $search_limit commits has a complete image set; run this workflow manually to build one" >&2
+    exit 1
+  fi
 fi
 
 backend=false
@@ -62,7 +106,7 @@ metering_proxy=false
 private_executor=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
-# no earlier successful build also needs a complete bootstrap.
+# no earlier complete image set also needs a complete bootstrap.
 if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
   # Which of the four it was. A full rebuild of every image is ~20 minutes on
@@ -74,7 +118,7 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   elif [[ "$ref_type" == "tag" ]]; then
     why="a tag is an explicit release build"
   elif [[ -z "$base_sha" ]]; then
-    why="no previous successful build to compare against"
+    why="no earlier commit has a complete image set"
   else
     why="base commit $base_sha is not in this checkout"
   fi
@@ -144,23 +188,16 @@ else
         | backend/sandbox/cheese \
         | backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py \
-        | backend/app/domain/agent/harness/claude_code/remote_execution/private.py)
+        | backend/app/domain/agent/harness/claude_code/remote_execution/private.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/private_egress.py \
+        | backend/app/domain/fetch/addresses.py)
         private_executor=true
         ;;
     esac
   done < <(git diff --name-only -z "$base_sha" "$current_sha" --)
-  # A baseline predating this image cannot provide a manifest to promote.
-  if ! git cat-file -e "$base_sha:deploy/metering-proxy/Dockerfile" 2>/dev/null; then
-    metering_proxy=true
-  fi
-  # The executor's recipe is older than its build job, so a baseline whose
-  # workflow never built it has no manifest to promote either. No `grep -q`:
-  # it exits at the first match, and under pipefail the SIGPIPE that gives
-  # `git show` would read as "not built" and force this image every time.
-  if ! git show "$base_sha:.github/workflows/build.yml" 2>/dev/null \
-      | grep '^  build-private-executor:' >/dev/null; then
-    private_executor=true
-  fi
+  for image in "${images[@]}"; do
+    builds_image "$image" "$base_sha" || printf -v "${image//-/_}" true
+  done
 fi
 
 # The decision, where a person can read it. It has only ever gone to

@@ -226,15 +226,22 @@ class Settings(BaseSettings):
     # needs no entry: everything the project can use is something it can drive,
     # and listing those again would be a second copy to fall out of date.
     agent_harness_models: dict[str, list[str]] = {}
-    # 这套部署跑哪个骨架（结论 28）。骨架是开发者选项，不是产品概念：它不在类型
-    # 上也不在实例上，普通用户看不到，单个项目可以在自己的设置里盖过这一行。
-    # 空着 = 注册表里那个未配置时的骨架；注册表是唯一写着骨架名字的地方（不变量
-    # I5），所以这里给不出一个名字当默认值。名字不在注册表里，启动就失败——
-    # 悄悄跑另一个骨架，正是结论 28 要防的那件事。
-    agent_harness: str = ""
+    # 这套部署可用的骨架，按偏好排序（结论 28），例如 ["claude-code", "pi"]。骨
+    # 架是开发者选项，不是产品概念：它不在类型上也不在实例上，普通用户看不到。项
+    # 目可以在自己的设置里指定其中一个；没指定、或指定的不在这里，就从头往下取第
+    # 一个那台机器挂着的。空着 = 注册表里未配置时的那一份；注册表是唯一写着骨架名
+    # 字的地方（不变量 I5），所以这里给不出名字当默认值。列了注册表里没有的名字，
+    # 启动就失败——悄悄跑另一个骨架，正是结论 28 要防的那件事。
+    agent_harnesses: list[str] = []
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
+    # The memory one session on the session host may hold, in MiB; 0 lifts it.
+    # Every room's session shares that machine's kernel, so one without a cap
+    # can take the others into swap with it (#1544). It is also the room a new
+    # session needs: a turn that would start one waits until the host has that
+    # much available.
+    agent_session_memory_max_mb: int = 3072
     private_chat_executor_image: str = "cheese-private-executor:2.1.282"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
@@ -264,6 +271,10 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
+    # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
+    # to see the real address to know it is public. See domain/fetch/guard.py.
+    fetch_dns_over_https: str = "https://223.5.5.5/resolve"
 
     # LibreOffice, reached over HTTP for the same reasons as the browser above:
     # it is ~800MB and wants a writable profile directory, which rules it out of
@@ -315,17 +326,24 @@ class Settings(BaseSettings):
     # this platform's own code ("owner/repo", case-insensitive).
     docs_dev_repositories: list[str] = ["SageSeekerSociety/cheese"]
     # The gateway model 问芝士 answers with. Its virtual key is minted through
-    # `llm_gateway_admin_base` and capped at this budget per 30 days.
+    # `llm_gateway_admin_base`; what it spends is charged to the asker's
+    # personal credits, so the model must be priced on the gateway.
     docs_assistant_model: str = "deepseek-flash"
-    docs_assistant_budget_usd: float = 20.0
     # Whether 问芝士 searches and reads the docs itself, over the three tools in
     # `docs_site/tools.py`, instead of answering from one round of retrieval.
     # False keeps the old path, for a deployment that wants the cheaper one.
     docs_assistant_agentic: bool = True
-    # Per signed-in user, and across one backend process.
-    docs_assistant_hourly_limit: int = 20
-    docs_assistant_daily_limit: int = 100
+    # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
+
+    # --- A person's 芝士 outside any project (app/domain/assistant, #2285) ---
+    # The gateway model it answers with; charged to the asker's personal
+    # credits at this model's rates, so the model must be priced on the gateway.
+    assistant_model: str = "deepseek-flash"
+    assistant_max_tokens: int = 1500
+    # When one question's prompt passes this many tokens, the older part of the
+    # conversation is summarised and dropped from what the model is sent.
+    assistant_history_cap_tokens: int = 16_000
     docs_question_retention_days: int = 90
     # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
     docs_dev_session_seconds: int = 3600
@@ -717,6 +735,9 @@ class Settings(BaseSettings):
     # usage is folded into credits and deducted from the project's grants
     # (oldest grant first). Default: 1 credit = 10k tokens.
     compute_credit_tokens: int = 10_000
+    # Credits each person gets every calendar month for the AI they ask for
+    # outside any project (问芝士 on the docs site). Unused credits lapse.
+    personal_credits_monthly: float = 200.0
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].
@@ -811,6 +832,10 @@ class Settings(BaseSettings):
     # 问模型那一步的超时。一次问的是一批旧记忆（几十条、几万字），比一次普通对话
     # 长得多，默认的几十秒会在长项目上直接超时。
     memory_migration_timeout_s: float = 600.0
+    # The gateway model that sorts old memories, and what its key may spend per
+    # 30 days: the platform runs it, so no person's credits pay for it.
+    memory_migration_model: str = "deepseek-flash"
+    memory_migration_budget_usd: float = 10.0
     # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。
     memory_migration_chunk: int = 60
 
@@ -914,42 +939,21 @@ class Settings(BaseSettings):
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
     # membership check entirely if a token rollout surfaces an unexpected block.
     authz_enforce_topic_access: bool = True
-    # Escape hatch for LOCAL harnesses only (the eval runner's throwaway backend,
-    # browser probes): admit a chat WebSocket that carries no ``?token=`` and let
-    # the message body name its own author. That is the pre-token Phase-0 path —
-    # with it on, any client can post as any handle, which is why production
-    # leaves it off. It does NOT weaken the invalid/expired-token case: a socket
-    # that presents a token we cannot verify is refused either way, because
-    # silently downgrading a failed credential to "anonymous" is what let a whole
-    # batch of messages land under 匿名者 while the sender saw no error at all.
-    chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (task AI advice, rank checks, email/notifications, real-name
+    # (PDF task drafts, rank checks, email/notifications, real-name
     # encryption) read these off settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_base_url: str = Field(
-        default="https://api.openai.com/v1", alias="OPENAI_BASE_URL"
-    )
-    openai_default_model: str = Field(
-        default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL"
-    )
-    openai_reasoning_model: str = Field(
-        default="o1-mini", alias="OPENAI_REASONING_MODEL"
-    )
-    openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
-    openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
-    openai_timeout_seconds: float = Field(default=180.0, alias="OPENAI_TIMEOUT_SECONDS")
-    openai_pdf_timeout_seconds: float = Field(
-        default=300.0, alias="OPENAI_PDF_TIMEOUT_SECONDS"
-    )
+    # The gateway model that turns an uploaded PDF into task drafts; each page
+    # is one call, charged to the publisher's personal credits.
+    task_draft_model: str = "deepseek-flash"
+    task_draft_max_tokens: int = 4096
+    task_draft_timeout_s: float = 300.0
     pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
-    ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")

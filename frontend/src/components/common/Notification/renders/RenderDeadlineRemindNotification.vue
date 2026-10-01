@@ -20,12 +20,11 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import dayjs from 'dayjs'
 
 import { getEntity, getMetadata, getStringMetadata } from './NotificationRenderUtils'
 
 const props = defineProps<NotificationRenderProps>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // 获取实体和元数据
 const project = computed(() => getEntity(props.notification, 'project'))
@@ -36,15 +35,17 @@ const daysLeft = computed(() => getMetadata<number | null>(props.notification, '
 // 计算截止日期的格式化显示
 const formattedDeadlineDate = computed(() => {
   if (!deadlineTimestamp.value) return ''
-  return dayjs(deadlineTimestamp.value).format('YYYY年MM月DD日 HH:mm')
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'long', timeStyle: 'short' }).format(
+    new Date(deadlineTimestamp.value)
+  )
 })
 
 // 计算剩余天数的显示文本
 const daysLeftText = computed(() => {
   if (daysLeft.value === null) return ''
-  if (daysLeft.value <= 0) return '已截止'
-  if (daysLeft.value < 1) return '今天截止'
-  return `剩余 ${daysLeft.value} 天`
+  if (daysLeft.value <= 0) return t('notifications.DEADLINE_REMIND.closed')
+  if (daysLeft.value < 1) return t('notifications.DEADLINE_REMIND.dueToday')
+  return t('notifications.DEADLINE_REMIND.daysLeft', { n: daysLeft.value }, daysLeft.value)
 })
 
 // 计算进度条的值

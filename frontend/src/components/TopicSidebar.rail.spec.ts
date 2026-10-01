@@ -138,6 +138,8 @@ beforeAll(() => {
   if (!('devicePixelRatio' in globalThis)) {
     ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
   }
+  // 右键弹出的菜单定位在一个点上，Vuetify 那时要读它；同样是环境缺件。
+  if (!document.elementFromPoint) document.elementFromPoint = () => null
 })
 
 describe('C1 置顶导航组', () => {
@@ -229,8 +231,8 @@ describe('C4 项目文档', () => {
     expect(onSelectDocs).toHaveBeenCalledWith('charter')
   })
 
-  it('四种文档里的任何一种打开时，这一行都是选中态', () => {
-    for (const kind of ['charter', 'decisions', 'weeklies', 'memory']) {
+  it('三种文档里的任何一种打开时，这一行都是选中态', () => {
+    for (const kind of ['charter', 'weeklies', 'memory']) {
       const { container, unmount } = mount({ activeDocs: kind })
       expect(container.querySelector('.docs-row')?.classList.contains('is-active')).toBe(true)
       unmount()
@@ -358,6 +360,23 @@ describe('C5 行操作', () => {
     expect(actions.querySelectorAll('.v-btn').length).toBe(1)
   })
 
+  // 右键一行，弹出的就是 ⋯ 那一份操作；右键不是点开这个房间。
+  it('右键一行弹出这一行的操作，不打开这个房间', async () => {
+    const onSelectTopic = vi.fn()
+    const { container } = mount({ onSelectTopic })
+    const row = container.querySelector('[data-row-actions="a"]') as HTMLElement
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 })
+    row.dispatchEvent(event)
+    await vi.waitFor(() => {
+      const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
+        n.textContent?.trim()
+      )
+      expect(items).toEqual(expect.arrayContaining(['复制链接', '重命名']))
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(onSelectTopic).not.toHaveBeenCalled()
+  })
+
   it('排序菜单已经不在侧栏里', () => {
     const { container } = mount()
     const buttons = Array.from(container.querySelectorAll('.v-btn')) as HTMLElement[]
@@ -375,13 +394,13 @@ describe('C6 等你的那一颗点', () => {
       {
         ...topic('mine', 'root'),
         awaits_me: true,
-        presentation: { column: 'needs_you', display_status: '待回答' },
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
       },
       {
         ...topic('theirs', 'root'),
-        presentation: { column: 'needs_you', display_status: '待审阅' },
+        presentation: { column: 'needs_you', phrase: 'awaiting_review' },
       },
-      { ...topic('busy', 'root'), presentation: { column: 'building', display_status: '运行中' } },
+      { ...topic('busy', 'root'), presentation: { column: 'building', phrase: 'running' } },
     ]
   }
   function rowOf(container: Element, title: string): HTMLElement {

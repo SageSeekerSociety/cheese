@@ -28,6 +28,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.domain.block.notice_text import say
 from app.domain.project.forge import (
     background_may_use_forge,
     branch_head,
@@ -381,13 +382,13 @@ async def retarget_completed_dependencies(
                 if retarget:
                     task.base_branch = base
                 outcome = (
-                    "已合并"
+                    say("dependencyOutcomeMerged")
                     if delivered
-                    else "已关闭，未交付"
+                    else say("dependencyOutcomeClosed")
                     if ancestor.status == TaskStatus.closed
-                    else "已被退回，任务仍在进行"
+                    else say("dependencyOutcomeReturned")
                 )
-                headline = f"父任务{outcome}，子任务需要重新检查依赖"
+                headline = say("dependencyHeadline", outcome=outcome)
                 rejection = (
                     parent_card
                     if not delivered
@@ -417,46 +418,47 @@ async def retarget_completed_dependencies(
                         previous_reviews.append(previous_rejection)
                     for previous_review in previous_reviews:
                         review_history[previous_review["card_id"]] = previous_review
-                instruction = (
-                    f"任务 {task.id} 的父任务 {ancestor.id} {outcome}。\n"
-                    f'先执行 cd "$(cheese worktree {task.id})"。\n'
-                    + (
-                        f"当前目标分支为 {task.base_branch}。获取远端分支，"
-                        "将本任务的提交整理到目标分支上，解决冲突，重新运行检查并推送。"
-                        "父任务可能采用 squash 合并，请核对补丁，"
-                        "只重放本任务独有的改动；不要重新带入父任务整理时移除、"
-                        "且尚未重新获准的祖先改动。"
-                        "普通 rebase 成功不代表提交范围正确，"
-                        "请核对最终差异是否仅含本任务交付。"
+                instruction = say(
+                    "dependencyInstruction",
+                    task=task.id,
+                    parent=ancestor.id,
+                    outcome=outcome,
+                    command=f'cd "$(cheese worktree {task.id})"',
+                    action=(
+                        say("dependencyActionDelivered", branch=task.base_branch)
                         if delivered
-                        else "保留现有工作，检查本任务依赖了哪些尚未交付的修改。"
-                        "根据任务要求决定移除依赖、独立实现或报告无法继续的原因；"
-                        "不要把驳回或关闭当作代码已经合并，也不要自动关闭子任务。"
-                        "决定移除依赖时，在本任务分支上，以项目默认分支为基线"
-                        "重新整理本任务独有的提交，"
-                        "验证差异不包含被驳回的改动，再执行 "
-                        "cheese push-fix --drop-dependency。"
-                        "它会更新现有 PR 的目标分支、清除任务依赖和旧批准；"
-                        "不要重复递卡或自行合并。"
-                    )
-                    + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
-                )
-                if review_history:
-                    instruction += (
-                        "\n祖先依赖的历史驳回记录如下；这不是当前状态，"
-                        "请重新读取对应验收卡和任务，核对哪些改动已被撤回或后来获准。"
-                    )
-                    for previous_review in review_history.values():
-                        instruction += (
-                            f"\n验收卡 {previous_review['card_id']} 的历史驳回理由：\n"
-                            + (previous_review.get("reason") or "未填写理由")
+                        else say("dependencyActionUndelivered")
+                    ),
+                    history=(
+                        say(
+                            "dependencyHistory",
+                            items=[
+                                say(
+                                    "dependencyHistoryItem",
+                                    card=previous_review["card_id"],
+                                    reason=previous_review.get("reason")
+                                    or say("dependencyNoReason"),
+                                )
+                                for previous_review in review_history.values()
+                            ],
                         )
-                if rejection is not None:
-                    instruction += f"\n父任务最近一张验收卡 {rejection.id} 被驳回。" + (
-                        f"驳回理由原文：\n{rejection.note}"
-                        if rejection.note
-                        else "验收人没有填写驳回理由。"
-                    )
+                        if review_history
+                        else ""
+                    ),
+                    rejection=(
+                        say(
+                            "dependencyRejection",
+                            card=rejection.id,
+                            why=(
+                                say("dependencyRejectionNote", note=rejection.note)
+                                if rejection.note
+                                else say("dependencyRejectionNoNote")
+                            ),
+                        )
+                        if rejection is not None
+                        else ""
+                    ),
+                )
                 for card in await cards.list_for_task(task.id):
                     if card.status in ("pending", "conflict"):
                         await cards.clear_approvals(card.id)
@@ -474,7 +476,7 @@ async def retarget_completed_dependencies(
                             severity=SEVERITY_INFO,
                             who=WHO_CHEESE,
                             detail=instruction,
-                            detail_label="下一步",
+                            detail_label=say("labelNextStep"),
                         ),
                         AGENT_NOTICE_META_KEY: instruction,
                         "dependency_task_id": str(task.id),

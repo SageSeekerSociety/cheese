@@ -1,0 +1,59 @@
+{
+  "statusCell": {
+    "step": "{label} · step {step} of {total}"
+  },
+  "assignee": {
+    "label": "Assign to",
+    "searching": "Searching…",
+    "noMatch": "No one found",
+    "placeholder": "Username or display name"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "then": "then",
+    "scope": {
+      "global": "Everywhere",
+      "list": "List",
+      "listAndDetail": "List and details",
+      "detail": "Details"
+    },
+    "focusSearch": "Focus the search box",
+    "notInInputs": "Not while typing",
+    "refresh": "Refresh the list or dashboard",
+    "goQueue": "Go to the queue",
+    "goDashboard": "Go to the dashboard",
+    "goFeedbackCenter": "Go to the feedback center (user view)",
+    "within1s": "Within 1s",
+    "openSheet": "Open this sheet",
+    "down": "Next row",
+    "stopsAtLast": "Stops at the last row",
+    "up": "Previous row",
+    "stopsAtFirst": "Stops at the first row",
+    "sameAsJk": "Same as j / k",
+    "openRow": "Open the row’s details",
+    "setStatus": "Status → {status}",
+    "noUndo": "Can’t be undone",
+    "keep": "Leave as is and go to the next row",
+    "undo": "Undo the last triage",
+    "shownFor5s": "Available for 5s",
+    "assign": "Assign",
+    "markRead": "Mark as read",
+    "back": "Go back",
+    "oneLevel": "One level at a time",
+    "comment": "Post the comment"
+  },
+  "integrations": {
+    "domainFeishu": "Feishu (feishu.cn)"
+  },
+  "layout": {
+    "brand": "Cheese · Admin",
+    "sections": "Admin sections",
+    "leave": "Back to workspace",
+    "collapseNav": "Collapse navigation",
+    "collapse": "Collapse",
+    "checking": "Checking access…",
+    "deniedTitle": "This is the admin console",
+    "deniedBody": "Your account isn’t an admin, so you can’t open the admin console.",
+    "toFeedbackCenter": "Go to the feedback center"
+  }
+}

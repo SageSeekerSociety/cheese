@@ -7,8 +7,10 @@ import { artifactVersionBytes } from '../api'
 import { t } from '../i18n'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
 
+import DesignImage from './panels/preview/DesignImage.vue'
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
+import PreviewSlides from './panels/preview/PreviewSlides.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -99,9 +101,15 @@ onBeforeUnmount(() => {
       >{{ version.url }}</a
     >
     <div v-else-if="data" class="version-preview__body">
-      <PreviewPages v-if="view === 'pages'" :data="data" />
+      <PreviewSlides v-if="['pptx', 'ppt', 'odp'].includes(suffix)" :data="data" :title="version.filename || ''" />
+      <PreviewPages v-else-if="view === 'pages'" :data="data" />
       <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="suffix === 'csv' ? 'csv' : 'workbook'" />
-      <img v-else-if="imageUrl" :src="imageUrl" :alt="version.filename || ''" />
+      <DesignImage
+        v-else-if="imageUrl"
+        :src="imageUrl"
+        :alt="version.filename || ''"
+        :identity="`${artifactId}:${version.card_id}`"
+      />
       <pre v-else-if="text !== null" class="pa-3 t-body">{{ text }}</pre>
       <p v-else class="pa-4 t-body c-muted">{{ t('tasks.artifactComparison.downloadOnly') }}</p>
     </div>

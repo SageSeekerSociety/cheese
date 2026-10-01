@@ -18,6 +18,11 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
@@ -76,7 +81,7 @@ function mountPanel(id = 'topic-A', props: Record<string, unknown> = {}) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0, ...props },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 
@@ -235,12 +240,12 @@ describe('工作面板 · Tab 容器', () => {
   // 和分支，按 kind 分只是猜。
   const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
 
-  it('谁也没在里面干过活的话题：四格都在，除了总览都是浅的', async () => {
+  it('谁也没在里面干过活的话题：五格都在，改动、现场、预览是浅的', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
     const { container } = mountPanel()
     await flush()
 
-    expect(tabLabels(container)).toEqual(['总览', '现场', '改动', '预览'])
+    expect(tabLabels(container)).toEqual(['总览', '现场', '改动', '预览', '定时与触发'])
     expect(isEmpty(findTab(container, '总览'))).toBe(false)
     expect(['现场', '改动', '预览'].every((label) => isEmpty(findTab(container, label)))).toBe(true)
     expect(visible(container, '.panel-overview')).toBe(true)

@@ -15,6 +15,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { copyIntoRoom, openRoomFileEditor, roomFileRevisions } from '../../../api'
+import { t } from '../../../i18n'
 
 import RoomFileHistory from './RoomFileHistory.vue'
 
@@ -56,7 +57,7 @@ function loadScript(src: string): Promise<void> {
     el.onload = () => resolve()
     el.onerror = () => {
       scripts.delete(src)
-      reject(new Error('编辑器服务连不上，稍后再试'))
+      reject(new Error(t('work.room.fileEditor.serviceUnreachable')))
     }
     document.head.appendChild(el)
   })
@@ -76,7 +77,7 @@ async function start() {
     if (!got.enabled || !got.config || !got.api_url) return
     await loadScript(got.api_url)
     const api = (window as unknown as { DocsAPI?: DocsApi }).DocsAPI
-    if (!api) throw new Error('编辑器没有加载出来')
+    if (!api) throw new Error(t('work.room.fileEditor.notLoaded'))
     loadedVersion = got.version ?? ''
     editorKey = String((got.config.document as { key?: string })?.key ?? '')
     await nextTick()
@@ -89,12 +90,12 @@ async function start() {
           unsaved.value = e.data
         },
         onError: (e: { data?: { errorDescription?: string } }) => {
-          failure.value = e?.data?.errorDescription || '编辑器出错了'
+          failure.value = e?.data?.errorDescription || t('work.room.fileEditor.editorError')
         },
       },
     })
   } catch (e) {
-    failure.value = e instanceof Error ? e.message : '打不开编辑器'
+    failure.value = e instanceof Error ? e.message : t('work.room.fileEditor.openFailed')
   } finally {
     loading.value = false
   }
@@ -120,12 +121,12 @@ async function watchVersion() {
 
 async function makeCopy() {
   const leaf = props.path.split('/').pop() ?? 'file'
-  const target = copyName.value.trim() || `文档/${leaf}`
+  const target = copyName.value.trim() || `${t('work.room.outputs.defaultFolder')}/${leaf}`
   try {
     const made = await copyIntoRoom(props.topicId, props.path, target)
     emit('opened', made.path)
   } catch (e) {
-    failure.value = e instanceof Error ? e.message : '复制失败'
+    failure.value = e instanceof Error ? e.message : t('work.room.fileEditor.copyFailed')
   }
 }
 
@@ -135,7 +136,7 @@ function onRestored() {
 
 onMounted(() => {
   const leaf = props.path.split('/').pop() ?? 'file'
-  copyName.value = `文档/${leaf}`
+  copyName.value = `${t('work.room.outputs.defaultFolder')}/${leaf}`
   void start()
   timer = setInterval(watchVersion, 8000)
 })
@@ -151,24 +152,41 @@ onBeforeUnmount(() => {
     <div class="rfe__bar">
       <v-icon size="18">mdi-file-edit-outline</v-icon>
       <span class="rfe__name">{{ path }}</span>
-      <span v-if="session?.enabled && !session.editable" class="t-meta">只读（这种格式只能查看）</span>
-      <span v-else-if="unsaved" class="t-meta">有未保存的修改</span>
-      <span v-else-if="savedSeq" class="t-meta">已保存为第 {{ savedSeq }} 版</span>
+      <span v-if="session?.enabled && !session.editable" class="t-meta">{{ t('work.room.fileEditor.readOnly') }}</span>
+      <span v-else-if="unsaved" class="t-meta">{{ t('work.room.fileEditor.unsaved') }}</span>
+      <span v-else-if="savedSeq" class="t-meta">{{ t('work.room.fileEditor.savedAs', { seq: savedSeq }) }}</span>
       <v-spacer />
-      <v-btn size="small" variant="text" prepend-icon="mdi-history" @click="showHistory = !showHistory"> 历史 </v-btn>
-      <v-btn size="small" variant="text" icon="mdi-close" title="关闭" @click="emit('close')" />
+      <v-btn size="small" variant="text" prepend-icon="mdi-history" @click="showHistory = !showHistory">
+        {{ t('work.room.fileEditor.history') }}
+      </v-btn>
+      <v-btn
+        size="small"
+        variant="text"
+        icon="mdi-close"
+        :title="t('work.room.fileEditor.close')"
+        @click="emit('close')"
+      />
     </div>
 
     <v-alert v-if="changedBy" type="info" density="compact" class="ma-2" data-testid="changed-by">
       <div>
-        <UserRef v-if="changedBy.author" :handle="changedBy.author" />
-        <template v-else>{{ changedBy.author_kind === 'agent' ? '芝士' : '有人' }}</template>
-        刚刚保存了这份文件（第 {{ changedBy.seq }} 版）<template v-if="changedBy.note">：{{ changedBy.note }}</template>
+        <i18n-t scope="global" keypath="work.room.fileEditor.changedBy" tag="span">
+          <template #who>
+            <UserRef v-if="changedBy.author" :handle="changedBy.author" />
+            <template v-else>{{
+              changedBy.author_kind === 'agent' ? t('work.room.defaultAgentName') : t('work.room.fileEditor.someone')
+            }}</template>
+          </template>
+          <template #seq>{{ changedBy.seq }}</template>
+        </i18n-t>
+        <template v-if="changedBy.note">{{ t('work.room.fileEditor.changedNote', { note: changedBy.note }) }}</template>
       </div>
       <div class="t-meta">
-        你现在看到的是改动之前的内容。载入新版本会丢掉这里还没保存的修改；先保存的话，你的修改会另存一份，不会覆盖。
+        {{ t('work.room.fileEditor.staleNote') }}
       </div>
-      <v-btn size="small" color="primary" variant="flat" class="mt-1" @click="start">载入新版本</v-btn>
+      <v-btn size="small" color="primary" variant="flat" class="mt-1" @click="start">{{
+        t('work.room.fileEditor.loadNew')
+      }}</v-btn>
     </v-alert>
 
     <v-alert v-if="failure" type="warning" density="compact" class="ma-2">{{ failure }}</v-alert>
@@ -177,11 +195,19 @@ onBeforeUnmount(() => {
       <div class="rfe__canvas">
         <div v-if="loading" class="rfe__state"><v-progress-circular indeterminate color="primary" /></div>
         <div v-else-if="session && !session.enabled" class="rfe__state">
-          <div>{{ session.reason }}</div>
+          <div>{{ session.reason ? t(`work.room.fileEditor.unavailable.${session.reason}`) : '' }}</div>
           <div v-if="session.copyable" class="mt-3 rfe__copy">
-            <v-text-field v-model="copyName" density="compact" label="在房间里存成" autocomplete="off" hide-details />
-            <v-btn color="primary" variant="flat" class="mt-2" @click="makeCopy">复制一份来编辑</v-btn>
-            <div class="t-meta mt-1">原件留在资料库里不动。</div>
+            <v-text-field
+              v-model="copyName"
+              density="compact"
+              :label="t('work.room.fileEditor.copyName')"
+              autocomplete="off"
+              hide-details
+            />
+            <v-btn color="primary" variant="flat" class="mt-2" @click="makeCopy">{{
+              t('work.room.fileEditor.makeCopy')
+            }}</v-btn>
+            <div class="t-meta mt-1">{{ t('work.room.fileEditor.originalKept') }}</div>
           </div>
         </div>
         <!-- 编辑器把占位的那个 div 换成自己的 iframe，所以定位留在外面这一层。 -->

@@ -1,5 +1,11 @@
 <template>
-  <v-avatar :size="size" :color="avatarColor" :variant="variant">
+  <!-- 发来通知的人画成圆（人是圆的）；没有人时画的是通知类型的图标，按不是人的圆角方块。 -->
+  <v-avatar
+    :size="size"
+    :color="avatarColor"
+    :variant="variant"
+    :rounded="primaryEntityWithAvatar ? 'circle' : undefined"
+  >
     <!-- 如果有主要实体并且有头像，显示实体头像 -->
     <v-img v-if="primaryEntityWithAvatar" :src="primaryEntityWithAvatar.avatarUrl" />
     <!-- 否则显示图标 -->

@@ -38,7 +38,7 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
@@ -81,7 +81,7 @@ function work(roomId: string, id: string, title: string, createdAt: string, extr
     created_at: createdAt,
     updated_at: createdAt,
     // 落哪一列、写哪句话，全由后端给。这一份用例不关心是哪一列，但字段必须在。
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
     ...extra,
   }
 }
@@ -95,7 +95,7 @@ function mountPanel(topic: Topic, tasks: RoomTask[]) {
   const vuetify = createVuetify({ components, directives })
   return render(ChatPanel, {
     props: { topic, topicList: [topic] },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 

@@ -237,8 +237,8 @@ const xLabels = computed(() => (product.value?.north_star.series ?? []).map((row
 .ad__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 24px;
-  margin-top: 24px;
+  gap: 16px;
+  margin-top: 16px;
 }
 
 /* 两块并排要各到 ~300px 以上，图里的刻度才不互相压 —— 所以双栏从 720 容器宽开始。 */
@@ -262,7 +262,7 @@ const xLabels = computed(() => (product.value?.north_star.series ?? []).map((row
    筛选视角，不该和「四个各自独立的数」争同一档视觉重量。 */
 
 .ad__split {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .ad__split-grid {

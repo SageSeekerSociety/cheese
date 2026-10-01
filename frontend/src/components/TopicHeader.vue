@@ -69,15 +69,26 @@ const usageLoading = ref(false)
 const topicUsage = ref<UsageStats | null>(null)
 const projectUsage = ref<UsageStats | null>(null)
 
+// 指针移到 ⋯ 上就开始取，点开时多半已经到了；刚取过的（同一个话题、十秒以内）
+// 不再取第二遍——悬停一次紧接着点开是常态。取的时候手里的旧数照样显示，只有
+// 一个数都还没有时才画占位条（TopicUsageSummary），卡片从一出来就是最终尺寸。
+// 没有定时器：20 秒轮询买来的新鲜度没人在看。
+const USAGE_FRESH_MS = 10_000
+let usageFor: string | null = null
+let usageAt = 0
 async function loadUsage() {
   const tid = props.topic.id
   const pid = props.topic.project_id
   if (!tid || !pid) return
+  if (usageLoading.value || (usageFor === tid && Date.now() - usageAt < USAGE_FRESH_MS)) return
   usageLoading.value = true
   try {
     const [tu, pu] = await Promise.all([getTopicUsage(tid), getProjectUsage(pid)])
+    if (props.topic.id !== tid) return
     topicUsage.value = tu
     projectUsage.value = pu
+    usageFor = tid
+    usageAt = Date.now()
   } catch {
     // Best-effort; the popover just shows 暂无数据.
   } finally {
@@ -85,11 +96,18 @@ async function loadUsage() {
   }
 }
 
-// Opening it is the only thing that fetches. No timer: 20 秒轮询 was buying
-// staleness nobody was watching for.
 watch(usageOpen, (open) => {
   if (open) void loadUsage()
 })
+// 换了话题，上一个话题的数不能挂在这一个上。
+watch(
+  () => props.topic.id,
+  () => {
+    topicUsage.value = null
+    projectUsage.value = null
+    usageFor = null
+  }
+)
 
 // 有 AI 队友能访问整台机器。工作电脑写在成员名册里，这件事不能跟着收进名册：它是
 // 权限，不是设置，要一直看得见。名册读到了就告诉这里。
@@ -107,7 +125,8 @@ const renaming = ref(false)
 const draftTitle = ref('')
 
 function startRename() {
-  draftTitle.value = props.topic.title
+  // 还没名字的话题从空白开始改：占位标题不是谁起的名字。
+  draftTitle.value = props.topic.title_source === 'placeholder' ? '' : props.topic.title
   renaming.value = true
 }
 
@@ -143,7 +162,9 @@ useCommands(roomCommands)
           <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
             <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
           </span>
-          <span v-if="!connected" class="topic-header__disconnected" role="status">未连接</span>
+          <span v-if="!connected" class="topic-header__disconnected" role="status">{{
+            t('work.room.header.disconnected')
+          }}</span>
         </span>
       </div>
 
@@ -152,6 +173,7 @@ useCommands(roomCommands)
       <TopicMembers
         v-if="isWorkTopic"
         :topic-id="topic.id"
+        :project-id="topic.project_id"
         :project-members="members"
         :me="me"
         @machine-access="machineNotice = $event"
@@ -184,6 +206,7 @@ useCommands(roomCommands)
             class="tap-target"
             :title="t('work.room.menu.more')"
             :aria-label="t('work.room.menu.more')"
+            @mouseenter="loadUsage"
           />
         </template>
         <v-card min-width="300" class="room-menu">

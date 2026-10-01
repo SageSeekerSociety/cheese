@@ -24,9 +24,10 @@ pages this question actually searched or read.
 
 Either way it has no project context and no memory beyond the last few turns the
 browser sends back, so the worst a hostile question can do is get a short answer
-about the docs. What it may cost is bounded twice: by ``limits`` per account,
-and by the gateway's own budget on a virtual key minted for this purpose alone —
-the deployment's upstream keys never leave the gateway. The agentic path calls
+about the docs. What it costs is charged to the asker's personal credits
+(``usage/personal.py``), and it calls the gateway on a virtual key minted for
+this purpose alone — the deployment's upstream keys never leave the gateway.
+The agentic path calls
 the gateway up to ``MAX_TOOL_ROUNDS + 1`` times per question instead of once,
 which is why the two paths have their own switch.
 """
@@ -47,6 +48,7 @@ from app.core.config import settings
 from app.domain.docs_site import tools, visits
 from app.domain.docs_site.models import DocsQuestion
 from app.domain.docs_site.retrieval import Hit
+from app.domain.gateway_chat import Usage
 from app.domain.service_keys import KeySpec, service_key
 
 logger = logging.getLogger(__name__)
@@ -136,6 +138,10 @@ class Outcome:
     answer: str = ""
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # The share of ``prompt_tokens`` read from, and written to, the provider's
+    # cache: billed at their own rates.
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     sources: list[str] = field(default_factory=list)
     # Tool calls the model made, across all rounds (agentic path only).
     tool_calls: int = 0
@@ -249,15 +255,15 @@ async def gateway_key(
     session: AsyncSession, transport: httpx.AsyncBaseTransport | None = None
 ) -> str | None:
     """The virtual key 问芝士 calls the gateway with, minted on first use. It
-    carries its own budget (``max_budget`` per 30 days) and rate limit, so the
-    gateway refuses spend beyond it even if everything above failed."""
+    carries a rate limit and no budget: what a question costs is charged to the
+    asker's personal credits."""
     return await service_key(
         session,
         KeySpec(
             name=KEY_NAME,
             alias="docs-assistant",
             model=settings.docs_assistant_model,
-            budget_usd=settings.docs_assistant_budget_usd,
+            budget_usd=None,
             rpm=120,
         ),
         transport,
@@ -273,11 +279,8 @@ def _completions_url() -> str:
     return f"{base}/v1/chat/completions"
 
 
-def _gateway_message(status: int, text: str) -> str:
-    """What the reader is told when the gateway would not answer."""
-    if status in (400, 429) and "budget" in text.lower():
-        return "问芝士这个月的额度用完了，下个月再来。"
-    return "芝士暂时答不上来，稍后再试。"
+# What the reader is told when the gateway would not answer.
+_GATEWAY_REFUSED = "芝士暂时答不上来，稍后再试。"
 
 
 def _add_usage(result: Outcome, usage: object) -> None:
@@ -285,15 +288,11 @@ def _add_usage(result: Outcome, usage: object) -> None:
     the gateway several times, and the recorded cost is all of them."""
     if not isinstance(usage, dict):
         return
-    for field_name in ("prompt_tokens", "completion_tokens"):
-        value = usage.get(field_name)
-        if value is None:
-            continue
-        setattr(
-            result,
-            field_name,
-            (getattr(result, field_name) or 0) + int(value),
-        )
+    spent = Usage.of(usage)
+    result.prompt_tokens = (result.prompt_tokens or 0) + spent.prompt_tokens
+    result.completion_tokens = (result.completion_tokens or 0) + spent.completion_tokens
+    result.cache_read_tokens += spent.cache_read_tokens
+    result.cache_write_tokens += spent.cache_write_tokens
 
 
 async def stream_answer(
@@ -356,8 +355,7 @@ async def stream_answer(
                     await r.aread()
                     result.outcome = "failed"
                     logger.warning("docs assistant: gateway answered %s", r.status_code)
-                    message = _gateway_message(r.status_code, r.text)
-                    yield sse("error", {"message": message})
+                    yield sse("error", {"message": _GATEWAY_REFUSED})
                     return
                 async for line in r.aiter_lines():
                     if not line.startswith("data:"):
@@ -438,7 +436,7 @@ async def _tool_round(
             r = await client.post(url, headers=headers, json=body)
         if r.status_code != 200:
             logger.warning("docs assistant: gateway answered %s", r.status_code)
-            raise Refused(_gateway_message(r.status_code, r.text))
+            raise Refused(_GATEWAY_REFUSED)
         payload = r.json()
     _add_usage(result, payload.get("usage"))
     choices = payload.get("choices") or []
@@ -576,7 +574,7 @@ async def run_agent(
     yield sse("sources", {"sources": sources})
 
 
-async def record(
+def record(
     session: AsyncSession,
     *,
     user_id: int,
@@ -603,7 +601,6 @@ async def record(
             latency_ms=int((time.monotonic() - started) * 1000),
         )
     )
-    await session.commit()
 
 
 async def purge_old_questions(sessions) -> int:

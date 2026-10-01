@@ -10,19 +10,24 @@
 // 留在这里的是「画」和「只和这一格有关的手势」：全屏（它要的就是这个 DOM 节点）、
 // 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
 // 需要问后端。
+import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { FileContent } from '../../cx_types'
+import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
+import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
-import { computed, defineAsyncComponent, nextTick, ref } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
+import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 import AttachmentImage from '../AttachmentImage.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
+import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 
@@ -43,6 +48,10 @@ const props = withDefaults(
     path?: string | null
     /** 授权表要落进的那个 iframe 的名字（取数那一层按它 POST）。 */
     frameName: string
+    frames?: PreviewFrame[]
+    displayedFrame?: PreviewFrame | null
+    navigation?: PreviewNavigation
+    navigationError?: string
     loading: boolean
     refreshing: boolean
     previewFile: FileContent | null
@@ -61,13 +70,28 @@ const props = withDefaults(
     isImageArtifact: boolean
     downloadError: string
     docBytes: ArrayBuffer | null
+    docIdentity?: DocumentIdentity | null
+    docSnapshot?: DocumentSnapshot | null
+    /** Identity verified against the actual conversion response, not current metadata alone. */
+    slideContext?: SlideSource
     docLoading: boolean
     docError: string
     docRendererMissing: boolean
   }>(),
-  { path: null }
+  {
+    path: null,
+    frames: undefined,
+    displayedFrame: null,
+    navigation: 'idle',
+    navigationError: '',
+    docIdentity: null,
+    docSnapshot: null,
+    slideContext: undefined,
+  }
 )
 const emit = defineEmits<{
+  (e: 'frame-load', id: number, event: Event): void
+  (e: 'frame-error', id: number, event: Event): void
   /** ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈。 */
   (e: 'refresh'): void
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
@@ -94,7 +118,11 @@ const fullscreenError = ref('')
  *  所以要把它自己的地址带过去；不给就是当前预览，那一条路本来就落在预览域根上。 */
 function openPreviewInNewTab(path?: string | null) {
   if (!props.topicId) return
-  const query = path ? `?path=${encodeURIComponent(roomFileDestination(path))}` : ''
+  // Bind the displayed file path, not latest metadata. This still serves mutable
+  // room resources; it is not an immutable version or a fixed app instance.
+  const displayedPath = props.displayedFrame && !props.displayedFrame.live ? props.displayedFrame.label : null
+  const targetPath = displayedPath || path
+  const query = targetPath ? `?path=${encodeURIComponent(roomFileDestination(targetPath))}` : ''
   window.open(`/previews/${encodeURIComponent(props.topicId)}${query}`, '_blank', 'noopener')
 }
 
@@ -104,7 +132,7 @@ async function fullscreen() {
     // Fullscreen keeps the same browsing context, including unsaved app state.
     await toggleFullscreen()
   } catch {
-    fullscreenError.value = '无法进入全屏，请在新标签页打开'
+    fullscreenError.value = t('work.room.preview.fullscreenFailed')
   }
 }
 
@@ -159,10 +187,12 @@ const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
 // 不做能长期保留的批注——读者要改的那句话，正是芝士下一轮要改掉的那句话，锚点必然
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
 const locator = ref<{ label: string; quote: string; address: string } | null>(null)
+const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
 const locatorInput = ref<HTMLInputElement | null>(null)
 
 function openLocator(label: string, quote: string, address: string) {
+  pageContext.value = null
   locator.value = { label, quote, address }
   locatorNote.value = ''
   void nextTick(() => locatorInput.value?.focus())
@@ -170,27 +200,104 @@ function openLocator(label: string, quote: string, address: string) {
 
 function clearLocator() {
   locator.value = null
+  pageContext.value = null
   locatorNote.value = ''
 }
+function canUsePageContext(context: SlideSource): boolean {
+  const expected = props.slideContext
+  const current = props.docIdentity
+  const displayed = props.docSnapshot
+  if (
+    !expected ||
+    !current ||
+    !displayed ||
+    props.docBytes !== displayed.bytes ||
+    props.docLoading ||
+    props.docError ||
+    props.docRendererMissing ||
+    props.topicId !== current.topicId ||
+    props.previewFile?.path !== current.path ||
+    props.previewFile?.version !== current.version ||
+    (props.previewFile?.source ?? 'live') !== current.source
+  )
+    return false
+  const identity = { ...context, taskId: context.taskId ?? null }
+  return (
+    sameDocumentIdentity(identity, current) &&
+    sameDocumentIdentity(current, displayed.identity) &&
+    sameDocumentIdentity({ ...expected, taskId: expected.taskId ?? null }, current) &&
+    displayed.sourceVersion === current.version
+  )
+}
+
+function onPageContext(payload: SlidePageContext) {
+  if (payload.scope !== 'page' || !canUsePageContext(payload.context)) return
+  const page = t('work.room.preview.page', { page: payload.page })
+  openLocator(page, t('slides.wholePage'), page)
+  pageContext.value = { ...payload, context: { ...payload.context } }
+}
+watch(
+  [
+    () => props.docBytes,
+    () => props.docSnapshot,
+    () => props.docIdentity?.topicId,
+    () => props.docIdentity?.path,
+    () => props.docIdentity?.source,
+    () => props.docIdentity?.taskId,
+    () => props.docIdentity?.version,
+    () => props.slideContext?.version,
+    () => props.slideContext?.path,
+    () => props.slideContext?.source,
+    () => props.slideContext?.topicId,
+    () => props.slideContext?.taskId,
+  ],
+  clearLocator,
+  { flush: 'sync' }
+)
 
 function onQuote(payload: { text: string; page: number }) {
   // 一整页的选中没有指向性，当作没指。
   const quote = payload.text.replace(/\s+/g, ' ').trim()
   if (quote.length < 2) return
-  openLocator(`第 ${payload.page} 页`, quote.slice(0, 200), `第 ${payload.page} 页`)
+  const page = t('work.room.preview.page', { page: payload.page })
+  openLocator(page, quote.slice(0, 200), page)
 }
 
 function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
-  openLocator(where, payload.value || '（空）', where)
+  openLocator(where, payload.value || t('work.room.preview.emptyCell'), where)
 }
 
 function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
-  emit('locate', `在 ${props.previewFile?.path ?? ''} 的 ${target.address}（「${target.quote}」）：${note}`)
+  if (pageContext.value) {
+    const payload = pageContext.value
+    if (!canUsePageContext(payload.context)) return
+    emit(
+      'locate',
+      t('slides.pageMessage', {
+        ...payload.context,
+        task: payload.context.taskId ?? '',
+        page: payload.page,
+        text: payload.text,
+        note,
+      })
+    )
+    clearLocator()
+    return
+  }
+  emit(
+    'locate',
+    t('work.room.preview.locateMessage', {
+      path: props.previewFile?.path ?? '',
+      address: target.address,
+      quote: target.quote,
+      note,
+    })
+  )
   clearLocator()
 }
 </script>
@@ -210,7 +317,7 @@ function sendLocator() {
         variant="text"
         color="medium-emphasis"
       >
-        发布网站
+        {{ t('work.room.preview.publishSite') }}
       </v-btn>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
@@ -219,7 +326,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          title="在新标签页打开"
+          :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <v-btn
@@ -228,7 +335,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          :title="previewFull ? '退出全屏' : '全屏预览'"
+          :title="previewFull ? t('work.room.preview.exitFullscreen') : t('work.room.preview.fullscreen')"
           @click="fullscreen"
         />
       </template>
@@ -237,7 +344,7 @@ function sendLocator() {
         size="small"
         variant="text"
         color="medium-emphasis"
-        title="刷新"
+        :title="t('work.room.preview.refresh')"
         :loading="refreshing"
         @click="emit('refresh')"
       />
@@ -245,15 +352,28 @@ function sendLocator() {
 
     <v-alert v-if="fullscreenError" type="warning" density="compact">{{ fullscreenError }}</v-alert>
 
-    <div v-if="loading" class="d-flex justify-center py-8">
+    <div v-if="loading && !frames?.length" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
 
-    <div v-else-if="previewUrl" class="preview-wrap">
+    <div v-else-if="frames ? frames.length > 0 : previewUrl" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">
-        <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
-        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
-        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
+        <span class="text-medium-emphasis">{{ displayedFrame?.label || previewAppNote || previewFile?.path }}</span>
+        <span v-if="displayedFrame?.version" class="text-medium-emphasis ms-2">{{
+          t('work.room.preview.readVersion', { version: displayedFrame.version })
+        }}</span>
+        <v-chip
+          v-if="
+            displayedFrame
+              ? displayedFrame.live && displayedFrame.connection === 'online' && !navigationError
+              : previewAppNote
+          "
+          size="x-small"
+          variant="tonal"
+          class="ms-2"
+          >{{ t('work.room.preview.runningApp') }}</v-chip
+        >
+        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ displayedFrame?.mime || previewMime }}</v-chip>
         <!-- 指定了文件的那一格：它不跟着当前预览走，所以顶栏那些动作（发布、新标签
              页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
         <template v-if="path">
@@ -263,7 +383,7 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="在新标签页打开"
+            :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
           <v-btn
@@ -271,30 +391,105 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="下载"
+            :title="t('work.room.preview.download')"
             @click="emit('download')"
           />
         </template>
       </div>
-      <!-- The form supplies a scoped grant; neither src nor srcdoc carries content. -->
-      <iframe
-        :name="frameName"
-        class="preview-frame"
-        title="话题预览"
-        sandbox="allow-scripts allow-forms allow-same-origin"
-      />
+      <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
+        <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
+          t('work.room.preview.resourceIdentity', { id: displayedFrame.resourceId.slice(0, 12) })
+        }}</span>
+        <span v-if="displayedFrame.instance">
+          · {{ t('work.room.preview.instanceIdentity', { id: displayedFrame.instance.slice(0, 12) }) }}</span
+        >
+        <span v-else>
+          · {{ t(displayedFrame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile') }}</span
+        >
+        <span>
+          ·
+          {{
+            t(
+              displayedFrame.runtime === 'ready'
+                ? 'work.room.preview.runtimeReady'
+                : displayedFrame.runtime === 'failed'
+                  ? 'work.room.preview.runtimeFailed'
+                  : 'work.room.preview.runtimeUnconfirmed'
+            )
+          }}</span
+        >
+        <span v-if="displayedFrame.connection === 'disconnected'">
+          · {{ t('work.room.preview.instanceDisconnected') }}</span
+        >
+        <span v-if="displayedFrame.connection === 'gone'"> · {{ t('work.room.preview.instanceGone') }}</span>
+        <div v-if="displayedFrame.runtimeError" role="alert">{{ displayedFrame.runtimeError }}</div>
+      </div>
+      <div
+        v-if="navigation === 'authorizing' || navigation === 'navigating'"
+        role="status"
+        class="px-3 py-2 text-caption"
+      >
+        {{ t(navigation === 'authorizing' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
+      </div>
+      <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
+        {{ navigationError || previewError || previewReadError }}
+        <div v-if="previewAppNote && !previewUrl">
+          {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+        </div>
+        <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
+        <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
+      </div>
+      <v-btn v-if="path" size="small" variant="text" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
+        t('work.room.preview.refresh')
+      }}</v-btn>
+      <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
+      <div class="preview-frames">
+        <template v-if="frames">
+          <iframe
+            v-for="frame in frames"
+            :key="frame.id"
+            :name="frame.name"
+            class="preview-frame"
+            :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
+            :inert="frame.id !== displayedFrame?.id"
+            :aria-hidden="frame.id !== displayedFrame?.id"
+            :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
+            :title="t('work.room.preview.frameTitle')"
+            sandbox="allow-scripts allow-forms allow-same-origin"
+            @load="emit('frame-load', frame.id, $event)"
+            @error="emit('frame-error', frame.id, $event)"
+          />
+        </template>
+        <iframe
+          v-else
+          :name="frameName"
+          class="preview-frame"
+          :title="t('work.room.preview.frameTitle')"
+          sandbox="allow-scripts allow-forms allow-same-origin"
+        />
+      </div>
     </div>
-    <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
+    <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
-      <div>预览加载失败</div>
-      <div class="text-caption mt-1">{{ previewError }}</div>
+      <div>{{ t('work.room.preview.loadFailed') }}</div>
+      <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
+      <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
+        {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+      </div>
+      <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>无法读取文件</div>
-      <div v-if="path" class="text-caption mt-1">{{ path }}：{{ previewReadError }}</div>
+      <div>{{ t('work.room.preview.readFailed') }}</div>
+      <div v-if="path" class="text-caption mt-1">
+        {{ t('work.room.preview.pathError', { path, error: previewReadError }) }}
+      </div>
       <div v-else class="text-caption mt-1">
-        {{ previewNamedPath ? `${previewNamedPath}：` : '' }}{{ previewReadError }}
+        {{
+          previewNamedPath
+            ? t('work.room.preview.pathError', { path: previewNamedPath, error: previewReadError })
+            : previewReadError
+        }}
       </div>
     </div>
     <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
@@ -326,7 +521,7 @@ function sendLocator() {
           data-testid="edit-file"
           @click="editing = previewFile.path"
         >
-          编辑
+          {{ t('work.room.preview.edit') }}
         </v-btn>
         <v-btn
           v-if="previewFile && !previewFile.path.startsWith('library/')"
@@ -337,7 +532,7 @@ function sendLocator() {
           data-testid="file-history"
           @click="showHistory = !showHistory"
         >
-          历史
+          {{ t('work.room.preview.history') }}
         </v-btn>
         <v-btn
           size="small"
@@ -346,7 +541,7 @@ function sendLocator() {
           prepend-icon="mdi-download"
           @click="emit('download')"
         >
-          下载
+          {{ t('work.room.preview.download') }}
         </v-btn>
       </div>
       <RoomFileHistory
@@ -362,7 +557,7 @@ function sendLocator() {
       </v-alert>
       <!-- 刷新失败但屏幕上还留着上一版：说清楚看到的不是最新的。 -->
       <v-alert v-else-if="docError && docBytes" type="warning" density="compact" class="mx-3 mb-2">
-        刷新失败，当前显示的是上一次的内容：{{ docError }}
+        {{ t('work.room.preview.staleDoc', { error: docError }) }}
       </v-alert>
 
       <!-- Markdown 排在最前面：它不走 docBytes 那条路（loadDocument 直接跳过），
@@ -387,15 +582,25 @@ function sendLocator() {
            这个文件转换不了（别的文件仍然能看）。 -->
       <div v-else-if="docRendererMissing && !docBytes" class="doc__state doc__state--text">
         <v-icon size="28" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-        <div>文档预览未启用</div>
+        <div>{{ t('work.room.preview.docPreviewDisabled') }}</div>
       </div>
       <div v-else-if="docError && !docBytes" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-        <div>无法显示这个文件</div>
+        <div>{{ t('work.room.preview.cantDisplay') }}</div>
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
       <div v-else class="doc__body">
-        <PreviewPages v-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
+        <PreviewSlides
+          v-if="['pptx', 'ppt', 'odp'].includes(documentSuffix)"
+          :data="docBytes"
+          :pending="docLoading"
+          :error="docError"
+          :renderer-missing="docRendererMissing"
+          :context="slideContext"
+          @quote="onQuote"
+          @page-context="onPageContext"
+        />
+        <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
         <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
         <!-- 修订清单。页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是
@@ -421,19 +626,19 @@ function sendLocator() {
             v-model="locatorNote"
             class="locator__input"
             autocomplete="off"
-            placeholder="说明要改什么"
+            :placeholder="t('work.room.preview.locatorPlaceholder')"
             @keydown.enter.prevent="sendLocator"
             @keydown.esc.prevent="clearLocator"
           />
           <v-btn size="small" color="primary" variant="flat" :disabled="!locatorNote.trim()" @click="sendLocator">
-            发送
+            {{ t('work.room.preview.send') }}
           </v-btn>
           <v-btn
             icon="mdi-close"
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="取消"
+            :title="t('work.room.preview.cancel')"
             @click="clearLocator"
           />
         </div>
@@ -446,8 +651,8 @@ function sendLocator() {
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>这个文件不是文本</div>
-      <div class="text-caption mt-1">{{ previewFile.path }} 无法作为网页显示，可以在新窗口打开</div>
+      <div>{{ t('work.room.preview.notText') }}</div>
+      <div class="text-caption mt-1">{{ t('work.room.preview.notTextDetail', { path: previewFile.path }) }}</div>
       <!-- 指定了文件的那一格也走这条路：内容域按路径服务房间里的任意一份，所以那
            一句话在这一格同样成立——它带着文件自己的地址过去。 -->
       <v-btn
@@ -455,14 +660,14 @@ function sendLocator() {
         size="small"
         variant="tonal"
         prepend-icon="mdi-open-in-new"
-        @click="openPreviewInNewTab(path)"
+        @click="openPreviewInNewTab(previewFile.path)"
       >
-        在新窗口打开
+        {{ t('work.room.preview.openInNewWindow') }}
       </v-btn>
     </div>
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-      <div>暂无预览</div>
+      <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
@@ -541,6 +746,24 @@ function sendLocator() {
      transparent — the page controls its own colours, we only back it. */
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #fff;
+}
+.preview-runtime-status {
+  overflow-wrap: anywhere;
+}
+.preview-frames {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: var(--preview-min);
+}
+.preview-frames .preview-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.preview-frame--incoming {
+  opacity: 0;
+  pointer-events: none;
 }
 .panel-preview:fullscreen {
   width: 100%;

@@ -23,6 +23,8 @@ import { usePanelDoc } from '../../composables/usePanelDoc'
 
 import PanelDocView from './PanelDocView.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
@@ -35,7 +37,7 @@ const props = withDefaults(
     /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
     agentName?: string
   }>(),
-  { topicList: () => [], agentName: '芝士' }
+  { topicList: () => [], agentName: () => t('work.room.defaultAgentName') }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
@@ -46,7 +48,7 @@ const emit = defineEmits<{
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   // 总览自动区里的一条决策 / 里程碑：去向不在话题里，交给拿着路由的那一层。
-  (e: 'open-resource', resource: 'decision' | 'milestone'): void
+  (e: 'open-resource', resource: 'milestone'): void
 }>()
 
 // 展示组件也是组合式函数要的那两个口子：读编辑器里现在这一版、把服务端那一版装进去。
@@ -75,6 +77,8 @@ const {
   liveRefIndex,
   commentMarkIndex,
   refreshComments,
+  commentAuthor,
+  sendComment,
   save,
   confirmLossySave,
   onBlur: handleBlur,
@@ -147,6 +151,8 @@ defineExpose({ pulse, highlightTurn })
     :has-pending-edits="hasPendingEdits"
     :external-doc="externalDoc"
     :comments="comments"
+    :comment-author="commentAuthor"
+    :send-comment="sendComment"
     :anchor-nodes="anchorNodes"
     :live-ref-index="liveRefIndex"
     :comment-mark-index="commentMarkIndex"

@@ -43,6 +43,11 @@ vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
 import RunningWorkView from './RunningWorkView.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const Board = RunningWorkView as unknown as Component
 const ROOT = { id: 'root-1', title: '项目总览', kind: 'root' }
 const ROOM = { id: 'room-1', title: '第一周的调研', kind: 'topic' }
@@ -57,7 +62,7 @@ function task(): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
   } as RoomTask
 }
 

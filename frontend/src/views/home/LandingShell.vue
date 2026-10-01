@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import logo from '@/assets/logo-plain.svg?url'
+import BrandLockup from '@/components/common/BrandLockup.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import i18n, { t } from '@/i18n'
 import AccountService from '@/services/account'
@@ -24,9 +24,7 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
   <main id="top" class="landing" :lang="i18n.global.locale.value">
     <header class="site-bar">
       <router-link class="brand" :to="homeHref" :aria-label="t('publicSite.cheeseHome')">
-        <span class="brand-mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
-        <span class="brand-word">cheese</span>
-        <span v-if="i18n.global.locale.value === 'zh-CN'" class="brand-cn">{{ t('global.cheese') }}</span>
+        <BrandLockup />
       </router-link>
       <!-- Router links, so moving between the public pages does not reload the app;
            the router's scrollBehavior lands each one at its top. The docs are a
@@ -56,9 +54,7 @@ const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace'
 
     <footer class="site-foot">
       <span class="brand">
-        <span class="brand-mark" :style="{ maskImage: `url(${logo})` }" aria-hidden="true" />
-        <span class="brand-word">cheese</span>
-        <span v-if="i18n.global.locale.value === 'zh-CN'" class="brand-cn">{{ t('global.cheese') }}</span>
+        <BrandLockup />
       </span>
       <span>{{ t('publicSite.slogan') }}</span>
       <nav class="site-foot-links" :aria-label="t('publicSite.legal')">

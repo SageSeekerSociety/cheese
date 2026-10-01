@@ -1,8 +1,8 @@
 """@all / @here notify the whole topic roster (群播, fusion-design §3)."""
 
 from tests.integration.conftest import (
-    chat_ws_url,
     join_project_team,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -30,15 +30,11 @@ def _add(client, tid: str, handle: str, actor: str = "alice") -> None:
     assert r.status_code == 200
 
 
-def _post(ws, content: str) -> None:
-    # human-only post (summon False): the @all notifications fire on the human
-    # block persist, before any agent turn. The sender is the socket's token,
-    # not a body field.
-    ws.send_json({"type": "message", "content": content})
-    while True:
-        f = ws.receive_json()
-        if f["type"] in ("done", "error"):
-            break
+def _post(client, tid: str, content: str) -> None:
+    # A human-only post: the @all notifications fire as the human block is
+    # stored, before any agent turn. The sender is the request's token, not a
+    # body field.
+    post_message(client, tid, "alice", {"content": content})
 
 
 def _notifs(client, pid: str, handle: str) -> list[dict]:
@@ -52,8 +48,7 @@ def test_at_all_notifies_every_member_except_sender_and_cheese(client):
     pid, tid = _project_topic(client, created_by="alice")
     _add(client, tid, "bob")
     _add(client, tid, "carol")
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
-        _post(ws, "<@all> 大家看一下")
+    _post(client, tid, "<@all> 大家看一下")
 
     assert len(_notifs(client, pid, "bob")) == 1
     assert len(_notifs(client, pid, "carol")) == 1
@@ -66,6 +61,5 @@ def test_at_all_notifies_every_member_except_sender_and_cheese(client):
 def test_at_here_equals_all_for_now(client):
     pid, tid = _project_topic(client, created_by="alice")
     _add(client, tid, "bob")
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
-        _post(ws, "<@here> 在的人")
+    _post(client, tid, "<@here> 在的人")
     assert len(_notifs(client, pid, "bob")) == 1

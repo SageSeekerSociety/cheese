@@ -66,8 +66,11 @@ import type {
   WaitingItem,
   WorkspaceFile,
 } from './cx_types'
+import type { SitePage } from './types/site'
 
 import { desktopAppHeaders } from './lib/desktopApp'
+import { refusalText } from './lib/noticeText'
+import { createPreviewPdfReader } from './lib/previewPdf'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -344,8 +347,7 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       // #450 rule 2 (frontend edition): the backend's errors carry a human
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
-      const said = body as { message?: string; error?: { message?: string } }
-      const serverSaid = said.error?.message || said.message || ''
+      const serverSaid = refusalText(body, details.error?.message || details.message || '')
       throw new ApiError(
         res.status,
         serverSaid || `请求失败（HTTP ${res.status}）`,
@@ -411,7 +413,7 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const said = body as { message?: string; error?: { name?: string; message?: string } }
-    const serverSaid = said.message || said.error?.message || ''
+    const serverSaid = refusalText(body, said.message || said.error?.message || '')
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
   const envelope = body as ApiEnvelope<T>
@@ -725,7 +727,7 @@ export interface ProjectSearchHits {
     id: string
     room_id: string
     room_title: string
-    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'decision' | 'weekly'
+    kind: 'message' | 'doc' | 'doc_node' | 'comment' | 'weekly'
     author: string
     created_at: string
     /** 说在某件活的卡片里，而不是房间自己的对话里。 */
@@ -751,7 +753,7 @@ export async function searchProject(
 
 /**
  * 同一次搜索，再带上每一类各能搜到多少（`message`、`doc`、`doc_node`、`comment`、
- * `decision`、`weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
+ * `weekly`、`tasks`、`library`）。搜索结果页第一次打开时用它，一次问完。
  */
 export async function searchProjectCounted(
   projectId: string,
@@ -798,8 +800,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, title }
+export function createTopic(projectId: string, title?: string, parentId?: string): Promise<Topic> {
+  const body: Record<string, string> = { project_id: projectId, ...(title ? { title } : {}) }
   if (parentId) body.parent_id = parentId
   return request<Topic>('/topics', {
     method: 'POST',
@@ -1375,83 +1377,6 @@ export function taskAttachmentRawUrl(taskId: number, attachmentId: number): stri
   return `${BASE}/tasks/${taskId}/attachments/${attachmentId}/download`
 }
 
-export interface Routine {
-  id: string
-  project_id: string
-  topic_id: string
-  title: string
-  instructions: string
-  context_scope: string
-  output_dir: string
-  trigger: 'schedule' | 'library_file_added' | 'task_closed' | 'card_accepted'
-  trigger_text: string
-  spec: Record<string, unknown>
-  timezone: string
-  state: 'draft' | 'active' | 'paused'
-  agent_handle: string
-  owner_handle: string
-  proposed_by: string
-  confirmed_by: string | null
-  confirmed_at: string | null
-  next_run_at: string | null
-  revision: number
-  created_at: string
-  updated_at: string
-}
-
-export interface RoutineRun {
-  id: string
-  routine_id: string
-  trigger_detail: string
-  routine_revision: number
-  scheduled_for: string | null
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
-  summary: string
-  outputs: string[]
-  error: string
-  created_at: string
-  started_at: string | null
-  finished_at: string | null
-}
-
-export type RoutineInput = Pick<
-  Routine,
-  'title' | 'instructions' | 'context_scope' | 'output_dir' | 'trigger' | 'spec' | 'timezone'
->
-
-export function listProjectRoutines(projectId: string): Promise<ListPayload<Routine>> {
-  return request<ListPayload<Routine>>(`/projects/${encodeURIComponent(projectId)}/routines`)
-}
-
-export function getRoutine(id: string): Promise<Routine & { runs: RoutineRun[] }> {
-  return request<Routine & { runs: RoutineRun[] }>(`/routines/${encodeURIComponent(id)}`)
-}
-
-export function createRoutine(topicId: string, body: RoutineInput): Promise<Routine> {
-  return request<Routine>(`/topics/${encodeURIComponent(topicId)}/routines`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function updateRoutine(id: string, body: Partial<RoutineInput>): Promise<Routine> {
-  return request<Routine>(`/routines/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  })
-}
-
-export function routineAction(
-  id: string,
-  action: 'confirm' | 'pause' | 'resume' | 'run-now'
-): Promise<Routine | RoutineRun> {
-  return request<Routine | RoutineRun>(`/routines/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
-}
-
-export function deleteRoutine(id: string): Promise<{ deleted: string }> {
-  return request<{ deleted: string }>(`/routines/${encodeURIComponent(id)}`, { method: 'DELETE' })
-}
-
 export interface Integration {
   id: string
   provider: 'mail' | 'feishu'
@@ -1875,7 +1800,10 @@ export function decideDocumentRevisions(
 /** Raised when the deployment has no document renderer, as opposed to when this
  *  particular file cannot be converted. The panel says a different thing for
  *  each: one is about the deployment and one is about the file. */
-export class PreviewRendererUnavailable extends Error {}
+export { PreviewRendererUnavailable } from './lib/previewPdf'
+
+/** Bytes and source fingerprint from the same authorized conversion response. */
+export const previewDocumentPdfSnapshot = createPreviewPdfReader(BASE, authHeaders)
 
 /** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
 export async function previewDocumentPdf(
@@ -1884,22 +1812,7 @@ export async function previewDocumentPdf(
   task?: string | null,
   source: FileSource = 'live'
 ): Promise<ArrayBuffer> {
-  const url =
-    `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
-    `?path=${encodeURIComponent(path)}&source=${source}` +
-    (task ? `&task=${encodeURIComponent(task)}` : '')
-  const res = await fetch(url, { headers: authHeaders() })
-  if (res.ok) return res.arrayBuffer()
-  let message = ''
-  try {
-    message = String((await res.json())?.message || '')
-  } catch {
-    message = ''
-  }
-  if (res.status === 503) {
-    throw new PreviewRendererUnavailable(message || '这个部署没有启用文档预览')
-  }
-  throw new Error(message || `无法生成预览（HTTP ${res.status}）`)
+  return (await previewDocumentPdfSnapshot(topicId, path, task, source)).bytes
 }
 
 // Downloads carry the same credentials as API requests, including token-only sessions.
@@ -1922,7 +1835,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~⑤, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -1977,12 +1890,6 @@ export function addComment(
     method: 'POST',
     body: JSON.stringify({ content, author, anchor, quote }),
   })
-}
-
-// 决策记录 (spec §7.1): the project's decision log. Each entry is a Block whose
-// `topic_id` points back to the source topic where the decision was made.
-export function getProjectDecisions(projectId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/decisions`)
 }
 
 // 周报集 (spec §7.1): the project's weekly reports, newest first. Each Block
@@ -2053,15 +1960,13 @@ export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
   opts: { limit?: number; before?: string; author?: string | null } = {}
-): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
+): Promise<SitePage> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
   if (opts.author) q.set('author', opts.author)
   const qs = q.toString()
-  return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
-    `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`
-  )
+  return request<SitePage>(`/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`)
 }
 
 // 现场一步打印出来的东西：后端只留末尾一截（至多 8 KiB，凭据已抹掉）。列表和
@@ -2072,14 +1977,8 @@ export function getStepOutput(topicId: string, blockId: string): Promise<{ outpu
   )
 }
 
-export interface PreviewSession {
-  url: string
-  grant: string
-}
-
-export function requestPreviewSession(topicId: string): Promise<PreviewSession> {
-  return request<PreviewSession>(`/topics/${encodeURIComponent(topicId)}/preview-session`, { method: 'POST' })
-}
+export { requestPreviewSession } from './api/preview'
+export type { PreviewSelection, PreviewSession } from './types/preview'
 
 export interface AgentControlResult {
   request_id: string
@@ -2421,31 +2320,8 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
   return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
-export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
-  return request<TopicMemberRow>(`/topics/${encodeURIComponent(topicId)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ handle, role, actor }),
-  })
-}
-
-export function updateTopicMemberRole(
-  topicId: string,
-  handle: string,
-  role: string,
-  actor: string
-): Promise<TopicMemberRow> {
-  return request<TopicMemberRow>(`/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ role, actor }),
-  })
-}
-
-export function removeTopicMember(topicId: string, handle: string, actor: string): Promise<{ deleted: boolean }> {
-  return request<{ deleted: boolean }>(
-    `/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}?actor=${encodeURIComponent(actor)}`,
-    { method: 'DELETE' }
-  )
-}
+// 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
+export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
 // 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
 // `getRoomTask`（房间的地址 + 卡的 id）。
@@ -3494,8 +3370,7 @@ export function acceptFeedbackProposal(
 export function chatWsUrl(topicId: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   // Browsers can't set an Authorization header on a WebSocket, so the session
-  // token rides as ?token= (the backend pins authorship from it, ignoring any
-  // per-message `author` the client sends).
+  // token rides as ?token=. The socket only carries what lands in the room.
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
   // BASE, not a hand-written '/api': the gateway strips exactly one '/api', so a
@@ -3578,10 +3453,10 @@ export function copyIntoRoom(
   })
 }
 
-/** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 说为什么打不开。 */
+/** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 是为什么打不开的码。 */
 export interface RoomFileEditorSession {
   enabled: boolean
-  reason?: string
+  reason?: 'not_configured' | 'unsupported' | 'library_original'
   copyable?: boolean
   editable?: boolean
   api_url?: string

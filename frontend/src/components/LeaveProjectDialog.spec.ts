@@ -14,6 +14,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const leaveProject = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -28,8 +30,10 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), us
 
 const refreshMembers = vi.fn()
 const refreshProjects = vi.fn()
+// 名册上「我」这一行是怎么进来的：随团队进来（team），还是被邀请进来的外部成员（external）。
+const members: { user_handle: string; source: string }[] = []
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshMembers, refreshProjects }),
+  useWorkspaceStore: () => ({ refreshMembers, refreshProjects, members }),
 }))
 
 import LeaveProjectDialog from './LeaveProjectDialog.vue'
@@ -65,6 +69,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  setLocale('zh-CN')
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+  members.splice(0, members.length, { user_handle: 'linxia', source: 'team' })
   leaveProject.mockReset().mockResolvedValue({ deleted: true })
   refreshMembers.mockReset().mockResolvedValue(undefined)
   refreshProjects.mockReset().mockResolvedValue(undefined)
@@ -83,6 +90,9 @@ function mount(projectId = 'p1') {
   }
   return render(Host as unknown as Component, { global: { plugins: [vuetify] } })
 }
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 describe('LeaveProjectDialog 的被拒语义', () => {
   it('被拒时弹窗不关，理由说在弹窗里——人还没退成', async () => {
@@ -123,6 +133,15 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     expect(screen.queryByText(/退出团队/)).toBeNull()
   })
 
+  // 被邀请进来的外部成员（包括别人名下项目里的人）本来就不在什么团队里：跟他说「你在
+  // 团队里的身份不变」是一句假话。
+  it('不是随团队进来的人，确认框不提团队', () => {
+    members.splice(0, members.length, { user_handle: 'linxia', source: 'external' })
+    mount()
+    expect(screen.getByText(/你将无法查看这个项目/)).toBeTruthy()
+    expect(screen.queryByText(/团队/)).toBeNull()
+  })
+
   it('确认之后退出、刷新、回首页；刷新失败也照样走', async () => {
     refreshMembers.mockRejectedValue(new Error('boom'))
     refreshProjects.mockRejectedValue(new Error('boom'))
@@ -139,5 +158,14 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     mount('p-other')
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p-other'))
+  })
+
+  it('reads in English under the en locale', async () => {
+    setLocale('en')
+    mount()
+    expect(await screen.findByText('Leave project?')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
+    await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
   })
 })

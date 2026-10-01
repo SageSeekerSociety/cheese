@@ -44,7 +44,7 @@ def _topic(client) -> str:
 
 
 def _say(client, tid: str, text_: str) -> str:
-    r = client.post(f"/topics/{tid}/decision", json={"decision": text_})
+    r = client.post(f"/topics/{tid}/weekly", json={"body": text_})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 

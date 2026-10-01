@@ -19,7 +19,7 @@
     "APPROVED": "已通过",
     "REJECTED": "已驳回",
     "emptyMine": "暂无空间申请",
-    "loadFailed": "加载失败，请重试。",
+    "loadFailed": "空间申请加载失败",
     "retry": "重试",
     "resubmit": "修改并重新提交",
     "enter": "进入空间",
@@ -32,7 +32,7 @@
     "approve": "通过",
     "reject": "驳回",
     "reason": "驳回原因",
-    "actionFailed": "审核未完成，请刷新确认申请状态后重试。",
+    "actionFailed": "审核未完成，刷新页面确认申请状态。",
     "dismiss": "关闭这条提示"
   },
   "detail": {
@@ -47,7 +47,6 @@
     "publishedAt": "发布于 {time}",
     "updateSuccess": "更新成功",
     "updateFailed": "更新失败",
-    "dangerZone": "危险操作",
     "deleteSpace": "删除空间",
     "deleteSpaceHint": "删除后这个空间会从所有人的列表里消失，且无法恢复。只有空间所有者能删除它。",
     "confirmDeleteSpace": "确定要删除空间「{name}」吗？删除后它对所有人消失，且无法恢复。",
@@ -56,9 +55,6 @@
     "auditTasks": {
       "title": "待审核题目",
       "noTasks": "暂无待审核的题目",
-      "pendingReview": "待审核",
-      "published": "发布了题目",
-      "detailedInfo": "详细信息",
       "description": "题目描述",
       "submissionRequirements": "提交要求",
       "noRequirements": "暂无提交要求",
@@ -74,13 +70,27 @@
       "operationFailed": "操作失败",
       "rejectReason": "请输入驳回理由",
       "rejectReasonDialogTitle": "驳回理由",
-      "rejectReasonRequired": "请输入驳回理由"
+      "rejectReasonRequired": "请输入驳回理由",
+      "by": "{name} 发布",
+      "noDeadline": "不截止",
+      "deadline": "{date} 截止",
+      "requireRealName": "需要实名",
+      "entryType": {
+        "TEXT": "文本",
+        "FILE": "文件"
+      },
+      "noDescription": "暂无题目描述"
     },
     "manageTemplates": {
       "back": "返回",
       "createTemplate": "创建模板",
-      "noTemplates": "暂无任务模板",
-      "deleteConfirm": "确定要删除这个模板吗？"
+      "noTemplates": "暂无题目模板",
+      "deleteConfirm": "确定要删除这个模板吗？",
+      "edit": "编辑模板",
+      "delete": "删除模板",
+      "defaultDeadline": "领取后 {n} 天",
+      "realName": "需要实名",
+      "noRealName": "不需要实名"
     },
     "manageTopics": {
       "addTopics": "添加话题",
@@ -88,7 +98,8 @@
       "add": "添加",
       "cancel": "取消",
       "addSuccess": "添加话题成功",
-      "addFailed": "添加话题失败"
+      "addFailed": "添加话题失败",
+      "delete": "移除话题"
     },
     "manageCategories": {
       "noCategories": "暂无分类",
@@ -140,7 +151,8 @@
         "materialIds": "材料编号",
         "knowledgeIds": "知识条目编号",
         "listHint": "用逗号分隔"
-      }
+      },
+      "displayOrderHint": "越小越靠前显示"
     },
     "publishTask": {
       "title": "发布题目",
@@ -163,7 +175,57 @@
       "createFailed": "创建任务失败",
       "spaceIdNotFound": "未找到空间 ID",
       "initializationFailed": "初始化失败",
-      "loadTemplateFailed": "加载模板失败"
+      "loadTemplateFailed": "加载模板失败",
+      "attachmentsUploading": "附件还在上传，请稍候再发布",
+      "pendingQueue": "待审核",
+      "mode": {
+        "write": "手写一道",
+        "pdf": "从 PDF 生成"
+      },
+      "quick": {
+        "noFile": "请先选择要上传的 PDF 文件",
+        "tooLarge": "PDF 文件不能超过 15MB",
+        "noDrafts": "未识别到可发布的题目草稿",
+        "parametersName": "PDF 批量发布参数",
+        "parsed": "解析完成，共识别 {n} 个题目草稿",
+        "previewFailed": "PDF 解析预览失败",
+        "nothingToPublish": "没有可发布的草稿，请先解析预览",
+        "published": "已发布 {n} 个题目",
+        "publishFailed": "PDF 批量发布失败",
+        "title": "PDF 快速发布",
+        "subtitle": "上传题目 PDF 后系统会解析出草稿；发布参数在下面那张表单里统一填写",
+        "uploadLabel": "上传题目 PDF",
+        "hint": "支持 PDF 文件，单文件大小不超过 15MB。地址栏带模板参数时优先用那份模板，否则用空白模板。",
+        "readOnlyNote": "解析是只读的：读一遍 PDF、生成草稿，不会直接发出去。",
+        "preview": "解析预览",
+        "resultTitle": "解析预览结果",
+        "resultSubtitle": "共识别 {n} 个题目草稿，提交下面那张表单时会批量应用发布参数",
+        "resultSubtitleTokens": "共识别 {n} 个题目草稿，提交下面那张表单时会批量应用发布参数。本次约消耗 {tokens} tokens",
+        "untitled": "未命名题目",
+        "draftChip": "PDF 草稿",
+        "intro": "简介：{intro}",
+        "description": "内容预览：{text}",
+        "confirmNote": "确认之后这 {n} 道会一起进{queue}队列；参数在下面那张表单里填。",
+        "clear": "清空预览"
+      },
+      "lifecycle": {
+        "title": "发出去之后",
+        "pending": "题目只有你自己和管理员看得到。",
+        "reviewedLabel": "有人审了",
+        "reviewedManager": "你可以直接通过（自己发的题自己审）。",
+        "reviewedMember": "所有者或管理员通过后就上板。",
+        "visibleLabel": "上板",
+        "visible": "所有人可见可领，领取进度开始计。",
+        "trackLabel": "你能看到",
+        "track": "「我的 → 我发布的」里有这道题的领取走势、领取者名单和完成情况。",
+        "rejectedNote": "被驳回会带原因退回，改完可以重新提交，不用重写一遍。"
+      },
+      "checks": {
+        "title": "提交前",
+        "ok": "看起来没问题。",
+        "waiting": "表单装好之后，这里会逐条列出它现在拦着你的规则。",
+        "submit": "提交审核"
+      }
     },
     "selectTemplate": {
       "title": "选择题目模板",
@@ -228,7 +290,6 @@
     "templateForm": {
       "editTitle": "编辑题目模板",
       "createTitle": "创建题目模板",
-      "back": "返回",
       "templateName": "模板名称",
       "templateDescription": "模板描述",
       "contestTitle": "题目标题",
@@ -237,7 +298,85 @@
       "loadTemplateFailed": "加载模板失败",
       "updateSuccess": "模板更新成功",
       "createSuccess": "模板创建成功",
-      "saveTemplateFailed": "保存模板失败"
+      "saveTemplateFailed": "保存模板失败",
+      "defaults": "题目默认设置",
+      "defaultsHint": "用这个模板发题时自动填入，发题时可以修改",
+      "unset": "留空",
+      "teamSize": "队伍人数",
+      "minTeamSize": "最小队伍人数",
+      "maxTeamSize": "最大队伍人数",
+      "to": "至",
+      "deadlinePrefix": "领取题目后",
+      "deadlineSuffix": "天",
+      "realName": "实名信息",
+      "requireRealName": "需要实名信息",
+      "noRealName": "不需要实名信息",
+      "realNameNote": "参与者需完成实名认证才能参与这道题，信息加密存储，访问受到严格控制",
+      "cancel": "取消"
+    },
+    "pdfGenerate": {
+      "blankTemplate": "空白模板（这块板没有配题模板）",
+      "noCategory": "未指定分类（落这块板的默认分类）",
+      "categoryFallback": "分类 #{id}",
+      "unknownError": "未知错误",
+      "error": {
+        "spaceNotReady": "空间还没装好，稍等一下再试。",
+        "noFile": "先选一份 PDF。",
+        "notPdf": "只收 PDF：这个文件既不是 application/pdf，也不叫 .pdf。",
+        "tooLarge": "单个 PDF 不能超过 15MB，这一份 {size}MB。",
+        "noDrafts": "这次没解析出草稿：后端读了 PDF，但一条题也没识别出来（已消耗 {tokens} tokens）。",
+        "parseFailed": "解析失败：{reason}",
+        "publishFailed": "发布失败：{reason}"
+      },
+      "receipt": {
+        "title": "已发布",
+        "body": "刚发的 {count} 道题已经进了{queue}队列 —— 解析不会绕开审核，上板还是要人看一眼。",
+        "hint": "每道题的简介里都带了出处标记 {marker} ，审核的人在队列那一行就能看出它来自哪一页。",
+        "again": "再解析一份 PDF",
+        "viewMine": "查看我发布的题目",
+        "toQueue": "去审核队列"
+      },
+      "upload": {
+        "title": "上传 PDF",
+        "subtitle": "只收 PDF，单个文件最大 15MB，一次最多解析 {max} 道题",
+        "hint": "解析是只读的：读一遍 PDF、按题目模板生成草稿，{notPublished}。这一步要跑大模型，几秒到几十秒。",
+        "notPublished": "不会直接发出去"
+      },
+      "meta": {
+        "template": "模板：{name}",
+        "images": "抽出插图 {n} 张",
+        "tokens": "消耗 {n} tokens",
+        "warn": "草稿{notYet}，确认之后才会进审核队列",
+        "notYet": "还没有成为题目"
+      },
+      "parse": "解析成题目草稿",
+      "parseNote": "模板这一版跟老页同一口径（地址栏里的 {param}，没有就是空白模板）；一次最多 {max} 道。",
+      "drafts": {
+        "title": "解析出的草稿",
+        "subtitle": "勾选要发的 {picked} / {total} 道，标题和题干都能就地改",
+        "pick": "勾选「{name}」",
+        "name": "标题",
+        "description": "题干",
+        "intro": "简介（原样发出去）：{intro}",
+        "page": "PDF · 第 {page} 页",
+        "images": "含 {n} 张插图",
+        "imagesNote": "插图数是从草稿正文里的图片链接数出来的 —— 后端把抽出的插图传上存储，再把正文里的图片标记换成链接，所以那几张图跟着题干一起发出去。"
+      },
+      "attach": {
+        "title": "附带给领取者",
+        "count": "这 {n} 个文件会附在{every}生成出来的题上",
+        "every": "每一道",
+        "pdf": "原 PDF",
+        "images": "抽出的插图（{n} 张）",
+        "pdfFile": "原 PDF：{name}",
+        "imageFiles": "插图：{names}",
+        "separator": "、",
+        "noPdf": "这一项没画「原 PDF」那颗勾：这次预览没有把 PDF 落成可附的文件（响应里没有这一项），勾了也带不走。",
+        "noImages": "这一项没画「抽出的插图」那颗勾：这次没有抽到能当附件的插图（没抽到图，或抽到的图没进到任何一条草稿正文里）。"
+      },
+      "confirmNote": "确认后这 {n} 道都会进{queue}队列 —— 解析归解析，上板还是要人审。",
+      "cancel": "取消",
+      "confirm": "确认发布 {n} 道"
     }
   },
   "domainGroups": {
@@ -264,7 +403,46 @@
     "copy": "复制",
     "createdTitle": "这是你的邀请码",
     "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。",
-    "openSpace": "进入空间"
+    "openSpace": "进入空间",
+    "create": "新建",
+    "current": "当前使用中的码",
+    "noneUsable": "暂无可用的码",
+    "newTitle": "新建一个码",
+    "maxUses": "可用人数",
+    "expiresOn": "有效期至（不填 = 永不过期）",
+    "expiresOnEdit": "有效期至（留空 = 永不过期）",
+    "note": "说明（这张码给谁 / 干什么用，可不填）",
+    "noteEdit": "说明（留空 = 清掉）",
+    "cancel": "取消",
+    "generate": "生成",
+    "save": "保存",
+    "edit": "调整",
+    "revoke": "撤销",
+    "confirmRevoke": "确认撤销",
+    "status": {
+      "usable": "可用",
+      "expired": "已过期",
+      "exhausted": "已用尽"
+    },
+    "usage": "{used} / {max} 人已用",
+    "usageUnlimited": "{used} / 不限 人已用",
+    "expiresAt": "有效期至 {date}",
+    "neverExpires": "永不过期",
+    "maker": "建码人",
+    "unknownMaker": "未知",
+    "noNote": "没写说明",
+    "empty": "暂无邀请码",
+    "toast": {
+      "loadFailed": "邀请码读不出来",
+      "maxUsesInvalid": "可用人数要是正整数",
+      "maxUsesBelowUsed": "可用人数不能少于已经用掉的 {n} 人",
+      "updated": "已更新",
+      "updateFailed": "更新失败",
+      "revoked": "已撤销，这个码从此加入不了",
+      "revokeFailed": "撤销失败",
+      "created": "已生成",
+      "createFailed": "生成失败"
+    }
   },
   "index": {
     "searchPlaceholder": "搜索空间",
@@ -272,7 +450,17 @@
       "newest": "最新",
       "hot": "最热"
     },
-    "noSpaces": "暂无空间"
+    "noSpaces": "暂无空间",
+    "title": "空间",
+    "heroTitle": "在知是，灵感启航。",
+    "heroSubtitle": "让你的学术好奇心，在此与一个好课题相遇。",
+    "firstRun": {
+      "title": "从这里开始",
+      "body": "建一个项目，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。",
+      "newProject": "新建项目",
+      "browse": "或者浏览下面的空间，看看别人在做什么"
+    },
+    "explore": "探索空间"
   },
   "sidebar": {
     "back": "回到首页",
@@ -305,7 +493,8 @@
       "owner": "所有者",
       "admin": "管理员",
       "member": "成员"
-    }
+    },
+    "count": "共 {n} 人"
   },
   "settings": {
     "title": "设置",
@@ -329,8 +518,15 @@
       "visibleLimitLimited": "限制数量",
       "visibleLimitInput": "数量上限",
       "visibleLimitRequired": "填写数量上限",
-      "visibleLimitInvalid": "数量上限需为大于等于 0 的整数"
-    }
+      "visibleLimitInvalid": "数量上限需为大于等于 0 的整数",
+      "avatar": "头像",
+      "changeAvatar": "更换头像",
+      "visibleLimitLabel": "题目可见上限"
+    },
+    "overlay": "空间设置",
+    "close": "关闭空间设置",
+    "closeHint": "关闭空间设置（Esc）",
+    "back": "返回空间设置"
   },
   "announcements": {
     "publish": "发布公告",
@@ -371,5 +567,297 @@
       "unpinFailed": "取消置顶失败"
     },
     "morePinned": "另有 {count} 条置顶公告"
+  },
+  "analytics": {
+    "title": "数据",
+    "tabs": {
+      "overview": "总览",
+      "alerts": "告警",
+      "publishers": "出题人",
+      "tasks": "题目",
+      "participants": "参与者",
+      "learning": "学习"
+    },
+    "filter": {
+      "presetLabel": "时间段",
+      "preset": {
+        "30d": "最近 30 天",
+        "180d": "最近半年",
+        "all": "全部"
+      },
+      "from": "从",
+      "to": "到",
+      "category": "分类",
+      "approval": "审核",
+      "allCategories": "全部分类",
+      "approvalOption": {
+        "ALL": "全部",
+        "NONE": "待审核",
+        "APPROVED": "仅已通过",
+        "DISAPPROVED": "仅未通过"
+      },
+      "reset": "重置",
+      "apply": "应用"
+    },
+    "chart": {
+      "summary": "{total} / {points} 个时间点",
+      "noTrend": "暂无趋势数据",
+      "noDistribution": "暂无分布数据"
+    },
+    "distribution": {
+      "APPROVED": "已通过",
+      "DISAPPROVED": "未通过",
+      "NONE": "待审核",
+      "NO_PARTICIPANTS": "无人领取",
+      "NOT_STARTED": "未提交",
+      "IN_PROGRESS": "已提交",
+      "PARTIAL_SUCCESS": "部分通过",
+      "ALL_SUCCESS": "全部通过",
+      "NOT_SUBMITTED": "未提交",
+      "PENDING_REVIEW": "待评审",
+      "REJECTED_RESUBMITTABLE": "退回可重交",
+      "FAILED": "未通过",
+      "SUCCESS": "通过",
+      "WITH_REAL_NAME": "已实名",
+      "WITHOUT_REAL_NAME": "未实名"
+    },
+    "sortBy": "排序",
+    "sortOrder": {
+      "label": "排序方向",
+      "desc": "降序",
+      "asc": "升序"
+    },
+    "groupBy": {
+      "label": "粒度",
+      "day": "按日",
+      "week": "按周",
+      "month": "按月"
+    },
+    "publisher": {
+      "label": "出题人",
+      "all": "全部"
+    },
+    "export": {
+      "failed": "导出失败，稍后重试"
+    },
+    "alerts": {
+      "empty": "暂无告警",
+      "loadFailed": "加载告警失败",
+      "pendingTasks": {
+        "label": "待审核题目",
+        "hint": "点开看待审核的题目"
+      },
+      "pendingClaims": {
+        "label": "待审核报名",
+        "hint": "点开看有报名待审核的题目"
+      },
+      "pendingReviews": {
+        "label": "待评审提交",
+        "hint": "点开看有提交待评审的题目"
+      },
+      "stalledTasks": {
+        "label": "停滞题目",
+        "hint": "有人报名，但 14 天没有提交"
+      },
+      "overdueReviews": {
+        "label": "超时未评审",
+        "hint": "提交超过 7 天没有评审"
+      },
+      "inactivePublishers": {
+        "label": "长期不活跃出题人",
+        "hint": "30 天没有发题"
+      }
+    },
+    "tasks": {
+      "pendingClaims": "待审核报名",
+      "pendingReviews": "待评审提交",
+      "export": "导出题目清单",
+      "loadFailed": "加载题目数据失败",
+      "sort": {
+        "createdAt": "创建时间",
+        "participantCount": "报名主体数",
+        "successRate": "成功率",
+        "pendingReviewCount": "待评审数"
+      },
+      "col": {
+        "taskName": "题目",
+        "publisher": "出题人",
+        "category": "分类",
+        "approved": "审核状态",
+        "createdAt": "创建时间",
+        "deadline": "截止时间",
+        "participantCount": "报名主体",
+        "pendingParticipantApprovalCount": "待审核报名",
+        "pendingReviewCount": "待评审",
+        "submissionConversionRate": "提交转化率",
+        "successRate": "成功率"
+      }
+    },
+    "publishers": {
+      "export": "导出出题人数据",
+      "loadFailed": "加载出题人数据失败",
+      "col": {
+        "publisherName": "出题人",
+        "taskCount": "题目数",
+        "participantCount": "报名主体",
+        "approvedParticipantCount": "审核通过报名",
+        "submittedParticipantCount": "提交主体",
+        "successfulParticipantCount": "成功主体",
+        "avgParticipantsPerTask": "平均每题报名",
+        "submissionConversionRate": "提交转化率",
+        "successRate": "成功率",
+        "lastTaskCreatedAt": "最近发题"
+      },
+      "sort": {
+        "taskCount": "题目数",
+        "participantCount": "报名主体数",
+        "successRate": "成功率",
+        "lastTaskCreatedAt": "最近发题时间"
+      },
+      "rank": {
+        "mostTasks": "发题最多",
+        "tasks": "{n} 个题目",
+        "bestRate": "成功率最高",
+        "mostClaims": "报名最多",
+        "claims": "{n} 个报名主体"
+      }
+    },
+    "participants": {
+      "approval": "报名审核",
+      "completion": "完成状态",
+      "realName": "实名",
+      "realNameOption": {
+        "all": "全部",
+        "with": "已实名",
+        "without": "未实名"
+      },
+      "export": "导出参与者明细",
+      "loadFailed": "加载参与者数据失败",
+      "empty": "暂无参与者数据",
+      "metric": {
+        "claims": {
+          "label": "报名主体数",
+          "hint": "个人和团队都按一个主体计算"
+        },
+        "approved": {
+          "label": "审核通过报名",
+          "hint": "审核通过的报名主体"
+        },
+        "succeeded": {
+          "label": "成功主体数",
+          "hint": "完成状态为成功的主体"
+        },
+        "realName": {
+          "label": "实名成员数",
+          "hint": "已实名的成员"
+        }
+      },
+      "trend": {
+        "joined": "报名趋势",
+        "submitted": "提交趋势",
+        "succeeded": "成功趋势"
+      },
+      "distribution": {
+        "approval": "报名审核状态",
+        "completion": "完成状态",
+        "realName": "实名状态",
+        "grade": "年级",
+        "major": "专业",
+        "className": "班级"
+      }
+    },
+    "overview": {
+      "loadFailed": "加载总览失败",
+      "empty": "暂无总览数据",
+      "alerts": "待处理",
+      "trend": {
+        "joined": "报名主体趋势",
+        "succeeded": "成功趋势"
+      },
+      "distribution": {
+        "category": "题目分类",
+        "approval": "题目审核状态",
+        "completion": "参与完成状态"
+      },
+      "metric": {
+        "tasks": {
+          "label": "题目总数",
+          "hint": "纳入统计的题目"
+        },
+        "publishers": {
+          "label": "发题人数",
+          "hint": "发过有效题目的出题人"
+        },
+        "claims": {
+          "label": "报名主体数",
+          "hint": "个人或团队都按一个主体计算"
+        },
+        "submitted": {
+          "label": "提交主体数",
+          "hint": "提交转化率 {rate}"
+        },
+        "succeeded": {
+          "label": "成功主体数",
+          "hint": "成功率 {rate}"
+        },
+        "members": {
+          "label": "真实成员人数",
+          "hint": "团队按成员展开"
+        }
+      }
+    },
+    "learning": {
+      "lede": "成员与 AI 对话时卡住的地方，用来挑下一讲要讲的内容",
+      "student": "成员",
+      "knowledgePoint": "知识点",
+      "allStudents": "全部",
+      "allKnowledgePoints": "全部",
+      "summary": "可查看的成员项目 {projects} 个 · 成员 {students} 人 · 发言 {questions} 条 · 共性卡点 {stuck} 个",
+      "noProjects": "暂无可查看的成员项目",
+      "queue": {
+        "title": "待处理队列",
+        "hint": "共性卡点按有多少个成员撞上排序",
+        "flagged": "成员标记「这道题我答不了」的问题",
+        "noFlagged": "暂无成员标记的问题",
+        "unavailable": "暂无可显示的内容",
+        "noStuck": "暂无共性卡点"
+      },
+      "questions": {
+        "title": "成员发言",
+        "hint": "共 {n} 条，勾选要带进提纲的",
+        "empty": "暂无成员发言"
+      },
+      "selected": "已选 {n} 条发言",
+      "clear": "清空",
+      "buildOutline": "生成讲解提纲",
+      "outlineHint": "讲次按勾选顺序排列",
+      "toast": {
+        "filtersFailed": "加载学习筛选条件失败",
+        "queuesFailed": "加载待处理队列失败",
+        "questionsFailed": "加载成员发言失败",
+        "outlineFailed": "生成讲解提纲失败"
+      },
+      "unclassified": "未归类",
+      "noTime": "暂无",
+      "stuck": {
+        "pick": "勾选卡点 {label}",
+        "latest": "最近 {time}",
+        "counts": "{students} 个成员 · {projects} 个项目 · {questions} 条发言"
+      },
+      "quote": {
+        "pick": "勾选 {name} 的这条发言",
+        "source": "查看原文"
+      },
+      "outline": {
+        "session": "建议第 {n} 讲",
+        "empty": "暂无可讲解的内容",
+        "missing": "有 {n} 条发言已经读不到，没有放进这份提纲"
+      }
+    },
+    "all": "全部"
+  },
+  "barList": {
+    "hint": "{label}：{hint}",
+    "empty": "暂无数据"
   }
 }

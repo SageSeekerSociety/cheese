@@ -21,7 +21,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic_membership.services import TopicMemberService
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 
 class StillWorking(StubChannel):
@@ -69,7 +69,7 @@ def _room_with_a_teammate(client) -> str:
 
 def _say(client, room: str, content: str) -> None:
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": content})
+        post_message(client, room, "alice", {"content": content})
         while ws.receive_json()["type"] != "user_block":
             pass
 

@@ -16,7 +16,7 @@ import DemoRoom from './DemoRoom.vue'
 import { demoRouter } from './demoRouter'
 import { frameAt } from './demoScene'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const Room = DemoRoom as unknown as Component
 
@@ -54,7 +54,7 @@ describe('DemoRoom', () => {
   it('mounts the product panel a frame asks for, fed from the scene', async () => {
     const view = render(Room, {
       props: { scene: SCENE, frame: frameAt(SCENE, 0, 0) },
-      global: { plugins: [createVuetify({ components, directives }), createPinia(), demoRouter()] },
+      global: { plugins: [createVuetify({ components, directives }), createPinia(), demoRouter(), i18n] },
     })
     const selected = () =>
       view.container.querySelector('[data-region="tabs"] [role="tab"][aria-selected="true"]')?.textContent?.trim()

@@ -10,6 +10,7 @@
  * 为什么先写这一份：这个文件正要被拆成 composable 加几个只管画的件（#2143），而
  * 上面那几块行为散在各处、没有任何断言。拆的时候掉一条，整套用例照样全绿。
  */
+import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
 
 import { defineComponent, h, ref } from 'vue'
@@ -27,12 +28,16 @@ vi.mock('../../api', async () => {
     // 待发条上的图片先取字节再画：这个地址在测试里给不出东西，返回空串就够了，
     // 这一份问的不是它画成什么样。
     attachmentImageUrl: vi.fn().mockResolvedValue(''),
+    // 「拉进话题」走的是名册抽屉那一条加人的接口。
+    addTopicMember: vi.fn().mockResolvedValue({}),
   }
 })
 
-import { listProjectLibrary } from '../../api'
+import { addTopicMember, listProjectLibrary } from '../../api'
 
 import RoomComposer from './RoomComposer.vue'
+
+import { setLocale } from '@/i18n'
 
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
 
@@ -63,6 +68,7 @@ interface Options {
   attsUploading?: boolean
   replyLabel?: string | null
   alwaysSummon?: boolean
+  pool?: MentionPoolEntry[]
 }
 
 /** 回车那条路只在焦点真的在输入框里时才走（走的时候还会问一次
@@ -86,7 +92,7 @@ function mount(opts: Options = {}) {
     setup: () => () =>
       h(RoomComposer, {
         topic: topic(),
-        mentionPool: POOL,
+        mentionPool: opts.pool ?? POOL,
         topicList: [],
         agentSeat: CHEESE_SEAT,
         agentName: CHEESE_SEAT.label,
@@ -125,6 +131,8 @@ async function flush() {
 }
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.mocked(listProjectLibrary)
     .mockReset()
     .mockResolvedValue({ data: [], total: 0 } as never)
@@ -240,6 +248,224 @@ describe('@ 候选：资料库是往里走一层', () => {
     // 第一格就是回车的默认答案，而「打一个 @ 然后回车」这个产品里压倒性地是「交给
     // 芝士」；群播让位，但资料库那一行是入口不是人，排在群播前面。
     expect(labels(container)).toEqual(['芝士', '资料库', '所有人', '在线成员', 'Alice'])
+  })
+
+  /** 按一下键，返回这一下有没有被接住（`preventDefault`）：接住了，浏览器就不会再
+   *  拿它去删字、挪光标。 */
+  async function press(el: HTMLElement, key: string): Promise<boolean> {
+    const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    el.dispatchEvent(ev)
+    await flush()
+    return ev.defaultPrevented
+  }
+
+  /** 翻进资料库这一层，确认它真的进去了。 */
+  async function intoLibrary(container: Element) {
+    await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('资料库'))!)
+    await flush()
+    expect(container.querySelector('.mention-menu-head')).toBeTruthy()
+  }
+
+  function atRoot(container: Element) {
+    expect(container.querySelector('.mention-menu-head')).toBeNull()
+    expect(labels(container)).toContain('资料库')
+  }
+
+  it('资料库的头上有一颗「返回上一级」，点它回到一级，@ 还留在正文里', async () => {
+    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    const { container, box, draft, getByRole } = mount()
+
+    await fireEvent.update(box(), '@')
+    await flush()
+    await intoLibrary(container)
+
+    await fireEvent.click(getByRole('button', { name: '返回上一级' }))
+    await flush()
+
+    atRoot(container)
+    expect(draft.value).toBe('@')
+    // 退回来之后人要接着挑，光标回到输入框。
+    expect(document.activeElement).toBe(box())
+  })
+
+  it('@ 后面什么都没打时按退格，是退回一级，不是删掉 @', async () => {
+    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    const { container, box, draft } = mount()
+
+    await fireEvent.update(box(), '@')
+    await flush()
+    await intoLibrary(container)
+    focusIn(box())
+
+    // 这一下退格被菜单接住了：浏览器不会再删掉那个 @。
+    expect(await press(box(), 'Backspace')).toBe(true)
+    atRoot(container)
+    expect(draft.value).toBe('@')
+  })
+
+  it('在资料库里打了字再按退格，删的是字，人还在这一层', async () => {
+    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    const { container, box } = mount()
+
+    await fireEvent.update(box(), '@')
+    await flush()
+    await intoLibrary(container)
+    await fireEvent.update(box(), '@pl')
+    await flush()
+    focusIn(box())
+
+    expect(await press(box(), 'Backspace')).toBe(false)
+    expect(container.querySelector('.mention-menu-head')).toBeTruthy()
+  })
+
+  it('在资料库里按 ← 也是退回一级', async () => {
+    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    const { container, box, draft } = mount()
+
+    await fireEvent.update(box(), '@')
+    await flush()
+    await intoLibrary(container)
+    focusIn(box())
+
+    expect(await press(box(), 'ArrowLeft')).toBe(true)
+
+    atRoot(container)
+    expect(draft.value).toBe('@')
+  })
+
+  it('在一级按 ← 和退格不拦：那是挪光标、删字', async () => {
+    const { box } = mount()
+
+    await fireEvent.update(box(), '@')
+    await flush()
+    focusIn(box())
+
+    expect(await press(box(), 'ArrowLeft')).toBe(false)
+    expect(await press(box(), 'Backspace')).toBe(false)
+  })
+})
+
+describe('@ 候选：不在话题里的人', () => {
+  const MIXED: MentionPoolEntry[] = [
+    // 顺序故意打乱：排在前面的是话题外的人，候选里他仍然要排到话题里的人后面。
+    { handle: 'carol', label: 'Carol', agent: false, outsideTopic: true },
+    { handle: 'alice', label: 'Alice', agent: false },
+    { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, agent: true },
+  ]
+
+  it('话题里的人排在前面，不在话题里的人跟在后面，右边挂「不在话题中」', async () => {
+    const { container, box } = mount({ pool: MIXED })
+
+    await fireEvent.update(box(), '@')
+    await flush()
+
+    expect(labels(container)).toEqual(['芝士', '所有人', '在线成员', 'Alice', 'Carol'])
+    const row = (name: string) => menuItems(container).find((el) => el.textContent?.includes(name))!
+    expect(row('Carol').textContent).toContain('不在话题中')
+    expect(row('Alice').textContent).not.toContain('不在话题中')
+    expect(row('芝士').textContent).not.toContain('不在话题中')
+  })
+
+  it('不在话题里的人照样挑得中，@ 写进正文', async () => {
+    const { container, box, draft } = mount({ pool: MIXED })
+
+    await fireEvent.update(box(), '@Car')
+    await flush()
+    await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('Carol'))!)
+    await flush()
+
+    expect(draft.value).toBe('@Carol ')
+  })
+})
+
+describe('发出去的消息 @ 了不在话题里的人', () => {
+  /** 自己是这个话题的 `role`；Carol 在项目里、不在这个话题里。 */
+  function pool(role: string): MentionPoolEntry[] {
+    return [
+      { handle: 'alice', label: 'Alice', agent: false, role },
+      { handle: 'dave', label: 'Dave', agent: false, role: 'member' },
+      { handle: 'carol', label: 'Carol', agent: false, outsideTopic: true },
+      { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, agent: true, role: 'member' },
+    ]
+  }
+
+  function notice(container: Element): HTMLElement | null {
+    return container.querySelector<HTMLElement>('.outside-notice')
+  }
+
+  async function send(utils: ReturnType<typeof mount>, text: string) {
+    await fireEvent.update(utils.box(), text)
+    await flush()
+    await fireEvent.click(utils.getByRole('button', { name: '发送' }))
+    await flush()
+  }
+
+  beforeEach(() => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'alice' }))
+    vi.mocked(addTopicMember)
+      .mockReset()
+      .mockResolvedValue({} as never)
+  })
+
+  it('只 @ 了话题里的人，不提示', async () => {
+    const utils = mount({ pool: pool('owner') })
+
+    await send(utils, '@Dave 看一下')
+
+    expect(utils.onSend).toHaveBeenCalled()
+    expect(notice(utils.container)).toBeNull()
+  })
+
+  it('@ 了不在话题里的人，发出去之后说一句他收不到通知', async () => {
+    const utils = mount({ pool: pool('owner') })
+
+    await send(utils, '@Carol @Dave 看一下')
+
+    expect(notice(utils.container)?.textContent).toContain('Carol 不在话题中，他们不会收到通知')
+    expect(notice(utils.container)?.textContent).not.toContain('Dave')
+  })
+
+  it('能管名册的人点「拉进话题」把他加进来，提示随之消失', async () => {
+    const utils = mount({ pool: pool('admin') })
+    await send(utils, '@Carol 看一下')
+
+    await fireEvent.click(utils.getByRole('button', { name: '拉进话题' }))
+    await flush()
+
+    expect(addTopicMember).toHaveBeenCalledWith('t1', 'carol', 'member', 'alice')
+    expect(notice(utils.container)).toBeNull()
+  })
+
+  it('不能管名册的人只看到那句话，没有「拉进话题」', async () => {
+    const utils = mount({ pool: pool('member') })
+
+    await send(utils, '@Carol 看一下')
+
+    expect(notice(utils.container)?.textContent).toContain('不在话题中')
+    expect(utils.queryByRole('button', { name: '拉进话题' })).toBeNull()
+  })
+
+  it('加人失败时提示留着，并说出为什么', async () => {
+    vi.mocked(addTopicMember).mockRejectedValue(new Error('只能添加项目成员'))
+    const utils = mount({ pool: pool('owner') })
+    await send(utils, '@Carol 看一下')
+
+    await fireEvent.click(utils.getByRole('button', { name: '拉进话题' }))
+    await flush()
+
+    expect(notice(utils.container)?.textContent).toContain('只能添加项目成员')
+    expect(notice(utils.container)?.textContent).toContain('Carol')
+  })
+
+  it('点 × 收起提示，谁也不加', async () => {
+    const utils = mount({ pool: pool('owner') })
+    await send(utils, '@Carol 看一下')
+
+    await fireEvent.click(utils.getByRole('button', { name: '知道了' }))
+    await flush()
+
+    expect(notice(utils.container)).toBeNull()
+    expect(addTopicMember).not.toHaveBeenCalled()
   })
 })
 

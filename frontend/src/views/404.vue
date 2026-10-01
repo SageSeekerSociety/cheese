@@ -5,9 +5,9 @@
         <v-sheet flat rounded="lg">
           <v-empty-state
             title="404"
-            text="页面不存在"
+            :text="t('shell.notFound.text')"
             icon="mdi-alert-circle"
-            action-text="返回首页"
+            :action-text="t('shell.notFound.home')"
             @click:action="goHome"
           >
           </v-empty-state>
@@ -19,6 +19,8 @@
 
 <script lang="ts" setup>
 import { useNavigation } from '@/composables/useNavigation'
+
+import { t } from '@/i18n'
 
 const nav = useNavigation()
 

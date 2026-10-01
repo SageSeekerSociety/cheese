@@ -30,6 +30,9 @@ import {
   CHANGES_EMPTY,
   changesPanelProps,
   CHEESE_LINES,
+  CLOUD_SUPPLY,
+  CLOUD_SUPPLY_UNKNOWN,
+  COMPUTE_DEVICES,
   docPanelProps,
   EXCERPTS,
   FEEDBACK_ROWS,
@@ -65,6 +68,7 @@ import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
+import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
@@ -195,20 +199,26 @@ export const CATALOG: CatalogEntry[] = [
     about: '对话栏里的一条消息：人说的、芝士说的、步骤清单、自己发的。',
     file: 'src/components/room/RoomMessage.vue',
     component: RoomMessage,
-    needs: UI,
+    needs: ['vuetify', 'i18n'],
     states: [
       {
-        // 现状对照图的两格：产品现在作答就是这两下，不是这次要做的那套。
-        name: '提问：还没答（一键选项）',
-        note: 'cheese_ask 落在消息上，房间画一排一键按钮，点一下就交。',
-        props: roomMessageProps(ASK_OPEN),
+        name: '提问：还没答（选择后提交）',
+        note: '选项先保存在草稿里，明确提交后才作答。',
+        props: roomMessageProps(ASK_OPEN, {
+          viewer: 'wang',
+          askState: {
+            draft: { kind: null, option: '', note: '', later: false },
+            pending: null, editing: false, busy: false, fresh: true,
+            saved: false, error: null, conflict: false, storageBlocked: false,
+          },
+        }),
         expect: '课程平台收文件',
       },
       {
         name: '提问：已经有人答了（回执）',
-        note: '同一条消息上落了 answered / answered_by，整排收成「谁选了什么」。',
+        note: '显示真实答案日志，执行者是否接续仍需回执确认。',
         props: roomMessageProps(ASK_ANSWERED),
-        expect: '选了「课程平台收文件」',
+        expect: '课程平台收文件',
       },
       {
         name: '留言（没有交给芝士）',
@@ -228,6 +238,19 @@ export const CATALOG: CatalogEntry[] = [
         props: roomMessageProps(CHEESE_LINES[0]),
         expect: '写完递验收卡给你',
       },
+      ...(
+        [
+          ['think', '在想', '思考中 · 已用 6 秒'],
+          ['work', '在干活', '正在运行命令 · 已用 41 秒'],
+          ['stuck', '卡住了', '重试中（第 2 次） · 已用 1 分 12 秒'],
+          ['done', '做完了', null],
+        ] as const
+      ).map(([face, label, faceLabel]) => ({
+        name: `芝士的头像：${label}`,
+        note: '队友在干活时，对话里它最近出现的那个头像跟着状态动；在动时点它去现场。',
+        props: roomMessageProps(CHEESE_LINES[0], { face, faceLabel }),
+        expect: '写完递验收卡给你',
+      })),
       {
         name: '步骤清单',
         note: '同一个块，正文换成清单：三项都打勾，末尾跟一句结果。',
@@ -285,7 +308,7 @@ export const CATALOG: CatalogEntry[] = [
     file: 'src/components/TopicAcceptCard.vue',
     component: TopicAcceptCard,
     // 这张卡自己去接口取数（`getAcceptCards` / `getPrChecks`），也读工作区 store。
-    needs: ['vuetify', 'pinia', 'router'],
+    needs: ['vuetify', 'pinia', 'router', 'i18n'],
     states: [
       {
         name: '贴在输入框上方',
@@ -839,7 +862,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'panel-doc',
     title: 'PanelDocView',
-    about: '总览那一格的文档：右上角一条工具条、中间一栏正文、底下评论区。',
+    about: '总览那一格的文档：工具条、正文和评论侧栏，窄面板中评论以抽屉展开。',
     file: 'src/components/panels/PanelDocView.vue',
     component: PanelDocView,
     needs: UI,
@@ -857,7 +880,7 @@ export const CATALOG: CatalogEntry[] = [
       },
       {
         name: '一篇文档',
-        note: '标题（话题名）、右上角那条工具条、正文那一栏和底下的评论区都在。正文由容器取到之后装进编辑器，不由 props 进。',
+        note: '标题（话题名）、工具条、正文和评论入口都在。正文由容器取到之后装进编辑器，不由 props 进。',
         props: docPanelProps(),
         expect: '课程资料',
       },
@@ -883,6 +906,34 @@ export const CATALOG: CatalogEntry[] = [
   },
   // 提案那两件（`AskCard`、`AskFlow`）在自己的文件里：`catalogAsk.ts`。
   ...ASK_ENTRIES,
+  {
+    id: 'compute-choice-form',
+    title: 'ComputeChoiceForm',
+    about: '选一台工作电脑：云端或自有设备；云端可自定义规格，先看云端此刻能开的范围。',
+    file: 'src/components/ComputeChoiceForm.vue',
+    component: ComputeChoiceForm,
+    needs: UI,
+    states: [
+      {
+        name: '查到了范围',
+        note: '勾「自定义」后显示可选范围（云端供应与平台允许值的交集）；填超的那一格标红，按钮变灰。数字是示例。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+      {
+        name: '查不到范围',
+        note: '云端没应答时照实说查不到、说原因，不显示任何范围数字，仍可保存，开机时由云端校验。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: CLOUD_SUPPLY_UNKNOWN },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+      {
+        name: '正在查',
+        note: '范围还在路上时按钮不可点，不拿旧数或默认数先顶上。',
+        props: { devices: COMPUTE_DEVICES, cloudAvailable: true, supply: null, supplyLoading: true },
+        expect: '自定义 CPU、内存和磁盘',
+      },
+    ],
+  },
 ]
 
 /** 按 id 找一条（地址里那一段）。 */

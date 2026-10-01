@@ -149,6 +149,10 @@ def post_project(client, json: dict | None = None, *, headers=None, **kwargs):
     body["owner_handle"] = owner
     if body.get("team_id") is None:
         _register(client, owner)
+    if body.get("external_task_id") is not None and caller is None:
+        # A project built from a task needs a signed-in creator who claimed it;
+        # the owner is that person unless the test says who is calling.
+        headers = {**(headers or {}), **session_auth_headers(owner)}
     return client.post("/projects", json=body, headers=headers, **kwargs)
 
 
@@ -340,11 +344,28 @@ def chat_ws_url(topic_id: str, handle: str) -> str:
     """The topic's chat WebSocket, authenticated as ``handle``.
 
     The socket requires a session token (``app.api.routes.chat``), so tests take
-    the same path the browser does. ``handle`` must be able to reach the topic —
-    its roster owner, or a member/owner of its project — or the connect is
-    refused with ``code: forbidden``.
+    the same path the browser does. It only carries what lands in the room; a
+    message is sent with :func:`post_message`. ``handle`` must be able to reach
+    the topic — its roster owner, or a member/owner of its project — or the
+    connect is refused with ``code: forbidden``.
     """
     return f"/topics/{topic_id}/chat?token={session_token(handle)}"
+
+
+def post_message(client, topic_id: str, handle: str, body: dict) -> dict:
+    """``handle`` says something in the room the way the browser does: a POST
+    with a fresh ``request_id``, authenticated as ``handle``. Returns the stored
+    message; the room's chat socket carries the same block as a ``user_block``.
+
+    Pass ``request_id`` in ``body`` to send a retry of an earlier send.
+    """
+    response = client.post(
+        f"/topics/{topic_id}/messages",
+        json={"request_id": str(uuid.uuid4()), **body},
+        headers=session_auth_headers(handle),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 @dataclass

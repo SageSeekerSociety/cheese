@@ -33,11 +33,14 @@ beforeEach(() => {
 })
 
 describe('opening a topic', () => {
+  // 这是这个文件里第一次导航：路由守卫要现编出它们 import 的那一整条模块图（账号、
+  // 邮箱校验……），本地要一秒半，比 waitFor 默认的一秒长。超时红在这里说的是机器有
+  // 多忙，不是消息有没有提前取，所以等待按「编译要多久」给（同 workspaceRoutes.spec.ts）。
   it('fetches its newest messages while the page code is still loading', async () => {
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b01'
     void router.push(`/projects/${PROJECT}/topics/${topic}`)
-    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()))
-  })
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()), { timeout: 20_000 })
+  }, 30_000)
 
   it('fetches nothing for a topic whose messages are already on hand', async () => {
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b02'

@@ -1312,7 +1312,7 @@ MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
 # What the tool result promises the caller about the file: `isImage` for the
 # suffixes that are pictures, `media_type` for what the bytes are. The room
 # types the artifact off the path on `POST /topics/{id}/shown`
-# (`topics._ARTIFACT_MIME`); this tool never declares `as`, so that table is
+# (`room_files.ARTIFACT_MIME`); this tool never declares `as`, so that table is
 # the only one that names a kind. These two fields describe the file to the
 # caller — they are not a second copy of the room's kind table.
 _SEND_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -1660,36 +1660,9 @@ def transport(config, target_path):
                             },
                         },
                         {
-                            "name": "platform_request",
-                            "description": (
-                                "Call the Cheese backend with room credentials. "
-                                "Use for platform documents, tasks and metadata. "
-                                "Paths are relative to the API root. "
-                                "Use chat_send for messages and native tools "
-                                "for project files."
-                            ),
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "method": {
-                                        "type": "string",
-                                        "enum": [
-                                            "GET",
-                                            "POST",
-                                            "PUT",
-                                            "PATCH",
-                                            "DELETE",
-                                        ],
-                                    },
-                                    "path": {"type": "string"},
-                                    "body": {
-                                        "description": (
-                                            "JSON body, without shell parsing."
-                                        )
-                                    },
-                                },
-                                "required": ["method", "path"],
-                            },
+                            "name": "permission",
+                            "description": "Internal. Call Bash instead.",
+                            "inputSchema": {"type": "object"},
                         },
                         {
                             "name": "send_user_file",
@@ -1731,7 +1704,7 @@ def transport(config, target_path):
                 tool = request["params"]["name"]
                 if tool not in (
                     "invoke",
-                    "platform_request",
+                    "permission",
                     "send_user_file",
                     "project_tools",
                 ) and (tool not in cheese.PLATFORM_TOOLS):
@@ -1741,7 +1714,6 @@ def transport(config, target_path):
                 picked = {
                     "chat_send": ("content", "reply_to", "request_id"),
                     "project_tools": ("server", "name", "arguments"),
-                    "platform_request": ("method", "path", "body"),
                 }
                 if tool in picked:
                     payload = {
@@ -1750,24 +1722,15 @@ def transport(config, target_path):
                         "tool": "mcp__native__" + tool,
                         "args": {k: payload[k] for k in picked[tool] if k in payload},
                     }
-                elif tool == "send_user_file":
-                    payload = {
-                        "id": payload["id"],
-                        "session_id": payload["session_id"],
-                        "tool": "SendUserFile",
-                        "args": {
-                            key: value
-                            for key, value in payload.items()
-                            if key not in ("id", "session_id")
-                        },
-                    }
-                elif tool in cheese.PLATFORM_TOOLS:
+                elif tool == "send_user_file" or tool in cheese.PLATFORM_TOOLS:
                     # Every other row of the table. Membership, not a `cheese_`
                     # prefix, decides: `todo_write` carries none.
                     payload = {
                         "id": payload["id"],
                         "session_id": payload["session_id"],
-                        "tool": "mcp__native__" + tool,
+                        "tool": "SendUserFile"
+                        if tool == "send_user_file"
+                        else "mcp__native__" + tool,
                         "args": {
                             key: value
                             for key, value in payload.items()
@@ -1807,10 +1770,10 @@ def transport(config, target_path):
                     receipt = platform_tool(tool, args, payload["id"], invoke)
                 else:
                     receipt = (
-                        client.platform_request(args)
-                        if tool == "platform_request"
-                        else client.publish_message(payload, args)
+                        client.publish_message(payload, args)
                         if tool == "chat_send"
+                        else client.permission(payload, args, notice)
+                        if tool == "permission"
                         else invoke(payload, args, abandoned)
                     )
                 if "error" in receipt:

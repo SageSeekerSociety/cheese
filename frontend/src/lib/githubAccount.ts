@@ -2,6 +2,8 @@
 // helpers kept out of the view so they're testable without mounting Vuetify.
 import type { OAuthConnectionInfo } from '../cx_types'
 
+import { t } from '@/i18n'
+
 export const GITHUB_APP_PROVIDER_ID = 'github_app'
 
 // The list endpoint returns every provider a user has linked; this picks the
@@ -17,38 +19,33 @@ export function findGithubAccountConnection(connections: OAuthConnectionInfo[]):
 // feedback anyone gets, and it lands in whichever browser followed the link —
 // which may not be the one that started the flow. So each code says what
 // happened AND what to do about it; an unknown code still names itself, since
-// a code we can't explain is more useful than 「未知原因」.
+// a code we can't explain is more useful than 「原因未知」.
 //
 // Sources: `github_account_link.py` (account) and `github_install.py` (repo).
-const ACCOUNT_LINK_REASONS: Record<string, string> = {
-  already_linked: '这个 GitHub 账号已经绑在另一个平台账号上了。换一个 GitHub 账号，或者让对方先断开。',
-  oauth_failed: 'GitHub 没有接受这次授权，授权码可能已过期或已被用过。请回到本页重新点「连接 GitHub 账号」。',
-  github_unreachable:
-    '芝士服务器这次没连上 GitHub，是网络问题，不是你的操作问题。请稍后回到本页再点一次「连接 GitHub 账号」。',
-  invalid_state: '授权链接已失效或被用过了。请回到本页重新点「连接 GitHub 账号」，不要复用旧链接。',
-}
+const ACCOUNT_LINK_REASONS = ['already_linked', 'oauth_failed', 'github_unreachable', 'invalid_state']
 
-const REPO_INSTALL_REASONS: Record<string, string> = {
-  invalid_state: '安装链接已失效或被用过了。请回到本页重新点一次「连接 GitHub 仓库」。',
-  missing_installation_id: 'GitHub 没有回传安装 ID，这次安装没有生效。重试一次。',
-  project_not_found: '找不到这个项目，可能刚被删除。',
-  no_accessible_repos: '这次安装没有授权任何仓库。请在 GitHub 的安装页里勾选至少一个仓库。',
-  forge_conflict: '这个项目的代码由芝士托管，不能改连 GitHub 仓库。',
-  github_error: '无法验证你的 GitHub 仓库权限。请重新连接 GitHub 账号，确认该账号能访问安装和仓库后重试。',
-  access_denied: '连接人的项目权限或 GitHub 账号连接已失效。请由项目 owner/lead 重新连接 GitHub 账号后重试。',
-  upstream_not_accessible: '这次安装未授权项目的上游仓库，或你的 GitHub 账号无权访问。请检查上游地址与安装授权后重试。',
-  repository_selection_required: '这次安装可访问多个仓库。请先在本页「上游仓库」保存目标 GitHub 仓库地址，再连接仓库。',
-  repository_write_required: '你的 GitHub 账号没有该仓库的写入权限。请有写入权限的项目 owner/lead 来连接。',
-  internal_error: '平台内部出错，这次连接没有生效。重试一次；仍失败请提 issue。',
-}
+const REPO_INSTALL_REASONS = [
+  'invalid_state',
+  'missing_installation_id',
+  'project_not_found',
+  'no_accessible_repos',
+  'forge_conflict',
+  'github_error',
+  'access_denied',
+  'upstream_not_accessible',
+  'repository_selection_required',
+  'repository_write_required',
+  'internal_error',
+]
 
-function explain(table: Record<string, string>, reason: string | undefined): string {
-  if (!reason) return '未知原因。'
-  return table[reason] ?? `未知原因（${reason}）。`
+function explain(kind: 'account' | 'repo', known: string[], reason: string | undefined): string {
+  if (!reason) return t('work.projectSettings.github.unknown')
+  if (!known.includes(reason)) return t('work.projectSettings.github.unknownCode', { code: reason })
+  return t(`work.projectSettings.github.${kind}.${reason}`)
 }
 
 export function explainAccountLinkFailure(reason: string | undefined): string {
-  return `连接 GitHub 账号失败：${explain(ACCOUNT_LINK_REASONS, reason)}`
+  return t('work.projectSettings.github.accountFailed', { reason: explain('account', ACCOUNT_LINK_REASONS, reason) })
 }
 
 // `repository_taken` carries the repo and, when the person connecting may see
@@ -58,14 +55,18 @@ export function explainRepoInstallFailure(
   details: { repo?: string; holder?: string } = {}
 ): string {
   if (reason === 'repository_taken') {
-    const repo = details.repo ?? '这个仓库'
-    const where = details.holder ? `项目「${details.holder}」` : '另一个你看不到的项目'
-    const next = details.holder
-      ? '请到那个项目里工作，或者换一个仓库。'
-      : '请换一个仓库，或者请那个项目的成员邀请你加入。'
-    return `连接 GitHub 仓库失败：${repo} 已经连接在${where}上，一个仓库只能连接一个项目。${next}`
+    const reasonText = t('work.projectSettings.github.taken', {
+      repo: details.repo ?? t('work.projectSettings.github.takenRepo'),
+      where: details.holder
+        ? t('work.projectSettings.github.takenHolder', { holder: details.holder })
+        : t('work.projectSettings.github.takenHidden'),
+      next: details.holder
+        ? t('work.projectSettings.github.takenNextHolder')
+        : t('work.projectSettings.github.takenNextHidden'),
+    })
+    return t('work.projectSettings.github.repoFailed', { reason: reasonText })
   }
-  return `连接 GitHub 仓库失败：${explain(REPO_INSTALL_REASONS, reason)}`
+  return t('work.projectSettings.github.repoFailed', { reason: explain('repo', REPO_INSTALL_REASONS, reason) })
 }
 
 // tokenExpires is null whenever the GitHub App wasn't configured to expire

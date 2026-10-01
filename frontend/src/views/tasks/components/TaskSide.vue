@@ -9,7 +9,7 @@
             identity.type === 'TEAM' ? identity.teamName || t('tasks.side.unnamedTeam') : t('tasks.side.individual')
           }}</strong>
           <span v-if="remaining" class="t-meta-read t-num">{{ remaining }}</span>
-          <v-menu v-if="identity.approved === 'APPROVED'" location="bottom end">
+          <AdaptiveMenu v-if="identity.approved === 'APPROVED'" :actions="mineActions">
             <template #activator="{ props: menu }">
               <v-btn
                 v-bind="menu"
@@ -19,10 +19,7 @@
                 :aria-label="t('tasks.side.more')"
               />
             </template>
-            <v-list density="compact">
-              <v-list-item :title="t('tasks.side.leave')" @click="emit('leave')" />
-            </v-list>
-          </v-menu>
+          </AdaptiveMenu>
         </div>
         <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
 
@@ -83,6 +80,7 @@
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
 import type { TaskParticipationIdentity } from '@/network/api/tasks/types'
 import type { Task, TaskSubmissionReview } from '@/types'
@@ -93,6 +91,7 @@ import { useI18n } from 'vue-i18n'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjectsForTask } from '@/api'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 const props = defineProps<{
   task: Task
@@ -103,6 +102,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ leave: [] }>()
+
+const mineActions = computed<MenuAction[]>(() => [
+  { key: 'leave', label: t('tasks.side.leave'), icon: 'mdi-exit-to-app', onSelect: () => emit('leave') },
+])
 
 const { t } = useI18n()
 

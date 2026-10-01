@@ -5,6 +5,8 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const requestPreviewSession = vi.fn()
 const route = reactive({
   params: { topicId: 'topic-a' },
@@ -41,6 +43,9 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 it('requires platform login before requesting a preview grant', async () => {
   mount()
@@ -80,6 +85,15 @@ it('shows launch failures and offers retry', async () => {
   mount()
   expect(await screen.findByText('预览暂不可用')).toBeTruthy()
   expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
+})
+
+it('reads in English under the en locale', async () => {
+  setLocale('en')
+  localStorage.setItem('accessToken', 'platform-secret')
+  requestPreviewSession.mockRejectedValue(new Error('Preview unavailable'))
+  mount()
+  expect(await screen.findByText('Preview unavailable')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
 })
 
 it('returns to login when authorization expires', async () => {

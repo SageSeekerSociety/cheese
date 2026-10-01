@@ -42,13 +42,9 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.block.notice_text import say
+from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.llm.llm_client import (
-    LLMAPIError,
-    LLMClient,
-    LLMConnectionError,
-    LLMTimeoutError,
-)
 from app.domain.membership.roster import roster
 from app.domain.memory.files import MemoryFileScope, prefix_of
 from app.domain.memory.files_store import (
@@ -77,6 +73,7 @@ from app.domain.memory.models import (
 )
 from app.domain.memory.store import live_entries
 from app.domain.project.services import ProjectService
+from app.domain.service_keys import KeySpec, service_key
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
@@ -109,9 +106,29 @@ class Gathered:
 class MemoryMigrationService:
     """一个请求一个实例，跟着那一个 session 走。"""
 
-    def __init__(self, session: AsyncSession, *, llm: LLMClient | None = None):
+    def __init__(self, session: AsyncSession, *, chat: GatewayChat | None = None):
         self._session = session
-        self._llm = llm or LLMClient()
+        self._chat = chat
+
+    async def _model(self) -> GatewayChat | None:
+        """The model that judges where each old memory goes. The platform runs
+        this migration, so it calls on a key of its own with its own budget."""
+        if self._chat is None:
+            key = await service_key(
+                self._session,
+                KeySpec(
+                    name="memory-migration-gateway-key",
+                    alias="memory-migration",
+                    model=settings.memory_migration_model,
+                    budget_usd=settings.memory_migration_budget_usd,
+                    rpm=60,
+                ),
+            )
+            if key is not None:
+                self._chat = GatewayChat(
+                    key, settings.memory_migration_model, max_tokens=8192
+                )
+        return self._chat
 
     # --- 读 -------------------------------------------------------------
 
@@ -301,7 +318,8 @@ class MemoryMigrationService:
 
     async def _ask(self, gathered: Gathered) -> list[dict]:
         """分批问模型。一批里的决定只看得见这一批的旧记忆，合并时一起校验。"""
-        if not self._llm.is_configured:
+        chat = await self._model()
+        if chat is None:
             raise BadRequestError("没有配置模型，搬迁要一个模型来判去处")
         decisions: list[dict] = []
         size = max(1, settings.memory_migration_chunk)
@@ -315,14 +333,13 @@ class MemoryMigrationService:
                 existing=gathered.existing,
             )
             try:
-                answer = await self._llm.get_completion(
+                answer = await chat.complete(
+                    system=MIGRATION_SYSTEM,
                     prompt=prompt,
-                    system_prompt=MIGRATION_SYSTEM,
-                    model_type="reasoning",
                     json_response=True,
                     timeout=settings.memory_migration_timeout_s,
                 )
-            except (LLMTimeoutError, LLMConnectionError, LLMAPIError) as exc:
+            except GatewayCallError as exc:
                 raise BadRequestError(f"问模型这一步失败了：{exc}") from exc
             try:
                 decisions += decode_answer(answer.content)
@@ -474,17 +491,19 @@ class MemoryMigrationService:
             )
         await self._say(
             gathered,
-            content=(
-                f"旧记忆迁移：报告好了，等复核 —— {len(row.source_ids)} 条旧记忆 → "
-                f"{len(row.files)} 个文件"
-                + ("；**team 索引超出目标**" if plan.over_goal() else "")
+            content=say(
+                "memoryMigrationReportedOverGoal"
+                if plan.over_goal()
+                else "memoryMigrationReported",
+                sources=len(row.source_ids),
+                files=len(row.files),
             ),
             meta=notice(
                 EVENT_MEMORY_ORGANIZING,
                 severity=SEVERITY_WARN if plan.over_goal() else SEVERITY_INFO,
                 who=WHO_PLATFORM,
                 detail=detail,
-                detail_label="报告（一条一条的去处）",
+                detail_label=say("labelMigrationReport"),
             ),
         )
 
@@ -494,14 +513,14 @@ class MemoryMigrationService:
         """搬完了：说进项目总览，列出动过的文件。"""
         await self._say(
             gathered,
-            content=f"旧记忆迁移：搬完了，写了 {len(written)} 个文件",
+            content=say("memoryMigrationApplied", files=len(written)),
             meta=notice(
                 EVENT_MEMORY_ORGANIZING,
                 severity=SEVERITY_INFO,
                 who=WHO_PLATFORM,
                 detail="\n".join(f"- `{path}`" for path in written)
                 + (f"\n\n{row.summary}" if row.summary else ""),
-                detail_label="写了哪些",
+                detail_label=say("labelFilesWritten"),
             ),
         )
 

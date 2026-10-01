@@ -165,7 +165,7 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 8px 12px;
+  padding: 12px 16px;
   /* sticky 时**不能透明**，否则行会从表头文字底下穿过去。 */
   background: var(--surface);
   border-bottom: 1px solid var(--line-2);
@@ -191,7 +191,7 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
    （`(0,3,0)` > 这里的 `(0,2,1)`）：`.am__cell.am__cell--actions` 不够，
    `.am .am__cell--actions` 才够。 */
 .agrid__body :deep(td) {
-  padding: 8px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
@@ -365,7 +365,7 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
      （和表格模式下的 8/12 一致），标签不画 —— 它们的内容自己安排版面。 */
   .agrid--cards .agrid__body :deep(tr[data-card='flat']) {
     gap: 0;
-    padding: 8px 12px;
+    padding: 12px 16px;
   }
 
   /* 只清内边距、**不动 `display`**：平铺行里那一格可能是页面自己排的 flex（成员表的

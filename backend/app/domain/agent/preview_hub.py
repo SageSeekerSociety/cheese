@@ -30,8 +30,11 @@ definition of the wire instead of two that drift.
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Protocol
+
+import anyio
 
 from app.domain.agent import preview_tunnel as wire
 
@@ -70,27 +73,130 @@ class PreviewResponse:
     body: bytes
 
 
+MAX_QUEUED_BYTES = 1024 * 1024
+MAX_QUEUED_FRAMES = 256
+SEND_TIMEOUT_S = 5.0
+MAX_STREAMS = 64
+
+
 class PreviewStream:
     """One browser request (or one browser WebSocket) and its whole life."""
 
     def __init__(self, machine: "PreviewMachine", stream_id: int) -> None:
         self._machine = machine
         self.id = stream_id
-        self.inbox: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
+        self.inbox: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(MAX_QUEUED_FRAMES)
+        self._queued_bytes = 0
+        self._closed = False
+        self._terminal = False
+        self._close_task: asyncio.Task[None] | None = None
+
+    @property
+    def close_metadata(self) -> bool:
+        return not self._terminal and "ws-close-v1" in self._machine.capabilities
 
     async def send(self, op: int, payload: bytes = b"") -> None:
         await self._machine.send(op, self.id, payload)
 
+    def offer(self, op: int, payload: bytes) -> None:
+        if self._closed or self._terminal:
+            return
+        # Legacy RESP frames may include initial body bytes. decode_meta checks
+        # their header separately; retain the existing bounded queue allowance.
+        limit = wire._CHUNK if op == wire.OP_DATA else MAX_QUEUED_BYTES
+        if (
+            len(payload) > limit
+            or self._queued_bytes + len(payload) > MAX_QUEUED_BYTES
+            or self.inbox.full()
+        ):
+            self.terminate(b"preview consumer queue overflow")
+            self._machine.cancel_later(self.id)
+            return
+        self._queued_bytes += len(payload)
+        self.inbox.put_nowait((op, payload))
+
+    def terminate(self, reason: bytes) -> None:
+        if self._closed or self._terminal:
+            return
+        self._terminal = True
+        while not self.inbox.empty():
+            self.inbox.get_nowait()
+        self._queued_bytes = len(reason)
+        self.inbox.put_nowait((wire.OP_CLOSE, reason))
+        self._machine.forget(self.id)
+
     async def receive(
         self, timeout: float | None = STREAM_TIMEOUT_S
     ) -> tuple[int, bytes]:
-        """The next frame from the machine. Bounded by default (see
-        STREAM_TIMEOUT_S); ``None`` waits indefinitely, which only a proxied
-        WebSocket wants — an HMR socket is silent until somebody edits a file."""
-        return await asyncio.wait_for(self.inbox.get(), timeout=timeout)
+        item = await asyncio.wait_for(self.inbox.get(), timeout=timeout)
+        self._queued_bytes -= len(item[1])
+        return item
 
     def close(self) -> None:
+        self._closed = True
         self._machine.forget(self.id)
+
+    async def aclose(self, *, cancel: bool = True, payload: bytes = b"") -> None:
+        if not self._closed:
+            terminal = self._terminal
+            self.close()
+            if cancel and not terminal:
+                self._close_task = asyncio.create_task(self._send_close(payload))
+        if self._close_task is None:
+            return
+        cancelled = False
+        # AnyIO disconnect scopes and direct asyncio task cancellation are
+        # different paths. Own the bounded write through either, then propagate
+        # direct cancellation only after the wire task has been reaped.
+        with anyio.CancelScope(shield=True):
+            while True:
+                try:
+                    await asyncio.shield(self._close_task)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+                    if self._close_task.done():
+                        self._close_task.result()
+                        break
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _send_close(self, payload: bytes) -> None:
+        try:
+            await self.send(wire.OP_CLOSE, payload)
+        except (OSError, RuntimeError, TimeoutError):
+            pass
+
+
+@dataclass
+class PreviewHttpResponse:
+    status: int
+    headers: list[tuple[str, str]]
+    stream: PreviewStream
+    first: bytes = b""
+    timeout: float = STREAM_TIMEOUT_S
+    ended: bool = False
+
+    async def iter_bytes(self) -> AsyncIterator[bytes]:
+        try:
+            if self.first:
+                yield self.first
+                self.first = b""
+            while not self.ended:
+                op, payload = await self.stream.receive(self.timeout)
+                if op == wire.OP_END:
+                    self.ended = True
+                    break
+                if op != wire.OP_DATA:
+                    raise ConnectionError(
+                        f"preview response interrupted: {payload[:200]!r}"
+                    )
+                yield payload
+        finally:
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        await self.stream.aclose(cancel=not self.ended)
 
 
 @dataclass
@@ -100,18 +206,54 @@ class PreviewMachine:
     transport: PreviewTransport
     # When the credential it dialled with was issued; see the module docstring.
     issued: int = 0
+    capabilities: frozenset[str] = frozenset()
     streams: dict[int, PreviewStream] = field(default_factory=dict)
     next_stream: int = 0
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    pending_cancels: set[asyncio.Task[None]] = field(default_factory=set)
+    stopped: bool = False
+    failed: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def send(self, op: int, stream_id: int, payload: bytes = b"") -> None:
-        # Serialised for the same reason the device channel serialises: a
-        # WebSocket is not safe for concurrent writes, and every open stream
-        # sends here.
-        async with self.send_lock:
-            await self.transport.send_bytes(wire.encode(op, stream_id, payload))
+        if self.stopped:
+            raise ConnectionError("preview tunnel stopped")
+        try:
+            async with asyncio.timeout(SEND_TIMEOUT_S):
+                async with self.send_lock:
+                    if self.stopped:
+                        raise ConnectionError("preview tunnel stopped")
+                    await self.transport.send_bytes(wire.encode(op, stream_id, payload))
+        except (TimeoutError, OSError, RuntimeError):
+            self.stopped = True
+            self.failed.set()
+            for stream in list(self.streams.values()):
+                stream.terminate(b"preview tunnel write failed")
+            raise
 
-    def open(self) -> PreviewStream:
+    def cancel_later(self, stream_id: int) -> None:
+        async def cancel() -> None:
+            try:
+                await self.send(wire.OP_CLOSE, stream_id)
+            except (OSError, RuntimeError, TimeoutError):
+                pass
+
+        if self.stopped:
+            return
+        task = asyncio.create_task(cancel())
+        self.pending_cancels.add(task)
+        task.add_done_callback(self.pending_cancels.discard)
+
+    async def drain(self) -> None:
+        tasks = tuple(self.pending_cancels)
+        for task in tasks:
+            task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.pending_cancels.difference_update(tasks)
+
+    def open(self) -> PreviewStream | None:
+        if self.stopped or len(self.streams) >= MAX_STREAMS:
+            return None
         self.next_stream += 1
         stream = PreviewStream(self, self.next_stream)
         self.streams[stream.id] = stream
@@ -137,7 +279,7 @@ class PreviewMachine:
         stream = self.streams.get(stream_id)
         if stream is None:
             return
-        stream.inbox.put_nowait((op, payload))
+        stream.offer(op, payload)
 
 
 _Seat = tuple[uuid.UUID, str]
@@ -164,8 +306,11 @@ class PreviewHub:
         so a machine that disappears would otherwise leave one browser socket
         held open per viewer, forever, with no frame ever arriving to end it.
         """
+        machine.stopped = True
+        for task in machine.pending_cancels:
+            task.cancel()
         for stream in list(machine.streams.values()):
-            stream.inbox.put_nowait((wire.OP_CLOSE, b"the machine went away"))
+            stream.terminate(b"the machine went away")
         machine.streams.clear()
 
     def attach(
@@ -175,6 +320,7 @@ class PreviewHub:
         transport: PreviewTransport,
         *,
         issued: int = 0,
+        capabilities: frozenset[str] = frozenset(),
     ) -> PreviewMachine | None:
         """Give this seat's tunnel to ``transport``; None when it may not have it.
 
@@ -189,7 +335,11 @@ class PreviewHub:
                 return None
             self._abandon(displaced)
         machine = PreviewMachine(
-            topic_id=topic_id, seat=seat, transport=transport, issued=issued
+            topic_id=topic_id,
+            seat=seat,
+            transport=transport,
+            issued=issued,
+            capabilities=wire.CAPABILITIES.intersection(capabilities),
         )
         self._machines[key] = machine
         # POPPED, not merely set: a waiter already holds its own reference, and
@@ -210,7 +360,8 @@ class PreviewHub:
             self._abandon(machine)
 
     def is_online(self, topic_id: uuid.UUID, seat: str) -> bool:
-        return (topic_id, seat) in self._machines
+        machine = self._machines.get((topic_id, seat))
+        return machine is not None and not machine.stopped
 
     async def wait_online(self, topic_id: uuid.UUID, seat: str, timeout: float) -> bool:
         """Whether a helper is connected, waiting up to ``timeout`` for one.
@@ -239,6 +390,63 @@ class PreviewHub:
         machine = self._machines.get((topic_id, seat))
         return None if machine is None else machine.open()
 
+    async def request_stream(
+        self,
+        topic_id: uuid.UUID,
+        seat: str,
+        *,
+        method: str,
+        path: str,
+        headers: list[tuple[str, str]],
+        body: bytes = b"",
+        timeout: float = STREAM_TIMEOUT_S,
+        instance: str | None = None,
+        inspect_instance: bool = False,
+    ) -> PreviewHttpResponse | None:
+        """Return at RESP; the caller owns the body and cancellation."""
+        stream = self.open_stream(topic_id, seat)
+        if stream is None:
+            return None
+        transferred = False
+        try:
+            if (
+                instance or inspect_instance
+            ) and "instance-v1" not in stream._machine.capabilities:
+                return None
+            await stream.send(
+                wire.OP_REQ,
+                wire.encode_meta(
+                    {
+                        "method": method,
+                        "path": path,
+                        "headers": [list(h) for h in headers],
+                        **({"instance": instance} if instance else {}),
+                        **({"inspect_instance": True} if inspect_instance else {}),
+                    },
+                    body,
+                ),
+            )
+            op, payload = await stream.receive(timeout)
+            if op != wire.OP_RESP:
+                logger.info("preview request on %s failed: %s", topic_id, payload[:200])
+                return None
+            meta, first = wire.decode_meta(payload)
+            response = PreviewHttpResponse(
+                status=int(meta.get("status", 502)),
+                headers=[(str(k), str(v)) for k, v in meta.get("headers") or []],
+                stream=stream,
+                first=first,
+                timeout=timeout,
+            )
+            transferred = True
+            return response
+        except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
+            logger.info("preview request on %s did not complete: %s", topic_id, exc)
+            return None
+        finally:
+            if not transferred:
+                await stream.aclose()
+
     async def request(
         self,
         topic_id: uuid.UUID,
@@ -250,54 +458,53 @@ class PreviewHub:
         body: bytes = b"",
         timeout: float = STREAM_TIMEOUT_S,
     ) -> PreviewResponse | None:
-        """One HTTP request to the topic's app. None = there is no tunnel, the
-        app did not answer, or it answered with more than we will hold."""
-        stream = self.open_stream(topic_id, seat)
-        if stream is None:
+        response = await self.request_stream(
+            topic_id,
+            seat,
+            method=method,
+            path=path,
+            headers=headers,
+            body=body,
+            timeout=timeout,
+        )
+        if response is None:
             return None
         try:
-            await stream.send(
-                wire.OP_REQ,
-                wire.encode_meta(
-                    {
-                        "method": method,
-                        "path": path,
-                        "headers": [list(h) for h in headers],
-                    },
-                    body,
-                ),
-            )
-            op, payload = await stream.receive(timeout)
-            if op != wire.OP_RESP:
-                logger.info("preview request on %s failed: %s", topic_id, payload[:200])
-                return None
-            meta, first = wire.decode_meta(payload)
-            chunks = [first]
-            size = len(first)
-            while size <= MAX_BODY:
-                op, payload = await stream.receive(timeout)
-                if op == wire.OP_END:
-                    break
-                if op != wire.OP_DATA:
-                    logger.info(
-                        "preview body on %s ended early: %s", topic_id, payload[:200]
-                    )
+            chunks = []
+            size = 0
+            async for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > MAX_BODY:
                     return None
-                size += len(payload)
-                chunks.append(payload)
-            if size > MAX_BODY:
-                logger.info("preview body on %s is too large to hold", topic_id)
-                return None
-            return PreviewResponse(
-                status=int(meta.get("status", 502)),
-                headers=[(str(k), str(v)) for k, v in meta.get("headers") or []],
-                body=b"".join(chunks),
-            )
+                chunks.append(chunk)
+            return PreviewResponse(response.status, response.headers, b"".join(chunks))
         except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
-            logger.info("preview request on %s did not complete: %s", topic_id, exc)
+            logger.info("preview buffered response interrupted: %s", exc)
             return None
         finally:
-            stream.close()
+            await response.aclose()
+
+    async def instance(self, topic_id: uuid.UUID, seat: str) -> str | None:
+        response = await self.request_stream(
+            topic_id,
+            seat,
+            method="HEAD",
+            path="/",
+            headers=[],
+            inspect_instance=True,
+            timeout=PROBE_TIMEOUT_S,
+        )
+        if response is None:
+            return None
+        try:
+            value = dict(response.headers).get("x-cheese-instance", "")
+            return (
+                value
+                if len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+                else None
+            )
+        finally:
+            await response.aclose()
 
     async def probe(
         self, topic_id: uuid.UUID, seat: str, *, timeout: float = PROBE_TIMEOUT_S

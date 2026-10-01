@@ -15,8 +15,8 @@ def _project_with_a_secret(client) -> tuple[str, str]:
     ]
     tid = p["root_topic_id"]
     r = client.post(
-        f"/topics/{tid}/decision",
-        json={"decision": "机密：下季度裁员名单"},
+        f"/topics/{tid}/weekly",
+        json={"body": "机密：下季度裁员名单"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text

@@ -10,15 +10,15 @@ export default {
     {
       path: 'settings',
       name: 'UserSettings',
-      components: {
-        default: () => import('@/layouts/user/Settings.vue'),
-        sidebar: () => import('@/views/user/settings/SettingsSidebar.vue'),
-      },
+      // 盖在整个窗口上的一层（layouts/user/Settings.vue）。这一条自己的地址在桌面上
+      // 落到「个人资料」，手机上是目录。
+      component: () => import('@/layouts/user/Settings.vue'),
       meta: {
         titleKey: 'navigation.userMenu.settings',
         palette: { label: 'navigation.userMenu.settings', icon: 'mdi-account-cog-outline' },
+        settingsOverlay: true,
+        hideTabs: true,
       },
-      redirect: { name: 'UserSettingsProfile' },
       children: [
         {
           path: 'profile',

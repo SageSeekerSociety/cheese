@@ -16,6 +16,8 @@ import { fileLabel } from './fileKind'
 import { markdown } from './markdown'
 import { plainTokens } from './renderMessage'
 
+import { t } from '@/i18n'
+
 /** 附件块里装的是不是一张图。图要直接画出来，别的给一个下载入口。 */
 export function isImageBlock(block: Block): boolean {
   return block.kind === 'attachment' && (block.mime_type || '').startsWith('image/')
@@ -46,7 +48,8 @@ function readableText(tokens: Token[]): string {
  * 指文件的 token 两边都一样读成名字，和正文里 chip 上写的字一致。
  */
 export function replySnippet(block: Block, maps: RefMaps): string {
-  if (block.kind === 'attachment') return isImageBlock(block) ? '[图片]' : '[文件]'
+  if (block.kind === 'attachment')
+    return isImageBlock(block) ? t('work.room.attachments.imageSnippet') : t('work.room.attachments.fileSnippet')
   const source = isAgentBlock(block) ? readableText(markdown.lexer(block.content)) : block.content
   const text = plainTokens(source, maps).replace(/\s+/g, ' ').trim()
   return text.length > 24 ? text.slice(0, 24) + '…' : text

@@ -21,7 +21,6 @@ import pytest
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.launch import MachinePlace
-from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.project.environment import EnvironmentConfig
 
 
@@ -257,26 +256,11 @@ def _place(**overrides) -> MachinePlace:
     )
 
 
-@pytest.mark.parametrize(
-    "plan",
-    [
-        pytest.param(ClaudeLaunch(system_prompt="房间的系统提示词"), id="claude-code"),
-        pytest.param(
-            PiLaunch(
-                system_prompt="房间的系统提示词", model="glm-5.2", agent_handle="ops"
-            ),
-            id="pi",
-        ),
-    ],
-)
-def test_one_channel_carries_whichever_harness_it_was_handed(plan):
-    """同一段 channel 逻辑，两个 harness —— 这是「切干净」的那句话本身。
-
-    The platform half of the environment is the same sentence for both, and
-    neither the composition nor anything it reads had to learn which one it is
-    holding. A regression here does not look like a broken test elsewhere: it
-    looks like the second harness never being reachable.
-    """
+def test_a_screen_carries_the_platforms_half_whatever_runs_in_it():
+    """The platform half of the environment is the same sentence for any plan
+    a channel is handed: neither the composition nor anything it reads has to
+    learn which harness it is holding."""
+    plan = ClaudeLaunch(system_prompt="房间的系统提示词")
     place = _place()
     command, env = machine_launcher.screen_launch(
         place,
@@ -323,17 +307,6 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
     assert placed["CHEESE_TOPIC"] == "T"
 
 
-def test_the_two_harnesses_do_not_produce_the_same_launch():
-    """The parametrised test above would pass just as well if `on` ignored the
-    plan, so this is the half that says the answers actually differ."""
-    place = _place()
-    claude = ClaudeLaunch(system_prompt="x").on(place)
-    pi = PiLaunch(system_prompt="x", model="glm-5.2").on(place)
-    assert claude.command != pi.command
-    assert "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH" in claude.env
-    assert pi.env == {}
-
-
 # --- the machine's document toolchain ---------------------------------------
 #
 # These are capabilities rather than dependencies, which decides every assertion
@@ -353,15 +326,20 @@ def _fake_upstream(tmp_path):
     served = tmp_path / "served"
     served.mkdir()
     payload = tmp_path / "payload"
-    for tool in ("typst", "pandoc", "uv"):
+    for tool, _, kind, name in machine_launcher.toolchain.PLACEMENTS:
+        if kind != "bin":
+            continue
         directory = payload / f"{tool}-some-vendor-layout"
         directory.mkdir(parents=True)
-        (directory / tool).write_text(f"#!/bin/sh\necho {tool}\n")
-        (directory / tool).chmod(0o755)
+        (directory / name).write_text(f"#!/bin/sh\necho {name}\n")
+        (directory / name).chmod(0o755)
         with tarfile.open(served / tool, "w:gz") as tar:
             tar.add(directory, arcname=directory.name)
     (served / "font-sans").write_bytes(b"OTTO sans")
     (served / "font-serif").write_bytes(b"OTTO serif")
+    # agent-browser's artifact is the binary itself (kind "raw"), so a bare
+    # file here is the faithful fixture, not a shortcut.
+    (served / "agent-browser").write_text("#!/bin/sh\necho agent-browser\n")
 
     bin_dir = tmp_path / "fakebin"
     bin_dir.mkdir()
@@ -436,6 +414,24 @@ def test_the_toolchain_belongs_to_the_machine_not_to_the_room(tmp_path):
     # Version-named, so a bump lands beside the old copy instead of over it.
     assert (chain / "typst" / machine_launcher.toolchain.TYPST_VERSION).is_dir()
     assert not (session / ".cheese" / "toolchain").exists()
+
+
+def test_a_raw_artifact_is_placed_without_unpacking(tmp_path):
+    """agent-browser ships a bare binary per platform, not an archive: the raw
+    kind must land it in bin/ directly, where the unpack-and-find path would
+    just fail tar and unzip both."""
+    home, env, _log = _machine_with_upstream(tmp_path)
+
+    chain = home / ".cheese" / "toolchain"
+    report = tmp_path / "raw"
+    prepare = _agent_waiting_for(
+        tmp_path, chain / "bin" / "agent-browser", report, "CHEESE_TOOLCHAIN"
+    )
+    result = _run(tmp_path, env, prepare=prepare, command='"$AGENT"')
+
+    assert result.returncode == 0, result.stderr
+    assert report.read_text(), "the agent gave up waiting for the placement"
+    assert (chain / "bin" / "agent-browser").exists()
 
 
 def test_a_toolchain_that_cannot_be_fetched_never_fails_the_launch(tmp_path):

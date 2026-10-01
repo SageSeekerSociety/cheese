@@ -15,15 +15,17 @@ import type { SuggestionProps } from '@tiptap/suggestion'
 import type { Block, Topic } from '../../../cx_types'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import {
   commentMarkKey,
+  commentQuoteRanges,
   createCommentMarks,
   createLiveRefBadges,
   createTokenChips,
   liveRefKey,
+  mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
 import { docExtensions, docReplaceRange, serializeDoc } from '../../../lib/docMarkdown'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
@@ -31,6 +33,8 @@ import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 
 import { alignedDocBlocks } from './docBlocks'
 import DocOverlays from './DocOverlays.vue'
+
+import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -45,6 +49,7 @@ const props = withDefaults(
     liveRefIndex?: Map<number, string>
     /** 段落 index → 压在上面的评论（同上）。 */
     commentMarkIndex?: Map<number, { id: string; quote: string }[]>
+    openCommentId?: string | null
     /** 取一份最新的节点树：闪某一段、给评论定锚点都要它。 */
     fetchDocNodes: () => Promise<Block[]>
     /** 图片 src 的显示期解析：工作区相对路径走原始文件接口。 */
@@ -58,6 +63,7 @@ const props = withDefaults(
     topicList: () => [],
     liveRefIndex: () => new Map<number, string>(),
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
+    openCommentId: null,
     scrollTick: 0,
   }
 )
@@ -258,6 +264,8 @@ function onHover(e: MouseEvent) {
 // Guard: when we programmatically setContent from a server reload we don't want
 // onUpdate to flag the doc as dirty.
 const loadingFromServer = ref(false)
+const displayTick = ref(0)
+const commentIndexStale = ref(false)
 
 const editor = useEditor({
   content: '',
@@ -273,7 +281,7 @@ const editor = useEditor({
         return { title: sub?.title ?? null, status: sub?.status ?? '' }
       },
     }),
-    createCommentMarks({ index: () => props.commentMarkIndex }),
+    createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
     createSlashCommands({
       onStart: showSlashMenu,
       onUpdate: showSlashMenu,
@@ -284,6 +292,10 @@ const editor = useEditor({
   editable: props.editable,
   editorProps: {
     attributes: { class: 'doc-prose' },
+  },
+  onTransaction: ({ transaction }) => {
+    displayTick.value++
+    if (transaction.docChanged) commentIndexStale.value = true
   },
   onUpdate: () => {
     if (import.meta.env.DEV) {
@@ -309,8 +321,37 @@ watch(
   () => poke(commentMarkKey)
 )
 function poke(key: PluginKey) {
+  if (key === commentMarkKey) commentIndexStale.value = false
   const view = editor.value?.view
   if (view) view.dispatch(view.state.tr.setMeta(key, true))
+}
+
+watch(
+  () => props.openCommentId,
+  () => {
+    const view = editor.value?.view
+    if (view) view.dispatch(view.state.tr.setMeta(commentMarkKey, 'active-only'))
+  }
+)
+function commentQuoteState(id: string): 'unique' | 'missing' | 'ambiguous' {
+  void displayTick.value
+  const ed = editor.value
+  if (!ed) return 'missing'
+  const marks =
+    commentMarkKey
+      .getState(ed.state)
+      ?.find()
+      .filter((mark: { spec: { commentId?: string } }) => mark.spec.commentId === id) ?? []
+  if (marks.length) {
+    return mappedCommentQuoteState(ed.state.doc, marks[0])
+  }
+  if (commentIndexStale.value) return 'missing'
+  let status: 'unique' | 'missing' | 'ambiguous' = 'missing'
+  ed.state.doc.forEach((node, offset, index) => {
+    const comment = props.commentMarkIndex.get(index)?.find((item) => item.id === id)
+    if (comment) status = commentQuoteRanges(node, offset, comment.quote).status
+  })
+  return status
 }
 
 // 能不能改这件事两边都要知道：取数那一半拿它判「现在不许自动保存」，这一层拿它判
@@ -377,7 +418,10 @@ function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
 }
 
-defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
+defineExpose({ editor, installMarkdown, serializeVisual, highlightTurn, highlightNode, commentQuoteState })
+
+// 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
+const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
 </script>
 
 <template>
@@ -422,7 +466,7 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
    its left edge instead of cutting through a misaligned overlay. PM renders
    an empty doc as <p><br class="ProseMirror-trailingBreak"></p>. */
 .doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
-  content: 'AI 队友会在这里维护文档，你也可以直接编辑';
+  content: v-bind(emptyPlaceholder);
   color: rgba(var(--v-theme-on-surface), 0.38);
   pointer-events: none;
   float: left;
@@ -481,9 +525,10 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
   min-height: 240px;
   max-width: 720px;
   margin: 0 auto;
-  /* 连续正文那一档（.t-reading 15/24）。 */
-  font-size: 15px;
-  line-height: var(--lh-15-reading);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+  caret-color: var(--ink);
   color: var(--text);
 }
 .doc-editor :deep(.doc-prose:focus) {
@@ -528,56 +573,61 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
 
 /* Feishu-style comment anchor: a quiet dashed underline; hover fills. */
 .doc-editor :deep(.comment-anchor) {
-  border-bottom: 1.5px dashed var(--faint);
-  padding-bottom: 1px;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, var(--muted) 40%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
   cursor: pointer;
+}
+.doc-editor :deep(.comment-anchor.is-active) {
+  background: var(--fill);
+  text-decoration-color: var(--accent-ink);
 }
 .doc-editor :deep(.comment-anchor:hover) {
   background: var(--fill);
 }
-/* ---- Document typography: Feishu-quiet rhythm. Heading sizes step down
-   evenly; vertical space leans UP (more before than after) so headings bind
-   to their section. ---- */
+/* Source-backed document hierarchy, shared by editing and read-only modes. */
+.doc-editor :deep(h1),
+.doc-editor :deep(h2),
+.doc-editor :deep(h3),
+.doc-editor :deep(h4),
+.doc-editor :deep(h5),
+.doc-editor :deep(h6) {
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 12px 0 -4px;
+  color: var(--ink);
+}
 .doc-editor :deep(h1) {
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  line-height: var(--lh-18);
-  margin: 1.1em 0 0.4em;
+  font-size: 22px;
 }
 .doc-editor :deep(h2) {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15-reading);
-  margin: 1.15em 0 0.35em;
+  font-size: 18px;
 }
-.doc-editor :deep(h3) {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  margin: 1em 0 0.3em;
-}
+.doc-editor :deep(h3),
 .doc-editor :deep(h4) {
+  font-size: 16px;
+}
+.doc-editor :deep(h5),
+.doc-editor :deep(h6) {
   font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  margin: 0.9em 0 0.25em;
-  color: var(--ink);
 }
 /* The doc starts flush: no phantom gap above a leading heading. */
 .doc-editor :deep(.doc-prose > :first-child) {
   margin-top: 0;
 }
 .doc-editor :deep(p) {
-  margin: 0 0 0.75em;
+  margin: 0;
 }
 .doc-editor :deep(ul),
 .doc-editor :deep(ol) {
-  margin: 0.4em 0 0.75em;
-  padding-left: 1.5em;
+  margin: 0 0 12px;
+  padding-left: 32px;
 }
 .doc-editor :deep(li) {
-  margin: 0.25em 0;
+  margin: 0;
+  padding-inline-start: 8px;
 }
 .doc-editor :deep(li::marker) {
   color: var(--muted);
@@ -629,7 +679,7 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
 .doc-editor :deep(blockquote) {
   margin: 0.7em 0;
   padding: 6px 14px;
-  border-left: 3px solid var(--line-2);
+  border-left: 4px solid var(--line);
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
   background: var(--fill);
@@ -749,7 +799,9 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
 /* 链接: 主题琥珀 ink, quiet until hover. */
 .doc-editor :deep(a) {
   color: var(--accent-ink);
-  text-decoration: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
   cursor: pointer;
 }
 .doc-editor :deep(a:hover) {
@@ -757,6 +809,35 @@ defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
   text-underline-offset: 3px;
 }
 /* 图片: soft corners, never wider than the column. */
+.doc-editor :deep(.doc-prose > *) {
+  min-width: 0;
+  margin-bottom: 12px;
+}
+.doc-editor :deep(.doc-prose ul),
+.doc-editor :deep(.doc-prose ol) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.doc-editor :deep(.doc-prose li ul),
+.doc-editor :deep(.doc-prose li ol) {
+  margin: 4px 0 0;
+}
+.doc-editor :deep(.doc-prose li > p) {
+  margin: 0;
+}
+.doc-editor :deep(.doc-prose a) {
+  cursor: text;
+}
+.doc-editor :deep(.doc-prose[contenteditable='false'] a) {
+  cursor: pointer;
+}
+.doc-editor :deep(.doc-prose pre code) {
+  white-space: pre;
+}
+.doc-editor :deep(.doc-prose table) {
+  line-height: 1.7;
+}
 .doc-editor :deep(img) {
   max-width: 100%;
   border-radius: 8px;

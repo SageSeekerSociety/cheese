@@ -14,7 +14,7 @@
 **和另外两个「mention」模块不是一份东西，是同一根管子上的三段。**
 
 - `app.domain.mentions`：friendly `@名字` / `@话题名` → 编码 token 的规范化
-  （`expand_mention_names` / `canonicalize_refs`），文档 PUT、决策、结论回流也
+  （`expand_mention_names` / `canonicalize_refs`），文档 PUT、周报、结论回流也
   要过。它**产出** token。
 - `app.domain.delivery.mention`：一条消息点到哪位 AI 队友，那条投递记在它那里
   （`record_mentions`），和定时投递同一本账。它决定**谁被叫起来**。
@@ -49,6 +49,7 @@ from app.core.text import markdown_preview
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.membership.roster import roster_rows
@@ -313,7 +314,7 @@ async def announce_mentions(
             task_id=landed.task_id,
             author=author,
             author_type=AuthorType.participant,
-            content=f"未能通知 <@{bad}>：项目中没有这个成员",
+            content=say("mentionUnknownMember", member=f"<@{bad}>"),
             kind=BlockKind.event,
             turn_id=block.turn_id,
             meta={"in_room": False},

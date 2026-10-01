@@ -1,4 +1,4 @@
-// 设置「基本信息」这一栏。底部的危险区（删除空间）钉三件事：
+// 设置「基本信息」这一栏。底部的删除空间钉三件事：
 //   1. 只有创建者（OWNER）看得到它 —— 后端 delete_space 走的是 allow_admin=False
 //      那道闸，管理员点下去只会拿到 403，摆一颗必然失败的按钮比不摆更糟；
 //   2. 点下去先问一句，人没确认之前一个请求都不发；
@@ -52,9 +52,13 @@ import Detail from '../../Detail.vue'
 import BasicInfo from './BasicInfo.vue'
 
 import DialogContainer from '@/components/common/DialogContainer.vue'
+import { setLocale } from '@/i18n'
 import { dialogs } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
+
+// The confirm dialog's buttons are read by their Chinese labels below.
+setLocale('zh-CN')
 
 const SPACE_ID = 11
 const OWNER_ID = 4
@@ -154,15 +158,12 @@ describe('题目板删除入口', () => {
     await mountPage(999)
 
     await waitFor(() => expect(document.body.textContent).toContain('spaces.settings.basic.save'))
-    expect(document.body.textContent).not.toContain('spaces.detail.dangerZone')
-    expect(document.body.textContent).not.toContain('spaces.detail.deleteSpaceHint')
+    expect(document.body.textContent).not.toContain('spaces.detail.deleteSpace')
   })
 
   it('先问一句：没点确定之前一个请求都不发', async () => {
     await mountPage(OWNER_ID)
-    await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.dangerZone'))
-
-    await fireEvent.click(buttonWith('spaces.detail.deleteSpace'))
+    await fireEvent.click(await waitFor(() => buttonWith('spaces.detail.deleteSpace')))
 
     await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.confirmDeleteSpace'))
     expect(delSpace).not.toHaveBeenCalled()
@@ -170,9 +171,7 @@ describe('题目板删除入口', () => {
 
   it('确认之后删掉它，并把人送到题目板列表', async () => {
     const { router } = await mountPage(OWNER_ID)
-    await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.dangerZone'))
-
-    await fireEvent.click(buttonWith('spaces.detail.deleteSpace'))
+    await fireEvent.click(await waitFor(() => buttonWith('spaces.detail.deleteSpace')))
     await waitFor(() => expect(document.body.textContent).toContain('spaces.detail.confirmDeleteSpace'))
 
     // 「确定」只有确认框那一颗：Detail 自己那几个弹窗的按钮文案都是 key，撞不上。

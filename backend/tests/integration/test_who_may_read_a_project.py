@@ -21,7 +21,7 @@
 
 import asyncio
 
-from tests.conftest import seed_space, seed_user
+from tests.conftest import seed_claim, seed_space, seed_user
 from tests.integration.conftest import add_external_member, post_project
 from tests.integration.test_project_reads_need_membership import off_the_street
 from tests.integration.test_team_member_enters_team_project import (
@@ -36,7 +36,7 @@ DOORS = {
     "房间列表（页面）": "/topics?project_id={pid}",
     "任务列表": "/projects/{pid}/tasks",
     "成员名册": "/projects/{pid}/members",
-    "决策记录": "/projects/{pid}/decisions",
+    "周报集": "/projects/{pid}/weeklies",
     "AI 摘要（贡献聚合）": "/projects/{pid}/contributions",
 }
 
@@ -127,6 +127,7 @@ def _task_by(client, handle: str) -> int:
 
 def _project_from_task(client, task_id: int, *, student: str) -> str:
     """报名者开的项目：他拥有它，出题者不在名册上。"""
+    seed_claim(client, task_id, handle=student)
     r = post_project(
         client,
         json={"name": "赛题项目", "owner_handle": student, "external_task_id": task_id},
@@ -404,116 +405,3 @@ def test_a_teammate_reads_the_files_like_any_other_door(client):
 
     assert client.get(f"/projects/{pid}", headers=who).status_code == 200
     assert client.get(f"/projects/{pid}/files", headers=who).status_code == 200
-
-
-# --- 4. AI 摘要：同一个判断，没有旁路 ----------------------------------------
-
-
-def _conversation_of(client, *, task_id: int, owner: str) -> str:
-    """给 ``task_id`` 真建一条 AI 对话，返回它的 id。
-
-    单条对话那条路要读到东西才谈得上「谁读得到」：从前它只按 id 取，连它属于哪
-    道题都不看，所以 id 本身就是通行证。
-    """
-    from datetime import UTC, datetime
-
-    from app.domain.llm.models import AIConversation
-    from app.domain.user.repositories import UserRepository
-
-    seed_user(client, owner)
-    holder: dict[str, str] = {}
-    cid = f"conv-for-{task_id}"
-
-    async def _seed() -> None:
-        now = datetime.now(UTC)
-        async with client.test_factory() as session:  # type: ignore[attr-defined]
-            author = await UserRepository(session).get_by_username(owner)
-            assert author is not None
-            session.add(
-                AIConversation(
-                    owner_id=author.id,
-                    context_id=task_id,
-                    conversation_id=cid,
-                    title="AI 摘要",
-                    model_type="standard",
-                    module_type="task_ai_advice",
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            await session.commit()
-        holder["cid"] = cid
-
-    asyncio.run(_seed())
-    return holder["cid"]
-
-
-def _ai_advice_paths(task_id: int, conversation_id: str) -> dict[str, str]:
-    return {
-        "摘要列表": f"/tasks/{task_id}/ai-advice",
-        "生成状态": f"/tasks/{task_id}/ai-advice/status",
-        "对话分组": f"/tasks/{task_id}/ai-advice/conversations/grouped",
-        "单条对话": f"/tasks/{task_id}/ai-advice/conversations/{conversation_id}",
-    }
-
-
-def test_the_ai_summary_of_a_task_is_readable_only_by_those_who_see_the_task(client):
-    """摘要的读路径不能比任务本身更宽。
-
-    从前这些路只问「登录了吗」：任何一个注册用户拿着任何一道题的 id，就能读它的
-    建议记录与 AI 对话。现在它们问的是 ``TaskVisibilityService`` —— 和任务页同一
-    个判断。答 404 而不是 403，是为了不确认这个 id 指向什么。
-    """
-    task_id = _task_by(client, "teacher")
-    teacher = _bearer(seed_user(client, "teacher"))
-    stranger = _bearer(seed_user(client, "mallory"))
-    cid = _conversation_of(client, task_id=task_id, owner="teacher")
-
-    for what, path in _ai_advice_paths(task_id, cid).items():
-        assert client.get(path, headers=teacher).status_code == 200, what
-        assert client.get(path, headers=stranger).status_code == 404, what
-
-
-def test_a_conversation_id_is_not_a_pass_by_itself(client):
-    """知道 id 不等于有权限：别的题的对话 id 放在这道题的地址里也读不到。
-
-    读出路径过去只按 id 找（``get_by_conversation_id``），连它属于哪道题都不看。
-    id 是随机的、不好猜，但「猜不到」不是一道授权判断 —— 问的那条路
-    （``ask``/``stream``）一直要求 ``convo.context_id == task_id``，读的那条现在
-    也一样。
-    """
-    mine = _task_by(client, "teacher")
-    theirs = _task_by(client, "someone-else")
-    teacher = _bearer(seed_user(client, "teacher"))
-    other_cid = _conversation_of(client, task_id=theirs, owner="someone-else")
-
-    # 出题者自己那条路开着，别人那道题的 id 放进来必须关。
-    assert (
-        client.get(
-            f"/tasks/{mine}/ai-advice/conversations/{other_cid}", headers=teacher
-        ).status_code
-        == 404
-    )
-    assert (
-        client.delete(
-            f"/tasks/{mine}/ai-advice/conversations/{other_cid}", headers=teacher
-        ).status_code
-        == 404
-    )
-
-
-def test_the_ai_summary_write_paths_take_the_same_door(client):
-    """问一句、删一条，也都是对某道题的摘要在动手 —— 同样没有旁路。"""
-    task_id = _task_by(client, "teacher")
-    stranger = _bearer(seed_user(client, "mallory"))
-
-    asked = client.post(
-        f"/tasks/{task_id}/ai-advice/conversations",
-        json={"question": "这道题怎么做？"},
-        headers=stranger,
-    )
-    assert asked.status_code == 404
-    deleted = client.delete(
-        f"/tasks/{task_id}/ai-advice/conversations/whatever", headers=stranger
-    )
-    assert deleted.status_code == 404

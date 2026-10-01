@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -57,7 +57,7 @@ async def _sessions_for_cloud(client, topic_id):
         return result
 
 
-def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
+def test_sessions_in_one_room_share_the_rooms_cloud_machine(warm_case):
     client, topics, actor, cloud = warm_case
     choice = ComputeChoice(name="Cloud", profile="cloud")
 
@@ -75,15 +75,15 @@ def test_sessions_in_one_room_reserve_distinct_cloud_machines(warm_case):
         a, duplicate, b = await asyncio.gather(
             ensure(first), ensure(first), ensure(second)
         )
-        assert a == duplicate
-        assert a[0] != b[0] and a[1] != b[1] and a[2] != b[2]
-        assert len(cloud.created) == 1 and len(cloud.claims) == 1
-        assert cloud.claims[0][1]["claimKey"] in {str(a[0]), str(b[0])}
+        # 一个话题一个容器: one machine rented for the room, whoever asks first.
+        assert a == duplicate == b
+        assert len(cloud.created) + len(cloud.claims) == 1
         async with client.test_request_factory() as db:
             service = MachineService(db, cloud)
             assert await service.topic_machine(uuid.UUID(topics[0])) is None
             rows = await service.list_active_for_topic(uuid.UUID(topics[0]))
-            assert {row.session_id for row in rows} == {first, second}
+            assert [row.id for row in rows] == [a[0]]
+            assert rows[0].session_id in {first, second}
             assert await service.ready_topic_devices() == []
             for row in rows:
                 row.status = MachineStatus.error
@@ -161,6 +161,53 @@ def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
             assert resumed.id == new.id and resumed.status == MachineStatus.resuming
             assert cloud.deleted == []
             assert len(cloud.created) == 1 and len(cloud.claims) == 1
+
+    client.portal.call(run)
+
+
+def test_a_left_vm_the_leaving_session_failed_to_delete_is_deleted_later(
+    warm_case,
+):
+    client, topics, actor, cloud = warm_case
+    choice = ComputeChoice(name="Cloud", profile="cloud")
+
+    async def run():
+        first, second = await _sessions_for_cloud(client, topics[0])
+        long_ago = datetime.now(UTC) - timedelta(hours=1)
+        async with client.test_request_factory() as db:
+            service = MachineService(db, cloud)
+
+            async def leave(*, device_id=None, when=None):
+                machine = await service.ensure_session_machine(
+                    first, actor=actor, choice=choice
+                )
+                if device_id is not None:
+                    machine.device_id = device_id
+                await service.supersede_session_machine(first, actor=actor)
+                if when is not None:
+                    machine.superseded_at = when
+                await db.commit()
+                return machine
+
+            # Its one delete attempt never landed, and nothing is only on it.
+            orphan = await leave(when=long_ago)
+            # The other session left without pushing: its work is only here.
+            holding = await leave(device_id="holds-unpushed", when=long_ago)
+            other = await db.get(AgentSession, second)
+            other.execution_request = {
+                "retained_leases": [{"device_id": "holds-unpushed"}]
+            }
+            # The leaving session may still be deleting this one itself.
+            just_left = await leave()
+            await db.commit()
+
+            assert await service.release_left_machines() == 1
+            assert cloud.deleted == [orphan.machine_id]
+            for machine in (orphan, holding, just_left):
+                await db.refresh(machine)
+            assert orphan.released_at is not None
+            assert holding.released_at is None and just_left.released_at is None
+            assert await service.release_left_machines() == 0
 
     client.portal.call(run)
 
@@ -563,7 +610,19 @@ def test_timeout_keeps_quota_reserved_and_retry_finishes_same_claim(
     cloud.fail_claim = True
 
     async def run():
-        sessions = await _sessions_for_cloud(client, topics[0]) if session_owned else []
+        sessions = []
+        if session_owned:
+            # One session in each room: rooms, not sessions, rent machines.
+            [first, _] = await _sessions_for_cloud(client, topics[0])
+            async with client.test_request_factory() as db:
+                other = AgentSession(
+                    topic_id=uuid.UUID(topics[1]),
+                    agent_handle="cloud-a",
+                    harness="claude-code",
+                )
+                db.add(other)
+                await db.commit()
+                sessions = [first, other.id]
 
         async def ensure(db, index):
             service = MachineService(db, cloud)
@@ -705,3 +764,123 @@ def test_failed_claim_stays_reserved_until_explicit_retry(warm_case, monkeypatch
 
     client.portal.call(lambda: run())
     assert cloud.created == []
+
+
+def _failed_cleanup(machine_id):
+    return WarmMachine(
+        state="cleanup_failed",
+        machine_id=machine_id,
+        attempts=5,
+        error="delete HTTP None",
+        create_request={"hostname": f"warm-stale-{machine_id}"},
+    )
+
+
+def test_machines_that_failed_cleanup_do_not_hold_the_pool_empty(
+    warm_case, monkeypatch
+):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            # The one ready machine goes to a room; two stale cleanups remain.
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add_all([_failed_cleanup(901), _failed_cleanup(902)])
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert states.count("preparing") == 1
+            # A record that may still be billed is left exactly as it was.
+            assert states.count("cleanup_failed") == 2
+            assert cloud.deleted == []
+
+    client.portal.call(lambda: run())
+
+
+def test_a_pile_of_failed_cleanups_stops_replacement(warm_case, monkeypatch):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add_all([_failed_cleanup(n) for n in (901, 902, 903)])
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert "preparing" not in states
+
+    client.portal.call(lambda: run())
+
+
+def _deleting(machine_id, since):
+    return WarmMachine(
+        state="deleting",
+        machine_id=machine_id,
+        create_request={"hostname": f"warm-deleting-{machine_id}"},
+        updated_at=since,
+    )
+
+
+def _provider_keeps_what_it_deletes(cloud, monkeypatch, *machine_ids):
+    """A provider that accepts every deletion and never carries one out."""
+    for machine_id in machine_ids:
+        cloud.machines[machine_id] = {"id": machine_id, "status": "error"}
+
+    async def accept(machine_id):
+        cloud.deleted.append(machine_id)
+
+    monkeypatch.setattr(cloud, "delete_machine", accept)
+
+
+def test_a_machine_the_provider_never_deletes_stops_holding_the_pool(
+    warm_case, monkeypatch
+):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+    _provider_keeps_what_it_deletes(cloud, monkeypatch, 901)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add(_deleting(901, datetime.now(UTC) - timedelta(hours=8)))
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert "deleting" not in states
+            # Still a record of something that may be billed, for a person.
+            assert states.count("cleanup_failed") == 1
+            assert states.count("preparing") == 1
+
+    client.portal.call(lambda: run())
+
+
+def test_a_deletion_still_under_way_keeps_its_place(warm_case, monkeypatch):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+    _provider_keeps_what_it_deletes(cloud, monkeypatch, 902)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add(_deleting(902, datetime.now(UTC) - timedelta(minutes=1)))
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert states.count("deleting") == 1
+            assert "preparing" not in states
+
+    client.portal.call(lambda: run())

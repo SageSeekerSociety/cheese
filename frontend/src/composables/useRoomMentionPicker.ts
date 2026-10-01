@@ -18,6 +18,7 @@ import type { Topic } from '../cx_types'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { listProjectLibrary } from '../api'
+import { t } from '../i18n'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 
 /** 能被 @ 到的人：这个房间里的，加上项目里还没进这个房间的。 */
@@ -26,6 +27,10 @@ export interface MentionPoolEntry {
   label: string
   agent: boolean
   external?: boolean
+  /** 项目里的人，但不在这个话题里：@ 得到，候选上挂「不在话题中」。 */
+  outsideTopic?: boolean
+  /** 在这个话题名册上的角色（owner / admin / member）；不在名册上的人没有。 */
+  role?: string
 }
 
 export interface MentionItem {
@@ -38,6 +43,8 @@ export interface MentionItem {
   agent: boolean
   /** 团队以外、被邀请进这个项目的人：候选里挂「外部」，@ 之前就知道他不是自己人。 */
   external?: boolean
+  /** 不在这个话题里的人：排在话题里的人后面，右边挂「不在话题中」。 */
+  outsideTopic?: boolean
   /** 二级菜单里这一项属于哪一组（同一组的标题只画一次）。 */
   group?: string
   /** 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。 */
@@ -45,10 +52,23 @@ export interface MentionItem {
 }
 
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
-// at the top. expandMentions turns them into <@all>/<@here>.
-const BROADCAST_ITEMS: MentionItem[] = [
-  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
-  { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
+// at the top. expandMentions turns them into <@all>/<@here>. Built per call so
+// the labels follow the current language.
+const broadcastItems = (): MentionItem[] => [
+  {
+    label: t('work.room.mention.all'),
+    kind: 'broadcast',
+    insert: 'all',
+    sub: t('work.room.mention.allSub'),
+    agent: false,
+  },
+  {
+    label: t('work.room.mention.here'),
+    kind: 'broadcast',
+    insert: 'here',
+    sub: t('work.room.mention.hereSub'),
+    agent: false,
+  },
 ]
 
 /** 这一格里「算不算图片」比预览域宽：gif / webp 浏览器也画得出来，而这里只是分组。 */
@@ -98,8 +118,12 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       group,
     })
     return [
-      ...rows.filter((f) => !PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '文件')),
-      ...rows.filter((f) => PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '图片')),
+      ...rows
+        .filter((f) => !PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path)))
+        .map((f) => item(f, t('work.room.mention.fileGroup'))),
+      ...rows
+        .filter((f) => PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path)))
+        .map((f) => item(f, t('work.room.mention.imageGroup'))),
     ]
   }
 
@@ -141,7 +165,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     if (q === null) return []
     const ql = q.toLowerCase()
     if (level.value === 'library') return libraryItems(ql).slice(0, 12)
-    const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+    const broadcast = broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
     const named: MentionItem[] = [
       ...deps.mentionPool().map((m) => ({
         label: m.label,
@@ -150,16 +174,17 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
         sub: `@${m.handle}`,
         agent: m.agent,
         external: !!m.external,
+        outsideTopic: !!m.outsideTopic,
         handle: m.handle,
       })),
       ...deps
         .topicList()
-        .filter((t) => t.kind !== 'root')
-        .map((t) => ({
-          label: t.title,
+        .filter((tp) => tp.kind !== 'root')
+        .map((tp) => ({
+          label: tp.title,
           kind: 'topic' as const,
-          insert: t.title,
-          sub: t.status === 'archived' ? '已归档' : '进行中',
+          insert: tp.title,
+          sub: tp.status === 'archived' ? t('work.room.mention.archived') : t('work.room.mention.inProgress'),
           agent: false,
         })),
     ].filter((i) => i.label.toLowerCase().includes(ql))
@@ -168,17 +193,22 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
     // 它还是那两个 token。
     const agents = named.filter((i) => i.agent)
-    const rest = named.filter((i) => !i.agent)
+    // 话题里的人在前，不在话题里的人跟在后面（和 Slack 一样）：@ 一个不在场的人
+    // 他读不到这段对话，所以他不该排在在场的人前面，挂的那个标说的也是这件事。
+    const rest = [
+      ...named.filter((i) => !i.agent && !i.outsideTopic),
+      ...named.filter((i) => !i.agent && i.outsideTopic),
+    ]
     // 没打字：资料库是一行入口。打了字：文件和人、话题一起被搜出来。
     const files = ql ? libraryItems(ql) : []
     const library: MentionItem[] =
       !ql && libraryFiles.value.length
         ? [
             {
-              label: '资料库',
+              label: t('work.room.mention.library'),
               kind: 'category',
               insert: 'library',
-              sub: `${libraryFiles.value.length} 份文件`,
+              sub: t('work.room.mention.fileCount', { count: libraryFiles.value.length }),
               agent: false,
             },
           ]
@@ -238,9 +268,11 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     closed.value = true
   }
 
-  /** 翻进资料库之后，Esc 是退回一级的那一步。 */
+  /** 从资料库退回一级：Esc、← 、查询为空时的退格，和二级菜单头上那颗 ‹。 */
   function backToRoot() {
     level.value = 'root'
+    // 点 ‹ 会把焦点带到那颗按钮上；退回来之后人要接着挑，光标得回输入框。
+    void nextTick(deps.focus)
   }
 
   /** 回车挑的是高亮那一项；菜单收起了（Esc）返回 false，把这次回车还给「发送」。 */

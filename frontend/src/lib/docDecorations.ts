@@ -16,21 +16,24 @@ import { Extension as TiptapExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
+import { t } from '@/i18n'
+
 export interface LiveRefFacts {
   title: string | null
   status: string
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  open: '进行中',
-  in_progress: '进行中',
-  active: '进行中',
-  draft: '草稿',
-  archived: '已完成',
-  completed: '已完成',
+const STATUS_KEY: Record<string, string> = {
+  open: 'work.room.doc.status.inProgress',
+  in_progress: 'work.room.doc.status.inProgress',
+  active: 'work.room.doc.status.inProgress',
+  draft: 'work.room.doc.status.draft',
+  archived: 'work.room.doc.status.done',
+  completed: 'work.room.doc.status.done',
 }
 function statusLabel(s: string): string {
-  return STATUS_LABEL[s] ?? s
+  const key = STATUS_KEY[s]
+  return key ? t(key) : s
 }
 
 // ---- 支线徽章: a doc paragraph that was upgraded into a subtopic stays in
@@ -50,7 +53,10 @@ function liveRefWidget(topicId: string, facts: LiveRefFacts): HTMLElement {
   el.dataset.topic = topicId
   el.contentEditable = 'false'
   el.setAttribute('role', 'button')
-  el.title = `「${subTitle ?? '这件任务'}」· ${statusLabel(status)} — 点击打开`
+  el.title = t('work.room.doc.liveRefTitle', {
+    title: subTitle ?? t('work.room.doc.thisTask'),
+    status: statusLabel(status),
+  })
   const dot = document.createElement('span')
   dot.className = `doc-liveref__dot is-${status}`
   // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在
@@ -63,7 +69,7 @@ function liveRefWidget(topicId: string, facts: LiveRefFacts): HTMLElement {
   icon.setAttribute('aria-hidden', 'true')
   const label = document.createElement('span')
   label.className = 'doc-liveref__label'
-  label.textContent = subTitle ?? '子话题'
+  label.textContent = subTitle ?? t('work.room.doc.subtopic')
   const st = document.createElement('span')
   st.className = 'doc-liveref__status'
   st.textContent = statusLabel(status)
@@ -144,28 +150,95 @@ export function createLiveRefBadges(opts: {
 
 export const commentMarkKey = new PluginKey('cheeseCommentMarks')
 
+export function mappedCommentQuoteState(doc: PMNode, mark: Decoration): 'unique' | 'missing' | 'ambiguous' {
+  const $from = doc.resolve(mark.from)
+  if (!$from.depth || typeof mark.spec.quote !== 'string') return 'missing'
+  const result = commentQuoteRanges($from.node(1), $from.before(1), mark.spec.quote)
+  if (result.status !== 'unique') return result.status
+  // A new unique occurrence elsewhere is not the original mapped selection.
+  return result.ranges.length === 1 && result.ranges[0].from === mark.from && result.ranges[0].to === mark.to
+    ? 'unique'
+    : 'missing'
+}
+
+export function commentQuoteRanges(
+  node: PMNode,
+  offset: number,
+  quote: string
+): {
+  status: 'unique' | 'missing' | 'ambiguous'
+  ranges: { from: number; to: number }[]
+} {
+  if (!quote) return { status: 'missing', ranges: [] }
+  const runs: { text: string; positions: number[] }[] = []
+  function textblock(block: PMNode, contentStart: number) {
+    let text = ''
+    const positions: number[] = []
+    block.descendants((child, pos) => {
+      if (child.isText) {
+        text += child.text ?? ''
+        for (let i = 0; i < (child.text?.length ?? 0); i++) positions.push(contentStart + pos + i)
+      } else if (child.isLeaf) {
+        text += '\u0000'
+        positions.push(-1)
+      }
+    })
+    runs.push({ text, positions })
+  }
+  if (node.isTextblock) textblock(node, offset + 1)
+  else
+    node.descendants((child, pos) => {
+      if (!child.isTextblock) return
+      textblock(child, offset + pos + 2)
+      return false
+    })
+  const matches: { from: number; to: number }[][] = []
+  for (const run of runs) {
+    for (let at = run.text.indexOf(quote); at >= 0; at = run.text.indexOf(quote, at + 1)) {
+      const positions = run.positions.slice(at, at + quote.length)
+      if (positions.some((pos) => pos < 0)) continue
+      const ranges: { from: number; to: number }[] = []
+      for (const pos of positions) {
+        const last = ranges[ranges.length - 1]
+        if (last?.to === pos) last.to++
+        else ranges.push({ from: pos, to: pos + 1 })
+      }
+      matches.push(ranges)
+    }
+  }
+  return matches.length === 1
+    ? { status: 'unique', ranges: matches[0] }
+    : { status: matches.length ? 'ambiguous' : 'missing', ranges: [] }
+}
+
 function commentMarkDecorations(doc: PMNode, index: Map<number, { id: string; quote: string }[]>): DecorationSet {
   const decos: Decoration[] = []
   doc.forEach((node, offset, index_) => {
     const anchored = index.get(index_)
     if (!anchored?.length) return
-    const text = node.textContent
     for (const c of anchored) {
-      const at = text.indexOf(c.quote)
-      if (at < 0) continue
-      // +1: past the block's opening token into its text content.
-      decos.push(
-        Decoration.inline(offset + 1 + at, offset + 1 + at + c.quote.length, {
-          class: 'comment-anchor',
-          'data-comment': c.id,
-        })
-      )
+      for (const range of commentQuoteRanges(node, offset, c.quote).ranges) {
+        decos.push(
+          Decoration.inline(
+            range.from,
+            range.to,
+            {
+              class: 'comment-anchor',
+              'data-comment': c.id,
+            },
+            { commentId: c.id, quote: c.quote }
+          )
+        )
+      }
     }
   })
   return DecorationSet.create(doc, decos)
 }
 
-export function createCommentMarks(opts: { index: () => Map<number, { id: string; quote: string }[]> }): Extension {
+export function createCommentMarks(opts: {
+  index: () => Map<number, { id: string; quote: string }[]>
+  openId?: () => string | null
+}): Extension {
   return TiptapExtension.create({
     name: 'cheeseCommentMarks',
     addProseMirrorPlugins() {
@@ -175,13 +248,31 @@ export function createCommentMarks(opts: { index: () => Map<number, { id: string
           state: {
             init: (_cfg, state) => commentMarkDecorations(state.doc, opts.index()),
             apply: (tr, old) => {
+              if (tr.getMeta(commentMarkKey) === 'active-only') return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
               if (tr.getMeta(commentMarkKey)) return commentMarkDecorations(tr.doc, opts.index())
               return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
             },
           },
           props: {
             decorations(state) {
-              return this.getState(state)
+              const marks = this.getState(state) as DecorationSet
+              return DecorationSet.create(
+                state.doc,
+                marks
+                  .find()
+                  .filter((mark) => mappedCommentQuoteState(state.doc, mark) === 'unique')
+                  .map((mark) =>
+                    Decoration.inline(
+                      mark.from,
+                      mark.to,
+                      {
+                        class: mark.spec.commentId === opts.openId?.() ? 'comment-anchor is-active' : 'comment-anchor',
+                        'data-comment': mark.spec.commentId,
+                      },
+                      mark.spec
+                    )
+                  )
+              )
             },
           },
         }),
@@ -208,7 +299,7 @@ function tokenWidget(kind: '@' | '#' | '&', id: string, titleOf: (tid: string) =
   } else if (kind === '#') {
     el.className = 'mention topic-ref'
     el.dataset.topic = id
-    el.textContent = `#${titleOf(id) ?? '话题'}`
+    el.textContent = `#${titleOf(id) ?? t('work.room.doc.topic')}`
   } else {
     el.className = 'mention file-ref'
     el.dataset.file = id

@@ -12,6 +12,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import RevisionList from './RevisionList.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 vi.mock('../../../api', () => ({
   documentRevisions: vi.fn(),
   decideDocumentRevisions: vi.fn(),

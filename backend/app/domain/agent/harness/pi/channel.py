@@ -1,70 +1,69 @@
-"""把设备通道包成 pi 的 SessionChannel —— 同一台机器，没有 executor。
+"""把中心会话机包成 pi 的 SessionChannel：会话在中心机，手在房间的执行机。
 
-This is the first backend in the pool to run on a bare ``DeviceChannel``. Every
-other one wraps it in ``CentralChannel``, which assigns a separate executor
-machine and forbids the two being the same box; pi does not need that. It does
-not run on a subscription, so there is no credential to hide behind a proxy we
-control, and no reason to put the agent anywhere but where the files are.
+pi runs where every other room's session runs — on the central session host —
+and reaches the room's machine for its files and commands (`machine.py`,
+#1106), the way Claude Code and Codex do. So a pi room talks before it has a
+machine, takes one only when its work needs one, and every harness's room is
+placed, leased and recovered by the one central channel (`CentralChannel`).
 
-What that removes: an executor process, a second machine, the environment
-preparation happening somewhere other than where the work does, and every tool
-call crossing a network. What it costs: the workspace machine now runs the
-agent too, which is the deal a person who lends us their machine was making
-anyway.
-
-Reaching the runner needs no new transport either. ``hub.call_executor`` looks
-like an executor thing and is not: the connector derives a socket path from the
-state directory the backend recorded and relays one JSON line each way
-(``cli/internal/host/executor.go``). pi's runner binds the socket that path
-names, so the existing channel carries it unchanged.
+The launch is Codex's shape: a Python script over the connector's stdin
+(`launch.script`) that leaves the room's runner running on the host
+(`host.configure`), which is then reached through ``hub.call_executor`` — the
+connector derives a socket path from the state directory the backend recorded
+and relays one JSON line each way (``cli/internal/host/executor.go``).
 """
 
-import asyncio
 import base64
 import hashlib
+import json
 import logging
-import time
-import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.domain.agent import machine_launcher
+from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import (
     Placement,
     ScreenSetupError,
+    discovery_missed,
     mint_session_token,
     startup_refused,
 )
-from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent.harness.launch import ExecutorLaunch
+from app.domain.agent.harness.pi.launch import arguments, extension, script
 from app.domain.agent.harness.pi.runtime import PI, Handle
-from app.domain.agent_instance.services import agent_stdio_servers
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.library import service as library
-from app.domain.remote_mcp import service as remote_mcp
-from app.domain.topic.models import Topic
+from app.domain.project_skill.service import session_skill_files
 
 logger = logging.getLogger(__name__)
 
-# How long a room's first call waits for the runner to bind its socket, and how
-# often it asks. Generous because the cost of being wrong is asymmetric: waiting
-# too long delays a turn that was going to fail anyway, while giving up too
-# early refuses a session that was seconds from answering — which is what a new
-# room got every time, since the wait was zero.
-STARTUP_WAIT_S = 120.0
-STARTUP_POLL_S = 1.0
+#: How long a launch may take on the session host: the first one after a pin
+#: bump downloads pi, and every one waits for the runner to answer
+#: (`host.STARTUP_S`).
+LAUNCH_TIMEOUT_S = 900
+
+
+@dataclass(frozen=True)
+class Preparation:
+    execution: ExecutorLaunch
+    resume_session_id: str | None = None
 
 
 class PiChannel:
-    def __init__(self, channel: DeviceChannel):
+    builds_model_env = True
+
+    def __init__(self, channel: CentralChannel, executor: ExecutorLaunch):
         self.channel = channel
+        self.executor = executor
         self.name = channel.name
         self.provisions_machine = channel.provisions_machine
         self.deferred_work = channel.deferred_work
-        self.builds_model_env = channel.builds_model_env
 
     def available(self) -> bool:
         return self.channel.available()
@@ -86,168 +85,100 @@ class PiChannel:
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, Placement)
-        device_id, agent = precheck.machine, precheck.agent_handle
+        agent = precheck.agent_handle
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
+        placed: dict = {}
+
+        def placement(resource):
+            placed.update(
+                harness=PI,
+                agent_handle=agent,
+                state=machine_launcher.state_dir(
+                    session.project_id, resource, PI, agent
+                ),
+            )
+            return placed
+
         token = mint_session_token(session.project_id, session.topic_id, agent)
-        screen = await self.channel.ensure_ready(
+        async with self.channel.prepare_session(
             session=session,
             token=token,
             env=opening.env,
+            launch=Preparation(self.executor, opening.resume_token),
+            precheck=precheck,
             memory_scope=opening.memory_scope,
             owner=opening.owner,
-            turn_id=None,
-            launch=PiLaunch(
-                system_prompt=opening.system_prompt,
-                model=opening.model or settings.agent_model,
-                resume_session_id=opening.resume_token,
-                agent_handle=agent,
-                remote_mcp=await self._remote_mcp(session, agent)
-                if opening.needs_place
-                else None,
-                agent_mcp=await self._agent_mcp(session, agent)
-                if opening.needs_place
-                else None,
-            ),
-            precheck=precheck,
-        )
-        resource_id = screen.resource_id or session.topic_id
-        state = machine_launcher.state_dir(session.project_id, resource_id, PI, agent)
-        # The runner chose the session id (or resumed the one it was given), and
-        # it is the only thing that knows which: asking beats recording a second
-        # copy that a rebuilt room could disagree with.
-        status = await self._greet(device_id, state)
-        if not status.get("alive"):
-            raise startup_refused(
-                await self._why(device_id, state, RuntimeError("pi exited")),
-                harness=PI,
-            )
-        await self._remember(session, device_id, resource_id, state, agent)
-        return Handle(
-            session,
-            device_id,
-            state,
-            status["session_id"],
-            agent,
-            self._mirror(session, str(resource_id) + agent),
-        )
-
-    async def _remote_mcp(self, session: SessionRef, agent: str) -> dict | None:
-        """The remote MCP servers this teammate's session can call now: the
-        project's and its type's.
-
-        As a central session gets them (`CentralProvider.prepare_session`): only
-        the usable ones. A server someone still has to connect is a line in the
-        prompt and a notice in the room instead (`ChatService._unconnected_mcp`).
-        """
-        factory = self.channel._session_factory or async_session_factory
-        async with factory() as db:
-            return await remote_mcp.session_target(
-                db, session.project_id, session.topic_id, agent
-            )
-
-    async def _agent_mcp(self, session: SessionRef, agent: str) -> dict | None:
-        """The teammate's type's own stdio servers, as definitions the runner
-        starts on this machine beside the checkout's."""
-        factory = self.channel._session_factory or async_session_factory
-        async with factory() as db:
-            return await agent_stdio_servers(db, session.project_id, agent) or None
-
-    async def _greet(self, device_id: str, state: str) -> dict:
-        """The first call into a runner that may still be starting.
-
-        The runner binds its socket LAST — after it has started pi and traded a
-        first round of RPC with it — while the screen reports ready as soon as
-        the machine has a program running. A cold pi is a 100MB bun binary
-        opening a session, so a room's FIRST turn asks before there is anything
-        to answer: measured on dev 2026-09-15, a new room's socket appeared
-        about a minute after the turn that had already been refused.
-
-        So a refused socket is retried, not reported. Only a window that runs
-        out means the session is not coming: at that point the machine's own
-        record of why travels back with the refusal (``_why``).
-        """
-        deadline = time.monotonic() + STARTUP_WAIT_S
-        while True:
-            try:
-                return await self.channel._hub.call_executor(
-                    device_id, state, "ping", {}
+            runtime_factory=placement,
+        ) as prepared:
+            state = placed["state"]
+            api = await self.channel._device_api_base(prepared.device_id)
+            target = json.loads(prepared.env["CHEESE_EXECUTION_TARGET"])
+            env = {
+                **prepared.env,
+                "CHEESE_API": api,
+                "CHEESE_TOKEN": prepared.token,
+                "CHEESE_PROJECT": str(session.project_id),
+                "CHEESE_TOPIC": str(session.topic_id),
+                "CHEESE_AUTHOR": agent,
+            }
+            if target["kind"] == "private":
+                await self._run(
+                    prepared.device_id,
+                    self.executor.private_script(target, env),
+                    timeout=120,
                 )
-            except DeviceOffline:
-                # Not the runner's doing, and not something waiting fixes.
-                raise
-            except Exception as exc:  # noqa: BLE001 — see below
-                # Deliberately not `RuntimeError`. The hub the backend holds is
-                # usually a PROXY: the owner raises RuntimeError in its own
-                # process, answers 500, and `raise_for_status` turns that into
-                # an `httpx.HTTPStatusError` here. Catching the owner's type
-                # caught nothing where it mattered, and a person kept seeing
-                # `500 Internal Server Error for url …/call/call_executor` —
-                # the pipe the answer did not come back through, and nothing
-                # about why. Whatever shape it arrives in, a ping that does not
-                # come back means the session cannot be reached.
-                if time.monotonic() >= deadline:
-                    raise startup_refused(
-                        await self._why(device_id, state, exc),
-                        harness=PI,
-                        timed_out=True,
-                    ) from exc
-            await asyncio.sleep(STARTUP_POLL_S)
-
-    async def _why(self, device_id: str, state: str, failure: Exception) -> str:
-        """The runner's last words, when we have them.
-
-        The machine is the only place a startup failure is written down, and
-        nobody reads a file on somebody else's box — so the reason travels back
-        with the refusal: the room gets a sentence chosen from it, 现场 the
-        text itself.
-        Falls back to the transport's own message: a device that cannot even be
-        asked has told us something too.
-        """
-        try:
-            result = await self.channel._hub.exec(
-                device_id,
-                ["sh", "-c", f'tail -c 1200 "{state}/runner.log" 2>/dev/null'],
-                timeout=15,
+            model = opening.model or settings.agent_model
+            status = await self._run(
+                prepared.device_id,
+                script(
+                    state=state,
+                    config={
+                        "opening": {
+                            "system_prompt": opening.system_prompt,
+                            "resume_token": opening.resume_token,
+                            "model": model,
+                            "agent_handle": agent,
+                        },
+                        "args": arguments(model),
+                        "execution_target": target,
+                        # Carried as content, not as paths: these are the
+                        # platform's files, and the session host has no copy of
+                        # them. The runner writes them and points pi at them.
+                        "skills": session_skill_files(session.project_id),
+                        "extension": extension(),
+                        # The marker platform instructions carry in this room,
+                        # so the one the extension raises is not a second
+                        # convention the agent has to learn.
+                        "notice": PLATFORM_NOTICE,
+                    },
+                    api_base=api,
+                    model=model,
+                    env=env,
+                ),
+                timeout=LAUNCH_TIMEOUT_S,
             )
-        except Exception:  # noqa: BLE001 — a failed read must not replace the failure
-            return str(failure)
-        return (result.get("stdout") or "").strip() or str(failure)
-
-    async def _remember(
-        self,
-        session: SessionRef,
-        device_id: str,
-        resource_id: uuid.UUID,
-        state: str,
-        agent: str,
-    ) -> None:
-        """Write down where this session runs, so a restarted backend finds it.
-
-        The device channel keeps its live screens in memory and re-derives the
-        rest from bindings; that is enough for a harness whose session IS the
-        screen's process. pi's outlives the screen, so the row has to say which
-        harness and which state directory, the way the central channel's does.
-        """
-        factory = self.channel._session_factory or async_session_factory
-        async with factory() as db:
-            if await db.get(Topic, session.topic_id) is None:
-                return
-            await AgentSessionService(db).remember_place(
-                topic_id=session.topic_id,
-                agent_handle=session.agent_handle,
-                harness=session.harness,
-                # pi works where its process already is, so there is no second
-                # machine to lease — the hands and the process are one.
-                work_lease=None,
-                runtime_location={
-                    "device_id": device_id,
-                    "resource_id": str(resource_id),
-                    "channel": self.name,
-                    "runtime": {"harness": PI, "state": state, "agent_handle": agent},
-                },
+            return Handle(
+                session,
+                prepared.device_id,
+                state,
+                status["session_id"],
+                agent,
+                self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
             )
-            await db.commit()
+
+    async def _run(self, device_id: str, program: str, *, timeout: int) -> dict:
+        """One launch step on the session host: its answer, or the reason it
+        gave for having none, as the room is told it (`startup_refused`)."""
+        result = await self.channel._hub.exec(
+            device_id, ["python3", "-"], stdin=program, timeout=timeout
+        )
+        if result.get("exit") != 0 or result.get("truncated"):
+            raise startup_refused(
+                result.get("stderr") or "pi did not start", harness=PI
+            )
+        output = (result.get("stdout") or "").strip()
+        return json.loads(output.splitlines()[-1]) if output else {}
 
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
         return await self.channel._hub.call_executor(
@@ -262,19 +193,17 @@ class PiChannel:
         for project_id, room_id, handle, harness, place in sessions:
             if harness != PI or place.channel != self.name:
                 continue
-            machine = place.machine
-            if device_id is not None and machine != device_id:
+            center = place.machine
+            if device_id is not None and center != device_id:
                 continue
-            if not self.channel._hub.is_online(machine):
+            if not self.channel._hub.is_online(center):
                 continue
             try:
                 status = await self.channel._hub.call_executor(
-                    machine, place.runtime["state"], "ping", {}, timeout=15
+                    center, place.runtime["state"], "ping", {}, timeout=15
                 )
             except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
-                logger.warning(
-                    "pi discovery failed topic=%s device=%s: %s", room_id, machine, exc
-                )
+                discovery_missed(logger, PI, room_id, center, exc)
                 continue
             if not status.get("alive"):
                 continue
@@ -283,7 +212,7 @@ class PiChannel:
             handles.append(
                 Handle(
                     ref,
-                    machine,
+                    center,
                     place.runtime["state"],
                     status["session_id"],
                     agent,

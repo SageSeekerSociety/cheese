@@ -8,13 +8,15 @@ import { onMounted, ref, watch } from 'vue'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
+import { useCloudSupply } from '../composables/useCloudSupply'
 import { t } from '../i18n'
-import { choiceDetail } from '../lib/computeConfig'
+import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 const props = defineProps<{ projectId: string }>()
+const { supply: cloudSupply, loading: supplyLoading, load: loadSupply } = useCloudSupply(() => props.projectId)
 const state = ref<ProjectComputeConfigs | null>(null)
 const error = ref('')
 const busy = ref(false)
@@ -48,6 +50,11 @@ async function save(choice: ComputeChoice) {
 const releaseGate = holdRevealGate()
 onMounted(() => load().finally(releaseGate))
 watch(() => props.projectId, load)
+// 再进编辑就再问一次范围：表单收起时答案留在这里，留着的那份会旧。还没问过就不问，
+// 等表单自己要；这样一次编辑最多问一次。
+watch(editing, (open) => {
+  if (open && cloudSupply.value) void loadSupply()
+})
 </script>
 
 <template>
@@ -56,7 +63,7 @@ watch(() => props.projectId, load)
     <template v-if="state">
       <div class="default-row" data-testid="project-default">
         <span class="c-muted">{{ t('work.projectMachine.defaultLabel') }}</span>
-        <span class="default-name">{{ state.default.name }}</span>
+        <span class="default-name">{{ choiceName(state.default) }}</span>
         <span class="c-muted">{{ choiceDetail(state.default) }}</span>
         <v-btn
           v-if="state.can_manage"
@@ -73,8 +80,11 @@ watch(() => props.projectId, load)
         v-if="editing && state.can_manage"
         :devices="state.devices"
         :cloud-available="state.cloud_available"
+        :supply="cloudSupply"
+        :supply-loading="supplyLoading"
         :busy="busy"
         @select="save"
+        @need-supply="loadSupply"
       />
 
       <div class="distribution" data-testid="project-distribution">
@@ -88,14 +98,17 @@ watch(() => props.projectId, load)
               t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
             }}
           </li>
-          <li v-for="device in state.distribution.devices" :key="device.device_id ?? device.name">
+          <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">
             <span class="status-dot" :class="{ 'status-dot--warn': device.machine_access }" />{{
-              t('work.projectMachine.onDevice', { name: device.name, agents: agents(device.agents) })
+              t('work.projectMachine.onDevice', {
+                name: deviceName(device.name, device.device_id),
+                agents: agents(device.agents),
+              })
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
             <DeviceSessionsSwitch
               v-if="state.can_manage && device.device_id"
               :project-id="projectId"
-              :device="{ device_id: device.device_id, name: device.name }"
+              :device="{ device_id: device.device_id, name: deviceName(device.name, device.device_id) }"
               :devices="state.devices"
               :cloud-available="state.cloud_available"
               :project-default="state.default"

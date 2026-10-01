@@ -1,17 +1,16 @@
 """项目总览的实况文档：哪一块是谁写的。
 
-总览文档是项目**根话题**那一份实况文档，全项目共看（结论 7）。它长成五块：
+总览文档是项目**根话题**那一份实况文档，全项目共看（结论 7）。它长成四块：
 
     ① 项目是什么      人 / 芝士写，≤1500 字（目标、范围、对外口径）
     ② 现在在做什么    每个活跃话题一行
-    ③ 最近决策        决策卡，最近 10 条
-    ④ 里程碑
-    ⑤ 已结束的话题    结论卡一行 + 话题链接
+    ③ 里程碑
+    ④ 已结束的话题    结论卡一行 + 话题链接
 
-**只有 ① 在文档本体里。** ②~⑤ 由平台从结构化数据现拼，注入的那一刻才存在，
+**只有 ① 在文档本体里。** ②~④ 由平台从结构化数据现拼，注入的那一刻才存在，
 谁的 `cheese_doc_set` 也覆盖不到它们。
 
-这是这一版改造的要点。以前 ②~⑤ 靠人 / 芝士手抄进文档：抄进去的是**过程**，
+这是这一版改造的要点。以前 ②~④ 靠人 / 芝士手抄进文档：抄进去的是**过程**，
 而过程没人敢删（删了链接就断），于是文档只涨不落，最后靠读取时截断把垃圾藏起
 来。改成现拼以后，这几块的篇幅由**条数**决定，不靠截断，也抄不进正文——往文档
 里写它们，写的是一个读者根本不会读到的副本。
@@ -31,7 +30,6 @@ BRIEF_CHAR_BUDGET = 1500
 
 #: 自动区各按条数截断。条数上限就是篇幅上限。
 ACTIVE_TOPICS_LIMIT = 20
-DECISIONS_LIMIT = 10
 MILESTONES_LIMIT = 10
 CLOSED_TOPICS_LIMIT = 10
 
@@ -52,7 +50,7 @@ _SENTENCE_END_RE = re.compile(r"[。！？!?；;]|\.\s")
 
 
 def render_overview(*, brief: str, auto: str) -> str:
-    """注入用的整份总览：① 的正文，加上（只在总览房间里）②~⑤。
+    """注入用的整份总览：① 的正文，加上（只在总览房间里）②~④。
 
     ① 空着时说「还没写」并给一句要写什么——留白读起来像「这个项目没有目标」，
     而事实只是没人写过。
@@ -97,7 +95,7 @@ def project_brief(content: str) -> str:
 def topic_status(content: str) -> str | None:
     """一份话题文档的「现状」第一句，没有就是 None。
 
-    注入到总览 ② / ⑤ 的那一句。取不到就报 None——编一个「进行中」出来，比
+    注入到总览 ② / ④ 的那一句。取不到就报 None——编一个「进行中」出来，比
     留空更容易被当成事实。没有「现状」时退回旧模板的「当前结论」。
     """
     sections = _sections(content)
@@ -143,21 +141,11 @@ MILESTONE_STATE = {"upcoming": "进行中", "done": "已完成", "missed": "已�
 #: 标题是给人读的；两者在 markdown 和结构化数据里必须是同一份，不然同一块会有
 #: 两个名字。
 ACTIVE_TOPICS_KEY, ACTIVE_TOPICS_TITLE = "active_topics", "现在在做什么"
-DECISIONS_KEY, DECISIONS_TITLE = "decisions", "最近决策"
 MILESTONES_KEY, MILESTONES_TITLE = "milestones", "里程碑"
 CLOSED_TOPICS_KEY, CLOSED_TOPICS_TITLE = "closed_topics", "已结束的话题"
 
 
-def decision_summary(content: str) -> str:
-    """决策卡正文的第一句 —— 注入的和列表里显示的都是索引，全文在那张卡上。"""
-    for line in content.splitlines():
-        text = line.strip().lstrip("#-*> ").strip()
-        if text:
-            return first_sentence(text) or text
-    return content.strip()
-
-
-# ---- ②~⑤：条目只定义一次，两个读者各自排版 ----
+# ---- ②~④：条目只定义一次，两个读者各自排版 ----
 #
 # 这几块有两个读者：提示词要一段 markdown，总览那一栏要能逐个点击的结构化数据
 # （`GET /topics/{id}/overview`）。所以字段在 `_*_item()` 里定义一次，两个公开
@@ -180,18 +168,6 @@ def _topic_item(row: dict) -> dict:
     }
 
 
-def _decision_item(row: dict) -> dict:
-    # 决策卡的正文是要点，不是一句话；这里只取前 120 字，全文在那张卡上。
-    return {
-        "kind": "decision",
-        # id 只有取数的那一头有；markdown 那一版用不到它，所以缺了也照排。
-        "block_id": str(row["id"]) if row.get("id") else None,
-        "text": _clip(row["text"], 120),
-        "topic_id": str(row["topic_id"]) if row.get("topic_id") else None,
-        "topic_title": row.get("topic") or None,
-    }
-
-
 def _milestone_item(row: dict) -> dict:
     # 状态给的是原值（upcoming / done / missed）：怎么说是界面的事，它按状态上点
     # 和色。`due` 是日期字符串，没有就是没定。
@@ -207,10 +183,6 @@ def _milestone_item(row: dict) -> dict:
 
 def _active_items(rows: list[dict]) -> list[dict]:
     return [_topic_item(t) for t in rows[:ACTIVE_TOPICS_LIMIT]]
-
-
-def _decision_items(rows: list[dict]) -> list[dict]:
-    return [_decision_item(d) for d in rows[:DECISIONS_LIMIT]]
 
 
 def _milestone_items(rows: list[dict]) -> list[dict]:
@@ -241,17 +213,6 @@ def _closed_row(item: dict) -> str:
     )
 
 
-def _decision_row(item: dict) -> str:
-    return _row(
-        [
-            item["text"],
-            f"（<#{item['topic_id']}> {item['topic_title']}）"
-            if item["topic_title"]
-            else None,
-        ]
-    )
-
-
 def _milestone_row(item: dict) -> str:
     return _row(
         [
@@ -267,24 +228,19 @@ def _milestone_row(item: dict) -> str:
 def render_overview_auto(
     *,
     active_topics: list[dict],
-    decisions: list[dict],
     milestones: list[dict],
     closed_topics: list[dict],
 ) -> str:
-    """②~⑤ 拼成一段 markdown；四块都空时给空串。
+    """②~④ 拼成一段 markdown；三块都空时给空串。
 
     每块的输入是**已经取好的结构化行**（见模块顶部的字段约定），所以这里只排版、
-    不查库。空块整块不出现：一份「## 最近决策（暂无）」对读者是噪音，对这个项目
-    有没有决策这件事毫无帮助。
+    不查库。空块整块不出现：一份「## 里程碑（暂无）」对读者是噪音，对这个项目
+    有没有里程碑这件事毫无帮助。
     """
     blocks = [
         _block(
             f"## {ACTIVE_TOPICS_TITLE}",
             [_active_row(i) for i in _active_items(active_topics)],
-        ),
-        _block(
-            f"## {DECISIONS_TITLE}",
-            [_decision_row(i) for i in _decision_items(decisions)],
         ),
         _block(
             f"## {MILESTONES_TITLE}",
@@ -299,7 +255,7 @@ def render_overview_auto(
     if not blocks:
         return ""
     return (
-        "以下四块由平台从结构化数据现拼（话题、决策卡、里程碑、结论卡），"
+        "以下三块由平台从结构化数据现拼（话题、里程碑、结论卡），"
         "不在本文档正文里，也不要往正文里抄：\n\n" + "\n\n".join(blocks)
     )
 
@@ -307,18 +263,16 @@ def render_overview_auto(
 def overview_auto_blocks(
     *,
     active_topics: list[dict],
-    decisions: list[dict],
     milestones: list[dict],
     closed_topics: list[dict],
 ) -> list[dict]:
-    """②~⑤ 的结构化形态：``[{key, title, items}]``，**空块不出现**（同
-    `render_overview_auto`——一份「最近决策（暂无）」对读者也是噪音）。
+    """②~④ 的结构化形态：``[{key, title, items}]``，**空块不出现**（同
+    `render_overview_auto`——一份「里程碑（暂无）」对读者也是噪音）。
 
     和 markdown 那一份读的是同一个 `_*_items()`，所以两头永远不会各说各的。
     """
     built = [
         (ACTIVE_TOPICS_KEY, ACTIVE_TOPICS_TITLE, _active_items(active_topics)),
-        (DECISIONS_KEY, DECISIONS_TITLE, _decision_items(decisions)),
         (MILESTONES_KEY, MILESTONES_TITLE, _milestone_items(milestones)),
         (CLOSED_TOPICS_KEY, CLOSED_TOPICS_TITLE, _closed_items(closed_topics)),
     ]
