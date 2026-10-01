@@ -351,3 +351,42 @@ def test_claude_code_lists_and_calls_the_types_server_on_the_machine(
     finally:
         contract.stop_remote(session)
         sys.path.remove(str(SCRIPTS))
+
+
+def test_two_pi_sessions_on_one_machine_each_get_their_own_answer(tmp_path):
+    """pi numbers its tool calls per session, so two sessions on one room's
+    machine can both make a `call-0`. The machine answers each with its own
+    call, never with what it answered the other one."""
+    from app.domain.agent.harness.pi.machine import Machine
+    from app.domain.agent.harness.pi.runner import Runner
+    from tests.support.room_machine import room_machine
+
+    work = tmp_path / "room"
+    work.mkdir()
+
+    async def ask(name: str, target: dict, note: str):
+        runner = Runner(tmp_path / name)
+        runner.journal.remember("session_id", f"session-{name}")
+        runner.machine = Machine(
+            {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+        )
+        try:
+            await runner.open_servers()
+            return await runner.dispatch(
+                "mcp",
+                {
+                    "id": "call-0",
+                    "tool": "mcp__lint__where",
+                    "arguments": {"note": note},
+                },
+            )
+        finally:
+            await runner.close()
+
+    async def both():
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            return await ask("one", target, "first"), await ask("two", target, "second")
+
+    first, second = asyncio.run(both())
+    assert "first" in first["content"][0]["text"]
+    assert "second" in second["content"][0]["text"]

@@ -373,7 +373,9 @@ def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
         ("PreToolUse", "mcp__notes__where", "forbidden"),
         ("PreToolUse", "mcp__tracker__whoami", "forbidden"),
     ]
-    assert events[0]["tool_use_id"] == "call-0"
+    # Paired by one id, which names the session as well as the call.
+    assert events[0]["tool_use_id"] == events[1]["tool_use_id"]
+    assert events[0]["tool_use_id"].endswith("-call-0")
 
 
 def test_a_stdio_server_still_goes_to_the_rooms_machine(tmp_path):

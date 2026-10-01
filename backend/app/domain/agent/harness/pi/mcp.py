@@ -25,6 +25,7 @@ the other harnesses read it.
 import asyncio
 import json
 import sys
+import uuid
 
 #: Listing runs before the runner binds its socket, and the room's first turn
 #: waits on that socket; servers are listed together, so one that hangs costs
@@ -64,8 +65,12 @@ def _pi_result(result: dict) -> dict:
 class ProjectServers:
     """The session's MCP servers: listed once at start, called by tool name."""
 
-    def __init__(self, machine):
+    def __init__(self, machine, session: str = ""):
         self.machine = machine
+        # The executor keeps every call it was asked under its id, for good, and
+        # answers an id it has seen with what it answered then. pi numbers its
+        # calls per session, so the id the executor sees names the session too.
+        self.session = session or uuid.uuid4().hex
         #: pi's tool name -> (server, the server's own tool name)
         self.routes: dict[str, tuple[str, str]] = {}
 
@@ -127,6 +132,7 @@ class ProjectServers:
         return tools
 
     def _call(self, server: str, tool: str, arguments: dict, call_id: str) -> dict:
+        call_id = f"pi-{self.session}-{call_id}"
         client = self.machine.client
         if server not in client.remote_servers():
             # The machine's own server: its executor runs the hooks around it.

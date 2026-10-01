@@ -342,7 +342,9 @@ class Runner(runner.Runner[Journal]):
         """List every MCP server's tools, before the extension's manifest is
         written."""
         assert self.machine is not None
-        self.servers = ProjectServers(self.machine)
+        self.servers = ProjectServers(
+            self.machine, self.journal.recall("session_id") or ""
+        )
         self.mcp_tools = await self.servers.discover()
 
     def _invoke(self, payload: dict, args: dict) -> dict:
