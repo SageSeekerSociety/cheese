@@ -186,6 +186,7 @@ async def preview_tunnel(
         pass
     finally:
         preview_hub.detach(machine)
+        await machine.drain()
 
 
 # --- the browser's end ---------------------------------------------------------

@@ -335,6 +335,31 @@ async def test_repeated_cancellation_reaps_one_deadline_bounded_close(monkeypatc
     assert not machine.streams
 
 
+async def test_queue_overflow_keeps_cancel_ownership_until_machine_teardown():
+    started = asyncio.Event()
+    reaped = asyncio.Event()
+
+    class Transport:
+        async def send_bytes(self, data):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                reaped.set()
+
+    hub = PreviewHub()
+    machine = hub.attach(uuid.uuid4(), SEAT, Transport())
+    stream = machine.open()
+    stream.offer(wire.OP_DATA, b"x" * (wire._CHUNK + 1))
+    await started.wait()
+    hub.detach(machine)
+    await machine.drain()
+    assert reaped.is_set()
+    assert not machine.pending_cancels
+    assert not machine.streams
+    assert machine.open() is None
+
+
 async def test_slow_consumer_is_cancelled_without_blocking_sibling():
     from app.domain.agent.preview_hub import MAX_QUEUED_BYTES
 

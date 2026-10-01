@@ -208,6 +208,8 @@ class PreviewMachine:
     streams: dict[int, PreviewStream] = field(default_factory=dict)
     next_stream: int = 0
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    pending_cancels: set[asyncio.Task[None]] = field(default_factory=set)
+    stopped: bool = False
 
     async def send(self, op: int, stream_id: int, payload: bytes = b"") -> None:
         try:
@@ -226,10 +228,22 @@ class PreviewMachine:
             except (OSError, RuntimeError, TimeoutError):
                 pass
 
-        asyncio.create_task(cancel())
+        if self.stopped:
+            return
+        task = asyncio.create_task(cancel())
+        self.pending_cancels.add(task)
+        task.add_done_callback(self.pending_cancels.discard)
+
+    async def drain(self) -> None:
+        tasks = tuple(self.pending_cancels)
+        for task in tasks:
+            task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.pending_cancels.difference_update(tasks)
 
     def open(self) -> PreviewStream | None:
-        if len(self.streams) >= MAX_STREAMS:
+        if self.stopped or len(self.streams) >= MAX_STREAMS:
             return None
         self.next_stream += 1
         stream = PreviewStream(self, self.next_stream)
@@ -283,6 +297,9 @@ class PreviewHub:
         so a machine that disappears would otherwise leave one browser socket
         held open per viewer, forever, with no frame ever arriving to end it.
         """
+        machine.stopped = True
+        for task in machine.pending_cancels:
+            task.cancel()
         for stream in list(machine.streams.values()):
             stream.terminate(b"the machine went away")
         machine.streams.clear()

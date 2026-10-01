@@ -84,13 +84,22 @@ def _relay(port_file, monkeypatch):
         assert not session._streams
 
 
-def _read_head(connection):
+def _read_head(connection, *, with_headers=False):
     head = bytearray()
     while b"\r\n\r\n" not in head:
         chunk = connection.recv(4096)
         assert chunk, "upstream request ended before headers"
         head.extend(chunk)
-    return bytes(head).split(b"\r\n")[0].decode()
+    lines = bytes(head).split(b"\r\n")
+    if with_headers:
+        headers = {
+            key.strip().lower().decode(): value.strip().decode()
+            for line in lines[1:]
+            if b":" in line
+            for key, value in [line.split(b":", 1)]
+        }
+        return lines[0].decode(), headers
+    return lines[0].decode()
 
 
 @pytest.mark.parametrize("phase", ["before_headers", "after_headers", "first_chunk"])
@@ -190,7 +199,7 @@ def test_representation_headers_ranges_and_raw_query_reach_viewer(
                 connection, _ = listener.accept()
                 with connection:
                     connection.settimeout(5)
-                    line = _read_head(connection)
+                    line, request_headers = _read_head(connection, with_headers=True)
                     seen.append(line)
                     method, path, _ = line.split(" ")
                     if path.startswith("/gzip"):
@@ -200,12 +209,14 @@ def test_representation_headers_ranges_and_raw_query_reach_viewer(
                             b"Content-Encoding: gzip\r\n",
                         )
                     elif path == "/range":
+                        assert request_headers.get("range") == "bytes=2-4"
                         status, body, extra = (
                             "206 Partial Content",
                             b"234",
                             b"Content-Range: bytes 2-4/10\r\n",
                         )
                     elif path == "/unsatisfied":
+                        assert request_headers.get("range") == "bytes=99-100"
                         status, body, extra = (
                             "416 Range Not Satisfiable",
                             b"",
@@ -235,7 +246,12 @@ def test_representation_headers_ranges_and_raw_query_reach_viewer(
             ]:
                 connection = http.client.HTTPConnection("127.0.0.1", port, timeout=4)
                 try:
-                    connection.request(method, path)
+                    request_headers = {}
+                    if path == "/range":
+                        request_headers["Range"] = "bytes=2-4"
+                    elif path == "/unsatisfied":
+                        request_headers["Range"] = "bytes=99-100"
+                    connection.request(method, path, headers=request_headers)
                     response = connection.getresponse()
                     body = response.read()
                     if path.startswith("/gzip"):
