@@ -29,7 +29,12 @@
     @dragover="onDragOver"
     @drop="onDrop"
     @dragend="emit('dragEnd')"
+    @contextmenu="openMenuAt"
   >
+    <!-- 右键弹出的操作（项目格子才有），弹在鼠标那一点上。 -->
+    <AdaptiveMenu v-if="menu.length" v-model="menuOpen" :actions="menu" :point="menuPoint" :title="item.title">
+      <template #activator />
+    </AdaptiveMenu>
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
     <v-tooltip activator="parent" location="end" content-class="rail-flyout">
       <div class="rail-flyout__inner">
@@ -68,7 +73,7 @@
 <script lang="ts" setup>
 import type { DropEdge } from '@/lib/projectOrder'
 
-import { computed, toRefs } from 'vue'
+import { computed, ref, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -76,6 +81,7 @@ import { useNavigation } from '@/composables/useNavigation'
 import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
@@ -119,6 +125,16 @@ const current = computed(() => {
   if (item.value.type !== 'item' || !item.value.match) return undefined
   return item.value.match(nav?.route?.path ?? '') ? 'page' : undefined
 })
+
+const menu = computed(() => (item.value.type === 'item' ? item.value.menu ?? [] : []))
+const menuOpen = ref(false)
+const menuPoint = ref<[number, number] | null>(null)
+function openMenuAt(e: MouseEvent) {
+  if (!menu.value.length) return
+  e.preventDefault()
+  menuPoint.value = [e.clientX, e.clientY]
+  menuOpen.value = true
+}
 
 function onDragStart(e: DragEvent) {
   const id = projectId.value

@@ -98,6 +98,20 @@ watch(
   },
   { immediate: true }
 )
+
+// 右键一行，弹出的就是 ⋯ 那一份操作，只是弹在鼠标那一点上。正在改名时右键留给
+// 输入框（复制、粘贴）。点 ⋯ 打开时照旧挂在 ⋯ 下面。
+const menuPoint = ref<[number, number] | null>(null)
+function openMenuAt(e: MouseEvent) {
+  if (props.page || props.renaming) return
+  e.preventDefault()
+  menuPoint.value = [e.clientX, e.clientY]
+  emit('update:menu-open', true)
+}
+function onMenuToggle(open: boolean) {
+  if (!open) menuPoint.value = null
+  emit('update:menu-open', open)
+}
 </script>
 
 <template>
@@ -120,6 +134,7 @@ watch(
     @click="emit('select', row.topic.id)"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
+    @contextmenu="openMenuAt"
   >
     <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，
          种类标签不要（缩进表达层级），操作 hover 才浮现。原先这里还有一颗每行都
@@ -218,7 +233,8 @@ watch(
           :model-value="menuOpen"
           :actions="actions(row.topic).map(menuActionOf)"
           :title="topicTitle(row.topic)"
-          @update:model-value="(open: boolean) => emit('update:menu-open', open)"
+          :point="menuPoint"
+          @update:model-value="onMenuToggle"
         >
           <template #activator="{ props: menuProps }">
             <v-btn
