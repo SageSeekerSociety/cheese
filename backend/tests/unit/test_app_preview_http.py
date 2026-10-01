@@ -133,6 +133,80 @@ async def test_cancel_during_watcher_cleanup_does_not_leave_unowned_response(
     assert sum(op == wire.OP_CLOSE for op, _, _ in sink.frames) == 1
 
 
+async def test_tunnel_ingress_overflow_closes_and_detaches_real_adapter(monkeypatch):
+    monkeypatch.setattr(wire, "MAX_WS_MESSAGE_BYTES", 8)
+    hub = PreviewHub()
+    topic = uuid.uuid4()
+    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(
+        app_preview,
+        "scoped_token_claims",
+        lambda _token: {"t": str(topic), "a": "seat"},
+    )
+    connected = False
+    sent = []
+
+    async def receive():
+        nonlocal connected
+        if not connected:
+            connected = True
+            return {"type": "websocket.connect"}
+        return {"type": "websocket.receive", "bytes": b"x" * (9 + wire._HEAD.size)}
+
+    async def send(message):
+        sent.append(message)
+
+    websocket = WebSocket(dict(_scope(), type="websocket"), receive, send)
+    await asyncio.wait_for(app_preview.preview_tunnel(websocket, "fixture"), 1)
+    assert any(m.get("code") == 1009 for m in sent)
+    assert not hub.is_online(topic, "seat")
+    assert hub.open_stream(topic, "seat") is None
+
+
+async def test_request_body_overflow_stops_before_tunnel_admission(monkeypatch):
+    monkeypatch.setattr(wire, "MAX_REQUEST_BYTES", 8)
+    sink = _TunnelSink()
+    hub = PreviewHub()
+    topic = uuid.uuid4()
+    machine = hub.attach(topic, "seat", sink)
+    sink.machine = machine
+    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    chunks = iter([b"12345678", b"9"])
+
+    async def receive():
+        return {"type": "http.request", "body": next(chunks), "more_body": True}
+
+    response = await app_preview.relay_http(topic, "seat", Request(_scope(), receive))
+    assert response.status_code == 413
+    assert sink.frames == [] and machine.streams == {}
+
+
+async def test_legacy_inline_response_body_remains_supported():
+    body = b"x" * (wire.MAX_META_BYTES + 1)
+
+    class Transport:
+        machine = None
+
+        async def send_bytes(self, data):
+            op, sid, _ = wire.decode(data)
+            if op == wire.OP_REQ:
+                self.machine.on_frame(
+                    wire.encode(
+                        wire.OP_RESP, sid, wire.encode_meta({"status": 200}, body)
+                    )
+                )
+                self.machine.on_frame(wire.encode(wire.OP_END, sid))
+
+    transport = Transport()
+    hub = PreviewHub()
+    topic = uuid.uuid4()
+    machine = hub.attach(topic, "seat", transport)
+    transport.machine = machine
+    response = await hub.request(topic, "seat", method="GET", path="/", headers=[])
+    assert response is not None and response.body == body
+    assert machine.streams == {}
+
+
 async def test_failed_write_closes_idle_real_adapter_and_joins_route(monkeypatch):
     import pytest
 

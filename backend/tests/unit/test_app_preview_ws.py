@@ -44,6 +44,60 @@ def test_hmr_cleanup_ignores_a_peer_gone_during_close(monkeypatch):
     stream.aclose.assert_awaited_once_with()
 
 
+@pytest.mark.parametrize("text", [False, True])
+@pytest.mark.parametrize("overflow", [False, True])
+async def test_browser_message_limit_counts_wire_bytes_and_cancels_stream(
+    monkeypatch, text, overflow
+):
+    monkeypatch.setattr(wire, "MAX_WS_MESSAGE_BYTES", 8)
+    frames = []
+
+    class Transport:
+        async def send_bytes(self, data):
+            frames.append(wire.decode(data))
+
+    hub = PreviewHub()
+    machine = hub.attach(uuid.uuid4(), "seat", Transport())
+    stream = machine.open()
+    connected = False
+    sent_message = False
+    sent = []
+    # The wire type byte counts toward the limit. UTF-8 text uses byte length.
+    data = b"x" * (8 if overflow else 7)
+    message = (
+        {"text": "测" * (3 if overflow else 2) + ("" if overflow else "x")}
+        if text
+        else {"bytes": data}
+    )
+
+    async def receive():
+        nonlocal connected, sent_message
+        if not connected:
+            connected = True
+            return {"type": "websocket.connect"}
+        if not sent_message:
+            sent_message = True
+            return {"type": "websocket.receive", **message}
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(message):
+        sent.append(message)
+
+    browser = WebSocket(
+        {"type": "websocket", "path": "/hmr", "headers": []}, receive, send
+    )
+    await browser.accept()
+    await asyncio.wait_for(app_preview._pump(browser, stream), 1)
+    messages = [payload for op, _, payload in frames if op == wire.OP_WS_MSG]
+    assert len(messages) == (0 if overflow else 1)
+    if not overflow:
+        assert len(messages[0]) == 8
+    else:
+        assert any(m.get("code") == 1009 for m in sent)
+    assert sum(op == wire.OP_CLOSE for op, _, _ in frames) == 1
+    assert machine.streams == {}
+
+
 @pytest.mark.parametrize(
     "negotiated,payload,expected",
     [

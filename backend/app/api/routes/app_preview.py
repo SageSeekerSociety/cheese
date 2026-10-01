@@ -199,6 +199,9 @@ async def preview_tunnel(
                 break
             data = message.get("bytes")
             if data is not None:
+                if len(data) > wire.MAX_WS_MESSAGE_BYTES + wire._HEAD.size:
+                    await websocket.close(code=1009, reason="preview frame too large")
+                    break
                 machine.on_frame(data)
     except (WebSocketDisconnect, RuntimeError):
         pass
@@ -377,14 +380,19 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
                     await stream.aclose(payload=payload)
                     return
                 data = message.get("bytes")
-                if data is not None:
-                    await stream.send(wire.OP_WS_MSG, bytes([wire.WS_BINARY]) + data)
-                    continue
                 text = message.get("text")
-                if text is not None:
-                    await stream.send(
-                        wire.OP_WS_MSG, bytes([wire.WS_TEXT]) + text.encode()
-                    )
+                payload = (
+                    bytes([wire.WS_BINARY]) + data
+                    if data is not None
+                    else bytes([wire.WS_TEXT]) + text.encode()
+                    if text is not None
+                    else b""
+                )
+                if len(payload) > wire.MAX_WS_MESSAGE_BYTES:
+                    await browser.close(code=1009, reason="preview message too large")
+                    return
+                if payload:
+                    await stream.send(wire.OP_WS_MSG, payload)
         except (WebSocketDisconnect, OSError, RuntimeError):
             return
 

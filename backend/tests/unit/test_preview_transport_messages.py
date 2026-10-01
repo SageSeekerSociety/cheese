@@ -27,6 +27,21 @@ def test_websocket_limit_rejects_declared_overflow_without_reading_body(fragment
         peer.close()
 
 
+@pytest.mark.parametrize("fragmented", [False, True])
+def test_websocket_message_at_exact_limit_survives(fragmented):
+    reader, peer = socket.socketpair()
+    reader.settimeout(1)
+    try:
+        if fragmented:
+            peer.sendall(b"\x02\x03abc\x80\x05defgh")
+        else:
+            peer.sendall(b"\x82\x08abcdefgh")
+        assert wire.recv_message(reader, max_bytes=8) == (wire._OP_BIN, b"abcdefgh")
+    finally:
+        reader.close()
+        peer.close()
+
+
 def test_metadata_limit_rejects_header_before_json_decode():
     blob = b'{"padding":"' + b"x" * (64 * 1024) + b'"}'
     payload = struct.pack("!I", len(blob)) + blob
