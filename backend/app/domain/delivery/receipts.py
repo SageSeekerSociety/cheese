@@ -138,7 +138,7 @@ async def register_input(
         | set(effects.block_ids)
         | set(effects.seen_block_ids)
     )
-    await _lock_blocks(session, identity, affected)
+    blocks = await _lock_blocks(session, identity, affected)
     if effects.seen_by is not None and effects.seen_by != identity.recipient_handle:
         raise ValidationError("Input cannot mark blocks as read by another receiver")
     if effects.held_block_ids:
@@ -149,8 +149,94 @@ async def register_input(
             recipient_handle=identity.recipient_handle,
             exclude_input_id=row.id,
         )
-        if held.intersection(effects.held_block_ids):
+        overlap = held.intersection(effects.held_block_ids)
+        if overlap and (
+            delivery is None
+            or delivery.payload.get("ask_origin") is None
+            or not overlap <= set(members)
+            or not await _shared_ask_members(
+                session, identity, row.id, delivery, members, overlap, blocks
+            )
+        ):
             raise ValidationError("Input batch is already held by another native input")
+
+
+async def _shared_ask_members(
+    session, identity, input_row_id, delivery, members, overlap, blocks
+):
+    """Share one group's questions only inside its proven original native work.
+
+    Registration reserves an input; only an earlier native echo proves the work.
+    Each answer wake stays exclusive, and this never stamps a new input's receipt.
+    Read immutable identities without adding a Block-to-Input/Delivery lock edge.
+    """
+    origin = delivery.payload["ask_origin"]
+    group_id = delivery.payload.get("ask_group")
+    member_ids = {str(member) for member in members}
+    questions = [block for block in blocks if block.id in members]
+    if (
+        not group_id
+        or origin.get("work_id") != str(identity.work_id)
+        or len(questions) != len(member_ids)
+        or any(
+            block.author != identity.recipient_handle
+            or block.turn_id != identity.work_id
+            or block.meta.get("ask_origin") != origin
+            or block.meta.get("ask_group", {}).get("id") != group_id
+            or block.meta.get("ask_group", {}).get("asked_by")
+            != identity.recipient_handle
+            or set(block.meta.get("ask_group", {}).get("members", [])) != member_ids
+            for block in questions
+        )
+    ):
+        return False
+    inputs = list(
+        await session.execute(
+            select(NativeInput, Delivery)
+            .outerjoin(Delivery, Delivery.id == NativeInput.delivery_id)
+            .where(
+                NativeInput.project_id == identity.project_id,
+                NativeInput.topic_id == identity.topic_id,
+                NativeInput.recipient_handle == identity.recipient_handle,
+                NativeInput.id != input_row_id,
+            )
+            .execution_options(populate_existing=True)
+        )
+    )
+    if not any(
+        prior.harness == identity.harness
+        and prior.native_session_id == identity.native_session_id
+        and prior.work_id == identity.work_id
+        and prior.execution_work_id == identity.work_id
+        and prior.echoed_at is not None
+        and prior.settled_at is not None
+        and prior.completed_at is None
+        for prior, _ in inputs
+    ):
+        return False
+    remaining = set(overlap)
+    for prior, previous in inputs:
+        held = set(prior.held_block_ids) - set(prior.released_block_ids)
+        shared = {uuid.UUID(block) for block in held}.intersection(overlap)
+        if not shared:
+            continue
+        if (
+            prior.harness != identity.harness
+            or prior.native_session_id != identity.native_session_id
+            or prior.work_id != identity.work_id
+            or prior.execution_work_id not in (None, identity.work_id)
+            or prior.completed_at is not None
+            or previous is None
+            or previous.topic_id != identity.topic_id
+            or previous.recipient_handle != identity.recipient_handle
+            or prior.event_id != previous.event_id
+            or previous.payload.get("ask_origin") != origin
+            or previous.payload.get("ask_group") != group_id
+            or previous.payload.get("block_ids") != delivery.payload["block_ids"]
+        ):
+            return False
+        remaining.difference_update(shared)
+    return not remaining
 
 
 async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
