@@ -7,9 +7,10 @@ took any URL it was handed would read those for whoever asked and return them.
 
 So every connection a fetch makes goes to an address checked here first: the
 host is resolved, and every address it resolves to must be globally routable.
-Resolving, rather than matching the text of the URL, is what makes ``127.1``,
-``0x7f000001``, ``localhost`` and a public name pointing at ``10.0.0.5`` the
-same case.
+Which addresses are public is defined in ``addresses.py``, shared with the
+network gate in front of a private chat's container. Resolving, rather than
+matching the text of the URL, is what makes ``127.1``, ``0x7f000001``,
+``localhost`` and a public name pointing at ``10.0.0.5`` the same case.
 
 A check alone would leave a gap between checking a name and connecting to it —
 the name can resolve differently the second time. The HTTP client below closes
@@ -34,7 +35,6 @@ reported as a miss.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import socket
 from urllib.parse import urlsplit
 
@@ -42,6 +42,8 @@ import httpcore
 import httpx
 
 from app.core.config import settings
+from app.domain.fetch.addresses import is_placeholder as _is_placeholder
+from app.domain.fetch.addresses import is_public as _is_public
 
 #: A redirect chain longer than this is not a page, it is a loop or a probe.
 MAX_REDIRECTS = 5
@@ -57,15 +59,6 @@ async def _resolve(host: str, port: int) -> list[str]:
     return [str(info[4][0]) for info in infos]
 
 
-#: Where fake-IP DNS hands out its placeholders (the benchmarking range).
-_PLACEHOLDERS = ipaddress.ip_network("198.18.0.0/15")
-
-
-def _is_placeholder(address: str) -> bool:
-    ip = ipaddress.ip_address(address.split("%", 1)[0])
-    return isinstance(ip, ipaddress.IPv4Address) and ip in _PLACEHOLDERS
-
-
 async def _resolve_over_https(host: str) -> list[str]:
     """``host``'s IPv4 addresses from a DNS-over-HTTPS resolver's JSON API."""
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), trust_env=False) as c:
@@ -77,13 +70,6 @@ async def _resolve_over_https(host: str) -> list[str]:
     r.raise_for_status()
     answers = r.json().get("Answer") or []
     return [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
-
-
-def _is_public(address: str) -> bool:
-    ip = ipaddress.ip_address(address.split("%", 1)[0])
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return ip.is_global and not ip.is_multicast
 
 
 async def public_address(host: str, port: int) -> str:
