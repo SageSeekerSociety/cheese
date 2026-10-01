@@ -3890,10 +3890,15 @@ class ChatService:
             overview_doc_text = overview_root.content if overview_root else None
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
-            # 这个参与者的属性。这一轮只解析这一次，往下每一处都读它：会话行的键
-            # 里有骨架，两处各自解析一次就够把一条会话拆成两条。
-            wanted_harness = harness_for(project.settings if project else None)
+            # 骨架是这个项目在这台机器上跑的那一个（结论 28），不是这个参与者的属
+            # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
+            # 各自解析一次就够把一条会话拆成两条。
+            compute_id = _resolve_compute_id(
+                project.settings if project else None, topic
+            )
+            wanted_harness, provider = self._compute.choose(
+                project.settings if project else None, compute_id
+            )
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
@@ -3994,19 +3999,11 @@ class ChatService:
             )
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
-            compute_id = _resolve_compute_id(
-                project.settings if project else None, topic
-            )
-            # 先问这套部署有没有这个骨架，再过档位策略：策略那一步要解析模型，而一个
-            # 没注册的骨架一个模型都指不到（结论 43），先问它就会以「没有默认模型」
-            # 收场，房间读到的不是真正的原因。
-            provider = self._compute.select(
-                provider_id=compute_id, harness=wanted_harness
-            )
+            # 先问这台机器上有没有可用的骨架，再过档位策略：策略那一步要解析模型，
+            # 而一个没挂上的骨架一个模型都指不到，先问它就会以「没有默认模型」收场，
+            # 房间读到的不是真正的原因。
             if provider is None:
-                # The machine is fine; what this deployment runs is not
-                # deployed on it. Say so rather than starting something else:
-                # a turn taken on another harness is a turn nobody asked for.
+                # The machine is fine; nothing this deployment lists runs on it.
                 return _TurnBail(
                     [
                         {

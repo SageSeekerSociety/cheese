@@ -16,7 +16,7 @@ from app.domain.agent.compute_configs import (
     room_choice,
     standard_choice,
 )
-from app.domain.agent.harness import deployment_harness
+from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -694,7 +694,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         # The room's own Cheese: its conversation is kept under the agent,
         # whichever seat the session authored under.
         resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE, harness=deployment_harness()
+            topic_id, CHEESE_HANDLE, harness=harness_for(None)
         )
     assert resumes_by == "s-affinity"
 

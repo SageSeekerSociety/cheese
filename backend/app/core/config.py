@@ -226,12 +226,13 @@ class Settings(BaseSettings):
     # needs no entry: everything the project can use is something it can drive,
     # and listing those again would be a second copy to fall out of date.
     agent_harness_models: dict[str, list[str]] = {}
-    # 这套部署跑哪个骨架（结论 28）。骨架是开发者选项，不是产品概念：它不在类型
-    # 上也不在实例上，普通用户看不到，单个项目可以在自己的设置里盖过这一行。
-    # 空着 = 注册表里那个未配置时的骨架；注册表是唯一写着骨架名字的地方（不变量
-    # I5），所以这里给不出一个名字当默认值。名字不在注册表里，启动就失败——
-    # 悄悄跑另一个骨架，正是结论 28 要防的那件事。
-    agent_harness: str = ""
+    # 这套部署可用的骨架，按偏好排序（结论 28），例如 ["claude-code", "pi"]。骨
+    # 架是开发者选项，不是产品概念：它不在类型上也不在实例上，普通用户看不到。项
+    # 目可以在自己的设置里指定其中一个；没指定、或指定的不在这里，就从头往下取第
+    # 一个那台机器挂着的。空着 = 注册表里未配置时的那一份；注册表是唯一写着骨架名
+    # 字的地方（不变量 I5），所以这里给不出名字当默认值。列了注册表里没有的名字，
+    # 启动就失败——悄悄跑另一个骨架，正是结论 28 要防的那件事。
+    agent_harnesses: list[str] = []
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None

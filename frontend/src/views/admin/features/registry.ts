@@ -37,6 +37,12 @@ const VIEWS: Record<string, FeatureView> = {
     // 懒加载：功能页是各自一块，谁也不该为另一个功能的图表付首屏的钱。
     view: defineAsyncComponent(() => import('./DocsAssistantPage.vue')),
   },
+  'topic-naming': {
+    id: 'topic-naming',
+    titleKey: 'featureStats.features.topicNaming.title',
+    summaryKey: 'featureStats.features.topicNaming.summary',
+    view: defineAsyncComponent(() => import('./TopicNamingPage.vue')),
+  },
 }
 
 export function findFeatureView(id: string): FeatureView | undefined {
