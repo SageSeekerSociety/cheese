@@ -6,7 +6,11 @@ import uuid
 import httpx
 import pytest
 
-from app.domain.doc_ai.completion import InvalidCompletion, complete
+from app.domain.doc_ai.completion import (
+    CompletionCallFailed,
+    InvalidCompletion,
+    complete,
+)
 from app.domain.doc_ai.services import Lease
 
 
@@ -240,3 +244,72 @@ async def test_valid_proposal_and_reported_zero_cost_remain_valid():
     )
     assert result.result.replacement == "右侧提问，人采纳。"
     assert result.usage.cost_usd == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [302, 400, 401, 403, 408, 429, 500, 502, 503, 504])
+async def test_http_status_is_safe_and_never_retried(status):
+    work = lease()
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        body = json.loads(request.content)
+        assert body["model"] == work.binding["wire_model"]
+        assert body["stream"] is False
+        assert "tools" not in body and "functions" not in body
+        assert request.headers["idempotency-key"] == f"doc-ai:{work.request_id}:1"
+        assert request.headers["x-request-id"] == request.headers["idempotency-key"]
+        return httpx.Response(
+            status,
+            text="private-provider-body",
+            headers={"location": "https://private.example/private-token"},
+        )
+
+    with pytest.raises(CompletionCallFailed) as caught:
+        await complete(
+            work,
+            base="https://private.example/private-token",
+            key="private-project-key",
+            transport=httpx.MockTransport(upstream),
+        )
+    assert len(calls) == 1
+    assert caught.value.stage == "http_status"
+    assert caught.value.status_code == status
+    assert str(caught.value) == f"文档模型调用失败 [doc_ai:http_status:{status}]"
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "error_type,stage",
+    [
+        (httpx.ConnectTimeout, "timeout"),
+        (httpx.ReadTimeout, "timeout"),
+        (httpx.WriteTimeout, "timeout"),
+        (httpx.PoolTimeout, "timeout"),
+        (httpx.ConnectError, "transport"),
+        (httpx.ReadError, "transport"),
+        (httpx.WriteError, "transport"),
+        (httpx.RemoteProtocolError, "transport"),
+    ],
+)
+async def test_http_io_failure_is_safe_and_never_retried(error_type, stage):
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        raise error_type("private-url-body-header-token", request=request)
+
+    with pytest.raises(CompletionCallFailed) as caught:
+        await complete(
+            lease(),
+            base="https://private.example/private-token",
+            key="private-project-key",
+            transport=httpx.MockTransport(upstream),
+        )
+    assert len(calls) == 1
+    assert caught.value.stage == stage
+    assert caught.value.status_code is None
+    assert str(caught.value) == f"文档模型调用失败 [doc_ai:{stage}]"
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__

@@ -177,6 +177,53 @@ async def test_contract_failure_persists_safe_stage_and_available_usage_once(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["http_status:429", "timeout", "transport"])
+async def test_http_failure_is_durable_unpriced_metered_and_not_reinvoked(
+    business_db_factory, failure
+):
+    factory = business_db_factory
+    room, request_id, bound = await pending(factory)
+    sent = []
+    metered = []
+
+    def gateway(request):
+        sent.append(request)
+        assert json.loads(request.content)["model"] == bound["wire_model"]
+        if failure == "timeout":
+            raise httpx.ReadTimeout("private-token-url", request=request)
+        if failure == "transport":
+            raise httpx.ConnectError("private-token-url", request=request)
+        return httpx.Response(429, text="private-provider-body")
+
+    async def invoke(lease):
+        return await complete(
+            lease,
+            base="https://gateway.example",
+            key="project-key",
+            transport=httpx.MockTransport(gateway),
+        )
+
+    async def meter(lease):
+        metered.append(lease.request_id)
+
+    assert await run_one(factory, invoke, meter, authorize_work)
+    assert not await run_one(factory, invoke, meter, authorize_work)
+    assert len(sent) == 1 and metered == [request_id]
+    async with factory() as session:
+        row = await DocAiService(session).get(room, request_id)
+        attempt = await session.scalar(
+            select(DocAiAttempt).where(DocAiAttempt.request_id == request_id)
+        )
+        assert row.state == "failed" and row.answer is None
+        assert row.binding == bound
+        assert row.error == attempt.error
+        assert row.error == f"文档模型调用失败 [doc_ai:{failure}]"
+        assert attempt.usage is None
+        assert await DocAiService(session).proposal_id(request_id) is None
+        assert (await TopicService(session).get_doc(room)).doc_version == 1
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "supply,empty_budget,reason",
     [
