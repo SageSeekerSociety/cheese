@@ -44,7 +44,7 @@ covers:
 - 父线程能改它的指令
 - 父线程能停掉它
 
-pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`Task` 在同一台机器上起第二个 pi，模型经平台准入，子会话的每条记录带着线程标识写进会话自己的记录，`SendMessage` 与 `TaskStop` 改它、停它（`harness/pi/subagents.py`）。
+pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`Task` 在中心机上起第二个 pi，手在同一台执行机、同一个工作区里，模型经平台准入，子会话的每条记录带着线程标识写进会话自己的记录，`SendMessage` 与 `TaskStop` 改它、停它（`harness/pi/subagents.py`）。
 
 `SubagentRequirement` 就是这四条。`Harness.__post_init__` 逐条要一个非空的 `str`：**答不全根本造不出来**，判在构造上而不是判在一条守卫测试上——注册表是一个字面量，一个造得出来的条目总会有人写进去。值只能是一句话，而 `Difference` 是 `StrEnum`、填进来照样是个 `str`，所以 `__post_init__` 认的是类型本身：硬性要求没有「暂缺」那一档。`backend/tests/contract/test_subagent_requirements.py` 还核这两件事：引的路径存在，引的符号真的**参与过代码**（被定义、被赋值、被读）。
 
@@ -75,6 +75,8 @@ pi 核心没有子 agent，四条由平台给它的 extension 和 runner 答：`
 
 Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进程、说它的协议、把它产出的东西按稳定序号记进本地 journal，并且**每个输入至多接受一次**；后端从一个游标镜像那份 journal，每条会话一个 poller 把镜像到的东西交给房间。只有协议不同，所以只有协议住在 `codex/` 和 `pi/` 里；journal、runner 的 socket 和输入账、drain 循环、poller 都在 `harness/driven/`。它是**共用的一层**，不是第四个骨架。
 
+三种骨架的会话都在中心会话机上，手在房间的执行机上，用到才领（`CentralChannel`）。pi 的工具是 pi 自己的 read、write、edit、bash，平台的扩展换掉的只是它们底下的文件与进程操作（pi 的 `Operations` 注入点）：每一次都经 runner 变成执行机上的一条命令（`pi/machine.py`），走的是另外两个骨架同一个 `RemoteClient`。后台任务在执行机上有自己的终端（`pi/relay.py`），runner 把它的输出抄回中心机（`pi/jobs.py`）。仓库自己的说明和技能在会话到了机器上时读（`pi/repository.py`、`pi/project_skills.py`）；会话还在占位工作区时第一次领到机器，那次操作不执行，先把仓库的说明交给它，和另外两个骨架一样。
+
 镜像里的记录只在两小时之内落进房间（`driven/subscription.py` 的 `STALE_S`，按 journal 记下的时间算：Claude Code 和 Codex 用会话机记录的时间，pi 用后端镜像到它的时间）。更老还没落的，只可能是这期间没人在读：后端或机器不在，或者每次 drain 都卡在同一条记录上。那时房间早已不等它了，这一轮已经结束，消息也重发过或告诉过人，所以游标直接越过它，房间不会再收到这些记录。
 
 输入账（`driven/runner.py` 的 `Runner.accept`）是重连安全的那一半：id 是平台的，一个没看到回话的后端重发同一个 id 拿到的是同一个结果，而不是第二轮；同一个 id 配不同的正文当场拒绝——拿第一次的结果回答它会报告一件从没发出去的事。写进会话的一个输入，到的次数因此不由重连次数决定。
@@ -85,7 +87,7 @@ Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进�
 | --- | --- | --- | --- |
 | Claude Code | `2.1.282` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
 | Codex | `0.154.0` | `codex/host.py` 的 `VERSION` | 同上；不在注册表也照样被它管着 |
-| pi | `0.85.1` | `pi/device_launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
+| pi | `0.85.1` | `pi/launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
 
 pin 的版本号只写一处：那份脚本从每份 `Declaration.pinned_version` 取，不再自己 `ast` 解文件或抄一个字面量。`.github/workflows/mcp-contract.yml` 管另一个方向的契约：执行器借这台机器的 `claude mcp serve` 做文件读写、从它的 Bash 工具取 shell 快照，两样都没有公开契约，所以 `scripts/remote_execution/mcp_contract.py` 就是契约本身（同处的 `headless_contract.py`、`equivalence.py`、`refresh_contract.py` 各管一段）。
 

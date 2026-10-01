@@ -201,7 +201,7 @@ class Subagent:
         self.process = await asyncio.create_subprocess_exec(
             self.runner.binary,
             *argv,
-            cwd=self.runner.workspace,
+            cwd=self.runner.cwd,
             env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

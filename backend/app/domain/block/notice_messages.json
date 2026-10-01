@@ -91,7 +91,6 @@
   "cloudStepConnect": "正在启动连接器",
   "cloudStepConnector": "正在下载连接器",
   "cloudStepPreparingClaude": "正在准备 Claude 运行程序",
-  "cloudStepRuntime": "正在安装运行程序",
   "cloudStepTools": "正在检查并安装基础工具",
   "cloudStepTransferringClaude": "正在传输 Claude 运行程序",
   "cloudStepVerify": "正在检查连接器服务",

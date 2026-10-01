@@ -3,7 +3,8 @@
 A repository guards Bash or its files with PreToolUse and PostToolUse hooks in
 `.claude/settings.json`, written for Claude Code's tool names. pi fires no
 hooks, so before each of its tool calls the extension asks the runner, and
-again after it (`platform.ts`). What is driven here is the real runner, over
+again after it (`platform.ts`), and the room's machine runs them. What is
+driven here is the real runner, over
 its socket, in a checkout that carries hooks: the calls a pi session makes are
 asked about the way the extension asks, and run only when the answer allows
 it, the way pi runs them.
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.pi.runner import Runner
+from tests.support.room_machine import room_machine
 from tests.unit.test_pi_runner import call, shim
 
 LOG = 'cat >> "$CLAUDE_PROJECT_DIR/hooks.log"; echo >> "$CLAUDE_PROJECT_DIR/hooks.log"'
@@ -129,12 +131,15 @@ async def _session(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
     """A pi session in `work` making `calls`, each asked about before and after
     the way the extension asks; returns what each call answered."""
     runner = Runner(tmp_path / "state")
+    machine = room_machine(tmp_path / "machine", checkout=work)
+    target = machine.__enter__()
     await runner.start(
         Opening("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
-        cwd=str(work),
+        cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=[],
+        target=target,
     )
     answers = []
     try:
@@ -162,6 +167,7 @@ async def _session(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
             answers.append(("ran", output))
     finally:
         await runner.close()
+        machine.__exit__(None, None, None)
     return answers
 
 
@@ -235,21 +241,28 @@ def test_a_tool_claude_code_has_no_equivalent_for_keeps_its_own_name(tmp_path):
 
     async def ask():
         runner = Runner(tmp_path / "state")
-        await runner.start(
-            Opening("system prompt", None, agent_handle="teammate"),
-            binary=shim(tmp_path),
-            cwd=str(work),
-            env={"PATH": "/usr/bin:/bin"},
-            args=[],
-        )
-        try:
-            return await call(
-                runner.state,
-                "hooks",
-                {"event": "PreToolUse", "tool": tool, "id": "c", "input": {"id": "x"}},
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            await runner.start(
+                Opening("system prompt", None, agent_handle="teammate"),
+                binary=shim(tmp_path),
+                cwd=str(tmp_path),
+                env={"PATH": "/usr/bin:/bin"},
+                args=[],
+                target=target,
             )
-        finally:
-            await runner.close()
+            try:
+                return await call(
+                    runner.state,
+                    "hooks",
+                    {
+                        "event": "PreToolUse",
+                        "tool": tool,
+                        "id": "c",
+                        "input": {"id": "x"},
+                    },
+                )
+            finally:
+                await runner.close()
 
     assert asyncio.run(ask()) == {"input": {"id": "x"}}
     (event,) = [

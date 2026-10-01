@@ -1,22 +1,21 @@
 """项目的 MCP 服务器在 pi 这边：开场时列出它们的工具，调用时送回去。
 
 pi has no MCP client of its own, so the runner is one, and each kind of server
-is reached where the other harnesses reach it:
+is reached where the other harnesses reach it, through the room's machine
+client (`machine.py`):
 
-- **stdio servers** in the checkout's ``.mcp.json`` run as processes here. pi
-  runs on the machine that holds the workspace, which is the machine Claude
-  Code's and Codex's executors start the same processes on, with the same
-  command, arguments, environment and working directory.
-- **the teammate's type's stdio servers** (``agent_mcp``, from the type's
-  ``mcpServers``) run here too, beside the checkout's. A name the checkout or a
-  remote server already uses stays that server's.
-- **remote servers** (an entry with a ``url``) are the platform's to call. The
-  backend names the ones this session can use (``remote_mcp``, from the default
-  branch's ``.mcp.json``), and every request goes to ``/topics/{id}/mcp/{name}``
-  through ``RemoteClient``, the client Codex's tools use. The backend attaches
-  the server's credential, so nothing on this machine ever holds it. A stdio
-  entry in the checkout under a remote server's name does not replace it: which
-  host a name reaches is decided by committed configuration, not the checkout.
+- **the checkout's stdio servers** (``.mcp.json``) and **the teammate's type's**
+  (``agent_mcp``) run on the room's machine, started by its executor with the
+  command, arguments, environment and working directory a native session there
+  would use. The executor runs the project's hooks around each call itself.
+- **remote servers** (an entry with a ``url``) are the platform's to call: every
+  request goes to ``/topics/{id}/mcp/{name}``, which attaches the server's
+  credential, so nothing pi can read ever holds it. Their hooks are the
+  machine's, run around the call once the session has a machine.
+
+Which servers a session lists is the client's to say (`session_servers`): a
+session started before it had a machine lists only the remote ones, and is
+started again on the machine once it has one (the channel's launch contract).
 
 A tool is registered with pi as ``mcp__<server>__<tool>``, the name Claude Code
 and Codex give it, and the tool list is read once, when the session starts, as
@@ -24,156 +23,17 @@ the other harnesses read it.
 """
 
 import asyncio
-import contextlib
-import hashlib
 import json
-import os
-import signal
 import sys
-from pathlib import Path
 
-from app.domain.agent.executor_transport import RemoteClient
-from app.domain.agent.harness.pi import hooks
-from app.domain.agent.harness.pi.rpc import LINE_LIMIT
-
-PROTOCOL_VERSION = "2024-11-05"
-# Listing runs before the runner binds its socket, and the room's first turn
-# waits on that socket for two minutes (`channel.STARTUP_WAIT_S`). Servers are
-# listed together, so one that hangs costs this much and not the room.
-LIST_TIMEOUT_S = 30.0
-# The executor's bound for one call to a stdio server (`MCPProcess.finish`).
-CALL_TIMEOUT_S = 300.0
+#: Listing runs before the runner binds its socket, and the room's first turn
+#: waits on that socket; servers are listed together, so one that hangs costs
+#: this much and not the room.
+LIST_TIMEOUT_S = 60.0
 
 
 def tool_name(server: str, tool: str) -> str:
     return f"mcp__{server}__{tool}"
-
-
-def stdio_servers(workspace: str) -> dict[str, dict]:
-    """The checkout's stdio servers: every entry without a ``url``."""
-    try:
-        text = (Path(workspace) / ".mcp.json").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    declared = json.loads(text).get("mcpServers") or {}
-    return {
-        name: spec
-        for name, spec in declared.items()
-        if isinstance(spec, dict) and not isinstance(spec.get("url"), str)
-    }
-
-
-class StdioServer:
-    """One stdio MCP server, as a child of this runner."""
-
-    def __init__(self, process: asyncio.subprocess.Process):
-        self.process = process
-        self.pending: dict[int, asyncio.Future] = {}
-        self.sequence = 0
-        self.reader = asyncio.create_task(self._read())
-
-    @classmethod
-    async def start(
-        cls, spec: dict, *, workspace: str, env: dict[str, str], log: Path
-    ) -> "StdioServer":
-        with log.open("ab") as errors:
-            process = await asyncio.create_subprocess_exec(
-                spec["command"],
-                *spec.get("args", []),
-                cwd=spec.get("cwd", workspace),
-                env={**env, **spec.get("env", {})},
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=errors,
-                # Its own group, so closing it takes whatever it started too.
-                start_new_session=True,
-                limit=LINE_LIMIT,
-            )
-        server = cls(process)
-        try:
-            await server.request(
-                "initialize",
-                {
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "cheese-pi", "version": "0.1.0"},
-                },
-                timeout=LIST_TIMEOUT_S,
-            )
-            await server._send(
-                {"jsonrpc": "2.0", "method": "notifications/initialized"}
-            )
-        except BaseException:
-            await server.close()
-            raise
-        return server
-
-    async def _send(self, message: dict) -> None:
-        assert self.process.stdin is not None
-        self.process.stdin.write(json.dumps(message).encode() + b"\n")
-        await self.process.stdin.drain()
-
-    async def _read(self) -> None:
-        assert self.process.stdout is not None
-        try:
-            while line := await self.process.stdout.readline():
-                try:
-                    message = json.loads(line)
-                except ValueError:
-                    continue
-                if "method" in message:
-                    # A request from the server (sampling, elicitation): there
-                    # is nobody here to answer it, and saying so beats a server
-                    # waiting forever.
-                    if "id" in message:
-                        await self._send(
-                            {
-                                "jsonrpc": "2.0",
-                                "id": message["id"],
-                                "error": {
-                                    "code": -32601,
-                                    "message": "This client has no sampling "
-                                    "or elicitation handler",
-                                },
-                            }
-                        )
-                    continue
-                future = self.pending.pop(message.get("id"), None)
-                if future is not None and not future.done():
-                    future.set_result(message)
-        finally:
-            for future in self.pending.values():
-                if not future.done():
-                    future.set_exception(RuntimeError("MCP process disconnected"))
-            self.pending.clear()
-
-    async def request(self, method: str, params: dict, *, timeout: float) -> dict:
-        self.sequence += 1
-        key = self.sequence
-        future = asyncio.get_running_loop().create_future()
-        self.pending[key] = future
-        try:
-            await self._send(
-                {"jsonrpc": "2.0", "id": key, "method": method, "params": params}
-            )
-            answer = await asyncio.wait_for(future, timeout)
-        finally:
-            self.pending.pop(key, None)
-        if "error" in answer:
-            raise RuntimeError(answer["error"].get("message") or str(answer["error"]))
-        return answer["result"]
-
-    async def close(self) -> None:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(self.process.pid, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(self.process.wait(), 2)
-        except TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(self.process.pid, signal.SIGKILL)
-            await self.process.wait()
-        self.reader.cancel()
-        await asyncio.gather(self.reader, return_exceptions=True)
 
 
 def _pi_result(result: dict) -> dict:
@@ -204,56 +64,24 @@ def _pi_result(result: dict) -> dict:
 class ProjectServers:
     """The session's MCP servers: listed once at start, called by tool name."""
 
-    def __init__(
-        self,
-        state: Path,
-        *,
-        workspace: str,
-        env: dict[str, str],
-        remote: dict | None = None,
-        agent: dict | None = None,
-    ):
-        self.state = state
-        self.agent = dict(agent or {})
-        self.workspace = workspace
-        self.env = env
-        self.remote_names = list((remote or {}).get("servers", []))
-        self.remote = (
-            RemoteClient({"remote_mcp": remote}) if self.remote_names else None
-        )
-        self.stdio: dict[str, StdioServer] = {}
+    def __init__(self, machine):
+        self.machine = machine
         #: pi's tool name -> (server, the server's own tool name)
         self.routes: dict[str, tuple[str, str]] = {}
 
-    async def _list_stdio(self, name: str, spec: dict) -> list[dict]:
-        digest = hashlib.sha256(name.encode()).hexdigest()[:12]
-        server = await StdioServer.start(
-            spec,
-            workspace=self.workspace,
-            env=self.env,
-            log=self.state / f"mcp-{digest}.log",
-        )
-        self.stdio[name] = server
-        return await self._pages(
-            lambda params: server.request("tools/list", params, timeout=LIST_TIMEOUT_S)
-        )
-
-    async def _list_remote(self, name: str) -> list[dict]:
-        assert self.remote is not None
-        remote = self.remote
-        return await self._pages(
-            lambda params: asyncio.to_thread(
-                remote.call,
-                "mcp",
-                {"server": name, "method": "tools/list", "params": params},
-            )
-        )
-
-    @staticmethod
-    async def _pages(ask) -> list[dict]:
+    async def _list(self, server: str) -> list[dict]:
+        client = self.machine.client
         tools, cursor = [], None
         while True:
-            page = await ask({"cursor": cursor} if cursor else {})
+            page = await asyncio.to_thread(
+                client.call,
+                "mcp",
+                {
+                    "server": server,
+                    "method": "tools/list",
+                    "params": {"cursor": cursor} if cursor else {},
+                },
+            )
             tools += page.get("tools", [])
             cursor = page.get("nextCursor")
             if not cursor:
@@ -267,32 +95,16 @@ class ProjectServers:
         tools are absent rather than broken.
         """
         try:
-            declared = stdio_servers(self.workspace)
-        except ValueError as error:
-            print(f"[cheese] .mcp.json is unreadable: {error}", file=sys.stderr)
-            declared = {}
-        stdio = {
-            name: spec
-            for name, spec in declared.items()
-            if name not in self.remote_names
-        }
-        for name, spec in self.agent.items():
-            if name not in stdio and name not in self.remote_names:
-                stdio[name] = spec
-        names = [*stdio, *self.remote_names]
+            servers = await asyncio.to_thread(self.machine.servers)
+        except Exception as error:  # noqa: BLE001 — the room still opens
+            print(f"[cheese] MCP servers unavailable: {error}", file=sys.stderr)
+            return []
         listings = await asyncio.gather(
-            *(
-                asyncio.wait_for(self._list_stdio(name, spec), LIST_TIMEOUT_S * 2)
-                for name, spec in stdio.items()
-            ),
-            *(
-                asyncio.wait_for(self._list_remote(name), LIST_TIMEOUT_S * 2)
-                for name in self.remote_names
-            ),
+            *(asyncio.wait_for(self._list(name), LIST_TIMEOUT_S) for name in servers),
             return_exceptions=True,
         )
         tools = []
-        for server, listing in zip(names, listings, strict=True):
+        for server, listing in zip(servers, listings, strict=True):
             if isinstance(listing, BaseException):
                 print(
                     f"[cheese] MCP server {server} is unavailable: "
@@ -314,53 +126,38 @@ class ProjectServers:
                 )
         return tools
 
-    async def call(
-        self, tool: str, arguments: dict, *, call_id: str, cwd: str | None = None
-    ) -> dict:
-        """One tool call, with the project's hooks around it (`hooks.py`): a
-        `PreToolUse` block means the call is not made, and a `PostToolUse`
-        block is added to the result as feedback, since the call has happened."""
+    def _call(self, server: str, tool: str, arguments: dict, call_id: str) -> dict:
+        client = self.machine.client
+        if server not in client.remote_servers():
+            # The machine's own server: its executor runs the hooks around it.
+            return client.call(
+                "invoke",
+                {
+                    "id": call_id,
+                    "server": server,
+                    "tool": tool,
+                    "args": arguments,
+                },
+            )
+        if not self.machine.taken:
+            # The project's hooks are the machine's, and a remote server needs
+            # none: a session that has not needed its machine yet has no hooks
+            # to run, and is not made to take one for this call.
+            return client.remote_mcp(
+                "invoke", {"server": server, "tool": tool, "args": arguments}
+            )
+        return client.remote_call_with_hooks(call_id, server, tool, arguments)
+
+    async def call(self, tool: str, arguments: dict, *, call_id: str) -> dict:
+        """One tool call, with the project's hooks around it: a `PreToolUse`
+        block means the call is not made, and a `PostToolUse` block is added to
+        the result as feedback, since the call has happened."""
         if tool not in self.routes:
             raise ValueError(f"No MCP tool named {tool}")
         server, original = self.routes[tool]
-        around = {
-            "call_id": call_id,
-            "root": self.workspace,
-            "cwd": cwd,
-            "env": self.env,
-            "session_id": self.state.name,
-        }
-        try:
-            arguments = await hooks.run("PreToolUse", tool, arguments, **around)
-        except hooks.Denied as denied:
-            raise RuntimeError(str(denied)) from None
-        if server in self.stdio:
-            result = await self.stdio[server].request(
-                "tools/call",
-                {"name": original, "arguments": arguments},
-                timeout=CALL_TIMEOUT_S,
-            )
-        else:
-            assert self.remote is not None
-            receipt = await asyncio.to_thread(
-                self.remote.call,
-                "invoke",
-                {"server": server, "tool": original, "args": arguments},
-            )
-            if "error" in receipt:
-                raise RuntimeError(receipt["error"])
-            result = receipt["value"]
-        answer = _pi_result(result)
-        try:
-            await hooks.run("PostToolUse", tool, arguments, result=result, **around)
-        except hooks.Denied as denied:
-            answer["content"].append(
-                {"type": "text", "text": f"PostToolUse hook: {denied}"}
-            )
-        return answer
-
-    async def close(self) -> None:
-        servers, self.stdio = list(self.stdio.values()), {}
-        await asyncio.gather(
-            *(server.close() for server in servers), return_exceptions=True
+        receipt = await asyncio.to_thread(
+            self._call, server, original, arguments, call_id
         )
+        if "error" in receipt:
+            raise RuntimeError(receipt["error"])
+        return _pi_result(receipt["value"])

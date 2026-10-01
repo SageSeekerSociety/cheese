@@ -38,9 +38,10 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     release,
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
-from app.domain.agent.harness.pi import catalog
+from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.support.room_machine import NO_MACHINE
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 HARNESSES = ["claude-code", "codex", "pi"]
@@ -229,8 +230,9 @@ def harness(request, client, room, tmp_path, monkeypatch):
     else:
         for name, value in env.items():
             monkeypatch.setenv(name, value)
-        monkeypatch.setattr(catalog, "cli_path", lambda: CLI)
+        # Platform tools take no machine: the room's has none yet.
         runner = PiRunner(tmp_path / "pi")
+        runner.machine = Machine(NO_MACHINE)
 
         def call(tool, arguments):
             result = asyncio.run(

@@ -91,7 +91,6 @@
   "cloudStepConnect": "Starting the connector",
   "cloudStepConnector": "Downloading the connector",
   "cloudStepPreparingClaude": "Preparing the Claude runtime",
-  "cloudStepRuntime": "Installing the runtime",
   "cloudStepTools": "Checking and installing basic tools",
   "cloudStepTransferringClaude": "Transferring the Claude runtime",
   "cloudStepVerify": "Checking the connector service",

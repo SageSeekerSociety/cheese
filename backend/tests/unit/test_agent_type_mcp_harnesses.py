@@ -14,7 +14,6 @@ and which hooks ran around it. The machine's checkout never names the server.
 import argparse
 import asyncio
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -231,10 +230,12 @@ def test_a_session_at_the_placeholder_lists_no_stdio_server():
 
 
 def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
-    """pi's runner is its MCP client: it starts the type's server on the
-    machine as it starts the checkout's, and runs the project's hooks around
+    """pi's runner is its MCP client: the room's machine starts the type's
+    server as it starts the checkout's, and runs the project's hooks around
     the call."""
+    from app.domain.agent.harness.pi.machine import Machine
     from app.domain.agent.harness.pi.runner import Runner
+    from tests.support.room_machine import room_machine
 
     work = tmp_path / "room"
     (work / ".claude").mkdir(parents=True)
@@ -245,34 +246,33 @@ def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
     runner = Runner(tmp_path / "pi")
 
     async def session():
-        try:
-            await runner.open_servers(
-                workspace=str(work),
-                env=dict(os.environ),
-                remote=None,
-                agent={"lint": _definition(tmp_path)},
+        with room_machine(tmp_path / "machine", checkout=work) as target:
+            runner.machine = Machine(
+                {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
             )
-            home = runner.write_extension(
-                {"index.ts": "export default function () {}\n", "background.py": "\n"}
-            )
-            answers: list[object] = []
-            for index, note in enumerate(("hello", "FORBIDDEN")):
-                try:
-                    answers.append(
-                        await runner.dispatch(
-                            "mcp",
-                            {
-                                "id": f"call-{index}",
-                                "tool": "mcp__lint__where",
-                                "arguments": {"note": note},
-                            },
+            try:
+                await runner.open_servers()
+                home = runner.write_extension(
+                    {"index.ts": "export default function () {}\n"}
+                )
+                answers: list[object] = []
+                for index, note in enumerate(("hello", "FORBIDDEN")):
+                    try:
+                        answers.append(
+                            await runner.dispatch(
+                                "mcp",
+                                {
+                                    "id": f"call-{index}",
+                                    "tool": "mcp__lint__where",
+                                    "arguments": {"note": note},
+                                },
+                            )
                         )
-                    )
-                except Exception as error:  # noqa: BLE001 — the answer under test
-                    answers.append(error)
-            return (home / "platform.json").read_text(), answers
-        finally:
-            await runner.close()
+                    except Exception as error:  # noqa: BLE001 — the answer under test
+                        answers.append(error)
+                return (home / "platform.json").read_text(), answers
+            finally:
+                await runner.close()
 
     manifest, (allowed, denied) = asyncio.run(session())
     assert [tool["name"] for tool in json.loads(manifest)["mcp"]] == [

@@ -44,6 +44,61 @@ export function createLocalBashOperations() {
   };
 }
 
+// read, write and edit as pi builds them on their operations, reduced to what
+// the extension relies on: the path is resolved against the directory the call
+// is handed (pi prefers it to the one the tool was built with), and every byte
+// goes through the operations.
+function resolved(cwd: string, file: string, ctx: any) {
+  return file.startsWith("/") ? file : `${ctx?.cwd || cwd}/${file}`;
+}
+
+export function createReadTool(cwd: string, settings: { operations: any }) {
+  return {
+    name: "read",
+    label: "read",
+    description: "Read a file",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+    async execute(_id: string, params: any, _signal?: any, _update?: any, ctx?: any) {
+      const file = resolved(cwd, params.path, ctx);
+      await settings.operations.access(file);
+      const data: Buffer = await settings.operations.readFile(file);
+      return { content: [{ type: "text", text: data.toString("utf8") }], details: {} };
+    },
+  };
+}
+
+export function createWriteTool(cwd: string, settings: { operations: any }) {
+  return {
+    name: "write",
+    label: "write",
+    description: "Write a file",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+    async execute(_id: string, params: any, _signal?: any, _update?: any, ctx?: any) {
+      const file = resolved(cwd, params.path, ctx);
+      await settings.operations.mkdir(file.replace(/\/[^/]*$/, ""));
+      await settings.operations.writeFile(file, params.content);
+      return { content: [{ type: "text", text: `Successfully wrote to ${params.path}` }] };
+    },
+  };
+}
+
+export function createEditTool(cwd: string, settings: { operations: any }) {
+  return {
+    name: "edit",
+    label: "edit",
+    description: "Edit a file",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+    async execute(_id: string, params: any, _signal?: any, _update?: any, ctx?: any) {
+      const file = resolved(cwd, params.path, ctx);
+      await settings.operations.access(file);
+      let text = (await settings.operations.readFile(file)).toString("utf8");
+      for (const edit of params.edits) text = text.replace(edit.oldText, edit.newText);
+      await settings.operations.writeFile(file, text);
+      return { content: [{ type: "text", text: "edited" }] };
+    },
+  };
+}
+
 export function createBashTool(cwd: string, settings: { operations?: any } = {}) {
   const operations = settings.operations ?? createLocalBashOperations();
   return {

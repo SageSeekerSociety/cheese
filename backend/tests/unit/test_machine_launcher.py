@@ -21,7 +21,6 @@ import pytest
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.launch import MachinePlace
-from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.project.environment import EnvironmentConfig
 
 
@@ -257,26 +256,11 @@ def _place(**overrides) -> MachinePlace:
     )
 
 
-@pytest.mark.parametrize(
-    "plan",
-    [
-        pytest.param(ClaudeLaunch(system_prompt="房间的系统提示词"), id="claude-code"),
-        pytest.param(
-            PiLaunch(
-                system_prompt="房间的系统提示词", model="glm-5.2", agent_handle="ops"
-            ),
-            id="pi",
-        ),
-    ],
-)
-def test_one_channel_carries_whichever_harness_it_was_handed(plan):
-    """同一段 channel 逻辑，两个 harness —— 这是「切干净」的那句话本身。
-
-    The platform half of the environment is the same sentence for both, and
-    neither the composition nor anything it reads had to learn which one it is
-    holding. A regression here does not look like a broken test elsewhere: it
-    looks like the second harness never being reachable.
-    """
+def test_a_screen_carries_the_platforms_half_whatever_runs_in_it():
+    """The platform half of the environment is the same sentence for any plan
+    a channel is handed: neither the composition nor anything it reads has to
+    learn which harness it is holding."""
+    plan = ClaudeLaunch(system_prompt="房间的系统提示词")
     place = _place()
     command, env = machine_launcher.screen_launch(
         place,
@@ -321,17 +305,6 @@ def test_a_screen_with_no_room_context_is_given_none_rather_than_empty():
 
     placed = machine_launcher.screen_env(_place(), token="t")
     assert placed["CHEESE_TOPIC"] == "T"
-
-
-def test_the_two_harnesses_do_not_produce_the_same_launch():
-    """The parametrised test above would pass just as well if `on` ignored the
-    plan, so this is the half that says the answers actually differ."""
-    place = _place()
-    claude = ClaudeLaunch(system_prompt="x").on(place)
-    pi = PiLaunch(system_prompt="x", model="glm-5.2").on(place)
-    assert claude.command != pi.command
-    assert "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH" in claude.env
-    assert pi.env == {}
 
 
 # --- the machine's document toolchain ---------------------------------------

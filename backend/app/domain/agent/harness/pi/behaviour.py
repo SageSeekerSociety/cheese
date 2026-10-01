@@ -12,7 +12,7 @@
 """
 
 from app.domain.agent.capability import BuiltIn, Declaration, Difference
-from app.domain.agent.harness.pi.device_launch import VERSION
+from app.domain.agent.harness.pi.launch import VERSION
 
 #: 见 ``claude_code/behaviour.py`` 同名常量：升级 pin 就要重新读一遍再改这里。
 VERIFIED_AGAINST = "0.85.1"
