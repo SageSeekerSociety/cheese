@@ -50,6 +50,8 @@ from tests.unit.test_claude_runner import Machine
         "history",
         "history-pruned",
         "ordinary-start",
+        "ordinary-resume",
+        "ordinary-recovery",
         "history-multi",
         "history-multi-session",
         "history-multi-missing",
@@ -430,7 +432,9 @@ def test_http_answer_continues_original_native_executor(
         prepared_gate = asyncio.Event()
         prepared_seen = asyncio.Event()
         delayed_writes = []
-        if mode in ("idle-race", "accepted-start", "project-seat", "ordinary-start"):
+        if mode in ("idle-race", "accepted-start", "project-seat") or mode.startswith(
+            "ordinary-"
+        ):
             assemble = chat._assemble_turn
 
             async def paused_assembly(**kwargs):
@@ -441,7 +445,7 @@ def test_http_answer_continues_original_native_executor(
 
             if mode == "idle-race":
                 chat._assemble_turn = paused_assembly
-            elif mode in ("accepted-start", "ordinary-start"):
+            elif mode == "accepted-start" or mode.startswith("ordinary-"):
                 write = native_runner._write
 
                 async def accepted_write(message):
@@ -523,6 +527,7 @@ def test_http_answer_continues_original_native_executor(
         assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
 
         async def verify():
+            nonlocal chat, runtime
             if mode == "history-pruned":
                 await get_work_runner().drain(10)
                 assert operations.count("send") == initial_sends
@@ -537,7 +542,7 @@ def test_http_answer_continues_original_native_executor(
                     )
                     assert row.completed_at is None
                 return
-            if mode == "ordinary-start":
+            if mode.startswith("ordinary-"):
                 await get_work_runner().drain(10)
                 assert len(delayed_writes) == 1 and not native_runner.working
                 async with client.test_request_factory() as session:
@@ -587,6 +592,29 @@ def test_http_answer_continues_original_native_executor(
                     while not native_runner.working:
                         await asyncio.sleep(0.01)
                 assert native_runner.work == str(held_work)
+                if mode != "ordinary-start":
+                    from tests.integration.native_deferred_message import (
+                        finish_deferred_message,
+                    )
+
+                    chat, runtime = await finish_deferred_message(
+                        client=client,
+                        chat=chat,
+                        runtime=runtime,
+                        channel=channel,
+                        native_runner=native_runner,
+                        machine=machine,
+                        operations=operations,
+                        ordinary_id=ordinary.id,
+                        held_work=held_work,
+                        gate=gate,
+                        mode=mode,
+                        monkeypatch=monkeypatch,
+                        topic=topic,
+                        default_seat=default_seat,
+                        recipient_handle=handle.agent_handle,
+                    )
+                    return
             if mode == "project-seat":
                 async with asyncio.timeout(10):
                     await answer_queued.wait()
