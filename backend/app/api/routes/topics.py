@@ -34,7 +34,6 @@ from app.domain.block.models import (
     AuthorType,
     Block,
     BlockKind,
-    agent_notice,
 )
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
@@ -57,7 +56,6 @@ from app.domain.room_task.services import (
     TaskService,
 )
 from app.domain.topic import naming
-from app.domain.topic.doc_checks import living_doc_warnings
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import (
@@ -68,7 +66,6 @@ from app.domain.topic.repositories import (
 )
 from app.domain.topic.schemas import (
     CheckResultIn,
-    DocEditIn,
     LockIn,
     RelayIn,
     SplitIn,
@@ -997,26 +994,6 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.get("/{topic_id}/doc")
-async def get_topic_doc(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """This place's single living doc (spec §2.2 docs-out).
-
-    Two levels exist and both are real: a room's document is the shared picture,
-    a thread's is that one piece of work's brief and then its status. They are
-    told apart by the id in the path.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    doc = await TopicService(db).get_doc(topic_id)
-    if doc is None:
-        return ok(None)
-    return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
-
-
 @router.get("/{topic_id}/overview")
 async def get_topic_overview(
     topic_id: uuid.UUID,
@@ -1037,88 +1014,6 @@ async def get_topic_overview(
     await _actor_in_place(resolver, place)
     blocks = await topics.overview_auto(topic_id)
     return ok({"root_topic_id": str(place.room_id), "blocks": blocks})
-
-
-@router.put("/{topic_id}/doc")
-async def edit_topic_doc(
-    topic_id: uuid.UUID,
-    body: DocEditIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
-    """改文档即指令 (eval B2): edit the living doc; emits a conversation event.
-
-    Conditional on ``expected_version``: this doc has no partial write, so a
-    save based on a version that is no longer current is refused with 409
-    rather than quietly erasing whatever landed in between.
-
-    A person's edit is also pushed into whatever turn is running right now.
-    改文档即指令 has always been true of the NEXT turn — the doc is read at the
-    top of one — and false of the turn already in progress, which went on
-    working from the version it started with and would then set that version
-    back. What gets pushed is the version number and a line about what moved,
-    never the text: the doc is one `cheese_doc_get` away, and a document
-    injected mid-turn displaces the work instead of informing it."""
-    # A thread has a doc of its own — its brief, and then how the work is
-    # going — and `edit_doc` has always written by place. Only this handler
-    # still refused to name one, so `cheese_doc_set` 404ed for every 分身 doing
-    # the work while `cheese_doc_get` right above answered fine.
-    place = await TopicService(db).place_or_404(topic_id)
-    # actor 在信任边界注入: prefer the verified token, fall back to body.author.
-    # The token is scoped to the place; the roster is the room's.
-    actor = await resolver.resolve(
-        fallback_handle=body.author,
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    # Same backstop as chat replies: friendly "@名字 / @话题名" → structured
-    # token, so refs in the doc render as clickable chips (docs used to skip
-    # this and stayed plain text).
-    content = await canonicalize_refs(
-        db, place.project_id, body.content, exclude_topic_id=place.room_id
-    )
-    doc, notice = await TopicService(db).edit_doc(
-        topic_id=topic_id,
-        content=content,
-        author=actor.handle,
-        expected_version=body.expected_version,
-        author_type=AuthorType.participant,
-    )
-    # Publish only committed edits: connected teammates can immediately read
-    # the new document and the same persisted contribution record.
-    await db.commit()
-    broker = get_broker()
-    if notice is not None:
-        await broker.publish(
-            str(place.room_id),
-            {
-                "type": "event_block",
-                "block": BlockOut.model_validate(notice).model_dump(mode="json"),
-            },
-        )
-    await announce_stale(place.room_id, "doc")
-    if topic_id == place.room_id:
-        # A rewritten goal is the clearest sign a room changed direction.
-        naming.nudge(place.room_id, "signal")
-    if notice is not None and (line := agent_notice(notice)):
-        # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
-        # new one by the time it does — same ordering as the comment route.
-        # What it says was written where the document moved (`edit_doc`), so the
-        # running turn and the next one are told the same thing; naming `notice`
-        # is what lets the receipt stamp it consumed instead of it being said
-        # twice.
-        await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
-    # 写入检查（#1889 第 3 条）：**照样写入**，只把「哪里不像状态」跟着响应
-    # 带回去，让写它的人当场改。拦下来是错的——让人先猜格式再写字，比一条警告
-    # 贵得多；而只写进日志的警告等于没写（没人读日志，写它的人也不在那儿）。
-    return ok(
-        BlockOut.model_validate(doc).model_dump(mode="json"),
-        warnings=living_doc_warnings(content),
-    )
 
 
 @router.post("/{topic_id}/deliveries")
