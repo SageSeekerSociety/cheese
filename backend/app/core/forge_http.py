@@ -73,4 +73,6 @@ def forge_client(
         loop, borrowed = _shared
         if loop is asyncio.get_running_loop():
             transport = borrowed
-    return httpx.AsyncClient(transport=transport, **kwargs)
+    if transport is not None:
+        kwargs["transport"] = transport
+    return httpx.AsyncClient(**kwargs)
