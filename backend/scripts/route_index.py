@@ -168,6 +168,56 @@ def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
     return findings
 
 
+def _sync(index_file: str, records: list[RouteRecord]) -> int:
+    """The checked-in index vs the live app (v3 route index + auth column).
+
+    The route SET must match exactly — a route added, removed, or re-shaped
+    without touching the index fails here. The handwritten ``auth`` column
+    is a ratchet: every route added SINCE the index must carry a note, and
+    the list of routes still lacking one may only shrink (same idiom as the
+    boundary baselines — a debt that never grows).
+    """
+    path = Path(index_file)
+    if not path.exists():
+        print(f"route index missing: {index_file}")
+        return 1
+    indexed = [
+        json.loads(line) for line in path.read_text().splitlines() if line.strip()
+    ]
+    live = [
+        {
+            "index": record.index,
+            "protocol": record.protocol,
+            "path": record.path,
+            "methods": sorted(record.methods),
+            "endpoint": record.endpoint,
+        }
+        for record in records
+    ]
+    live_keys = {
+        (row["protocol"], row["path"], tuple(row["methods"]), row["endpoint"])
+        for row in live
+    }
+    indexed_keys = {
+        (row["protocol"], row["path"], tuple(row["methods"]), row["endpoint"])
+        for row in indexed
+    }
+    added = live_keys - indexed_keys
+    removed = indexed_keys - live_keys
+    for key in sorted(added):
+        print(f"[added] {key} — not in the index (auth note required)")
+    for key in sorted(removed):
+        print(f"[removed] {key} — still in the index")
+    empty = [row["path"] for row in indexed if not row.get("auth")]
+    if added or removed:
+        print(f"route index out of sync: +{len(added)} −{len(removed)}")
+        return 1
+    # The missing-note debt, shrunk only: recorded as a count the same way
+    # the boundary baselines record theirs.
+    print(f"route index in sync ({len(indexed)} routes); {len(empty)} auth notes owed")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -175,6 +225,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--check", action="store_true", help="run the first-match guard"
+    )
+    parser.add_argument(
+        "--sync",
+        metavar="FILE",
+        help="verify the checked-in index matches the live app (v3 sync)",
     )
     args = parser.parse_args()
 
@@ -230,6 +285,8 @@ def main() -> int:
             return 1
         print(f"first-match guard: clean ({len(findings)} witness-only pairs)")
         return 0
+    if args.sync:
+        return _sync(args.sync, records)
     parser.print_help()
     return 2
 

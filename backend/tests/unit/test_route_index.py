@@ -5,6 +5,8 @@ protocols never cross. The real-app assertions pin the fixed profile's
 effective expansion, including the seven WebSocket routes.
 """
 
+import json
+
 from fastapi import APIRouter, FastAPI
 
 from scripts.route_index import RouteRecord, collect, first_match_findings
@@ -125,3 +127,58 @@ def test_records_keep_their_methods_for_the_http_intersection():
     )
     assert not record.all_literal
     assert record.segments == ("users", "{userId}")
+
+
+def _write_index(tmp_path, records, auth="") -> str:
+    path = tmp_path / "index.json"
+    with open(path, "w") as fh:
+        for record in records:
+            fh.write(
+                json.dumps(
+                    {
+                        "index": record.index,
+                        "protocol": record.protocol,
+                        "path": record.path,
+                        "methods": sorted(record.methods),
+                        "endpoint": record.endpoint,
+                        "auth": auth,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return str(path)
+
+
+def test_the_sync_check_catches_drift_both_ways(tmp_path):
+    from scripts.route_index import _sync
+
+    app = _app_with((["GET"], "/users/{user_id}", "get_user"))
+    records = collect(app)
+    good = _write_index(tmp_path, records)
+    assert _sync(good, records) == 0, "an exact index is in sync"
+
+    drifted = _write_index(tmp_path, records[1:])
+    assert _sync(drifted, records) == 1, "a missing row fails"
+    renamed = _write_index(
+        tmp_path,
+        records[1:]
+        + [
+            RouteRecord(
+                index=records[0].index,
+                protocol=records[0].protocol,
+                path=records[0].path,
+                methods=records[0].methods,
+                endpoint="elsewhere.other",
+                name=records[0].name,
+            )
+        ],
+    )
+    assert _sync(renamed, records) == 1, "a re-pointed row fails"
+
+
+def test_the_real_index_is_the_collectors_truth():
+    from app.main import app
+    from scripts.route_index import _sync
+
+    assert _sync("scripts/route_index.json", collect(app)) == 0
