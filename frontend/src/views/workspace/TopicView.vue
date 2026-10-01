@@ -18,6 +18,7 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames } from '@/lib/agentNames'
+import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { topicPhase, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -325,6 +326,12 @@ async function loadMemberNames() {
   }
 }
 void loadMemberNames()
+// 名册抽屉里加了人、移了人，这份跟着重拉：刚请进来的队友在「现场」那一格也要叫得出名字。
+onUnmounted(
+  onTopicRosterChange((topicId) => {
+    if (topicId === props.topicId) void loadMemberNames()
+  })
+)
 
 // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
 // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，

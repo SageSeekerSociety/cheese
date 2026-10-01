@@ -42,6 +42,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import notice_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import (
     NAMES_NOBODY,
@@ -205,14 +206,16 @@ async def _notify(
             # 房间里刚落下的那一行就是这条事件 —— 投递账本按它去重、按它补发。
             # 调用点给了身份就用它：那件事比它这一行长命。
             id=event_id or block.id,
-            # 一个类别码走完所有平台提示，具体是哪件事看 `eventType` —— 通知要显示
-            # 的那句话是后端给的 `content`，不是前端按类别码拼出来的模板。
+            # 一个类别码走完所有平台提示，具体是哪件事看 `eventType`。通知显示的
+            # 就是房间里那一行：`message` 是它的键和参数，读者的屏幕按读者的语言
+            # 渲染；`content` 是那句中文，给没有键的旧行和读不了目录的渠道（推送）。
             type=NotificationType.ROOM_NOTICE,
             payload={
                 "projectId": str(place.project_id),
                 "topicId": str(place.room_id),
                 "topicTitle": place.title,
                 "content": content,
+                **notice_message(block.meta),
                 "eventType": str(meta.get("event_type") or ""),
                 "severity": str(meta.get("severity") or SEVERITY_INFO),
             },

@@ -46,6 +46,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 
 import TaskForm from '../TaskForm.vue'
 
+import i18n from '@/i18n'
 import { PUBLISH_CHECKS_SINK } from '@/lib/taskPublishChecks'
 
 beforeAll(() => {
@@ -97,7 +98,7 @@ function mountForm(harness: Harness, initialData: Record<string, unknown> = {}) 
   const view = render(TaskForm as Component, {
     props: { submitButtonText: '提交', initialData },
     global: {
-      plugins: [createVuetify({ components, directives })],
+      plugins: [createVuetify({ components, directives }), i18n],
       provide: { [PUBLISH_CHECKS_SINK as symbol]: harness.sink },
     },
   })
@@ -128,7 +129,7 @@ describe('发题表单 →「提交前」清单', () => {
 
     expect(harness.ids()).toEqual(['name', 'submitterType', 'rank', 'categoryId'])
     // 报的每一句都是人话，不是字段名。
-    expect(harness.state.last?.map((check) => check.text).join(' ')).toContain('标题')
+    expect(harness.state.last?.[0]).toEqual({ id: 'name', text: i18n.global.t('tasks.publishChecks.name') })
   })
 
   it('标题一边敲一边报：空着报、填上就不报、清掉又报', async () => {
@@ -149,17 +150,17 @@ describe('发题表单 →「提交前」清单', () => {
     const harness = makeSink()
     const view = await mounted(harness, FILLED)
 
-    await fireEvent.update(view.getByLabelText('视频链接（选填）'), 'http://example.com/video')
+    await fireEvent.update(view.getByLabelText('tasks.form.video.label'), 'http://example.com/video')
     await waitFor(() => expect(harness.ids()).toEqual(['videoUrl']))
 
-    await fireEvent.update(view.getByLabelText('视频链接（选填）'), 'https://www.bilibili.com/video/BV1xx411c7mD')
+    await fireEvent.update(view.getByLabelText('tasks.form.video.label'), 'https://www.bilibili.com/video/BV1xx411c7mD')
     await waitFor(() => expect(harness.ids()).toEqual([]))
   })
 
   it('参与人数上限：填 0 被拦，填上 ≥ 1 的整数放行（清单空的那一刻表单也真交得出去）', async () => {
     const harness = makeSink()
     const view = await mounted(harness, FILLED)
-    const box = view.getByLabelText('参与者人数限制')
+    const box = view.getByLabelText('tasks.form.participantLimit')
 
     await fireEvent.update(box, '0')
     await waitFor(() => expect(harness.ids()).toEqual(['participantLimit']))
@@ -181,7 +182,7 @@ describe('发题表单 →「提交前」清单', () => {
   it('参与人数上限：删空之后拿到的是空串、表单照样拦（所以清单也照样报）', async () => {
     const harness = makeSink()
     const view = await mounted(harness, FILLED)
-    const box = view.getByLabelText('参与者人数限制')
+    const box = view.getByLabelText('tasks.form.participantLimit')
 
     await fireEvent.update(box, '12')
     await waitFor(() => expect(harness.ids()).toEqual([]))

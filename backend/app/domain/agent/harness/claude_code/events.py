@@ -104,13 +104,18 @@ def _authored(events: list[AgentEvent], record: dict) -> list[AgentEvent]:
 def _retrying(record: dict, label: str | None) -> AgentRetrying:
     """``system/api_retry``, as the pinned build writes it: ``attempt``,
     ``max_retries``, ``retry_delay_ms``, ``error_status`` (null for a
-    connection error) and ``error``, the kind of failure."""
+    connection error), ``error``, the kind of failure, and — only when the
+    request got no response at all — ``no_response.waited_ms``."""
+    no_response = record.get("no_response")
     return AgentRetrying(
         error=str(record.get("error") or ""),
         attempt=_count(record.get("attempt")),
         max_attempts=_count(record.get("max_retries")),
         delay_ms=_count(record.get("retry_delay_ms")),
         status=_count(record.get("error_status")),
+        no_response_ms=_count(no_response.get("waited_ms"))
+        if isinstance(no_response, dict)
+        else None,
         thread_label=label,
     )
 

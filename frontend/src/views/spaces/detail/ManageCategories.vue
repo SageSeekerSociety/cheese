@@ -94,7 +94,7 @@
               :label="t('spaces.detail.manageCategories.displayOrder')"
               type="number"
               min="0"
-              hint="越小越靠前显示"
+              :hint="t('spaces.detail.manageCategories.displayOrderHint')"
               v-bind="displayOrderProps"
             ></v-text-field>
           </v-form>

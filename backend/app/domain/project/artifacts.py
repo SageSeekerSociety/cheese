@@ -68,6 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -132,9 +133,9 @@ def clean_name(raw: str | None) -> str:
     """
     name = _unwrap(" ".join((raw or "").split()))
     if not name:
-        raise ValidationError("产物的名字不能是空的")
+        raise ValidationError(say("artifactNameEmpty"))
     if len(name) > NAME_MAX:
-        raise ValidationError(f"产物的名字最长 {NAME_MAX} 个字")
+        raise ValidationError(say("artifactNameTooLong", max=NAME_MAX))
     return name
 
 
@@ -319,7 +320,7 @@ async def get_or_404(
     """这个项目清单上的那一行。别的项目的一行在这里就是不存在。"""
     row = await session.get(ProjectArtifact, artifact_id)
     if row is None or row.project_id != project_id:
-        raise NotFoundError("产物清单上没有这一项")
+        raise NotFoundError(say("artifactNotFound"))
     return row
 
 
@@ -339,10 +340,7 @@ async def rename(
         return artifact
     taken = await _by_name(session, project_id=artifact.project_id, name=clean)
     if taken is not None:
-        raise ValidationError(
-            f"《{clean}》已经是清单上另一项了。它们确实是同一个东西，就把这一项"
-            "合并到它；不是的话，换一个说得出区别的名字。"
-        )
+        raise ValidationError(say("artifactNameTaken", name=clean))
     artifact.name = clean
     await session.flush()
     return artifact

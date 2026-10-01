@@ -75,7 +75,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'needs_you', display_status: '待审阅' },
+    presentation: { column: 'needs_you', phrase: 'awaiting_review' },
     ...over,
   }
 }
@@ -86,25 +86,25 @@ const ROWS = [
     id: 'b',
     title: '归档的待处理',
     room_id: 'room-old',
-    presentation: { column: 'needs_you', display_status: '已退回' },
+    presentation: { column: 'needs_you', phrase: 'bounced' },
   }),
   task({
     id: 'c',
     title: '归档的施工',
     room_id: 'room-old',
-    presentation: { column: 'building', display_status: '已动工' },
+    presentation: { column: 'building', phrase: 'started' },
   }),
   task({
     id: 'd',
     title: '归档的交付',
     room_id: 'room-old',
-    presentation: { column: 'delivering', display_status: '等待检查' },
+    presentation: { column: 'delivering', phrase: 'awaiting_checks' },
   }),
   task({
     id: 'e',
     title: '归档的已完成',
     room_id: 'room-old',
-    presentation: { column: 'done', display_status: '已采纳' },
+    presentation: { column: 'done', phrase: 'accepted' },
   }),
 ]
 

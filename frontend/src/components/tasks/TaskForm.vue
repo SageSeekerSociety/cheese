@@ -17,6 +17,7 @@
 import type { DomainGroup, SpaceCategory, TaskFormSubmitData, Topic } from '@/types'
 
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { useTaskForm } from '@/composables/useTaskForm'
 
@@ -29,6 +30,8 @@ import TaskFormRealNameCard from './form/TaskFormRealNameCard.vue'
 import TaskFormTimeCard from './form/TaskFormTimeCard.vue'
 import TaskFormVideoCard from './form/TaskFormVideoCard.vue'
 import TaskFormVideoDialog from './form/TaskFormVideoDialog.vue'
+
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -45,7 +48,7 @@ const props = withDefaults(
   }>(),
   {
     initialData: null,
-    submitButtonText: '提交',
+    submitButtonText: '',
     isEditing: false,
     classificationTopics: () => [],
     categories: () => [],
@@ -187,8 +190,12 @@ const {
     <div class="d-flex justify-end">
       <slot name="buttons" :is-submitting="isSubmitting">
         <div class="d-flex gap-4">
-          <v-btn v-if="isEditing" variant="text" :disabled="isSubmitting" @click="handleCancel">取消</v-btn>
-          <v-btn type="submit" color="primary" size="large" :loading="isSubmitting">{{ submitButtonText }}</v-btn>
+          <v-btn v-if="isEditing" variant="text" :disabled="isSubmitting" @click="handleCancel">{{
+            t('global.cancel')
+          }}</v-btn>
+          <v-btn type="submit" color="primary" size="large" :loading="isSubmitting">{{
+            submitButtonText || t('tasks.form.submit')
+          }}</v-btn>
         </div>
       </slot>
     </div>

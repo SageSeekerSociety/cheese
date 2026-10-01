@@ -23,7 +23,7 @@ const list: ChecklistMeta = {
   result: null,
 }
 
-function mount(props: { checklist?: ChecklistMeta; updatedAt: string; edited?: boolean }) {
+function mount(props: { checklist?: ChecklistMeta; updatedAt: string; edited?: boolean; live?: boolean }) {
   return render(ChecklistMessage, {
     props: { checklist: list, edited: false, ...props },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -49,6 +49,23 @@ describe('步骤清单消息', () => {
     expect(row(view, '核实问题').querySelector('.mdi-check')).not.toBeNull()
     expect(row(view, '写实现').className).toContain('is-in_progress')
     expect(row(view, '核实问题').className).toContain('is-completed')
+  })
+
+  // 队友还在推进时，正在做的那一步换成一颗在动的星；这一轮停了（或是更早的一张），
+  // 就只剩静止的 ✱——没有在发生的事，就不该动。
+  it('队友正在推进时，正在做的那一步在动；别的步骤不动', () => {
+    const view = mount({ updatedAt: NOW.toISOString(), live: true })
+    expect(row(view, '写实现').classList).toContain('is-live')
+    expect(row(view, '写实现').querySelector('.mdi-asterisk')).toBeNull()
+    expect(row(view, '写实现').querySelector('svg')).not.toBeNull()
+    expect(row(view, '补测试').classList).not.toContain('is-live')
+    expect(row(view, '核实问题').classList).not.toContain('is-live')
+  })
+
+  it('停下来的清单不动', () => {
+    const view = mount({ updatedAt: NOW.toISOString(), live: false })
+    expect(row(view, '写实现').classList).not.toContain('is-live')
+    expect(row(view, '写实现').querySelector('.mdi-asterisk')).not.toBeNull()
   })
 
   it('做完时下面接一句结果', () => {

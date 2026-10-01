@@ -31,14 +31,17 @@ export const workspaceRoutes: RouteRecordRaw = {
     sidebar: () => import('@/views/workspace/ProjectSidebar.vue'),
   },
   props: { default: true, sidebar: true },
-  // `projectFrame` 标出「项目这个框」。顶栏那颗 ← 靠它回答两个问题：这一跳是不是
-  // 从项目外面走进来的（是才记入口），以及现在还在不在同一个框里（在就别覆盖）。
-  // 用标记而不是比对 URL 前缀：`/project/<id>` 的旧链接会先经过一次重定向，比
-  // 前缀会把重定向前后判成两个不同的地方。
+  // `projectFrame` 标出「项目这个框」。没有浏览历史可退时，顶栏那颗 ← 靠它认出
+  // 自己站在项目的根上，退到项目所属的小队。
   // 顶栏标题是这个项目的名字（ProjectShell 按 `project-frame` 这个键填进来），不是
   // 一句对哪个项目都一样的「项目工作台」：顶栏回答的是「我在哪」，各页的页头回
   // 答「这一页是什么」。名字到货之前先用这句兜底。
-  meta: { title: '项目工作台', dynamicTitleKey: 'project-frame', isFullPage: true, projectFrame: true },
+  meta: {
+    titleKey: 'navigation.pages.projectWorkspace',
+    dynamicTitleKey: 'project-frame',
+    isFullPage: true,
+    projectFrame: true,
+  },
   children: [
     {
       name: 'workspace-project',
@@ -72,7 +75,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/workspace/RunningWorkView.vue'),
       props: true,
       meta: {
-        title: '看板',
+        titleKey: 'navigation.project.board',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
@@ -85,7 +88,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       props: true,
       // ← 回成员页，不回话题列表：私聊只有一个入口，就是名册。手机顶栏那颗 ←
       // 读的是这里，桌面上私聊头里那颗读的是 DmView，两颗指同一个地方。
-      meta: { title: '私聊', hideTabs: true, backTo: 'project-members' },
+      meta: { titleKey: 'navigation.pages.dm', hideTabs: true, backTo: 'project-members' },
     },
     {
       name: 'project-docs',
@@ -93,7 +96,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectDocsView.vue'),
       props: true,
       meta: {
-        title: '项目文档',
+        titleKey: 'navigation.project.docs',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.docs', icon: 'mdi-file-document-outline', params: { kind: 'charter' } },
@@ -112,7 +115,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/CalendarView.vue'),
       props: true,
       meta: {
-        title: '日历',
+        titleKey: 'navigation.project.calendar',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
@@ -126,7 +129,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectLibraryView.vue'),
       props: true,
       meta: {
-        title: '资料库',
+        titleKey: 'navigation.project.library',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
@@ -138,7 +141,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'search',
       component: () => import('@/views/ProjectSearchView.vue'),
       props: true,
-      meta: { title: '搜索', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'navigation.search.title', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       // 定时与触发：房间里的 AI 队友按时间或按项目事件自己开工的那些规则。项目级，
@@ -148,7 +151,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectRoutinesView.vue'),
       props: true,
       meta: {
-        title: '定时与触发',
+        titleKey: 'navigation.project.routines',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
@@ -161,7 +164,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectSkillsView.vue'),
       props: true,
       meta: {
-        title: '工作方法',
+        titleKey: 'navigation.project.skills',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
@@ -174,7 +177,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'artifacts/:artifactId',
       component: () => import('@/views/ProjectArtifactView.vue'),
       props: true,
-      meta: { title: '产物', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'navigation.pages.artifact', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       // AI 队友回到了项目设置里：队友的角色设定和模型本来就是这个项目的设置，而
@@ -190,7 +193,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
       meta: {
-        title: '项目设置',
+        titleKey: 'navigation.project.settings',
         hideTabs: true,
         backTo: 'workspace-project',
         settingsOverlay: true,
@@ -211,7 +214,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/workspace/ProjectMembersView.vue'),
       props: true,
       meta: {
-        title: '成员',
+        titleKey: 'navigation.project.members',
         hideTabs: true,
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
@@ -223,7 +226,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'members/:handle',
       component: () => import('@/views/ProfileView.vue'),
       props: true,
-      meta: { title: '成员', hideTabs: true, backTo: 'project-members' },
+      meta: { titleKey: 'navigation.pages.member', hideTabs: true, backTo: 'project-members' },
     },
     ...DOC_KINDS.map(
       (kind): RouteRecordRaw => ({

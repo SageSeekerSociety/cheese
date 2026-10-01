@@ -55,6 +55,7 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
+from app.domain.block.notice_text import say
 
 # Every read of a room's journal is a call to its device, and an idle room
 # answers it with nothing. Read at the floor while there is anything to read;
@@ -625,7 +626,11 @@ class DrivenRuntime[H: Handle]:
             work,
             AgentResult(
                 text=(
-                    f"{self.label} 的运行程序连续 {RUNNER_GONE_S:.0f} 秒没有应答"
+                    say(
+                        "runnerUnresponsive",
+                        harness=self.label,
+                        seconds=f"{RUNNER_GONE_S:.0f}",
+                    )
                     if out_of_reach
                     else f"{self.label} session process exited"
                 ),

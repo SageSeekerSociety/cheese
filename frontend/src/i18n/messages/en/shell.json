@@ -1,0 +1,65 @@
+{
+  "back": {
+    "to": "Back to {label}",
+    "up": "Back",
+    "previous": "Back"
+  },
+  "countdown": {
+    "days": "d",
+    "hours": "h",
+    "minutes": "m",
+    "seconds": "s",
+    "closed": "Closed"
+  },
+  "empty": "Nothing here yet",
+  "fileSelect": {
+    "upload": "Upload files",
+    "tooMany": "You can upload up to {max} files"
+  },
+  "list": {
+    "loading": "Loading…",
+    "empty": "No data",
+    "loadMore": "Load more",
+    "end": "No more"
+  },
+  "loading": "Loading",
+  "offline": "Offline · New messages can’t be sent or received. Reconnects when the network is back",
+  "version": {
+    "title": "Deployed build {sha} (click to copy)"
+  },
+  "avatar": {
+    "change": "Change avatar",
+    "upload": "Upload avatar"
+  },
+  "dialog": {
+    "ok": "OK"
+  },
+  "topicSelector": {
+    "label": "Add topics",
+    "placeholder": "Search topics or create one"
+  },
+  "notFound": {
+    "text": "This page doesn’t exist",
+    "home": "Back to home"
+  },
+  "errors": {
+    "actionFailed": "Something went wrong",
+    "teamLockedBy": "This team is locked: it’s taking part in {tasks}",
+    "teamLocked": "This team is locked, so its members can’t be changed",
+    "noPermission": "You don’t have permission to do this",
+    "sessionExpired": "Your session expired. Sign in again",
+    "network": "Network request failed",
+    "server": "Server error"
+  },
+  "agentDefaultName": "Cheese",
+  "workspaceErrors": {
+    "loadProject": "Couldn’t load the project",
+    "loadTopics": "Couldn’t load topics",
+    "rename": "Couldn’t rename",
+    "undo": "Couldn’t undo",
+    "archive": "Couldn’t archive",
+    "unarchive": "Couldn’t unarchive",
+    "createTopic": "Couldn’t create the topic",
+    "convertToTopic": "Couldn’t turn it into a topic"
+  }
+}

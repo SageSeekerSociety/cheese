@@ -20,11 +20,7 @@ from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import (
-    ForbiddenError,
-    NotFoundError,
-    ValidationError,
-)
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.runtime import (
@@ -40,6 +36,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -551,7 +548,7 @@ async def list_topic_blocks(
             or cursor.task_id is not None
             or cursor.kind in BlockRepository.NON_TIMELINE
         ):
-            raise NotFoundError("游标消息不存在")
+            raise NotFoundError(say("cursorMessageNotFound"))
         return cursor
 
     older_than = await cursor_of(before)
@@ -1214,9 +1211,9 @@ async def summon_agent(
         # 因此恰好有它一个，这一轮才跑得起来。
         addressed=addressed_to_agent(seat),
         nudge_event=(
-            f"<@{actor.handle}> 把之前的消息交给了 <@{seat}>"
+            say("pendingHandedTo", actor=f"<@{actor.handle}>", seat=f"<@{seat}>")
             if seat
-            else f"<@{actor.handle}> 交出了之前的消息"
+            else say("pendingHandedOver", actor=f"<@{actor.handle}>")
         ),
         provision_actor=actor,
     )
@@ -1239,7 +1236,7 @@ async def answer_options(
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
-        raise NotFoundError("问题不存在")
+        raise NotFoundError(say("optionQuestionNotFound"))
     actor = await resolver.resolve(
         fallback_handle=body.get("author"),
         topic_id=blk.topic_id,
@@ -1257,7 +1254,7 @@ async def answer_options(
         raise ValidationError("不在选项里")
     if meta.get("answered"):
         raise ValidationError(
-            f"已由 {meta.get('answered_by')} 选过：{meta.get('answered')}"
+            say("optionTaken", by=meta.get("answered_by"), option=meta.get("answered"))
         )
     meta["answered"] = option
     meta["answered_by"] = author

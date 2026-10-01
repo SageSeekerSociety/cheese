@@ -4,19 +4,19 @@
     v-if="task.submitterType === 'USER' && !canJoin && !task.joined && userReasons.length > 0 && !deadlinePassed"
     type="warning"
     rounded="lg"
-    title="暂时无法参与"
+    :title="t('tasks.eligibilityAlert.cannotJoinTitle')"
   >
     <template #text>
       <div class="mt-2">
         <div class="font-weight-medium">{{ reasonText(userReasons[0]?.code) }}</div>
         <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
-          完成更多基础题目来提升等级，解锁更高难度的题目。
+          {{ t('tasks.eligibilityAlert.rankHint') }}
         </div>
         <div v-if="userReasons[0]?.code === 'MISSING_REAL_NAME'" class="mt-2 text-medium-emphasis">
           <div class="d-flex align-center ga-2">
-            <span>这道题需要实名信息才能参与。</span>
+            <span>{{ t('tasks.eligibilityAlert.needRealName') }}</span>
             <v-btn variant="tonal" size="small" :to="{ name: 'UserSettingsRealName' }">
-              前往填写
+              {{ t('tasks.eligibilityAlert.goFillIn') }}
               <v-icon end>mdi-arrow-right</v-icon>
             </v-btn>
           </div>
@@ -29,22 +29,22 @@
     v-if="task.submitterType === 'TEAM' && !canJoin && !task.joined && !deadlinePassed"
     type="warning"
     rounded="lg"
-    title="团队不满足参与条件"
+    :title="t('tasks.eligibilityAlert.teamNotEligibleTitle')"
   >
     <template #text>
       <div class="mt-2">
         <div v-if="teams.length === 0" class="font-weight-medium">
-          你需要创建或加入一个团队才能参与这道题
+          {{ t('tasks.eligibilityAlert.needTeam') }}
           <div class="mt-2">
             <v-btn variant="tonal" size="small" :to="{ name: 'HomeTeamsMine' }">
-              管理我的团队
+              {{ t('tasks.eligibilityAlert.manageMyTeams') }}
               <v-icon end>mdi-arrow-right</v-icon>
             </v-btn>
           </div>
         </div>
 
         <div v-else-if="!teams.some((team) => team.eligibility.eligible)" class="font-weight-medium">
-          你有 {{ teams.length }} 个团队，但没有一个符合这道题的条件
+          {{ t('tasks.eligibilityAlert.teamsNoneEligible', teams.length) }}
           <v-expansion-panels variant="accordion" class="mt-3">
             <v-expansion-panel v-for="entry in teams" :key="entry.team.id">
               <v-expansion-panel-title class="py-2">
@@ -63,13 +63,13 @@
                     {{ reasonText(reason.code) }}
                   </div>
                   <div v-if="reason.code === 'TEAM_TOO_SMALL'" class="mt-1 text-medium-emphasis">
-                    这道题要求团队至少 {{ task.minTeamSize }} 人，邀请更多成员加入团队。
+                    {{ t('tasks.eligibilityAlert.teamTooSmall', { count: task.minTeamSize }) }}
                   </div>
                   <div v-if="reason.code === 'TEAM_TOO_LARGE'" class="mt-1 text-medium-emphasis">
-                    这道题要求团队最多 {{ task.maxTeamSize }} 人，你的团队人数超出限制。
+                    {{ t('tasks.eligibilityAlert.teamTooBig', { count: task.maxTeamSize }) }}
                   </div>
                   <div v-if="reason.code === 'TEAM_MEMBER_MISSING_REAL_NAME'" class="mt-1">
-                    <p class="text-medium-emphasis mb-2">以下成员尚未填写实名信息：</p>
+                    <p class="text-medium-emphasis mb-2">{{ t('tasks.eligibilityAlert.memberMissingRealName') }}</p>
                     <v-list
                       v-if="entry.team.memberRealNameStatus"
                       density="compact"
@@ -94,7 +94,7 @@
                   class="mt-2"
                   :to="{ name: 'TeamsDetailMembers', params: { handle: entry.team.handle } }"
                 >
-                  管理这个团队
+                  {{ t('tasks.eligibilityAlert.manageThisTeam') }}
                   <v-icon end>mdi-arrow-right</v-icon>
                 </v-btn>
               </v-expansion-panel-text>
@@ -105,7 +105,7 @@
         <div v-else-if="userReasons.length > 0" class="font-weight-medium">
           {{ reasonText(userReasons[0]?.code) }}
           <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
-            完成更多基础题目来提升等级，解锁更高难度的题目。
+            {{ t('tasks.eligibilityAlert.rankHint') }}
           </div>
         </div>
       </div>

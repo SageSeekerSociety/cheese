@@ -56,7 +56,7 @@ vi.mock('../../api', async () => {
           title: '写合同',
           status: 'open',
           branch_name: 'task/contract',
-          presentation: { column: 'building', display_status: '运行中' },
+          presentation: { column: 'building', phrase: 'running' },
           blocks: [],
         },
       ],

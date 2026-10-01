@@ -18,6 +18,7 @@
 import type { DomainGroup, SpaceCategory, TaskFormSubmitData, Topic } from '@/types'
 
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
@@ -58,6 +59,7 @@ export function useTaskForm(
   /** 读富文本编辑器现在的正文；Markdown 那条路上编辑器不在，给 `undefined`。 */
   readDescriptionText: () => string | undefined
 ) {
+  const { t } = useI18n()
   const topicItems = computed(() => props.classificationTopics.map((topic) => ({ title: topic.name, value: topic.id })))
   const categoryItems = computed(
     () => props.categories?.map((category) => ({ title: category.name, value: category.id })) ?? []
@@ -74,7 +76,7 @@ export function useTaskForm(
           defaultDeadline: z.number().int().default(30),
           rank: z.number().int().min(1).max(3),
           topics: z.array(z.number()).optional(),
-          categoryId: z.number().int().min(1, '请选择所属分类'),
+          categoryId: z.number().int().min(1, t('tasks.form.validation.categoryRequired')),
           minTeamSize: z.number().int().min(1).optional(),
           maxTeamSize: z.number().int().min(1).optional(),
           requireRealName: z.boolean().optional().default(false),
@@ -95,17 +97,17 @@ export function useTaskForm(
                   return false
                 }
               },
-              { message: '请输入有效的 HTTPS 链接' }
+              { message: t('tasks.form.validation.httpsRequired') }
             ),
         })
         .refine((arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize, {
-          message: '最大人数不能小于最小人数',
+          message: t('tasks.form.validation.teamSizeOrder'),
           path: ['maxTeamSize'],
         })
     ),
     initialValues: {
       ...(props.initialData ?? {}),
-      name: props.initialData?.name ?? (props.parametersOnly ? 'PDF 批量发布参数' : ''),
+      name: props.initialData?.name ?? (props.parametersOnly ? t('tasks.form.pdfParametersName') : ''),
       registrationStartAt: props.initialData?.registrationStartAt
         ? new Date(props.initialData.registrationStartAt)
         : null,

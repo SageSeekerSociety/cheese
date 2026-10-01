@@ -42,7 +42,7 @@ defineExpose({
       v-if="descriptionFormat === 'markdown'"
       v-model="markdownDescription"
       autocomplete="off"
-      label="题目详情（Markdown 格式）"
+      :label="t('tasks.form.markdownDescription')"
       :rows="10"
       :max-rows="30"
       rounded

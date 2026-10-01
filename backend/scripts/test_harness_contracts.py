@@ -67,6 +67,8 @@ def main() -> int:
     env = {
         **os.environ,
         "PATH": str(tools / "node_modules/.bin") + os.pathsep + os.environ["PATH"],
+        "CHEESE_TEST_CLAUDE": str(tools / "node_modules/.bin/claude"),
+        "CHEESE_TEST_CODEX": str(tools / "node_modules/.bin/codex"),
     }
     with (run / "versions.log").open("w") as log:
         for binary in ("claude", "codex"):

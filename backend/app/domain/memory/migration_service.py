@@ -42,6 +42,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.roster import roster
@@ -490,17 +491,19 @@ class MemoryMigrationService:
             )
         await self._say(
             gathered,
-            content=(
-                f"旧记忆迁移：报告好了，等复核 —— {len(row.source_ids)} 条旧记忆 → "
-                f"{len(row.files)} 个文件"
-                + ("；**team 索引超出目标**" if plan.over_goal() else "")
+            content=say(
+                "memoryMigrationReportedOverGoal"
+                if plan.over_goal()
+                else "memoryMigrationReported",
+                sources=len(row.source_ids),
+                files=len(row.files),
             ),
             meta=notice(
                 EVENT_MEMORY_ORGANIZING,
                 severity=SEVERITY_WARN if plan.over_goal() else SEVERITY_INFO,
                 who=WHO_PLATFORM,
                 detail=detail,
-                detail_label="报告（一条一条的去处）",
+                detail_label=say("labelMigrationReport"),
             ),
         )
 
@@ -510,14 +513,14 @@ class MemoryMigrationService:
         """搬完了：说进项目总览，列出动过的文件。"""
         await self._say(
             gathered,
-            content=f"旧记忆迁移：搬完了，写了 {len(written)} 个文件",
+            content=say("memoryMigrationApplied", files=len(written)),
             meta=notice(
                 EVENT_MEMORY_ORGANIZING,
                 severity=SEVERITY_INFO,
                 who=WHO_PLATFORM,
                 detail="\n".join(f"- `{path}`" for path in written)
                 + (f"\n\n{row.summary}" if row.summary else ""),
-                detail_label="写了哪些",
+                detail_label=say("labelFilesWritten"),
             ),
         )
 

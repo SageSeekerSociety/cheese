@@ -17,7 +17,6 @@ import { workspaceRoutes } from './workspaceRoutes'
 
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
-import { recordEntry } from '@/lib/projectEntry'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { myId } from '@/me'
 import { reloadForNewBuild } from '@/services/staleBuild'
@@ -67,19 +66,19 @@ const routes: RouteRecordRaw[] = [
     name: 'preview-open',
     path: '/previews/:topicId',
     component: () => import('@/views/PreviewOpenView.vue'),
-    meta: { title: '打开预览', isFullPage: true, ...PERSONAL_PAGE },
+    meta: { titleKey: 'navigation.pages.openPreview', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'site-open',
     path: '/sites/:projectId',
     component: () => import('@/views/SiteOpenView.vue'),
-    meta: { title: '打开网站', isFullPage: true, ...PERSONAL_PAGE },
+    meta: { titleKey: 'navigation.pages.openSite', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'my-archived-projects',
     path: '/my/archived-projects',
     component: () => import('@/views/MyArchivedProjectsView.vue'),
-    meta: { title: '已归档的项目', isFullPage: true, ...PERSONAL_PAGE },
+    meta: { titleKey: 'navigation.userMenu.archivedProjects', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     // Device-flow approval landing page: `cheesehost auth login` prints a
@@ -89,20 +88,20 @@ const routes: RouteRecordRaw[] = [
     name: 'connect',
     path: '/connect',
     component: () => import('@/views/ConnectView.vue'),
-    meta: { title: '连接设备', isFullPage: true, ...PERSONAL_PAGE },
+    meta: { titleKey: 'navigation.pages.connect', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),
-    meta: { title: '市场', isFullPage: true },
+    meta: { titleKey: 'navigation.pages.market', isFullPage: true },
   },
   {
     name: 'NotFound',
     path: '/:pathMatch(.*)*',
     component: () => import('@/views/404.vue'),
     meta: {
-      title: '页面未找到',
+      titleKey: 'navigation.pages.notFound',
     },
   },
 ]
@@ -145,23 +144,10 @@ router.beforeEach(async (to, from, next) => {
   next()
 })
 
-router.afterEach((to, from, failure) => {
+router.afterEach((to, _from, failure) => {
   const store = usePageTitleStore()
   store.triggerUpdate()
   if (!failure) rememberPageBeforeSettings(to)
-  // 走进一个项目时，把来路记下来——顶栏那颗 ← 靠它才回得去。名字必须**在这一刻**
-  // 抓下来跟路由一起存：等按 ← 的时候再去取，那一页早就卸载了，只能显示一个光秃
-  // 秃的箭头。
-  recordEntry(to, from, (route) => {
-    const dynamic = store.getDynamicTitle(route.name)
-    if (dynamic) return dynamic
-    // 由深到浅取第一个有标题的祖先：`/teams/:handle` 自己没有标题，标题在
-    // `/teams` 那一层上。
-    for (const record of [...route.matched].reverse()) {
-      if (record.meta?.title) return record.meta.title
-    }
-    return ''
-  })
 })
 
 // 话题的消息和话题页的代码同时去取。不在这里起头的话，消息要等话题页那一串

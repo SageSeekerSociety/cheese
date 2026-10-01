@@ -57,6 +57,7 @@ from app.core.db import async_session_factory
 from app.core.obs import scrub_secrets
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
@@ -295,14 +296,24 @@ def _headline(err: BackendErrorIn) -> str:
 def event_content(err: BackendErrorIn) -> str:
     """The one line a human sees. The stack lives in ``meta`` — 芝士 reads the
     whole thing, a person reads this."""
-    where = f"（{err.where}）" if err.where else ""
-    return f"后端报错{where}：{_headline(err)}"
+    if err.where:
+        return say("backendErrorAt", where=err.where, headline=_headline(err))
+    return say("backendError", headline=_headline(err))
 
 
 def summary_content(err: BackendErrorIn, count: int) -> str:
     minutes = int(DEDUP_WINDOW_S // 60)
-    where = f"（{err.where}）" if err.where else ""
-    return f"后端报错刷屏{where}：{_headline(err)} —— {minutes} 分钟内 {count} 次"
+    if err.where:
+        return say(
+            "backendErrorBurstAt",
+            where=err.where,
+            headline=_headline(err),
+            minutes=minutes,
+            count=count,
+        )
+    return say(
+        "backendErrorBurst", headline=_headline(err), minutes=minutes, count=count
+    )
 
 
 def event_meta(err: BackendErrorIn, verdict: Verdict) -> dict:

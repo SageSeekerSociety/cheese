@@ -9,7 +9,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { t } from '../i18n'
-import { choiceDetail } from '../lib/computeConfig'
+import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
@@ -56,7 +56,7 @@ watch(() => props.projectId, load)
     <template v-if="state">
       <div class="default-row" data-testid="project-default">
         <span class="c-muted">{{ t('work.projectMachine.defaultLabel') }}</span>
-        <span class="default-name">{{ state.default.name }}</span>
+        <span class="default-name">{{ choiceName(state.default) }}</span>
         <span class="c-muted">{{ choiceDetail(state.default) }}</span>
         <v-btn
           v-if="state.can_manage"
@@ -88,14 +88,17 @@ watch(() => props.projectId, load)
               t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
             }}
           </li>
-          <li v-for="device in state.distribution.devices" :key="device.device_id ?? device.name">
+          <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">
             <span class="status-dot" :class="{ 'status-dot--warn': device.machine_access }" />{{
-              t('work.projectMachine.onDevice', { name: device.name, agents: agents(device.agents) })
+              t('work.projectMachine.onDevice', {
+                name: deviceName(device.name, device.device_id),
+                agents: agents(device.agents),
+              })
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
             <DeviceSessionsSwitch
               v-if="state.can_manage && device.device_id"
               :project-id="projectId"
-              :device="{ device_id: device.device_id, name: device.name }"
+              :device="{ device_id: device.device_id, name: deviceName(device.name, device.device_id) }"
               :devices="state.devices"
               :cloud-available="state.cloud_available"
               :project-default="state.default"

@@ -4,6 +4,8 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 const attachmentImageUrl = vi.fn()
 
 vi.mock('../api', () => ({
@@ -41,6 +43,9 @@ function mount(props: Record<string, unknown>) {
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 it('draws the bytes it fetched, not a bare URL the browser cannot authenticate', async () => {
   attachmentImageUrl.mockResolvedValue('blob:image-1')

@@ -29,7 +29,9 @@
     >
       <div class="rounded-lg d-flex flex-column align-center justify-center gap-4 pa-4 text-white uploader-inner">
         <v-icon size="32">mdi-camera</v-icon>
-        <div class="text-body-1 text-white">{{ avatarFile || src ? '更换头像' : '上传头像' }}</div>
+        <div class="text-body-1 text-white">
+          {{ avatarFile || src ? t('shell.avatar.change') : t('shell.avatar.upload') }}
+        </div>
       </div>
     </file-select>
   </div>
@@ -39,6 +41,8 @@
 import { ref, watch } from 'vue'
 
 import FileSelect from './FileSelect.vue'
+
+import { t } from '@/i18n'
 
 const emit = defineEmits<{
   (e: 'error', error: Error): void

@@ -9,6 +9,7 @@
 
 import type { Block } from '../cx_types'
 
+import { noticeText } from './noticeText'
 import { TOOL_LABELS, toolLabel } from './toolLabels'
 
 import { t } from '@/i18n'
@@ -164,7 +165,7 @@ export function eventVerb(b: Block): string {
   // as_tool 优先：一次 Bash 调用如果后端认出它其实在读文件，就按「读取文件」显示。
   // tool 仍然如实记着真正跑的是哪个工具。
   if (b.meta?.tool) return toolLabel(b.meta.as_tool ?? b.meta.tool)
-  const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
+  const first = (noticeText(b).split('\n')[0] || '').replace(/^🔧\s*/, '')
   return Object.hasOwn(TOOL_LABELS, first) ? toolLabel(first) : first
 }
 
@@ -175,8 +176,9 @@ export function eventArg(b: Block): string {
     return stack.split('\n')[0].trim() || page
   }
   if (b.meta?.tool) return b.meta.arg ?? ''
-  const nl = b.content.indexOf('\n')
-  return nl >= 0 ? b.content.slice(nl + 1).trim() : ''
+  const text = noticeText(b)
+  const nl = text.indexOf('\n')
+  return nl >= 0 ? text.slice(nl + 1).trim() : ''
 }
 
 // 这一步挂了没有。后端只在挂了的时候写这个字段，所以「没有」就是「没挂」。

@@ -144,7 +144,7 @@ async def waiting_items(
                 topic_title=titles.get(task.room_id, ""),
                 task_id=task.id,
                 task_title=task.title,
-                display_status=shown.display_status,
+                phrase=shown.phrase,
                 reason=reason,
                 at=beats.get(task.id) or task.updated_at,
             )
@@ -182,7 +182,7 @@ async def waiting_items(
                 topic_title=topic.title,
                 task_id=None,
                 task_title=None,
-                display_status=shown.display_status,
+                phrase=shown.phrase,
                 reason=reason,
                 at=topic.updated_at,
             )

@@ -81,6 +81,7 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent_instance.configuration import model_choices
+from app.domain.block.notice_text import say
 from app.domain.machine.services import MachineService
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
@@ -163,7 +164,7 @@ async def save_default_model(
         if chosen is None:
             values.pop(key, None)
         elif chosen not in valid:
-            raise ValidationError(f"当前项目无法使用模型 {chosen!r}，请选择可用模型")
+            raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
         else:
             values[key] = chosen
     project.settings = values

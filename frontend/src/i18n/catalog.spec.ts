@@ -52,7 +52,9 @@ const zhById = new Map(zhEntries.map((e) => [e.id, e.value]))
 // catalogs at all — they are constants in `languages.ts`. That leaves no key for
 // which a CJK value is correct in the English catalog, and this scan has no
 // exemption to hide behind.
-const CJK = /[㐀-䶿一-鿿豈-﫿]/
+// Escapes, not literals: NFC turns a literal U+F900 into U+8C48, which widens
+// the last range to Hangul and to the surrogate halves of every emoji.
+const CJK = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/
 const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort()
 
 function sourceFiles(dir: string): string[] {
@@ -76,12 +78,23 @@ const callSite = new RegExp(`(?:\\$?t|te|tm)\\(\\s*['"\`](${NS})\\.${PATH}['"\`]
 // A key named in a comment is not a call site, and a commented-out call does not
 // show the user a raw key. Strip comments before looking for references, so this
 // scan reports what the running code actually asks for.
-const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/gm, '$1')
+const stripJsComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/gm, '$1')
+// A .vue template has no JS comments: `accept="image/*"` there is an attribute, and
+// treating its `/*` as a comment opener would blank everything up to the next `*/`
+// in the script block — the keys in between would read as unused. So in a .vue
+// file only the <script> and <style> blocks get JS comment stripping.
+const stripComments = (path: string, text: string) =>
+  path.endsWith('.vue')
+    ? text.replace(
+        /(<(script|style)\b[^>]*>)([\s\S]*?)(<\/\2>)/g,
+        (_m, open: string, _tag: string, body: string, close: string) => open + stripJsComments(body) + close
+      )
+    : stripJsComments(text)
 
 const sourceText = new Map(
   sourceFiles(SRC)
     .filter((p) => !relative(SRC, p).startsWith('i18n/messages/'))
-    .map((p) => [relative(SRC, p), stripComments(readFileSync(p, 'utf8'))])
+    .map((p) => [relative(SRC, p), stripComments(p, readFileSync(p, 'utf8'))])
 )
 
 // A key built at run time — t(`spaces.members.role.${role}`) — names a family of
@@ -202,7 +215,20 @@ describe('every message compiles', () => {
 describe('source and catalog agree', () => {
   it('does not start a block comment inside a line comment', () => {
     const source = "// The response has image/* content.\nt('tasks.preview.unavailable')\n/* style */"
-    expect(stripComments(source)).toContain("t('tasks.preview.unavailable')")
+    expect(stripComments('Example.ts', source)).toContain("t('tasks.preview.unavailable')")
+  })
+
+  it('does not read an attribute in a .vue template as a block comment', () => {
+    const source = [
+      '<template><input accept="image/*" :label="t(\'tasks.preview.unavailable\')" /></template>',
+      '<script setup lang="ts">',
+      '/** docs */',
+      "// t('tasks.preview.appUnavailable')",
+      '</script>',
+    ].join('\n')
+    const stripped = stripComments('Example.vue', source)
+    expect(stripped).toContain("t('tasks.preview.unavailable')")
+    expect(stripped).not.toContain("t('tasks.preview.appUnavailable')")
   })
 
   it('resolves every key the source calls by name', () => {

@@ -25,6 +25,7 @@ from app.domain.agent.platform_notices import (
     EVENT_PR_CONFLICT,
     EVENT_PR_REVIEW,
 )
+from app.domain.block.notice_text import say
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
 
@@ -108,7 +109,7 @@ def _ci_nudge(
         # 拿它当签名等于每轮都重发。带上 commit，是因为芝士推了新提交之后同样
         # 的失败是**新事实**，必须再说一次。
         signature=pr_signals.signature(card.pr_head_sha or "", headline),
-        event=f"PR #{card.pr_number} 的 {stage} 检查没通过",
+        event=say("ciFailed", pr=card.pr_number, stage=stage),
         content=(
             f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
             f"```\n{clean[:_NUDGE_TAIL_LIMIT]}\n```\n"
@@ -122,7 +123,7 @@ def _ci_nudge(
         # `meta.detail`, under the same `_NUDGE_TAIL_LIMIT` bound the message
         # body always used.
         detail=clean[:_NUDGE_TAIL_LIMIT],
-        detail_label=f"{stage} 日志",
+        detail_label=say("labelCiLog", stage=stage),
         note=f"{_nudge_note_prefix(stage)}{headline}",
         note_code=notes.NoteCode.checks_failed,
         event_type=EVENT_CI_FAILED,
@@ -170,13 +171,16 @@ async def _review_nudge(
     )
     body = "\n".join(s.line() for s in signals)
     asked = sum(1 for s in signals if s.kind == "changes_requested")
-    head = "有人在 PR 上要求改动" if asked else "有人在 PR 上留了评审意见"
+    head = say("prReviewChangesRequested") if asked else say("prReviewCommented")
     if capped:
         return pr_signals.PendingNudge(
             kind=pr_signals.NudgeKind.review,
             signature=signature,
-            event=f"PR #{card.pr_number} 的评审意见已来回 "
-            f"{pr_signals.REVIEW_NUDGE_LIMIT} 轮，需要人介入",
+            event=say(
+                "prReviewCapped",
+                pr=card.pr_number,
+                limit=pr_signals.REVIEW_NUDGE_LIMIT,
+            ),
             content="",
             note=(
                 f"评审意见已自动回流 {pr_signals.REVIEW_NUDGE_LIMIT} 轮仍未收敛，"
@@ -188,7 +192,7 @@ async def _review_nudge(
     return pr_signals.PendingNudge(
         kind=pr_signals.NudgeKind.review,
         signature=signature,
-        event=f"PR #{card.pr_number} 上{head}",
+        event=say("prReview", pr=card.pr_number, head=head),
         content=(
             f"{head}（PR #{card.pr_number}，{card.pr_url}）：\n"
             f"{body}\n\n"
@@ -197,7 +201,7 @@ async def _review_nudge(
             "在话题里说清理由，让人来定。"
         ),
         detail=body,
-        detail_label="评审意见原文",
+        detail_label=say("labelReviewComments"),
         note=f"{head}（{len(signals)} 条）",
         note_code=notes.NoteCode.accept_pr_stalled,
         event_type=EVENT_PR_REVIEW,
@@ -225,7 +229,7 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
         kind=pr_signals.NudgeKind.conflict,
         # commit 变了就重新算一次：芝士推了一次合并上来，冲突还在，那是新事实。
         signature=pr_signals.signature("conflict", card.pr_head_sha or ""),
-        event=f"PR #{card.pr_number} 和目标分支冲突了",
+        event=say("prConflict", pr=card.pr_number),
         content=(
             f"PR #{card.pr_number}（{card.pr_url}）的{where}和目标分支冲突了，"
             "GitHub 现在合不了它。\n"

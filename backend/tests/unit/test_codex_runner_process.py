@@ -6,7 +6,6 @@ import functools
 import io
 import json
 import os
-import shutil
 import signal
 import subprocess
 import threading
@@ -25,6 +24,7 @@ from app.domain.agent.harness.codex.host import configure
 from app.domain.agent.harness.codex.subscription import Subscription
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult
+from tests.pinned_claude import codex_binary
 
 
 @pytest.fixture
@@ -140,7 +140,7 @@ async def test_standalone_owner_survives_client_disconnect(
                 "execution_target": {"kind": "device", "url": endpoint + "/execution"},
                 "opening": {"system_prompt": "PROCESS_CONTRACT"},
                 "mcp_servers": [],
-                "binary": shutil.which("codex"),
+                "binary": codex_binary(),
                 "cwd": str(workspace),
             }
         )

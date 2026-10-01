@@ -75,6 +75,7 @@ from app.domain.agent.service import (
     proves_output,
 )
 from app.domain.agent.step_output import without_output
+from app.domain.block.notice_text import NoticeText, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope
@@ -283,22 +284,29 @@ def _turn_failure_notice(
     if failure is not None:
         if failure.code in SESSION_START_CODES and text.strip():
             # The sentence it was raised with can name what was found.
-            return text.strip(), _with_log(failure.meta, log)
+            line = text if isinstance(text, NoticeText) else text.strip()
+            return line, _with_log(failure.meta, log)
         return failure.content, _with_log(failure.meta, log)
     detail = (text or "").strip()
     if _is_out_of_credit(detail):
         # A spent balance is not a wait — no amount of retrying refills it, and
         # telling someone to try again later sends them into a loop that cannot
         # succeed. Say what actually has to happen.
-        line = "本轮未完成：AI 中继余额已用完"
-        hint = "需要充值，或者把机器切换到其他 AI 服务。重试没有作用。"
+        line = say("turnFailedOutOfCredit")
+        hint = say("turnFailedOutOfCreditHint")
         retryable = False
     else:
         first = detail.splitlines()[0].strip() if detail else ""
         if len(first) > 160:
             first = first[:160] + "…"
-        line = f"本轮未完成：{first}" if first else "本轮未完成：AI 服务返回错误"
-        hint = "稍后可以重试。"
+        if isinstance(text, NoticeText) and first == text:
+            # The platform's own one-line sentence (a runner that stopped
+            # answering): nested whole, so it keeps its key.
+            first = text
+        line = (
+            say("turnFailedWith", reason=first) if first else say("turnFailedService")
+        )
+        hint = say("turnFailedRetryLater")
         retryable = True
     return line, notice(
         EVENT_TURN_FAILED,
@@ -306,11 +314,8 @@ def _turn_failure_notice(
         who=WHO_HUMAN,
         # 原话是唯一的一份——它没有第二个副本可以「去别处看」，所以原样收进
         # detail，不截、不摘要。
-        detail="\n\n".join(
-            part for part in (hint, f"服务原话：\n{detail}" if detail else "") if part
-        )
-        or None,
-        detail_label="详细说明",
+        detail=(say("hintAndServiceWords", hint=hint, said=detail) if detail else hint),
+        detail_label=say("labelDetails"),
         retryable=retryable,
     )
 
@@ -394,7 +399,7 @@ async def _consume_hook_event(
                 sessions,
                 compact_notes,
                 turn_id,
-                AgentCompacting(done=True, error="会话在整理完成前结束了"),
+                AgentCompacting(done=True, error=say("contextCompactSessionEnded")),
                 channel=channel,
             )
     if isinstance(event, AgentSessionInfo):
@@ -549,14 +554,16 @@ async def _consume_hook_event(
                 # is different, so it keeps its own card. Recognised by the
                 # message because that is what the watchdog emits; nothing
                 # overrides it today.
+                # The constant rather than `event.text`: the same words,
+                # and the constant is the one that carries its key.
                 line, meta = (
-                    event.text,
+                    TURN_TIMEOUT_MESSAGE,
                     notice(
                         EVENT_TURN_TIMEOUT,
                         severity=SEVERITY_WARN,
                         who=WHO_HUMAN,
-                        detail="会话活动已停止；屏幕订阅仍会接收后续输出。",
-                        detail_label="详细说明",
+                        detail=say("turnTimeoutDetail"),
+                        detail_label=say("labelDetails"),
                     ),
                 )
             elif await service._turn_credits_refused(turn_id):
@@ -672,22 +679,35 @@ async def _note_retry(
         if event.attempt and event.max_attempts
         else str(event.attempt or "")
     )
-    content = "AI 服务请求失败，正在重试" + (f"（第 {count} 次）" if count else "")
-    said = " ".join(
-        part
-        for part in (
-            event.error,
-            f"HTTP {event.status}" if event.status is not None else "",
+    content = say("apiRetryAttempt", attempt=count) if count else say("apiRetry")
+    # Claude Code files a failure it cannot classify as `unknown`, and with no
+    # HTTP status that means the request got no response at all. Shown as-is,
+    # "unknown" tells a reader nothing; say what it means instead.
+    if event.status is None and event.error in ("", "unknown"):
+        detail = (
+            say("apiRetryNoResponseWaited", seconds=round(event.no_response_ms / 1000))
+            if event.no_response_ms
+            else say("apiRetryNoResponse")
         )
-        if part
-    )
+        label = say("labelDetails")
+    else:
+        said = " ".join(
+            part
+            for part in (
+                event.error,
+                f"HTTP {event.status}" if event.status is not None else "",
+            )
+            if part
+        )
+        detail = said or None
+        label = say("labelServiceWords") if said else None
     meta = {
         **notice(
             EVENT_API_RETRY,
             severity=SEVERITY_WARN,
             who=WHO_PLATFORM,
-            detail=said or None,
-            detail_label="服务原话" if said else None,
+            detail=detail,
+            detail_label=label,
         ),
         "attempt": event.attempt,
         "max_attempts": event.max_attempts,
@@ -743,7 +763,7 @@ async def _note_reachability(
         await _restate_note(
             sessions,
             block_id,
-            "机器已恢复连接",
+            say("deviceReconnected"),
             {"state": "over", "at": datetime.now(UTC).isoformat()},
             str(topic_id),
         )
@@ -755,7 +775,7 @@ async def _note_reachability(
             severity=SEVERITY_WARN,
             who=WHO_PLATFORM,
             detail=reason or None,
-            detail_label="原因" if reason else None,
+            detail_label=say("labelReason") if reason else None,
         ),
         "state": "waiting",
         "at": datetime.now(UTC).isoformat(),
@@ -765,7 +785,7 @@ async def _note_reachability(
         waiting_notes,
         topic_id,
         work_id,
-        "等待机器连接",
+        say("deviceWaiting"),
         meta,
         author=state.acting_agent if state is not None else None,
         task_id=None,

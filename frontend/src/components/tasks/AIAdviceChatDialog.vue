@@ -5,7 +5,7 @@
     :context-id="taskId"
     :context="context"
     :chat-service="chatService"
-    title="启星智询 Converse AI"
+    :title="t('tasks.advice.chatTitle')"
     @clear-context="clearContext"
   />
 </template>
@@ -14,8 +14,11 @@
 import type { TaskAIAdviceConversationContext } from '@/network/api/tasks/types'
 
 import { defineAsyncComponent, ref, toRefs } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { TaskAIAdviceChatService } from '@/components/chat'
+
+const { t } = useI18n()
 
 const ChatDialog = defineAsyncComponent(() => import('@/components/chat/ChatDialog.vue'))
 

@@ -6,7 +6,7 @@
       class="quote-item__check"
       density="compact"
       hide-details
-      :aria-label="`勾选 ${excerpt.studentName} 的这条发言`"
+      :aria-label="t('spaces.analytics.learning.quote.pick', { name: excerpt.studentName })"
     />
 
     <div class="quote-item__body">
@@ -19,12 +19,16 @@
       </div>
     </div>
 
-    <v-btn class="quote-item__source" size="small" variant="text" @click="openSource">查看原文</v-btn>
+    <v-btn class="quote-item__source" size="small" variant="text" @click="openSource">{{
+      t('spaces.analytics.learning.quote.source')
+    }}</v-btn>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
+
+import { useI18n } from 'vue-i18n'
 
 import { useNavigation } from '@/composables/useNavigation'
 
@@ -37,6 +41,8 @@ const props = withDefaults(
   }>(),
   { selectable: false }
 )
+
+const { t } = useI18n()
 
 const checked = defineModel<boolean>('checked', { default: false })
 

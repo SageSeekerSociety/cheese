@@ -43,8 +43,8 @@ class WaitingItem:
     #: 这是房间自己的事（None），还是房间里某一条活的事。
     task_id: uuid.UUID | None
     task_title: str | None
-    #: 看板算的那一格 —— 和项目看板上同一个函数、同一句话。
-    display_status: str
+    #: 看板算的那一格 —— 和项目看板上同一个函数、同一句话（短语的码）。
+    phrase: str
     #: 为什么在等他 —— `delivery/addressing.py` 的那几个码。
     reason: str
     #: 排序用：这件事最后一次动是什么时候。
@@ -58,7 +58,7 @@ class WaitingItem:
             "topicTitle": self.topic_title,
             "taskId": None if self.task_id is None else str(self.task_id),
             "taskTitle": self.task_title,
-            "displayStatus": self.display_status,
+            "phrase": self.phrase,
             "reason": self.reason,
             "at": self.at.isoformat(),
         }

@@ -84,6 +84,9 @@ jobs:
       - name: Ratchet collection evidence
         run: python3 deploy/tests/test_arch_metrics_workflow.py
 
+      - name: Render browser reaches public addresses only
+        run: python3 deploy/tests/test_browser_render_egress.py
+
       - name: Cloud control connection lifecycle
         run: python3 deploy/tests/test_cloud_control.py
 

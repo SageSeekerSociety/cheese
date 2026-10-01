@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import single_use_state
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.remote_mcp import declared, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
 from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret
@@ -266,7 +267,7 @@ async def _declared_server(
 ) -> RemoteServer:
     server = (await _project_declared(db, project_id, fresh=fresh)).get(name)
     if server is None:
-        raise NotFoundError("项目的 .mcp.json 里没有这个远程 MCP 服务器")
+        raise NotFoundError(say("mcpServerNotDeclared"))
     return server
 
 
@@ -284,12 +285,14 @@ async def begin_connect(
     """Start the authorization; returns the URL the browser goes to."""
     server = await _declared_server(db, project_id, name, fresh=True)
     if not server.uses_oauth:
-        raise ValidationError("这个服务器用请求头里的密钥授权，不需要连接")
+        raise ValidationError(say("mcpServerUsesHeaderKey"))
     values = _secret_values(project_id, await _secret_rows(db, project_id))
     try:
         url, _ = server.expanded(values)
     except KeyError as missing:
-        raise ValidationError(f"先填写 {missing.args[0]}，再连接") from None
+        raise ValidationError(
+            say("mcpFillVariableFirst", variable=missing.args[0])
+        ) from None
     await db.rollback()  # nothing below needs the database
     resource = declared.canonical_resource(url)
     found = await oauth.discover(url, resource)
@@ -331,9 +334,9 @@ def read_state(state: str) -> dict:
             decrypt(Purpose.MCP_OAUTH_STATE, state, bound_to="remote-mcp-state")
         )
     except (DecryptionError, ValueError):
-        raise ValidationError("授权链接无效，请回到项目设置重新连接") from None
+        raise ValidationError(say("mcpAuthLinkInvalid")) from None
     if flow.get("exp", 0) < time.time():
-        raise ValidationError("授权已过期，请回到项目设置重新连接")
+        raise ValidationError(say("mcpAuthExpired"))
     return flow
 
 
@@ -342,10 +345,10 @@ async def finish_connect(
 ) -> None:
     """The authorization server sent the browser back with a code."""
     if not await single_use_state.claim(_STATE_SCOPE, flow["jti"]):
-        raise ValidationError("这次授权已经用过了，请回到项目设置重新连接")
+        raise ValidationError(say("mcpAuthAlreadyUsed"))
     # RFC 9207: a response naming another issuer is a mix-up, not ours.
     if issuer and issuer.rstrip("/") != flow["issuer"].rstrip("/"):
-        raise ValidationError("授权服务器与发起授权的不是同一个")
+        raise ValidationError(say("mcpIssuerMismatch"))
     tokens = await oauth.exchange(
         token_endpoint=flow["token_endpoint"],
         code=code,
@@ -450,7 +453,7 @@ async def disconnect(db: AsyncSession, project_id: uuid.UUID, name: str) -> None
         .with_for_update()
     )
     if row is None:
-        raise NotFoundError("这个服务器没有连接")
+        raise NotFoundError(say("mcpServerNotConnected"))
     await _revoke(row)
     await db.delete(row)
     await db.commit()
@@ -465,7 +468,7 @@ async def set_secret(
 ) -> None:
     found = await _project_declared(db, project_id, fresh=True)
     if not any(name in server.all_variables() for server in found.servers):
-        raise NotFoundError("项目的 .mcp.json 里没有用到这个变量")
+        raise NotFoundError(say("mcpVariableNotUsed"))
     if not value:
         raise ValidationError("值不能为空")
     row = await db.scalar(

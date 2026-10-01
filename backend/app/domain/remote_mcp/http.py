@@ -15,6 +15,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.block.notice_text import say
 from app.domain.integration.service import refuse_internal_host
 
 #: Some MCP hosts sit behind bot filters that refuse the default Python agent.
@@ -27,12 +28,12 @@ async def _guard(request: httpx.Request) -> None:
     if settings.remote_mcp_allow_private_hosts:
         return
     if request.url.scheme != "https":
-        raise ValidationError(f"MCP 服务器地址必须是 HTTPS：{request.url.host}")
+        raise ValidationError(say("mcpServerNeedsHttps", host=request.url.host))
     host = request.url.host
     now = time.monotonic()
     if now - _checked.get(host, -_GUARD_S) < _GUARD_S:
         return
-    await asyncio.to_thread(refuse_internal_host, host, "MCP 服务器")
+    await asyncio.to_thread(refuse_internal_host, host, say("nounMcpServer"))
     _checked[host] = now
 
 

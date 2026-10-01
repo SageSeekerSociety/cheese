@@ -23,6 +23,24 @@ from starlette.status import (
 )
 
 
+def message_key(message: object) -> dict | None:
+    """The key and parameters of a message said with ``say()``, or None.
+
+    A client shows ``error.message`` as it is; when the message is a catalog
+    sentence (``app/domain/block/notice_text.py``) its key goes out beside it
+    as ``error.i18n``, and the browser renders that in its reader's language.
+    Read by attribute rather than by type: this layer does not import the
+    domain the sentences live in."""
+    describe = getattr(message, "descriptor", None)
+    key = describe() if callable(describe) else None
+    return key if isinstance(key, dict) else None
+
+
+def _with_key(error: dict, message: object) -> dict:
+    key = message_key(message)
+    return error if key is None else {**error, "i18n": key}
+
+
 class BaseError(Exception):
     def __init__(self, status_code: int, message: str, data: Any | None = None) -> None:
         super().__init__(message)
@@ -37,12 +55,15 @@ class BaseError(Exception):
         return {
             "code": self.status_code,
             "message": f"{self.name}: {self.args[0]}",
-            "error": {
-                "name": self.name,
-                "message": self.args[0],
-                "data": self.data,
-                "retryable": False,
-            },
+            "error": _with_key(
+                {
+                    "name": self.name,
+                    "message": self.args[0],
+                    "data": self.data,
+                    "retryable": False,
+                },
+                self.args[0],
+            ),
         }
 
 
@@ -429,11 +450,14 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "code": exc.code,
                 "message": exc.message,
                 "data": None,
-                "error": {
-                    "name": type(exc).__name__,
-                    "message": exc.message,
-                    "retryable": exc.retryable,
-                },
+                "error": _with_key(
+                    {
+                        "name": type(exc).__name__,
+                        "message": exc.message,
+                        "retryable": exc.retryable,
+                    },
+                    exc.message,
+                ),
             },
         )
 

@@ -31,6 +31,7 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.runtime import announce_stale, get_broker
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.feedback import proposals as proposal_rules
@@ -75,7 +76,7 @@ async def _actor_in_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
     if not actor.authenticated or not actor.handle:
-        raise AuthenticationRequiredError("需要登录")
+        raise AuthenticationRequiredError(say("signInRequired"))
     return place, actor
 
 
@@ -87,7 +88,7 @@ async def _require_proposal_block(
         # A block in another topic, or none at all: 404. The id the client sent
         # is the problem, not a secret — but answering 400 would confirm which
         # ids are real.
-        raise NotFoundError("提案不存在")
+        raise NotFoundError(say("feedbackProposalNotFound"))
     return block
 
 

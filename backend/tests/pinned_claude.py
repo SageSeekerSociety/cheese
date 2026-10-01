@@ -1,18 +1,38 @@
-"""The pinned Claude Code build, for tests whose executor runs it.
+"""The pinned harness builds, for tests that run one.
 
-An executor serves its file tools through that build's `mcp serve`, and its
-commands start from the shell snapshot that build writes, so a test that runs
-either needs the build itself.
+An executor serves its file tools through the pinned Claude Code build's `mcp
+serve`, and its commands start from the shell snapshot that build writes; the
+Codex and pi runner tests drive those builds directly. Each comes only from its
+CHEESE_TEST_* variable, never from PATH: on a developer machine the `claude` on
+PATH is often a wrapper or another version, and a test run against it fails, or
+passes, for reasons unrelated to the code under test.
 """
 
 import os
-import shutil
+
+import pytest
+
+SETUP = 'eval "$(bash .claude/scripts/dev-db.sh start)"'
 
 
-def claude_binary():
-    claude = os.environ.get("CHEESE_TEST_CLAUDE") or shutil.which("claude")
-    if not claude:
-        raise RuntimeError(
-            "CHEESE_TEST_CLAUDE must point to the pinned Claude Code build"
+def _pinned(variable: str, harness: str) -> str:
+    binary = os.environ.get(variable)
+    if not binary:
+        pytest.fail(
+            f"{variable} must point to the pinned {harness} build; run `{SETUP}`"
+            " from the repository root, which installs it and exports it.",
+            pytrace=False,
         )
-    return claude
+    return binary
+
+
+def claude_binary() -> str:
+    return _pinned("CHEESE_TEST_CLAUDE", "Claude Code")
+
+
+def codex_binary() -> str:
+    return _pinned("CHEESE_TEST_CODEX", "Codex")
+
+
+def pi_binary() -> str:
+    return _pinned("CHEESE_TEST_PI", "pi")

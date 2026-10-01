@@ -23,7 +23,7 @@ export interface RouteMetaTitle {
   /** 这一页是设置：画成盖在整个窗口上的一层（components/common/SettingsOverlay），
    *  关掉回到打开之前的那一页（lib/settingsReturn）。 */
   settingsOverlay?: boolean
-  /** 「项目这个框」那条记录自己举的手——见 lib/projectEntry 的 projectFrameOf。 */
+  /** 「项目这个框」那条记录自己举的手——见 lib/projectFrame 的 projectFrameOf。 */
   projectFrame?: boolean
   /**
    * 这一页能从命令面板直接去。页面自己在路由上声明，面板不另记一份页面清单。带

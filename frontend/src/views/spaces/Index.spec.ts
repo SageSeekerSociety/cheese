@@ -54,8 +54,8 @@ import SpacesIndex from './Index.vue'
 
 import AccountService from '@/services/account'
 
-const START_HERE = '从这里开始'
-const NEW_PROJECT = '新建项目'
+const START_HERE = 'spaces.index.firstRun.title'
+const NEW_PROJECT = 'spaces.index.firstRun.newProject'
 
 async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))

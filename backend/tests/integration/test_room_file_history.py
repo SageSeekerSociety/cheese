@@ -252,6 +252,7 @@ def test_a_library_original_is_copied_into_the_room_before_editing(client):
         f"/topics/{room}/files/editor", params={"path": library_path}
     ).json()["data"]
     assert closed["enabled"] is False and closed["copyable"] is True
+    assert closed["reason"] == "library_original"
 
     copied = client.post(
         f"/topics/{room}/files/copy",

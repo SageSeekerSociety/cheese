@@ -13,11 +13,14 @@ import { useI18n } from 'vue-i18n'
 
 import { getStringMetadata } from './NotificationRenderUtils'
 
+import { renderNoticeMessage } from '@/lib/noticeText'
+
 /**
  * 平台在房间里说的、要人动手的那一句。
  *
- * 标题就是房间里那一行原文，这里不改写、不套模板：通知和房间对同一件事只有一种
- * 说法，点进去看到的和通知里读到的是同一句。副标题只回答「在哪个房间」。
+ * 标题就是房间里那一行：`message` 是它的键和参数，按读者当前的语言渲染，和房间里
+ * 那一行走同一份目录；没有键的旧通知显示存下的原文。通知和房间对同一件事只有一种
+ * 说法。副标题只回答「在哪个房间」。
  */
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()
@@ -27,7 +30,9 @@ const topicId = computed(() => getStringMetadata(props.notification, 'topicId'))
 const topicTitle = computed(() => getStringMetadata(props.notification, 'topicTitle'))
 
 const title = computed(
-  () => getStringMetadata(props.notification, 'content') || t('notifications.ROOM_NOTICE.untitled')
+  () =>
+    renderNoticeMessage(props.notification.contextMetadata.message, getStringMetadata(props.notification, 'content')) ||
+    t('notifications.ROOM_NOTICE.untitled')
 )
 
 const body = computed(() =>
