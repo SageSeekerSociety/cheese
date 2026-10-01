@@ -46,8 +46,7 @@ The chat guide teaches the lead agent to answer user messages directly
 when possible, announce work before doing it, and publish progress and results.
 Queued messages and messages received during work follow the same rules. Each
 new or merged terminal input also reminds the agent that ordinary text is not
-sent. Subagents report to their lead; scheduled inspections use the heartbeat
-notification rules.
+sent. Subagents report to their lead.
 
 The `cheese-docs` skill handles durable overviews and updates when the underlying
 state changes. It does not require a document edit for every chat turn. Both

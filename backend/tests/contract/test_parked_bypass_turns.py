@@ -1,6 +1,6 @@
-"""The three parked bypass turns must stay unreachable.
+"""The two parked bypass turns must stay unreachable.
 
-线下接入 / 定期巡检 / 一页纸总结 each had the platform do something 芝士 already
+线下接入 / 一页纸总结 each had the platform do something 芝士 already
 does when asked, so each grew its own turn, its own session and its own failure
 mode — activity ingestion's fresh session overwrote the topic's session pointer,
 which is why 27% of live sessions had no history at all. The need behind them is
@@ -19,7 +19,6 @@ from app.main import app
 
 PARKED = [
     ("POST", "/projects/{project_id}/activities"),
-    ("POST", "/projects/{project_id}/heartbeat"),
     ("POST", "/projects/{project_id}/summary"),
 ]
 
@@ -43,7 +42,7 @@ def test_a_parked_bypass_turn_has_no_route(
     (fastapi/openapi/utils.py), and that flag is off on 17 routes under
     `app/api/routes/` — so a schema read calls a hidden remount absent. Walking
     `app.routes` is no better: FastAPI keeps an included router as one entry
-    whose own `path` is `None`, so none of these three appear there either way.
+    whose own `path` is `None`, so none of these appear there either way.
     A request is the only reading that covers both.
 
     404 is what only an unmounted path answers: a route that exists but declines
@@ -52,7 +51,7 @@ def test_a_parked_bypass_turn_has_no_route(
     response = probe.request(method, re.sub(r"\{[^}]+\}", "7", path))
     assert response.status_code == 404, (
         f"{method} {path} answered {response.status_code} — it is mounted "
-        "again. These three were parked on 2026-08-12 — read "
+        "again. These were parked on 2026-08-12 — read "
         "docs/agent-principles.md §12 before restoring one, and bring a design "
         "that does not give the turn its own session."
     )

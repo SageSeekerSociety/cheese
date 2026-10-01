@@ -1,8 +1,8 @@
-"""巡检和一页纸总结这两轮，不注入记忆（`keeps_memory=False`）。
+"""一页纸总结那一轮，不注入记忆（`keeps_memory=False`）。
 
-它们不是某一间房的回合：巡检是芝士自己在总览上的一次巡逻，一页纸总结描述的是项目
-状态。两轮都没有「本轮说话的人」，注入谁的 private 都不对；更要紧的是这两轮**不落
-记忆文件**——说给它们听，它们照着写下去的文件也没有下一轮读得到。
+它不是某一间房的回合：一页纸总结描述的是项目状态。这一轮没有「本轮说话的人」，注入
+谁的 private 都不对；更要紧的是这一轮**不落记忆文件**——说给它听，它照着写下去的文
+件也没有下一轮读得到。
 
 这里读的是会话真的拿到的那份 system prompt（`StubChannel.last_system_prompt`），而
 不是某个函数的参数：注入这件事唯一能被看见的地方就是那里。
@@ -28,8 +28,8 @@ INDEX_HEAD = "## 你的记忆（索引"
 
 class Screen(StubChannel):
     async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
-        self.starts(screen, session_id="patrol")
-        self.stops(screen, "Done.", session_id="patrol")
+        self.starts(screen, session_id="one-pager")
+        self.stops(screen, "Done.", session_id="one-pager")
         return True
 
 
@@ -45,23 +45,13 @@ async def _a_project(factory, tmp_path) -> tuple[ChatService, Screen, uuid.UUID]
     async with factory() as session:
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
-        # 一个话题：巡检要按话题状态说话，一页纸总结要按话题列状态。
+        # 一个话题：一页纸总结要按话题列状态。
         await TopicService(session).create(
             project_id=project.id, title="Work", created_by="u"
         )
         project_id = project.id
         await session.commit()
     return svc, screen, project_id
-
-
-async def test_the_patrol_is_not_told_about_memory(client, tmp_path):
-    svc, screen, project_id = await _a_project(client.test_request_factory, tmp_path)
-
-    await svc.run_heartbeat(project_id=project_id)
-
-    assert screen.last_system_prompt is not None
-    assert INSTRUCTIONS_HEAD not in screen.last_system_prompt
-    assert INDEX_HEAD not in screen.last_system_prompt
 
 
 async def test_the_one_pager_is_not_told_about_memory(client, tmp_path):
