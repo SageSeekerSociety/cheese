@@ -182,3 +182,30 @@ async def test_rollback_leaves_no_document_nodes_event_history_or_claim(
             )
             == 0
         )
+
+
+@pytest.mark.anyio
+async def test_platform_brief_seed_has_raw_history_without_contribution_event(
+    business_db_factory,
+):
+    factory = business_db_factory
+    room = await seed(factory)
+    raw = "# 原稿\r\n😀"
+    async with factory() as session:
+        topics = TopicService(session)
+        topic = await topics.get(room)
+        await topics.seed_brief_doc(topic, raw)
+        await session.commit()
+    async with factory() as session:
+        doc = await TopicService(session).get_doc(room)
+        assert doc.content == raw
+        versions = await DocumentJournal(session).history(room)
+        assert len(versions) == 1
+        assert versions[0]["content"] == raw
+        assert versions[0]["actor"] == "system"
+        assert versions[0]["base_version"] == 0
+        assert versions[0]["event_id"] is None
+        blocks = list(
+            await session.scalars(select(Block).where(Block.topic_id == room))
+        )
+        assert not any((block.meta or {}).get("action") == "doc" for block in blocks)
