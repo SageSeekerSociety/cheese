@@ -55,8 +55,8 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 
 
 class Runner(runner.Runner[Journal]):
-    def __init__(self, state: Path):
-        super().__init__(state, Journal, "entries.sqlite")
+    def __init__(self, state: Path, *, idle_exit_s: float = runner.IDLE_EXIT_S):
+        super().__init__(state, Journal, "entries.sqlite", idle_exit_s=idle_exit_s)
         self.client: Connection | None = None
         self.refreshing = asyncio.Lock()
         self.doorbell = asyncio.Event()
@@ -724,6 +724,14 @@ class Runner(runner.Runner[Journal]):
         extension's `bash` (`platform.ts`), which watches the file the debt was
         just written to and lets go of its command as soon as it changes."""
 
+    def busy(self) -> bool:
+        return bool(
+            self.working
+            or (self.continuing is not None and not self.continuing.done())
+            or any(not agent.ended.done() for agent in self.children.started.values())
+            or (self.jobs is not None and self.jobs.running() > 0)
+        )
+
     # --- the socket ----------------------------------------------------------
 
     async def dispatch(self, method: str, params: dict) -> dict:
@@ -731,7 +739,7 @@ class Runner(runner.Runner[Journal]):
             await self.refresh()
             since = params.get("since")
             after = self.journal.sequence_of(since) if since else 0
-            return {"entries": [row["record"] for row in self.journal.read(after)]}
+            return {"entries": [row["record"] for row in self.records(after)]}
         if method == "send":
             return await self.send(
                 params["input_id"],

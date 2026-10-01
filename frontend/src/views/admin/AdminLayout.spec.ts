@@ -198,7 +198,9 @@ describe('外壳上的全局键', () => {
   })
 
   it('`G` 之后 `Q` 换到队列，当前那一项带 aria-current', async () => {
+    getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: true, hot_min_items: 5 })
     const { findByText, router } = await mountAt('/admin/dashboard')
+    await findByText('看板')
     await findByText('看板内容')
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g' }))

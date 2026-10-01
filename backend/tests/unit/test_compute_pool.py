@@ -369,6 +369,69 @@ def test_pi_runs_on_every_machine_and_takes_it_only_for_work():
         assert backend.deferred_work is True
 
 
+def test_a_room_runs_a_harness_that_hands_tools_over(monkeypatch):
+    """要远端执行的场景不会派给没声明它的骨架，哪怕项目指定了它。
+
+    每台机器上，会话跑在中心机、工具交给执行机。拿掉 pi 的这一项声明，挑出来的
+    就是下一个声明了的；声明在，pi 照旧被挑中。
+    """
+    from app.core.config import settings
+    from app.domain.agent import harness as harness_module
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import (
+        CLAUDE_CODE,
+        HARNESS_SETTING,
+        HARNESSES,
+        PI,
+        Harness,
+        harness_on,
+    )
+
+    monkeypatch.setattr(settings, "agent_harnesses", [CLAUDE_CODE, PI])
+    project = {HARNESS_SETTING: PI}
+
+    def chosen() -> str | None:
+        pool = build_compute_pool()
+        return harness_on(
+            project,
+            lambda name: pool.select(provider_id="device", harness=name) is not None,
+        )
+
+    assert chosen() == PI
+    pi = HARNESSES[PI]
+    monkeypatch.setitem(
+        harness_module.HARNESSES, PI, Harness(pi.name, pi.label, subagents=pi.subagents)
+    )
+    assert chosen() == CLAUDE_CODE
+
+
+def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_host(
+    monkeypatch,
+):
+    """会话在中心机、手在执行机的那条路，只挂声明了远端执行的骨架。
+
+    把 Claude Code 的这一项声明拿掉，它就哪台机器都不挂：一个答不出「工具交给执行
+    机」的骨架挂在那里，跑起来是在中心机上碰项目文件。
+    """
+    from app.core.config import settings
+    from app.domain.agent import harness as harness_module
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import CLAUDE_CODE, HARNESSES, PI, Harness
+
+    claude = HARNESSES[CLAUDE_CODE]
+    monkeypatch.setitem(
+        harness_module.HARNESSES,
+        CLAUDE_CODE,
+        Harness(claude.name, claude.label, subagents=claude.subagents),
+    )
+    monkeypatch.setattr(settings, "agent_harnesses", [PI])
+    pool = build_compute_pool()
+
+    for machine in pool.machines():
+        assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is None
+    assert pool.select(provider_id="device", harness=PI) is not None
+
+
 def test_resolve_compute_id_uses_room_then_explicit_project_default():
     from app.domain.agent.chat import _resolve_compute_id
     from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs

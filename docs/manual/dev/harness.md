@@ -19,21 +19,21 @@ covers:
 
 ## 谁在选骨架 {#which}
 
-骨架名全仓只在 `backend/app/domain/agent/harness/__init__.py` 顶上写一遍（不变量 I5）：`CLAUDE_CODE` / `CODEX` / `PI`。解析有三层，都在同一个文件里：
+骨架名全仓只在 `backend/app/domain/agent/harness/__init__.py` 顶上写一遍（不变量 I5）：`CLAUDE_CODE` / `CODEX` / `PI`。选择分三步，都在同一个文件里：
 
 | 函数 | 回答 |
 | --- | --- |
-| 模块常量 `_UNCONFIGURED` | 部署设置没写时跑的那个 |
-| `deployment_harness()` | 这套部署跑哪个：读 `settings.agent_harness`，还必须**在注册表里**，配错是起不来 |
-| `harness_for(project_settings)` | 这个项目跑哪个：项目设置的 `harness` 键（`HARNESS_SETTING`）盖过部署设置 |
+| `deployment_harnesses()` | 这套部署可用哪些，按偏好排好：读 `settings.agent_harnesses`（例如 `["claude-code", "pi"]`），每个都必须**在注册表里**，配错是起不来；没配就是模块常量 `_UNCONFIGURED` |
+| `harness_for(project_settings)` | 这个项目跑哪个，不问机器：项目设置的 `harness` 键（`HARNESS_SETTING`）指定的那个，前提是部署列了它；否则是部署偏好的第一个 |
+| `harness_on(project_settings, offered)` | 这个项目在一台机器上跑哪个：同样的次序，取第一个这台机器挂着的；一个都没有就是 `None`，这一轮在房间里说明、不开始 |
 
-`_known()` 认的是「这个仓库有没有适配层」，不是「注册表里有没有」：一个项目把设置指向有适配层、这套部署却没注册的骨架，是轮次开始时要在房间里说出来的一件事，不是一次配置错误。三处都不兜底回默认值——兜底会让一个配错名字的部署安静地跑另一个骨架，而「跑的是哪个」正是只许有一个答法的那件事。
+房间的一轮问的是 `ComputePool.choose`：它拿这台机器挂着哪些骨架去问 `harness_on`。一个骨架挂不挂得上一台机器，看它能不能把工具送到那台机器的手上：被 `CentralChannel` 包起来的通道会话在中心机、手在执行机，只挂声明了 `Capability.REMOTE_EXECUTION` 的骨架（`compute.py` 的 `build_compute_pool`）。项目设置写了一个没有适配层的名字是配置错误，直接报；写了一个有适配层、部署却没列的，按部署偏好往下取。
 
 ## 注册的是三个里的两个 {#registry}
 
 `HARNESSES`（`harness/__init__.py`）有 `claude-code` 和 `pi` 两条。`codex/` 的适配层也在、也在跑、也有完整的契约夹具和行为声明，只是没注册。
 
-注册表列的是答得出下面四条硬性要求的骨架：答不出的留着代码不注册，能力矩阵里也就不占一列，答出四条的那天回到表里。`deployment_harness()` 因此只放注册了的骨架过去。
+注册表列的是答得出下面四条硬性要求的骨架：答不出的留着代码不注册，能力矩阵里也就不占一列，答出四条的那天回到表里。`deployment_harnesses()` 因此只放注册了的骨架过去。
 
 ## 四条硬性要求 {#subagents}
 
@@ -93,6 +93,6 @@ pin 的版本号只写一处：那份脚本从每份 `Declaration.pinned_version
 
 ## 骨架能指向什么、一条活用哪个模型 {#models}
 
-`Harness` 的字段：`name`、`label`、`subagents`、`speaks_gateway`、`carries_subscription`。这几个事实写在骨架上而不是模型上——以前是反过来的（每个模型带一张「允许哪些骨架驱动我」的名单），方向错得付出过代价：加一个骨架要改模型目录，拒绝一个组合时报的错还是关于模型的，而模型对这件事什么意见都没有。`speaks_gateway` 说它说不说平台网关自己那套形状（能，就所有模型都能驱动它）；`carries_subscription` 说它能不能承载 Anthropic 订阅凭据——那份凭据只为**一个**骨架铸造。
+`Harness` 的字段：`name`、`label`、`subagents`、`capabilities`、`speaks_gateway`、`carries_subscription`。这几个事实写在骨架上而不是模型上——以前是反过来的（每个模型带一张「允许哪些骨架驱动我」的名单），方向错得付出过代价：加一个骨架要改模型目录，拒绝一个组合时报的错还是关于模型的，而模型对这件事什么意见都没有。`speaks_gateway` 说它说不说平台网关自己那套形状（能，就所有模型都能驱动它）；`carries_subscription` 说它能不能承载 Anthropic 订阅凭据——那份凭据只为**一个**骨架铸造。`capabilities` 是可选能力（`Capability`），和四条硬性要求不同，答不出不妨碍注册，只是要它的地方用不了这个骨架；每一项也写一句「怎么做到的」，由同一份 `test_subagent_requirements.py` 核引文。今天只有一项「远端执行」，Claude Code 和 pi 声明了，Codex 没注册。
 
-一条活具体用哪个模型由 `backend/app/domain/room_task/binding.py` 的 `resolve()` 定：显式绑在这条活上的 → 队友的 → 调用方给的默认 → 项目主模型，逐个往下；一个都没有就报「当前项目没有可用的默认模型」。Codex 和 pi 没有 MCP，它们把平台工具交到模型手里的方式见[平台工具与会话侧 MCP](/dev/mcp)。
+一条活具体用哪个模型由 `backend/app/domain/room_task/binding.py` 的 `resolve()` 定：显式绑在这条活上的 → 队友的 → 调用方给的默认 → 项目主模型，逐个往下；一个都没有就报「当前项目没有可用的默认模型」。各个骨架怎么把平台工具交到模型手里，见[平台工具与会话侧 MCP](/dev/mcp)。

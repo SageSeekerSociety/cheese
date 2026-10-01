@@ -60,15 +60,15 @@ covers:
 | --- | --- | --- |
 | Claude Code | 执行器的 `native` MCP 服务器：`tools/list` 的最后一批就是 `PLATFORM_TOOLS.schemas()`；容器里的 `proxy.js` 给它们加 `mcp__native__` 前缀 | `mcp__native__chat_send` |
 | Codex | 后端把表当 `dynamicTools` 发过去（`harness/codex/tools.py` 的 `platform_tools()`、`RemoteTools.discover`），调用按 `PLATFORM` 这条路由原地执行 | `chat_send` |
-| pi | 没有 MCP：`harness/pi/catalog.py` 读随 runner 一起送到中心机的那份 CLI 文件，生成目录 | `chat_send` |
+| pi | 平台给 pi 的 extension（`harness/pi/platform.ts` 的 `registerPlatformTools`）把目录注册成工具；目录由 `harness/pi/catalog.py` 读随 runner 一起送到中心机的那份 CLI 文件生成 | `chat_send` |
 
 **Claude Code 的约定**：服务器注册名固定叫 `native`，项目自己的 MCP 服务不许叫这个名字，撞上直接报错；写 `mcp.json` 时用 `--strict-mcp-config --mcp-config <路径>` 钉住这一次的清单。`native` 底下不全是平台工具：`invoke` 是这个 harness 搬运读写与命令的通道（Read / Edit / Bash 都从它过），`project_tools` 是项目 MCP 的入口（见[项目自定义 MCP](/dev/remote-mcp)），`send_user_file` 替内置的 SendUserFile 交文件。
 
 Codex 那条路走 `RemoteTools.discover`：先向执行器问 `native` 和各个项目服务的 `tools/list`，`native` 底下的只留 `NATIVE_TOOLS` 那九个，项目服务的一律写成 `mcp__<服务>__<工具>`，最后把平台表整个并进来；命重当场报错，不猜谁该赢。调用时按路由分两路：平台工具走 `run_platform_tool` 原地打后端，项目工具走执行器的 `invoke`。
 
-**pi 没有 MCP**，所以它的平台工具不可能像另外两个那样「送到」。能送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；CLI 的命令在执行机上、在工作区里跑。`catalog.argv()` 再把一次工具调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
+**pi 自己没有 MCP 客户端**，平台工具因此不走 MCP，而是作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；其余的是 CLI 命令，在执行机上、在工作区里跑。`catalog.argv()` 把调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
 
-pi 的项目 MCP 也由 runner 当客户端（`pi/mcp.py`）：机器上的 stdio 服务器由执行器起、执行器在调用两边跑项目的钩子；远程服务器走平台的 `/topics/{id}/mcp/{name}`，跟另外两个骨架是同一个 `RemoteClient`。
+项目的 MCP 服务器由 runner 充当 pi 的 MCP 客户端（`harness/pi/mcp.py`），走另外两个骨架同一个 `RemoteClient`：检出里 `.mcp.json` 的 stdio 服务器和队友类型声明的 stdio 服务器由执行机上的执行器起，执行器在调用两边跑项目的 PreToolUse / PostToolUse 钩子；远程服务器经后端的 `/topics/{id}/mcp/{name}` 调用，凭据只在后端。它们的工具在开场时列一次，以 `mcp__<服务>__<工具>` 的名字由 `platform.ts` 的 `registerMcpTools` 注册，调用回到 runner 再转给对应的服务器。
 
 ## 一个文件两种用法 {#file}
 

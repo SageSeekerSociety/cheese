@@ -12,10 +12,19 @@ ran are gone; what remains is the shape that can be reconnected to.
 """
 
 import uuid
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Protocol
 
 from app.core.config import settings
-from app.domain.agent.harness import CODEX, HARNESSES, PI, AgentRuntime, runtime_for
+from app.domain.agent.harness import (
+    CLAUDE_CODE,
+    CODEX,
+    HARNESSES,
+    PI,
+    AgentRuntime,
+    Capability,
+    runtime_for,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
@@ -131,7 +140,7 @@ class ComputePool:
     """
 
     def __init__(self, backends: list[ComputeProvider], default_name: str):
-        from app.domain.agent.harness import deployment_harness
+        from app.domain.agent.harness import deployment_harnesses
 
         # Every backend runs a harness. Checked HERE, once, at wiring time: the
         # turn path then reads `runtime_for` as an answer rather than as a
@@ -141,9 +150,10 @@ class ComputePool:
             (backend.name, runtime_for(backend).harness): backend
             for backend in backends
         }
-        # 部署跑的那个骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，
-        # 而不是等到某一轮才发现自己跑的是另一个东西（结论 28）。
-        self._default = (default_name, deployment_harness())
+        # 部署列的骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，而
+        # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。偏好的第一个得挂在
+        # 默认机器上：没说骨架的平台工作落在这一对上。
+        self._default = (default_name, deployment_harnesses()[0])
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
         # 归属按座位记（topic, agent_handle）：一间房坐着几个 agent，各有各的
@@ -370,6 +380,25 @@ class ComputePool:
     def has(self, provider_id: str) -> bool:
         return provider_id in self.machines()
 
+    def choose(
+        self, project_settings: Mapping[str, Any] | None, provider_id: str | None
+    ) -> tuple[str, ComputeProvider | None]:
+        """The harness a room's turn runs on this machine, and its backend.
+
+        ``harness_on`` walks the project's order over what this machine runs.
+        When none of it runs here, the answer is the project's first pick with
+        no backend: the turn says that one is not deployed on this machine.
+        """
+        from app.domain.agent.harness import harness_for, harness_on
+
+        chosen = harness_on(
+            project_settings,
+            lambda name: self.select(provider_id=provider_id, harness=name) is not None,
+        )
+        if chosen is None:
+            return harness_for(project_settings), None
+        return chosen, self.select(provider_id=provider_id, harness=chosen)
+
     def select(
         self,
         *,
@@ -384,11 +413,10 @@ class ComputePool:
         deployment does not have falls back to the default one, so a stored
         selection that was retired never breaks a turn.
 
-        ``harness`` is what the agent's TYPE asks to be run by, and it does NOT
-        fall back. A type that names a harness this deployment does not run on
-        that machine gets None — running something else would answer as an agent
-        nobody configured, which is worse than not answering. None asks for the
-        deployment's default harness.
+        ``harness`` is the one already chosen for this turn (``harness_on``
+        walks the project's order over this pool), and it does NOT fall back
+        here: a name this machine does not run gets None. None asks for the
+        deployment's first preference.
 
         caps/quota/queue routing arrives with ``env_spec`` (design §3
         pick_provider, v2 R9)."""
@@ -449,24 +477,34 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     preferred = compute_default_name(settings)
     names = {channel.name for channel in channels}
     default_name = preferred if preferred in names else DeviceChannel.name
-    backends: list[ComputeProvider] = [
-        ClaudeCodeRuntime(ClaudeCodeChannel(CentralChannel(c)), **policy)
-        for c in channels
-    ]
+
+    # 一个骨架挂不挂得上一条通道，看它能不能把工具送到那条通道的手上。被
+    # `CentralChannel` 包起来的，会话在中心机、手在执行机，所以只挂声明了
+    # `Capability.REMOTE_EXECUTION` 的骨架。房间的一轮按这张池子挑骨架
+    # （`harness_on`），所以「这个场景要远端执行」的判据就落在这里。
+    def forwards(name: str) -> bool:
+        return name in HARNESSES and (
+            Capability.REMOTE_EXECUTION in HARNESSES[name].capabilities
+        )
+
+    backends: list[ComputeProvider] = []
+    if forwards(CLAUDE_CODE):
+        backends.extend(
+            ClaudeCodeRuntime(ClaudeCodeChannel(CentralChannel(c)), **policy)
+            for c in channels
+        )
     # 挂谁，由注册表说（结论 43）。一个骨架答不出四条硬性要求就不在 `HARNESSES`
     # 里，而「不在注册表里」如果只是矩阵上少一列，它照样是个活调用点：
     # `recover_sessions` 进程重启后会把它的旧会话恢复回来并写进 `_owners`，
     # `bind_events` 照样把房间侧的持久化交给它，`deliver` 在没有 owner 的时候照样
     # 按 `holds()` 找到它。所以判据落在装配这一步：注册表是唯一的那一处，什么时候
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
-    if CODEX in HARNESSES:
+    if forwards(CODEX):
         backends.extend(
             CodexRuntime(CodexChannel(CentralChannel(c), executor_launch), **policy)
             for c in channels
         )
-    # pi too runs on the session host and sends its tools to the room's machine
-    # (#1106), so it hangs on every machine the way the other two do.
-    if PI in HARNESSES:
+    if forwards(PI):
         backends.extend(
             PiRuntime(PiChannel(CentralChannel(c), executor_launch), **policy)
             for c in channels
