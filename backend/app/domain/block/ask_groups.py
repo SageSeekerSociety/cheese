@@ -75,7 +75,7 @@ class AskGroups:
         return select(Block).where(
             Block.topic_id == topic_id,
             Block.author == asked_by,
-            Block.meta["ask_group"]["id"].astext == group_id,
+            Block.meta["ask_group"]["id"].as_string() == group_id,
         )
 
     async def read(self, topic_id, asked_by, group_id, *, lock=False):

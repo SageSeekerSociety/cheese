@@ -38,6 +38,9 @@ async def ask_receipt(session, *, event_id, project_id, topic_id, recipient):
                 NativeInput.project_id == project_id,
                 NativeInput.topic_id == topic_id,
                 NativeInput.recipient_handle == recipient,
+                NativeInput.harness == row.payload["ask_origin"]["harness"],
+                NativeInput.native_session_id
+                == row.payload["ask_origin"]["native_session_id"],
             )
         )
     )

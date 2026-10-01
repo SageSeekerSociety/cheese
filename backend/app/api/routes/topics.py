@@ -1294,6 +1294,8 @@ async def answer_options(
     )
     blk = locked.scalar_one()
     meta = dict(blk.meta or {})
+    if meta.get("ask_group"):
+        raise ValidationError("问题组必须整组提交，不能逐题发送")
     entry, replay = answer.apply(meta, author)
     if replay:
         return ok(BlockOut.model_validate(blk).model_dump(mode="json"))

@@ -200,11 +200,16 @@ async def settle_ask_group(
         content=text,
         payload={
             "ask_group": group_id,
+            "answer_to": str(rows[0].id),
             "v": settlement["v"],
             "block_ids": [str(row.id) for row in rows],
         },
     )
-    meta = {"answer_group": group_id, "delivery_event_id": str(event_id)}
+    meta = {
+        "answer_group": group_id,
+        "answer_to": str(rows[0].id),
+        "delivery_event_id": str(event_id),
+    }
     if recipient:
         meta["agent_recipient"] = recipient
     wake = await BlockRepository(db).add(

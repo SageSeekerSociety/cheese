@@ -139,7 +139,9 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
             )
         )
     work = chat._consuming_work_id(
-        topic_id, lambda state: state.acting_agent == seat, strict=True
+        topic_id,
+        lambda state: (state.agent_instance_handle or state.acting_agent) == seat,
+        strict=True,
     )
     if work is None:
         async with chat.session_factory() as session:

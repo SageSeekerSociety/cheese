@@ -28,6 +28,7 @@ from typing import Protocol
 
 import httpx
 
+from app.core.errors import ValidationError
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -677,7 +678,18 @@ class DrivenRuntime[H: Handle]:
         images: list[dict] | None = None,
         owes_reply: bool = False,
     ) -> bool:
-        handle = await self.ensure(session, opening, work_id=work_id)
+        if opening.expected_native_session is not None:
+            handle = self.live.get(self._seat_of(session))
+            if (
+                handle is None
+                or self.conversation(handle) != opening.expected_native_session
+                or handle.session.project_id != session.project_id
+            ):
+                raise ValidationError(
+                    "The original Ask session is not live; no replacement started"
+                )
+        else:
+            handle = await self.ensure(session, opening, work_id=work_id)
         await self.check_input_protocol(handle)
         payload = await self.channel.images(handle, images or [])
         on_mark(work_id)

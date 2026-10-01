@@ -266,6 +266,8 @@ class Opening:
 
     system_prompt: str
     resume_token: str | None = None
+    # An Ask answer may use only this existing conversation, never a cold one.
+    expected_native_session: str | None = None
     model: str | None = None
     env: dict[str, str] | None = None
     memory_scope: str | None = None

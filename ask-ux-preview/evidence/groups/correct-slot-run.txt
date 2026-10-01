@@ -1,0 +1,209 @@
+EEE                                                                      [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_replay_confirms_old_operation_without_rolling_back_blocks _
+tests/integration/test_ask_groups.py:51: in group
+    assert response.status_code == 200, response.text
+E   AssertionError: {"code":403,"message":"ForbiddenError: 要登录才能读取或提交问题组","error":{"name":"ForbiddenError","message":"要登录才能读取或提交问题组","data":null,"retryable":false}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+---------------------------- Captured stderr setup -----------------------------
+2026-10-01 17:59:59 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=df2561eba136
+2026-10-01 17:59:59 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 17:59:59 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 17:59:59 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 17:59:59 [info     ] req                            [http] bytes=644 client=testclient host=testserver method=POST ms=799.0 path=/projects req=df2561eba136 status=200 ua=testclient
+2026-10-01 17:59:59 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:00 [warning  ] event loop stalled             [cheesex.loop] note='one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.' stalled_ms=1142 worst_ms=1142
+2026-10-01 18:00:00 [info     ] req                            [http] bytes=726 client=testclient host=testserver method=POST ms=1214.1 path=/topics req=d194ccd2b9d7 status=200 ua=testclient
+2026-10-01 18:00:00 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:00 [info     ] req                            [http] bytes=518 client=testclient host=testserver method=GET ms=27.9 path=/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/members req=699a028e678c status=200 ua=testclient
+2026-10-01 18:00:00 [info     ] HTTP Request: GET http://testserver/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/members "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:00 [info     ] req                            [http] bytes=196 client=testclient host=testserver method=POST ms=15.0 path=/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/ask req=55365cb62766 status=403 ua=testclient
+2026-10-01 18:00:00 [info     ] HTTP Request: POST http://testserver/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/ask "HTTP/1.1 403 Forbidden" [httpx2]
+------------------------------ Captured log setup ------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': 'df2561eba136', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 17:59:59'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 799.0, 'req': 'df2561eba136', 'bytes': 644, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 17:59:59'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+WARNING  cheesex.loop:loop_lag.py:75 {'stalled_ms': 1142, 'worst_ms': 1142, 'note': 'one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.', 'event': 'event loop stalled', 'level': 'warning', 'logger': 'cheesex.loop', 'timestamp': '2026-10-01 18:00:00'}
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 1214.1, 'req': 'd194ccd2b9d7', 'bytes': 726, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:00'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'GET', 'path': '/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/members', 'status': 200, 'ms': 27.9, 'req': '699a028e678c', 'bytes': 518, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:00'}
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/members "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/ask', 'status': 403, 'ms': 15.0, 'req': '55365cb62766', 'bytes': 196, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:00'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/801d2dcd-d6df-404f-ab7b-f7d38b5b0433/ask "HTTP/1.1 403 Forbidden"
+____ ERROR at setup of test_last_member_error_leaves_every_answer_unchanged ____
+tests/integration/test_ask_groups.py:51: in group
+    assert response.status_code == 200, response.text
+E   AssertionError: {"code":403,"message":"ForbiddenError: 要登录才能读取或提交问题组","error":{"name":"ForbiddenError","message":"要登录才能读取或提交问题组","data":null,"retryable":false}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+---------------------------- Captured stderr setup -----------------------------
+2026-10-01 18:00:01 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=457066b91e6e
+2026-10-01 18:00:01 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 18:00:01 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 18:00:01 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 18:00:01 [info     ] req                            [http] bytes=644 client=testclient host=testserver method=POST ms=178.1 path=/projects req=457066b91e6e status=200 ua=testclient
+2026-10-01 18:00:01 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:01 [info     ] req                            [http] bytes=726 client=testclient host=testserver method=POST ms=35.2 path=/topics req=a1321ceebb81 status=200 ua=testclient
+2026-10-01 18:00:01 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:01 [info     ] req                            [http] bytes=518 client=testclient host=testserver method=GET ms=30.9 path=/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/members req=29b7869c5a8e status=200 ua=testclient
+2026-10-01 18:00:01 [info     ] HTTP Request: GET http://testserver/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/members "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:01 [info     ] req                            [http] bytes=196 client=testclient host=testserver method=POST ms=10.0 path=/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/ask req=a15ae25558a0 status=403 ua=testclient
+2026-10-01 18:00:01 [info     ] HTTP Request: POST http://testserver/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/ask "HTTP/1.1 403 Forbidden" [httpx2]
+------------------------------ Captured log setup ------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': '457066b91e6e', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 18:00:01'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 178.1, 'req': '457066b91e6e', 'bytes': 644, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:01'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 35.2, 'req': 'a1321ceebb81', 'bytes': 726, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:01'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'GET', 'path': '/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/members', 'status': 200, 'ms': 30.9, 'req': '29b7869c5a8e', 'bytes': 518, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:01'}
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/members "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/ask', 'status': 403, 'ms': 10.0, 'req': 'a15ae25558a0', 'bytes': 196, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:01'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/a99d6608-216b-4e44-9408-e27c3a8e4a26/ask "HTTP/1.1 403 Forbidden"
+______ ERROR at setup of test_human_cannot_create_group_or_append_members ______
+tests/integration/test_ask_groups.py:51: in group
+    assert response.status_code == 200, response.text
+E   AssertionError: {"code":403,"message":"ForbiddenError: 要登录才能读取或提交问题组","error":{"name":"ForbiddenError","message":"要登录才能读取或提交问题组","data":null,"retryable":false}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+---------------------------- Captured stderr setup -----------------------------
+2026-10-01 18:00:02 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=542224c779dd
+2026-10-01 18:00:02 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 18:00:02 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 18:00:02 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 18:00:02 [info     ] req                            [http] bytes=644 client=testclient host=testserver method=POST ms=202.0 path=/projects req=542224c779dd status=200 ua=testclient
+2026-10-01 18:00:02 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:02 [info     ] req                            [http] bytes=726 client=testclient host=testserver method=POST ms=43.9 path=/topics req=8c95c550530c status=200 ua=testclient
+2026-10-01 18:00:02 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:02 [info     ] req                            [http] bytes=518 client=testclient host=testserver method=GET ms=29.8 path=/topics/8e248484-acd6-49b9-839c-a1016a243977/members req=998b514a6743 status=200 ua=testclient
+2026-10-01 18:00:02 [info     ] HTTP Request: GET http://testserver/topics/8e248484-acd6-49b9-839c-a1016a243977/members "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 18:00:02 [info     ] req                            [http] bytes=196 client=testclient host=testserver method=POST ms=11.2 path=/topics/8e248484-acd6-49b9-839c-a1016a243977/ask req=573d25785678 status=403 ua=testclient
+2026-10-01 18:00:02 [info     ] HTTP Request: POST http://testserver/topics/8e248484-acd6-49b9-839c-a1016a243977/ask "HTTP/1.1 403 Forbidden" [httpx2]
+------------------------------ Captured log setup ------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': '542224c779dd', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 18:00:02'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 202.0, 'req': '542224c779dd', 'bytes': 644, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:02'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 43.9, 'req': '8c95c550530c', 'bytes': 726, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:02'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'GET', 'path': '/topics/8e248484-acd6-49b9-839c-a1016a243977/members', 'status': 200, 'ms': 29.8, 'req': '998b514a6743', 'bytes': 518, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:02'}
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/topics/8e248484-acd6-49b9-839c-a1016a243977/members "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/8e248484-acd6-49b9-839c-a1016a243977/ask', 'status': 403, 'ms': 11.2, 'req': '573d25785678', 'bytes': 196, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 18:00:02'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/8e248484-acd6-49b9-839c-a1016a243977/ask "HTTP/1.1 403 Forbidden"
+=============================== warnings summary ===============================
+tests/integration/test_ask_groups.py::test_replay_confirms_old_operation_without_rolling_back_blocks
+tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/integration/test_ask_groups.py::test_replay_confirms_old_operation_without_rolling_back_blocks
+ERROR tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+ERROR tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+3 warnings, 3 errors in 4.83s

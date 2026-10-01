@@ -6,6 +6,7 @@ Nothing here resubmits an input whose outcome is uncertain.
 """
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -45,6 +46,35 @@ async def register_input(
             or delivery.recipient_handle != identity.recipient_handle
         ):
             raise ValidationError("Input does not own the addressed delivery attempt")
+        origin = delivery.payload.get("ask_origin")
+        if origin is not None:
+            if any(
+                origin.get(field) != getattr(identity, field)
+                for field in ("recipient_handle", "harness", "native_session_id")
+            ):
+                raise ValidationError(
+                    "Ask answer cannot enter a replacement native session"
+                )
+            try:
+                members = tuple(
+                    uuid.UUID(value) for value in delivery.payload["block_ids"]
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "Ask delivery has invalid member effects"
+                ) from exc
+            # Complete group consumption is tied to successful work, not RPC or
+            # echo. The exact echo alone may add the recipient's read marks.
+            effects = replace(
+                effects,
+                held_block_ids=tuple(
+                    sorted(set(effects.held_block_ids) | set(members))
+                ),
+                seen_block_ids=tuple(
+                    sorted(set(effects.seen_block_ids) | set(members))
+                ),
+                seen_by=identity.recipient_handle,
+            )
         event_id = delivery.event_id
     elif effects.attempt_id is not None:
         raise ValidationError("An attempt must name its delivery")

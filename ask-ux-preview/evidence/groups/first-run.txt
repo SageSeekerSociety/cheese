@@ -1,0 +1,642 @@
+EEEEEE                                                                   [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_replay_confirms_old_operation_without_rolling_back_blocks _
+
+    @pytest.fixture(scope="session")
+    def _pg_schema():
+        """Create + migrate THIS worker's two dedicated databases once per session:
+        the integration DB (settings.database_url, bound by the app engines) and the
+        client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
+        autouse fixture above so the integration harness — which binds to
+        settings.database_url — always finds a ready schema too. Both are per-worker,
+        so nothing races across xdist workers. Talks to the Postgres server at
+        TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
+        """
+        global _TEMPLATE_READY
+        _TEMPLATE_READY = _ensure_template()
+>       _create_and_migrate(_INTG_DB_NAME, settings.database_url)
+
+tests/conftest.py:1746: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:1528: in _create_and_migrate
+    _migrate_fresh_db(db_name, db_url)
+tests/conftest.py:1475: in _migrate_fresh_db
+    asyncio.run(_admin_recreate_db(db_name))
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1238: in _admin_recreate_db
+    conn = await asyncpg.connect(dsn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+params = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+retry = True, addr = ('localhost', 5433)
+loop = <_UnixSelectorEventLoop running=False closed=True debug=False>
+config = ConnectionConfiguration(command_timeout=None, statement_cache_size=100, max_cached_statement_lifetime=300, max_cacheable_statement_size=15360)
+connection_class = <class 'asyncpg.connection.Connection'>
+record_class = <class 'asyncpg.protocol.record.Record'>
+params_input = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+
+    async def __connect_addr(
+        params,
+        retry,
+        addr,
+        loop,
+        config,
+        connection_class,
+        record_class,
+        params_input,
+    ):
+        connected = _create_future(loop)
+    
+        proto_factory = lambda: protocol.Protocol(
+            addr, connected, params, record_class, loop)
+    
+        if isinstance(addr, str):
+            # UNIX socket
+            connector = loop.create_unix_connection(proto_factory, addr)
+    
+        elif params.ssl and params.ssl_negotiation is SSLNegotiation.direct:
+            # if ssl and ssl_negotiation is `direct`, skip STARTTLS and perform
+            # direct SSL connection
+            connector = loop.create_connection(
+                proto_factory, *addr, ssl=params.ssl
+            )
+    
+        elif params.ssl:
+            connector = _create_ssl_connection(
+                proto_factory, *addr, loop=loop, ssl_context=params.ssl,
+                ssl_is_advisory=params.sslmode == SSLMode.prefer)
+        else:
+            connector = loop.create_connection(proto_factory, *addr)
+    
+        tr, pr = await connector
+    
+        try:
+>           await connected
+E           asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: InvalidAuthorizationSpecificationError
+_ ERROR at teardown of test_replay_confirms_old_operation_without_rolling_back_blocks _
+
+item = <Function test_replay_confirms_old_operation_without_rolling_back_blocks>
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_teardown(item: pytest.Item):
+        """After a client-DB test has torn down, no session of ours may still be
+        inside a transaction on that database.
+    
+        One left open holds locks the next test's TRUNCATE needs (see
+        ``_truncate_all``), and it is invisible from there: the report names the
+        test that waited, never the one that leaked. Checking at the leaker's own
+        teardown is what pins it, so a leak fails HERE, on the test that made it,
+        with the statement it was running. The session is terminated too, so the
+        rest of the run is not held hostage to a bug already reported.
+    
+        Only the client database (``_c``): it is truncate-isolated, so any open
+        transaction there once the test is over is a leak by definition. The
+        integration database uses a session-long connection with per-test rollback,
+        where a transaction between tests can be the harness itself. ``client``,
+        ``python_client`` and ``db_factory`` all sit on this same database (all
+        three build their engine on ``TEST_DATABASE_URL``), so all three name it
+        here — ``db_factory``'s own teardown check (see the fixture) is meant to
+        catch a leak first, by cancelling the task that holds it; this is the
+        backstop for whatever gets past that.
+    
+        Cost: one connection to the maintenance DB per client-DB test, a few ms.
+        """
+        yield
+        names = getattr(item, "fixturenames", ())
+        # A pure test has no database behind it, so it cannot have leaked a
+        # transaction on one — and the name check below cannot tell that on its own:
+        # three files define their own local ``client``, a fake HTTP client or a
+        # four-route FastAPI app, which shadows the fixture this hook is named after
+        # and matches here all the same. That cost every one of them a connection to
+        # the maintenance database per test, and in the pure CI selection, which has
+        # no database reachable at all, it was an error at teardown on a test that
+        # had passed.
+        if item.get_closest_marker("pure") is not None:
+            return
+        if not ({"client", "python_client", "db_factory"} & set(names)):
+            return
+>       leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/conftest.py:1696: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1641: in _terminate_open_transactions
+    conn = await asyncpg.connect(dsn, timeout=10)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+params = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+retry = True, addr = ('localhost', 5433)
+loop = <_UnixSelectorEventLoop running=False closed=True debug=False>
+config = ConnectionConfiguration(command_timeout=None, statement_cache_size=100, max_cached_statement_lifetime=300, max_cacheable_statement_size=15360)
+connection_class = <class 'asyncpg.connection.Connection'>
+record_class = <class 'asyncpg.protocol.record.Record'>
+params_input = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+
+    async def __connect_addr(
+        params,
+        retry,
+        addr,
+        loop,
+        config,
+        connection_class,
+        record_class,
+        params_input,
+    ):
+        connected = _create_future(loop)
+    
+        proto_factory = lambda: protocol.Protocol(
+            addr, connected, params, record_class, loop)
+    
+        if isinstance(addr, str):
+            # UNIX socket
+            connector = loop.create_unix_connection(proto_factory, addr)
+    
+        elif params.ssl and params.ssl_negotiation is SSLNegotiation.direct:
+            # if ssl and ssl_negotiation is `direct`, skip STARTTLS and perform
+            # direct SSL connection
+            connector = loop.create_connection(
+                proto_factory, *addr, ssl=params.ssl
+            )
+    
+        elif params.ssl:
+            connector = _create_ssl_connection(
+                proto_factory, *addr, loop=loop, ssl_context=params.ssl,
+                ssl_is_advisory=params.sslmode == SSLMode.prefer)
+        else:
+            connector = loop.create_connection(proto_factory, *addr)
+    
+        tr, pr = await connector
+    
+        try:
+>           await connected
+E           asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: InvalidAuthorizationSpecificationError
+____ ERROR at setup of test_last_member_error_leaves_every_answer_unchanged ____
+
+    @pytest.fixture(scope="session")
+    def _pg_schema():
+        """Create + migrate THIS worker's two dedicated databases once per session:
+        the integration DB (settings.database_url, bound by the app engines) and the
+        client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
+        autouse fixture above so the integration harness — which binds to
+        settings.database_url — always finds a ready schema too. Both are per-worker,
+        so nothing races across xdist workers. Talks to the Postgres server at
+        TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
+        """
+        global _TEMPLATE_READY
+        _TEMPLATE_READY = _ensure_template()
+>       _create_and_migrate(_INTG_DB_NAME, settings.database_url)
+
+tests/conftest.py:1746: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:1528: in _create_and_migrate
+    _migrate_fresh_db(db_name, db_url)
+tests/conftest.py:1475: in _migrate_fresh_db
+    asyncio.run(_admin_recreate_db(db_name))
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1238: in _admin_recreate_db
+    conn = await asyncpg.connect(dsn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+params = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+retry = True, addr = ('localhost', 5433)
+loop = <_UnixSelectorEventLoop running=False closed=True debug=False>
+config = ConnectionConfiguration(command_timeout=None, statement_cache_size=100, max_cached_statement_lifetime=300, max_cacheable_statement_size=15360)
+connection_class = <class 'asyncpg.connection.Connection'>
+record_class = <class 'asyncpg.protocol.record.Record'>
+params_input = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+
+    async def __connect_addr(
+        params,
+        retry,
+        addr,
+        loop,
+        config,
+        connection_class,
+        record_class,
+        params_input,
+    ):
+        connected = _create_future(loop)
+    
+        proto_factory = lambda: protocol.Protocol(
+            addr, connected, params, record_class, loop)
+    
+        if isinstance(addr, str):
+            # UNIX socket
+            connector = loop.create_unix_connection(proto_factory, addr)
+    
+        elif params.ssl and params.ssl_negotiation is SSLNegotiation.direct:
+            # if ssl and ssl_negotiation is `direct`, skip STARTTLS and perform
+            # direct SSL connection
+            connector = loop.create_connection(
+                proto_factory, *addr, ssl=params.ssl
+            )
+    
+        elif params.ssl:
+            connector = _create_ssl_connection(
+                proto_factory, *addr, loop=loop, ssl_context=params.ssl,
+                ssl_is_advisory=params.sslmode == SSLMode.prefer)
+        else:
+            connector = loop.create_connection(proto_factory, *addr)
+    
+        tr, pr = await connector
+    
+        try:
+>           await connected
+E           asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: InvalidAuthorizationSpecificationError
+__ ERROR at teardown of test_last_member_error_leaves_every_answer_unchanged ___
+
+item = <Function test_last_member_error_leaves_every_answer_unchanged>
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_teardown(item: pytest.Item):
+        """After a client-DB test has torn down, no session of ours may still be
+        inside a transaction on that database.
+    
+        One left open holds locks the next test's TRUNCATE needs (see
+        ``_truncate_all``), and it is invisible from there: the report names the
+        test that waited, never the one that leaked. Checking at the leaker's own
+        teardown is what pins it, so a leak fails HERE, on the test that made it,
+        with the statement it was running. The session is terminated too, so the
+        rest of the run is not held hostage to a bug already reported.
+    
+        Only the client database (``_c``): it is truncate-isolated, so any open
+        transaction there once the test is over is a leak by definition. The
+        integration database uses a session-long connection with per-test rollback,
+        where a transaction between tests can be the harness itself. ``client``,
+        ``python_client`` and ``db_factory`` all sit on this same database (all
+        three build their engine on ``TEST_DATABASE_URL``), so all three name it
+        here — ``db_factory``'s own teardown check (see the fixture) is meant to
+        catch a leak first, by cancelling the task that holds it; this is the
+        backstop for whatever gets past that.
+    
+        Cost: one connection to the maintenance DB per client-DB test, a few ms.
+        """
+        yield
+        names = getattr(item, "fixturenames", ())
+        # A pure test has no database behind it, so it cannot have leaked a
+        # transaction on one — and the name check below cannot tell that on its own:
+        # three files define their own local ``client``, a fake HTTP client or a
+        # four-route FastAPI app, which shadows the fixture this hook is named after
+        # and matches here all the same. That cost every one of them a connection to
+        # the maintenance database per test, and in the pure CI selection, which has
+        # no database reachable at all, it was an error at teardown on a test that
+        # had passed.
+        if item.get_closest_marker("pure") is not None:
+            return
+        if not ({"client", "python_client", "db_factory"} & set(names)):
+            return
+>       leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/conftest.py:1696: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1641: in _terminate_open_transactions
+    conn = await asyncpg.connect(dsn, timeout=10)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+params = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+retry = True, addr = ('localhost', 5433)
+loop = <_UnixSelectorEventLoop running=False closed=True debug=False>
+config = ConnectionConfiguration(command_timeout=None, statement_cache_size=100, max_cached_statement_lifetime=300, max_cacheable_statement_size=15360)
+connection_class = <class 'asyncpg.connection.Connection'>
+record_class = <class 'asyncpg.protocol.record.Record'>
+params_input = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+
+    async def __connect_addr(
+        params,
+        retry,
+        addr,
+        loop,
+        config,
+        connection_class,
+        record_class,
+        params_input,
+    ):
+        connected = _create_future(loop)
+    
+        proto_factory = lambda: protocol.Protocol(
+            addr, connected, params, record_class, loop)
+    
+        if isinstance(addr, str):
+            # UNIX socket
+            connector = loop.create_unix_connection(proto_factory, addr)
+    
+        elif params.ssl and params.ssl_negotiation is SSLNegotiation.direct:
+            # if ssl and ssl_negotiation is `direct`, skip STARTTLS and perform
+            # direct SSL connection
+            connector = loop.create_connection(
+                proto_factory, *addr, ssl=params.ssl
+            )
+    
+        elif params.ssl:
+            connector = _create_ssl_connection(
+                proto_factory, *addr, loop=loop, ssl_context=params.ssl,
+                ssl_is_advisory=params.sslmode == SSLMode.prefer)
+        else:
+            connector = loop.create_connection(proto_factory, *addr)
+    
+        tr, pr = await connector
+    
+        try:
+>           await connected
+E           asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: InvalidAuthorizationSpecificationError
+______ ERROR at setup of test_human_cannot_create_group_or_append_members ______
+
+    @pytest.fixture(scope="session")
+    def _pg_schema():
+        """Create + migrate THIS worker's two dedicated databases once per session:
+        the integration DB (settings.database_url, bound by the app engines) and the
+        client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
+        autouse fixture above so the integration harness — which binds to
+        settings.database_url — always finds a ready schema too. Both are per-worker,
+        so nothing races across xdist workers. Talks to the Postgres server at
+        TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
+        """
+        global _TEMPLATE_READY
+        _TEMPLATE_READY = _ensure_template()
+>       _create_and_migrate(_INTG_DB_NAME, settings.database_url)
+
+tests/conftest.py:1746: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:1528: in _create_and_migrate
+    _migrate_fresh_db(db_name, db_url)
+tests/conftest.py:1475: in _migrate_fresh_db
+    asyncio.run(_admin_recreate_db(db_name))
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1238: in _admin_recreate_db
+    conn = await asyncpg.connect(dsn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+params = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+retry = True, addr = ('localhost', 5433)
+loop = <_UnixSelectorEventLoop running=False closed=True debug=False>
+config = ConnectionConfiguration(command_timeout=None, statement_cache_size=100, max_cached_statement_lifetime=300, max_cacheable_statement_size=15360)
+connection_class = <class 'asyncpg.connection.Connection'>
+record_class = <class 'asyncpg.protocol.record.Record'>
+params_input = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+
+    async def __connect_addr(
+        params,
+        retry,
+        addr,
+        loop,
+        config,
+        connection_class,
+        record_class,
+        params_input,
+    ):
+        connected = _create_future(loop)
+    
+        proto_factory = lambda: protocol.Protocol(
+            addr, connected, params, record_class, loop)
+    
+        if isinstance(addr, str):
+            # UNIX socket
+            connector = loop.create_unix_connection(proto_factory, addr)
+    
+        elif params.ssl and params.ssl_negotiation is SSLNegotiation.direct:
+            # if ssl and ssl_negotiation is `direct`, skip STARTTLS and perform
+            # direct SSL connection
+            connector = loop.create_connection(
+                proto_factory, *addr, ssl=params.ssl
+            )
+    
+        elif params.ssl:
+            connector = _create_ssl_connection(
+                proto_factory, *addr, loop=loop, ssl_context=params.ssl,
+                ssl_is_advisory=params.sslmode == SSLMode.prefer)
+        else:
+            connector = loop.create_connection(proto_factory, *addr)
+    
+        tr, pr = await connector
+    
+        try:
+>           await connected
+E           asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: InvalidAuthorizationSpecificationError
+____ ERROR at teardown of test_human_cannot_create_group_or_append_members _____
+
+item = <Function test_human_cannot_create_group_or_append_members>
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_teardown(item: pytest.Item):
+        """After a client-DB test has torn down, no session of ours may still be
+        inside a transaction on that database.
+    
+        One left open holds locks the next test's TRUNCATE needs (see
+        ``_truncate_all``), and it is invisible from there: the report names the
+        test that waited, never the one that leaked. Checking at the leaker's own
+        teardown is what pins it, so a leak fails HERE, on the test that made it,
+        with the statement it was running. The session is terminated too, so the
+        rest of the run is not held hostage to a bug already reported.
+    
+        Only the client database (``_c``): it is truncate-isolated, so any open
+        transaction there once the test is over is a leak by definition. The
+        integration database uses a session-long connection with per-test rollback,
+        where a transaction between tests can be the harness itself. ``client``,
+        ``python_client`` and ``db_factory`` all sit on this same database (all
+        three build their engine on ``TEST_DATABASE_URL``), so all three name it
+        here — ``db_factory``'s own teardown check (see the fixture) is meant to
+        catch a leak first, by cancelling the task that holds it; this is the
+        backstop for whatever gets past that.
+    
+        Cost: one connection to the maintenance DB per client-DB test, a few ms.
+        """
+        yield
+        names = getattr(item, "fixturenames", ())
+        # A pure test has no database behind it, so it cannot have leaked a
+        # transaction on one — and the name check below cannot tell that on its own:
+        # three files define their own local ``client``, a fake HTTP client or a
+        # four-route FastAPI app, which shadows the fixture this hook is named after
+        # and matches here all the same. That cost every one of them a connection to
+        # the maintenance database per test, and in the pure CI selection, which has
+        # no database reachable at all, it was an error at teardown on a test that
+        # had passed.
+        if item.get_closest_marker("pure") is not None:
+            return
+        if not ({"client", "python_client", "db_factory"} & set(names)):
+            return
+>       leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/conftest.py:1696: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests/conftest.py:1641: in _terminate_open_transactions
+    conn = await asyncpg.connect(dsn, timeout=10)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+params = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+retry = True, addr = ('localhost', 5433)
+loop = <_UnixSelectorEventLoop running=False closed=True debug=False>
+config = ConnectionConfiguration(command_timeout=None, statement_cache_size=100, max_cached_statement_lifetime=300, max_cacheable_statement_size=15360)
+connection_class = <class 'asyncpg.connection.Connection'>
+record_class = <class 'asyncpg.protocol.record.Record'>
+params_input = ConnectionParameters(user='postgres', password='postgres', database='postgres', ssl=<ssl.SSLContext object at 0x7fe99c...postgres'>, server_settings=None, target_session_attrs=<SessionAttribute.any: 'any'>, krbsrvname=None, gsslib='gssapi')
+
+    async def __connect_addr(
+        params,
+        retry,
+        addr,
+        loop,
+        config,
+        connection_class,
+        record_class,
+        params_input,
+    ):
+        connected = _create_future(loop)
+    
+        proto_factory = lambda: protocol.Protocol(
+            addr, connected, params, record_class, loop)
+    
+        if isinstance(addr, str):
+            # UNIX socket
+            connector = loop.create_unix_connection(proto_factory, addr)
+    
+        elif params.ssl and params.ssl_negotiation is SSLNegotiation.direct:
+            # if ssl and ssl_negotiation is `direct`, skip STARTTLS and perform
+            # direct SSL connection
+            connector = loop.create_connection(
+                proto_factory, *addr, ssl=params.ssl
+            )
+    
+        elif params.ssl:
+            connector = _create_ssl_connection(
+                proto_factory, *addr, loop=loop, ssl_context=params.ssl,
+                ssl_is_advisory=params.sslmode == SSLMode.prefer)
+        else:
+            connector = loop.create_connection(proto_factory, *addr)
+    
+        tr, pr = await connector
+    
+        try:
+>           await connected
+E           asyncpg.exceptions.InvalidAuthorizationSpecificationError: role "postgres" does not exist
+
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1102: InvalidAuthorizationSpecificationError
+=============================== warnings summary ===============================
+tests/integration/test_ask_groups.py::test_replay_confirms_old_operation_without_rolling_back_blocks
+tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/_pytest/runner.py:250: PluggyTeardownRaisedWarning: A plugin raised an exception during an old-style hookwrapper teardown.
+  Plugin: /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/tests/conftest.py, Hook: pytest_runtest_teardown
+  InvalidAuthorizationSpecificationError: role "postgres" does not exist
+  For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning
+    lambda: runtest_hook(item=item, **kwds),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/integration/test_ask_groups.py::test_replay_confirms_old_operation_without_rolling_back_blocks
+ERROR tests/integration/test_ask_groups.py::test_replay_confirms_old_operation_without_rolling_back_blocks
+ERROR tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+ERROR tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+ERROR tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+ERROR tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+3 warnings, 6 errors in 1.54s

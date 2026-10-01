@@ -4376,6 +4376,14 @@ class ChatService:
         queued turn picks up every message posted while it waited."""
         from app.api.deps import get_work_runner
 
+        ask_origin = None
+        if delivery_id is not None:
+            from app.domain.delivery.models import Delivery
+
+            async with self._sessions() as session:
+                delivery = await session.get(Delivery, delivery_id)
+                if delivery is not None:
+                    ask_origin = delivery.payload.get("ask_origin")
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
             topic_id=topic_id,
@@ -4635,6 +4643,9 @@ class ChatService:
                 Opening(
                     system_prompt=system_prompt,
                     resume_token=resume_session_id,
+                    expected_native_session=(
+                        ask_origin["native_session_id"] if ask_origin else None
+                    ),
                     memory_scope="personal" if private_owner else None,
                     owner=private_owner,
                     model=model_kwargs.get("model"),
