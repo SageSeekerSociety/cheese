@@ -32,12 +32,15 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const {
   handle,
+  name = undefined,
   isAgent = false,
   avatarId = null,
   size = 24,
 } = defineProps<{
   /** 作者（或评论者、备注者）的 handle。 */
   handle: string
+  /** 显示名。给了就用它取头像的字和底色，和聊天里同一个人的头像一致；不给退回 handle。 */
+  name?: string
   /** 服务端的 `author_is_agent`。 */
   isAgent?: boolean
   /** 服务端的 `author_avatar_id`：作者自己挑过的头像，没挑过是 null。 */
@@ -50,8 +53,8 @@ const avatarUrl = computed(() => (avatarId == null ? '' : getAvatarUrl(avatarId)
 </script>
 
 <template>
-  <CheeseAvatar v-if="isAgent" class="fb-avatar" :size="size" :name="handle" :handle="handle" />
-  <UserAvatar v-else class="fb-avatar" :size="size" :name="handle" :avatar="avatarUrl" />
+  <CheeseAvatar v-if="isAgent" class="fb-avatar" :size="size" :name="name || handle" :handle="handle" />
+  <UserAvatar v-else class="fb-avatar" :size="size" :name="name || handle" :avatar="avatarUrl" />
 </template>
 
 <style scoped>
