@@ -525,7 +525,8 @@ class StubChannel:
 
         Played on the runner's own loop, whichever thread the test scripts it
         from — the runner's journal belongs to that loop's thread, and the
-        reader waiting there is woken so it lands without being asked.
+        reader waiting there is woken the way a runner's ring wakes it, so it
+        lands without being asked.
         """
         session = self._session_for(topic_id, agent)
         record.setdefault("uuid", str(uuid.uuid4()))
@@ -533,7 +534,7 @@ class StubChannel:
 
         def play() -> None:
             session.observe(dict(record))
-            self.runtime._wake((topic_id, session.session_agent))
+            self.runtime.wake(topic_id, session.session_agent)
 
         if threading.get_ident() == session.thread:
             play()
