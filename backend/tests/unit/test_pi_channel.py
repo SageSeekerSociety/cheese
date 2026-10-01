@@ -178,7 +178,7 @@ class Rooms:
             )
 
         async def placed_sessions(_self):
-            return [(*key, place) for key, place in rooms.placed.items()]
+            return [(*key, None, place) for key, place in rooms.placed.items()]
 
         monkeypatch.setattr(AgentSessionService, "remember_place", remember_place)
         monkeypatch.setattr(AgentSessionService, "placed_sessions", placed_sessions)

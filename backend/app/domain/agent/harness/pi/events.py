@@ -58,6 +58,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
+    AgentUserEntry,
 )
 
 # pi stops for a tool call and keeps going; every other reason ends the turn,
@@ -108,9 +109,18 @@ class Assembler:
     final entry would bill a fraction and look plausible.
     """
 
-    def __init__(self, session_id: str | None = None):
+    def __init__(
+        self,
+        session_id: str | None = None,
+        harness: str = "pi",
+        attachment: str | None = None,
+    ):
         self.session_id = session_id
+        self.harness = harness
+        self.attachment = attachment
         self.spent = AgentUsage()
+        self.generation = ""
+        self._positions: dict[str, int] = {}
 
     def _accumulate(self, message: dict) -> None:
         usage = message.get("usage") or {}
@@ -124,6 +134,10 @@ class Assembler:
             cost_usd=self.spent.cost_usd
             + float((usage.get("cost") or {}).get("total", 0.0)),
         )
+
+    def _pos_of(self, entry_id: str) -> int:
+        """The entry's mirror position, or 0 when it is not ours to know."""
+        return self._positions.get(entry_id, 0)
 
     def absorb(self, entry: dict) -> None:
         """Count an entry towards the turn without reporting it again.
@@ -168,9 +182,30 @@ class Assembler:
         role = message.get("role")
         if role == "user":
             # The room already holds what the person said; a turn starts here,
-            # so this is where the running total goes back to zero.
+            # so this is where the running total goes back to zero. The entry
+            # itself goes out as the binding point an input is matched to
+            # (FB-56) — text, the mirror's own id and position, and the
+            # mirror's generation, so the platform never trusts page order.
             self.spent = AgentUsage()
-            return []
+            content = message.get("content") or []
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+            entry_id = str(entry.get("id") or "")
+            return [
+                AgentUserEntry(
+                    text,
+                    entry_id=entry_id,
+                    pos=self._pos_of(entry_id),
+                    generation=self.generation,
+                    session_id=self.session_id,
+                    harness=self.harness,
+                    attachment=self.attachment,
+                    eid=f"pi:user:{entry_id}",
+                )
+            ]
         if role == "toolResult":
             # What the tool handed back goes onto its step, not onto a line of
             # its own. A FAILURE also marks that step, because the effect of a
@@ -220,6 +255,7 @@ class Assembler:
                 events.append(
                     AgentMessage(
                         part["text"],
+                        session_id=self.session_id,
                         eid=eid,
                         eids=(eid,),
                         at=_stamp(entry),
@@ -230,6 +266,7 @@ class Assembler:
                     AgentToolUse(
                         part.get("name", ""),
                         part.get("arguments") or {},
+                        session_id=self.session_id,
                         eid=eid,
                         call_id=part.get("id"),
                     )
@@ -308,6 +345,7 @@ class Assembler:
                     AgentToolUse(
                         part.get("name", ""),
                         part.get("arguments") or {},
+                        session_id=self.session_id,
                         eid=eid,
                         call_id=part.get("id"),
                         thread_label=on,

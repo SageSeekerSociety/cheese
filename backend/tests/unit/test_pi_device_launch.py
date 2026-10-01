@@ -26,6 +26,7 @@ from app.domain.agent.harness.pi.device_launch import PiLaunch, build_launch_scr
 from app.domain.machine import pi_dist
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
+NONCE = "⟪w:00000000000000000000f001⟫"
 FIXTURE = Path(__file__).parent / "fixtures/pi-entries.json"
 STATE = "$HOME/.cheese/harness/proj/res/pi/deadbeef"
 
@@ -273,7 +274,7 @@ def test_a_turn_reaches_pi_and_comes_back_stamped(tmp_path):
         _call(
             path,
             "send",
-            {"input_id": str(uuid.uuid4()), "text": "改一下", "work_id": work},
+            {"input_id": str(uuid.uuid4()), "text": f"改一下 {NONCE}", "work_id": work},
         )
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -282,7 +283,12 @@ def test_a_turn_reaches_pi_and_comes_back_stamped(tmp_path):
                 break
             time.sleep(0.05)
         assert entries, "the turn produced no entries"
-        assert {entry["cheese"]["work_id"] for entry in entries} == {work}
+        # Session metadata (model/thinking changes) belongs to no turn and
+        # carries no work_id by design (FB-56); the turn's entries all
+        # carry this turn's.
+        worked = [entry for entry in entries if entry["type"] == "message"]
+        assert worked
+        assert {entry["cheese"]["work_id"] for entry in worked} == {work}
         assert {entry["cheese"]["harness"] for entry in entries} == {"pi"}
     finally:
         process.terminate()

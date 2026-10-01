@@ -224,7 +224,12 @@ class ClaudeCodeChannel:
         handles: list[Handle] = []
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        for project_id, room_id, handle, harness, place in sessions:
+        # Per-conversation observations from THIS round, same contract as
+        # pi's (FB-56 legacy③): a terminal answer counts only when its
+        # session_id matches the stored resume token exactly; everything
+        # unheard or unmatched is "unknown".
+        self.last_outcomes: dict[tuple[uuid.UUID, str, str], str] = {}
+        for project_id, room_id, handle, harness, resume_token, place in sessions:
             if harness != CLAUDE_CODE or place.channel != self.name:
                 continue
             runtime = place.runtime or {}
@@ -233,7 +238,9 @@ class ClaudeCodeChannel:
             center = place.machine
             if device_id is not None and center != device_id:
                 continue
+            key = (room_id, handle, resume_token or "")
             if not self.channel._hub.is_online(center):
+                self.last_outcomes[key] = "unknown"
                 continue
             try:
                 status = await self.channel._hub.call_executor(
@@ -246,9 +253,24 @@ class ClaudeCodeChannel:
                     center,
                     exc,
                 )
+                self.last_outcomes[key] = "unknown"
                 continue
-            if not status.get("alive"):
+            alive = status.get("alive")
+            if alive is not True:
+                # Only an explicit alive=False is a terminal answer, and only
+                # when its session_id binds to the stored resume token. The
+                # hub hands the RPC result through without field validation:
+                # a missing or non-boolean ``alive`` is no observation at
+                # all, and no observation is unknown, never dead (FB-56).
+                self.last_outcomes[key] = (
+                    "dead"
+                    if alive is False
+                    and resume_token
+                    and status.get("session_id") == resume_token
+                    else "unknown"
+                )
                 continue
+            self.last_outcomes[key] = "alive"
             ref = SessionRef(project_id, room_id, handle, harness=harness)
             agent = runtime["agent_handle"]
             handles.append(

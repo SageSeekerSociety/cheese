@@ -257,15 +257,25 @@ class PiChannel:
     async def discover(self, device_id: str | None) -> list[Handle]:
         factory = self.channel._session_factory or async_session_factory
         handles: list[Handle] = []
+        # Per-conversation observations from THIS round, keyed by the stored
+        # pointer identity (FB-56 legacy③): "alive" only on an alive=true
+        # answer carrying the conversation's id; "dead" only when an
+        # alive=false answer's session_id matches the stored resume token
+        # exactly — the terminal answer must bind to the stored provenance.
+        # Everything else (offline machine, timeout, call error, a missing
+        # or mismatched id) is "unknown" and closes nothing.
+        self.last_outcomes: dict[tuple[uuid.UUID, str, str], str] = {}
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        for project_id, room_id, handle, harness, place in sessions:
+        for project_id, room_id, handle, harness, resume_token, place in sessions:
             if harness != PI or place.channel != self.name:
                 continue
             machine = place.machine
             if device_id is not None and machine != device_id:
                 continue
+            key = (room_id, handle, resume_token or "")
             if not self.channel._hub.is_online(machine):
+                self.last_outcomes[key] = "unknown"
                 continue
             try:
                 status = await self.channel._hub.call_executor(
@@ -275,9 +285,24 @@ class PiChannel:
                 logger.warning(
                     "pi discovery failed topic=%s device=%s: %s", room_id, machine, exc
                 )
+                self.last_outcomes[key] = "unknown"
                 continue
-            if not status.get("alive"):
+            alive = status.get("alive")
+            if alive is not True:
+                # Only an explicit alive=False is a terminal answer, and only
+                # when its session_id binds to the stored resume token. The
+                # hub hands the RPC result through without field validation:
+                # a missing or non-boolean ``alive`` is no observation at
+                # all, and no observation is unknown, never dead (FB-56).
+                self.last_outcomes[key] = (
+                    "dead"
+                    if alive is False
+                    and resume_token
+                    and status.get("session_id") == resume_token
+                    else "unknown"
+                )
                 continue
+            self.last_outcomes[key] = "alive"
             ref = SessionRef(project_id, room_id, handle, harness=harness)
             agent = place.runtime["agent_handle"]
             handles.append(

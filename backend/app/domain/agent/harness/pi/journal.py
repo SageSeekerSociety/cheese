@@ -57,12 +57,22 @@ class Journal(journal.Journal):
     """
 
     def import_entries(
-        self, entries: list[dict], *, cursor: tuple[str, str] | None = None
+        self,
+        entries: list[dict],
+        *,
+        cursor: tuple[str, str] | None = None,
+        owner: str | None = None,
     ) -> None:
-        """Land a page, then advance the cursor we ask pi from.
+        """Land a page, the owner the page walked to, and the cursor we ask
+        pi from — in one transaction (FB-56 P2-4).
 
-        In that order: the cursor may only claim what is already durable, or a
-        crash between the two loses entries nobody will ask for again.
+        In that order, and together: the cursor may only claim what is
+        already durable, and the owner may only move with the page that
+        proves it. A crash between them used to replay a page with the new
+        owner already written, re-stamping the predecessor's tail as the
+        successor's. The cursor writes below go through the same execute as
+        the page and the owner: `remember` carries its own commit, and
+        nesting it here would land the cursor ahead of the page.
 
         ``cursor`` names a cursor other than the session's own, and where it
         now stands: a subagent is a pi of its own, asked from its own place in
@@ -84,14 +94,40 @@ class Journal(journal.Journal):
                         json.dumps(entry, ensure_ascii=False),
                     ),
                 )
+
+            def put(key: str, value: str) -> None:
+                self.connection.execute(
+                    "INSERT INTO state VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value),
+                )
+
+            if owner is not None:
+                put("owner", owner)
             if cursor is not None:
-                self.remember(*cursor)
+                put(*cursor)
                 return
             # The cursor pi is asked from names pi's own entries only: the
             # runner's records (``RETRYING``, ``GAVE_UP``) are ids pi never saw.
             ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]
             if ours:
-                self.remember("received", ours[-1]["id"])
+                put("received", ours[-1]["id"])
+
+    def generation(self) -> str:
+        """The mirror's own id, stable across resumes, new on a rebuild (FB-56).
+
+        A resume reads the same file and keeps it; a rebuild creates the file
+        and mints a new one. Positions are only comparable inside one
+        generation — that is the epoch the platform's owner records compare.
+        """
+        import uuid as _uuid
+
+        existing = self.recall("generation")
+        if existing:
+            return existing
+        generation = _uuid.uuid4().hex
+        self.remember("generation", generation)
+        return generation
 
     def sequence_of(self, entry_id: str) -> int:
         """Where a pi entry id sits in arrival order, or 0 when we never saw it.

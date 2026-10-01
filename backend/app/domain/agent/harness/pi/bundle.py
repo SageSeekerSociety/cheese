@@ -16,6 +16,9 @@ def build() -> bytes:
             "domain/agent/executor_transport.py",
             # The project's tool hooks, by the executor's own rules (`hooks.py`).
             "domain/agent/project_hooks.py",
+            # The input marker the runner reads back for exact attribution
+            # (FB-56) — stdlib-only, so the machine needs nothing else.
+            "domain/agent/nonce.py",
             "domain/agent/harness/pi/rpc.py",
             "domain/agent/harness/pi/journal.py",
             "domain/agent/harness/pi/catalog.py",

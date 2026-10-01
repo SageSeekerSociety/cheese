@@ -141,6 +141,7 @@ class ComputePool:
             (backend.name, runtime_for(backend).harness): backend
             for backend in backends
         }
+
         # 部署跑的那个骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，
         # 而不是等到某一轮才发现自己跑的是另一个东西（结论 28）。
         self._default = (default_name, deployment_harness())
@@ -242,6 +243,63 @@ class ComputePool:
             ):
                 return await recover(topic_id, agent_handle)
         return False
+
+    def seat_state(self, topic_id, agent_handle) -> str:
+        """ "live" / "dead" / "unknown" for the seat, by whichever runtime
+        can answer (FB-56 legacy③). A runtime without the probe cannot tell
+        a watched death from an unanswered question — it says "unknown" by
+        not having one, which is the safe answer."""
+        seat = (topic_id, agent_handle)
+        for runtime in self._runtimes():
+            probe = getattr(runtime, "seat_state", None)
+            if probe is None:
+                continue
+            state = probe(seat)
+            if state != "unknown":
+                return state
+        return "unknown"
+
+    def dead_conversations(self, topic_id, agent_handle) -> set[str]:
+        """The conversations on this seat some runtime watched die
+        (FB-56 legacy③) — conversation-scoped, never the seat's flag."""
+        seat = (topic_id, agent_handle)
+        found: set[str] = set()
+        for runtime in self._runtimes():
+            probe = getattr(runtime, "dead_conversations", None)
+            if probe is not None:
+                found.update(probe(seat))
+        return found
+
+    def terminal_conversations(self, topic_id, agent_handle) -> set[str]:
+        """The conversations on this seat an authority's own per-conversation
+        terminal answer named dead this recover round (FB-56 legacy③) —
+        never a complement of somebody else's success."""
+        seat = (topic_id, agent_handle)
+        found: set[str] = set()
+        for runtime in self._runtimes():
+            found.update(
+                conversation
+                for pair_seat, conversation in getattr(
+                    runtime, "terminal_conversations", set()
+                )
+                if pair_seat == seat
+            )
+        return found
+
+    def found_conversations(self, topic_id, agent_handle) -> set[str]:
+        """The conversations on this seat recovery actually reached and
+        re-attached (FB-56 legacy③)."""
+        seat = (topic_id, agent_handle)
+        found: set[str] = set()
+        for runtime in self._runtimes():
+            found.update(
+                conversation
+                for pair_seat, conversation in getattr(
+                    runtime, "found_conversations", set()
+                )
+                if pair_seat == seat
+            )
+        return found
 
     def bind_events(
         self,

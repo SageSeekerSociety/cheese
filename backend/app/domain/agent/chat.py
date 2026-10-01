@@ -215,6 +215,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
+from app.domain.agent.turn_inputs import new_nonce, record_input
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -552,6 +553,9 @@ class ChatService:
         # itself out of an SDK client, and building compute out of nothing is
         # exactly what no longer exists.
         self._compute = compute
+        # Seats a reachable machine said are gone (recover_sessions),
+        # until a session answers on them again (FB-56 legacy③).
+        self._dead_sessions: set[tuple] = set()
         self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
         self._compute.bind_receipts(self.confirm_prompt_receipt)
         self._compute.bind_unread_probe(self.oldest_unread_at)
@@ -1567,17 +1571,18 @@ class ChatService:
             ),
         }
 
-    async def _close_open_turns(self, topic_id: uuid.UUID) -> None:
-        """End every open interval on this topic. Never raises — a Stop that
-        cannot update the bookkeeping must still land the message it carries."""
+    async def _close_open_turns(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> None:
+        """End the one open interval the Stop names (FB-56). Never raises — a
+        Stop that cannot update the bookkeeping must still land the message it
+        carries. An id that names no live row closes nothing."""
         from datetime import UTC, datetime
 
         from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
-                closed = await AgentTurnRepository(session).close_for_topic(
-                    topic_id, datetime.now(UTC)
+                closed = await AgentTurnRepository(session).close_one(
+                    topic_id, turn_id, datetime.now(UTC)
                 )
                 if closed:
                     await session.commit()
@@ -1656,6 +1661,23 @@ class ChatService:
         except Exception:  # noqa: BLE001 — a failed read must not break the notice
             logger.exception("could not read credits-refused stamp for %s", turn_id)
             return False
+
+    def row_is_dead(
+        self, topic_id: uuid.UUID, agent_handle: str, session_id: str | None
+    ) -> bool:
+        """Is THIS row's conversation known dead (FB-56 legacy③)? Matched by
+        the row's own session id only — a row without one is not attributed
+        by anything else, and stays "unknown" by construction."""
+        if session_id is None:
+            return False
+        if (topic_id, agent_handle, session_id) in self._dead_sessions:
+            return True
+        return session_id in self._compute.dead_conversations(topic_id, agent_handle)
+
+    def seat_state(self, topic_id: uuid.UUID, agent_handle: str) -> str:
+        """One of "live" / "dead" / "unknown" for the seat (FB-56 legacy③):
+        a session nobody has seen die and nobody holds is not a dead one."""
+        return self._compute.seat_state(topic_id, agent_handle)
 
     def has_live_screen(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
@@ -1749,6 +1771,49 @@ class ChatService:
         and waiting for it held every room's turns, not only its own.
         """
         sessions = await self._compute.recover_sessions(device_id)
+        # Death evidence is consumed HERE, recovered sessions or not (FB-56
+        # legacy③): every conversation can be terminal at once — zero handles
+        # is exactly the case the evidence exists for. A conversation is dead
+        # only on the authority's own per-conversation terminal answer, bound
+        # to exactly the stored resume token; everything else — offline, a
+        # call error, a timeout, a missing field — is unknown, and unknown
+        # stays open.
+        async with self._sessions() as session:
+            from sqlalchemy import select
+
+            from app.domain.agent_session.models import AgentSession
+
+            pointers = (
+                (
+                    await session.execute(
+                        select(AgentSession).where(
+                            AgentSession.resume_token.is_not(None)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        for pointer in pointers:
+            key = (pointer.topic_id, pointer.agent_handle, pointer.resume_token)
+            # The conversation ITSELF answered this recover's ping: it is
+            # alive, and any earlier death record for exactly it is
+            # revoked (FB-56 legacy③ — a found conversation's old key
+            # must not close the rows it starts next).
+            if pointer.resume_token in self._compute.found_conversations(
+                pointer.topic_id, pointer.agent_handle
+            ):
+                self._dead_sessions.discard(key)
+                continue
+            # Death is only ever an authority's own per-conversation
+            # terminal answer, bound to exactly this stored resume token
+            # (FB-56 legacy③). Everything else — unheard, offline,
+            # timed out, another conversation's success — is unknown,
+            # and unknown stays open.
+            if pointer.resume_token in self._compute.terminal_conversations(
+                pointer.topic_id, pointer.agent_handle
+            ):
+                self._dead_sessions.add(key)
         # One per seat, not per room: teammates in one room run side by side,
         # and a seat left out here is re-attached but never read again until
         # somebody next addresses it.
@@ -1766,12 +1831,16 @@ class ChatService:
             )
             if work is not None and (session.topic_id, work) not in self._hook_work:
                 try:
+                    found = self._compute.found_conversations(
+                        session.topic_id, session.agent_handle
+                    )
                     await self._begin_self_started_turn(
                         session.project_id,
                         session.topic_id,
                         work,
                         opened=True,
                         agent_handle=session.agent_handle or None,
+                        session_id=next(iter(found)) if len(found) == 1 else None,
                     )
                 except Exception:  # noqa: BLE001 — one topic cannot block startup
                     logger.exception(
@@ -1894,6 +1963,26 @@ class ChatService:
                     # 事件没说骨架，就问这个项目跑的是哪个——同一个答法，和开
                     # 这一轮用的那一个（结论 28）。
                     harness = harness or harness_for(owner.settings if owner else None)
+                    # Lock the pointer row before moving it: the active-source
+                    # guard in `hook_stream._bind_user_entry` holds the same
+                    # lock while it validates and mutates, so the two sides of
+                    # a session change serialize on the row itself (FB-56 P2-1).
+                    from sqlalchemy import select as _select
+
+                    from app.domain.agent_session.models import AgentSession as _AS
+
+                    await session.execute(
+                        _select(_AS.id)
+                        .where(
+                            _AS.topic_id == place.room_id,
+                            _AS.agent_handle == agent.handle,
+                            _AS.harness == harness,
+                        )
+                        .with_for_update()
+                    )
+                    self._dead_sessions.discard(
+                        (place.room_id, agent.handle, session_id)
+                    )
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
                         agent_handle=agent.handle,
@@ -2027,6 +2116,7 @@ class ChatService:
         *,
         opened: bool = False,
         agent_handle: str | None = None,
+        session_id: str | None = None,
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
         any other: an interval a sweep can find, and everything its Stop needs.
@@ -2093,6 +2183,7 @@ class ChatService:
                     turn_id,
                     author=acting_agent,
                     agent_handle=agent.handle,
+                    session_id=session_id,
                 )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
@@ -4340,7 +4431,6 @@ class ChatService:
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
-        from app.api.deps import get_work_runner
 
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
@@ -4447,6 +4537,21 @@ class ChatService:
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text)
+        # FB-56: this input's durable ledger row and its marker, written
+        # before anything registers the text or sends it — the nonce is what
+        # the native user entry is bound back with, and the row must exist
+        # even if the send below fails (a fact, never a resend).
+        nonce = new_nonce()
+        prompt_text = f"{prompt_text}\n{nonce}"
+        async with self._sessions() as session:
+            await record_input(
+                session,
+                turn_id=turn_id,
+                nonce=nonce,
+                harness=prepared.harness,
+                at=datetime.now(UTC),
+            )
+            await session.commit()
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
             "elapsed_ms=%.3f unix_ms=%.3f",
@@ -4537,16 +4642,11 @@ class ChatService:
         def _register_work(marked_work_id: uuid.UUID) -> None:
             marked_work_ids.append(marked_work_id)
             key = (topic_id, marked_work_id)
-            # This turn takes the session over, so anything it was doing on its
-            # own is over: the Stop that ends this turn will be attributed HERE,
-            # and the self-started state would sit in these maps forever waiting
-            # for a Stop of its own that is never coming. Its durable row closes
-            # either way — `_close_open_turns` closes every open interval on the
-            # place — so what is dropped here is only the bookkeeping.
-            for prior_key, prior in list(self._hook_work.items()):
-                if prior_key[0] == topic_id and prior.self_started:
-                    self._hook_work.pop(prior_key, None)
-                    get_work_runner().close_turn_the_session_started(prior_key[1])
+            # A self-started predecessor's state and runner marks end where the
+            # takeover is PROVEN — the bound native user entry's transition
+            # (hook_stream's AgentUserEntry branch) — not here: registering a
+            # send proves nothing about the session, and this loop used to
+            # scan the whole topic for it (FB-56).
             state = self._hook_work.get(key)
             if state is None:
                 self._hook_work[key] = _HookWorkState(

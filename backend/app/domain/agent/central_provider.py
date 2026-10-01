@@ -124,7 +124,7 @@ class CentralChannel(DeviceChannel):
         scopes = list(
             dict.fromkeys(
                 (project_id, room_id, place.machine)
-                for project_id, room_id, _handle, _harness, place in sessions
+                for project_id, room_id, _handle, _harness, _token, place in sessions
                 if place.channel == self.name
                 and (device_id is None or place.machine == device_id)
                 and self._hub.is_online(place.machine)

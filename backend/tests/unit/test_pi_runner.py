@@ -86,14 +86,23 @@ async def test_an_input_reaches_the_model_once_however_often_it_is_resent(tmp_pa
     try:
         identifier = str(uuid.uuid4())
         work = str(uuid.uuid4())
-        payload = {"input_id": identifier, "text": "改一下 greet", "work_id": work}
+        payload = {
+            "input_id": identifier,
+            "text": "改一下 greet ⟪w:00000000000000000000f001⟫",
+            "work_id": work,
+        }
         first = await call(runner.state, "send", payload)
         # A backend that never saw the answer resends the same id.
         assert await call(runner.state, "send", payload) == first
 
         entries = (await call(runner.state, "entries"))["entries"]
         assert len(entries) == len(json.loads(FIXTURE.read_text())["entries"])
-        assert {entry["cheese"]["work_id"] for entry in entries} == {work}
+        # Session metadata (model/thinking changes) belongs to no turn and
+        # carries no work_id by design (FB-56); the turn's entries all
+        # carry this turn's.
+        worked = [entry for entry in entries if entry["type"] == "message"]
+        assert worked
+        assert {entry["cheese"]["work_id"] for entry in worked} == {work}
         assert {entry["cheese"]["harness"] for entry in entries} == {"pi"}
 
         # One prompt reached pi, not two.

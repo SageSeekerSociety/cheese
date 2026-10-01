@@ -11,7 +11,7 @@ from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
-from app.domain.agent.compute import build_compute_pool
+from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
@@ -123,6 +123,16 @@ def get_llm_gateway() -> LlmGateway | None:
 
 
 @lru_cache
+def _pool_with_owns_sessions(cloud: CloudChannel) -> ComputePool:
+    """The chat service's pool, with every harness's attach checking the
+    work runner's ``owns_sessions`` flag (FB-56)."""
+    pool = build_compute_pool(cloud_channel=cloud)
+    runner = get_work_runner()
+    for runtime in pool._runtimes():
+        runtime.bind_owns_sessions(lambda: runner)
+    return pool
+
+
 def get_chat_service() -> ChatService:
     gateway = get_llm_gateway()
     cloud = CloudChannel(
@@ -137,7 +147,7 @@ def get_chat_service() -> ChatService:
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(cloud_channel=cloud),
+        compute=_pool_with_owns_sessions(cloud),
         gateway=gateway,
     )
 
