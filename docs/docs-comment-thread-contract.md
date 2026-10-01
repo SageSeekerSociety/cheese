@@ -86,3 +86,20 @@ notification or comment-edit/delete endpoint in this stage. Existing root POST
 is still the original non-idempotent API. UI owners implement their own wiring;
 this backend change does not modify UI, AI request/proposal/accept, preview,
 network, Slides or admin.
+
+## Verification at PR #2350
+
+The finite real PostgreSQL/HTTP suite has 121 passing cases: new thread and
+populated forward-migration tests plus existing comment/tree/identity/agent
+callers and import guard. The migrated test verifies node deletion preserves
+anchor evidence, rejects anchor updates, and leaves block content after metadata
+downgrade. Competing independent HTTP requests verify operation replay, revision
+conflict, reply/resolve races and revoked-member denial. Removing revision and
+forced-member guards in an isolated tree fails two owning HTTP assertions;
+intact guards pass. These tests use real test databases, not production data.
+
+Required CI 36866228458 on ba73ecb4 failed before tests in three harness-install
+jobs: Pi 0.85.1 upstream returned HTTP 504 in two jobs and ReadTimeout in one.
+Those suites did not produce test reports. This result is retained separately
+from the local pass; no gate, harness installer or deployed service was changed.
+Subsequent exact-head CI and independent review must pass before normal queue.
