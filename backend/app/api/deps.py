@@ -13,6 +13,7 @@ from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
+from app.domain.agent.harness.pi.personal import PersonalSessions
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.runtime import (
     AgentWorkRunner,
@@ -29,6 +30,7 @@ from app.domain.machine.wakeup import WAKE_NOTICE, WAKE_PROMPT, CloudWakeup
 __all__ = [
     "get_db",
     "get_chat_service",
+    "get_personal_sessions",
     "get_profile_registry",
     "get_broker",
     "get_work_runner",
@@ -111,6 +113,14 @@ def get_llm_gateway() -> LlmGateway | None:
             settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
         )
     return None
+
+
+@lru_cache
+def get_personal_sessions() -> PersonalSessions:
+    """Every person's 芝士 session this process talks to. One per process, like
+    the chat service: it remembers which sessions are running and where each
+    one's answer was read to."""
+    return PersonalSessions(device_hub)
 
 
 @lru_cache

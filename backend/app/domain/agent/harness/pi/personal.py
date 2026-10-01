@@ -353,7 +353,7 @@ class PersonalSessions:
             left = deadline - time.monotonic()
             if left <= 0:
                 await self._abort(session)
-                yield Answered("", "芝士这次答得太久，已经停下了。")
+                yield Answered("", "the answer ran past its ceiling and was stopped")
                 return
             try:
                 answer = await self._entries(
@@ -367,7 +367,7 @@ class PersonalSessions:
                 if now - failing_since > GONE_S:
                     self.forget(launch.conversation_id)
                     logger.warning("personal session out of reach: %s", exc)
-                    yield Answered("", "芝士的会话意外结束了。")
+                    yield Answered("", "the session ended mid-answer")
                     return
                 await asyncio.sleep(1)
                 continue
@@ -392,7 +392,7 @@ class PersonalSessions:
                 return
             if not answer.get("alive", True):
                 self.forget(launch.conversation_id)
-                yield Answered("", "芝士的会话意外结束了。")
+                yield Answered("", "the session ended mid-answer")
                 return
 
     async def _settle(self, session: Session, deadline: float) -> None:
@@ -468,7 +468,9 @@ class _Reading:
                 events.append(
                     Answered(
                         answer,
-                        (event.text or "AI 服务请求失败") if event.is_error else None,
+                        (event.text or "the model call failed")
+                        if event.is_error
+                        else None,
                     )
                 )
         return events

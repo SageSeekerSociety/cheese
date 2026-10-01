@@ -156,6 +156,28 @@ class PersonalCredits:
         cost = rates.cost_usd(
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
         )
+        return await self.charge_spent(
+            user_id,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            kind=kind,
+        )
+
+    async def charge_spent(
+        self,
+        user_id: int,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        kind: str,
+    ) -> float:
+        """Record what the gateway says was spent and deduct it — the cost as
+        the gateway priced it, cache shares at the cache rate. Returns the
+        credits deducted."""
         row = await UsageRepository(self._session).add(
             project_id=None,
             user_id=user_id,
@@ -163,7 +185,7 @@ class PersonalCredits:
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=cost,
+            cost_usd=cost_usd,
             kind=kind,
             route="gateway",
         )
