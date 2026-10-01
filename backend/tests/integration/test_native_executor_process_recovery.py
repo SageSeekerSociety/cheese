@@ -64,6 +64,22 @@ def test_new_full_service_process_reuses_original_native_executor(
     handle = None
     old = None
     gate = tmp_path / "continue-native"
+    if http and busy:
+        import time
+
+        def hold_completion(body):
+            # Claude backgrounds a Bash wait when a steer arrives. Hold the
+            # deterministic model response, not its stdin/receipt processing.
+            deadline = time.monotonic() + 60
+            while not gate.exists():
+                assert time.monotonic() < deadline, "HTTP correction gate timed out"
+                time.sleep(0.05)
+            return None
+
+        machine.server.state["actions"] = [
+            headless_contract.directive,
+            hold_completion,
+        ]
 
     class Channel:
         name = "native-socket-fixture"
@@ -236,6 +252,7 @@ def test_new_full_service_process_reuses_original_native_executor(
 
         client.portal.call(replace_backend)
     finally:
+        gate.touch()
         if old is not None:
             client.portal.call(before.runtime.stop_listening)
         if screen is not None:
