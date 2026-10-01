@@ -37,6 +37,10 @@ POOL_LOCK = 728104913
 # The pool replaces at most one machine per max age, so a provider whose deletes
 # keep failing adds about one hidden machine an hour; this bounds that at three.
 UNRESOLVED_CLEANUP_LIMIT = 3
+# How long a deletion the provider accepted may go unconfirmed. A machine that
+# is still there after it is not being deleted: it waits with the cleanups that
+# failed, which hold no place in the pool and stop replacement once they pile up.
+DELETION_CONFIRM_S = 15 * 60
 # One provider claim per reservation per process; a second claimer waits here,
 # holding no database lock. One lock per machine ever claimed, so this stays small.
 _claim_locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -525,6 +529,16 @@ class WarmPoolService:
                 raise
         if await self.client.get_machine(row.machine_id) is not None:
             # Count accepted deletion until the provider confirms the machine gone.
+            if row.updated_at < datetime.now(UTC) - timedelta(
+                seconds=DELETION_CONFIRM_S
+            ):
+                row.state = "cleanup_failed"
+                row.error = "provider kept the machine after deletion"
+                logger.error(
+                    "warm cleanup unconfirmed id=%s machine=%s",
+                    row.id,
+                    row.machine_id,
+                )
             await self.session.commit()
             return
         if row.device_id:
