@@ -49,22 +49,60 @@ async def run_with_answer_offer(
 
 
 @asynccontextmanager
-async def admitted_answer(chat, topic_id, delivery_id, attempt_id, content):
-    """Project admission precedes this seat lock and the final pre-turn decision."""
-    if delivery_id is None:
-        yield False
-        return
+async def admitted_initial(
+    chat,
+    topic_id,
+    delivery_id,
+    attempt_id,
+    content,
+    *,
+    user_block_id=None,
+    recipient_instance_id=None,
+    recipient_handle=None,
+):
+    """Every initial turn rechecks durable ownership after project admission."""
     async with chat.session_factory() as session:
-        delivery = await session.get(Delivery, delivery_id)
-        instance_id = delivery.agent_instance_id if delivery is not None else None
+        delivery = (
+            await session.get(Delivery, delivery_id)
+            if delivery_id is not None
+            else None
+        )
+        instance_id = (
+            delivery.agent_instance_id
+            if delivery is not None
+            else recipient_instance_id
+        )
         is_answer = delivery is not None and "answer_to" in delivery.payload
-    if not is_answer:
-        yield False
-        return
-    seat = await chat._turn_seat_handle(topic_id, recipient_instance_id=instance_id)
+    seat = await chat._turn_seat_handle(
+        topic_id,
+        user_block_id=user_block_id,
+        recipient_instance_id=instance_id,
+        recipient_handle=recipient_handle,
+    )
     async with seat_admission(chat._seat_lock_for(topic_id, seat)):
-        offered = await offer_answer(chat, topic_id, delivery_id, attempt_id, content)
-        yield offered is True or isinstance(offered, InputReconciliationPending)
+        if is_answer:
+            offered = await offer_answer(
+                chat, topic_id, delivery_id, attempt_id, content
+            )
+            yield offered is True or isinstance(offered, InputReconciliationPending)
+            return
+        from app.domain.agent_instance.service import AgentInstanceService
+        from app.domain.project.repositories import ProjectRepository
+        from app.domain.topic.repositories import TopicRepository
+
+        async with chat.session_factory() as session:
+            topic = await TopicRepository(session).get(topic_id)
+            project = await ProjectRepository(session).get(topic.project_id)
+            agent = await chat._session_agent(
+                AgentInstanceService(session),
+                topic,
+                project,
+                seat,
+            )
+            acting = await chat._acting_handle(session, topic_id, agent)
+            pending = await seat_has_unfinished_input(session, topic_id, acting)
+            await session.commit()
+        yield pending
 
 
 async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):

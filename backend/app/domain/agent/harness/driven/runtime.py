@@ -899,6 +899,7 @@ class DrivenRuntime[H: Handle]:
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         seat = self._seat_of(session)
         if subscription := self.subscriptions.get(seat):
+            await subscription.reconcile_history()
             await subscription.drain()
             self._listen(seat)
 

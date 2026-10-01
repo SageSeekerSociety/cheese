@@ -210,6 +210,9 @@ class Subscription[B: Backlog]:
     def completion(self, record: dict) -> WorkCompletion | None:
         return None
 
+    async def reconcile_history(self) -> None:
+        """A harness may reconcile retained facts behind its landing cursor."""
+
     async def settle_completion(self, record: dict) -> WorkCompletion | None:
         completion = self.completion(record)
         if completion is not None:

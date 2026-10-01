@@ -2204,10 +2204,17 @@ class AgentWorkRunner:
             return
         lifecycle = {"started": False, "session_owned": False}
         try:
-            from app.domain.agent.answer_delivery import admitted_answer
+            from app.domain.agent.answer_delivery import admitted_initial
 
-            async with admitted_answer(
-                chat_service, topic_id, delivery_id, turn_id, content
+            async with admitted_initial(
+                chat_service,
+                topic_id,
+                delivery_id,
+                turn_id,
+                content,
+                user_block_id=landed_user_block_id,
+                recipient_instance_id=recipient_instance_id,
+                recipient_handle=recipient_handle,
             ) as offered:
                 if offered:
                     return

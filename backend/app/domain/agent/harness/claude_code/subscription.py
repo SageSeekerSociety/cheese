@@ -18,7 +18,11 @@ from app.domain.agent.harness import (
     SessionRef,
 )
 from app.domain.agent.harness.claude_code.backlog import ClaudeCodeBacklog, receive
-from app.domain.agent.harness.claude_code.legacy import completion_inputs
+from app.domain.agent.harness.claude_code.history import landed_results
+from app.domain.agent.harness.claude_code.legacy import (
+    LegacyEvidenceIncomplete,
+    completion_inputs,
+)
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.driven import subscription
 from app.domain.agent.service import AgentEvent
@@ -63,6 +67,52 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         self.recipient_handle = recipient_handle
         self.announce = announce
         self.input_protocol = input_protocol
+
+    async def reconcile_history(self) -> None:
+        """Repair old NULL completion facts without replaying landed room output.
+
+        Pruned/incomplete intervals remain quarantined by durable admission. A
+        failed database commit is not skipped: the next recovery retries it.
+        """
+        async with self.lock:
+            for record in await self.on_disk(landed_results, self.path):
+                stamp = record.get("cheese") or {}
+                if not stamp.get("work_id"):
+                    continue
+                try:
+                    echoes = await self.on_disk(
+                        completion_inputs,
+                        self.path,
+                        work_id=stamp["work_id"],
+                        session_id=self.session_id,
+                        recipient_handle=self.recipient_handle,
+                        result=record,
+                    )
+                except LegacyEvidenceIncomplete:
+                    continue
+                if not echoes:
+                    continue
+                if self.receipts is None or self.completions is None:
+                    raise RuntimeError("Historical settlement consumers are not bound")
+                for echo in echoes:
+                    receipt = self.receipt(echo)
+                    assert receipt is not None
+                    await self.receipts(receipt)
+                completion = WorkCompletion(
+                    self.session.project_id,
+                    self.session.topic_id,
+                    self.recipient_handle,
+                    self.session.harness,
+                    self.session_id,
+                    uuid.UUID(stamp["work_id"]),
+                    tuple(uuid.UUID(echo["uuid"]) for echo in echoes),
+                )
+                current = self.completion(record)
+                if current is not None and current != completion:
+                    raise ValueError(
+                        "Historical completion disagrees with retained inputs"
+                    )
+                await self.completions(completion)
 
     async def receive(self) -> None:
         if await receive(self.path, self.call, self.on_disk):

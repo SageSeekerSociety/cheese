@@ -40,7 +40,17 @@ from tests.unit.test_claude_runner import Machine
 
 
 @pytest.mark.parametrize(
-    "mode", ["busy", "idle", "idle-race", "accepted-start", "project-seat"]
+    "mode",
+    [
+        "busy",
+        "idle",
+        "idle-race",
+        "accepted-start",
+        "project-seat",
+        "history",
+        "history-pruned",
+        "ordinary-start",
+    ],
 )
 def test_http_answer_continues_original_native_executor(
     client, tmp_path, mode, monkeypatch
@@ -169,6 +179,63 @@ def test_http_answer_continues_original_native_executor(
             native_runner.process,
         )
         initial_sends = operations.count("send")
+        if mode in ("history", "history-pruned"):
+            from app.domain.agent.harness.claude_code.journal import Journal
+            from app.domain.delivery.answer_ownership import seat_has_unfinished_input
+
+            async def old_completion():
+                async with client.test_request_factory() as session:
+                    rows = list(
+                        await session.scalars(
+                            select(NativeInput).where(NativeInput.topic_id == topic)
+                        )
+                    )
+                    assert len(rows) == 1 and rows[0].completed_at
+                    rows[0].completed_at = None  # Exact post-upgrade legacy NULL row.
+                    await session.commit()
+                    assert await seat_has_unfinished_input(
+                        session, topic, handle.agent_handle
+                    )
+                await runtime.stop_listening()
+
+            client.portal.call(old_completion)
+            journal = Journal(handle.mirror)
+            try:
+                landed_before = journal.recall("landed")
+                assert landed_before and int(landed_before) > 0
+                if mode == "history-pruned":
+                    journal.prune("9999-01-01T00:00:00Z")
+            finally:
+                journal.close()
+            runtime = ClaudeCodeRuntime(channel)
+            chat = ChatService(
+                session_factory=client.test_request_factory,
+                base_system_prompt="你是芝士。",
+                workspace_root=str(machine.workspace),
+                compute=ComputePool([runtime], channel.name),
+            )
+            app.dependency_overrides[get_chat_service] = lambda: chat
+            assert client.portal.call(chat.recover_sessions) == 1
+            client.portal.call(chat.replays_settled)
+
+            async def verify_history():
+                async with client.test_request_factory() as session:
+                    row = await session.scalar(
+                        select(NativeInput).where(NativeInput.topic_id == topic)
+                    )
+                    assert bool(row.completed_at) == (mode == "history")
+                    assert await seat_has_unfinished_input(
+                        session, topic, handle.agent_handle
+                    ) == (mode == "history-pruned")
+                assert operations.count("send") == initial_sends
+                assert operations.count("steer") == 0
+
+            client.portal.call(verify_history)
+            journal = Journal(handle.mirror)
+            try:
+                assert journal.recall("landed") == landed_before
+            finally:
+                journal.close()
         asked = client.post(
             f"/topics/{topic}/ask",
             json={
@@ -189,7 +256,7 @@ def test_http_answer_continues_original_native_executor(
         prepared_gate = asyncio.Event()
         prepared_seen = asyncio.Event()
         delayed_writes = []
-        if mode in ("idle-race", "accepted-start", "project-seat"):
+        if mode in ("idle-race", "accepted-start", "project-seat", "ordinary-start"):
             assemble = chat._assemble_turn
 
             async def paused_assembly(**kwargs):
@@ -200,7 +267,7 @@ def test_http_answer_continues_original_native_executor(
 
             if mode == "idle-race":
                 chat._assemble_turn = paused_assembly
-            elif mode == "accepted-start":
+            elif mode in ("accepted-start", "ordinary-start"):
                 write = native_runner._write
 
                 async def accepted_write(message):
@@ -282,6 +349,70 @@ def test_http_answer_continues_original_native_executor(
         assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
 
         async def verify():
+            if mode == "history-pruned":
+                await get_work_runner().drain(10)
+                assert operations.count("send") == initial_sends
+                assert operations.count("steer") == 0
+                async with client.test_request_factory() as session:
+                    delivery = await session.scalar(
+                        select(Delivery).where(Delivery.topic_id == topic)
+                    )
+                    assert delivery.state == "pending" and delivery.sent_at is None
+                    row = await session.scalar(
+                        select(NativeInput).where(NativeInput.topic_id == topic)
+                    )
+                    assert row.completed_at is None
+                return
+            if mode == "ordinary-start":
+                await get_work_runner().drain(10)
+                assert len(delayed_writes) == 1 and not native_runner.working
+                async with client.test_request_factory() as session:
+                    waiting = await session.scalar(
+                        select(NativeInput).where(
+                            NativeInput.topic_id == topic,
+                            NativeInput.completed_at.is_(None),
+                        )
+                    )
+                    assert waiting.accepted_at and waiting.echoed_at is None
+                    held_work = waiting.work_id
+
+                def post_ordinary():
+                    with client.websocket_connect(
+                        chat_ws_url(str(topic), "alice")
+                    ) as ws:
+                        ws.send_json(
+                            {"type": "message", "content": f"<@{asker}> 普通追加消息"}
+                        )
+                        return _until(ws, lambda frame: frame["type"] == "user_block")
+
+                await asyncio.to_thread(post_ordinary)
+                await get_work_runner().drain(10)
+                assert len(delayed_writes) == 1
+                assert operations.count("send") == initial_sends + 1
+                async with client.test_request_factory() as session:
+                    assert (
+                        len(
+                            list(
+                                await session.scalars(
+                                    select(AgentTurn).where(AgentTurn.topic_id == topic)
+                                )
+                            )
+                        )
+                        == 2
+                    )
+                    ordinary = await session.scalar(
+                        select(Block).where(
+                            Block.topic_id == topic,
+                            Block.content.contains("普通追加消息"),
+                        )
+                    )
+                    assert ordinary and consumed_turn(ordinary) is None
+                native_runner._write = write
+                await write(delayed_writes[0])
+                async with asyncio.timeout(30):
+                    while not native_runner.working:
+                        await asyncio.sleep(0.01)
+                assert native_runner.work == str(held_work)
             if mode == "project-seat":
                 async with asyncio.timeout(10):
                     await answer_queued.wait()
@@ -437,7 +568,11 @@ def test_http_answer_continues_original_native_executor(
                         select(NativeInput).where(NativeInput.topic_id == topic)
                     )
                 )
-                assert len(rows) == (2 if mode in ("idle", "project-seat") else 3)
+                assert len(rows) == (
+                    2
+                    if mode in ("idle", "project-seat", "history", "ordinary-start")
+                    else 3
+                )
                 assert {row.native_session_id for row in rows} == {native}
                 assert all(row.echoed_at and row.settled_at for row in rows)
                 assert all(
@@ -455,7 +590,11 @@ def test_http_answer_continues_original_native_executor(
                         select(Delivery).where(Delivery.topic_id == topic)
                     )
                 )
-                assert len(deliveries) == (1 if mode in ("idle", "project-seat") else 2)
+                assert len(deliveries) == (
+                    1
+                    if mode in ("idle", "project-seat", "history", "ordinary-start")
+                    else 2
+                )
                 assert all(d.state == "received" and d.sent_at for d in deliveries)
                 answers = list(
                     await session.scalars(
