@@ -106,10 +106,137 @@ async def test_missing_cost_is_unknown_not_free():
     def upstream(request):
         return httpx.Response(200, json=response('{"answer":"ok"}'))
 
-    with pytest.raises(InvalidCompletion):
+    with pytest.raises(InvalidCompletion) as caught:
         await complete(
             lease(),
             base="https://gateway.example",
             key="project-key",
             transport=httpx.MockTransport(upstream),
         )
+    assert caught.value.stage == "cost_header"
+    assert caught.value.usage is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "payload,stage,metered",
+    [
+        ([], "response_json", False),
+        (response('{"answer":"ok"}', usage=None), "usage", False),
+        (
+            response(
+                '{"answer":"ok"}',
+                usage={"prompt_tokens": True, "completion_tokens": 8},
+            ),
+            "usage",
+            False,
+        ),
+        (response('{"answer":"ok"}', id=""), "usage", False),
+        (response('{"answer":"ok"}', choices=[]), "choices", True),
+        (response('{"answer":"ok"}', choices=[None]), "choices", True),
+        (response('{"answer":"ok"}', finish_reason="length"), "finish_reason", True),
+        (
+            response('{"answer":"ok"}', message={"tool_calls": [{"id": "secret"}]}),
+            "tool_call",
+            True,
+        ),
+        (
+            response('{"answer":"ok"}', message={"function_call": {"name": "secret"}}),
+            "tool_call",
+            True,
+        ),
+        (response(None), "assistant_content", True),
+        (
+            response('{"answer":"ok"}', message={"role": "user"}),
+            "assistant_content",
+            True,
+        ),
+        (response("private provider text"), "result_json", True),
+        (response('{"answer":"secret","extra":"private"}'), "result_schema", True),
+        (response('{"answer":17}'), "result_schema", True),
+    ],
+)
+async def test_failure_stage_is_safe_and_preserves_validated_usage(
+    payload, stage, metered
+):
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        return httpx.Response(
+            200, json=payload, headers={"x-litellm-response-cost": "0.01"}
+        )
+
+    with pytest.raises(InvalidCompletion) as caught:
+        await complete(
+            lease(),
+            base="https://gateway.example",
+            key="project-key",
+            transport=httpx.MockTransport(upstream),
+        )
+    assert len(calls) == 1
+    error = caught.value
+    assert error.stage == stage
+    assert str(error) == f"模型返回的文档结果不符合无工具数据合同 [doc_ai:{stage}]"
+    assert (error.usage is not None) == metered
+    if metered:
+        assert error.usage.upstream_id == "upstream-123"
+        assert error.usage.cost_usd == 0.01
+    assert error.__cause__ is None and error.__suppress_context__
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cost", ["", "private-header", "nan", "inf", "-0.01"])
+async def test_invalid_actual_cost_is_diagnosed_without_fabricating_usage(cost):
+    def upstream(request):
+        return httpx.Response(
+            200,
+            json=response('{"answer":"ok"}'),
+            headers={"x-litellm-response-cost": cost},
+        )
+
+    with pytest.raises(InvalidCompletion) as caught:
+        await complete(
+            lease(),
+            base="https://gateway.example",
+            key="project-key",
+            transport=httpx.MockTransport(upstream),
+        )
+    assert caught.value.stage == "cost_header"
+    assert caught.value.usage is None
+
+
+@pytest.mark.anyio
+async def test_invalid_response_json_is_diagnosed_without_provider_body():
+    def upstream(request):
+        return httpx.Response(200, text="private provider body")
+
+    with pytest.raises(InvalidCompletion) as caught:
+        await complete(
+            lease(),
+            base="https://gateway.example",
+            key="project-key",
+            transport=httpx.MockTransport(upstream),
+        )
+    assert caught.value.stage == "response_json"
+    assert "private" not in str(caught.value)
+    assert caught.value.usage is None
+
+
+@pytest.mark.anyio
+async def test_valid_proposal_and_reported_zero_cost_remain_valid():
+    def upstream(request):
+        return httpx.Response(
+            200,
+            json=response('{"answer":"精简建议","replacement":"右侧提问，人采纳。"}'),
+            headers={"x-litellm-response-cost": "0"},
+        )
+
+    result = await complete(
+        lease("propose"),
+        base="https://gateway.example",
+        key="project-key",
+        transport=httpx.MockTransport(upstream),
+    )
+    assert result.result.replacement == "右侧提问，人采纳。"
+    assert result.usage.cost_usd == 0
