@@ -42,6 +42,7 @@ from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import Place
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository
 
@@ -104,6 +105,22 @@ async def _session_agent(
                 project.id,
             )
     return await agents.for_topic(topic, project)
+
+
+async def session_agent_in_room(
+    session: AsyncSession, topic_id: uuid.UUID, handle: str | None
+) -> ResolvedAgent | None:
+    """Resolve admission's agent from room/project policy, returning no ORM rows.
+
+    Internal admission/recovery caller owns seat authorization and transaction.
+    Missing rooms return None; existing resolution policy and errors are retained.
+    This query never commits or starts a session.
+    """
+    topic = await TopicService(session).get(topic_id)
+    if topic is None:
+        return None
+    project = await ProjectRepository(session).get(topic.project_id)
+    return await _session_agent(AgentInstanceService(session), topic, project, handle)
 
 
 async def _agent_at(session: AsyncSession, place: Place) -> ResolvedAgent:

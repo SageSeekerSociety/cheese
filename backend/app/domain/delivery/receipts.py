@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
+from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
 from app.domain.block.models import Block
-from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.ask_inputs import guard_ask_inputs
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
@@ -264,7 +264,7 @@ async def complete_work_inputs(
         work_id,
     )
     await _lock_blocks(session, identity, consumed)
-    await BlockRepository(session).mark_consumed(list(consumed), work_id)
+    await consume_input_blocks(session, consumed, work_id)
     for row in rows:
         if row.echoed_at is not None:
             released = set(row.released_block_ids) | (
@@ -349,15 +349,13 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         raise ValidationError("Input cannot mark blocks as read by another receiver")
     row.echoed_at = row.echoed_at or stamp
     row.execution_work_id = execution_work
-    blocks = BlockRepository(session)
-    if execution_work is not None:
-        await blocks.mark_consumed(
-            [uuid.UUID(block) for block in row.block_ids], execution_work
-        )
-    for block in row.seen_block_ids:
-        await blocks.add_reaction_if_absent(
-            uuid.UUID(block), "👀", row.seen_by or row.recipient_handle
-        )
+    await apply_input_echo(
+        session,
+        consumed_ids=[uuid.UUID(block) for block in row.block_ids],
+        work_id=execution_work,
+        seen_ids=[uuid.UUID(block) for block in row.seen_block_ids],
+        seen_by=row.seen_by or row.recipient_handle,
+    )
     if delivery is not None:
         delivery.state = "received"
         delivery.sent_at = stamp

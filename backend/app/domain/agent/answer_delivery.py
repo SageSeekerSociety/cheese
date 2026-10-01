@@ -86,9 +86,7 @@ async def admitted_initial(
             )
             yield offered is True or isinstance(offered, InputReconciliationPending)
             return
-        from app.domain.agent_instance.services import AgentInstanceService
-        from app.domain.project.repositories import ProjectRepository
-        from app.domain.topic.repositories import TopicRepository
+        from app.domain.agent.queries import session_agent_in_room
 
         async with chat.session_factory() as session:
             if instance_id is not None:
@@ -102,14 +100,7 @@ async def admitted_initial(
                     raise ValidationError(
                         "The addressed agent is no longer seated in this room"
                     )
-            topic = await TopicRepository(session).get(topic_id)
-            project = await ProjectRepository(session).get(topic.project_id)
-            agent = await chat._session_agent(
-                AgentInstanceService(session),
-                topic,
-                project,
-                seat,
-            )
+            agent = await session_agent_in_room(session, topic_id, seat)
             acting = await chat._acting_handle(session, topic_id, agent)
             pending = await seat_has_unfinished_input(session, topic_id, acting)
             if pending and user_block_id is not None:

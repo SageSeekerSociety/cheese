@@ -8,7 +8,6 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -29,7 +28,7 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
     announce_stale,
 )
-from app.domain.block.answers import Answer
+from app.domain.block.answer_submission import add_answer_wake, submit_answer
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -41,13 +40,11 @@ from app.domain.block.models import (
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.agent import instance_for_seat, record_agent
-from app.domain.delivery.ledger import DeliveryEvent, event_id_for
+from app.domain.delivery.ask_wake import record_single_answer_wake, single_answer_wake
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
-from app.domain.notification.models import NotificationType
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -1092,35 +1089,17 @@ async def answer_options(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """Answer an option question, or correct this answerer's own earlier answer.
+    """Authorize and atomically persist an answer, timeline wake and delivery.
 
-    The answer is an append-only log; the last entry is the one in force. A
-    correction keeps the entry it replaces, so the room can still see what was
-    originally chosen and who chose it.
-
-    Two invariants worth naming, both of which a naive rewrite breaks:
-
-    * **Authentication happens before anything else.** The idempotency lookup
-      reads the question's state; returning "already answered" to somebody who
-      has not proven they belong here is a leak, and it is also how an outsider
-      would probe for `client_op_id` values. So `resolve` + `authorize_topic`
-      come first, and every other branch is behind them.
-    * **The wake is one durable delivery, not a second timeline message.**
-      `broker.receive_message` both persists a row and starts a turn; running it
-      here alongside `record_agent` wakes the seat twice and writes the answer
-      text twice. Only `record_agent` runs — and because `_run` does not persist
-      anything (`Human message already persisted by `receive_message``), the
-      answer text is written here, once, carrying the same `delivery_event_id`
-      as the delivery.
+    Authorization precedes replay lookup. Block owns answer rules and timeline
+    writes; delivery owns addressing and intent. Commit before publication or
+    dispatch. Calling receive_message here would duplicate the durable wake.
     """
-    repo = BlockRepository(db)
-    blk = await repo.get(block_id)
+    blk = await BlockRepository(db).get(block_id)
     if blk is None:
         raise NotFoundError(say("optionQuestionNotFound"))
 
-    # 1. 先鉴权。`body["author"]` 只是寻址的退路，不参与授权 —— 见
-    # `ActorResolver` 的 docstring：legacy authorship fallback does not
-    # authenticate.
+    # A body author is an addressing fallback, never authentication.
     actor = await resolver.resolve(
         fallback_handle=body.get("author"),
         topic_id=blk.topic_id,
@@ -1131,109 +1110,45 @@ async def answer_options(
     )
     author = actor.handle
 
-    answer = Answer.parse(body)
-    if author == "anonymous":
-        raise ValidationError("要登录才能作答")
-
-    # 2. 行锁。幂等查重、内容校验、版本比对读的是同一份 `answer_log`，不锁住就
-    # 会出现「两个并发都没看见对方」的假幂等 —— 重试的那一次会拿到 409 而不是
-    # 已经存好的那一版。锁在这里而不是在 CAS 那一行，是为了让查重也在锁内。
-    # repo.get 已将块放进 identity map；拿到锁也不会自动覆盖缓存属性。
-    # 等前一答提交后，必须用锁内读到的版本替换初读的 meta。
-    locked = await db.execute(
-        select(Block)
-        .where(Block.id == block_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
+    answer = await submit_answer(db, block_id=block_id, author=author, body=body)
+    if answer.replay:
+        return ok(answer.updated)
+    wake = await single_answer_wake(
+        db,
+        project_id=answer.project_id,
+        topic_id=answer.topic_id,
+        block_id=block_id,
+        asked_by=answer.asked_by,
+        entry=answer.entry,
     )
-    blk = locked.scalar_one()
-    meta = dict(blk.meta or {})
-    if meta.get("ask_group"):
-        raise ValidationError("问题组必须整组提交，不能逐题发送")
-    entry, replay = answer.apply(meta, author)
-    if replay:
-        return ok(BlockOut.model_validate(blk).model_dump(mode="json"))
-
-    members = TopicMemberService(db)
-    if blk.author in await members.agent_handles(blk.topic_id):
-        seat: str | None = blk.author
-    else:
-        seat = await members.addressable_agent_handle(blk.topic_id)
-
-    instance = (
-        await instance_for_seat(db, blk.project_id, seat) if seat is not None else None
-    )
-    answer_meta = {"answer_to": str(block_id)}
-    if instance is not None:
-        answer_meta["agent_recipient"] = {
-            "instance_id": str(instance.id),
-            "handle": instance.handle,
-            "mentioned": True,
-        }
-    event_id = event_id_for(NotificationType.MENTION, f"{block_id}:{entry['v']}")
-    answer_meta["delivery_event_id"] = str(event_id)
-    text = _answer_line(seat, entry)
-
-    # 7. 同一件事一个事务里写完：答案、那条给人看的文本、那条给席位的投递意图。
-    blk.meta = meta
-    answer_block = await repo.add(
-        project_id=blk.project_id,
-        topic_id=blk.topic_id,
+    answer_out = await add_answer_wake(
+        db,
+        project_id=answer.project_id,
+        topic_id=answer.topic_id,
         author=author,
-        author_type=AuthorType.participant,
-        content=text,
-        kind=BlockKind.message,
-        meta=answer_meta,
+        content=wake.content,
+        meta=wake.meta,
     )
-    if instance is not None:
-        await record_agent(
-            db,
-            DeliveryEvent(
-                id=event_id,
-                type=NotificationType.MENTION,
-                payload={"answer_to": str(block_id), "v": entry["v"]},
-                occurred_at=datetime.now(UTC),
-            ),
-            topic_id=blk.topic_id,
-            instance_id=instance.id,
-            content=text,
-        )
-
-    updated = BlockOut.model_validate(blk).model_dump(mode="json")
-    answer_out = BlockOut.model_validate(answer_block).model_dump(mode="json")
-
-    # 8. 提交。落库之后再广播 —— 广播是尽力而为，状态已经在库里，前端可以重取。
+    await record_single_answer_wake(
+        db,
+        topic_id=answer.topic_id,
+        block_id=block_id,
+        version=answer.entry["v"],
+        wake=wake,
+    )
+    # Publish only committed state; failed publication is recoverable by GET.
     await db.commit()
     await get_broker().publish(
-        str(blk.topic_id), {"type": "block_updated", "block": updated}
+        str(answer.topic_id), {"type": "block_updated", "block": answer.updated}
     )
     await get_broker().publish(
         str(blk.topic_id), {"type": "block_added", "block": answer_out}
     )
-    # 投递意图已经落库，接着把它交出去。这一步不在事务里：意图先持久，投递后发生，
-    # 中间崩了也只是留一条 `pending`，由 `dispatch_pending` / 定时补送接上，而不是
-    # 把答案写两遍。
+    # Committed pending intent survives a crash before dispatch.
     from app.domain.delivery.agent import dispatch_pending
 
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
-    return ok(updated)
-
-
-def _answer_line(seat: str | None, entry: dict) -> str:
-    """时间线上那一行的正文。@ 写进正文（不是帧上另置一位），读的人才看得出叫了谁。"""
-    kind = entry.get("kind")
-    if kind == "option":
-        what = entry["option"] or ""
-    elif kind == "reject":
-        what = "以上都不是"
-    else:
-        what = entry.get("note") or ""
-    suffix = ""
-    if kind == "option" and entry.get("note"):
-        suffix = f"（{entry['note']}）"
-    elif kind == "reject" and entry.get("note"):
-        suffix = f"（{entry['note']}）"
-    return f"<@{seat}> {what}{suffix}" if seat else f"{what}{suffix}"
+    return ok(answer.updated)
 
 
 @router.post("/{topic_id}/webhook-token")

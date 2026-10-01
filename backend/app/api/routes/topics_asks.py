@@ -17,6 +17,7 @@ from app.api.routes.topics import (
 )
 from app.core.errors import ForbiddenError, ValidationError
 from app.domain.agent.announce import notify_question
+from app.domain.agent.ask_origin import ask_origin
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.ask_groups import AskGroups, parse_questions, required_text
@@ -87,7 +88,7 @@ async def create_ask_group(
     ):
         raise ForbiddenError("只有真实 agent 会话可以创建问题")
     questions = parse_questions(body)
-    origin = await chat.ask_origin(place.project_id, place.room_id, actor.handle)
+    origin = await ask_origin(chat, place.project_id, place.room_id, actor.handle)
     if origin is None:
         raise ForbiddenError("无法确认原生提问会话和执行区间")
     group_id = body.get("ask_group")

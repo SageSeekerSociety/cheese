@@ -9,7 +9,6 @@ import uuid
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.chat import ChatService
 from tests.integration.conftest import (
     post_project,
     room_agent_seat,
@@ -44,7 +43,7 @@ def group(client, monkeypatch):
     async def no_dispatch(*args, **kwargs):
         return 0
 
-    monkeypatch.setattr(ChatService, "ask_origin", origin)
+    monkeypatch.setattr("app.api.routes.topics_asks.ask_origin", origin)
     monkeypatch.setattr("app.api.routes.topics_asks.dispatch_pending", no_dispatch)
     body = {
         "ask_group": "fixed-group",

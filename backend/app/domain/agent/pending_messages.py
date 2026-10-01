@@ -76,9 +76,7 @@ def nudge_messages(chat, topic_id):
 
 
 async def resume_messages(runner, chat, *, topic_id=None):
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.project.repositories import ProjectRepository
-    from app.domain.topic.repositories import TopicRepository
+    from app.domain.agent.queries import session_agent_in_room
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -142,13 +140,9 @@ async def resume_messages(runner, chat, *, topic_id=None):
             running = busy.get(block.topic_id, set())
             if None in running or handle in running or chat.has_running_turn(*key):
                 continue
-            topic = await TopicRepository(session).get(block.topic_id)
-            if topic is None:
+            agent = await session_agent_in_room(session, block.topic_id, handle)
+            if agent is None:
                 continue
-            project = await ProjectRepository(session).get(topic.project_id)
-            agent = await chat._session_agent(
-                AgentInstanceService(session), topic, project, handle
-            )
             if agent.handle != handle:
                 continue
             if recipient.get("instance_id") not in (None, str(agent.instance_id)):
