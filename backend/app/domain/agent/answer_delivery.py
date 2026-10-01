@@ -1,9 +1,15 @@
 """Offer a durable Ask answer to its executor's currently running work."""
 
+from contextlib import asynccontextmanager
+
 from sqlalchemy import select
 
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
+from app.domain.delivery.answer_ownership import (
+    reconcile_answer,
+    seat_has_unfinished_input,
+)
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -42,12 +48,34 @@ async def run_with_answer_offer(
             work.close()
 
 
+@asynccontextmanager
+async def admitted_answer(chat, topic_id, delivery_id, attempt_id, content):
+    """Project admission precedes this seat lock and the final pre-turn decision."""
+    if delivery_id is None:
+        yield False
+        return
+    async with chat.session_factory() as session:
+        delivery = await session.get(Delivery, delivery_id)
+        instance_id = delivery.agent_instance_id if delivery is not None else None
+        is_answer = delivery is not None and "answer_to" in delivery.payload
+    if not is_answer:
+        yield False
+        return
+    seat = await chat._turn_seat_handle(topic_id, recipient_instance_id=instance_id)
+    async with seat_admission(chat._seat_lock_for(topic_id, seat)):
+        offered = await offer_answer(chat, topic_id, delivery_id, attempt_id, content)
+        yield offered is True or isinstance(offered, InputReconciliationPending)
+
+
 async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
     async with chat.session_factory() as session:
         delivery = await session.get(Delivery, delivery_id)
         if delivery is None or "answer_to" not in delivery.payload:
             return False
         seat = delivery.recipient_handle
+        if await reconcile_answer(session, delivery_id, attempt_id):
+            await session.commit()
+            return True
         blocks = list(
             await session.scalars(
                 select(Block.id).where(
@@ -61,7 +89,8 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
         topic_id, lambda state: state.acting_agent == seat, strict=True
     )
     if work is None:
-        return False
+        async with chat.session_factory() as session:
+            return await seat_has_unfinished_input(session, topic_id, seat)
     state = chat._hook_work[(topic_id, work)]
     effects = InputEffects(
         held_block_ids=tuple(blocks),
@@ -73,7 +102,7 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
     register = chat._input_registrar(effects, probe_unread=True, fence_delivery=True)
 
     try:
-        return await chat._compute.deliver(
+        delivered = await chat._compute.deliver(
             topic_id,
             content,
             register_input=register,
@@ -81,5 +110,9 @@ async def offer_answer(chat, topic_id, delivery_id, attempt_id, content):
             agent_handle=state.agent_instance_handle or state.acting_agent,
             owes_reply=True,
         )
+        if delivered:
+            return True
+        async with chat.session_factory() as session:
+            return await seat_has_unfinished_input(session, topic_id, seat)
     except InputOutcomeUnconfirmed as exc:
         return InputReconciliationPending(exc.identity, exc.accepted)

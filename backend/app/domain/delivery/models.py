@@ -132,6 +132,9 @@ class NativeInput(UuidPk, Base):
     settled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TimedDelivery(UuidPk, Base):

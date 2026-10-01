@@ -22,7 +22,9 @@ from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.claude_code.runner import Runner
 from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime, Handle
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block, consumed_turn
+from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
@@ -37,8 +39,12 @@ from tests.integration.test_claude_session_records import _until
 from tests.unit.test_claude_runner import Machine
 
 
-@pytest.mark.parametrize("mode", ["busy", "idle", "idle-race"])
-def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
+@pytest.mark.parametrize(
+    "mode", ["busy", "idle", "idle-race", "accepted-start", "project-seat"]
+)
+def test_http_answer_continues_original_native_executor(
+    client, tmp_path, mode, monkeypatch
+):
     scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
     sys.path.insert(0, scripts)
     import headless_contract
@@ -182,7 +188,8 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         assert question["author"] == handle.agent_handle
         prepared_gate = asyncio.Event()
         prepared_seen = asyncio.Event()
-        if mode == "idle-race":
+        delayed_writes = []
+        if mode in ("idle-race", "accepted-start", "project-seat"):
             assemble = chat._assemble_turn
 
             async def paused_assembly(**kwargs):
@@ -191,7 +198,17 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                 await prepared_gate.wait()
                 return prepared
 
-            chat._assemble_turn = paused_assembly
+            if mode == "idle-race":
+                chat._assemble_turn = paused_assembly
+            elif mode == "accepted-start":
+                write = native_runner._write
+
+                async def accepted_write(message):
+                    # Model start is held after the real native admission ledger.
+                    # Only this isolated process's stdin write is delayed.
+                    delayed_writes.append(message)
+
+                native_runner._write = accepted_write
             directive = headless_contract.do(
                 "Bash",
                 command=(
@@ -205,6 +222,52 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                 lambda _body: json.loads(directive[3:]),
                 None,
             ]
+        if mode == "project-seat":
+            import app.domain.agent.runtime as work_runtime
+
+            runner = get_work_runner()
+            opener = work_runtime._open_turn
+            normal_turn = uuid.uuid4()
+            normal_opened, normal_release = asyncio.Event(), asyncio.Event()
+            answer_queued = asyncio.Event()
+            admit = runner._admit
+
+            async def pause_open(factory, **fields):
+                if fields["turn_id"] == normal_turn:
+                    normal_opened.set()
+                    await normal_release.wait()
+                await opener(factory, **fields)
+
+            async def observed_admit(service, room, turn):
+                if turn != normal_turn:
+                    answer_queued.set()
+                return await admit(service, room, turn)
+
+            async def policy(_topic):
+                return {
+                    "project_id": project_id,
+                    "max_concurrent_turns": 1,
+                    "credits_exhausted": False,
+                }
+
+            monkeypatch.setattr(work_runtime, "_open_turn", pause_open)
+            monkeypatch.setattr(runner, "_admit", observed_admit)
+            monkeypatch.setattr(chat, "work_policy", policy)
+
+            async def start_normal():
+                runner.submit(
+                    chat,
+                    topic,
+                    author="system",
+                    content="continue original session",
+                    addressed=addressed_to_agent(asker),
+                    turn_id=normal_turn,
+                    recipient_instance_id=uuid.UUID(made.json()["data"]["id"]),
+                )
+                async with asyncio.timeout(10):
+                    await normal_opened.wait()
+
+            client.portal.call(start_normal)
         answer = client.post(
             f"/topics/blocks/{question['id']}/answer",
             json={
@@ -219,6 +282,63 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
 
         async def verify():
+            if mode == "project-seat":
+                async with asyncio.timeout(10):
+                    await answer_queued.wait()
+                normal_release.set()
+                async with asyncio.timeout(30):
+                    while not native_runner.working:
+                        await asyncio.sleep(0.01)
+                assert native_runner.work == str(normal_turn)
+            if mode == "accepted-start":
+                await get_work_runner().drain(10)
+                assert len(delayed_writes) == 1
+                assert not native_runner.working
+                async with client.test_request_factory() as session:
+                    registered = list(
+                        await session.scalars(
+                            select(NativeInput).where(NativeInput.topic_id == topic)
+                        )
+                    )
+                    waiting = next(
+                        row for row in registered if row.completed_at is None
+                    )
+                    assert waiting.accepted_at and not waiting.echoed_at
+                    held_work = waiting.work_id
+                correction = await asyncio.to_thread(
+                    client.post,
+                    f"/topics/blocks/{question['id']}/answer",
+                    json={
+                        "kind": "option",
+                        "option": "稍后",
+                        "client_op_id": "http-correct-start",
+                        "expect_version": 1,
+                    },
+                    headers=session_auth_headers("alice"),
+                )
+                assert correction.status_code == 200, correction.text
+                await get_work_runner().drain(10)
+                assert len(delayed_writes) == 1
+                assert operations.count("send") == initial_sends + 1
+                assert operations.count("steer") == 0
+                native_runner._write = write
+                await write(delayed_writes[0])
+                async with asyncio.timeout(30):
+                    while not native_runner.working:
+                        await asyncio.sleep(0.01)
+                assert native_runner.work == str(held_work)
+                async with client.test_request_factory() as session:
+                    deliveries = await session.scalars(
+                        select(Delivery).where(
+                            Delivery.topic_id == topic, Delivery.state == "pending"
+                        )
+                    )
+                    for delivery in deliveries:
+                        delivery.retry_at = None
+                    await session.commit()
+                await dispatch_pending(
+                    client.test_request_factory, chat=chat, runner=get_work_runner()
+                )
             if mode == "idle-race":
                 async with asyncio.timeout(30):
                     await prepared_seen.wait()
@@ -284,7 +404,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                     while operations.count("steer") != 2:
                         await asyncio.sleep(0.05)
                 assert operations.count("send") == initial_sends
-            if mode == "idle-race":
+            if mode in ("idle-race", "accepted-start"):
                 async with asyncio.timeout(30):
                     while operations.count("steer") != 1:
                         await asyncio.sleep(0.05)
@@ -295,13 +415,29 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                     await asyncio.sleep(0.05)
             await settle_turn(chat, topic)
             await get_work_runner().drain(10)
+            if mode == "project-seat":
+                async with client.test_request_factory() as session:
+                    pending = await session.scalars(
+                        select(Delivery).where(
+                            Delivery.topic_id == topic, Delivery.state == "pending"
+                        )
+                    )
+                    for delivery in pending:
+                        delivery.retry_at = None
+                    await session.commit()
+                await dispatch_pending(
+                    client.test_request_factory, chat=chat, runner=get_work_runner()
+                )
+                await get_work_runner().drain(10)
+                assert operations.count("send") == initial_sends + 1
+                assert operations.count("steer") == 0
             async with client.test_request_factory() as session:
                 rows = list(
                     await session.scalars(
                         select(NativeInput).where(NativeInput.topic_id == topic)
                     )
                 )
-                assert len(rows) == (2 if mode == "idle" else 3)
+                assert len(rows) == (2 if mode in ("idle", "project-seat") else 3)
                 assert {row.native_session_id for row in rows} == {native}
                 assert all(row.echoed_at and row.settled_at for row in rows)
                 assert all(
@@ -319,7 +455,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                         select(Delivery).where(Delivery.topic_id == topic)
                     )
                 )
-                assert len(deliveries) == (1 if mode == "idle" else 2)
+                assert len(deliveries) == (1 if mode in ("idle", "project-seat") else 2)
                 assert all(d.state == "received" and d.sent_at for d in deliveries)
                 answers = list(
                     await session.scalars(
@@ -346,7 +482,10 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                         == handle.session.agent_handle
                     )
                     assert answer_block.meta["agent_recipient"]["mentioned"]
-                    assert owners[0].delivery_id in {d.id for d in deliveries}
+                    if mode == "project-seat":
+                        assert owners[0].delivery_id is None
+                    else:
+                        assert owners[0].delivery_id in {d.id for d in deliveries}
                 turns = list(
                     await session.scalars(
                         select(AgentTurn).where(AgentTurn.topic_id == topic)
@@ -363,6 +502,8 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
         gate.touch()
         if "prepared_gate" in locals():
             client.portal.call(prepared_gate.set)
+        if "normal_release" in locals():
+            client.portal.call(normal_release.set)
         try:
             if native_runner is not None:
                 client.portal.call(native_runner.close)

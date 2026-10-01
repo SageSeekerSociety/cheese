@@ -216,6 +216,10 @@ async def complete_work_inputs(
         for block in set(row.held_block_ids) - set(row.released_block_ids)
     }
     consumed = owned
+    stamp = datetime.now(UTC)
+    for row in rows:
+        if row.echoed_at is not None:
+            row.completed_at = row.completed_at or stamp
     if not consumed:
         return set()
     identity = InputIdentity(

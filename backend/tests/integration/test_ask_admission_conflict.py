@@ -12,11 +12,17 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.domain.agent.answer_delivery import offer_answer
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.delivery.input_identity import InputEffects
+from app.domain.block.models import Block
+from app.domain.delivery.input_identity import InputEffects, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
-from app.domain.delivery.receipts import register_input
+from app.domain.delivery.receipts import (
+    complete_work_inputs,
+    record_receipt,
+    register_input,
+)
 from tests.integration.test_native_batch_ownership import _blocks, _delivery, _identity
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
@@ -37,6 +43,13 @@ def test_prompt_hold_rolls_back_answer_fence_before_external_io(client, monkeypa
             delivery = await session.get(Delivery, delivery_id)
             delivery.state = "claimed"
             delivery.lease_until = datetime.now(UTC) + timedelta(minutes=2)
+            delivery.payload = {"answer_to": str(uuid.uuid4()), "v": 1}
+            for block_id in ids:
+                block = await session.get(Block, block_id)
+                block.meta = {
+                    "answer_to": delivery.payload["answer_to"],
+                    "delivery_event_id": str(delivery.event_id),
+                }
             await session.commit()
         chat = ChatService(
             session_factory=factory,
@@ -125,5 +138,38 @@ def test_prompt_hold_rolls_back_answer_fence_before_external_io(client, monkeypa
             assert len(inputs) == 1
             assert inputs[0].input_id == initial.input_id
             assert inputs[0].delivery_id is None
+        # Echo alone must withhold this Delivery, not certify consumption.
+        async with factory() as session:
+            await record_receipt(
+                session, InputReceipt(initial, "native_echo", initial.work_id)
+            )
+            await session.commit()
+        assert await offer_answer(chat, topic, delivery_id, attempt, "answer") is True
+        async with factory() as session:
+            assert (await session.get(Delivery, delivery_id)).sent_at is None
+            await complete_work_inputs(
+                session,
+                project_id=project,
+                topic_id=topic,
+                recipient_handle=initial.recipient_handle,
+                harness=initial.harness,
+                native_session_id=initial.native_session_id,
+                work_id=initial.work_id,
+                require_registered=True,
+                input_ids=(initial.input_id,),
+            )
+            await session.commit()
+        # A dispatcher retry gets a new attempt after the original hold released.
+        retry = uuid.uuid4()
+        async with factory() as session:
+            delivery = await session.get(Delivery, delivery_id)
+            delivery.attempt_id = retry
+            await session.commit()
+        assert await offer_answer(chat, topic, delivery_id, retry, "answer") is True
+        async with factory() as session:
+            delivery = await session.get(Delivery, delivery_id)
+            assert delivery.state == "received" and delivery.sent_at
+            assert len(list(await session.scalars(select(NativeInput)))) == 1
+        assert external == []
 
     client.portal.call(run)

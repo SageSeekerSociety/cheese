@@ -2204,41 +2204,48 @@ class AgentWorkRunner:
             return
         lifecycle = {"started": False, "session_owned": False}
         try:
-            if landed_user_block_id is not None:
-                frames = chat_service.converse_prepared(
-                    topic_id=topic_id,
+            from app.domain.agent.answer_delivery import admitted_answer
+
+            async with admitted_answer(
+                chat_service, topic_id, delivery_id, turn_id, content
+            ) as offered:
+                if offered:
+                    return
+                if landed_user_block_id is not None:
+                    frames = chat_service.converse_prepared(
+                        topic_id=topic_id,
+                        author=author,
+                        content=content,
+                        turn_id=turn_id,
+                        user_block_id=landed_user_block_id,
+                        continuation_id=continuation_id,
+                        provision_actor=provision_actor,
+                        **(
+                            {"recipient_handle": recipient_handle}
+                            if recipient_handle is not None
+                            else {}
+                        ),
+                    )
+                await self._execute(
+                    chat_service,
+                    topic_id,
+                    turn_id,
                     author=author,
                     content=content,
-                    turn_id=turn_id,
-                    user_block_id=landed_user_block_id,
+                    addressed=addressed,
+                    reply_to=reply_to,
+                    attachments=attachments,
+                    is_resume=is_resume,
+                    resume_reason=resume_reason,
+                    nudge_event=nudge_event,
+                    nudge_meta=nudge_meta,
                     continuation_id=continuation_id,
                     provision_actor=provision_actor,
-                    **(
-                        {"recipient_handle": recipient_handle}
-                        if recipient_handle is not None
-                        else {}
-                    ),
+                    frames=frames,
+                    lifecycle=lifecycle,
+                    delivery_id=delivery_id,
+                    recipient_instance_id=recipient_instance_id,
                 )
-            await self._execute(
-                chat_service,
-                topic_id,
-                turn_id,
-                author=author,
-                content=content,
-                addressed=addressed,
-                reply_to=reply_to,
-                attachments=attachments,
-                is_resume=is_resume,
-                resume_reason=resume_reason,
-                nudge_event=nudge_event,
-                nudge_meta=nudge_meta,
-                continuation_id=continuation_id,
-                provision_actor=provision_actor,
-                frames=frames,
-                lifecycle=lifecycle,
-                delivery_id=delivery_id,
-                recipient_instance_id=recipient_instance_id,
-            )
         finally:
             # Close what this turn opened, unless the session took over THIS
             # turn — asking by id rather than trusting the handover.
