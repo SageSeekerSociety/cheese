@@ -274,7 +274,7 @@ def test_http_answer_continues_original_native_executor(client, tmp_path, mode):
                     await session.scalars(
                         select(Block).where(
                             Block.topic_id == topic,
-                            Block.meta["answer_to"].astext == question["id"],
+                            Block.meta["answer_to"].as_string() == question["id"],
                         )
                     )
                 )
