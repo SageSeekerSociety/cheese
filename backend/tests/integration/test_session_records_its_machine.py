@@ -22,7 +22,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import SessionRef, deployment_harness
+from app.domain.agent.harness import SessionRef, harness_for
 from app.domain.agent.harness.claude_code import ClaudeCodeChannel, ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
@@ -190,8 +190,8 @@ async def test_two_sessions_in_one_room_land_on_the_rooms_machine(
 
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        ada = await sessions.place(topic, "ada", harness=deployment_harness())
-        linus = await sessions.place(topic, "linus", harness=deployment_harness())
+        ada = await sessions.place(topic, "ada", harness=harness_for(None))
+        linus = await sessions.place(topic, "linus", harness=harness_for(None))
     assert ada is not None and linus is not None
     hands_a = client.session_test_devices["hands-a"]
     assert ada.lease["device_id"] == hands_a
@@ -209,7 +209,7 @@ async def test_two_sessions_in_one_room_land_on_the_rooms_machine(
     _open(central, project, topic, "ada")
     async with client.test_factory() as db:
         again = await AgentSessionService(db).place(
-            topic, "ada", harness=deployment_harness()
+            topic, "ada", harness=harness_for(None)
         )
     assert again is not None
     assert again.lease["device_id"] == hands_a
@@ -240,8 +240,8 @@ async def test_an_automatic_room_gives_the_second_session_the_first_ones_machine
 
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        ada = await sessions.place(topic, "ada", harness=deployment_harness())
-        linus = await sessions.place(topic, "linus", harness=deployment_harness())
+        ada = await sessions.place(topic, "ada", harness=harness_for(None))
+        linus = await sessions.place(topic, "linus", harness=harness_for(None))
     assert ada is not None and linus is not None
     assert linus.lease["device_id"] == ada.lease["device_id"]
 
@@ -264,7 +264,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
             topic_id=topic,
             agent_handle="ada",
             resume_token="conversation-1",
-            harness=deployment_harness(),
+            harness=harness_for(None),
         )
         await db.commit()
 
@@ -273,7 +273,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     # in place; this is not host-loss recovery.
     async with client.test_factory() as db:
         row = await AgentSessionService(db).ensure(
-            topic, "ada", harness=deployment_harness()
+            topic, "ada", harness=harness_for(None)
         )
         before_resource = row.work_lease["resource_id"]
     moved = client.put(
@@ -297,7 +297,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     # 下一轮：续接指针是从这条会话行上读出来的，和 `chat.py` 读的是同一处。
     async with client.test_factory() as db:
         resumes_by = await AgentSessionService(db).resume_token(
-            topic, "ada", harness=deployment_harness()
+            topic, "ada", harness=harness_for(None)
         )
     target = _open(central, project, topic, "ada", resume=resumes_by)
     assert target["device_id"] == client.session_test_devices["hands-b"]
@@ -311,7 +311,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     # only metadata here: no claim is made that transcripts reached that host.
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        before = await sessions.place(topic, "ada", harness=deployment_harness())
+        before = await sessions.place(topic, "ada", harness=harness_for(None))
         await sessions.remember_place(
             topic_id=topic,
             agent_handle="ada",
@@ -321,11 +321,11 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
                 "resource_id": before.resource_id,
                 "channel": before.channel,
             },
-            harness=deployment_harness(),
+            harness=harness_for(None),
         )
         await db.commit()
         resumes_by = await sessions.resume_token(
-            topic, "ada", harness=deployment_harness()
+            topic, "ada", harness=harness_for(None)
         )
     on_new_host = _open(central, project, topic, "ada", resume=resumes_by)
 
@@ -351,7 +351,7 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
                 "resource_id": str(topic),
                 "channel": "device",
             },
-            harness=deployment_harness(),
+            harness=harness_for(None),
         )
         await db.commit()
         assert await sessions.has_run(topic) is False
@@ -359,7 +359,7 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
             topic_id=topic,
             agent_handle="ada",
             resume_token="conversation-1",
-            harness=deployment_harness(),
+            harness=harness_for(None),
         )
         await db.commit()
         assert await sessions.has_run(topic) is True

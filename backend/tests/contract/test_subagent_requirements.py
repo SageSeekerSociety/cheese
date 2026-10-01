@@ -25,6 +25,7 @@ from app.domain.agent.harness import (
     CLAUDE_CODE,
     CODEX,
     HARNESSES,
+    Capability,
     Harness,
     Opening,
     SessionRef,
@@ -116,19 +117,45 @@ def test_an_answer_points_at_code_that_exists(
     到它。搜得到就算数的话，一张删除名单也算数：那正是这条守卫想挡的「读起来和真
     的一模一样」，只不过它读起来和真的一模一样的同时，说的是反话。
     """
-    answer = HARNESSES[name].subagents[requirement]
+    _points_at_code(f"{name}/{requirement}", HARNESSES[name].subagents[requirement])
+
+
+@pytest.mark.parametrize(
+    ("name", "capability"),
+    [(name, c) for name in sorted(HARNESSES) for c in HARNESSES[name].capabilities],
+    ids=str,
+)
+def test_a_declared_capability_points_at_code_that_exists(
+    name: str, capability: Capability
+) -> None:
+    """可选能力的声明守同一条规矩：说做得到，就指得出是哪一行做的。"""
+    _points_at_code(f"{name}/{capability}", HARNESSES[name].capabilities[capability])
+
+
+def test_a_capability_declared_without_saying_how_cannot_be_built() -> None:
+    claude = HARNESSES[CLAUDE_CODE]
+    with pytest.raises(ValueError, match="怎么做到"):
+        Harness(
+            "claimed",
+            "只说了能",
+            subagents=claude.subagents,
+            capabilities={Capability.REMOTE_EXECUTION: " "},
+        )
+
+
+def _points_at_code(what: str, answer: str) -> None:
     cited = _CITED.findall(answer)
     paths = [c for c in cited if _PATH.search(c)]
-    assert paths, f"{name}/{requirement} 没有指出这件事写在哪个文件里"
+    assert paths, f"{what} 没有指出这件事写在哪个文件里"
     missing = [path for path in paths if not (DOMAIN / path).exists()]
-    assert not missing, f"{name}/{requirement} 指着不存在的文件：{missing}"
+    assert not missing, f"{what} 指着不存在的文件：{missing}"
 
     sources = [(DOMAIN / path).read_text(encoding="utf-8") for path in paths]
     for symbol in (c for c in cited if c not in paths and _SYMBOL.match(c)):
         for part in symbol.split("."):
             found = any(_participates(part, src) for src in sources)
             assert found, (
-                f"{name}/{requirement} 指着 `{symbol}`，但 {paths} 里没有一处真的"
+                f"{what} 指着 `{symbol}`，但 {paths} 里没有一处真的"
                 f"定义、赋值或读 {part}——这句话此刻已经不成立了"
             )
 
