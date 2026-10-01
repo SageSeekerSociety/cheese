@@ -1,3 +1,5 @@
+import type { Block } from '../../../cx_types'
+
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -114,5 +116,87 @@ describe('document comment drafts', () => {
       global: { plugins: [createVuetify({ components, directives })] },
     })
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('离开再回来')
+  })
+})
+
+describe('comment card activation', () => {
+  const comment = {
+    id: 'card-a',
+    author: 'reader',
+    content: '评论正文',
+    created_at: '2026-10-01T07:00:00Z',
+    reply_to: 'node-a',
+    anchor_quote: '重复引用',
+  } as Block
+  function cards() {
+    return render(DocComments, {
+      props: {
+        topicId: `cards-${++serial}`,
+        author: 'reader',
+        comments: [comment],
+        anchorNodes: [{ id: 'node-a', content: '重复引用和重复引用' }] as Block[],
+        quoteState: () => 'ambiguous' as const,
+      },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+  }
+  it('activates only article Enter/Space, not a child control key', async () => {
+    const view = cards()
+    const article = screen.getByRole('article')
+    const quote = article.querySelector('button')!
+    await fireEvent.keyDown(quote, { key: 'Enter' })
+    expect(view.emitted()['update:openId']).toBeUndefined()
+    await fireEvent.keyDown(article, { key: 'Enter' })
+    expect(view.emitted()['update:openId']).toEqual([['card-a']])
+    await fireEvent.keyDown(article, { key: ' ' })
+    expect(view.emitted()['update:openId']).toEqual([['card-a'], ['card-a']])
+    await fireEvent.keyDown(article, { key: 'Enter', isComposing: true })
+    expect(view.emitted()['update:openId']).toHaveLength(2)
+    expect(quote.getAttribute('dir')).toBe('auto')
+    expect(screen.getByText('这段引用出现多次，无法确定原选区')).toBeTruthy()
+    await fireEvent.click(quote)
+    expect(view.emitted()['locate-node']).toEqual([['node-a']])
+    expect(view.emitted()['update:openId']).toHaveLength(3)
+  })
+
+  it('does not activate a card while dragging a selection in its body', async () => {
+    const view = cards()
+    const body = document.querySelector('[data-comment-body="card-a"]')!
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.selectNodeContents(body)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    try {
+      await fireEvent.click(body)
+      expect(view.emitted()['update:openId']).toBeUndefined()
+    } finally {
+      selection.removeAllRanges()
+    }
+    await fireEvent.click(body)
+    expect(view.emitted()['update:openId']).toEqual([['card-a']])
+  })
+
+  it('expands a measured long body only on the active card', async () => {
+    const view = cards()
+    const body = document.querySelector<HTMLElement>('[data-comment-body="card-a"]')!
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, value: 1000 })
+    await view.rerender({ openId: 'card-a' })
+    const expand = await screen.findByRole('button', { name: '展开全文' })
+    await fireEvent.click(expand)
+    expect(body.classList.contains('is-expanded')).toBe(true)
+    expect(view.emitted()['update:openId']).toBeUndefined()
+    await fireEvent.click(screen.getByRole('button', { name: '收起全文' }))
+    expect(body.classList.contains('is-expanded')).toBe(false)
+  })
+
+  it('reports the missing host sender rather than showing successful posting', async () => {
+    cards()
+    const input = await open()
+    await fireEvent.update(input, '保留原稿')
+    expect((screen.getByRole('button', { name: '评论' }) as HTMLButtonElement).disabled).toBe(true)
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await screen.findByText('当前宿主未提供评论发送接口')
+    expect(input.value).toBe('保留原稿')
   })
 })
