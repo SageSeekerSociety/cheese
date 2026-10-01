@@ -864,9 +864,10 @@ HARNESSES: dict[str, Harness] = {
                 "`registerMachineTools` 里把这些操作换成问 runner；grep 的搜索本身不"
                 "走注入的操作，同一处把它整个换成执行器上的一次搜索。runner 经 "
                 "`agent/harness/pi/machine.py` 的 `Machine` 把每一个文件操作变成执行"
-                "器答的一次调用（`control` 的 `files`，`agent/harness/claude_code/"
-                "remote_execution/machine_files.py`），命令变成执行器 shell 控制上的一条命令，走的是 "
-                "`RemoteClient`，用到才领机器，本机不执行。"
+                "器答的一次调用（`control` 的 `files`，"
+                "`agent/harness/claude_code/remote_execution/machine_files.py`），"
+                "命令变成执行器 shell 控制上的一条命令，走的是 `RemoteClient`，"
+                "用到才领机器，本机不执行。"
             ),
         },
     ),
