@@ -158,8 +158,9 @@
     "name": "Project name",
     "intent": "What do you plan to do (optional)",
     "intentExample": "For example: turn this term's course materials into an outline",
-    "team": "Team",
-    "personalTeam": "Personal",
+    "team": "Belongs to",
+    "ownHint": "Under your name; you can invite people to it",
+    "teamHint": "All {n} team members join automatically",
     "teamsEmpty": "No teams available. Create or join a team first.",
     "teamsFailed": "Could not load teams",
     "forge": "Code repository",
@@ -179,6 +180,7 @@
     "projects": "Projects: no limit is set",
     "concurrent": "Work computers are created on demand. A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue.",
     "machines": "Cloud machines: a team shares {count} by default. See the team's Work computers page for quota and usage.",
+    "machinesOwn": "Cloud machines: projects under your name share {count} by default; see Work computers under your name for credits and usage",
     "failed": "Could not load resource limits",
     "retry": "Retry",
     "loading": "Loading resource limits…"
@@ -518,12 +520,20 @@
       "locateMessage": "In {path} at {address} (“{quote}”): {note}",
       "publishSite": "Publish site",
       "openInNewTab": "Open in a new tab",
+      "openLatestPreview": "Open the latest preview in a new tab",
       "exitFullscreen": "Exit full screen",
       "fullscreen": "Full-screen preview",
       "refresh": "Refresh",
       "runningApp": "Running app",
       "download": "Download",
       "frameTitle": "Topic preview",
+      "authorizing": "Authorizing the preview…",
+      "navigating": "Loading the new page…",
+      "navigationTimeout": "The new page took too long to load. Try again.",
+      "navigationFailed": "The new page couldn't load. Try again.",
+      "retainedPage": "New content hasn't loaded. Still showing the previously opened page.",
+      "retryTarget": "Retry new content",
+      "readVersion": "Version at metadata read: {version}",
       "loadFailed": "Couldn't load the preview",
       "readFailed": "Couldn't read the file",
       "pathError": "{path}: {error}",
@@ -1018,7 +1028,7 @@
     "cancel": "Cancel",
     "confirmRemove": "Remove",
     "inviteTitle": "Invite an external member",
-    "inviteHint": "An external member is someone outside the team who takes part in this project only. They join once they accept, and see only this project",
+    "inviteHint": "Invite someone to this project only. They join once they accept, and see only this project",
     "inviteLabel": "Username or email",
     "invitePlaceholder": "Enter the full username or email",
     "notFound": "No one has this username or email",
@@ -1030,7 +1040,7 @@
   },
   "external": {
     "tag": "External",
-    "tagHint": "Not on the team; takes part in this project only"
+    "tagHint": "Takes part in this project only"
   },
   "mcp": {
     "title": "MCP servers",
@@ -1419,8 +1429,8 @@
     "supplyLoading": "Checking what the cloud can offer right now…",
     "supplyRange": "Available range: {range}",
     "supplyUnknown": "The cloud's available range can't be read right now ({reason}). You can save anyway and it is checked again when the machine starts",
-    "cloudHint": "Allocated on the first run and counted against the team's cloud quota. The cloud does not report remaining capacity, so a configuration inside the range can still fail to start",
-    "deviceHint": "The device is already on the team, so no further authorization is needed. If it is offline, work waits until it comes online",
+    "cloudHint": "Allocated on the first run and counted against the cloud quota. The cloud does not report remaining capacity, so a configuration inside the range can still fail to start",
+    "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
   },
   "cloudSupply": {
@@ -1437,9 +1447,10 @@
     "cancel": "Cancel",
     "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
     "noCandidates": "No members can take it over",
-    "lookupIntro": "No one on the team to hand it to? Find a person directly:",
+    "lookupTeam": "No one on the team to hand it to? Find a person directly:",
+    "lookupOwn": "Enter the new owner's username or email:",
     "lookupLabel": "Full username or email",
-    "movingOut": "{'@'}{handle} isn't on this project's team, so the transfer moves the whole project to them. Afterwards you are no longer a member and can't see any of its topics. (A project that belongs to a shared team can only go to someone on that team.)"
+    "movingOut": "The whole project moves to {'@'}{handle}. Afterwards you are no longer a member and can't see any of its topics."
   },
   "skills": {
     "edit": "Edit",

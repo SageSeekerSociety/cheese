@@ -114,6 +114,9 @@
   "sidebar": {
     "resize": "拖动调整宽度"
   },
+  "backTo": {
+    "own": "你名下的项目"
+  },
   "desktopApp": {
     "about": "关于知是",
     "appVersion": "App 版本",

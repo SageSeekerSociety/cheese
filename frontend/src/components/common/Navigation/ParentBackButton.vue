@@ -9,6 +9,7 @@ import { topBarBack } from '../topBarBack'
 
 import { t } from '@/i18n'
 import { projectFrameOf } from '@/lib/projectFrame'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const route = useRoute()
@@ -48,8 +49,15 @@ const atProjectRoot = computed(() => {
 const owningTeam = computed(() => {
   const projectId = projectFrameOf(route)
   if (!projectId || !atProjectRoot.value) return null
-  const handle = workspace.projects.find((p) => p.id === projectId)?.team_handle
-  return handle ? { name: 'TeamsDetail', params: { handle }, label: t('navigation.teams') } : null
+  const project = workspace.projects.find((p) => p.id === projectId)
+  const handle = project?.team_handle
+  if (!handle) return null
+  // 项目在某人名下时，「所属团队」就是只有他自己的那一个，地址是他的用户名，也只有他
+  // 本人打得开：对他是「你名下的项目」，对被邀请进来的人没有这一层。
+  if (handle === project.owner_handle) {
+    return handle === myHandle() ? { name: 'TeamsDetail', params: { handle }, label: t('navigation.backTo.own') } : null
+  }
+  return { name: 'TeamsDetail', params: { handle }, label: t('navigation.teams') }
 })
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）。 */

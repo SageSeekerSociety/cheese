@@ -40,8 +40,8 @@ from app.domain.agent.service import (
     AgentToolResult,
 )
 from app.domain.room_task.thread_label import thread_label
+from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
-from tests.unit.test_a_person_is_answered_before_anything_else import pi_binary
 
 PARENT = "parent-model"
 LABEL = thread_label(uuid.UUID("4f1c2a9b-8d7e-4c1f-a0b3-c5d6e7f80912"))

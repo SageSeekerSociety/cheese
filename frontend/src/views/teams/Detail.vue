@@ -34,8 +34,10 @@ import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
 import { BusinessError } from '@/network/types/error'
+import { usePageTitleStore } from '@/stores/title'
 
 const route = useRoute()
+const titles = usePageTitleStore()
 const teamData = ref<Team>()
 provide(teamDataInjectionKey, teamData)
 
@@ -50,8 +52,7 @@ const PAGE_TITLES: Record<string, string> = {
 }
 const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects'))
 
-// 个人团队没写介绍时回落成一句说明，和团队列表里的说法一致。
-const teamIntro = computed(() => teamData.value?.intro || (teamData.value?.personal ? t('home.nav.personalIntro') : ''))
+const teamIntro = computed(() => teamData.value?.intro ?? '')
 
 const fetchTeamData = async (handle: string) => {
   notFound.value = false
@@ -60,6 +61,8 @@ const fetchTeamData = async (handle: string) => {
       data: { team },
     } = await TeamsApi.detailByHandle(handle)
     teamData.value = team
+    // 标签页上写这个团队（自己名下就是自己的昵称），不写笼统的「团队」。
+    titles.setDynamicTitle(team.name, 'TeamsDetail')
   } catch (error) {
     // 隐身小队对非成员就是 404：和不存在的小队说同一句话。
     if (error instanceof BusinessError && error.code === 404) notFound.value = true

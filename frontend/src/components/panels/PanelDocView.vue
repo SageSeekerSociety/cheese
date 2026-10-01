@@ -5,6 +5,7 @@
 // 只时钟都在 composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在
 // doc/DocSurface.vue：这里画出它的位置，把取来的东西递下去，把底下发上来的动作接住
 // （「换了个值」直接落回组合式函数的 ref，「做了个动作」原样再往上发）。
+import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
 import type { DocSaveStatus } from '../../lib/docEditState'
 
@@ -49,6 +50,8 @@ withDefaults(
     externalDoc: string | null
     // ---- 评论区 ----
     comments: Block[]
+    commentAuthor?: string
+    sendComment?: SendDocComment
     anchorNodes: Block[]
     // ---- 装饰的原料（原样递给正文那一半） ----
     liveRefIndex: Map<number, string>
@@ -75,7 +78,7 @@ withDefaults(
     overwriteWithMine: () => void
     setError: (message: string | null) => void
   }>(),
-  { agentName: () => t('work.room.defaultAgentName'), topicList: () => [] }
+  { agentName: () => t('work.room.defaultAgentName'), topicList: () => [], commentAuthor: '', sendComment: undefined }
 )
 
 const emit = defineEmits<{
@@ -344,6 +347,8 @@ defineExpose({
             <DocComments
               ref="commentsRef"
               :topic-id="topic?.id ?? null"
+              :author="commentAuthor"
+              :send-comment="sendComment"
               :comments="comments"
               :anchor-nodes="anchorNodes"
               @locate-node="highlightNode"

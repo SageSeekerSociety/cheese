@@ -3,7 +3,7 @@
 一台既没有 Postgres 也没有 docker 的容器**照样能跑全量测试**——DB-backed 的测试要的是一个服务器，不是 docker。`.claude/scripts/dev-db.sh` 用预编译 wheel（`postgresql-binaries`、`redislite`，由 `uv` 取）把 Postgres + Redis 起起来，给 Postgres 补上 ParadeDB 的 `pg_search`，装好钉住版本的 Claude Code 和 Codex——CI 用服务容器和 “Install pinned harness binaries” 那一步提供的，这里一样不缺：
 
 ```bash
-eval "$(bash .claude/scripts/dev-db.sh start)"   # 导出 TEST_PG_BASE、REDIS_URL、CHEESE_TEST_CLAUDE、PATH
+eval "$(bash .claude/scripts/dev-db.sh start)"   # 导出 TEST_PG_BASE、REDIS_URL、CHEESE_TEST_CLAUDE、CHEESE_TEST_CODEX、CHEESE_TEST_PI、PATH
 cd backend && uv run pytest tests/ -n 4 -q
 bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 ```

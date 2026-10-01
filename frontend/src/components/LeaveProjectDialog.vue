@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // 「退出项目」的确认框，从成员页打开。「点了之后发生什么」只有这一份：确认、
 // DELETE /projects/{id}/membership、刷新名册和项目列表、离开这个项目。
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { leaveProject } from '@/api'
 import { t } from '@/i18n'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
@@ -13,6 +14,10 @@ const open = defineModel<boolean>({ required: true })
 
 const router = useRouter()
 const store = useWorkspaceStore()
+
+// 「退出的是项目不是团队」只对随团队进来的人成立：被邀请进来的外部成员、自己名下
+// 项目里的人，本来就不在什么团队里。
+const viaTeam = computed(() => store.members.find((member) => member.user_handle === myHandle())?.source === 'team')
 
 const leaving = ref(false)
 const error = ref<string | null>(null)
@@ -51,7 +56,7 @@ async function confirmLeave() {
     <v-card>
       <v-card-title class="t-dialog-title pt-4">{{ t('project.leave.title') }}</v-card-title>
       <v-card-text class="t-body c-muted">
-        {{ t('project.leave.body') }}
+        {{ t(viaTeam ? 'project.leave.bodyTeam' : 'project.leave.body') }}
         <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
           {{ error }}
         </v-alert>

@@ -114,6 +114,9 @@
   "sidebar": {
     "resize": "Drag to resize"
   },
+  "backTo": {
+    "own": "your projects"
+  },
   "desktopApp": {
     "about": "About Cheese",
     "appVersion": "App version",

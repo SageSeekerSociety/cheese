@@ -158,8 +158,9 @@
     "name": "项目名称",
     "intent": "你打算做什么（可选）",
     "intentExample": "例如：帮我把这学期的课程材料整理成一份大纲",
-    "team": "所属团队",
-    "personalTeam": "个人",
+    "team": "归属",
+    "ownHint": "你名下，可以另外邀请人",
+    "teamHint": "团队的 {n} 位成员会自动加入",
     "teamsEmpty": "暂无可用团队，请先创建或加入团队",
     "teamsFailed": "团队列表加载失败",
     "forge": "代码仓库",
@@ -179,6 +180,7 @@
     "projects": "项目数量：当前未设置上限",
     "concurrent": "工作电脑按需创建；新项目默认最多同时运行 {count} 个 AI 任务，超出后排队",
     "machines": "云端机器：团队默认共享 {count} 台名额，额度与用量见团队的「工作电脑」页",
+    "machinesOwn": "云端机器：你名下的项目默认共享 {count} 台名额，额度与用量见你名下的「工作电脑」页",
     "failed": "资源限制加载失败",
     "retry": "重试",
     "loading": "正在加载资源限制…"
@@ -518,12 +520,20 @@
       "locateMessage": "在 {path} 的 {address}（「{quote}」）：{note}",
       "publishSite": "发布网站",
       "openInNewTab": "在新标签页打开",
+      "openLatestPreview": "在新标签页打开最新预览",
       "exitFullscreen": "退出全屏",
       "fullscreen": "全屏预览",
       "refresh": "刷新",
       "runningApp": "运行中的应用",
       "download": "下载",
       "frameTitle": "话题预览",
+      "authorizing": "正在获取预览授权…",
+      "navigating": "正在加载新页面…",
+      "navigationTimeout": "新页面加载超时，请重试。",
+      "navigationFailed": "新页面未能加载，请重试。",
+      "retainedPage": "新内容未加载，当前仍显示上次打开的页面。",
+      "retryTarget": "重试新内容",
+      "readVersion": "读取时版本：{version}",
       "loadFailed": "预览加载失败",
       "readFailed": "无法读取文件",
       "pathError": "{path}：{error}",
@@ -1018,7 +1028,7 @@
     "cancel": "取消",
     "confirmRemove": "移出",
     "inviteTitle": "邀请外部成员",
-    "inviteHint": "外部成员是团队以外、只参与这个项目的人。对方接受邀请后才会加入，只能看到这个项目",
+    "inviteHint": "邀请只参与这个项目的人。对方接受邀请后才会加入，只能看到这个项目",
     "inviteLabel": "用户名或邮箱",
     "invitePlaceholder": "输入完整的用户名或邮箱",
     "notFound": "找不到这个用户名或邮箱",
@@ -1030,7 +1040,7 @@
   },
   "external": {
     "tag": "外部",
-    "tagHint": "团队以外的成员，只参与这个项目"
+    "tagHint": "只参与这个项目的成员"
   },
   "mcp": {
     "title": "MCP 服务器",
@@ -1419,8 +1429,8 @@
     "supplyLoading": "正在查询云端当前可选范围…",
     "supplyRange": "可选范围：{range}",
     "supplyUnknown": "暂时查不到云端可选范围（{reason}）。可以先保存，开机时由云端校验。",
-    "cloudHint": "首次运行时分配，计入团队云额度。云端不报告剩余容量，范围内的配置开机时仍可能创建失败。",
-    "deviceHint": "设备已加入团队，无需再次授权；离线时需要等待设备上线",
+    "cloudHint": "首次运行时分配，计入云端额度。云端不报告剩余容量，范围内的配置开机时仍可能创建失败。",
+    "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
   },
   "cloudSupply": {
@@ -1437,9 +1447,10 @@
     "cancel": "取消",
     "intro": "项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出",
     "noCandidates": "暂无可以接手的成员",
-    "lookupIntro": "团队里没人可交？直接找一个人：",
+    "lookupTeam": "团队里没人可交？直接找一个人：",
+    "lookupOwn": "输入接手人的用户名或邮箱：",
     "lookupLabel": "用户名或邮箱（要写完整）",
-    "movingOut": "{'@'}{handle} 不在这个项目的团队里：转让会把项目整个搬到 TA 名下。转完你就不再是项目成员，也看不到它的任何话题。（项目属于某个共享团队时只能转给团队里的人，后端会拒。）"
+    "movingOut": "转让会把项目整个搬到 {'@'}{handle} 名下。转完你就不再是项目成员，也看不到它的任何话题。"
   },
   "skills": {
     "edit": "修改",

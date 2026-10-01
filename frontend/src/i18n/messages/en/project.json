@@ -1,7 +1,8 @@
 {
   "leave": {
     "title": "Leave project?",
-    "body": "You will no longer see this project; existing messages and records are kept. You leave this project, not the team: your place in the team stays the same, and the team's other projects are unaffected. You can come back if invited again.",
+    "body": "You will no longer see this project; existing messages and records are kept. You can come back if invited again.",
+    "bodyTeam": "You will no longer see this project; existing messages and records are kept. You leave this project, not the team: your place in the team stays the same, and the team's other projects are unaffected. You can come back if invited again.",
     "confirm": "Leave",
     "failed": "Couldn't leave"
   },

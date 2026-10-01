@@ -36,7 +36,8 @@
       <template #activator />
     </AdaptiveMenu>
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
-    <v-tooltip activator="parent" location="end" content-class="rail-flyout">
+    <!-- 右键菜单开着时让开：两个浮层都贴在这一格右边，提示会压住菜单的上沿。 -->
+    <v-tooltip activator="parent" location="end" content-class="rail-flyout" :disabled="menuOpen">
       <div class="rail-flyout__inner">
         <span class="rail-flyout__name">{{ item.title }}</span>
         <template v-if="item.shortcut">
@@ -212,6 +213,9 @@ function warmDestination() {
     // the dark theme its own ≈#2B2C2E tile at 1.31:1 — so the 方块 stays legible
     // in both, which a single literal cannot do.
     background-color: rgba(var(--v-theme-on-surface), 0.12);
+    // v-card 默认 overflow: hidden，而且沿着圆角裁：探出右上角的未读点和件数角标
+    // 会被切掉一块。别的格子早就放开了（--tile / --icon），这一格漏了。
+    overflow: visible;
 
     .cheese-icon {
       // logo size set via CSS (the width/height props on the ?component SVG don't

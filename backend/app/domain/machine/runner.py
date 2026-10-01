@@ -51,6 +51,7 @@ class MachineEnrollmentSweeper:
             # ever updated, so without this the sweep decides on whatever was
             # true the last time a human opened the project.
             await service.settle_reservations()
+            await service.release_left_machines()
             await service.refresh_unsettled()
             result = await service.enroll_pending()
             ready = await service.ready_topic_devices()

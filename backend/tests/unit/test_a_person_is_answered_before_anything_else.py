@@ -20,7 +20,6 @@ import base64
 import json
 import os
 import shlex
-import shutil
 import socket
 import subprocess
 import sys
@@ -48,7 +47,7 @@ from app.domain.agent.harness.driven.runner import (
 from app.domain.agent.harness.pi.device_launch import PiLaunch, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
-from tests.pinned_claude import claude_binary
+from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
 from tests.support.responses_fixture import Responses
@@ -435,7 +434,7 @@ async def codex(tmp_path: Path, steps: list):
                 },
                 "opening": {"system_prompt": "FIXTURE"},
                 "mcp_servers": [],
-                "binary": shutil.which("codex"),
+                "binary": codex_binary(),
                 "cwd": str(workspace),
             },
             "codex_config": model.config(),
@@ -475,13 +474,6 @@ async def codex(tmp_path: Path, steps: list):
 
 
 # --- pi ------------------------------------------------------------------------
-
-
-def pi_binary() -> str:
-    found = os.environ.get("CHEESE_TEST_PI") or shutil.which("pi")
-    if not found:
-        raise RuntimeError("CHEESE_TEST_PI must point to the pinned pi build")
-    return found
 
 
 @asynccontextmanager

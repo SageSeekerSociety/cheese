@@ -161,3 +161,67 @@ async def test_every_rung_that_reads_the_page_itself_refuses_an_inward_redirect(
         site.close()
 
     assert internal.hits == []
+
+
+@pytest.fixture
+def fake_ip_dns(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """A machine whose DNS answers ``site.test`` with a fake-IP placeholder; the
+    DNS-over-HTTPS answer is whatever the test puts in ``real``."""
+    state: dict = {"real": [], "asked": 0}
+    real_resolve = guard._resolve
+
+    async def resolve(host: str, port: int) -> list[str]:
+        if host == "site.test":
+            return ["198.18.3.4"]
+        return await real_resolve(host, port)
+
+    async def over_https(host: str) -> list[str]:
+        state["asked"] += 1
+        if isinstance(state["real"], Exception):
+            raise state["real"]
+        return state["real"]
+
+    monkeypatch.setattr(guard, "_resolve", resolve)
+    monkeypatch.setattr(guard, "_resolve_over_https", over_https)
+    return state
+
+
+async def test_behind_fake_ip_dns_the_real_address_is_checked_and_reached(
+    public_host, fake_ip_dns: dict
+) -> None:
+    site = _Server("127.0.0.2", lambda _r: (200, {"content-type": "text/html"}, PAGE))
+    fake_ip_dns["real"] = ["127.0.0.2"]
+    port = site.url.rsplit(":", 1)[1]
+    try:
+        got = await service.fetch(f"http://site.test:{port}/article")
+    finally:
+        site.close()
+
+    assert got.ok and "一段正文" in got.text
+    assert site.hits and fake_ip_dns["asked"]
+
+
+async def test_behind_fake_ip_dns_a_name_that_really_points_inward_is_refused(
+    internal: _Server, downstream: _Server, fake_ip_dns: dict
+) -> None:
+    fake_ip_dns["real"] = ["127.0.0.1"]
+    port = internal.url.rsplit(":", 1)[1]
+    got = await service.fetch(
+        f"http://site.test:{port}/admin",
+        reader_endpoint=downstream.url,
+        browser_endpoint=downstream.url,
+    )
+
+    assert not got.ok and "INTERNAL" not in got.text
+    assert internal.hits == [] and downstream.hits == []
+
+
+async def test_behind_fake_ip_dns_an_unanswerable_name_is_refused(
+    internal: _Server, fake_ip_dns: dict
+) -> None:
+    fake_ip_dns["real"] = OSError("resolver unreachable")
+    port = internal.url.rsplit(":", 1)[1]
+    got = await service.fetch(f"http://site.test:{port}/admin")
+
+    assert not got.ok
+    assert internal.hits == []

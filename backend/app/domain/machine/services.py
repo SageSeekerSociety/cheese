@@ -599,6 +599,29 @@ class MachineService:
         await self._repo.mark_released(machine, when=datetime.now(UTC))
         await self._session.commit()
 
+    async def release_left_machines(self) -> int:
+        """Delete VMs their session left whose one delete attempt did not land.
+
+        ``release_left_machine`` runs once, as the session leaves; a provider
+        refusal or a restart before it runs leaves the VM superseded, and the
+        room's cleanup only comes when the room is archived, which an active room
+        never is. A VM still holding a session's unpushed work is left to that
+        cleanup.
+        """
+        # Past the moment the leaving session itself deletes it.
+        cutoff = datetime.now(UTC) - timedelta(minutes=5)
+        released = 0
+        for machine in await self._repo.list_left_older_than(cutoff):
+            if machine.status in GONE or await left_unpushed_on(
+                self._session, machine.topic_id, machine.device_id
+            ):
+                continue
+            await self.release_left_machine(machine.id)
+            await self._session.refresh(machine)
+            if machine.released_at is not None:
+                released += 1
+        return released
+
     async def list_active_for_topic(self, topic_id: uuid.UUID) -> list[ProjectMachine]:
         return await self._repo.list_active_for_topic(topic_id)
 
@@ -1113,3 +1136,23 @@ def _as_ai_status(value: object) -> AiStatus:
         return AiStatus(str(value))
     except ValueError:
         return AiStatus.unknown
+
+
+async def left_unpushed_on(db, topic_id, device_id) -> bool:
+    """Another session of the room left this machine without pushing: its work
+    is only there, so the machine waits for the room's cleanup."""
+    from app.domain.agent_session.models import AgentSession
+
+    if device_id is None:
+        return False
+    requests = await db.scalars(
+        select(AgentSession.execution_request).where(
+            AgentSession.topic_id == topic_id,
+            AgentSession.execution_request.is_not(None),
+        )
+    )
+    return any(
+        lease.get("device_id") == device_id
+        for request in requests
+        for lease in request.get("retained_leases", [])
+    )

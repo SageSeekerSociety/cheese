@@ -242,7 +242,7 @@ describe('取数', () => {
     listMock.mockResolvedValue(page([]))
     const view = mount()
     expect(await view.findByText('知识库暂无内容')).toBeTruthy()
-    expect(view.container.textContent).toContain('在频道聊天中添加有价值的内容到知识库')
+    expect(view.container.textContent).toContain('在对话中把有价值的内容加入知识库')
     expect(view.container.textContent).not.toContain('请尝试调整筛选条件')
   })
 
