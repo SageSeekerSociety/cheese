@@ -16,6 +16,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from tests.integration.conftest import (
+    join_project_team,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -553,6 +554,7 @@ def test_creating_a_notification_requires_a_credential(client):
 
 def test_creating_with_a_bearer_alone_works(client):
     pid = _project(client)
+    join_project_team(client, pid, "alice")
     r = client.post(
         f"/projects/{pid}/alerts",
         # 点名给一个人 —— 这条验的是凭据，不是广播展开给谁，而一份空名册上的广播
@@ -567,6 +569,7 @@ def test_creating_with_a_bearer_alone_works(client):
 def test_creating_with_a_scoped_token_works(client):
     """The sandbox cheese CLI path: a per-turn token scoped to this project."""
     pid = _project(client)
+    join_project_team(client, pid, "alice")
     tid = _topic(client, pid)
     # 点名给一个人 —— 这条验的是凭据，不是广播展开给谁，而一间只坐着芝士的房间和
     # 一份空名册上的广播一个人也到不了。
