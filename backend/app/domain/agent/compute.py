@@ -342,6 +342,16 @@ class ComputePool:
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
         )
 
+    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Read this seat's journal now: its runner wrote records nobody has
+        read. False when no backend in this process reads that seat."""
+        woken = False
+        for runtime in self._runtimes():
+            wake = getattr(runtime, "wake", None)
+            if wake is not None and wake(topic_id, agent_handle):
+                woken = True
+        return woken
+
     async def recover_sessions(
         self, device_id: str | None = None
     ) -> list["SessionRef"]:

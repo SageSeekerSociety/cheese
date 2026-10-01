@@ -5,13 +5,16 @@ It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 """
 
 import logging
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.api.deps import get_compute_pool
 from app.core.errors import UnauthorizedError
 from app.core.sandbox_auth import scoped_token_claims
+from app.domain.agent.compute import ComputePool
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,24 @@ async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dic
         raise UnauthorizedError("Cleanup trigger requires the server credential")
     spawn(sweep_retired_storage(async_session_factory), name="archived-room cleanup")
     return {"code": 200, "data": {"scheduled": True}}
+
+
+@router.post("/journal-written")
+async def journal_written(
+    x_cheese_token: str = Header(default=""),
+    compute: ComputePool = Depends(get_compute_pool),
+) -> dict:
+    """A runner has records nobody has read: read its seat now.
+
+    The session's own credential names the seat, so this reads no database and
+    carries no records; the read that follows takes them from its own cursor.
+    """
+    claims = scoped_token_claims(x_cheese_token)
+    topic, agent = (claims or {}).get("t"), (claims or {}).get("a")
+    if not isinstance(topic, str) or not isinstance(agent, str) or not agent:
+        raise UnauthorizedError("A session credential is required")
+    woken = compute.wake(uuid.UUID(topic), agent)
+    return {"code": 200, "data": {"woken": woken}}
 
 
 # The `cheese` platform-action CLI source, shipped to enrolled devices (the local

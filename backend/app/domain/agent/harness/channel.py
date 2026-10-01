@@ -1,9 +1,11 @@
 """Transport operations shared by harness implementations."""
 
+import logging
 import uuid
 from typing import NamedTuple
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
 from app.domain.agent.platform_failures import classify_session_start
@@ -13,6 +15,34 @@ from app.domain.device.supply import Supply
 # launch (its CONNECT password and OAuth token are read once), so it has to
 # outlast the session rather than a single turn.
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
+
+
+def discovery_missed(
+    logger: logging.Logger, harness: str, room, device: str, failure: Exception
+) -> None:
+    """Note a placed session a restarted backend could not reach.
+
+    A machine that answers that the runner is not there is a session that sat
+    idle and was let go (``driven.runner``); the next message starts it again,
+    so that is not worth a warning. Every deploy finds dozens of them. A machine
+    that is away, not ready or not answering is.
+    """
+    if isinstance(failure, DeviceCallError) and not isinstance(failure, DeviceNotReady):
+        logger.info(
+            "%s discovery found no runner topic=%s device=%s: %s",
+            harness,
+            room,
+            device,
+            failure,
+        )
+    else:
+        logger.warning(
+            "%s discovery failed topic=%s device=%s: %s",
+            harness,
+            room,
+            device,
+            failure,
+        )
 
 
 def mint_session_token(project_id, topic_id, agent_handle: str) -> str:
