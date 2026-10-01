@@ -109,6 +109,48 @@ async def main() -> None:
     assert b"PUBLIC PAGE" in reply, reply
     assert public.hits == 2
 
+    # Behind fake-IP DNS every name resolves to a placeholder in 198.18.0.0/15;
+    # the real address is asked over HTTPS, and that is what is checked.
+    async def placeholder(host: str, p: int) -> list[str]:
+        if host == "site.test":
+            return ["198.18.3.4"]
+        return await real_resolve(host, p)
+
+    real_over_https = egress.resolve_over_https
+    egress.resolve = placeholder
+    hits = public.hits
+
+    async def points_public(host: str) -> list[str]:
+        return ["127.0.0.2"]
+
+    egress.resolve_over_https = points_public
+    reply = await exchange(
+        port,
+        f"GET http://site.test:{public.port}/ HTTP/1.1\r\nHost: site.test\r\n\r\n".encode(),
+    )
+    assert status(reply) == 200, reply
+    assert public.hits == hits + 1
+
+    async def points_inward(host: str) -> list[str]:
+        return ["127.0.0.1"]
+
+    egress.resolve_over_https = points_inward
+    reply = await exchange(
+        port, f"CONNECT site.test:{internal.port} HTTP/1.1\r\n\r\n".encode()
+    )
+    assert status(reply) == 403, reply
+
+    async def unanswerable(host: str) -> list[str]:
+        raise OSError("resolver unreachable")
+
+    egress.resolve_over_https = unanswerable
+    reply = await exchange(
+        port, f"CONNECT site.test:{internal.port} HTTP/1.1\r\n\r\n".encode()
+    )
+    assert status(reply) == 403, reply
+    assert internal.hits == 0
+
+    egress.resolve, egress.resolve_over_https = real_resolve, real_over_https
     server.close()
     print("browser-render egress: internal refused, public reached")
 

@@ -16,6 +16,15 @@ the name can resolve differently the second time. The HTTP client below closes
 it by connecting to the very address that was checked, at the point where every
 connection is opened, redirect hops included.
 
+Some machines resolve every name to a placeholder in ``198.18.0.0/15`` and let
+a transparent proxy connect to the real host by name ("fake-IP" DNS). Those
+placeholders say nothing about where a connection really goes, so when every
+address a name resolves to is one of them, the name is asked again over DNS over
+HTTPS (``settings.fetch_dns_over_https``), the real addresses are checked the
+same way, and the connection goes to the real address — the proxy carries a
+connection to a real IP as readily as one to a placeholder. If that answer
+cannot be had, the name is refused.
+
 A refused address stops the whole fetch. The ladder in ``service.fetch`` treats
 any rung's failure as "try the next one", and the next ones hand the URL to a
 third party or a browser; ``NotPublic`` is therefore raised past every rung, not
@@ -32,6 +41,8 @@ from urllib.parse import urlsplit
 import httpcore
 import httpx
 
+from app.core.config import settings
+
 #: A redirect chain longer than this is not a page, it is a loop or a probe.
 MAX_REDIRECTS = 5
 
@@ -44,6 +55,28 @@ async def _resolve(host: str, port: int) -> list[str]:
     loop = asyncio.get_running_loop()
     infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return [str(info[4][0]) for info in infos]
+
+
+#: Where fake-IP DNS hands out its placeholders (the benchmarking range).
+_PLACEHOLDERS = ipaddress.ip_network("198.18.0.0/15")
+
+
+def _is_placeholder(address: str) -> bool:
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    return isinstance(ip, ipaddress.IPv4Address) and ip in _PLACEHOLDERS
+
+
+async def _resolve_over_https(host: str) -> list[str]:
+    """``host``'s IPv4 addresses from a DNS-over-HTTPS resolver's JSON API."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), trust_env=False) as c:
+        r = await c.get(
+            settings.fetch_dns_over_https,
+            params={"name": host, "type": "A"},
+            headers={"accept": "application/dns-json"},
+        )
+    r.raise_for_status()
+    answers = r.json().get("Answer") or []
+    return [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
 
 
 def _is_public(address: str) -> bool:
@@ -65,6 +98,13 @@ async def public_address(host: str, port: int) -> str:
         raise NotPublic(f"{host} does not resolve") from exc
     if not addresses:
         raise NotPublic(f"{host} does not resolve")
+    if all(_is_placeholder(a) for a in addresses):
+        try:
+            addresses = await _resolve_over_https(host)
+        except Exception as exc:  # noqa: BLE001 — unknown means refused
+            raise NotPublic(f"{host} could not be resolved to a real address") from exc
+        if not addresses:
+            raise NotPublic(f"{host} does not resolve")
     for address in addresses:
         if not _is_public(address):
             raise NotPublic(f"{host} is not a public address")
