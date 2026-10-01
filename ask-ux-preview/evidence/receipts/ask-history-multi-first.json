@@ -1,0 +1,24 @@
+{
+  "source": "17603c7671d86d45dab934c4da47899e9e4170be",
+  "argv": [
+    ".venv/bin/pytest",
+    "-q",
+    "tests/integration/test_native_ask_answer.py",
+    "-k",
+    "history-multi"
+  ],
+  "cwd": "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend",
+  "env": {
+    "TEST_PG_BASE": "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433",
+    "REDIS_URL": "redis://127.0.0.1:6379/12",
+    "CHEESE_CI_SLOT": "ask_s_concurrency",
+    "CHEESE_CI_REDIS_BASE_DB": "12",
+    "PYTHONPATH": ".",
+    "CHEESE_TEST_CLAUDE": "/var/tmp/ask-s-native-2.1.282/claude"
+  },
+  "start": "2026-10-01T07:47:33.883442+00:00",
+  "end": "2026-10-01T07:47:51.769244+00:00",
+  "exit": 1,
+  "native_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+  "stdout_sha256": "172fdd6e4d1267c3266cae43dba7ac51f4731453b860dcec70a14f1df8a202f0"
+}

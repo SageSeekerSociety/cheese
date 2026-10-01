@@ -182,6 +182,7 @@ def test_http_answer_continues_original_native_executor(
             native_runner.process,
         )
         if mode.startswith("history-multi"):
+            from app.domain.agent.harness import Opening
             from app.domain.agent.harness.claude_code.journal import Journal
             from app.domain.agent.harness.driven import runtime as driven_runtime
             from app.domain.delivery.input_identity import InputEffects
@@ -208,7 +209,11 @@ def test_http_answer_continues_original_native_executor(
                 await runtime.send(
                     ref,
                     directive,
+                    Opening(
+                        system_prompt="你是芝士。", agent_handle=handle.agent_handle
+                    ),
                     work_id=high,
+                    on_mark=lambda _work: None,
                     register_input=registrar,
                 )
                 async with asyncio.timeout(30):
