@@ -878,7 +878,17 @@
       "uploadFailed": "文件上传失败",
       "addFailed": "添加文件失败"
     },
-    "defaultAgentName": "芝士"
+    "defaultAgentName": "芝士",
+    "reminder": {
+      "open": "提醒我",
+      "title": "提醒我",
+      "when": "时间",
+      "content": "内容",
+      "submit": "设置提醒",
+      "inPast": "这个时间已经过去",
+      "failed": "设置提醒失败",
+      "set": "将在 {when} 提醒你"
+    }
   },
   "board": {
     "column": {

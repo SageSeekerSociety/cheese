@@ -1121,40 +1121,6 @@ async def edit_topic_doc(
     )
 
 
-@router.post("/{topic_id}/deliveries")
-async def ask_for_a_delivery(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """定时投递（结论 17）：请平台在某个时刻把这条递给请求者自己。
-
-    收件人不在正文里，因为这条原语只有一个收件人规则——**就是请求它的那个参与者**。
-    给别人设闹钟是另一件事，而那件事没有人要过。
-    """
-    from app.domain.delivery.timer import deliver_at
-
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    recipient = actor.handle
-    if not actor.authenticated:
-        recipient = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        )
-    raw = (body.get("at") or "").strip()
-    try:
-        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        raise ValidationError("at 要是一个 ISO-8601 时刻") from None
-    row = await deliver_at(
-        db,
-        when=when,
-        event=body.get("content") or "",
-        recipient=recipient,
-        topic_id=topic_id,
-        project_id=place.project_id,
-    )
-    return ok({"id": str(row.id), "at": when.isoformat(), "to": recipient})
-
-
 @router.post("/{topic_id}/summon")
 async def summon_agent(
     topic_id: uuid.UUID,

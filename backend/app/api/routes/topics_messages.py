@@ -23,12 +23,11 @@ one-click option question 芝士 asks in the chat, and a note to a sister thread
 of the same handle. Each writes a line and hands it to whoever is meant to
 read it; none of them reads the room's history back.
 
-What stays behind, and why. `POST /{topic_id}/deliveries` and
-`POST /{topic_id}/summon` stay: the first is the DELIVERY half of the ask
-family (定时投递 -- the platform hands it over later), the second is the
-general "wake an agent now" door that is not a message at all, and both read
-helpers that a dozen staying handlers share. `_actor_in_place` (identity, then
-the room's roster), `DbSession`, `TopicService`, `TopicMemberService`,
+What stays behind, and why. `POST /{topic_id}/summon` stays: it is the
+general "wake an agent now" door that is not a message at all, and it reads
+helpers that a dozen staying handlers share. (`POST /{topic_id}/deliveries`,
+定时投递, has its own module, `topics_deliveries.py`.) `_actor_in_place`
+(identity, then the room's roster), `DbSession`, `TopicService`, `TopicMemberService`,
 `ChatService`, `AgentWorkRunner`, `project_refs_text`, `BlockRepository`,
 `BlockOut`, `AuthorType` and `BlockKind` keep their home in topics.py and are
 imported in: staying handlers read all of them, and the two ratchets read the
