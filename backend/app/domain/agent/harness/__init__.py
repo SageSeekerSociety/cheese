@@ -320,6 +320,12 @@ class AgentRuntime(Protocol):
     # question ("which machine pool"), and one attribute cannot mean both.
     harness: str
 
+    async def ask_origin(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str
+    ) -> dict | None:
+        """Read the exact live native seat without starting or sending work."""
+        ...
+
     async def ensure(
         self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
     ) -> object:

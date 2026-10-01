@@ -334,6 +334,18 @@ class ComputePool:
         }
         return works.pop() if len(works) == 1 else None
 
+    async def ask_origin(self, project_id, topic_id, agent_handle):
+        """Read exactly one owning runtime; ambiguity never chooses a seat."""
+        candidates = [
+            runtime
+            for runtime in self._runtimes()
+            if runtime.holds(topic_id, agent_handle)
+        ]
+        if len(candidates) != 1:
+            return None
+        reader = getattr(candidates[0], "ask_origin", None)
+        return await reader(project_id, topic_id, agent_handle) if reader else None
+
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for
         this agent's seat in it, when one is named?"""

@@ -807,6 +807,28 @@ class DrivenRuntime[H: Handle]:
             working = [seat for seat in working if self.work[seat] == expected_work_id]
         return working[0] if len(working) == 1 else None
 
+    async def ask_origin(self, project_id, topic_id, agent_handle):
+        """Read this seat's exact live native identity without starting work."""
+        seat = (topic_id, agent_handle)
+        handle = self.live.get(seat)
+        work = self.work.get(seat)
+        if handle is None or work is None or handle.session.project_id != project_id:
+            return None
+        status = await self.channel.call(handle, "ping", {})
+        if (
+            not self.working(status)
+            or status.get("work_id") != str(work)
+            or self.live.get(seat) is not handle
+            or self.work.get(seat) != work
+        ):
+            return None
+        return {
+            "harness": self.harness,
+            "native_session_id": self.conversation(handle),
+            "work_id": str(work),
+            "recipient_handle": agent_handle,
+        }
+
     def holds(self, topic_id, agent_handle=None) -> bool:
         if agent_handle is not None:
             return (topic_id, agent_handle) in self.live

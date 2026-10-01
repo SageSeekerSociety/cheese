@@ -20,10 +20,20 @@ class Answer:
 
     @classmethod
     def parse(cls, body: dict) -> "Answer":
-        kind = (body.get("kind") or "option").strip()
-        option = (body.get("option") or "").strip()
-        note = (body.get("note") or "").strip()
-        client_op_id = (body.get("client_op_id") or "").strip()
+        values = {}
+        for field, default in (
+            ("kind", "option"),
+            ("option", ""),
+            ("note", ""),
+            ("client_op_id", ""),
+        ):
+            value = body.get(field, default)
+            if not isinstance(value, str):
+                raise ValidationError(f"{field} 必须是字符串")
+            values[field] = value.strip()
+        kind, option, note, client_op_id = (
+            values[field] for field in ("kind", "option", "note", "client_op_id")
+        )
         expect_version = body.get("expect_version")
         if kind not in ("option", "note", "reject"):
             raise ValidationError("kind 要是 option / note / reject")

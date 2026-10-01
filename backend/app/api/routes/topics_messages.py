@@ -81,15 +81,13 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.response import ok
 from app.api.routes.topics import (
-    AuthorType,
-    BlockKind,
     BlockOut,
     BlockRepository,
     DbSession,
     _actor_in_place,
 )
 from app.core.errors import ForbiddenError, ValidationError
-from app.domain.agent.announce import announce, notify_question
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.platform_notices import (
     EVENT_MENTION_FUSED,
@@ -97,7 +95,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -223,120 +220,6 @@ async def _summon_the_named(
         )
     if summoned.woken:
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
-
-
-def _option_entries(raw: object) -> list[dict]:
-    """选项从这里进，形状只有一种：`{"text": …, "explain"?: …}`。
-
-    旧的 `string[]` 在这里就是错的形状，不是另一种写法：留一条兼容分支，就等于让
-    `meta.options` 永远有两种读法，而读它的人有四处（前端渲染、作答校验、待办判据、
-    CLI）。所以裸字符串直接 422，而不是被顺手收下。
-    """
-    if not isinstance(raw, list):
-        raise ValidationError("options 必须是数组")
-    out: list[dict] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            raise ValidationError("每个选项都是 {text, explain?} 对象")
-        text = str(entry.get("text") or "").strip()
-        if not text:
-            raise ValidationError("每个选项都要有 text")
-        item: dict = {"text": text}
-        explain = entry.get("explain")
-        if isinstance(explain, str) and explain.strip():
-            item["explain"] = explain.strip()
-        out.append(item)
-    return out
-
-
-@router.post("/{topic_id}/ask")
-async def ask_options(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """芝士 asks an option question IN the chat (cheese_ask): a message block
-    whose meta.options renders as one-click buttons. Structured interaction —
-    the answer comes back as data, never parsed from prose (spec §14.5).
-
-    本轮停在这里等回答，所以它同时通知发起这一轮的人（#1084）：其余每一种「下一步
-    在人手上」都是一轮结束之后的状态，唯独这一种**中断**运行，而房间安静下来这件事
-    本身没有人会注意到。
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    actor = await _actor_in_place(resolver, place)
-    question = (body.get("question") or "").strip()
-    options = _option_entries(body.get("options"))
-    if not question:
-        raise ValidationError("question is required")
-    # 提问方给 2-3 项，「以上都不是」由界面按 `reject_option` 自动补，不占这里的名额
-    # （已批 PDF p6）。少了不够选，多了那道题就变成读一列。
-    if not 2 <= len(options) <= 3:
-        raise ValidationError("需要 2-3 个选项")
-    # 作答许可写在这道题自己身上，不是留在请求里：作答那一刻读的是建题 meta。
-    # 默认开着，因为「关联自由输入」是已批方案的目标之二；关掉才需要显式说。
-    allow_other = bool(body.get("allow_other", True))
-    reject_option = bool(body.get("reject_option", True))
-    # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
-    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese_ask` 只在 CHEESE_TURN
-    # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
-    # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
-    # 直接说明（`own_output`）：不说明的话这道题会盖上待读标记，「忘了 @」的补救按钮
-    # 不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝士刚问出口的这道
-    # 题，它对着自己的问题再答一遍。人在房间里问出的那种照旧是一条待读输入。
-    if actor.authenticated:
-        author = actor.handle
-        asked_by_agent = await TopicMemberService(db).holds_an_agent_seat(
-            place.room, author
-        )
-    else:
-        author = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
-        )
-        asked_by_agent = True
-    # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
-    # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
-    #
-    # 记在这道题自己身上（`meta.asked`），不留到以后再去问轮次：`cheese_ask` 不等
-    # 回答，芝士问完就收尾，这一轮随即关闭——过一会儿再问「开着的那一轮是谁的」，
-    # 答案已经是「没有」，而题还摆在那儿等人。
-    waiting_for = await AgentTurnRepository(db).open_turn_author_for_topic(
-        place.room_id
-    )
-    asked = None if waiting_for == "system" else waiting_for
-    if waiting_for is None:
-        # 没有开着的轮次区间可问（有的执行路径不记它）：芝士此刻在回应的，就是
-        # 最近点它名的那个人。不兜底的话 `asked` 为空，谁那里都不亮黄灯。
-        asked = await BlockRepository(db).last_summoner(place.room_id)
-    blk = await BlockRepository(db).add(
-        project_id=place.project_id,
-        # The place id: `add` splits it, so a thread's question is asked in the
-        # thread rather than shouted into the room around it.
-        topic_id=topic_id,
-        author=author,
-        author_type=AuthorType.participant,
-        content=question,
-        kind=BlockKind.message,
-        meta={
-            "options": options,
-            "asked": asked,
-            "allow_other": allow_other,
-            "reject_option": reject_option,
-        },
-        own_output=asked_by_agent,
-    )
-    await notify_question(
-        db,
-        place=place,
-        block=blk,
-        question=question,
-        asker=blk.author,
-        asked=asked,
-    )
-    await db.commit()
-    payload = BlockOut.model_validate(blk).model_dump(mode="json")
-    await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
-    )
-    return ok(payload)
 
 
 @router.post("/{topic_id}/note")

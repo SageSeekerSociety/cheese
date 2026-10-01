@@ -662,6 +662,39 @@ class ChatService:
         self._replays: dict[uuid.UUID, asyncio.Task] = {}
         self._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 
+    async def ask_origin(self, project_id, topic_id, author):
+        """Resolve the authenticated author to their exact working native seat."""
+        states = [
+            state
+            for (topic, _), state in self._hook_work.items()
+            if topic == topic_id
+            and state.project_id == project_id
+            and state.acting_agent == author
+            and state.work_id in self._active_turn_ids.get(topic_id, ())
+        ]
+        if len(states) != 1:
+            return None
+        state = states[0]
+        origin = await self._compute.ask_origin(
+            project_id, topic_id, state.agent_instance_handle
+        )
+        if (
+            origin is None
+            or origin["work_id"] != str(state.work_id)
+            or self._hook_work.get((topic_id, state.work_id)) is not state
+            or state.work_id not in self._active_turn_ids.get(topic_id, ())
+        ):
+            return None
+        from app.domain.agent.repositories import AgentTurnRepository
+
+        async with self._sessions() as session:
+            turn = await AgentTurnRepository(session).get(state.work_id)
+            if turn is None or turn.topic_id != topic_id or turn.stopped_at is not None:
+                return None
+            asked = turn.author if names_a_person(turn.author) else None
+            task_id = str(turn.task_id) if turn.task_id else None
+        return {**origin, "asked_by": author, "asked": asked, "task_id": task_id}
+
     @property
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
