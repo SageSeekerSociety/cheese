@@ -21,6 +21,10 @@
     "docsAssistant": {
       "title": "Ask Cheese",
       "summary": "The docs site's question-answering assistant: how many people read the docs, how many asked it something, and how well it answered"
+    },
+    "topicNaming": {
+      "title": "Smart naming",
+      "summary": "Naming topic titles automatically: what it spends, which stages it runs at, and how often people rename what it wrote"
     }
   },
   "unit": {
@@ -92,6 +96,51 @@
       "question": "Question",
       "page": "Asked from",
       "count": "Times"
+    }
+  },
+  "naming": {
+    "kpi": {
+      "calls": "Naming calls",
+      "callsNote": "Requests on the gateway's dedicated naming key. Naming runs in the background, outside anyone's turn, so these calls count against no project's usage.",
+      "callsFailed": "{failed} of them failed",
+      "successRate": "Call success rate",
+      "successRateNote": "The gateway's own reading: the request reached the model and came back. A truncated answer, or one wrapped in broken JSON, is still a success there — those are only written to the log, which is why this page has no \"naming success rate\".",
+      "callsOf": "{failed} failed / {total} calls",
+      "tokens": "Tokens",
+      "tokensNote": "What naming sends in and writes back. Both its prompt and its answer are short, so this number is mainly here to catch the model starting to ramble.",
+      "tokenSplit": "in {prompt} · out {completion} · cached {cache}",
+      "cost": "Spend",
+      "costUnavailable": "Spend (cannot read)",
+      "costNote": "The gateway's own books, not an estimate.",
+      "costUnknownNote": "The gateway could not be read, so this figure is unknown — it is not drawn as 0, because 0 reads as \"costs nothing\".",
+      "budget": "Key total {spend} / budget {budget}",
+      "renames": "Titles written",
+      "renamesNote": "A row is written only when the title actually changes, so this counts renames, not looks.",
+      "stages": "first {name} · calibrate {calibrate} · follow {follow}",
+      "overridden": "Renamed by people",
+      "overriddenNote": "Of the rooms naming did title, how many a person later renamed. The denominator is only those rooms: a name a person chose themselves is not the platform being overridden.",
+      "overriddenOf": "{value} / {named} rooms"
+    },
+    "trend": {
+      "title": "Titles written per day",
+      "note": "Two lines for two things: what the platform renamed, and what people renamed. A day with no titles is drawn as 0 rather than a gap — a gap reads as \"not measured\".",
+      "auto": "Automatic",
+      "person": "By people"
+    },
+    "stages": {
+      "title": "Which stage naming ran at",
+      "note": "After the first name comes calibration, a second look at the room's first real message, and follow, which only fires when the room changes direction. The split says when the model usually steps in.",
+      "caption": "{n} automatic renames",
+      "name": "First name",
+      "calibrate": "Calibrate",
+      "follow": "Follow"
+    },
+    "person": {
+      "title": "What people changed",
+      "note": "Renaming is a person choosing the title (including asking Cheese for one); undo puts back the title an automatic rename replaced. Both stop the platform from touching that name again.",
+      "caption": "{n} changes by people",
+      "rename": "Renamed",
+      "undo": "Undone"
     }
   }
 }
