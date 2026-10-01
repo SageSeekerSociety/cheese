@@ -9,6 +9,8 @@ import type { GatewayAuditEntry, GatewayModelInfo, GatewayProject, GatewayUsageN
 import type { SpaceApplication } from '@/network/api/spaces/types'
 import type { RatchetArea, RatchetBoard, RatchetCheck, RatchetPoint } from '@/views/admin/ratchetApi'
 
+import { featureReport } from '@/proto-feature-fixtures'
+
 const DAY = 86400_000
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 const day = (offset: number) => new Date(Date.now() - offset * DAY).toISOString().slice(0, 10)
@@ -776,7 +778,14 @@ export function adminRoutes(
   // （数字在各自的功能页上），不是还没做。值照抄服务端注册表
   // （`backend/app/domain/feature_stats/features/docs_assistant.py`）。
   if (path === '/admin/feature-stats' && method === 'GET') {
-    return { data: { features: [{ id: 'docs-assistant', title: '问芝士', summary: '文档站的问答助手' }] } }
+    return {
+      data: {
+        features: [
+          { id: 'docs-assistant', title: '问芝士', summary: '文档站的问答助手' },
+          { id: 'topic-naming', title: '智能命名', summary: '房间自动命名的调用与标题变更' },
+        ],
+      },
+    }
   }
-  return undefined
+  return method === 'GET' ? featureReport(path, url) : undefined
 }

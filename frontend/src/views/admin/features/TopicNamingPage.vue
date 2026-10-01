@@ -194,177 +194,127 @@ const personRows = computed(() => {
 </script>
 
 <template>
-  <div class="anaming">
-    <AdminPageHeader
-      :title="t('featureStats.features.topicNaming.title')"
-      :sub="t('featureStats.features.topicNaming.summary')"
-    >
-      <template #tools>
-        <AdminTabs
-          size="sm"
-          :label="t('featureStats.page.windowAria')"
-          :model-value="String(days)"
-          :options="dayOptions"
-          @update:model-value="setDays"
+  <div class="anaming admin-page">
+    <div class="anaming__inner admin-page__col page-container--admin">
+      <AdminPageHeader
+        :title="t('featureStats.features.topicNaming.title')"
+        :sub="t('featureStats.features.topicNaming.summary')"
+      >
+        <template #tools>
+          <AdminTabs
+            size="sm"
+            :label="t('featureStats.page.windowAria')"
+            :model-value="String(days)"
+            :options="dayOptions"
+            @update:model-value="setDays"
+          />
+        </template>
+      </AdminPageHeader>
+
+      <div class="anaming__body admin-page__body">
+        <p v-if="window" class="anaming__stamp t-meta-read">{{ window }}</p>
+
+        <AdminEmptyState
+          v-if="failed"
+          :title="t('featureStats.page.loadFailed')"
+          :action="t('featureStats.page.retry')"
+          tone="error"
+          @action="load"
         />
-      </template>
-    </AdminPageHeader>
 
-    <div class="anaming__inner page-container--admin">
-      <p v-if="window" class="anaming__stamp t-meta-read">{{ window }}</p>
+        <template v-else>
+          <div class="admin-kpi-grid">
+            <AdminKpiCard
+              :label="t('featureStats.naming.kpi.calls')"
+              :value="count(numbers?.calls.value ?? null)"
+              :unit="t('featureStats.unit.times')"
+              :loading="loading"
+              :note="t('featureStats.naming.kpi.callsNote')"
+              :delta="callsFailed"
+              :delta-title="t('featureStats.naming.kpi.callsNote')"
+            />
+            <AdminKpiCard
+              :label="t('featureStats.naming.kpi.successRate')"
+              :value="fmtPercent(numbers?.calls.success_rate ?? null)"
+              :loading="loading"
+              :note="t('featureStats.naming.kpi.successRateNote')"
+              :delta="callsOf"
+              :delta-title="t('featureStats.naming.kpi.successRateNote')"
+            />
+            <AdminKpiCard
+              :label="t('featureStats.naming.kpi.tokens')"
+              :value="count(numbers?.tokens.value ?? null)"
+              :loading="loading"
+              :note="t('featureStats.naming.kpi.tokensNote')"
+              :delta="tokenSplit"
+              :delta-title="t('featureStats.naming.kpi.tokensNote')"
+            />
+            <AdminKpiCard
+              :label="costLabel"
+              :value="money(numbers?.cost.usd ?? null)"
+              :loading="loading"
+              :note="costNote"
+              :delta="budget"
+              :delta-title="costNote"
+            />
+            <AdminKpiCard
+              :label="t('featureStats.naming.kpi.renames')"
+              :value="count(numbers?.renames.value ?? null)"
+              :unit="t('featureStats.unit.times')"
+              :loading="loading"
+              :note="t('featureStats.naming.kpi.renamesNote')"
+              :delta="stages"
+              :delta-title="t('featureStats.naming.kpi.renamesNote')"
+            />
+            <AdminKpiCard
+              :label="t('featureStats.naming.kpi.overridden')"
+              :value="fmtPercent(numbers?.overridden.share ?? null)"
+              :loading="loading"
+              :note="t('featureStats.naming.kpi.overriddenNote')"
+              :delta="overriddenOf"
+              :delta-title="t('featureStats.naming.kpi.overriddenNote')"
+            />
+          </div>
 
-      <AdminEmptyState
-        v-if="failed"
-        :title="t('featureStats.page.loadFailed')"
-        :action="t('featureStats.page.retry')"
-        tone="error"
-        @action="load"
-      />
+          <div class="anaming__row">
+            <AdminLineChart
+              :title="t('featureStats.naming.trend.title')"
+              :note="t('featureStats.naming.trend.note')"
+              :x-labels="xLabels"
+              :series="series"
+              :loading="loading"
+            />
+          </div>
 
-      <template v-else>
-        <div class="anaming__kpis">
-          <AdminKpiCard
-            :label="t('featureStats.naming.kpi.calls')"
-            :value="count(numbers?.calls.value ?? null)"
-            :unit="t('featureStats.unit.times')"
-            :loading="loading"
-            :note="t('featureStats.naming.kpi.callsNote')"
-            :delta="callsFailed"
-            :delta-title="t('featureStats.naming.kpi.callsNote')"
-          />
-          <AdminKpiCard
-            :label="t('featureStats.naming.kpi.successRate')"
-            :value="fmtPercent(numbers?.calls.success_rate ?? null)"
-            :loading="loading"
-            :note="t('featureStats.naming.kpi.successRateNote')"
-            :delta="callsOf"
-            :delta-title="t('featureStats.naming.kpi.successRateNote')"
-          />
-          <AdminKpiCard
-            :label="t('featureStats.naming.kpi.tokens')"
-            :value="count(numbers?.tokens.value ?? null)"
-            :loading="loading"
-            :note="t('featureStats.naming.kpi.tokensNote')"
-            :delta="tokenSplit"
-            :delta-title="t('featureStats.naming.kpi.tokensNote')"
-          />
-          <AdminKpiCard
-            :label="costLabel"
-            :value="money(numbers?.cost.usd ?? null)"
-            :loading="loading"
-            :note="costNote"
-            :delta="budget"
-            :delta-title="costNote"
-          />
-          <AdminKpiCard
-            :label="t('featureStats.naming.kpi.renames')"
-            :value="count(numbers?.renames.value ?? null)"
-            :unit="t('featureStats.unit.times')"
-            :loading="loading"
-            :note="t('featureStats.naming.kpi.renamesNote')"
-            :delta="stages"
-            :delta-title="t('featureStats.naming.kpi.renamesNote')"
-          />
-          <AdminKpiCard
-            :label="t('featureStats.naming.kpi.overridden')"
-            :value="fmtPercent(numbers?.overridden.share ?? null)"
-            :loading="loading"
-            :note="t('featureStats.naming.kpi.overriddenNote')"
-            :delta="overriddenOf"
-            :delta-title="t('featureStats.naming.kpi.overriddenNote')"
-          />
-        </div>
-
-        <div class="anaming__row">
-          <AdminLineChart
-            :title="t('featureStats.naming.trend.title')"
-            :note="t('featureStats.naming.trend.note')"
-            :x-labels="xLabels"
-            :series="series"
-            :loading="loading"
-          />
-        </div>
-
-        <div class="anaming__row anaming__row--equal">
-          <AdminMetricList
-            :title="t('featureStats.naming.stages.title')"
-            :note="t('featureStats.naming.stages.note')"
-            :caption="t('featureStats.naming.stages.caption', { n: fmtNum(report?.numbers.renames.value ?? 0) })"
-            :rows="stageRows"
-            :emphasis="t('featureStats.naming.stages.name')"
-            :loading="loading"
-          />
-          <AdminMetricList
-            :title="t('featureStats.naming.person.title')"
-            :note="t('featureStats.naming.person.note')"
-            :caption="t('featureStats.naming.person.caption', { n: fmtNum(report?.numbers.person_edits.value ?? 0) })"
-            :rows="personRows"
-            :loading="loading"
-          />
-        </div>
-      </template>
+          <div class="anaming__row anaming__row--equal">
+            <AdminMetricList
+              :title="t('featureStats.naming.stages.title')"
+              :note="t('featureStats.naming.stages.note')"
+              :caption="t('featureStats.naming.stages.caption', { n: fmtNum(report?.numbers.renames.value ?? 0) })"
+              :rows="stageRows"
+              :emphasis="t('featureStats.naming.stages.name')"
+              :loading="loading"
+            />
+            <AdminMetricList
+              :title="t('featureStats.naming.person.title')"
+              :note="t('featureStats.naming.person.note')"
+              :caption="t('featureStats.naming.person.caption', { n: fmtNum(report?.numbers.person_edits.value ?? 0) })"
+              :rows="personRows"
+              :loading="loading"
+            />
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 滚动归这一页自己领（同 `AdminDashboardPage` 的 `.ad` 与 `DocsAssistantPage` 的
-   `.adoc`），页头的负 margin 同理。 */
-.anaming {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  padding: 0 24px 24px;
-  overflow-y: auto;
-}
-
-.anaming :deep(.aph) {
-  margin: 0 -24px;
-}
-
-.anaming__inner {
-  display: flex;
-  flex-direction: column;
-  margin: 0 auto;
-  container-type: inline-size;
-}
-
 /* 窗口那行（「统计窗口：2026-09-01 至 2026-09-30」）：它是这一页所有数的口径，
    放在所有数上面一行。常驻不收起。 */
 .anaming__stamp {
-  margin: 12px 0 0;
+  margin: 0;
   color: var(--muted);
-}
-
-/* KPI 行：格与格之间用发丝线（每格自己的上/左边线 + 面板负 margin 把第一行第一列的
-   推出外框裁掉），和看板那一排同一个做法。 */
-.anaming__kpis {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0;
-  margin: 16px 0 -1px -1px;
-  overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-}
-
-@container (min-width: 560px) {
-  .anaming__kpis {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  }
-}
-
-/* 窄屏两列时落单的末位铺满整行（2 列 6 张正好 3 行，5 张时不留半格洞）。 */
-@container (max-width: 559px) {
-  .anaming__kpis > :deep(*:last-child:nth-child(odd)) {
-    grid-column: 1 / -1;
-  }
-}
-
-.anaming__kpis > :deep(*) {
-  border-top: 1px solid var(--line);
-  border-left: 1px solid var(--line);
 }
 
 .anaming__row {

@@ -311,7 +311,7 @@ onMounted(load)
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  padding: 12px 16px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--line);
   transition: background-color var(--dur-quick) var(--ease-standard);
 }

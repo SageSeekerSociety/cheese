@@ -38,7 +38,7 @@ defineProps<{
 <style scoped>
 .aph {
   flex: 0 0 auto;
-  padding: 12px 24px;
+  padding: 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
