@@ -47,6 +47,7 @@ class SocketChannel:
             descriptor["protocol"],
         )
         self.calls = []
+        self.input_states = []
         self.runtime = ClaudeCodeRuntime(self)
 
     def available(self):
@@ -73,8 +74,10 @@ class SocketChannel:
         assert method not in ("interrupt", "close"), (
             "Recovery may not stop its executor"
         )
-        if self.descriptor["mode"].endswith("busy"):
-            assert method != "send", "Busy recovery may not resend the opening input"
+        if method in ("send", "steer"):
+            status = await self.call(handle, "ping", {})
+            self.input_states.append((method, status["working"]))
+            assert (method == "steer") == status["working"], status
         self.calls.append(method)
         reader, writer = await asyncio.open_unix_connection(
             socket_path(Path(handle.state))

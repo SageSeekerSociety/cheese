@@ -53,7 +53,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 await asyncio.sleep(0.05)
         await runner.drain(10)
 
-    async def received(expected):
+    async def received(expected, *, accepted_only=False):
         # HTTP commits intent before the background runner performs the RPC.
         # Establish its durable receipt before measuring retry/correction effects.
         async with asyncio.timeout(90):
@@ -73,9 +73,19 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                     )
                     if (
                         len(deliveries) == expected
-                        and all(d.state == "received" for d in deliveries)
+                        and all(
+                            d.state in ("sending", "received")
+                            if accepted_only
+                            else d.state == "received"
+                            for d in deliveries
+                        )
                         and len(rows) == expected + 1
-                        and all(r.echoed_at and r.settled_at for r in rows)
+                        and all(
+                            r.accepted_at
+                            if accepted_only
+                            else r.echoed_at and r.settled_at
+                            for r in rows
+                        )
                     ):
                         break
                 await asyncio.sleep(0.05)
@@ -131,9 +141,12 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                 (1, "继续", "alice"),
                 (2, "更正", "alice"),
             ]
-            await received(2)
             if descriptor["mode"] == "http-busy":
+                # Release model completion after RPC acceptance. The gated model
+                # response prevents the queued correction's echo until released.
+                await received(2, accepted_only=True)
                 Path(descriptor["gate"]).touch()
+            await received(2)
             await settled(3)
 
         async with factory() as session:
