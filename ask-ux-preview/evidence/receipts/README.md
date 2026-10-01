@@ -2,6 +2,22 @@
 
 The primitive, lock-order and send-fault tests exercise real PostgreSQL transactions. The retention tests use real SQLite journals and controlled callbacks. Send faults abort a flushed PostgreSQL transaction inside SQLAlchemy's commit path, against a scripted channel. None proves live native-model consumption, complete runtime integration, or a new-process restart.
 
+## Historical completion and public initial admission (WIP)
+
+Product source `2f9272ab962893d64a8937d24255e1a415d080b1`; compare `4d2be20a...2f9272ab`. `ask-history-public-second.txt` and JSON: 3 passed, 5 deselected, 21 test-JWT warnings, 10.38s, exit 0. Only new `history`, `history-pruned`, `ordinary-start` modes ran; accepted green admission cases were not rerun.
+
+Historical upgrade uses a real pinned-Claude completed input, settled PostgreSQL row and landed SQLite mirror. Resetting only `completed_at` to NULL models the migration's legacy-row shape. A replacement ChatService/ComputePool/runtime recovers the same idle native process and repairs completion from retained contiguous start/echo/clean-result evidence behind landing, without changing the cursor or sending/steering. A subsequent authenticated Ask answer starts one new work and settles normally. Replacement is in the same interpreter, not a new backend process or shared-runner upgrade.
+
+Pruning that landed mirror first leaves the old NULL row unresolved. Recovery does not fabricate completion; the answer remains pending with no native send/steer. Unknown/pruned/incomplete legacy input remains quarantined, retaining holds and pending blocks. Accepted/echo timestamps, native idle and AgentTurn closure do not release it. Restoring exact trusted retained evidence and repeating normal recovery is the supported repair. Automatic expiry, blind replay, manual completion and a safe replacement-session escape are not implemented by this checkpoint.
+
+The ordinary-message case delays isolated stdin after actual Ask W1 admission. An authenticated human WebSocket message addressed to B exercises live refusal and public initial fallback. Shared project→seat admission prevents W2: one delayed stdin message, two AgentTurns including the baseline, and an unconsumed ordinary block. Releasing stdin starts original W1 in the same native process/session, whose answer completes. Automatic later delivery of the retained ordinary message remains open.
+
+`ask-history-public-negative.txt` and JSON at evidence-only head `42f1b11a`: 2 failed, 6 deselected, 12 warnings, 7.32s, exit 1. `ask_history_admission_control.py` disables only the new historical pass and non-Ask initial guard, leaving product files, native pipes, fixtures and assertions unchanged. History fails on NULL completion after recovery; ordinary interleaving fails on two delayed stdin messages instead of one. These intended negative controls are not timeout/setup failures. Manifest hashes preserve the exact control and stdout; positive and negative heads have identical product/test source.
+
+`ask-history-public-first.txt` preserves the earlier 3 failures, 6.55s, exit 1 at `5c3d5093`: singular `agent_instance.service` import failed before native setup. `2f9272ab` fixes the module name. This is not a product negative control.
+
+Root's independent narrow review closed the two initial P2 defects on 2026-10-01. A further multi-input historical ordering defect remains: result inputs are UUID-sorted but retained echoes are arrival-ordered; strict dataclass tuple comparison wrongly rejects equal sets. Its correction/regression is pending. Complete original-executor A recovery, fresh-interpreter Ask HTTP recovery, native CLI/group cutover and full UI/PDF remain release gates. PR #2213 stays draft; migration is not separately releasable.
+
 ## Primitive baseline
 
 `primitives-first.txt`: 10 passed at source `43b73ca22d8df32ee86676c2542c0252f5de9f88`. Seven mismatched identity cases, acceptance versus echo with fresh SQLAlchemy sessions, explicit rollback/retry, and replaced attempt rejection. Published at `802047926f4c430c5d370b4230f793e317efc269`. Not repeated for the lock-order check.
