@@ -1,0 +1,39 @@
+"""The frozen first-match pairs (v3): exact four-field tuples, each citing the
+concrete registration records it names — leaf index and handler on both
+sides — plus the real-pair run that proved the behaviour. Nothing here is a
+blanket: a pair not listed field-for-field is not exempt, and a listed pair
+that stops being true breaks the guard on purpose (the ratchet shrinks
+only when the routes change).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FrozenPair:
+    earlier_path: str
+    earlier_endpoint: str
+    later_path: str
+    later_endpoint: str
+    witness: str
+    why: str
+
+
+#: The pairs the guard must NOT re-report. Four fields, exact, validated.
+FROZEN: tuple[FrozenPair, ...] = (
+    FrozenPair(
+        earlier_path="/users/{userId}",
+        earlier_endpoint="app.api.routes.users.get_user",
+        later_path="/users/invite-codes",
+        later_endpoint="app.api.routes.users.list_invite_codes",
+        witness="real pair: GET /users/invite-codes resolves to get_user",
+        why=(
+            "Documented known debt (users.py:3367): invite-codes registered "
+            "after {userId} and lands on its int parse. Frozen citing "
+            "registration records #628/#652; the fix is a reorder in its own "
+            "slice, not this guard's."
+        ),
+    ),
+)
