@@ -634,6 +634,7 @@ function read(file: LibraryFile) {
   flex: none;
   flex-direction: column;
   width: 480px;
+  min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--line);
 }
