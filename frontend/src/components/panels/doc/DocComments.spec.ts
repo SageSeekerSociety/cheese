@@ -77,7 +77,7 @@ describe('document comment drafts', () => {
     await fireEvent.update(input, '等待期间的新草稿')
     receipt.resolve()
     await waitFor(() => expect(view.emitted().posted).toHaveLength(1))
-    expect(input.value).toBe('等待期间的新草稿')
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('等待期间的新草稿')
   })
 
   it('keeps topic drafts separate and ignores the old topic receipt', async () => {
