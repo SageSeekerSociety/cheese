@@ -240,7 +240,7 @@ jobs:
 
       - name: Ensure required test tools
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof tmux zsh
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof ripgrep tmux zsh
           # Tests that launch a room's session need its namespace.
           "$GITHUB_WORKSPACE"/.github/scripts/allow-user-namespaces.sh
 
