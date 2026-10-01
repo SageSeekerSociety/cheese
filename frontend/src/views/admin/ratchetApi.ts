@@ -35,6 +35,24 @@ export interface RatchetStaleExemption {
   actual?: number
 }
 
+/** 整个仓库（树）的超限情况，只有 `file-sizes` 这一道带 —— 它是一个 **diff 口径**的
+ *  闸门，`actual` 数的是「这次改过、并且超了上限的文件」。采集跑在 main 的合并提交上
+ *  时工作树没有差异，那个数就是 0，读起来却像「树上没有超限文件」。树级数字从采集器
+ *  自己的板子里来，和检查记录存在同一份快照里。
+ *
+ *  `null` = 这次采集没有量到树（板子没测出来），**不是 0** —— 页面写「未知」。 */
+export interface RatchetTreeSize {
+  offenders: number
+  excess_lines: number
+  caps: {
+    prefix: string
+    cap: number | null
+    judged: number | null
+    over_cap: number | null
+    excess_lines: number | null
+  }[]
+}
+
 export interface RatchetCheck {
   id: string
   area: string
@@ -49,6 +67,8 @@ export interface RatchetCheck {
   stale_count: number | null
   rule_fingerprint: string | null
   points: RatchetPoint[]
+  /** 只有 `file-sizes` 有；`undefined` = 这一道检查没有树级数字这回事。 */
+  tree?: RatchetTreeSize | null
 }
 
 export interface RatchetArea {

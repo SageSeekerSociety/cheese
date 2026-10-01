@@ -114,7 +114,7 @@ const {
         @refresh="load"
       />
 
-      <div class="amd__body">
+      <div class="amd__body admin-page__body">
         <!-- 写失败 / 提示。**读失败不在这里说** —— 那一条画在各自那一段的位置上
              （表的列头下面、审计那张卡里），同一次失败说两遍，人会以为是两次。 -->
         <AdminModelsFlash :error="writeError" :notice="notice" @dismiss="clearFlash" />
@@ -254,7 +254,6 @@ const {
 .amd__body {
   display: flex;
   flex-direction: column;
-  padding: 16px 24px 24px;
 }
 
 .amd__kpis {
@@ -281,10 +280,6 @@ const {
 /* 窄屏的页头折行交给 `AdminPageHeader` 自己（它的工具槽是 `flex-wrap: wrap`），
    这里只管内容区的内边距收一档 —— 两页的 24px 在 390px 上占掉了 48px 宽度。 */
 @media (max-width: 700px) {
-  .amd__body {
-    padding: 12px 16px 16px;
-  }
-
   /* 时间窗口这一组比标题还宽（三段加起来 ~260px），而页头那一行是**一起缩**的：
      不干预的话被挤掉的是标题 —— 390px 上「模型管理」会只剩「模型…」。让工具槽
      自己占一整行，标题就还在一整行上。（`:deep` 只为了改页头那一行的折行，尺寸、

@@ -63,6 +63,17 @@ const toggle = (id: string) => {
 
 const passed = computed(() => props.checks.filter((check) => check.status === 'pass').length)
 
+/** 树级数字：只有规模区那一道带（服务端 `board.py` 的 `_tree_size`）。`undefined`
+ *  是「这一道没有树级数字这回事」，`null` 是「有这回事、这次没量到」—— 两者不能合，
+ *  合成一个就等于替没量到的那次报了一个数。 */
+const tree = computed(() => props.checks.find((check) => check.tree !== undefined)?.tree)
+
+/** 口径提示。全表只有 `file-sizes` 需要：它是 **diff 口径**的闸门，`actual` 数的是
+ *  「这次改过、并且超了上限的文件」。不说这句，收起状态下没人会怀疑那个 0。 */
+const SCOPE_KEYS: Record<string, string> = {
+  'file-sizes': 'ratchet.check.fileSizesScope',
+}
+
 const short = (sha: string) => sha.slice(0, 8)
 
 /** 归档里的时间一律按 UTC 显示，和 CI、快照里的字面一致 —— 换成本地时区之后，
@@ -144,12 +155,21 @@ const reasonOf = (check: RatchetCheck) => {
 </script>
 
 <template>
-  <section class="ara">
+  <section class="ara admin-card">
     <div class="ara__head">
-      <h3 class="ara__title">{{ areaName }}</h3>
-      <span class="ara__count t-num">{{ t('ratchet.area.count', { count: checks.length }) }}</span>
-      <span class="ara__count t-num">{{ t('ratchet.area.passed', { passed }) }}</span>
+      <h3 class="ara__title t-title">{{ areaName }}</h3>
+      <span class="ara__count t-meta-read t-num">{{ t('ratchet.area.count', { count: checks.length }) }}</span>
+      <span class="ara__count t-meta-read t-num">{{ t('ratchet.area.passed', { passed }) }}</span>
     </div>
+
+    <!-- 树级数字。表里那一行是 diff 口径的 0（这次没有文件被判定过），这一行才是
+         「树上到底超了多少」。量不到时写「未知」，不写 0。 -->
+    <p v-if="tree !== undefined" class="ara__tree t-meta-read">
+      <template v-if="tree">
+        {{ t('ratchet.tree.line', { offenders: tree.offenders, lines: tree.excess_lines }) }}
+      </template>
+      <template v-else>{{ t('ratchet.tree.unknown') }}</template>
+    </p>
 
     <table class="ara__table">
       <thead>
@@ -169,6 +189,7 @@ const reasonOf = (check: RatchetCheck) => {
             <td class="ara__name">
               <span>{{ checkName(check.id) }}</span>
               <span class="ara__id mono">{{ check.id }}</span>
+              <span v-if="SCOPE_KEYS[check.id]" class="ara__scope">{{ t(SCOPE_KEYS[check.id]!) }}</span>
             </td>
 
             <!-- 「现在」这一格：没跑到就写「没跑到」，绝不写 0。 -->
@@ -306,11 +327,11 @@ const reasonOf = (check: RatchetCheck) => {
   font-family: var(--font-mono);
 }
 
+/* 卡片长相交给 `.admin-card`（`--line` 描边 + `--radius-lg`），这里只留「块与块之间
+   隔 16px」和「表角跟着卡片圆角收」。原先这一页自己写了一份 `--line-2` + 8px 圆角，
+   和管理台里其他每一张卡片都不一样；`overflow: hidden` 是给表格方角收边的。 */
 .ara {
   margin-top: 16px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -324,11 +345,9 @@ const reasonOf = (check: RatchetCheck) => {
 
 .ara__title {
   margin: 0;
-  font-size: 15px;
 }
 
 .ara__count {
-  font-size: 12px;
   color: var(--muted);
 }
 
@@ -349,14 +368,28 @@ const reasonOf = (check: RatchetCheck) => {
   vertical-align: middle;
 }
 
+/* 表头长得和 `AdminGrid` 那张表一样：surface 底、下面一道 `--line-2`、12px 600 的
+   `--muted`。原来这里是**一块填色**（`--fill`）+ 500 字重 —— 全后台只有这一张表把
+   表头画成一条灰带子，切分区时像是另一个产品里的表。 */
 .ara__table thead th,
 .ara__inner thead th {
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--muted);
-  background: var(--fill);
+  background: var(--surface);
   border-top: 0;
+  border-bottom: 1px solid var(--line-2);
   white-space: nowrap;
+}
+
+/* 表头那条线已经分隔了第一行，第一行自己不画（画了就是两条贴在一起）。 */
+.ara__table tbody tr:first-child td,
+.ara__inner tbody tr:first-child td {
+  border-top: 0;
+}
+
+.ara__table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .ara__row {
@@ -373,8 +406,26 @@ const reasonOf = (check: RatchetCheck) => {
   gap: 1px;
 }
 
+/* 检查的英文 id 是**读得出来**的一行字（有人要拿它去 grep 脚本），不是装饰，所以它
+   跟正文同档的下限 12px，不再往 11px 掉 —— 设计系统里手写字号只有 12 起。 */
 .ara__id {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+/* 口径提示：只有 `file-sizes` 带。它是这一页唯一一个 `actual` 不是树级测量的格子，
+   这句话就挂在那个数旁边。 */
+.ara__scope {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+
+/* 树级数字那一行。它是这个区的**第一句结论**，所以比表头符重一档、比正文轻一档。 */
+.ara__tree {
+  margin: 0;
+  padding: 0 16px 8px;
   color: var(--muted);
 }
 
@@ -431,8 +482,8 @@ const reasonOf = (check: RatchetCheck) => {
   display: inline-block;
   margin-left: 6px;
   padding: 0 6px;
-  border-radius: 8px;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
   line-height: 18px;
   background: var(--fill-2);
   color: var(--accent-ink);

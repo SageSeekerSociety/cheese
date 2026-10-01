@@ -1131,6 +1131,20 @@ button:not(.v-btn) {
   border-radius: var(--radius-lg);
 }
 
+/* 功能数据页的指标共享列宽；卡片保留自己的外框，不再嵌套第二圈。 */
+.admin-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+@container (min-width: 720px) {
+  .admin-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 /* 表单页的那张卡片：宽度与标题左沿对齐，再窄一档 —— 一行输入框超过 720px 就该换行，
    而不是让人的眼从左边扫到右边再折回来看下一格的标签。 */
 .admin-form-card {
