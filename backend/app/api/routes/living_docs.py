@@ -125,7 +125,10 @@ async def document_history(
     after: int = Query(default=0, ge=0),
 ) -> dict:
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
     rows = await DocumentJournal(db).history(place.room_id, after=after)
     return ok({"versions": rows, "cursor": rows[-1]["version"] if rows else after})
 
@@ -138,7 +141,10 @@ async def document_refreshes(
     after: int = Query(default=0, ge=0),
 ) -> dict:
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
     rows = await DocumentJournal(db).refreshes(place.room_id, after=after)
     return ok({"refreshes": rows, "cursor": rows[-1]["cursor"] if rows else after})
 

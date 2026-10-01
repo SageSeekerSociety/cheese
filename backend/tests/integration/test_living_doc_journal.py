@@ -438,6 +438,11 @@ def test_operation_requires_real_owner_and_ignores_claimed_author(client, monkey
         client.get(f"/topics/{room}/doc/operations/{operation}", headers=owner).json()
         == saved.json()
     )
+    for endpoint in ["history", "refreshes"]:
+        assert (
+            client.get(f"/topics/{room}/doc/{endpoint}", headers=outsider).status_code
+            == 403
+        )
     hints = client.get(f"/topics/{room}/doc/refreshes", headers=owner).json()["data"]
     assert hints["cursor"] == 1
     assert len(hints["refreshes"]) == 1
