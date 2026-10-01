@@ -79,8 +79,8 @@ async def toggle_reaction(
     there takes: a verified caller — a session token, an agent's room
     credential, or the global sandbox token (the trusted dev credential, which
     stays gate-only) — who can reach the block's room. The credential is judged
-    against that room: an agent's is bound to its project, and judged against
-    nothing it was refused outright. Which handle the reaction lands under is
+    against that room, because an agent's is bound to its project and answers
+    only for a route that names one. Which handle the reaction lands under is
     still the body's — that is the 冒名 question, a different product call, and
     the sandbox fixture runs one client as alice/bob/carol on purpose
     (``tests/integration/test_reactions.py``)."""
