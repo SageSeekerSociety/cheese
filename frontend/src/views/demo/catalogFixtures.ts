@@ -868,6 +868,7 @@ const CHAT_BASE = {
   agentName: AGENT_NAME,
   refs: ROOM_REFS,
   outbox: [] as Outgoing[],
+  typing: [],
   editingId: null,
   editSaving: false,
   askBusy: null,

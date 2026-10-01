@@ -43,6 +43,7 @@ import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useTimeline } from '../components/room/composables/useTimeline'
+import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
@@ -418,6 +419,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       }
     }
+    typing.follow(frame, !awaitingReply.value)
   }
 
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
@@ -448,6 +450,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg.value = null
     connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
     turns.reset()
+    typing.clear()
     activity.reset()
     reactionPickerFor.value = null
     rowActions.resetBar()
@@ -851,6 +854,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       })
     )
   )
+  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, splitMarkers, arrived, delivered }) // 队友正在写的那条
   function outboxEdge(index: number): RunEdge {
     if (index > 0) return 'cont'
     const last = visible.value.at(-1)
@@ -940,6 +944,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     outgoingState,
     retrySend,
     outbox,
+    typingRows: typing.rows,
     noticeAgent,
     parentOf,
     showReplyCue,

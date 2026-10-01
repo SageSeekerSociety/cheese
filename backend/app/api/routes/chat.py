@@ -12,7 +12,7 @@ Protocol:
   client → {"type":"ping"}  →  server → {"type":"pong"}
   client → {"type":"typing"} / {"type":"typing","active":false}
   server → user_block / reaction / tool / todo / state / event_block /
-           assistant_block / activity / activity_snapshot / error / done
+           assistant_block / live / activity / activity_snapshot / error / done
 (Typing is the one thing a client says on this socket, and it is not written:
 it is member activity — who is busy in this room right now, a person composing
 or an agent with a turn running (`agent/activity.py`) — and it lives only in the
@@ -21,8 +21,10 @@ broker. The member is the socket's credential, never a field of the frame.)
 after its path stopped carrying frames — the browser only learns when TCP
 gives up — so the client asks every few seconds and replaces the socket when
 no answer comes; the reply is the whole point, it carries nothing.)
-(No token streaming: explicit chat publications arrive as assistant_block
-messages; terminal output arrives as activity event_block records.)
+(A chat publication arrives whole, as an assistant_block message; while an
+agent is still writing one, `live` frames carry what it has written so far,
+unstored, and the block replaces them (`live_frames.py`). Terminal output
+arrives as activity event_block records.)
 
 The `?token=` is not optional and a socket the connect check refuses is closed
 (1008) after one `error` frame carrying `code: auth_required` (no token),
