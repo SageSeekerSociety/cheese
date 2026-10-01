@@ -73,7 +73,7 @@ class SocketChannel:
         assert method not in ("interrupt", "close"), (
             "Recovery may not stop its executor"
         )
-        if self.descriptor["mode"] == "busy":
+        if self.descriptor["mode"].endswith("busy"):
             assert method != "send", "Busy recovery may not resend the opening input"
         self.calls.append(method)
         reader, writer = await asyncio.open_unix_connection(
@@ -109,7 +109,17 @@ async def run(descriptor):
         status = await channel.call(channel.handle, "ping", {})
         assert status["pid"] == descriptor["native_pid"]
         assert not any(method in ("send", "steer") for method in channel.calls)
-        if descriptor["mode"] == "busy":
+        http = descriptor["mode"].startswith("http-")
+        busy = descriptor["mode"].endswith("busy")
+        http_result = None
+        if http:
+            from tests.native_http_recovery import answer_after_recovery
+
+            assert status["working"] == busy
+            http_result = await answer_after_recovery(
+                descriptor, chat, channel, factory
+            )
+        elif busy:
             assert status["working"] and status["work_id"] == str(work)
             assert (topic, work) in chat._hook_work
             assert await chat.notify_running_turn(
@@ -148,7 +158,9 @@ async def run(descriptor):
                     select(NativeInput).where(NativeInput.topic_id == topic)
                 )
             )
-            assert len(rows) == 2
+            assert len(rows) == (3 if http else 2)
+            if http:
+                assert all(row.completed_at for row in rows)
             assert {row.native_session_id for row in rows} == {descriptor["native"]}
             assert all(row.echoed_at and row.settled_at for row in rows)
             assert all(
@@ -178,15 +190,16 @@ async def run(descriptor):
                     select(AgentTurn).where(AgentTurn.topic_id == topic)
                 )
             )
-            if descriptor["mode"] == "busy":
+            if busy:
                 assert {row.execution_work_id for row in rows} == {work}
                 assert len(turns) == 1
-                assert channel.calls.count("steer") == 1
+                assert channel.calls.count("steer") == (2 if http else 1)
                 assert channel.calls.count("send") == 0
             else:
-                assert len({row.execution_work_id for row in rows}) == 2
-                assert len(turns) == 2
-                assert channel.calls.count("send") == 1
+                count = 3 if http else 2
+                assert len({row.execution_work_id for row in rows}) == count
+                assert len(turns) == count
+                assert channel.calls.count("send") == (2 if http else 1)
                 assert channel.calls.count("steer") == 0
         print(
             json.dumps(
@@ -197,6 +210,7 @@ async def run(descriptor):
                     "send": channel.calls.count("send"),
                     "steer": channel.calls.count("steer"),
                     "turns": len(turns),
+                    "http": http_result,
                 }
             ),
             flush=True,
