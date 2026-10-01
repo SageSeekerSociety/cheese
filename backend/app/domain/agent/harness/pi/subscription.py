@@ -68,7 +68,7 @@ class Subscription(subscription.Subscription[PiBacklog]):
         return PiBacklog(
             self.path,
             self.session_id,
-            harness=self.session.harness or "pi",
+            harness=self.session.harness,
             attachment=getattr(self, "attachment_id", None),
         )
 

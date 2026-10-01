@@ -13,6 +13,7 @@ import pytest
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.pi.journal import Journal
 from app.domain.agent.harness.pi.runner import Runner, socket_path
+from tests.support.room_machine import NO_MACHINE
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 
@@ -89,6 +90,7 @@ async def _start(tmp_path: Path, shim: str) -> Runner:
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=[],
+        target=NO_MACHINE,
     )
     return runner
 

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent import death_evidence, turn_inputs
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
@@ -182,6 +183,7 @@ from app.domain.agent.queries import (
     _say_memory_change,
     _session_agent,
 )
+from app.domain.agent.recovery import SessionRecovery
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -215,7 +217,6 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
-from app.domain.agent.turn_inputs import new_nonce, record_input
 from app.domain.agent.turn_speakers import turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id, work_policy
 from app.domain.agent_instance.services import (
@@ -522,7 +523,7 @@ def _is_dm(topic: Topic) -> bool:
     return topic.is_private
 
 
-class ChatService:
+class ChatService(SessionRecovery):
     def __init__(
         self,
         *,
@@ -1636,19 +1637,12 @@ class ChatService:
     def row_is_dead(
         self, topic_id: uuid.UUID, agent_handle: str, session_id: str | None
     ) -> bool:
-        """Is THIS row's conversation known dead (FB-56 legacy③)? Matched by
-        the row's own session id only — a row without one is not attributed
-        by anything else, and stays "unknown" by construction."""
-        if session_id is None:
-            return False
-        if (topic_id, agent_handle, session_id) in self._dead_sessions:
-            return True
-        return session_id in self._compute.dead_conversations(topic_id, agent_handle)
+        """Is THIS row's conversation known dead (FB-56 legacy③)?"""
+        return death_evidence.row_is_dead(self, topic_id, agent_handle, session_id)
 
     def seat_state(self, topic_id: uuid.UUID, agent_handle: str) -> str:
-        """One of "live" / "dead" / "unknown" for the seat (FB-56 legacy③):
-        a session nobody has seen die and nobody holds is not a dead one."""
-        return self._compute.seat_state(topic_id, agent_handle)
+        """One of "live" / "dead" / "unknown" for the seat (FB-56 legacy③)."""
+        return death_evidence.seat_state(self, topic_id, agent_handle)
 
     def has_live_screen(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
@@ -1725,125 +1719,6 @@ class ChatService:
             replay.cancel()
         await asyncio.gather(*replays, return_exceptions=True)
         await self._compute.stop_listening()
-
-    async def recover_sessions(self, device_id: str | None = None) -> int:
-        """Listen again to sessions that outlived this process, and start
-        landing what they said while nobody was.
-
-        Two calls to the runtime, and the split is deliberate: ``recover``
-        establishes that we are listening, ``replay`` hands over the tail. What
-        the room already shows is ours to supply; which of the harness's own
-        records are still unlanded is its.
-
-        Returns once every session is listened to and its turn's bookkeeping is
-        back, which is all a turn elsewhere needs. The replays go on in the
-        background, a room at a time (``replaying``): a session that was not
-        read for a day can take longer to replay than this process stays up,
-        and waiting for it held every room's turns, not only its own.
-        """
-        sessions = await self._compute.recover_sessions(device_id)
-        # Death evidence is consumed HERE, recovered sessions or not (FB-56
-        # legacy③): every conversation can be terminal at once — zero handles
-        # is exactly the case the evidence exists for. A conversation is dead
-        # only on the authority's own per-conversation terminal answer, bound
-        # to exactly the stored resume token; everything else — offline, a
-        # call error, a timeout, a missing field — is unknown, and unknown
-        # stays open.
-        async with self._sessions() as session:
-            from sqlalchemy import select
-
-            from app.domain.agent_session.models import AgentSession
-
-            pointers = (
-                (
-                    await session.execute(
-                        select(AgentSession).where(
-                            AgentSession.resume_token.is_not(None)
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        for pointer in pointers:
-            key = (pointer.topic_id, pointer.agent_handle, pointer.resume_token)
-            # The conversation ITSELF answered this recover's ping: it is
-            # alive, and any earlier death record for exactly it is
-            # revoked (FB-56 legacy③ — a found conversation's old key
-            # must not close the rows it starts next).
-            if pointer.resume_token in self._compute.found_conversations(
-                pointer.topic_id, pointer.agent_handle
-            ):
-                self._dead_sessions.discard(key)
-                continue
-            # Death is only ever an authority's own per-conversation
-            # terminal answer, bound to exactly this stored resume token
-            # (FB-56 legacy③). Everything else — unheard, offline,
-            # timed out, another conversation's success — is unknown,
-            # and unknown stays open.
-            if pointer.resume_token in self._compute.terminal_conversations(
-                pointer.topic_id, pointer.agent_handle
-            ):
-                self._dead_sessions.add(key)
-        # One per seat, not per room: teammates in one room run side by side,
-        # and a seat left out here is re-attached but never read again until
-        # somebody next addresses it.
-        unique = {
-            (session.topic_id, session.agent_handle): session for session in sessions
-        }
-        rooms: dict[uuid.UUID, list[SessionRef]] = {}
-        for session in unique.values():
-            # A turn still running there was fed by a process that is gone,
-            # and its result lands here. Without its bookkeeping that result
-            # closes nothing: the batch it answered is never stamped
-            # consumed, and the next turn sends it again.
-            work = self._compute.work_in_flight(
-                session.topic_id, session.agent_handle or None
-            )
-            if work is not None and (session.topic_id, work) not in self._hook_work:
-                try:
-                    found = self._compute.found_conversations(
-                        session.topic_id, session.agent_handle
-                    )
-                    await self._begin_self_started_turn(
-                        session.project_id,
-                        session.topic_id,
-                        work,
-                        opened=True,
-                        agent_handle=session.agent_handle or None,
-                        session_id=next(iter(found)) if len(found) == 1 else None,
-                    )
-                except Exception:  # noqa: BLE001 — one topic cannot block startup
-                    logger.exception(
-                        "session recovery failed for topic %s", session.topic_id
-                    )
-                    continue
-            rooms.setdefault(session.topic_id, []).append(session)
-        for topic_id, seats in rooms.items():
-            # A device reconnecting while its room still replays: the new
-            # replay starts where that one stops, not beside it.
-            replay = asyncio.create_task(
-                self._replay_room(seats, after=self._replays.get(topic_id)),
-                name=f"replay:{topic_id}",
-            )
-            self._replays[topic_id] = replay
-            replay.add_done_callback(self._replayed)
-        return len(unique)
-
-    def _replayed(self, replay: asyncio.Task) -> None:
-        for topic_id, current in list(self._replays.items()):
-            if current is replay:
-                del self._replays[topic_id]
-
-    def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None:
-        """The replay a turn in this room has to wait for, if one is running."""
-        replay = self._replays.get(topic_id)
-        return None if replay is None or replay.done() else replay
-
-    async def replays_settled(self) -> None:
-        """Wait until no room is replaying."""
-        while self._replays:
-            await asyncio.gather(*self._replays.values(), return_exceptions=True)
 
     async def _replay_room(
         self, seats: list[SessionRef], *, after: asyncio.Task | None
@@ -4501,42 +4376,6 @@ class ChatService:
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
         prompt_text = publication_prompt(prompt_text)
-        # FB-56: this input's durable ledger row and its marker, written
-        # before anything registers the text or sends it — the nonce is what
-        # the native user entry is bound back with, and the row must exist
-        # even if the send below fails (a fact, never a resend).
-        nonce = new_nonce()
-        prompt_text = f"{prompt_text}\n{nonce}"
-        async with self._sessions() as session:
-            # The durable interval opens HERE as well (FB-56): a turn driven
-            # straight into converse — no work runner, no `_execute` — has the
-            # same right to a corpse the sweep can find as a runner-driven
-            # one, and the ledger row below names this interval its parent,
-            # so both land in one commit. `exists_ok` keeps the runner's own
-            # opening authoritative: ON CONFLICT DO NOTHING, and the fields
-            # it computed (resendable with the resume reason) are never
-            # rewritten here.
-            from app.domain.agent.repositories import AgentTurnRepository
-
-            await AgentTurnRepository(session).open(
-                turn_id=turn_id,
-                topic_id=topic_id,
-                continuation_id=continuation_id or turn_id,
-                author=author,
-                content=content,
-                is_resume=is_resume,
-                resendable=bool(content.strip()) and not is_resume,
-                started_at=datetime.now(UTC),
-                exists_ok=True,
-            )
-            await record_input(
-                session,
-                turn_id=turn_id,
-                nonce=nonce,
-                harness=prepared.harness,
-                at=datetime.now(UTC),
-            )
-            await session.commit()
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
             "elapsed_ms=%.3f unix_ms=%.3f",
@@ -4663,6 +4502,25 @@ class ChatService:
         # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
         # 同一个条件也是「这一轮欠人一句回话」：召唤它的是人，会话就得先在房间里
         # 回一句，再做别的（`driven/runner.py`）。
+        # FB-56: this input's durable interval and ledger row, opened only
+        # after every fallible preparation above has succeeded — a failure
+        # there leaves no interval to retire. The nonce is what the native
+        # user entry is bound back with; the row exists even if the send
+        # below fails (a fact, never a resend).
+        nonce = turn_inputs.new_nonce()
+        prompt_text = f"{prompt_text}\n{nonce}"
+        await turn_inputs.open_interval_with_input(
+            self._sessions,
+            topic_id=topic_id,
+            turn_id=turn_id,
+            author=author,
+            content=content,
+            is_resume=is_resume,
+            continuation_id=continuation_id,
+            harness=prepared.harness,
+            nonce=nonce,
+            at=datetime.now(UTC),
+        )
         summoned = False
         if user_block_id is not None and not is_resume and not platform_turn:
             summoned = True
@@ -4749,24 +4607,14 @@ class ChatService:
                 await report_failure(self, project_id, topic_id, status)
             # The write never reached the transport, so the Stop consumer's
             # close_one rightly refuses this interval (undelivered). Its own
-            # coroutine closes it HERE, by id, exactly this one — the same
-            # end the runner's `_execute` gives a runner-driven turn
-            # (FB-56): a pre-handoff failure retires its own interval and
-            # nobody else's.
-            from app.domain.agent.repositories import AgentTurnRepository
-
-            try:
-                async with self._sessions() as session:
-                    await AgentTurnRepository(session).close(
-                        [turn_id], datetime.now(UTC)
-                    )
-                    await session.commit()
-            except Exception:  # noqa: BLE001 — the turn already failed
-                logger.exception(
-                    "could not close the failed turn's interval (topic=%s, turn=%s)",
-                    topic_id,
-                    turn_id,
-                )
+            # coroutine retires it HERE, by exact id — the same end the
+            # runner's `_execute` gives a runner-driven turn (FB-56).
+            await turn_inputs.retire_failed(
+                self._sessions,
+                topic_id=topic_id,
+                turn_id=turn_id,
+                at=datetime.now(UTC),
+            )
             return
         # Internal frame: `send` returned, so the transport accepted
         # the write — which IS delivery (#563, per #487's contract that a
@@ -4777,22 +4625,15 @@ class ChatService:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
-        from app.domain.agent.turn_inputs import mark_delivered_for_turn
         from app.domain.project.environment_recovery import close_recovery
 
         # Delivery is recorded AT the source (FB-56): the transport accepted
         # the write, so the interval and its input are stamped delivered in
         # the same commit — a converse driven without the work runner leaves
-        # the same fact a runner-driven one does, and the Stop that comes
-        # later has a delivered row to close. Monotone, so the runner's own
-        # stamp on the frame below is a no-op second write.
+        # the same fact a runner-driven one does. Monotone, so the runner's
+        # own stamp on the frame below is a no-op second write.
         async with self._sessions() as session:
-            from app.domain.agent.repositories import AgentTurnRepository
-
-            await AgentTurnRepository(session).mark_delivered(
-                turn_id, datetime.now(UTC)
-            )
-            await mark_delivered_for_turn(
+            await turn_inputs.stamp_delivered(
                 session, turn_id=turn_id, at=datetime.now(UTC)
             )
             await close_recovery(session, topic_id)

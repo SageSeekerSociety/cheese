@@ -29,6 +29,7 @@ The rules this module is the whole of:
   completion, never `_close_hook_work`, never an AgentResult.
 """
 
+import logging
 import uuid
 from datetime import datetime
 
@@ -39,6 +40,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.domain.agent.models import Base
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.common import Uuid
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "new_nonce",
@@ -344,3 +347,139 @@ async def _retire(db: AsyncSession, *, turn_id: uuid.UUID, at: datetime) -> None
         .where(AgentTurn.stopped_at.is_(None))
         .values(stopped_at=at)
     )
+
+
+async def ensure_interval_and_input(
+    db: AsyncSession,
+    *,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    author: str,
+    content: str,
+    is_resume: bool,
+    continuation_id: uuid.UUID | None,
+    harness: str,
+    nonce: str,
+    at: datetime,
+) -> None:
+    """The parent interval and this input's ledger row, flushed parent-first
+    in the caller's one commit (the ledger's FK names the interval).
+
+    The interval opens idempotently (ON CONFLICT DO NOTHING): a turn the work
+    runner already opened keeps the runner's own row — its ``resendable``
+    was computed with the resume reason this call does not have. A turn
+    driven straight into converse gets the same honest interval a
+    runner-driven one has: the sweep can find its corpse, and a Stop can
+    close it once delivered.
+    """
+    from app.domain.agent.repositories import AgentTurnRepository
+
+    await AgentTurnRepository(db).open(
+        turn_id=turn_id,
+        topic_id=topic_id,
+        continuation_id=continuation_id or turn_id,
+        author=author,
+        content=content,
+        is_resume=is_resume,
+        resendable=bool(content.strip()) and not is_resume,
+        started_at=at,
+        exists_ok=True,
+    )
+    await record_input(db, turn_id=turn_id, nonce=nonce, harness=harness, at=at)
+
+
+async def stamp_delivered(
+    db: AsyncSession, *, turn_id: uuid.UUID, at: datetime
+) -> None:
+    """The transport accepted this turn's write: the parent interval and its
+    input(s) record delivery, monotone (the first stamp wins; a bound input
+    is never demoted). Stamped at the source, so a converse driven without
+    the work runner leaves the same fact a runner-driven one does.
+    """
+    from app.domain.agent.repositories import AgentTurnRepository
+
+    await AgentTurnRepository(db).mark_delivered(turn_id, at)
+    await mark_delivered_for_turn(db, turn_id=turn_id, at=at)
+
+
+async def retire_failed(
+    session_factory, *, topic_id: uuid.UUID, turn_id: uuid.UUID, at: datetime
+) -> None:
+    """Own the session for a pre-handoff failure's exact-id retirement,
+    logging rather than raising: the turn already failed, and a bookkeeping
+    error must not be reported as a second one.
+    """
+    try:
+        async with session_factory() as session:
+            await retire_failed_interval(session, turn_id=turn_id, at=at)
+            await session.commit()
+    except Exception:  # noqa: BLE001 — the turn already failed
+        logger.exception(
+            "could not close the failed turn's interval (topic=%s, turn=%s)",
+            topic_id,
+            turn_id,
+        )
+
+
+async def retire_failed_interval(
+    db: AsyncSession, *, turn_id: uuid.UUID, at: datetime
+) -> None:
+    """A write that never reached the transport retires its OWN interval, by
+    id, delivered or not — the Stop consumer's ``close_one`` rightly refuses
+    an undelivered row, and the turn's own coroutine is the only other
+    closer. Exactly this id: a failure retires nobody else's interval.
+    """
+    from app.domain.agent.repositories import AgentTurnRepository
+
+    await AgentTurnRepository(db).close([turn_id], at)
+
+
+async def open_interval_with_input(
+    session_factory,
+    *,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    author: str,
+    content: str,
+    is_resume: bool,
+    continuation_id: uuid.UUID | None,
+    harness: str,
+    nonce: str,
+    at: datetime,
+) -> None:
+    """Own the session for :func:`ensure_interval_and_input`: parent and
+    ledger row land in one commit, opened idempotently — a runner-opened
+    interval keeps the runner's own fields.
+    """
+    async with session_factory() as session:
+        await ensure_interval_and_input(
+            session,
+            topic_id=topic_id,
+            turn_id=turn_id,
+            author=author,
+            content=content,
+            is_resume=is_resume,
+            continuation_id=continuation_id,
+            harness=harness,
+            nonce=nonce,
+            at=at,
+        )
+        await session.commit()
+
+
+async def stamp_delivery_fact(
+    session_factory, *, turn_id: uuid.UUID, at: datetime
+) -> None:
+    """Record that the transport accepted this turn's prompt. Swallows its
+    own failure, unlike opening the interval: this runs mid-turn on a turn
+    that is working, and losing the stamp costs at most one duplicate
+    re-send if the process then dies, while raising here would kill the
+    live turn to protect it from a hypothetical one — a trade nobody would
+    make deliberately.
+    """
+    try:
+        async with session_factory() as session:
+            await stamp_delivered(session, turn_id=turn_id, at=at)
+            await session.commit()
+    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
+        logger.exception("could not stamp delivery for turn %s", turn_id)

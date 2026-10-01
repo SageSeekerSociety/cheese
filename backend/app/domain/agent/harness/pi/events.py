@@ -112,7 +112,8 @@ class Assembler:
     def __init__(
         self,
         session_id: str | None = None,
-        harness: str = "pi",
+        *,
+        harness: str,
         attachment: str | None = None,
     ):
         self.session_id = session_id
@@ -277,7 +278,7 @@ class Assembler:
                     text=said[-1] if said else "",
                     session_id=self.session_id,
                     usage=self.spent,
-                    harness="pi",
+                    harness=self.harness,
                 )
             )
         return events
@@ -359,7 +360,10 @@ class Assembler:
         said = str(entry.get("errorMessage") or "")
         if entry.get("aborted"):
             return AgentResult(
-                text="", session_id=self.session_id, usage=self.spent, harness="pi"
+                text="",
+                session_id=self.session_id,
+                usage=self.spent,
+                harness=self.harness,
             )
         status = STATUS.match(said)
         return AgentResult(
@@ -369,5 +373,5 @@ class Assembler:
             is_error=True,
             errors=[said] if said else None,
             api_error_status=int(status[1]) if status else None,
-            harness="pi",
+            harness=self.harness,
         )

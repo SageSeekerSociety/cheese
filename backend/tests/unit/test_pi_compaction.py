@@ -99,7 +99,7 @@ def recorded(name: str) -> dict:
 
 def read(log: list[dict]) -> tuple[list, list[int]]:
     """The events the room gets, and the positions in the log that end a turn."""
-    assembler = Assembler("session-1")
+    assembler = Assembler("session-1", harness="pi")
     events = [event for record in log for event in assembler.accept(record)]
     ends = [
         index

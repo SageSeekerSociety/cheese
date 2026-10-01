@@ -70,6 +70,7 @@ class PiRuntime(DrivenRuntime[Handle]):
         return PiBacklog(
             handle.mirror if handle else None,
             handle.session_id if handle else None,
+            harness=session.harness,
         )
 
     def working(self, status: dict) -> bool:

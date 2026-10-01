@@ -26,7 +26,7 @@ from sqlalchemy import select
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
-from app.domain.agent import dispatch_log, turn_inputs
+from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
@@ -140,22 +140,11 @@ async def _open_turn(session_factory, **fields) -> None:
 
 
 async def _stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
-    """Record that the transport accepted this turn's prompt.
-
-    Swallows its own failure, unlike opening the interval. This runs mid-turn on
-    a turn that is working: losing the stamp costs at most one duplicate re-send
-    if the process then dies, while raising here would kill the live turn to
-    protect it from a hypothetical one — a trade nobody would make deliberately.
-    """
-    try:
-        async with session_factory() as session:
-            await AgentTurnRepository(session).mark_delivered(turn_id, _utcnow())
-            await turn_inputs.mark_delivered_for_turn(
-                session, turn_id=turn_id, at=_utcnow()
-            )
-            await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
-        logger.exception("could not stamp delivery for turn %s", turn_id)
+    """Record that the transport accepted this turn's prompt (the ledger's own
+    helper; mid-turn bookkeeping that must never kill a working turn)."""
+    await turn_inputs.stamp_delivery_fact(
+        session_factory, turn_id=turn_id, at=_utcnow()
+    )
 
 
 async def _close_turns(session_factory, turn_ids) -> None:
@@ -1029,7 +1018,7 @@ class AgentWorkRunner:
         right there. What retired with 结论 13 is the author value nobody ever
         wrote (the literal 「会话」), not the record.
 
-        Opened DELIVERED, and that is not laziness: the Stop's `close_one` only closes
+        Opened DELIVERED, and that is not laziness: the Stop's close_one closes
         delivered intervals because 投喂 → Stop is what an interval means for a fed
         turn, so an undelivered row here would be one nothing could ever close.
         What delivery guards against — a Stop from the previous conversation
@@ -1437,28 +1426,13 @@ class AgentWorkRunner:
         }
         wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
         # A row the process cannot judge is not a dead row (FB-56 legacy③):
-        # delivered, not adopted, and its own session id matched to nothing
-        # dead. Such a row stays open and is listed, never closed. An
-        # undelivered row is the separate dispatch/retry policy's business
-        # and follows the existing path either way.
-        row_dead = getattr(chat_service, "row_is_dead", None)
-
-        def unknown(record) -> bool:
-            if not record.delivered:
-                return False
-            if row_dead is None:
-                # No probe at all: the observation is MISSING, and missing
-                # means unknown — never the historical "dead" (FB-56
-                # legacy③). A fixture that means dead says so, per row.
-                return True
-            return not row_dead(record.topic_id, record.agent_handle, record.session_id)
-
+        # it stays open and is listed, never closed (`death_evidence.unknown_row`).
         orphans = {
             tid: record
             for tid, record in old_enough.items()
             if (str(tid) not in self._live or tid in wedged)
             and not self._adopted(chat_service, record, wedged)
-            and not unknown(record)
+            and not death_evidence.unknown_row(chat_service, record)
         }
         if not orphans:
             return 0
