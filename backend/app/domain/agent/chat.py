@@ -4777,6 +4777,7 @@ class ChatService:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
+        from app.domain.agent.turn_inputs import mark_delivered_for_turn
         from app.domain.project.environment_recovery import close_recovery
 
         # Delivery is recorded AT the source (FB-56): the transport accepted
@@ -4785,8 +4786,6 @@ class ChatService:
         # the same fact a runner-driven one does, and the Stop that comes
         # later has a delivered row to close. Monotone, so the runner's own
         # stamp on the frame below is a no-op second write.
-        from app.domain.agent.turn_inputs import mark_delivered_for_turn
-
         async with self._sessions() as session:
             from app.domain.agent.repositories import AgentTurnRepository
 
