@@ -371,11 +371,11 @@ class ComputePool:
             await runtime.replay(session, known_texts=known_texts)
 
     def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
-        """The backend for work the PLATFORM starts — the activity digest and
-        the project summary.
+        """The backend for work the PLATFORM starts — the memory
+        consolidation (dream).
 
-        No agent type stands behind these, so there is no harness to honour and
-        nothing to refuse: they run on whatever the machine runs. Never None,
+        No agent type stands behind it, so there is no harness to honour and
+        nothing to refuse: it runs on whatever the machine runs. Never None,
         unlike ``select`` — a caller with no type to satisfy always has an
         answer, and falling back to the default machine is a better one than
         crashing on a wiring gap.

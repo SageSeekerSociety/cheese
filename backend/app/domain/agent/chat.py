@@ -67,10 +67,8 @@ from app.domain.agent.harness import (
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
-    OVERVIEW_DOC_CHAR_BUDGET,
     attachment_prompt_line,
     build_system_prompt,
-    fit_doc_to_budget,
     is_inline_image,
     platform_prompt,
     prompt_line,
@@ -210,7 +208,6 @@ from app.domain.agent.service import (
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolResult,
-    AgentToolUse,
     AgentUsage,
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
@@ -253,7 +250,6 @@ from app.domain.memory.session import (
     apply_tree,
     read_tree,
 )
-from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.forge import binding_for_project
@@ -265,15 +261,13 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import doc_nudge, naming
-from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
-from app.domain.topic.overview import project_brief
+from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
-ACTIVITY_SKILLS = ["chat", "chat-detail", "activity-digestion", "doc-form"]
 PRIVATE_SKILLS = ["private-chat"]
 
 CHEESE_AUTHOR = "cheese"
@@ -4649,212 +4643,6 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
         return
-
-    async def ingest_activity(
-        self,
-        *,
-        project_id: uuid.UUID,
-        text: str,
-        author: str,
-        kind_hint: str | None = None,
-    ) -> dict:
-        """活动接入 (eval E1/E3): turn raw offline input (记一笔 / 导聊天记录 /
-        会议纪要) into a structured event topic. 芝士 digests it with the
-        activity-digestion skill — writing the structured doc (做了什么/定了什么/
-        谁负责/下一步) and pinning a milestone if it's a key moment."""
-        # --- tx1: create the event topic under the project root, seed input ---
-        async with self._sessions() as session:
-            projects = ProjectRepository(session)
-            topics = TopicRepository(session)
-            blocks = BlockRepository(session)
-
-            project = await projects.get(project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-
-            title = " ".join(text.split())[:40] or "活动记录"
-            topic = await topics.add(
-                project_id=project_id,
-                title=f"[活动] {title}",
-                parent_id=project.root_topic_id,
-                kind=TopicKind.topic,
-                created_by=author,
-            )
-            landed = landing(EventAbout.room, project_id=project_id, room_id=topic.id)
-            await blocks.add(
-                project_id=landed.project_id,
-                topic_id=landed.topic_id,
-                task_id=landed.task_id,
-                author=author,
-                author_type=AuthorType.participant,
-                content=text,
-                kind=BlockKind.event,
-                # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
-                meta={"in_room": False},
-            )
-            memory = await memory_index(session, project_id, speaker_handles=[author])
-            topic_id = topic.id
-            compute_id = resolve_compute_id(
-                project.settings,
-            )
-            await session.commit()
-
-        # --- run 芝士 with the activity-digestion skill + tools ---
-        provider = self._compute.platform_work(compute_id)
-        runtime = runtime_for(provider)
-        system_prompt = build_system_prompt(
-            self._base_prompt,
-            load_skills(ACTIVITY_SKILLS),
-            None,
-            memory,
-            keeps_memory=runtime.keeps_memory,
-        )
-        prompt = (
-            "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
-            "用 cheese_doc_set 把 做了什么/定了什么/谁负责/下一步 设为本话题实况文档；"
-            "如果这是个关键节点就用 cheese_milestone 钉成里程碑；"
-            "需要分派的待办用 cheese_notify 通知到人。\n\n---\n" + text
-        )
-        final_text = ""
-        new_session_id = None
-        tools_used: list[str] = []
-        async for event in runtime.run_turn(
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider, topic_id))[0],
-        ):
-            if isinstance(event, AgentToolUse):
-                tools_used.append(event.name)
-            elif isinstance(event, AgentResult):
-                final_text = event.text
-                new_session_id = event.session_id
-
-        # Chat was published explicitly; terminal output belongs to hook activity.
-        async with self._sessions() as session:
-            topics = TopicRepository(session)
-            topic = await topics.get(topic_id)
-            if topic is not None and new_session_id:
-                agent = await self._resolved_agent(session, topic)
-                await AgentSessionService(session).remember(
-                    topic_id=topic_id,
-                    agent_handle=agent.handle,
-                    resume_token=new_session_id,
-                    # 这一轮真正跑在哪个骨架上，问跑它的那个适配器——平台自己起
-                    # 的活没有 agent 类型站在后面，``platform_work`` 给的是这台
-                    # 机器跑的东西（结论 28）。
-                    harness=runtime.harness,
-                )
-            await session.commit()
-
-        return {
-            "topic_id": str(topic_id),
-            "summary": final_text,
-            "tools_used": tools_used,
-        }
-
-    async def summarize_project(self, *, project_id: uuid.UUID) -> dict:
-        """一页纸总结 (spec §7.3 / eval F2): 芝士 writes a current, plain-language
-        one-pager so a teacher reads the team's state in 30s. Stored on the
-        project; surfaced on the overview and Space board."""
-        async with self._sessions() as session:
-            projects = ProjectRepository(session)
-            topics = TopicRepository(session)
-            milestones = MilestoneRepository(session)
-
-            project = await projects.get(project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-            all_topics = await topics.list_for_project(project_id)
-            upcoming = await milestones.list_calendar(project_id)
-            # 项目的状态在总览那份实况文档里，不在任何一个记忆池里（结论 7）：
-            # 一页纸总结描述的是这个项目，而记忆是某一个芝士自己的观察——拿它当
-            # 项目知识用，等于把一个实例看到的东西当成大家的共识写进总结。
-            overview_root = (
-                await BlockRepository(session).doc_root(project.root_topic_id)
-                if project.root_topic_id is not None
-                else None
-            )
-            overview_doc = overview_root.content if overview_root else ""
-            # 只要第 ① 块（#1889 第 1 条）：②~④ 由结构化数据现拼，手抄进正文的
-            # 那些副本是旧账，照抄一份进去等于把两个版本并排交给写总结的人。
-            brief = project_brief(overview_doc)
-            agents = AgentInstanceService(session)
-            agent = await agents.for_project(project)
-            role = await agents.system_prompt(agent)
-            compute_id = resolve_compute_id(
-                project.settings,
-            )
-
-        topic_lines = "\n".join(
-            f"- {t.title} [{t.status.value}]"
-            for t in all_topics
-            if t.kind != TopicKind.root
-        )
-        ms_lines = "\n".join(
-            f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
-            for m in upcoming
-        )
-        context = (
-            f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
-            f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
-            # 话题和里程碑上面已经按结构化数据列了，这里只补上「项目是什么」。
-            "## 项目是什么\n"
-            + (
-                fit_doc_to_budget(
-                    brief,
-                    OVERVIEW_DOC_CHAR_BUDGET,
-                    full_read_hint="在项目根话题里调 `cheese_doc_get` 读全文",
-                )
-                if brief
-                else "（暂无）"
-            )
-        )
-        system_prompt = build_system_prompt(
-            self._base_prompt,
-            "",  # This call returns a project summary, without chat publication.
-            None,
-            None,  # 一页纸总结也不注入记忆索引：它讲的是项目状态，不是某个人。
-            role,
-            # 记忆那一段同理，而且这一轮根本不落记忆文件。
-            keeps_memory=False,
-        )
-        prompt = (
-            "请基于下面的项目状态，写一份『一页纸总结』：3-5 句话，让管理员 30 秒读懂"
-            "这个团队在做什么、到哪了、下一步和风险。说人话、不堆术语、不要列工具调用，"
-            "直接给总结正文。\n\n" + context
-        )
-        # Pure text generation (no platform actions) — still runs through the
-        # provider (root-topic sandbox when present) for a single execution path;
-        # topic_id None (no root topic) degrades to a plain model turn.
-        provider = self._compute.platform_work(compute_id)
-        runtime = runtime_for(provider)
-        final_text = ""
-        async for event in runtime.run_turn(
-            project_id=project_id,
-            topic_id=project.root_topic_id,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            resume_session_id=None,
-            **(
-                await self._model_kwargs(
-                    project_id, provider, project.root_topic_id, agent=agent
-                )
-            )[0],
-        ):
-            if isinstance(event, AgentResult):
-                final_text = event.text
-
-        async with self._sessions() as session:
-            projects = ProjectRepository(session)
-            project = await projects.get(project_id)
-            if project is not None:
-                await projects.set_summary(project, final_text)
-            await session.commit()
-
-        return {"summary": final_text}
 
 
 async def _room_roster(

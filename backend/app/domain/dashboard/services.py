@@ -87,7 +87,6 @@ class DashboardService:
             "name": project.name,
             "ai_mode": project.ai_mode.value,
             "owner_handle": project.owner_handle,
-            "summary": project.summary,
             "topic_count": len(topics),
             "topics_by_status": by_status,
             "last_activity_at": (last_activity.isoformat() if last_activity else None),

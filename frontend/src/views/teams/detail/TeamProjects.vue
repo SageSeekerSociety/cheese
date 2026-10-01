@@ -92,7 +92,6 @@ watch(teamId, load)
             <v-icon size="20" color="primary" class="mr-2">mdi-robot-happy-outline</v-icon>
             <span class="text-subtitle-2 font-weight-medium text-truncate">{{ p.name }}</span>
           </div>
-          <p v-if="p.summary" class="text-body-2 text-medium-emphasis summary mb-2">{{ p.summary }}</p>
           <div class="text-caption text-medium-emphasis">
             {{ t('teams.projects.createdAt', { date: fmtDate(p.created_at) }) }}
           </div>
@@ -117,11 +116,5 @@ watch(teamId, load)
 .project-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);
   background: rgba(var(--v-theme-primary), 0.03);
-}
-.summary {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 </style>

@@ -20,19 +20,18 @@ covers:
 
 ## 库：一个标签选一份 {#library}
 
-`backend/app/domain/agent/skill_library/` 下 10 个 markdown，每份的 frontmatter 有一个 `scenarios:`，选择器就是它：
+`backend/app/domain/agent/skill_library/` 下 9 个 markdown，每份的 frontmatter 有一个 `scenarios:`，选择器就是它：
 
 | 文件 | `scenarios:` |
 | --- | --- |
 | `chat.md`、`chat_detail.md` | `chat` |
 | `doc_form.md` | `chat`、`doc` |
-| `activity_digestion.md` | `activity` |
 | `private_chat.md` | `private` |
 | `stage_delegating.md` / `stage_gate.md` / `stage_awaiting.md` / `stage_conflict.md` / `stage_archived.md` | `stage:<阶段>` |
 
 `skills_for_scenario(scenario)` 按标签选、按文件名排序；`load_scenario(scenario)` 把这些正文拼起来（`\n\n---\n\n` 相连）。`load_scenario` 每一轮都跑，所以它一遍读完整个目录，而不是先解析名字再回头重读文件取正文。
 
-`load_skills(names)` 是另一条路：按显式名字取，认不出的名字跳过。今天走这条的有房间那一份 `NATIVE_CHAT_GUIDANCE`（`["chat"]`）、私聊（`PRIVATE_SKILLS = ["private-chat"]`）、活动消化（`["chat", "chat-detail", "activity-digestion", "doc-form"]`）。
+`load_skills(names)` 是另一条路：按显式名字取，认不出的名字跳过。今天走这条的有房间那一份 `NATIVE_CHAT_GUIDANCE`（`["chat"]`）、私聊（`PRIVATE_SKILLS = ["private-chat"]`）。
 
 `scenarios:` 这个字段从库写出来那天就在，但一直到 `skills_for_scenario` 出现之前没人读过它——`load_skills` 只认显式名字，一个技能想服务两个场景只能被抄进两张名单。现在它是真的选择器。
 

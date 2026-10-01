@@ -6,8 +6,6 @@ export interface Project {
   id: string
   name: string
   created_at: string
-  // 一页纸总结 (may be empty until 芝士 generates it).
-  summary?: string
   // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
   intent?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
@@ -534,8 +532,6 @@ export interface Space {
 export interface SpaceTeam {
   project_id: string
   name: string
-  // 一页纸总结 for this team (may be empty).
-  summary?: string
   ai_mode: string
   owner_handle: string
   topic_count: number
