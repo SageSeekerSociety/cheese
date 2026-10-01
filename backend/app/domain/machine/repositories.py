@@ -315,6 +315,16 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
+    async def list_left_older_than(self, cutoff: datetime) -> list[ProjectMachine]:
+        """VMs a session left before ``cutoff`` that are still not released."""
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.superseded_at < cutoff,
+                ProjectMachine.released_at.is_(None),
+            )
+        )
+        return list(result.scalars())
+
     async def mark_released(
         self, machine: ProjectMachine, *, when: datetime
     ) -> ProjectMachine:

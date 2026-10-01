@@ -1,5 +1,6 @@
 import type { Project } from '@/cx_types'
 import type { Shell } from '@/lib/shell'
+import type { MenuAction } from '../menuAction'
 import type { NavGenericItem, NavItem } from './types'
 
 import { t } from '@/i18n'
@@ -50,6 +51,8 @@ export interface NavSources {
   awaitingCount?: number
   /** 有没有没读的动态（提到你、回复你……）。没有待处理的事时，用一颗小点提醒它。 */
   unreadActivity?: boolean
+  /** 右键一个项目格子能做什么。由宿主拼好：里面要用到路由、剪贴板和退出确认框。 */
+  projectMenu?: (project: Project) => MenuAction[]
 }
 
 /**
@@ -115,6 +118,7 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
         // 会盖掉链接本来算出的激活态。
         match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
         img: src.projectAvatar(p.name),
+        menu: src.projectMenu?.(p),
       })),
     ],
     add: [

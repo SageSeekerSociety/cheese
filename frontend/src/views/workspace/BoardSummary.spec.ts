@@ -22,7 +22,7 @@ import BoardSummary from './BoardSummary.vue'
 const Summary = BoardSummary as unknown as Component
 
 function task(id: string, room_id: string, column: string) {
-  return { id, room_id, presentation: { column, display_status: '' } }
+  return { id, room_id, presentation: { column, phrase: 'running' } }
 }
 
 function mount() {

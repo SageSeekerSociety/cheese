@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -161,6 +161,53 @@ def test_session_migration_preserves_old_vm_and_quota_and_resumes_only_new_one(
             assert resumed.id == new.id and resumed.status == MachineStatus.resuming
             assert cloud.deleted == []
             assert len(cloud.created) == 1 and len(cloud.claims) == 1
+
+    client.portal.call(run)
+
+
+def test_a_left_vm_the_leaving_session_failed_to_delete_is_deleted_later(
+    warm_case,
+):
+    client, topics, actor, cloud = warm_case
+    choice = ComputeChoice(name="Cloud", profile="cloud")
+
+    async def run():
+        first, second = await _sessions_for_cloud(client, topics[0])
+        long_ago = datetime.now(UTC) - timedelta(hours=1)
+        async with client.test_request_factory() as db:
+            service = MachineService(db, cloud)
+
+            async def leave(*, device_id=None, when=None):
+                machine = await service.ensure_session_machine(
+                    first, actor=actor, choice=choice
+                )
+                if device_id is not None:
+                    machine.device_id = device_id
+                await service.supersede_session_machine(first, actor=actor)
+                if when is not None:
+                    machine.superseded_at = when
+                await db.commit()
+                return machine
+
+            # Its one delete attempt never landed, and nothing is only on it.
+            orphan = await leave(when=long_ago)
+            # The other session left without pushing: its work is only here.
+            holding = await leave(device_id="holds-unpushed", when=long_ago)
+            other = await db.get(AgentSession, second)
+            other.execution_request = {
+                "retained_leases": [{"device_id": "holds-unpushed"}]
+            }
+            # The leaving session may still be deleting this one itself.
+            just_left = await leave()
+            await db.commit()
+
+            assert await service.release_left_machines() == 1
+            assert cloud.deleted == [orphan.machine_id]
+            for machine in (orphan, holding, just_left):
+                await db.refresh(machine)
+            assert orphan.released_at is not None
+            assert holding.released_at is None and just_left.released_at is None
+            assert await service.release_left_machines() == 0
 
     client.portal.call(run)
 

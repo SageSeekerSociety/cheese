@@ -497,8 +497,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!pid) return null
     const epoch = projectEpoch
     try {
-      // Untitled by default — the title is derived from the first message.
-      const topic = await createTopic(pid, title.trim() || '新话题')
+      // Untitled when nothing was typed: the backend stores its placeholder and
+      // flags it (`title_source`), and every screen names it in its own language.
+      const topic = await createTopic(pid, title.trim() || undefined)
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
       topics.value.unshift(topic)

@@ -122,7 +122,7 @@ def test_an_unanswered_question_puts_the_room_in_the_waiting_column(client):
 
     shown = _shown(client, pid, room)
     assert shown["column"] == "needs_you"
-    assert shown["display_status"] == NeedsYou.awaiting_answer
+    assert shown["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_answering_it_takes_the_room_back_out(client):
@@ -145,7 +145,7 @@ def test_a_second_question_after_an_answered_one_still_counts(client):
 
     _ask(client, room, "那按项目的口径要不要含外包")
 
-    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
@@ -160,11 +160,11 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
     _open_turn(client, room)
 
     _agent_ask(client, room)
-    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
     _agent_says(client, room, "找到根因了，改完推上去了")
 
-    assert _shown(client, pid, room)["display_status"] != NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] != NeedsYou.awaiting_answer
 
 
 def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
@@ -179,7 +179,7 @@ def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
     _ask(client, room)
     _agent_says(client, room, "我先把能查的查了")
 
-    assert _shown(client, pid, room)["display_status"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_the_person_who_started_the_turn_hears_the_question(client):

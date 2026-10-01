@@ -166,6 +166,39 @@ it('gives a room file the browser cannot draw a real new-window address', async 
   expect([target_, features]).toEqual(['_blank', 'noopener'])
 })
 
+it('shows the unsupported file and its own launch target after a loaded app', async () => {
+  const opened = vi.spyOn(window, 'open').mockReturnValue(null)
+  const { container, rerender, findByText, getByText } = mount()
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  await waitFor(() => expect(container.textContent).toContain('Dev server'))
+  getPreview.mockResolvedValue({
+    ...artifact('file', 'binary-b'),
+    path: 'weights.bin',
+    mime: 'application/octet-stream',
+    version: 'v2',
+  })
+  readPreviewFile.mockResolvedValue({
+    path: 'weights.bin',
+    content: null,
+    version: 'v2',
+    bytes: 2048,
+    binary: true,
+    too_large: false,
+  })
+  await rerender({ refreshTick: 1 })
+  expect(await findByText('这个文件不是文本')).toBeTruthy()
+  expect(container.textContent).toContain('weights.bin')
+  expect(container.textContent).not.toContain('Dev server')
+  expect(container.querySelector('iframe')).toBeNull()
+  expect(submissions).toHaveLength(1)
+  await fireEvent.click(getByText('在新窗口打开'))
+  const [target, target_, features] = opened.mock.calls[0]
+  const destination = new URL(String(target), 'https://app.example')
+  expect(destination.pathname).toBe('/previews/topic-a')
+  expect(destination.searchParams.get('path')).toBe('/_cheese/room/weights.bin')
+  expect([target_, features]).toEqual(['_blank', 'noopener'])
+})
+
 it('rejects a misconfigured same-origin authorization destination', async () => {
   requestPreviewSession.mockResolvedValue({ url: `${location.origin}/_cheese/session`, grant: 'preview-grant' })
   const { container, findByText } = mount()

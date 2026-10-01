@@ -94,7 +94,7 @@ def now() -> datetime:
 def _clean_dir(raw: str) -> str:
     path = (raw or "").strip().strip("/")
     if any(part in ("", ".", "..") for part in path.split("/")) and path:
-        raise ValidationError("结果目录要写成房间里的相对路径，例如 周报/")
+        raise ValidationError(say("routineOutputDirInvalid"))
     return path
 
 
@@ -128,7 +128,7 @@ class RoutineService:
     async def get(self, routine_id: uuid.UUID) -> Routine:
         row = await self._session.get(Routine, routine_id)
         if row is None:
-            raise NotFoundError("没有这条周期任务")
+            raise NotFoundError(say("routineNotFound"))
         return row
 
     async def list(
@@ -153,10 +153,10 @@ class RoutineService:
         seats = await TopicMemberService(self._session).agent_handles(topic_id)
         if requested:
             if requested not in seats:
-                raise ValidationError("执行者必须是这个房间里的 AI 队友")
+                raise ValidationError(say("routineAgentNotInRoom"))
             return requested
         if not seats:
-            raise ValidationError("这个房间里没有 AI 队友，周期任务没有人执行")
+            raise ValidationError(say("routineNoAgentInRoom"))
         return seats[0]
 
     async def create(
@@ -176,7 +176,7 @@ class RoutineService:
         agent_handle: str | None,
     ) -> Routine:
         if not title.strip() or not instructions.strip():
-            raise ValidationError("周期任务要有名称和工作内容")
+            raise ValidationError(say("routineFieldsRequired"))
         spec = _validate(trigger, spec, tz)
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
@@ -273,14 +273,14 @@ class RoutineService:
 
     async def confirm(self, row: Routine, *, by: str) -> Routine:
         if row.state != RoutineState.draft.value:
-            raise ValidationError("这条已经确认过了")
+            raise ValidationError(say("routineAlreadyConfirmed"))
         self._activate(row, confirmed_by=by)
         await self._session.flush()
         return row
 
     async def pause(self, row: Routine) -> Routine:
         if row.state != RoutineState.active.value:
-            raise ValidationError("只有执行中的规则能暂停")
+            raise ValidationError(say("routinePauseActiveOnly"))
         row.state = RoutineState.paused.value
         row.next_run_at = None
         await self._session.flush()
@@ -289,7 +289,7 @@ class RoutineService:
     async def resume(self, row: Routine) -> Routine:
         """Continue from the next future moment; what was missed is not replayed."""
         if row.state != RoutineState.paused.value:
-            raise ValidationError("只有暂停中的规则能恢复")
+            raise ValidationError(say("routineResumePausedOnly"))
         self._activate(row)
         await self._session.flush()
         return row
@@ -303,7 +303,7 @@ class RoutineService:
             if key in changes and changes[key] is not None:
                 setattr(row, key, str(changes[key]).strip())
         if not row.title or not row.instructions:
-            raise ValidationError("周期任务要有名称和工作内容")
+            raise ValidationError(say("routineFieldsRequired"))
         if changes.get("output_dir") is not None:
             row.output_dir = _clean_dir(changes["output_dir"])
         if changes.get("agent_handle"):
@@ -324,7 +324,7 @@ class RoutineService:
 
     async def run_now(self, row: Routine, *, by: str) -> RoutineRun:
         if row.state == RoutineState.draft.value:
-            raise ValidationError("还没确认的规则不能执行")
+            raise ValidationError(say("routineRunUnconfirmed"))
         run = await _fire(
             self._session,
             row,

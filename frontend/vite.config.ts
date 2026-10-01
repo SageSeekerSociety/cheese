@@ -215,8 +215,9 @@ export default defineConfig({
         // 的等待——开着的页面会在人眼皮底下被新代码接管。删掉之后新 worker 停在
         // waiting，直到下一次应用内跳转（pwa.ts 的路由守卫 → messageSkipWaiting）。
         //
-        // 在线导航本来就不依赖新 worker 是否接管：下面那条 NetworkOnly 规则每次
-        // 都去网上取当前 HTML，precache 只是它拿不到时的兜底。
+        // 下面那条 NetworkOnly 规则去网上取当前 HTML，但网络一失败就退回**这个
+        // worker 自己**预缓存的 index.html。所以旧 worker 还接着时，一次整页加载
+        // 可能落回旧版；pwa.ts 在整页加载之前先让新 worker 接管。
         // Inline the workbox runtime into sw.js — one root file to keep
         // no-cached in nginx, instead of a separate workbox-*.js.
         inlineWorkboxRuntime: true,

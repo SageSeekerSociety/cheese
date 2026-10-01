@@ -42,7 +42,6 @@
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
-    "cloud": "Cloud · Standard configuration",
     "unavailable": "{name} · Unavailable",
     "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
     "abandon": "Change without pushing"
@@ -597,7 +596,12 @@
       "loadNew": "Load the new version",
       "copyName": "Save in the room as",
       "makeCopy": "Make a copy to edit",
-      "originalKept": "The original stays in the library unchanged."
+      "originalKept": "The original stays in the library unchanged.",
+      "unavailable": {
+        "not_configured": "Online editing is not enabled on this deployment",
+        "unsupported": "This kind of file can't be edited online",
+        "library_original": "Originals in the project library are read-only. Make a copy in the room to edit it"
+      }
     },
     "fileHistory": {
       "source": {
@@ -715,6 +719,20 @@
       "copied": "Copied",
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
+      "format": {
+        "label": "Document formatting",
+        "unavailable": "This format is unavailable for the selection",
+        "bold": "Bold",
+        "italic": "Italic",
+        "strike": "Strikethrough",
+        "code": "Inline code",
+        "h1": "Heading 1",
+        "h2": "Heading 2",
+        "bullet": "Bulleted list",
+        "ordered": "Numbered list",
+        "task": "Task list",
+        "quote": "Quote"
+      },
       "slash": {
         "text": "Text",
         "h1": "Heading 1",
@@ -867,6 +885,27 @@
       "done": "Done",
       "archived": "Archived"
     },
+    "phrase": {
+      "running": "Running",
+      "started": "Started",
+      "not_started": "Not started",
+      "returned": "Handed back",
+      "idle": "Idle",
+      "draft": "Draft",
+      "lost": "Lost contact",
+      "gate_running": "Checks running",
+      "awaiting_checks": "Waiting for checks",
+      "fixing_checks": "Fixing checks",
+      "resolving_conflict": "Resolving conflict",
+      "updating_branch": "Platform updating branch",
+      "checks_failed": "Checks failed",
+      "awaiting_review": "Awaiting review",
+      "bounced": "Sent back",
+      "awaiting_answer": "Awaiting answer",
+      "accepted": "Accepted",
+      "closed": "Closed",
+      "archived": "Archived"
+    },
     "loadFailed": "Couldn't load",
     "unknownRoom": "Unknown room",
     "noneMine": "No tasks assigned to you",
@@ -897,7 +936,8 @@
     "notFound": "This topic doesn't exist",
     "notFoundHint": "It may have been deleted, or it isn't part of this project",
     "resize": "Drag to resize, double-click to reset",
-    "dmFailed": "Couldn't open the conversation"
+    "dmFailed": "Couldn't open the conversation",
+    "untitled": "New topic"
   },
   "access": {
     "signedOutTitle": "Sign in to view this project",

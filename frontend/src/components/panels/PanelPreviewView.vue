@@ -531,7 +531,7 @@ function sendLocator() {
         size="small"
         variant="tonal"
         prepend-icon="mdi-open-in-new"
-        @click="openPreviewInNewTab(path)"
+        @click="openPreviewInNewTab(previewFile.path)"
       >
         {{ t('work.room.preview.openInNewWindow') }}
       </v-btn>

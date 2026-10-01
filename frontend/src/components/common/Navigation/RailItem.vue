@@ -29,9 +29,15 @@
     @dragover="onDragOver"
     @drop="onDrop"
     @dragend="emit('dragEnd')"
+    @contextmenu="openMenuAt"
   >
+    <!-- 右键弹出的操作（项目格子才有），弹在鼠标那一点上。 -->
+    <AdaptiveMenu v-if="menu.length" v-model="menuOpen" :actions="menu" :point="menuPoint" :title="item.title">
+      <template #activator />
+    </AdaptiveMenu>
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
-    <v-tooltip activator="parent" location="end" content-class="rail-flyout">
+    <!-- 右键菜单开着时让开：两个浮层都贴在这一格右边，提示会压住菜单的上沿。 -->
+    <v-tooltip activator="parent" location="end" content-class="rail-flyout" :disabled="menuOpen">
       <div class="rail-flyout__inner">
         <span class="rail-flyout__name">{{ item.title }}</span>
         <template v-if="item.shortcut">
@@ -68,7 +74,7 @@
 <script lang="ts" setup>
 import type { DropEdge } from '@/lib/projectOrder'
 
-import { computed, toRefs } from 'vue'
+import { computed, ref, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -76,6 +82,7 @@ import { useNavigation } from '@/composables/useNavigation'
 import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
@@ -119,6 +126,16 @@ const current = computed(() => {
   if (item.value.type !== 'item' || !item.value.match) return undefined
   return item.value.match(nav?.route?.path ?? '') ? 'page' : undefined
 })
+
+const menu = computed(() => (item.value.type === 'item' ? item.value.menu ?? [] : []))
+const menuOpen = ref(false)
+const menuPoint = ref<[number, number] | null>(null)
+function openMenuAt(e: MouseEvent) {
+  if (!menu.value.length) return
+  e.preventDefault()
+  menuPoint.value = [e.clientX, e.clientY]
+  menuOpen.value = true
+}
 
 function onDragStart(e: DragEvent) {
   const id = projectId.value
@@ -196,6 +213,9 @@ function warmDestination() {
     // the dark theme its own ≈#2B2C2E tile at 1.31:1 — so the 方块 stays legible
     // in both, which a single literal cannot do.
     background-color: rgba(var(--v-theme-on-surface), 0.12);
+    // v-card 默认 overflow: hidden，而且沿着圆角裁：探出右上角的未读点和件数角标
+    // 会被切掉一块。别的格子早就放开了（--tile / --icon），这一格漏了。
+    overflow: visible;
 
     .cheese-icon {
       // logo size set via CSS (the width/height props on the ?component SVG don't

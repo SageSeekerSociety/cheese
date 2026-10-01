@@ -18,7 +18,7 @@ import { setLocale } from '../i18n'
 import ProjectComputeSettings from './ProjectComputeSettings.vue'
 
 const cloud: ComputeChoice = {
-  name: '云端 · 标准配置',
+  name: null,
   profile: 'cloud',
   device_id: null,
   cores: null,
@@ -118,6 +118,71 @@ describe('project work computer settings', () => {
     expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
   })
 
+  // The platform's choices carry no name: each screen names them in its own
+  // language. A device keeps its own name in every language.
+  it('names the platform choices in English and keeps a device its own name', async () => {
+    setLocale('en')
+    api.getProjectComputeConfigs.mockResolvedValue(
+      configs({
+        distribution: {
+          cloud: 0,
+          devices: [
+            { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: false },
+            { device_id: null, name: null, agents: 1, machine_access: false },
+          ],
+        },
+      })
+    )
+    const row = await mount()
+
+    expect(row.textContent).toContain('Cloud · Standard configuration')
+    const distribution = within(screen.getByTestId('project-distribution'))
+    expect(distribution.getByText('实验室工作站 · 2 agents')).toBeTruthy()
+    expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
+  })
+
+  it('does not show a label an older row stored on a platform choice', async () => {
+    setLocale('en')
+    api.getProjectComputeConfigs.mockResolvedValue(
+      configs({
+        default: { ...cloud, name: '云端 · 标准配置' },
+        distribution: {
+          cloud: 0,
+          devices: [{ device_id: null, name: '自有设备 · 自动选择', agents: 1, machine_access: false }],
+        },
+      })
+    )
+    const row = await mount()
+
+    expect(row.textContent).toContain('Cloud · Standard configuration')
+    expect(row.textContent).not.toContain('云端')
+    const distribution = within(screen.getByTestId('project-distribution'))
+    expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
+  })
+
+  it('names a cloud choice with its own specs as custom', async () => {
+    setLocale('en')
+    api.getProjectComputeConfigs.mockResolvedValue(configs({ default: { ...cloud, cores: 8, memory_mb: 16384 } }))
+    const row = await mount()
+
+    expect(row.textContent).toContain('Cloud · Custom configuration')
+  })
+
+  it('saves the cloud without a name, so no language is stored for everyone', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(
+      configs({ default: { ...cloud, name: '实验室工作站', profile: 'device', device_id: 'lab' } })
+    )
+    api.saveProjectComputeConfigs.mockResolvedValue({ default: cloud })
+    await mount()
+
+    await fireEvent.click(screen.getByRole('button', { name: '更换' }))
+    await fireEvent.mouseDown(screen.getByLabelText('工作电脑'))
+    await fireEvent.click(await screen.findByRole('option', { name: /^云端/ }))
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+
+    await waitFor(() => expect(api.saveProjectComputeConfigs).toHaveBeenCalledWith('p1', { default: cloud }))
+  })
+
   it('says so when no agent has started', async () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 0, devices: [] } }))
     await mount()
@@ -162,7 +227,7 @@ describe('project work computer settings', () => {
           devices: [
             { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true },
             // Picked when those sessions lease; there is no one device to list yet.
-            { device_id: null, name: '自有设备 · 自动选择', agents: 1, machine_access: true },
+            { device_id: null, name: null, agents: 1, machine_access: true },
           ],
         },
       })

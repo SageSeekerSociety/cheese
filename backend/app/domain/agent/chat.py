@@ -146,7 +146,7 @@ from app.domain.agent.prompt import (
     _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _REPLAY_NOTICE_AT,  # noqa: F401
     _REPLAY_NOTICE_EVERY,  # noqa: F401
-    PLACEHOLDER_TITLE,
+    PLACEHOLDER_TITLE,  # noqa: F401
     _addressed_to,
     _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
     _is_pending_input,  # noqa: F401
@@ -263,7 +263,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import doc_nudge, naming
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
 from app.domain.topic.overview import project_brief
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -854,7 +854,7 @@ class ChatService:
         if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
-            # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
+            # System-initiated turn (重发 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
             # instruction goes straight to the agent as the prompt.
             #
@@ -3992,7 +3992,7 @@ class ChatService:
             # cannot — no gateway to call — is the agent still asked to, and
             # never in a project that chose to name its rooms by hand.
             untitled = (
-                topic.title == PLACEHOLDER_TITLE
+                topic.title_source == TitleSource.placeholder
                 and not naming.available()
                 and naming.naming_mode(project.settings if project else None) == "auto"
             )

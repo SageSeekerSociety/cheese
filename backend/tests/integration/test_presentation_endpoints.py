@@ -124,29 +124,29 @@ def test_the_project_task_list_carries_the_board_cell(client, stub_hooks):
 
     assert by_id[ids["running"]]["presentation"] == {
         "column": "building",
-        "display_status": Building.running,
+        "phrase": Building.running,
     }
     # 安静，但等的是人 —— 光看 open/closed 和「待开工」一模一样，而这两者意味着相反的
     # 下一步（去验收 vs 去催）。
     assert by_id[ids["waiting"]]["presentation"] == {
         "column": "needs_you",
-        "display_status": NeedsYou.awaiting_review,
+        "phrase": NeedsYou.awaiting_review,
     }
     # 说有分身在做，但没有任何东西最近确认过 —— 今天前端没有这一格。
     assert by_id[ids["lost"]]["presentation"] == {
         "column": "building",
-        "display_status": Building.lost,
+        "phrase": Building.lost,
     }
     # 同样一个过期的 last_turn_at，但它刚落了一个 block：心跳压过认领时间。
     assert by_id[ids["talking"]]["presentation"] == {
         "column": "building",
-        "display_status": Building.running,
+        "phrase": Building.running,
     }
     # 没有分身、也没递卡，但它有草稿 PR —— 「做了一半停着」和「还没人碰过」不是
     # 一回事，而这两者在库里只差一列：
     assert by_id[ids["worked"]]["presentation"] == {
         "column": "building",
-        "display_status": Building.started,
+        "phrase": Building.started,
     }
 
 
@@ -186,7 +186,7 @@ def test_a_room_carries_its_own_board_cell(client):
     header = client.get(f"/topics/{ids['room']}").json()["data"]
     assert header["presentation"] == {
         "column": "building",
-        "display_status": Building.idle,
+        "phrase": Building.idle,
     }
 
     listed = client.get(f"/topics?project_id={ids['project']}").json()["data"]["data"]
@@ -205,7 +205,7 @@ def test_a_room_is_running_while_a_thread_under_it_runs(client, stub_hooks):
     row = next(t for t in listed if t["id"] == ids["room"])
     assert row["running"] is True
     assert client.get(f"/topics/{ids['room']}").json()["data"]["running"] is True
-    assert row["presentation"]["display_status"] == Building.idle
+    assert row["presentation"]["phrase"] == Building.idle
 
 
 def test_a_room_is_not_running_once_its_threads_have_stopped(client, stub_hooks):
@@ -249,5 +249,5 @@ def test_a_rooms_own_card_reaches_the_room(client):
     header = client.get(f"/topics/{ids['room']}").json()["data"]
     assert header["presentation"] == {
         "column": "needs_you",
-        "display_status": NeedsYou.awaiting_review,
+        "phrase": NeedsYou.awaiting_review,
     }

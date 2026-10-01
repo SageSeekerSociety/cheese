@@ -74,6 +74,7 @@ from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
 from app.domain.room_task import binding, presentation
@@ -209,10 +210,10 @@ async def get_room_task(
     tasks = TaskService(db)
     task = await tasks.get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
+        raise NotFoundError(say("taskNotInRoom"))
     blocks = await tasks.blocks_for_thread(task_id, limit=limit, through=through)
     if blocks is None:
-        raise NotFoundError("这条消息不在这个任务里")
+        raise NotFoundError(say("messageNotInTask"))
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     beats = await TaskRepository(db).last_block_at_for_tasks([task.id])
     live = await task_liveness(chat, db, [task])
@@ -279,7 +280,7 @@ async def say_on_task(
     place = await TopicService(db).place_or_404(topic_id)
     task = await TaskService(db).get(task_id)
     if task is None or task.room_id != place.room_id:
-        raise NotFoundError("这个房间里没有这个任务")
+        raise NotFoundError(say("taskNotInRoom"))
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("消息内容不能为空")
