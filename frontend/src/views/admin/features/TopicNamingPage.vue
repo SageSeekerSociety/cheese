@@ -158,18 +158,22 @@ const overriddenOf = computed(() => {
   })
 })
 
-/** 花费那张卡的标签：读不到网关时**不能**只画一个破折号 —— 那看起来像「还没加载」。 */
-const costLabel = computed(() =>
-  numbers.value?.cost.source === 'unavailable'
-    ? t('featureStats.naming.kpi.costUnavailable')
-    : t('featureStats.naming.kpi.cost')
-)
+/** 花费那张卡的标签：读不到网关时**不能**只画一个破折号 —— 那看起来像「还没加载」。
+ *  网关答了话、但上面没有那把密钥又是另一句话：一个数都没有报零，可这两句话说的不
+ *  是一件事，得分开说。 */
+const costSource = computed(() => numbers.value?.cost.source)
 
-const costNote = computed(() =>
-  numbers.value?.cost.source === 'unavailable'
-    ? t('featureStats.naming.kpi.costUnknownNote')
-    : t('featureStats.naming.kpi.costNote')
-)
+const costLabel = computed(() => {
+  if (costSource.value === 'unavailable') return t('featureStats.naming.kpi.costUnavailable')
+  if (costSource.value === 'no-key') return t('featureStats.naming.kpi.costNoKey')
+  return t('featureStats.naming.kpi.cost')
+})
+
+const costNote = computed(() => {
+  if (costSource.value === 'unavailable') return t('featureStats.naming.kpi.costUnknownNote')
+  if (costSource.value === 'no-key') return t('featureStats.naming.kpi.costNoKeyNote')
+  return t('featureStats.naming.kpi.costNote')
+})
 
 const window = computed(() =>
   report.value ? t('featureStats.page.window', { start: report.value.start, end: report.value.end }) : ''

@@ -110,9 +110,13 @@ export interface TopicNamingNumbers {
   }
   cost: {
     usd: number | null
-    /** `gateway` = 网关自己记的账；`unavailable` = 读不到网关，上面那几个数是 null。 */
-    source: 'gateway' | 'unavailable'
-    /** 那把密钥的额度与累计花费：额度用完网关就会拒，命名会静默停下。 */
+    /** `gateway` = 网关自己记的账；`no-key` = 网关答了话、上面没有那把命名密钥；
+     *  `unavailable` = 读不到网关。后两种上面那几个数都是 null：一个是「密钥不
+     *  存在」，一个是「没读到」，两句得分开说，都不能画成 0。 */
+    source: 'gateway' | 'no-key' | 'unavailable'
+    /** 那把密钥的额度与它自己记的花费：额度用完网关就会拒，命名会静默停下。
+     *  `key_spend_usd` 跟的是**网关的额度周期，不是这一页选的窗口**（dev 上实测
+     *  它正好等于当天的花费），所以贴纸写「密钥今日花费」。 */
     budget_usd: number | null
     budget_duration: string | null
     key_spend_usd: number | null
