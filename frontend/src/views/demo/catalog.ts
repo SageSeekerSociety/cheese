@@ -840,7 +840,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'panel-doc',
     title: 'PanelDocView',
-    about: '总览那一格的文档：右上角一条工具条、中间一栏正文、底下评论区。',
+    about: '总览那一格的文档：工具条、正文和评论侧栏，窄面板中评论以抽屉展开。',
     file: 'src/components/panels/PanelDocView.vue',
     component: PanelDocView,
     needs: UI,
@@ -858,7 +858,7 @@ export const CATALOG: CatalogEntry[] = [
       },
       {
         name: '一篇文档',
-        note: '标题（话题名）、右上角那条工具条、正文那一栏和底下的评论区都在。正文由容器取到之后装进编辑器，不由 props 进。',
+        note: '标题（话题名）、工具条、正文和评论入口都在。正文由容器取到之后装进编辑器，不由 props 进。',
         props: docPanelProps(),
         expect: '课程资料',
       },
