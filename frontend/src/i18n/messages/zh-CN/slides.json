@@ -1,0 +1,22 @@
+{
+  "reader": "幻灯片阅读",
+  "thumbnails": "缩略图",
+  "previous": "上一页",
+  "next": "下一页",
+  "pageNumber": "页码",
+  "goPage": "跳转到第 {page} 页",
+  "fit": "适合页面",
+  "fitWidth": "适合宽度",
+  "present": "演示",
+  "exit": "退出演示",
+  "askPage": "对整页提问",
+  "wholePageHint": "使用当前 PDF 页的全部文字作为上下文",
+  "download": "下载原文件",
+  "loading": "正在加载幻灯片",
+  "empty": "暂无幻灯片",
+  "rendererMissing": "暂时无法转换预览，可下载原文件",
+  "openFailed": "无法显示幻灯片",
+  "pageFailed": "第 {page} 页无法显示：{error}",
+  "noPageText": "当前页暂无可提取的文字",
+  "textFailed": "无法读取当前页文字"
+}

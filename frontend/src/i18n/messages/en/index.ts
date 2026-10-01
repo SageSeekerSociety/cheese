@@ -22,6 +22,7 @@ import ratchet from './ratchet.json'
 import roomNotice from './roomNotice.json'
 import routines from './routines.json'
 import shell from './shell.json'
+import slides from './slides.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
@@ -65,5 +66,6 @@ export default {
   project,
   routines,
   shell,
+  slides,
   topic,
 }
