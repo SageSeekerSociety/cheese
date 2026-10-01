@@ -39,7 +39,7 @@ from app.domain.block.models import (
 )
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut, OptionAnswerIn
+from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -1011,79 +1011,6 @@ async def summon_agent(
         provision_actor=actor,
     )
     return ok({"started": True})
-
-
-@router.post("/blocks/{block_id}/answer")
-async def answer_options(
-    block_id: uuid.UUID,
-    body: OptionAnswerIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """One-click answer to an option question: validates the choice against the
-    ask block's own options, records it on the block (meta.answered), and posts
-    the choice as the answerer's message, addressed to the teammate that asked."""
-    option = body.option.strip()
-    repo = BlockRepository(db)
-    blk = await repo.get(block_id)
-    if blk is None:
-        raise NotFoundError(say("optionQuestionNotFound"))
-    actor = await resolver.resolve(
-        fallback_handle=body.author,
-        topic_id=blk.topic_id,
-        project_id=blk.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=blk.project_id, topic_id=blk.topic_id
-    )
-    author = actor.handle
-    if author == "anonymous" or not option:
-        raise ValidationError("author 和 option 都要有")
-    meta = dict(blk.meta or {})
-    options = meta.get("options") or []
-    if option not in options:
-        raise ValidationError("不在选项里")
-    if meta.get("answered"):
-        raise ValidationError(
-            say("optionTaken", by=meta.get("answered_by"), option=meta.get("answered"))
-        )
-    meta["answered"] = option
-    meta["answered_by"] = author
-    blk.meta = meta
-    await db.flush()
-    updated = BlockOut.model_validate(blk).model_dump(mode="json")
-    await db.commit()
-    await get_broker().publish(
-        str(blk.topic_id), {"type": "block_updated", "block": updated}
-    )
-    # 选项是回答一个待确认问题，收件人就是问问题的那个席位。**@ 写进正文**，不在
-    # 帧上另置一位：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁
-    # 也没叫的消息却起了一轮（这也是浏览器发消息时遵守的同一条规矩）。
-    #
-    # 只认名册上真有的席位（`addressable_agent_handle`）：正文里的 @ 是由名册解析
-    # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
-    # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
-    # 样记在卡上。
-    #
-    # 「问问题的那个席位」就是这张卡的署名：一个房间可以坐好几位 AI 队友，点房间
-    # 的默认席位的话，别的队友问出的题一点选项就换成默认芝士来接，而它手上没有那
-    # 道题的来龙去脉。署名者已不在名册上（被请出房间、或者题是人问的）才退回默认
-    # 席位。
-    members = TopicMemberService(db)
-    if blk.author in await members.agent_handles(blk.topic_id):
-        seat: str | None = blk.author
-    else:
-        seat = await members.addressable_agent_handle(blk.topic_id)
-    await get_broker().receive_message(
-        chat,
-        blk.topic_id,
-        author=author,
-        content=f"<@{seat}> {option}" if seat else option,
-        provision_actor=actor,
-    )
-    return ok(updated)
 
 
 @router.post("/{topic_id}/webhook-token")

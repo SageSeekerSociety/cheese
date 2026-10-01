@@ -456,6 +456,16 @@
       "sendPhotos": "发送照片",
       "send": "发送"
     },
+    "ask": {
+      "title": "带选项提问",
+      "question": "问题",
+      "option": "选项 {n}",
+      "addOption": "添加选项",
+      "removeOption": "删除选项",
+      "repeated": "和前面的选项重复",
+      "send": "发送",
+      "failed": "发送失败"
+    },
     "dispatched": {
       "created": "新建任务",
       "title": "《{title}》",

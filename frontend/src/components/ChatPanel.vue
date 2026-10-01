@@ -182,6 +182,7 @@ const {
   pickOption,
   postChecklist,
   changeChecklist,
+  askQuestion,
   onReact,
   setReply,
   undoTitle,
@@ -347,6 +348,7 @@ defineExpose({ send, connected })
         :atts-uploading="attsUploading"
         :reply-label="replyLabel"
         :post-checklist="postChecklist"
+        :post-ask="askQuestion"
         @send="onComposerSend"
         @clear-reply="clearReply"
         @files="(files) => void addFiles(files)"

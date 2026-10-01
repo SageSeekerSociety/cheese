@@ -29,7 +29,6 @@ vi.mock('../../api', async () => {
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
-    answerOptions: vi.fn(),
     toggleReaction: vi.fn(),
   }
 })

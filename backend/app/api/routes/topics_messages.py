@@ -18,10 +18,15 @@ plus `ChatMessageIn` (the body schema of the first) and `_summon_the_named`
 (the helper the first calls). They are one group because they are one
 direction of the conversation -- what is said INTO the room: a message from a
 person or an agent, the @-mentions an agent's message wakes through
-`_summon_the_named`, a
-one-click option question 芝士 asks in the chat, and a note to a sister thread
-of the same handle. Each writes a line and hands it to whoever is meant to
-read it; none of them reads the room's history back.
+`_summon_the_named`, a one-click option question a member asks in the chat,
+and a note to a sister thread of the same handle. Each writes a line and hands
+it to whoever is meant to read it; none of them reads the room's history back.
+
+`POST /topics/blocks/{block_id}/answer` followed later: the answer to an option
+question is the other half of the ask, and who it goes back to is decided
+beside the rule that decides who asked. No route of this prefix mounted before
+this module has three literal-or-parameter segments ending in `answer`, so it
+still reaches the same handler.
 
 What stays behind, and why. `POST /{topic_id}/summon` stays: it is the
 general "wake an agent now" door that is not a message at all, and it reads
@@ -91,6 +96,7 @@ from app.api.routes.topics import (
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
+    NotFoundError,
     ValidationError,
 )
 from app.domain.agent.announce import announce, notify_question
@@ -104,6 +110,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.notice_text import say
+from app.domain.block.schemas import OptionAnswerIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -280,13 +287,19 @@ async def _summon_the_named(
 async def ask_options(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """芝士 asks an option question IN the chat (cheese_ask): a message block
-    whose meta.options renders as one-click buttons. Structured interaction —
-    the answer comes back as data, never parsed from prose (spec §14.5).
+    """An option question IN the chat: a message block whose meta.options
+    renders as one-click buttons. Structured interaction — the answer comes
+    back as data, never parsed from prose (spec §14.5).
 
-    本轮停在这里等回答，所以它同时通知发起这一轮的人（#1084）：其余每一种「下一步
-    在人手上」都是一轮结束之后的状态，唯独这一种**中断**运行，而房间安静下来这件事
-    本身没有人会注意到。
+    Any member of the room may ask one: 芝士 through `cheese_ask`, a person
+    from the composer. Who may is the room's roster (`_actor_in_place`); what
+    differs is only what the question does to a turn, and that is a fact about
+    the asker's seat.
+
+    芝士问的那种，本轮停在这里等回答，所以它同时通知发起这一轮的人（#1084）：其余
+    每一种「下一步在人手上」都是一轮结束之后的状态，唯独这一种**中断**运行，而房间
+    安静下来这件事本身没有人会注意到。人问的那种不停任何一轮，问的是整个房间，所以
+    不指名、不另发通知：它就是时间线上的一条消息。
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -296,7 +309,11 @@ async def ask_options(
         raise ValidationError("question is required")
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
-    # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
+    if len(set(options)) != len(options):
+        # An answer is matched to its option by text, so two equal options are
+        # one button that cannot be told apart from the other.
+        raise ValidationError("选项不能重复")
+    # 署名是 agent 席位的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
     # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese_ask` 只在 CHEESE_TURN
     # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
     # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
@@ -313,20 +330,22 @@ async def ask_options(
             topic_id, room_id=place.room_id
         )
         asked_by_agent = True
-    # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
-    # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
-    #
-    # 记在这道题自己身上（`meta.asked`），不留到以后再去问轮次：`cheese_ask` 不等
-    # 回答，芝士问完就收尾，这一轮随即关闭——过一会儿再问「开着的那一轮是谁的」，
-    # 答案已经是「没有」，而题还摆在那儿等人。
-    waiting_for = await AgentTurnRepository(db).open_turn_author_for_topic(
-        place.room_id
-    )
-    asked = None if waiting_for == "system" else waiting_for
-    if waiting_for is None:
-        # 没有开着的轮次区间可问（有的执行路径不记它）：芝士此刻在回应的，就是
-        # 最近点它名的那个人。不兜底的话 `asked` 为空，谁那里都不亮黄灯。
-        asked = await BlockRepository(db).last_summoner(place.room_id)
+    asked: str | None = None
+    if asked_by_agent:
+        # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台
+        # 发起的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
+        #
+        # 记在这道题自己身上（`meta.asked`），不留到以后再去问轮次：`cheese_ask`
+        # 不等回答，芝士问完就收尾，这一轮随即关闭——过一会儿再问「开着的那一轮是
+        # 谁的」，答案已经是「没有」，而题还摆在那儿等人。
+        waiting_for = await AgentTurnRepository(db).open_turn_author_for_topic(
+            place.room_id
+        )
+        asked = None if waiting_for == "system" else waiting_for
+        if waiting_for is None:
+            # 没有开着的轮次区间可问（有的执行路径不记它）：芝士此刻在回应的，就
+            # 是最近点它名的那个人。不兜底的话 `asked` 为空，谁那里都不亮黄灯。
+            asked = await BlockRepository(db).last_summoner(place.room_id)
     blk = await BlockRepository(db).add(
         project_id=place.project_id,
         # The place id: `add` splits it, so a thread's question is asked in the
@@ -336,23 +355,109 @@ async def ask_options(
         author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
-        meta={"options": options, "asked": asked},
+        # A person's question is answered back to them; the seat decided that
+        # here, so the answer route reads it rather than guessing from a handle.
+        meta={"options": options, "asked": asked}
+        | ({} if asked_by_agent else {"answer_to": author}),
         own_output=asked_by_agent,
     )
-    await notify_question(
-        db,
-        place=place,
-        block=blk,
-        question=question,
-        asker=blk.author,
-        asked=asked,
-    )
+    if asked_by_agent:
+        await notify_question(
+            db,
+            place=place,
+            block=blk,
+            question=question,
+            asker=blk.author,
+            asked=asked,
+        )
     await db.commit()
     payload = BlockOut.model_validate(blk).model_dump(mode="json")
-    await get_broker().publish(
-        str(topic_id), {"type": "assistant_block", "block": payload}
-    )
+    # A person's question arrives the way a person's message does, so the room
+    # does not read it as the end of an agent's reply.
+    frame = "assistant_block" if asked_by_agent else "user_block"
+    await get_broker().publish(str(topic_id), {"type": frame, "block": payload})
     return ok(payload)
+
+
+@router.post("/blocks/{block_id}/answer")
+async def answer_options(
+    block_id: uuid.UUID,
+    body: OptionAnswerIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """One-click answer to an option question: validates the choice against the
+    ask block's own options, records it on the block (meta.answered), and posts
+    the choice as the answerer's message, addressed to whoever asked — the
+    teammate whose turn waits on it, or the person who put the question to the
+    room. The asker does not answer their own question."""
+    option = body.option.strip()
+    repo = BlockRepository(db)
+    blk = await repo.get(block_id)
+    if blk is None:
+        raise NotFoundError(say("optionQuestionNotFound"))
+    actor = await resolver.resolve(
+        fallback_handle=body.author,
+        topic_id=blk.topic_id,
+        project_id=blk.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=blk.project_id, topic_id=blk.topic_id
+    )
+    author = actor.handle
+    if author == "anonymous" or not option:
+        raise ValidationError("author 和 option 都要有")
+    if author == blk.author:
+        raise ForbiddenError(say("optionOwnQuestion"))
+    meta = dict(blk.meta or {})
+    options = meta.get("options") or []
+    if option not in options:
+        raise ValidationError("不在选项里")
+    if meta.get("answered"):
+        raise ValidationError(
+            say("optionTaken", by=meta.get("answered_by"), option=meta.get("answered"))
+        )
+    meta["answered"] = option
+    meta["answered_by"] = author
+    blk.meta = meta
+    await db.flush()
+    updated = BlockOut.model_validate(blk).model_dump(mode="json")
+    await db.commit()
+    await get_broker().publish(
+        str(blk.topic_id), {"type": "block_updated", "block": updated}
+    )
+    # 选项是回答一个待确认问题，收件人就是问问题的那个席位。**@ 写进正文**，不在
+    # 帧上另置一位：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁
+    # 也没叫的消息却起了一轮（这也是浏览器发消息时遵守的同一条规矩）。
+    #
+    # 只认名册上真有的席位（`addressable_agent_handle`）：正文里的 @ 是由名册解析
+    # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
+    # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
+    # 样记在卡上。
+    #
+    # 「问问题的那个席位」就是这张卡的署名：一个房间可以坐好几位 AI 队友，点房间
+    # 的默认席位的话，别的队友问出的题一点选项就换成默认芝士来接，而它手上没有那
+    # 道题的来龙去脉。署名者已不在名册上（被请出房间）才退回默认席位。
+    #
+    # 人问的题，答案回到问的那个人手上（问的时候按席位记下的 `answer_to`）：@ 他，
+    # 不叫醒任何一位 AI 队友 —— 他问的是房间里的人，一位队友被这一下叫起来白跑一轮，
+    # 读到的是一个不是问它的答案。
+    members = TopicMemberService(db)
+    if blk.author in await members.agent_handles(blk.topic_id):
+        seat: str | None = blk.author
+    elif meta.get("answer_to"):
+        seat = meta["answer_to"]
+    else:
+        seat = await members.addressable_agent_handle(blk.topic_id)
+    await get_broker().receive_message(
+        chat,
+        blk.topic_id,
+        author=author,
+        content=f"<@{seat}> {option}" if seat else option,
+        provision_actor=actor,
+    )
+    return ok(updated)
 
 
 @router.post("/{topic_id}/note")
