@@ -307,14 +307,6 @@ defineExpose({ open, locate })
           {{ (c.author || '?').slice(0, 1).toUpperCase() }}
         </span>
         <div class="doc-comments__main">
-          <DocThreadView
-            v-if="activeId() === c.id && threadState && threadActions"
-            :id="c.id"
-            :topic="topicId"
-            :actor="author ?? ''"
-            :state="threadState"
-            :actions="threadActions"
-          />
           <div class="doc-comments__meta">
             <span class="doc-comments__author">{{ c.author }}</span>
             <span class="t-meta">{{ relTime(c.created_at) }}</span>
@@ -365,6 +357,14 @@ defineExpose({ open, locate })
           >
             {{ t(expanded.has(c.id) ? 'work.room.comments.showLess' : 'work.room.comments.showMore') }}
           </button>
+          <DocThreadView
+            v-if="activeId() === c.id && threadState && threadActions"
+            :id="c.id"
+            :topic="topicId"
+            :actor="author ?? ''"
+            :state="threadState"
+            :actions="threadActions"
+          />
         </div>
       </article>
     </template>
