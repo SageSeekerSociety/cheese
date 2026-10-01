@@ -1,14 +1,17 @@
 """Which addresses count as public: the one definition every egress check uses.
 
-The backend's fetch (``guard.py``) and the network gate in front of a private
-chat's container (``remote_execution/private_network.py``) both refuse what is
-not public. The gate runs inside the executor image, under whatever Python that
-image ships, and turns the list into firewall rules; so the IPv4 ranges are
-written out here rather than read from ``ipaddress.is_global``, whose answer has
-changed between Python releases. ``test_public_addresses.py`` holds the list to
-what ``is_global`` says on the backend's Python.
+The backend's fetch (``guard.py``) and the egress proxy private chats reach the
+network through (``remote_execution/private_egress.py``) refuse the same
+destinations, decided here. The proxy runs from the executor image, under
+whatever Python that image ships, so the IPv4 ranges are written out rather than
+read from ``ipaddress.is_global``, whose answer has changed between Python
+releases. ``test_public_addresses.py`` holds the list to what ``is_global`` says
+on the backend's Python.
 
-Standard library only: the image copies this file next to the gate.
+Only the decision lives here; each side does its own lookups (the backend
+asynchronously, the proxy with the standard library).
+
+Standard library only: the image copies this file next to the proxy.
 """
 
 from __future__ import annotations
@@ -66,3 +69,39 @@ def is_public(address: str) -> bool:
     if any(ip in network for network in PUBLIC_WITHIN_V4):
         return True
     return not any(ip in network for network in NOT_PUBLIC_V4)
+
+
+class NotPublic(Exception):
+    """The destination is somewhere egress must not go."""
+
+
+def needs_real_addresses(addresses: list[str]) -> bool:
+    """True when every answer is a fake-IP placeholder.
+
+    Some machines resolve every name to a placeholder in ``198.18.0.0/15`` and
+    let a transparent proxy connect to the real host by name. Those say nothing
+    about where a connection goes, so the name has to be asked again over DNS
+    over HTTPS, and the connection made to the real address it gives.
+    """
+    return bool(addresses) and all(is_placeholder(a) for a in addresses)
+
+
+def over_https_answers(payload: dict) -> list[str]:
+    """The IPv4 addresses in a DNS-over-HTTPS resolver's JSON answer."""
+    answers = payload.get("Answer") or []
+    return [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
+
+
+def vetted(host: str, addresses: list[str]) -> list[str]:
+    """``addresses``, IPv4 first, provided ALL of them are public.
+
+    All, not any: a name with one public and one private record would otherwise
+    be allowed and then connected to whichever the resolver hands back next.
+    """
+    if not addresses:
+        raise NotPublic(f"{host} does not resolve")
+    for address in addresses:
+        if not is_public(address):
+            raise NotPublic(f"{host} is not a public address")
+    # IPv4 first: it is what every deployment so far has a route for.
+    return sorted(dict.fromkeys(addresses), key=lambda a: ":" in a)

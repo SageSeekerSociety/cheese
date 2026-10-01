@@ -7,8 +7,8 @@ took any URL it was handed would read those for whoever asked and return them.
 
 So every connection a fetch makes goes to an address checked here first: the
 host is resolved, and every address it resolves to must be globally routable.
-Which addresses are public is defined in ``addresses.py``, shared with the
-network gate in front of a private chat's container. Resolving, rather than
+Which destinations are allowed is decided in ``addresses.py``, shared with the
+egress proxy private chats reach the network through. Resolving, rather than
 matching the text of the URL, is what makes ``127.1``, ``0x7f000001``,
 ``localhost`` and a public name pointing at ``10.0.0.5`` the same case.
 
@@ -42,15 +42,17 @@ import httpcore
 import httpx
 
 from app.core.config import settings
-from app.domain.fetch.addresses import is_placeholder as _is_placeholder
-from app.domain.fetch.addresses import is_public as _is_public
+from app.domain.fetch.addresses import (
+    NotPublic,
+    needs_real_addresses,
+    over_https_answers,
+    vetted,
+)
+
+__all__ = ["MAX_REDIRECTS", "NotPublic", "check", "client", "public_address"]
 
 #: A redirect chain longer than this is not a page, it is a loop or a probe.
 MAX_REDIRECTS = 5
-
-
-class NotPublic(Exception):
-    """The URL points somewhere a fetch must not go."""
 
 
 async def _resolve(host: str, port: int) -> list[str]:
@@ -68,34 +70,21 @@ async def _resolve_over_https(host: str) -> list[str]:
             headers={"accept": "application/dns-json"},
         )
     r.raise_for_status()
-    answers = r.json().get("Answer") or []
-    return [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
+    return over_https_answers(r.json())
 
 
 async def public_address(host: str, port: int) -> str:
-    """One address ``host`` resolves to, provided ALL of them are public.
-
-    All, not any: a name with one public and one private record would otherwise
-    be allowed and then connected to whichever the resolver hands back next.
-    """
+    """One address ``host`` resolves to, provided ALL of them are public."""
     try:
         addresses = await _resolve(host, port)
     except OSError as exc:
         raise NotPublic(f"{host} does not resolve") from exc
-    if not addresses:
-        raise NotPublic(f"{host} does not resolve")
-    if all(_is_placeholder(a) for a in addresses):
+    if needs_real_addresses(addresses):
         try:
             addresses = await _resolve_over_https(host)
         except Exception as exc:  # noqa: BLE001 — unknown means refused
             raise NotPublic(f"{host} could not be resolved to a real address") from exc
-        if not addresses:
-            raise NotPublic(f"{host} does not resolve")
-    for address in addresses:
-        if not _is_public(address):
-            raise NotPublic(f"{host} is not a public address")
-    # Prefer IPv4: it is what every deployment so far has a route for.
-    return next((a for a in addresses if ":" not in a), addresses[0])
+    return vetted(host, addresses)[0]
 
 
 def _target(url: str) -> tuple[str, int]:

@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 from fastapi.testclient import TestClient
 
-from app.domain.fetch import guard, service
+from app.domain.fetch import addresses, guard, service
 
 PAGE = "<html><body><article>" + "一段正文。" * 400 + "</article></body></html>"
 
@@ -70,8 +70,8 @@ def internal() -> Iterator[_Server]:
 @pytest.fixture
 def public_host(monkeypatch: pytest.MonkeyPatch):
     """Treat 127.0.0.2 as a public address, and only that one."""
-    real = guard._is_public
-    monkeypatch.setattr(guard, "_is_public", lambda a: a == "127.0.0.2" or real(a))
+    real = addresses.is_public
+    monkeypatch.setattr(addresses, "is_public", lambda a: a == "127.0.0.2" or real(a))
 
 
 @pytest.fixture
