@@ -15,6 +15,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.domain.agent.chat import ChatService, _HookWorkState
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.events import Assembler
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.repositories import BlockRepository
@@ -74,7 +75,7 @@ def test_only_exact_clean_native_work_releases_its_registered_batch(client, case
 
     async def run():
         factory = client.test_request_factory
-        identity = _identity(project, topic)
+        identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
         ids = await _blocks(factory, project, topic)
         async with factory() as session:
             await register_input(session, identity, InputEffects(held_block_ids=ids))
@@ -146,7 +147,7 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
 
     async def run():
         factory = client.test_request_factory
-        identity = _identity(project, topic)
+        identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
         ids = await _blocks(factory, project, topic)
         async with factory() as session:
             await register_input(session, identity, InputEffects(held_block_ids=ids))
