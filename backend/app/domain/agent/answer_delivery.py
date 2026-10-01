@@ -86,7 +86,7 @@ async def admitted_initial(
             )
             yield offered is True or isinstance(offered, InputReconciliationPending)
             return
-        from app.domain.agent_instance.service import AgentInstanceService
+        from app.domain.agent_instance.services import AgentInstanceService
         from app.domain.project.repositories import ProjectRepository
         from app.domain.topic.repositories import TopicRepository
 
