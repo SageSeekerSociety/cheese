@@ -418,9 +418,7 @@ def test_a_recovered_conversations_old_death_record_is_revoked(client):
     after = StubChannel()
     after.root = before.root
     after.sessions = {
-        key: session
-        for key, session in before.sessions.items()
-        if key[1] != mate_b
+        key: session for key, session in before.sessions.items() if key[1] != mate_b
     }
     for session in after.sessions.values():
         session.channel = after
@@ -448,9 +446,7 @@ def test_a_recovered_conversations_old_death_record_is_revoked(client):
     after.uses(topic, "Bash", agent=mate_b, command="make docs-again")
     deadline = time.monotonic() + 15
     while True:
-        new_rows = [
-            t for t in _turns(client, room) if t.id not in fed | {old_row.id}
-        ]
+        new_rows = [t for t in _turns(client, room) if t.id not in fed | {old_row.id}]
         if new_rows:
             break
         assert time.monotonic() < deadline, "the new turn never opened"

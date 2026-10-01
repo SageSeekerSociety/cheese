@@ -1124,9 +1124,7 @@ async def test_a_dead_seats_rows_are_still_claimed(db_factory):
         session_id="sess-s-dead",
     )
     runner = AgentWorkRunner(InProcessBroker())
-    chat = _SweepChat(
-        db_factory, live_screen=False, dead_sessions={"sess-s-dead"}
-    )
+    chat = _SweepChat(db_factory, live_screen=False, dead_sessions={"sess-s-dead"})
     await runner.sweep_orphans(chat)
     row = await turn_row(db_factory, turn_s)
     assert row.stopped_at is not None, "有真实终止证据：照既有规则收殓"
@@ -1217,9 +1215,7 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
     # 屏幕还活着 —— 这正是老路放过它的原因；收殓证据是这条会话真的死了。
-    chat = _SweepChat(
-        db_factory, live_screen=True, dead_sessions={"sess-quiet-1"}
-    )
+    chat = _SweepChat(db_factory, live_screen=True, dead_sessions={"sess-quiet-1"})
     await runner.open_turn_the_session_started(
         chat,
         topic,

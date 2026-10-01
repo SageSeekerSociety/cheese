@@ -291,8 +291,11 @@ async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_o
         )
         seat_b = (session_b.topic_id, "cheese")
         await runtime.send(
-            session_b, "write the docs", Opening(system_prompt=""),
-            work_id=uuid.uuid4(), on_mark=lambda _: None,
+            session_b,
+            "write the docs",
+            Opening(system_prompt=""),
+            work_id=uuid.uuid4(),
+            on_mark=lambda _: None,
         )
         await _until(lambda: seat_b in runtime.subscriptions)
         old_b = runtime.subscriptions[seat_b]

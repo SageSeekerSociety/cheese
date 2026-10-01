@@ -96,9 +96,7 @@ async def test_discover_records_each_conversations_own_outcome(db_factory):
 
     assert [handle.session.agent_handle for handle in handles] == ["ka"]
     assert channel.last_outcomes[(topic, "ka", "sid-a")] == "alive"
-    assert channel.last_outcomes[(topic, "kb", "sid-b")] == "unknown", (
-        "超时不是终态"
-    )
+    assert channel.last_outcomes[(topic, "kb", "sid-b")] == "unknown", "超时不是终态"
     assert channel.last_outcomes[(topic, "kc", "sid-c")] == "dead", (
         "绑定所存来源的终止回答才收口"
     )

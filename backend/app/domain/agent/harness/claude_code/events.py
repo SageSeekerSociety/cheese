@@ -264,13 +264,9 @@ class Assembler:
             return self._system(record)
         message, thread = _message(record)
         if message.get("type") == "assistant":
-            return _authored(
-                self._assistant(message, thread), record, self.session_id
-            )
+            return _authored(self._assistant(message, thread), record, self.session_id)
         if message.get("type") == "user" and not message.get("isReplay"):
-            return _authored(
-                self._returned(message, thread), record, self.session_id
-            )
+            return _authored(self._returned(message, thread), record, self.session_id)
         return []
 
     def _assistant(self, message: dict, thread: str | None) -> list[AgentEvent]:
