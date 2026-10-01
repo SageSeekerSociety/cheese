@@ -8,7 +8,7 @@
 // doing. The three animation sets (`arrived` / `older` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
-import type { Block, Topic } from '../../cx_types'
+import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
@@ -99,6 +99,7 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'answer', block: Block, option: string): void
+  (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
   (e: 'avatar-error', handle: string): void
@@ -199,6 +200,9 @@ function emitReact(block: Block, emoji: string) {
 }
 function emitAnswer(block: Block, option: string) {
   emit('answer', block, option)
+}
+function emitChecklist(block: Block, items: TodoItem[]) {
+  emit('checklist', block, items)
 }
 function emitOpenFile(path: string, taskId: string | null) {
   emit('open-file', path, taskId)
@@ -350,6 +354,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @open-card="emit('open-card', $event)"
           @react="emitReact"
           @answer="emitAnswer"
+          @checklist="emitChecklist"
           @download="emit('download', $event)"
           @jump="emit('jump', $event)"
           @avatar-error="emit('avatar-error', $event)"

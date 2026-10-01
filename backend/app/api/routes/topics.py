@@ -35,6 +35,7 @@ from app.domain.block.models import (
     Block,
     BlockKind,
     agent_notice,
+    checklist_text,
 )
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
@@ -876,6 +877,9 @@ class ProgressIn(BaseModel):
     # request a list belongs to is the agent's call: it sets this when someone
     # brings it a new one.
     new: bool = False
+    # Edit this checklist of the writer's rather than their newest: a person
+    # ticks a step on whichever of their lists they are looking at.
+    message: uuid.UUID | None = None
     # One line on what landed, written when the work is done; shown under the
     # list in the same message. Same ceiling as an item.
     result: (
@@ -886,21 +890,6 @@ class ProgressIn(BaseModel):
     ) = None
 
 
-# The step markers of the checklist message's text. The room draws its own
-# icons from `meta.checklist`; this text is what every other reader gets — the
-# agent reading the history, a copy, a notification preview.
-_CHECKLIST_MARK = {"completed": "✓", "in_progress": "✱", "pending": "○"}
-
-
-def _checklist_text(items: list[dict], result: str | None) -> str:
-    """The checklist as the message's text: one line per step, and the result
-    line under it once there is one."""
-    lines = [f"{_CHECKLIST_MARK[item['status']]} {item['subject']}" for item in items]
-    if result:
-        lines += ["", f"✅ {result}"]
-    return "\n".join(lines)
-
-
 @router.put("/{topic_id}/progress")
 async def write_topic_progress(
     topic_id: uuid.UUID,
@@ -909,60 +898,68 @@ async def write_topic_progress(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """`todo_write`: the agent's whole checklist (进度层), and its message.
+    """A member's whole checklist as their message: `todo_write` for an agent,
+    the composer's checklist for a person. The first write posts it, later
+    ones edit the writer's own current list (or the one ``message`` names)
+    through the edit every author has; ``new`` posts another. Whole-list
+    replace, so the message says exactly what its writer last said.
 
-    Whole-list replace, so what is stored is exactly what the agent last said,
-    never a merge of two plans. The stored list is what 总览 shows and what the
-    room's next turn is handed back.
-
-    In the room the list is an ordinary message by the agent. The first call
-    posts it; later calls edit the agent's current checklist message through
-    the same edit every author has (`domain/block/editing`); ``new`` posts a
-    fresh one.
-
-    With ``task`` it is that card's 分身 writing, and the list is the card's:
-    stored under the card and pushed on the card's channel, the same channel its
-    attributed events go to (`chat.py`), leaving the room's own list and
-    conversation alone.
-
-    A platform tool, so it reaches here the same way from every harness.
+    Only a writer seated as one of the room's agents also stores the list as
+    the room's progress (进度层): that is the plan the room's next turn is
+    handed back as its own, and what 总览 shows. A person's list stored there
+    would hand the agent somebody else's plan. With ``task`` a 分身 is writing
+    its card's list: stored under the card, pushed on the card's channel, and
+    nothing posted in the room — the worker's plan, so it takes the same seat.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
-    if not actor.authenticated:
-        raise ForbiddenError("An authenticated agent must write this checklist")
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
-        raise ForbiddenError("An authenticated agent must write this checklist")
+    if not actor.authenticated:
+        # The global development token opens the room but is nobody, and a
+        # message needs an author.
+        raise ForbiddenError("Sign in to write a checklist")
+    plans_the_turn = await TopicMemberService(db).holds_an_agent_seat(
+        place.room, actor.handle
+    )
     if body.task is not None:
+        if not plans_the_turn:
+            raise ForbiddenError("A card's checklist is written by its worker")
         task = await TaskRepository(db).get(body.task)
         if task is None or task.room_id != place.room_id:
             raise NotFoundError("Task not found in this room")
+    if body.new and body.message is not None:
+        raise ValidationError("message and new cannot both be given")
+    current = None
+    if body.task is None and not body.new:
+        current = await BlockRepository(db).current_checklist(
+            place.room_id, actor.handle, message=body.message
+        )
+        if current is None and body.message is not None:
+            raise NotFoundError("Checklist not found in this room")
+        if current is not None and current.author != actor.handle:
+            raise ForbiddenError("Only the author can edit this message")
     items = [
         {"id": str(number), "subject": todo.content, "status": todo.status}
         for number, todo in enumerate(body.todos, start=1)
     ]
     runner = get_work_runner()
-    work = runner.live_work_for_topic(place.room_id)
-    turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    await TopicProgressRepository(db).save(
-        place.room_id, items, task_id=body.task, turn_id=turn_id
-    )
-    await db.commit()
+    turn_id = None
+    if plans_the_turn:
+        work = runner.live_work_for_topic(place.room_id)
+        turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
+        await TopicProgressRepository(db).save(
+            place.room_id, items, task_id=body.task, turn_id=turn_id
+        )
+        await db.commit()
     if body.task is not None:
         await get_broker().publish(str(body.task), {"type": "todo", "items": items})
         return ok({"items": items})
-    text = _checklist_text(items, body.result)
+    text = checklist_text(items, body.result)
     checklist = {"items": items, "result": body.result}
-    current = (
-        None
-        if body.new
-        else await BlockRepository(db).current_checklist(place.room_id, actor.handle)
-    )
     if current is not None:
         message = await edit_message(
             db,
@@ -985,7 +982,9 @@ async def write_topic_progress(
         topic_refs=[],
         publish=True,
         author=actor.handle,
-        own_output=True,
+        # An agent's list is its own output; a person's is said to the room and
+        # waits to be read like anything else they post.
+        own_output=plans_the_turn,
         extra_meta={CHECKLIST_META_KEY: checklist},
     )
     assert message is not None  # a publication with no eid never deduplicates
