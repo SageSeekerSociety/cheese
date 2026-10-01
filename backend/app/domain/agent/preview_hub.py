@@ -210,13 +210,20 @@ class PreviewMachine:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     pending_cancels: set[asyncio.Task[None]] = field(default_factory=set)
     stopped: bool = False
+    failed: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def send(self, op: int, stream_id: int, payload: bytes = b"") -> None:
+        if self.stopped:
+            raise ConnectionError("preview tunnel stopped")
         try:
             async with asyncio.timeout(SEND_TIMEOUT_S):
                 async with self.send_lock:
+                    if self.stopped:
+                        raise ConnectionError("preview tunnel stopped")
                     await self.transport.send_bytes(wire.encode(op, stream_id, payload))
         except (TimeoutError, OSError, RuntimeError):
+            self.stopped = True
+            self.failed.set()
             for stream in list(self.streams.values()):
                 stream.terminate(b"preview tunnel write failed")
             raise
@@ -351,7 +358,8 @@ class PreviewHub:
             self._abandon(machine)
 
     def is_online(self, topic_id: uuid.UUID, seat: str) -> bool:
-        return (topic_id, seat) in self._machines
+        machine = self._machines.get((topic_id, seat))
+        return machine is not None and not machine.stopped
 
     async def wait_online(self, topic_id: uuid.UUID, seat: str, timeout: float) -> bool:
         """Whether a helper is connected, waiting up to ``timeout`` for one.

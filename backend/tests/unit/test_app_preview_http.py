@@ -131,3 +131,54 @@ async def test_cancel_during_watcher_cleanup_does_not_leave_unowned_response(
     assert not isinstance(outcomes[0], Response)
     assert machine.streams == {}
     assert sum(op == wire.OP_CLOSE for op, _, _ in sink.frames) == 1
+
+
+async def test_failed_write_closes_idle_real_adapter_and_joins_route(monkeypatch):
+    import pytest
+
+    hub = PreviewHub()
+    topic = uuid.uuid4()
+    monkeypatch.setattr(app_preview, "preview_hub", hub)
+    monkeypatch.setattr(
+        app_preview,
+        "scoped_token_claims",
+        lambda _token: {"t": str(topic), "a": "seat"},
+    )
+    accepted = asyncio.Event()
+    closed = []
+    receive_finished = asyncio.Event()
+    first = True
+
+    async def receive():
+        nonlocal first
+        if first:
+            first = False
+            return {"type": "websocket.connect"}
+        try:
+            await asyncio.Event().wait()
+        finally:
+            receive_finished.set()
+
+    async def send(message):
+        if message["type"] == "websocket.accept":
+            accepted.set()
+        elif message["type"] == "websocket.send":
+            raise RuntimeError("shared write lost")
+        elif message["type"] == "websocket.close":
+            closed.append(message)
+
+    ws = WebSocket(dict(_scope(), type="websocket"), receive, send)
+    owner = asyncio.create_task(app_preview.preview_tunnel(ws, "fixture"))
+    await accepted.wait()
+    machine = hub.machine(topic, "seat")
+    assert machine is not None
+    stream = machine.open()
+    with pytest.raises(OSError):
+        await stream.send(wire.OP_REQ)
+    await asyncio.wait_for(owner, 1)
+    assert receive_finished.is_set()
+    assert len(closed) == 1 and closed[0]["code"] == 1011
+    assert hub.machine(topic, "seat") is None
+    assert not hub.is_online(topic, "seat")
+    assert machine.open() is None
+    assert not machine.pending_cancels

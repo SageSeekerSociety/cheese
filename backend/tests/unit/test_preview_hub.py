@@ -8,6 +8,8 @@ a fake with a list in it is a complete machine.
 import asyncio
 import uuid
 
+import pytest
+
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import PreviewHub, PreviewMachine
 
@@ -381,3 +383,39 @@ async def test_slow_consumer_is_cancelled_without_blocking_sibling():
     await asyncio.sleep(0)
     assert frames == [(wire.OP_CLOSE, slow.id, b"")]
     sibling.close()
+
+
+@pytest.mark.parametrize("failure", ["error", "deadline"])
+async def test_failed_shared_write_refuses_admission_and_marks_seat_offline(
+    monkeypatch, failure
+):
+    import app.domain.agent.preview_hub as module
+
+    monkeypatch.setattr(module, "SEND_TIMEOUT_S", 0.02)
+    entered = asyncio.Event()
+
+    class Transport:
+        async def send_bytes(self, data):
+            entered.set()
+            if failure == "error":
+                raise OSError("lost tunnel")
+            await asyncio.Event().wait()
+
+    hub = PreviewHub()
+    topic = uuid.uuid4()
+    machine = hub.attach(topic, SEAT, Transport())
+    sibling = machine.open()
+    stream = machine.open()
+    with pytest.raises((OSError, TimeoutError)):
+        await stream.send(wire.OP_REQ)
+    assert entered.is_set()
+    assert not hub.is_online(topic, SEAT)
+    assert hub.open_stream(topic, SEAT) is None
+    assert machine.open() is None
+    assert (await sibling.receive())[0] == wire.OP_CLOSE
+    replacement = Machine().attach(hub, topic, issued=1)
+    hub.detach(machine)
+    assert hub.is_online(topic, SEAT)
+    response = await hub.request(topic, SEAT, method="GET", path="/", headers=[])
+    assert response is not None and response.body == b"body"
+    hub.detach(replacement.attached)

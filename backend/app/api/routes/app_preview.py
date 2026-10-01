@@ -8,6 +8,7 @@ import re
 import uuid
 from http.cookies import CookieError, SimpleCookie
 
+import anyio
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
@@ -15,7 +16,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from app.api import proxy
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
-from app.domain.agent.preview_hub import PreviewStream, preview_hub
+from app.domain.agent.preview_hub import SEND_TIMEOUT_S, PreviewStream, preview_hub
 
 tunnel_router = APIRouter(prefix="/preview", tags=["preview"])
 
@@ -174,9 +175,26 @@ async def preview_tunnel(
         displaced.transport, _WebSocketPreviewTransport
     ):
         await displaced.transport.hang_up()
+
+    async def close_failed_tunnel() -> None:
+        await machine.failed.wait()
+        try:
+            async with asyncio.timeout(SEND_TIMEOUT_S):
+                await websocket.close(code=1011, reason="preview tunnel write failed")
+        except (TimeoutError, OSError, WebSocketDisconnect, RuntimeError):
+            pass
+
+    failed = asyncio.create_task(close_failed_tunnel())
+    incoming = None
     try:
         while True:
-            message = await websocket.receive()
+            incoming = asyncio.create_task(websocket.receive())
+            done, _ = await asyncio.wait(
+                (incoming, failed), return_when=asyncio.FIRST_COMPLETED
+            )
+            if failed in done:
+                break
+            message = incoming.result()
             if message["type"] == "websocket.disconnect":
                 break
             data = message.get("bytes")
@@ -185,8 +203,19 @@ async def preview_tunnel(
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        preview_hub.detach(machine)
-        await machine.drain()
+        failed.cancel()
+        if incoming is not None:
+            incoming.cancel()
+        try:
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(
+                    failed,
+                    *([incoming] if incoming is not None else []),
+                    return_exceptions=True,
+                )
+        finally:
+            preview_hub.detach(machine)
+            await machine.drain()
 
 
 # --- the browser's end ---------------------------------------------------------
