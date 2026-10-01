@@ -117,7 +117,7 @@ class Runner(runner.Runner[Journal]):
         # index (``write``), and how many messages ended and how many of them
         # have had their entry pulled since: what is shown goes then (``refresh``).
         self.writing: dict[int, dict] = {}
-        self.ended, self.cleared = 0, 0
+        self.messages_ended, self.cleared = 0, 0
 
     capabilities = (runner.LONG_POLL, runner.LIVE)
 
@@ -139,7 +139,7 @@ class Runner(runner.Runner[Journal]):
                 owner = json.loads(self.journal.recall("owner") or "{}")
                 self.show([], owner.get("work_id"))
         elif kind in ("message_end", "agent_end"):
-            self.ended += 1
+            self.messages_ended += 1
         if kind == "agent_start":
             self.working = True
         elif kind == "agent_settled":
@@ -283,7 +283,7 @@ class Runner(runner.Runner[Journal]):
         async with self.refreshing:
             # pi wrote a message's entry before it said the message ended, so
             # this pull lands it, and what was shown of it goes.
-            ended = self.ended
+            ended = self.messages_ended
             # A failed call is held back until pi has said what it will do
             # about it (a verdict names it by ``after``), then goes in with the
             # verdict right behind it — so the log reads failure, verdict, next

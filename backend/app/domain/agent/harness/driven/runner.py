@@ -184,6 +184,7 @@ class Runner(Generic[J]):  # noqa: UP046
         self.read_through = 0
         self.read_at = time.monotonic()
         self.idler: asyncio.Task | None = None
+        self.ender: asyncio.Task | None = None
         # Set, and replaced, whenever there is news for a waiting read.
         self.news = asyncio.Event()
         self.journal.on_grow = self.announce
@@ -282,6 +283,14 @@ class Runner(Generic[J]):  # noqa: UP046
         os.chmod(socket_path(self.state), 0o600)
         if self.idle_exit_s:
             self.idler = asyncio.create_task(self._idle())
+        if self.process is not None:
+            self.ender = asyncio.create_task(self._announce_exit(self.process))
+
+    async def _announce_exit(self, process: asyncio.subprocess.Process) -> None:
+        """The agent process ended: a read held now is answered at once, saying
+        so (``alive``), whether or not the process wrote anything first."""
+        await process.wait()
+        self.announce()
 
     # --- a read that waits for news ------------------------------------------
 
@@ -313,6 +322,10 @@ class Runner(Generic[J]):  # noqa: UP046
     def alive(self) -> bool:
         return self.process is not None and self.process.returncode is None
 
+    def ended(self) -> bool:
+        """The agent process was started and has exited since."""
+        return self.process is not None and self.process.returncode is not None
+
     async def news_for(self, after: int, params: dict) -> dict:
         """Hold a read that asked to wait until there is news past ``after``,
         then add what else the reader keeps track of: what the agent is
@@ -332,7 +345,12 @@ class Runner(Generic[J]):  # noqa: UP046
         waited = False
         while True:
             news = self.news
-            if self.closing or self.journal.last() > after or self.live_mark() != seen:
+            if (
+                self.closing
+                or self.ended()
+                or self.journal.last() > after
+                or self.live_mark() != seen
+            ):
                 break
             left = deadline - time.monotonic()
             if left <= 0:
@@ -526,9 +544,10 @@ class Runner(Generic[J]):  # noqa: UP046
         # closing while a connection is being handled.
         self.closing = True
         self.announce()
-        if self.idler is not None:
-            self.idler.cancel()
-            await asyncio.gather(self.idler, return_exceptions=True)
+        for task in (self.idler, self.ender):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         if self.server is not None:
             self.server.close()
             await self.server.wait_closed()

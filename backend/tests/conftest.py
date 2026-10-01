@@ -309,6 +309,9 @@ class ScriptedSession(Runner):
     def alive(self) -> bool:
         return self.channel.alive
 
+    def ended(self) -> bool:
+        return not self.channel.alive
+
     # A runner whose host the test took away (``StubChannel.drop_session``) is
     # going as far as a read it holds is concerned: that read is answered.
     @property
@@ -372,12 +375,26 @@ class StubChannel:
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
         self.reply = "Hello world"
-        self.alive = True
+        self._alive = True
         # Fired the moment the transport actually writes, so a test can assert
         # what did (and did not) happen before the session was reached.
         self.on_start: Callable[[], None] | None = None
         self.calls: dict[str, str] = {}
         _CHANNELS.add(self)
+
+    @property
+    def alive(self) -> bool:
+        """Whether the scripted sessions' agent processes are still there."""
+        return self._alive
+
+    @alive.setter
+    def alive(self, value: bool) -> None:
+        # The agent process ending is something a runner hears at once
+        # (``Runner._announce_exit``): a read it holds is answered.
+        self._alive = value
+        if not value:
+            for session in self.sessions.values():
+                session.announce()
 
     # --- the channel -------------------------------------------------------
 

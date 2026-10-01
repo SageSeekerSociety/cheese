@@ -89,6 +89,26 @@ async def test_a_record_the_session_writes_reaches_the_room_at_once():
         await room.close()
 
 
+async def test_an_agent_process_that_dies_writing_nothing_ends_the_turn_at_once():
+    channel = Counting()
+    room = Room(channel)
+    try:
+        await room.send("fix the login page")
+        await _until(lambda: _said(room) == ["on it"])
+        # The read is held at the runner now, far longer than the wait below.
+        await _REAL_SLEEP(1.0)
+
+        died_at = time.monotonic()
+        channel.alive = False
+        await _until(lambda: room.results(), timeout=2.0)
+        assert time.monotonic() - died_at < 0.5
+        (ended,) = room.results()
+        assert ended.is_error
+        assert ended.text == "Claude Code session process exited"
+    finally:
+        await room.close()
+
+
 async def test_an_old_runner_is_read_at_a_fixed_rate_and_never_asked_to_wait():
     channel = OldRunners()
     room = Room(channel)

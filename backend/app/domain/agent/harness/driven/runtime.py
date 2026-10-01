@@ -623,7 +623,11 @@ class DrivenRuntime[H: Handle]:
                     waiting = False
                     self.logger.info("%s resumed topic=%s", self.records, topic)
                     await self._say_resumed(seat)
-                if not subscription.waits:
+                if subscription.waits and not subscription.heard.get("alive", True):
+                    # Its agent process is gone with no turn open: the runner
+                    # goes with it, and the next message starts it again.
+                    await self._wait(seat, IDLE_GONE_READ_S)
+                elif not subscription.waits:
                     await self._wait(
                         seat,
                         OLD_RUNNER_TURN_READ_S

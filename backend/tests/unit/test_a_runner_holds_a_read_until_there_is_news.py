@@ -108,6 +108,30 @@ async def test_what_the_agent_is_writing_answers_a_held_read(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_the_agent_process_ending_answers_a_held_read_at_once(tmp_path):
+    """A crash that writes nothing is still news: the read held at the runner
+    says at once that the agent process is gone, not when its wait runs out."""
+    session = Session(tmp_path / "state", idle_exit_s=0)
+    session.process = await asyncio.create_subprocess_exec("sleep", "60")
+    await session.start()
+    try:
+        mark = session.live_mark()
+        held = asyncio.create_task(
+            call(session.state, "events", {"after": 0, "wait": 30, "live": mark})
+        )
+        await asyncio.sleep(0.3)
+        assert not held.done()
+
+        died_at = time.monotonic()
+        session.process.kill()
+        answer = await asyncio.wait_for(held, 5)
+        assert time.monotonic() - died_at < 0.5
+        assert answer["alive"] is False
+    finally:
+        await session.close()
+
+
+@pytest.mark.anyio
 async def test_an_idle_session_is_let_go_with_a_read_held_on_it(tmp_path):
     """Being read is not being used, and a read that waits is no exception: the
     session goes, and the read it held is answered rather than left hanging."""
