@@ -186,6 +186,13 @@ def test_http_answer_continues_original_native_executor(
                                 and runtime.work_in_flight(topic, logical_handle)
                                 == uuid.UUID(ping["work_id"])
                             ):
+                                async with client.test_request_factory() as session:
+                                    original = await session.get(
+                                        AgentTurn, uuid.UUID(ping["work_id"])
+                                    )
+                                    assert original is not None
+                                    assert original.topic_id == topic
+                                    assert original.stopped_at is None
                                 return
                         await asyncio.sleep(0.01)
 
@@ -941,6 +948,11 @@ def test_http_answer_continues_original_native_executor(
                     )
                 )
                 assert len(turns) == (1 if mode == "busy" else 2)
+                original = next(
+                    (turn for turn in turns if turn.id == original_work), None
+                )
+                assert original is not None
+                assert original.stopped_at is not None
                 if mode == "busy":
                     assert {row.execution_work_id for row in rows} == {original_work}
             assert native_runner.session_id == native
