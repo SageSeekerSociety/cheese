@@ -10,7 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
-from app.domain.block.models import AGENT_NOTICE_META_KEY, AuthorType, Block, BlockKind
+from app.domain.block.models import (
+    AGENT_NOTICE_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    agent_notice,
+)
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
@@ -36,11 +42,40 @@ def _doc_conflict(current_version: int) -> ConflictError:
     )
 
 
+def persisted_notice(block: Block) -> str | None:
+    return agent_notice(block)
+
+
 class DocumentWriter:
     def __init__(self, session: AsyncSession, summarize: Callable[[str, str], str]):
         self._session = session
         self._blocks = BlockRepository(session)
         self._summarize = summarize
+
+    async def seed(
+        self, *, room_id: uuid.UUID, project_id: uuid.UUID, content: str
+    ) -> None:
+        journal = DocumentJournal(self._session)
+        await journal.lock(room_id)
+        if await self._blocks.doc_root(room_id) is not None:
+            raise _doc_conflict(1)
+        doc = await self._blocks.add(
+            project_id=project_id,
+            topic_id=room_id,
+            author="system",
+            author_type=AuthorType.platform,
+            content=content,
+            kind=BlockKind.doc,
+        )
+        await self._sync_doc_nodes(doc, content)
+        await journal.append(
+            room_id=room_id,
+            document_id=doc.id,
+            version=doc.doc_version,
+            content=content,
+            actor="system",
+            base_version=0,
+        )
 
     async def edit_doc(
         self,

@@ -11,7 +11,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import registered, session_auth_headers
 from tests.integration.test_docs import _topic
 
 
@@ -82,6 +82,7 @@ async def test_independent_sessions_have_exactly_one_cas_winner(
 
 def test_lost_response_replays_original_receipt_without_second_effect(client):
     room = _topic(client)
+    client.headers.update(session_auth_headers("owner"))
     operation = str(uuid.uuid4())
     body = {
         "content": "😀\r\n重复句\r\n重复句",
@@ -110,6 +111,36 @@ def test_lost_response_replays_original_receipt_without_second_effect(client):
     assert (
         len(client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]) == 2
     )
+
+
+def test_restore_adds_new_version_and_replays_without_rewriting_raw(client):
+    room = _topic(client)
+    client.headers.update(session_auth_headers("owner"))
+    raw = "😀\r\n相同句\r\n相同句\r\n"
+    for base, content in enumerate([raw, "后来"]):
+        assert (
+            client.put(
+                f"/topics/{room}/doc",
+                json={"content": content, "expected_version": base},
+            ).status_code
+            == 200
+        )
+    operation = str(uuid.uuid4())
+    payload = {"version": 1, "expected_version": 2, "operation_id": operation}
+    response = client.post(f"/topics/{room}/doc/restore", json=payload)
+    assert response.status_code == 200
+    assert response.json()["data"]["doc_version"] == 3
+    assert response.json()["data"]["content"] == raw
+    assert (
+        client.post(f"/topics/{room}/doc/restore", json=payload).json()
+        == response.json()
+    )
+    receipt = client.get(f"/topics/{room}/doc/operations/{operation}?action=restore")
+    assert receipt.json() == response.json()
+    versions = client.get(f"/topics/{room}/doc/history").json()["data"]["versions"]
+    assert [row["version"] for row in versions] == [1, 2, 3]
+    assert versions[0]["content"] == versions[2]["content"] == raw
+    assert versions[2]["previous_version"] == versions[2]["base_version"] == 2
 
 
 @pytest.mark.anyio

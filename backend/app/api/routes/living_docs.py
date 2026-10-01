@@ -12,7 +12,9 @@ from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import announce_stale
+from app.domain.block.documents import persisted_notice
 from app.domain.block.schemas import BlockOut
+from app.domain.living_doc.schemas import RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
 from app.domain.topic import naming
@@ -81,12 +83,21 @@ async def edit_topic_doc(
         expected_version=body.expected_version,
         operation_id=body.operation_id,
     )
+    return await _finish_write(
+        db, place, topic_id, doc, notice, operation, body.operation_id, chat
+    )
+
+
+async def _finish_write(
+    db, place, topic_id, doc, notice, operation, operation_id, chat
+):
+    content = doc.content
     snapshot = BlockOut.model_validate(doc).model_dump(mode="json")
     snapshot["content_hash"] = content_hash(doc.content)
-    snapshot["operation_id"] = str(body.operation_id) if body.operation_id else None
+    snapshot["operation_id"] = str(operation_id) if operation_id else None
     receipt = ok(snapshot, warnings=living_doc_warnings(content))
     if operation is not None:
-        await journal.finish(operation, receipt)
+        await DocumentJournal(db).finish(operation, receipt)
     await db.commit()
     if notice is not None:
         await get_broker().publish(
@@ -99,11 +110,8 @@ async def edit_topic_doc(
     await announce_stale(place.room_id, "doc")
     if topic_id == place.room_id:
         naming.nudge(place.room_id, "signal")
-    if notice is not None:
-        from app.domain.block.notice_text import agent_notice
-
-        if line := agent_notice(notice):
-            await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
+    if notice is not None and (line := persisted_notice(notice)):
+        await chat.notify_running_turn(topic_id, line, blocks=[notice.id])
     return receipt
 
 
@@ -126,6 +134,7 @@ async def document_receipt(
     operation_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    action: str = Query(default="replace", pattern="^(replace|restore)$"),
 ) -> dict:
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -134,9 +143,47 @@ async def document_receipt(
     receipt = await DocumentJournal(db).receipt(
         room_id=place.room_id,
         actor=actor.handle,
-        action="replace",
+        action=action,
         operation_id=operation_id,
     )
     if receipt is None:
         raise NotFoundError("没有这份文档操作回执")
     return receipt
+
+
+@router.post("/{topic_id}/doc/restore")
+async def restore_document(
+    topic_id: uuid.UUID,
+    body: RestoreIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("恢复文档需要已认证的写入者")
+    journal = DocumentJournal(db)
+    operation = await journal.claim(
+        room_id=place.room_id,
+        actor=actor.handle,
+        action="restore",
+        operation_id=body.operation_id,
+        payload={"version": body.version, "expected_version": body.expected_version},
+    )
+    if operation.receipt is not None:
+        return operation.receipt
+    content = await journal.version_content(place.room_id, body.version)
+    if content is None:
+        raise NotFoundError("没有这份历史文档版本")
+    doc, notice = await topics.edit_doc(
+        topic_id=topic_id,
+        content=content,
+        author=actor.handle,
+        expected_version=body.expected_version,
+        operation_id=body.operation_id,
+    )
+    return await _finish_write(
+        db, place, topic_id, doc, notice, operation, body.operation_id, chat
+    )

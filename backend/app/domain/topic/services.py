@@ -953,15 +953,9 @@ class TopicService:
         dispatch and stayed there while the work moved on. A brief belongs on
         the card (`Task.brief`), where being unchangeable is the point.
         """
-        doc = await self._blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
-            author="system",
-            author_type=AuthorType.platform,
-            content=content,
-            kind=BlockKind.doc,
+        await DocumentWriter(self._session, summarize_doc_change).seed(
+            room_id=topic.id, project_id=topic.project_id, content=content
         )
-        await self._sync_doc_nodes(doc, content)
 
     async def _card_block(self, room: Topic, task: Task) -> Block:
         """那张卡 —— the room's timeline says a piece of work went out from here.

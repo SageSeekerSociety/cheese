@@ -150,6 +150,14 @@ class DocumentJournal:
         )
         return row.receipt if row else None
 
+    async def version_content(self, room_id: uuid.UUID, version: int) -> str | None:
+        return await self.session.scalar(
+            select(DocumentVersion.content).where(
+                DocumentVersion.room_id == room_id,
+                DocumentVersion.version == version,
+            )
+        )
+
     async def history(self, room_id: uuid.UUID, *, after: int = 0) -> list[dict]:
         rows = await self.session.scalars(
             select(DocumentVersion)
