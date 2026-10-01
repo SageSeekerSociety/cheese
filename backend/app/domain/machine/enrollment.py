@@ -45,6 +45,13 @@ STARTUP_STEPS = {
     "verify": say("cloudStepVerify"),
 }
 
+# A machine MicroCloud reports running may not answer SSH yet. On dev every
+# first-attempt timeout came exactly ConnectTimeout (10 s) after the first
+# connect, and the next attempt 11 s later went through — so wait for SSH here
+# rather than spend one of the machine's five enrollment attempts on it.
+SSH_READY_WAIT_S = 60.0
+SSH_READY_POLL_S = 2.0
+
 SSH_OPTS = [
     "-o",
     "StrictHostKeyChecking=no",
@@ -317,20 +324,31 @@ async def run_bootstrap(
             handle.write(private_key)
         ssh = ["ssh", "-i", key_path, *SSH_OPTS, f"{login_user}@{ip}"]
 
-        async def run(*command: str) -> bytes:
-            child = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            try:
-                output, _ = await asyncio.wait_for(
-                    child.communicate(), timeout=SSH_TIMEOUT_S
+        async def run(*command: str, wait_for_ssh: bool = False) -> bytes:
+            deadline = asyncio.get_running_loop().time() + SSH_READY_WAIT_S
+            while True:
+                child = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
                 )
-            except TimeoutError as exc:
-                child.kill()
-                await child.wait()
-                raise EnrollmentError("Claude transfer timed out") from exc
+                try:
+                    output, _ = await asyncio.wait_for(
+                        child.communicate(), timeout=SSH_TIMEOUT_S
+                    )
+                except TimeoutError as exc:
+                    child.kill()
+                    await child.wait()
+                    raise EnrollmentError("Claude transfer timed out") from exc
+                # 255 is ssh's own failure — the connection, not the command.
+                if (
+                    wait_for_ssh
+                    and child.returncode == 255
+                    and asyncio.get_running_loop().time() < deadline
+                ):
+                    await asyncio.sleep(SSH_READY_POLL_S)
+                    continue
+                break
             if child.returncode:
                 raise EnrollmentError(
                     f"Claude transfer failed ({child.returncode}): "
@@ -351,6 +369,7 @@ async def run_bootstrap(
                     "then echo musl; else echo glibc; fi; "
                     f'mkdir -p "$HOME/{remote_dir}"; '
                     f'if test -x "$HOME/{remote_dir}/{pin}"; then echo present; fi',
+                    wait_for_ssh=True,
                 )
             )
             .decode()

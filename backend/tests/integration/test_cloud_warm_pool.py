@@ -764,3 +764,57 @@ def test_failed_claim_stays_reserved_until_explicit_retry(warm_case, monkeypatch
 
     client.portal.call(lambda: run())
     assert cloud.created == []
+
+
+def _failed_cleanup(machine_id):
+    return WarmMachine(
+        state="cleanup_failed",
+        machine_id=machine_id,
+        attempts=5,
+        error="delete HTTP None",
+        create_request={"hostname": f"warm-stale-{machine_id}"},
+    )
+
+
+def test_machines_that_failed_cleanup_do_not_hold_the_pool_empty(
+    warm_case, monkeypatch
+):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            # The one ready machine goes to a room; two stale cleanups remain.
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add_all([_failed_cleanup(901), _failed_cleanup(902)])
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert states.count("preparing") == 1
+            # A record that may still be billed is left exactly as it was.
+            assert states.count("cleanup_failed") == 2
+            assert cloud.deleted == []
+
+    client.portal.call(lambda: run())
+
+
+def test_a_pile_of_failed_cleanups_stops_replacement(warm_case, monkeypatch):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add_all([_failed_cleanup(n) for n in (901, 902, 903)])
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert "preparing" not in states
+
+    client.portal.call(lambda: run())
