@@ -39,6 +39,14 @@ async def human_in_room(db, resolver, topic_id):
     return place, actor, identity
 
 
+@router.get("/{topic_id}/doc-ai/source")
+async def selection_source(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place, _, _ = await human_in_room(db, resolver, topic_id)
+    return ok(await DocumentSelections(db).describe(place.room_id))
+
+
 @router.post("/{topic_id}/doc-ai/requests", status_code=202)
 async def create_request(
     topic_id: uuid.UUID, body: RequestIn, db: DbSession, resolver: ActorResolverDep
@@ -61,6 +69,8 @@ async def create_request(
         base_version=body.base_version,
         selection=selection,
     )
+    if place.room.archived_at is not None:
+        raise ValidationError("房间已归档，不能发起文档 AI 请求")
     bound = await project_binding(db, place.room_id)
     row = await DocAiService(db).create(
         project_id=place.project_id,

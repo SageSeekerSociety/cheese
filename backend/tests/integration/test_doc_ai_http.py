@@ -38,6 +38,13 @@ def setup(client):
 def test_request_creation_replay_payload_conflict_and_cancel_preserve_canonical(client):
     room, body = setup(client)
     before = client.get(f"/topics/{room}/doc").json()
+    source = client.get(f"/topics/{room}/doc-ai/source")
+    assert source.status_code == 200
+    raw = source.json()["data"]
+    assert raw["offset_unit"] == "utf8-bytes"
+    assert raw["source"] == "😀原文\r\n" and raw["base_version"] == 1
+    assert raw["nodes"][0]["start"] == 0
+    assert raw["nodes"][0]["end"] == len("😀原文".encode())
     response = client.post(f"/topics/{room}/doc-ai/requests", json=body)
     assert response.status_code == 202, response.text
     assert (

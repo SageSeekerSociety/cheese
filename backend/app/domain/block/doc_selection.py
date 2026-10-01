@@ -76,6 +76,30 @@ class DocumentSelections:
         self.session = session
         self.blocks = BlockRepository(session)
 
+    async def describe(self, room_id: uuid.UUID) -> dict:
+        await DocumentJournal(self.session).lock(room_id)
+        doc = await self.blocks.doc_root(room_id)
+        if doc is None:
+            raise ConflictError("文档已经不存在")
+        await self.session.refresh(doc)
+        nodes = await self.blocks.list_doc_nodes(room_id)
+        spans = raw_blocks(doc.content)
+        if len(nodes) != len(spans) or any(
+            node.struct_parent != doc.id or node.content != span.normalized
+            for node, span in zip(nodes, spans, strict=True)
+        ):
+            raise ConflictError("文档节点和原文不一致")
+        return {
+            "document_id": str(doc.id),
+            "base_version": doc.doc_version,
+            "source": doc.content,
+            "offset_unit": "utf8-bytes",
+            "nodes": [
+                {"node_id": str(node.id), "start": span.start, "end": span.end}
+                for node, span in zip(nodes, spans, strict=True)
+            ],
+        }
+
     async def snapshot(
         self,
         *,

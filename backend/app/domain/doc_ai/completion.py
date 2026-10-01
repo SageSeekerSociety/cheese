@@ -96,7 +96,7 @@ async def complete(
             raise ValueError("completion has no assistant text")
         schema = AskResult if lease.kind == "ask" else ProposalResult
         result = schema.model_validate_json(message["content"])
-    except (ValueError, TypeError, KeyError, SchemaError) as exc:
+    except (ValueError, TypeError, KeyError, AttributeError, SchemaError) as exc:
         raise InvalidCompletion(
             "模型返回的文档结果不符合无工具数据合同", usage
         ) from exc
