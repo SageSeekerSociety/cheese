@@ -114,6 +114,14 @@ class ClaudeCodeRuntime(DrivenRuntime[Handle]):
             memory=self._memory_hook(handle.session.topic_id),
         )
 
+    async def ensure(self, session, opening, *, work_id=None) -> Handle:
+        previous = self.live.get(self._seat_of(session))
+        if previous is not None:
+            # Do not reach the launch/ensure path to upgrade an adopted process.
+            # It owns native pipes and may still hold the original executor's WIP.
+            await self.check_input_protocol(previous)
+        return await super().ensure(session, opening, work_id=work_id)
+
     async def check_input_protocol(self, handle: Handle) -> None:
         status = await self.channel.call(handle, "ping", {})
         if not accepts_inputs(status):

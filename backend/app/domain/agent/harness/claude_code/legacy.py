@@ -43,6 +43,8 @@ def completion_inputs(
         or result.get("is_error")
         or (result.get("cheese") or {}).get("interrupted")
         or result.get("session_id") != session_id
+        or (result.get("cheese") or {}).get("completion_session_id")
+        not in (None, session_id)
         or any(b[0] != a[0] + 1 for a, b in zip(interval, interval[1:], strict=False))
     ):
         raise LegacyEvidenceIncomplete(

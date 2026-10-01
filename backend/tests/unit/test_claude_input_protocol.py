@@ -44,10 +44,6 @@ async def test_old_runner_refuses_before_registration_or_external_input(operatio
     async def register(identity):
         registrations.append(identity)
 
-    async def ensure(*args, **kwargs):
-        return handle
-
-    runtime.ensure = ensure
     with pytest.raises(InputProtocolUnavailable):
         if operation == "send":
             await runtime.send(
