@@ -51,7 +51,12 @@ error) and, separately, `aiStatus` (disabled / provisioning / ready / error). A 
 created with `aiMode: none` reports `aiStatus: disabled` from the moment it exists.
 Enrolment waits only for `status: running`. A room's lease counts a machine as ready
 when it is `running`, enrolled, and its `aiStatus` is `ready` or `disabled`; an `error`
-in either field is handed to the room as a failed lease.
+in either field is handed to the room as a failed lease, with one exception. A session's
+machine that reports `status: error` before it was enrolled holds none of the room's work,
+so the room's next request for it deletes it and asks for another. Quota, offering and spec
+problems are refused at create time, so this `error` means building the machine failed.
+After three such failures within an hour the room stops asking and the session is told
+that retries were made. The count is the room's own 「正在删除创建失败的机器」 lines.
 
 Since micro-cloud#84 every machine has an event log at `GET /machine/{id}/events` (tenant
 secret, page parameters, optional `since`): every Proxmox task with its UPID and duration,

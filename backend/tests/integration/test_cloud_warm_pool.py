@@ -14,20 +14,23 @@ from app.domain.agent.compute_configs import ComputeChoice
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import AgentSession
+from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import owner_reads as machine_owner_reads
+from app.domain.machine import progress
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import (
+    MAX_PROVIDER_ERRORS,
     AiStatus,
     MachineStatus,
     ProjectMachine,
     WarmMachine,
 )
 from app.domain.machine.repositories import ProjectMachineRepository
-from app.domain.machine.services import MachineService
+from app.domain.machine.services import CloudKeepsFailing, MachineService
 from app.domain.machine.warm import WarmPoolService
 from app.domain.topic.models import Topic
 from app.domain.user.repositories import UserRepository
@@ -931,3 +934,130 @@ def test_a_deletion_still_under_way_keeps_its_place(warm_case, monkeypatch):
             assert "preparing" not in states
 
     client.portal.call(lambda: run())
+
+
+async def _startup_lines(client, topic_id) -> list[str]:
+    async with client.test_request_factory() as db:
+        blocks = await BlockRepository(db).list_for_topic(uuid.UUID(topic_id))
+        return [
+            str(block.content)
+            for block in blocks
+            if (block.meta or {}).get("event_type") == "cloud_startup"
+        ]
+
+
+@pytest.fixture
+def cold_case(warm_case, monkeypatch):
+    """Rooms that rent cold machines, with their startup lines recorded."""
+    monkeypatch.setattr("app.domain.machine.warm.device_hub.is_online", lambda _: False)
+    client = warm_case[0]
+    monkeypatch.setattr(progress, "async_session_factory", client.test_request_factory)
+    return warm_case
+
+
+async def _fail(service, cloud, machine):
+    """MicroCloud gives up building the machine, and the sweep reads that."""
+    cloud.machines[machine.machine_id]["status"] = "error"
+    await service.refresh_unsettled()
+    await service._session.commit()
+
+
+def test_a_machine_the_provider_failed_to_build_is_replaced(cold_case):
+    """dev, 2026-10-01: a Proxmox create outlived MicroCloud's wait, the machine
+    was left `error`, and every later turn of the room got the same failure."""
+    client, topics, actor, cloud = cold_case
+    choice = ComputeChoice(name="Cloud", profile="cloud")
+
+    async def run():
+        session_id, _ = await _sessions_for_cloud(client, topics[0])
+        async with client.test_request_factory() as db:
+            service = MachineService(db, cloud)
+            failed = await service.ensure_session_machine(
+                session_id, actor=actor, choice=choice
+            )
+            await db.commit()
+            await _fail(service, cloud, failed)
+
+            fresh = await service.ensure_session_machine(
+                session_id, actor=actor, choice=choice
+            )
+            await db.commit()
+            assert fresh.machine_id != failed.machine_id
+            assert cloud.deleted == [failed.machine_id]
+
+            cloud.machines[fresh.machine_id].update(
+                status="running", ip="192.0.2.9", aiStatus="disabled"
+            )
+            await service.refresh_unsettled()
+            await db.commit()
+            again = await service.ensure_session_machine(
+                session_id, actor=actor, choice=choice
+            )
+            assert (again.id, again.status) == (fresh.id, MachineStatus.running)
+            assert len(cloud.created) == 2
+
+    client.portal.call(run)
+    lines = client.portal.call(_startup_lines, client, topics[0])
+    assert any("改为申请第 2 台" in line for line in lines), lines
+    assert not any("不再自动申请" in line for line in lines), lines
+
+
+def test_a_room_whose_machines_keep_failing_stops_and_says_it_retried(cold_case):
+    client, topics, actor, cloud = cold_case
+    choice = ComputeChoice(name="Cloud", profile="cloud")
+
+    async def run():
+        session_id, _ = await _sessions_for_cloud(client, topics[0])
+        async with client.test_request_factory() as db:
+            service = MachineService(db, cloud)
+            rented = []
+            for _ in range(MAX_PROVIDER_ERRORS):
+                machine = await service.ensure_session_machine(
+                    session_id, actor=actor, choice=choice
+                )
+                await db.commit()
+                rented.append(machine.machine_id)
+                await _fail(service, cloud, machine)
+            with pytest.raises(CloudKeepsFailing) as failing:
+                await service.ensure_session_machine(
+                    session_id, actor=actor, choice=choice
+                )
+            await db.commit()
+            # A later turn within the hour is told the same, renting nothing.
+            with pytest.raises(CloudKeepsFailing):
+                await service.ensure_session_machine(
+                    session_id, actor=actor, choice=choice
+                )
+            return str(failing.value), rented
+
+    message, rented = client.portal.call(run)
+    assert f"连续 {MAX_PROVIDER_ERRORS} 次" in message and "重试" in message
+    assert len(cloud.created) == MAX_PROVIDER_ERRORS
+    assert sorted(cloud.deleted) == sorted(rented)
+    lines = client.portal.call(_startup_lines, client, topics[0])
+    assert sum("不再自动申请" in line for line in lines) == 1, lines
+
+
+def test_an_enrolled_machine_in_error_is_not_deleted(cold_case):
+    """The room's unpushed work may be on it, so it is reported, not replaced."""
+    client, topics, actor, cloud = cold_case
+    choice = ComputeChoice(name="Cloud", profile="cloud")
+
+    async def run():
+        session_id, _ = await _sessions_for_cloud(client, topics[0])
+        async with client.test_request_factory() as db:
+            service = MachineService(db, cloud)
+            machine = await service.ensure_session_machine(
+                session_id, actor=actor, choice=choice
+            )
+            machine.device_id = "enrolled-before-error"
+            await db.commit()
+            await _fail(service, cloud, machine)
+            kept = await service.ensure_session_machine(
+                session_id, actor=actor, choice=choice
+            )
+            assert kept.id == machine.id
+
+    client.portal.call(run)
+    assert cloud.deleted == []
+    assert len(cloud.created) == 1
