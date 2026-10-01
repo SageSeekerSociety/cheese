@@ -50,29 +50,22 @@ async def authorize_topic_access(
 
 
 def refuse_unauthenticated_chat(
-    actor: Actor, *, token_presented: bool, allow_anonymous: bool
+    actor: Actor, *, token_presented: bool
 ) -> tuple[str, str] | None:
     """``(code, message)`` refusing a chat WebSocket, or ``None`` to admit it.
 
-    A WebSocket authenticates ONCE, at connect; the protocol carries no
-    per-message credential. So admitting a socket we could not identify means
-    every message it later sends is authored by a string the client chose —
-    which is how a batch of messages landed under 匿名者 after one user's token
-    quietly expired, with the sending side seeing nothing but success frames.
-
-    ``token_presented`` splits the two cases apart, because they are not the
-    same failure. A socket that presented a token we could not verify tried to
-    authenticate and failed: it is refused unconditionally, since treating a
-    rejected credential as "no credential" is precisely the silent downgrade
-    above. A socket that presented none is the pre-token Phase-0 caller, and
-    ``allow_anonymous`` keeps that path open for local harnesses only.
+    A WebSocket authenticates ONCE, at connect, and the feed it carries is the
+    room's own, so a socket we could not identify is refused. ``token_presented``
+    splits the two refusals apart, because they are not the same failure: a
+    socket that presented a token we could not verify tried to authenticate and
+    failed (sign in again), one that presented none never tried. Treating a
+    rejected credential as "no credential" is the silent downgrade that once
+    let a batch of messages land under 匿名者 while the sender saw no error.
     """
     if actor.authenticated:
         return None
     if token_presented:
         return ("auth_expired", "登录状态已失效，请重新登录后再发言")
-    if allow_anonymous:
-        return None
     return ("auth_required", "请先登录再进入话题")
 
 

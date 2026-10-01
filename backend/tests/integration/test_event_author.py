@@ -20,7 +20,12 @@ import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 # A valid 1x1 transparent PNG — small but real image bytes.
 PNG_1PX = bytes.fromhex(
@@ -44,8 +49,8 @@ def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
 def _say(client, topic_id: str, text: str, *, summon: bool) -> None:
     # 叫不叫它写在正文里：帧上没有这一位，后端从 @ 解析。
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json(
-            {"type": "message", "content": f"@芝士 {text}" if summon else text}
+        post_message(
+            client, topic_id, "user-1", {"content": f"@芝士 {text}" if summon else text}
         )
         while ws.receive_json()["type"] != "done":
             pass
@@ -144,12 +149,11 @@ def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub
     att = upload.json()["data"]
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "看看这张截图",
-                "attachments": [att],
-            }
+        post_message(
+            client,
+            topic_id,
+            "user-1",
+            {"content": "看看这张截图", "attachments": [att]},
         )
         while ws.receive_json()["type"] != "done":
             pass

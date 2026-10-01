@@ -20,7 +20,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 
 def _room(client) -> tuple[str, StubChannel, ChatService]:
@@ -53,7 +53,7 @@ def _blocks(client, room: str) -> list[Block]:
 
 def _say(client, room: str, content: str) -> None:
     with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
-        ws.send_json({"type": "message", "content": content})
+        post_message(client, room, "alice", {"content": content})
         while ws.receive_json()["type"] != "user_block":
             pass
 

@@ -14,7 +14,7 @@ from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.main import app
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 
 
 def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
@@ -59,7 +59,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
     seen: list[str] = []
     try:
         with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-            ws.send_json({"type": "message", "content": "@芝士 不要丢掉我"})
+            post_message(client, topic_id, "user-1", {"content": "@芝士 不要丢掉我"})
             while True:
                 frame = ws.receive_json()
                 seen.append(frame["type"])

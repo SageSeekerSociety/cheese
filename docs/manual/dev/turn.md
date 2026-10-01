@@ -50,7 +50,7 @@ steps:
 
 ## 1. 发消息与寻址 {#address}
 
-用户消息由 `ChatService.post_user_message` 在一个短事务里落库，并同时写好点名通知；浏览器重试同一条消息时按 `client_id` 去重。跑不跑一轮只看寻址结果：`runtime._a_turn_was_addressed` 判断这条消息点到的人里有没有 AI 队友。没点名 AI 队友，房间里人和人的对话不会触发一轮；平台自己的投递也一样，只能点名，不能凭空起一轮。AI 队友发的消息点名另一位队友，同样会叫起它，见[队友之间点名](#seats-mention)。一轮在库里是什么、后台谁推着走，见[会话与轮次](/dev/session)。
+人和 AI 队友发消息走同一条路由 `POST /topics/{id}/messages`，发送者在这个房间里有没有 AI 席位决定这是哪一种：人说的话由 `ChatService.post_user_message` 在一个短事务里落库，并同时写好点名通知；重发同一条消息时按 `request_id` 去重。房间的 WebSocket 只把落下的东西推出去，不收消息。跑不跑一轮只看寻址结果：`runtime._a_turn_was_addressed` 判断这条消息点到的人里有没有 AI 队友。没点名 AI 队友，房间里人和人的对话不会触发一轮；平台自己的投递也一样，只能点名，不能凭空起一轮。AI 队友发的消息点名另一位队友，同样会叫起它，见[队友之间点名](#seats-mention)。一轮在库里是什么、后台谁推着走，见[会话与轮次](/dev/session)。
 
 ## 2. 排队还是插话 {#serialize}
 

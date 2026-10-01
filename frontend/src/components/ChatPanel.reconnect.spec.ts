@@ -14,8 +14,12 @@ vi.mock('../api', async () => ({
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
   chatWsUrl: () => 'ws://test/chat',
 }))
+vi.mock('../api/messages', () => ({ postChatMessage: vi.fn() }))
+
+import type { ChatMessageBody } from '../cx_types'
 
 import { ApiError, listBlocks } from '../api'
+import { postChatMessage } from '../api/messages'
 
 import ChatPanel from './ChatPanel.vue'
 
@@ -66,7 +70,38 @@ beforeEach(() => {
   vi.mocked(listBlocks)
     .mockReset()
     .mockResolvedValue({ data: [], has_more: false, total: 0, oldest_id: null, has_newer: false, newest_id: null })
+  vi.mocked(postChatMessage)
+    .mockReset()
+    .mockImplementation(async (topic, body) => stored(body, topic))
 })
+
+/** What the backend answers a send with: the message, stored, carrying the send's id. */
+function stored(body: ChatMessageBody, topicId = vi.mocked(postChatMessage).mock.calls[0][0]): Block {
+  return {
+    id: crypto.randomUUID(),
+    project_id: 'p',
+    topic_id: topicId,
+    kind: 'message',
+    author_type: 'participant',
+    author: 'u',
+    content: body.content,
+    meta: { client_id: body.request_id },
+    created_at: new Date().toISOString(),
+  } as unknown as Block
+}
+
+/** The body of every send so far, in order. */
+function sends(): ChatMessageBody[] {
+  return vi.mocked(postChatMessage).mock.calls.map((call) => call[1])
+}
+
+async function type(view: ReturnType<typeof mountPanel>, text: string) {
+  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
+  textarea.focus()
+  await fireEvent.update(textarea, text)
+  await fireEvent.keyDown(textarea, { key: 'Enter' })
+  await flushPromises()
+}
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
@@ -117,62 +152,81 @@ describe('chat recovery after history errors', () => {
     expect(sockets[0].close).toHaveBeenCalledOnce()
   })
 
-  it('reconciles a lost echo from history before opening a replacement socket', async () => {
+  it('shows the stored message the moment the send is answered, with no echo needed', async () => {
     const view = mountPanel(true)
     await flushPromises()
     sockets[0].onopen?.()
     await flushPromises()
-    const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
-    textarea.focus()
-    await fireEvent.update(textarea, 'persisted while the echo was lost')
-    await fireEvent.keyDown(textarea, { key: 'Enter' })
-    const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
-    vi.mocked(listBlocks).mockResolvedValueOnce({
-      data: [
-        {
-          id: crypto.randomUUID(),
-          project_id: 'p',
-          topic_id: 't',
-          kind: 'message',
-          author_type: 'participant',
-          author: 'u',
-          content: sent.content,
-          meta: { client_id: sent.client_id },
-          created_at: new Date().toISOString(),
-        } as unknown as Block,
-      ],
-      has_more: false,
-      total: 1,
-      oldest_id: null,
-      has_newer: false,
-      newest_id: null,
-    })
-
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(sockets[0].close).toHaveBeenCalledOnce()
-    expect(sockets).toHaveLength(2)
+    await type(view, 'stored without an echo')
+    expect(sends()).toHaveLength(1)
+    expect(view.container.textContent).toContain('stored without an echo')
     expect(view.container.querySelector('.im-row--pending')).toBeNull()
-    sockets[1].onopen?.()
-    expect(sockets[1].send).not.toHaveBeenCalled()
   })
 
-  it('resends the same client id after history confirms the message is absent', async () => {
+  it('sends again with the same request id after the send could not get through', async () => {
+    vi.mocked(postChatMessage).mockRejectedValueOnce(new TypeError('Failed to fetch'))
     const view = mountPanel(true)
     await flushPromises()
     sockets[0].onopen?.()
     await flushPromises()
-    const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
-    textarea.focus()
-    await fireEvent.update(textarea, 'not persisted yet')
-    await fireEvent.keyDown(textarea, { key: 'Enter' })
-    const first = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
+    await type(view, 'not persisted yet')
+    expect(sends()).toHaveLength(1)
+    expect(view.container.querySelector('.im-row--pending')).not.toBeNull()
 
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sends()).toHaveLength(2)
+    expect(sends()[1].request_id).toBe(sends()[0].request_id)
+    expect(sends()[1].content).toBe('not persisted yet')
+    expect(view.container.querySelector('.im-row--pending')).toBeNull()
+  })
+
+  it('a send stuck in transit is abandoned and sent again with the same id', async () => {
+    vi.mocked(postChatMessage).mockImplementationOnce(
+      (_topic, _body, signal) =>
+        new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('', 'AbortError'))))
+    )
+    const view = mountPanel(true)
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    await type(view, 'slow line')
     await vi.advanceTimersByTimeAsync(30_000)
-    expect(sockets).toHaveLength(2)
-    sockets[1].onopen?.()
-    const retried = JSON.parse(String(sockets[1].send.mock.calls[0][0]))
-    expect(retried.client_id).toBe(first.client_id)
-    expect(retried.content).toBe(first.content)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sends()).toHaveLength(2)
+    expect(sends()[1].request_id).toBe(sends()[0].request_id)
+  })
+
+  it('a message whose echo arrives while its send is still out is not shown twice', async () => {
+    let answer!: (block: Block) => void
+    vi.mocked(postChatMessage).mockImplementationOnce(() => new Promise((yes) => (answer = yes)))
+    const view = mountPanel(true)
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    await type(view, 'echo first')
+    const block = stored(sends()[0])
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
+    answer(block)
+    await flushPromises()
+    expect(view.container.textContent?.split('echo first')).toHaveLength(2)
+    expect(view.container.querySelector('.im-row--pending')).toBeNull()
+  })
+
+  it('messages go out one at a time, in the order they were typed', async () => {
+    let answer!: (block: Block) => void
+    vi.mocked(postChatMessage).mockImplementationOnce(
+      (topic, body) => new Promise((yes) => (answer = () => yes(stored(body, topic))))
+    )
+    const view = mountPanel(true)
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    await type(view, 'first')
+    await type(view, 'second')
+    expect(sends().map((b) => b.content)).toEqual(['first'])
+    answer(undefined as unknown as Block)
+    await flushPromises()
+    expect(sends().map((b) => b.content)).toEqual(['first', 'second'])
   })
 
   it('pings an idle socket and replaces it when nothing answers', async () => {
@@ -226,20 +280,8 @@ it('can send while initial history is pending and preserves live messages when i
   await flushPromises()
   const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
   expect(textarea.disabled).toBe(false)
-  textarea.focus()
-  await fireEvent.update(textarea, 'hello before history')
-  await fireEvent.keyDown(textarea, { key: 'Enter' })
-  const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
-  const block = {
-    id: 'live',
-    topic_id: 'room',
-    kind: 'message',
-    author_type: 'participant',
-    author: 'alice',
-    content: sent.content,
-    meta: { client_id: sent.client_id },
-    created_at: new Date().toISOString(),
-  } as Block
+  await type(view, 'hello before history')
+  const block = stored(sends()[0])
   sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
   resolve({ data: [], has_more: false, total: 0, oldest_id: null, has_newer: false, newest_id: null })
   await flushPromises()
@@ -322,44 +364,33 @@ it('keeps a reaction received before its message arrives in history', async () =
 })
 
 it('a rejected message stops waiting and only resends when the user retries', async () => {
+  vi.mocked(postChatMessage).mockRejectedValueOnce(new ApiError(403, '房间已关闭'))
   const view = mountPanel(true)
   await flushPromises()
   sockets[0].onopen?.()
   await flushPromises()
-  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
-  textarea.focus()
-  await fireEvent.update(textarea, 'rejected message')
-  await fireEvent.keyDown(textarea, { key: 'Enter' })
-  const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
-  sockets[0].onmessage?.({
-    data: JSON.stringify({ type: 'error', code: 'ForbiddenError', client_id: sent.client_id, message: '房间已关闭' }),
-  })
-  await flushPromises()
+  await type(view, 'rejected message')
   expect(view.container.textContent).toContain('房间已关闭')
   expect(view.getByText(t('work.room.retry.action'))).toBeTruthy()
   sockets[0].onclose?.()
   await vi.advanceTimersByTimeAsync(1000)
   sockets[1].onopen?.()
-  expect(sockets[1].send).not.toHaveBeenCalled()
+  await flushPromises()
+  expect(sends()).toHaveLength(1)
   await fireEvent.click(view.getByText(t('work.room.retry.action')))
-  const retry = JSON.parse(String(sockets[1].send.mock.calls[0][0]))
-  expect(retry.client_id).toBe(sent.client_id)
+  await flushPromises()
+  expect(sends()).toHaveLength(2)
+  expect(sends()[1].request_id).toBe(sends()[0].request_id)
 })
 
 it('editing a message that failed to send puts its text back in the box and takes it off the timeline', async () => {
+  vi.mocked(postChatMessage).mockRejectedValueOnce(new ApiError(403, '房间已关闭'))
   const view = mountPanel(true)
   await flushPromises()
   sockets[0].onopen?.()
   await flushPromises()
   const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
-  textarea.focus()
-  await fireEvent.update(textarea, 'the words I typed')
-  await fireEvent.keyDown(textarea, { key: 'Enter' })
-  const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
-  sockets[0].onmessage?.({
-    data: JSON.stringify({ type: 'error', code: 'ForbiddenError', client_id: sent.client_id, message: '房间已关闭' }),
-  })
-  await flushPromises()
+  await type(view, 'the words I typed')
   expect(textarea.value).toBe('')
 
   await fireEvent.click(view.getByText(t('work.room.outbox.edit')))
@@ -370,5 +401,6 @@ it('editing a message that failed to send puts its text back in the box and take
   sockets[0].onclose?.()
   await vi.advanceTimersByTimeAsync(1000)
   sockets[1].onopen?.()
-  expect(sockets[1].send).not.toHaveBeenCalled()
+  await flushPromises()
+  expect(sends()).toHaveLength(1)
 })

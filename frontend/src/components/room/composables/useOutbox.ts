@@ -2,127 +2,137 @@
  * 发件箱：**已经打出去、但库里还没有**的那几条消息。
  *
  * 「人发的消息立即显示，绝不排在 AI turn 后面。别的都可以错，现场不能错」——
- * 而在这之前，发送是把帧塞进 socket 就完了：屏幕上什么都没有，要等后端落库
- * （名册查询、mention 解析、通知写入）再广播回来才显示。快的时候看不出，慢的
- * 时候你会以为自己的消息发丢了。
+ * 所以消息先进这里、立刻出现在时间线末尾，再一条一条 POST 给后端
+ * （`/topics/{id}/messages`，人和 AI 队友走的是同一扇门）。POST 的回答就是落库的那
+ * 一条：拿到它，本地这条就换成真的。房间 socket 上的回声和重连后读回的历史也能对上
+ * 账（后端把 `request_id` 原样戳在块的 `meta.client_id` 上），谁先到用谁。
  *
- * 所以消息先进这里、立刻出现在时间线末尾，再去对账：后端把 `client_id` 原样戳回
- * 块上，回声一到就把本地这条换成真的。对不上账的那条不会消失，它变成一条能重试
- * 的行——安静地丢掉一句话，比显示一条「未送达」糟得多。
+ * 一次只发一条，按打出去的顺序：前一条没落库，后一条不走，房间里的先后就是你打字
+ * 的先后。连不上（断网、后端在发版、请求超时）不算失败——这一条回到队列，过一会儿
+ * 带**同一个** `request_id` 再发，后端认得它，不会落两遍。后端明确拒了的那条才算
+ * 失败：它变成一条能重试、能拿回去改的行——安静地丢掉一句话，比显示一条「未送达」
+ * 糟得多。
  *
  * 这里不认识话题，也不认识轮次。「发出去之后房间该有什么反应」（等回复的指示、
  * 滚到底、清掉回复目标）是房间壳的事。
  */
 
-import type { Ref } from 'vue'
-import type { Block, ChatAttachment, WsClientChatMessage } from '../../../cx_types'
+import type { Block, ChatAttachment } from '../../../cx_types'
 import type { Outgoing } from '../../../lib/composerDrafts'
 
 import { onScopeDispose, ref } from 'vue'
 
 /**
- * 等回声等多久算没送到。宁可长一点：误报「未送达」比晚一点显示更伤——房间里
- * 已经有过一次这种误报（#539）。
+ * 一次发送等多久算没送到。宁可长一点：误报比晚一点显示更伤——房间里已经有过一次
+ * 这种误报（#539）。等满了也不判失败，只是带同一个 id 再发一次。
  */
-const ECHO_TIMEOUT_MS = 30_000
+const SEND_TIMEOUT_MS = 30_000
+
+/** 连不上时，下一次再试之前等多久（逐次加长，封顶）。 */
+const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15_000]
+
+/**
+ * 后端说了「不」（`send` 抛它）：原样再发也还是「不」，要人来决定。别的失败都当成这一刻
+ * 的链路问题，带同一个 id 再发一次就可能成。
+ */
+export class SendRefused extends Error {}
 
 export function useOutbox(options: {
-  /** 把一帧交给链路；没连上返回 false。 */
-  post: (message: WsClientChatMessage) => boolean
-  connected: Ref<boolean>
-  /**
-   * 一条消息等满了整个超时都没有回声。链路自己说 OPEN 也不算数——先请它换一条新
-   * 的；换成了返回 true，这条消息会跟着新链路重来，而不是被判成「未送达」。
-   */
-  onStale: () => boolean
+  /** POST 这一条；兑现为落库的那一块。后端拒了就抛 `SendRefused`。 */
+  send: (message: Outgoing, signal: AbortSignal) => Promise<Block>
+  /** 落库的那一块回来了：画到时间线上（socket 上可能也会再来一遍，由时间线去重）。 */
+  onDelivered: (block: Block) => void
 }) {
   const outbox = ref<Outgoing[]>([])
-  const echoTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  let running = false
+  let inFlight: AbortController | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let retryAttempt = 0
 
-  function clearEchoTimer(clientId: string) {
-    const t = echoTimers.get(clientId)
-    if (t) clearTimeout(t)
-    echoTimers.delete(clientId)
+  function cancelRetry() {
+    if (retryTimer) clearTimeout(retryTimer)
+    retryTimer = null
   }
 
-  /** 把所有还在等的计时器停掉（切话题、卸载）。 */
-  function cancelTimers() {
-    for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
+  function scheduleRetry() {
+    if (retryTimer) return
+    const delay = RETRY_DELAYS_MS[Math.min(retryAttempt, RETRY_DELAYS_MS.length - 1)]
+    retryAttempt += 1
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      void flush()
+    }, delay)
   }
 
-  function markFailed(clientId: string) {
-    clearEchoTimer(clientId)
-    const item = outbox.value.find((o) => o.clientId === clientId)
-    if (!item || item.state !== 'sending') return
-    // No durable echo for the full timeout: the link is gone whatever OPEN says.
-    if (!options.onStale()) item.state = 'failed'
+  /** 停下手上这一次发送和等着的重试（切话题、卸载）。没送完的那条回到队列。 */
+  function pause() {
+    cancelRetry()
+    inFlight?.abort()
   }
 
-  /** Hand every queued message to the link, if there is a link to hand it to. */
-  function flush() {
-    if (!options.connected.value) return
-    for (const item of outbox.value) {
-      if (item.state !== 'queued') continue
-      const msg: WsClientChatMessage = {
-        type: 'message',
-        content: item.content,
-        reply_to: item.replyTo,
-        attachments: item.atts,
-        client_id: item.clientId,
+  async function sendOne(item: Outgoing): Promise<'next' | 'stop'> {
+    item.state = 'sending'
+    item.error = undefined
+    const controller = new AbortController()
+    inFlight = controller
+    const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
+    try {
+      const block = await options.send(item, controller.signal)
+      retryAttempt = 0
+      outbox.value = outbox.value.filter((o) => o.clientId !== item.clientId)
+      options.onDelivered(block)
+      return 'next'
+    } catch (error) {
+      if (!outbox.value.some((o) => o.clientId === item.clientId)) return 'next'
+      if (error instanceof SendRefused) {
+        item.state = 'failed'
+        item.error = error.message
+        return 'next'
       }
-      if (!options.post(msg)) return
-      item.state = 'sending'
-      clearEchoTimer(item.clientId)
-      echoTimers.set(
-        item.clientId,
-        setTimeout(() => markFailed(item.clientId), ECHO_TIMEOUT_MS)
-      )
+      // 链路问题（含超时、切走时被叫停）：回到队列，同一个 id 过一会儿再发。
+      item.state = 'queued'
+      return 'stop'
+    } finally {
+      clearTimeout(timer)
+      if (inFlight === controller) inFlight = null
     }
   }
 
-  /** 排一条，立刻交出去。返回它的 `client_id`。 */
+  /** 把排着的那几条按顺序发出去。已经在发就不另起一路——顺序靠的就是只有一路。 */
+  async function flush() {
+    if (running) return
+    running = true
+    cancelRetry()
+    try {
+      for (;;) {
+        const item = outbox.value.find((o) => o.state === 'queued')
+        if (!item) return
+        if ((await sendOne(item)) === 'stop') {
+          if (inFlight === null && outbox.value.includes(item)) scheduleRetry()
+          return
+        }
+      }
+    } finally {
+      running = false
+    }
+  }
+
+  /** 排一条，立刻交出去。返回它的 `client_id`（也是这次发送的 `request_id`）。 */
   function enqueue(message: { content: string; replyTo?: string; atts?: ChatAttachment[] }): string {
-    const clientId = `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const clientId = crypto.randomUUID()
     outbox.value.push({ clientId, ...message, state: 'queued' })
-    flush()
+    void flush()
     return clientId
   }
 
-  /** The echo came home — this local copy has a real block now. */
+  /** 落库的那一块到了（socket 上的回声，或重连后读回的历史）：本地这条有真身了。 */
   function settle(block: Block): boolean {
     const clientId = (block.meta as Record<string, unknown> | null)?.client_id
     if (typeof clientId !== 'string') return false
     const i = outbox.value.findIndex((o) => o.clientId === clientId)
     if (i < 0) return false
-    clearEchoTimer(clientId)
     outbox.value.splice(i, 1)
     return true
-  }
-
-  /**
-   * 服务端明确拒了一条。返回它认不认得这个 `client_id`——不认得的话那句话是说给
-   * 整个房间听的，该上横幅而不是钉在某一行上。
-   */
-  function fail(clientId: string, message: string): boolean {
-    const item = outbox.value.find((o) => o.clientId === clientId)
-    if (!item) return false
-    clearEchoTimer(clientId)
-    item.state = 'failed'
-    item.error = message
-    return true
-  }
-
-  /**
-   * 链路没了。正在等回声的那几条失去了通道——回到队列，而不是让它们的计时器
-   * 判定「没送到」。
-   */
-  function requeueSending() {
-    for (const item of outbox.value) {
-      if (item.state === 'sending') {
-        clearEchoTimer(item.clientId)
-        item.state = 'queued'
-      }
-    }
   }
 
   function retry(clientId: string) {
@@ -130,15 +140,15 @@ export function useOutbox(options: {
     if (!item) return
     item.state = 'queued'
     item.error = undefined
-    flush()
+    retryAttempt = 0
+    void flush()
   }
 
   function drop(clientId: string) {
-    clearEchoTimer(clientId)
     outbox.value = outbox.value.filter((o) => o.clientId !== clientId)
   }
 
-  onScopeDispose(cancelTimers)
+  onScopeDispose(pause)
 
-  return { outbox, enqueue, flush, settle, fail, requeueSending, retry, drop, cancelTimers }
+  return { outbox, enqueue, flush, settle, retry, drop, pause }
 }

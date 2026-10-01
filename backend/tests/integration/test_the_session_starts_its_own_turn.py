@@ -20,7 +20,12 @@ from sqlalchemy import select
 from app.domain.agent.models import AgentTurn
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url, post_project, room_agent_seat
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    room_agent_seat,
+)
 
 
 def _room(client) -> tuple[str, str]:
@@ -35,7 +40,7 @@ def _room(client) -> tuple[str, str]:
 def _one_ordinary_turn(client, topic_id: str) -> None:
     """一轮普通的、平台喂进去的轮次 —— 之后这个房间才有一块活着的屏幕。"""
     with client.websocket_connect(chat_ws_url(topic_id, "u")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 你好"})
+        post_message(client, topic_id, "u", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
@@ -188,7 +193,7 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
 
     def say(content: str) -> None:
         with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-            ws.send_json({"type": "message", "content": content})
+            post_message(client, room_id, "alice", {"content": content})
             while ws.receive_json()["type"] not in ("done", "error"):
                 pass
         _wait_work_idle()

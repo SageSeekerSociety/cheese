@@ -18,7 +18,12 @@ from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
-from tests.integration.conftest import chat_ws_url, post_project, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+    session_auth_headers,
+)
 
 
 def _project(client, name: str = "Agents") -> str:
@@ -492,7 +497,7 @@ def _turn(client, room: str, text: str) -> None:
     `assert None == 'sess-test-1'`。"""
     addressed = text if "<@" in text else f"@芝士 {text}"
     with client.websocket_connect(chat_ws_url(room, "u")) as ws:
-        ws.send_json({"type": "message", "content": addressed})
+        post_message(client, room, "u", {"content": addressed})
         landed = False
         while True:
             frame = ws.receive_json()

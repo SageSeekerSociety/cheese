@@ -112,7 +112,7 @@
    "from": "room",
    "to": "api",
    "y": 196,
-   "label": "发消息（client_id 去重）",
+   "label": "发消息（request_id 去重）",
    "variant": "emphasis"
   },
   {

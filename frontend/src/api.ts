@@ -3460,8 +3460,7 @@ export function acceptFeedbackProposal(
 export function chatWsUrl(topicId: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   // Browsers can't set an Authorization header on a WebSocket, so the session
-  // token rides as ?token= (the backend pins authorship from it, ignoring any
-  // per-message `author` the client sends).
+  // token rides as ?token=. The socket only carries what lands in the room.
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
   // BASE, not a hand-written '/api': the gateway strips exactly one '/api', so a
