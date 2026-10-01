@@ -29,7 +29,15 @@ it('maps a captured drag to natural pixels and cancels a drag when identity reti
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
-  expect(ui.emitted().select![0]).toEqual([{ x: 100, y: 100, width: 200, height: 100 }])
+  expect(ui.emitted().select![0]).toEqual([
+    {
+      region: { x: 100, y: 100, width: 200, height: 100 },
+      identity: 'v1',
+      src: '',
+      naturalWidth: 1000,
+      naturalHeight: 500,
+    },
+  ])
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 8, clientX: 60, clientY: 70 })
   await ui.rerender({ identity: 'v2' })
   await fireEvent.pointerUp(overlay, { pointerId: 8, clientX: 160, clientY: 120 })
@@ -43,6 +51,17 @@ it('offers viewport and visual-scale actions without fetching or replacing any c
   expect(ui.emitted().zoom![0]).toEqual([0.625])
   await fireEvent.click(ui.getByRole('button', { name: '适合视口' }))
   expect(ui.emitted().fit).toHaveLength(1)
+})
+it('rejects a drag when the image source changes before pointerup', async () => {
+  const image = imageFixture()
+  image.setAttribute('src', 'blob:first')
+  const ui = render(DesignRasterRegion, { props: { image, enabled: true, identity: 'v1' } })
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  overlay.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
+  image.setAttribute('src', 'blob:replacement')
+  await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
+  expect(ui.emitted().select).toBeUndefined()
 })
 
 describe('Design image fit in owning previews (DOM geometry doubles)', () => {
