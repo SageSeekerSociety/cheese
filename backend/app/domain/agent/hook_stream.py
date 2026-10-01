@@ -680,21 +680,34 @@ async def _note_retry(
         else str(event.attempt or "")
     )
     content = say("apiRetryAttempt", attempt=count) if count else say("apiRetry")
-    said = " ".join(
-        part
-        for part in (
-            event.error,
-            f"HTTP {event.status}" if event.status is not None else "",
+    # Claude Code files a failure it cannot classify as `unknown`, and with no
+    # HTTP status that means the request got no response at all. Shown as-is,
+    # "unknown" tells a reader nothing; say what it means instead.
+    if event.status is None and event.error in ("", "unknown"):
+        detail = (
+            say("apiRetryNoResponseWaited", seconds=round(event.no_response_ms / 1000))
+            if event.no_response_ms
+            else say("apiRetryNoResponse")
         )
-        if part
-    )
+        label = say("labelDetails")
+    else:
+        said = " ".join(
+            part
+            for part in (
+                event.error,
+                f"HTTP {event.status}" if event.status is not None else "",
+            )
+            if part
+        )
+        detail = said or None
+        label = say("labelServiceWords") if said else None
     meta = {
         **notice(
             EVENT_API_RETRY,
             severity=SEVERITY_WARN,
             who=WHO_PLATFORM,
-            detail=said or None,
-            detail_label=say("labelServiceWords") if said else None,
+            detail=detail,
+            detail_label=label,
         ),
         "attempt": event.attempt,
         "max_attempts": event.max_attempts,
