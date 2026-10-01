@@ -54,7 +54,8 @@ FONTS = {
 }
 
 BRAND = '#FFA20F'                                # the mark's one colour
-TILE = '#1F1B16'                                 # app icon ground
+TILE = '#FFFFFF'                                 # app icon ground: white, showing through the mouse and holes
+EDGE = '#E5E3DF'                                 # hairline round a tile that sits on a page or a dock
 INK = {'light': '#191A1C', 'dark': '#F3F4F6'}    # 与 --ink 两套主题一致
 
 # 图形标：三个孔从鼻尖前面起，一个比一个大，间距也逐级放大，圆心都在一条弧上
@@ -494,14 +495,25 @@ def rgb(hexa):
     return tuple(int(hexa[i:i + 2], 16) for i in (1, 3, 5))
 
 
-def icon_png(logo, size, mark_frac, corner=0.0):
-    """The mark on the dark tile; corner > 0 rounds the tile and leaves the rest clear."""
-    scale = size * mark_frac / 1000
-    off = size * (1 - mark_frac) / 2
+def icon_png(logo, size, mark_frac, corner=0.0, inset=0.0):
+    """The mark on the white tile.
+
+    corner > 0 rounds the tile, leaves the rest clear and draws a hairline edge:
+    those tiles sit on a page or a dock, where white on white would vanish.
+    inset > 0 leaves a clear margin round the tile, as a macOS app icon has."""
+    t0 = size * inset
+    ts = size - 2 * t0
+    scale = ts * mark_frac / 1000
+    off = t0 + ts * (1 - mark_frac) / 2
     img = Image.new('RGBA', (size, size), rgb(TILE) + (255,))
     img.paste(Image.new('RGBA', (size, size), rgb(BRAND) + (255,)), (0, 0), coverage(logo, size, scale, off, off))
     if corner:
-        img.putalpha(coverage(rrect(0, 0, size, size, size * corner), size, 1, 0, 0))
+        r = ts * corner
+        w = max(1.0, size / 256)
+        outer = rrect(t0, t0, t0 + ts, t0 + ts, r)
+        ring = D(outer, rrect(t0 + w, t0 + w, t0 + ts - w, t0 + ts - w, r - w))
+        img.paste(Image.new('RGBA', (size, size), rgb(EDGE) + (255,)), (0, 0), coverage(ring, size, 1, 0, 0))
+        img.putalpha(coverage(outer, size, 1, 0, 0))
     return img
 
 
@@ -518,7 +530,7 @@ def build():
         out[os.path.join(ASSETS, 'brand', f'wordmark-{key}.svg')] = svg(w, h, f'<path fill="currentColor" d="{d_of(p)}"/>', label)
     for name, text in lockups(logo, zh, en).items():
         out[os.path.join(ASSETS, 'brand', name)] = text
-    tile = f'<rect width="1000" height="1000" rx="220" fill="{TILE}"/>'
+    tile = f'<rect x="12" y="12" width="976" height="976" rx="214" fill="{TILE}" stroke="{EDGE}" stroke-width="24"/>'
     out[os.path.join(PUBLIC, 'favicon.svg')] = svg(1000, 1000, tile + placed(logo, 150, 150, 0.7, BRAND))
     for path, text in out.items():
         open(path, 'w').write(text)
@@ -534,18 +546,21 @@ def build():
         print(os.path.relpath(path, ROOT))
 
     pngs = {
-        # full-bleed tiles: the platform draws its own mask. The desktop app's
-        # icons are made from pwa-512x512.png by `pnpm --dir desktop icons`.
-        os.path.join(PUBLIC, 'pwa-192x192.png'): (192, 0.70, 0),
-        os.path.join(PUBLIC, 'pwa-512x512.png'): (512, 0.70, 0),
-        os.path.join(PUBLIC, 'apple-touch-icon-180x180.png'): (180, 0.70, 0),
+        # full-bleed tiles: the platform draws its own mask
+        os.path.join(PUBLIC, 'pwa-192x192.png'): (192, 0.70, 0, 0),
+        os.path.join(PUBLIC, 'pwa-512x512.png'): (512, 0.70, 0, 0),
+        os.path.join(PUBLIC, 'apple-touch-icon-180x180.png'): (180, 0.70, 0, 0),
         # maskable: the mark stays inside the 80% safe circle
-        os.path.join(PUBLIC, 'pwa-maskable-512x512.png'): (512, 0.50, 0),
+        os.path.join(PUBLIC, 'pwa-maskable-512x512.png'): (512, 0.50, 0, 0),
         # shown on a page, so it carries its own rounded corners
-        os.path.join(ASSETS, 'app-icon.png'): (256, 0.70, 0.225),
+        os.path.join(ASSETS, 'app-icon.png'): (256, 0.70, 0.225, 0),
+        # the desktop app: macOS draws no mask, so the icon is Apple's template
+        # shape itself, an 824 tile with rounded corners in a clear 1024 square.
+        # Every desktop icon is made from it by `pnpm --dir desktop icons`.
+        os.path.join(ROOT, 'desktop', 'icon-source.png'): (1024, 0.70, 185 / 824, 100 / 1024),
     }
-    for path, (size, frac, corner) in pngs.items():
-        img = icon_png(logo, size, frac, corner)
+    for path, (size, frac, corner, inset) in pngs.items():
+        img = icon_png(logo, size, frac, corner, inset)
         (img if corner else img.convert('RGB')).save(path, optimize=True)
         print(os.path.relpath(path, ROOT))
     icon_png(logo, 256, 0.70, 0.22).save(os.path.join(PUBLIC, 'favicon.ico'), sizes=[(16, 16), (32, 32), (48, 48)])

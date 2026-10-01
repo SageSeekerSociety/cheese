@@ -79,11 +79,11 @@ Nunito 781，按字体自带的字偶间距排，再整体收紧 10/1000 em。�
 
 | 用途 | 文件 | 画法 |
 |---|---|---|
-| 网站图标 | [`favicon.svg`](../frontend/public/favicon.svg)、`favicon.ico` | 深色圆角方块 `#1F1B16`，图形标占七成 |
-| PWA、iOS 主屏 | `pwa-192x192.png`、`pwa-512x512.png`、`apple-touch-icon-180x180.png` | 深色满底，图形标占七成；圆角由系统裁 |
+| 网站图标 | [`favicon.svg`](../frontend/public/favicon.svg)、`favicon.ico` | 白色圆角方块，一圈 `#E5E3DF` 细边，图形标占七成 |
+| PWA、iOS 主屏 | `pwa-192x192.png`、`pwa-512x512.png`、`apple-touch-icon-180x180.png` | 白色满底，图形标占七成；圆角由系统裁 |
 | PWA 可裁切图标 | `pwa-maskable-512x512.png` | 同上，图形标只占五成，留在系统的安全圆里 |
-| 下载页 | [`app-icon.png`](../frontend/src/assets/app-icon.png) | 深色圆角方块，自带圆角 |
-| 桌面客户端 | `desktop/src-tauri/icons/` | 由 `pwa-512x512.png` 生成，见 §8 |
+| 下载页 | [`app-icon.png`](../frontend/src/assets/app-icon.png) | 白色圆角方块，自带圆角和细边 |
+| 桌面客户端 | `desktop/src-tauri/icons/` | 由 `desktop/icon-source.png` 生成，见 §8。macOS 不替应用裁形状，所以源图就是苹果模板的形状：1024 的透明方块里居中一块 824 的白色圆角方块，带细边 |
 | 登录页动效 | `brand-scene/logo-*.png` | 彩色贴图是图形标本身；金属和热成像两张是 Paper Shaders 处理过的，见 §8 |
 
 **首页方块**是侧栏首页那一格（悬停和选中时）、主页面在桌面客户端里的启动画面、桌面客户端的启动页：品牌色平涂的方块，上面压深色 `#23242a` 的图形标，两个主题下一样。两张启动页必须像素一致，里面的图形标都由脚本写入。
@@ -115,7 +115,7 @@ uv run --with fonttools --with skia-pathops --with uharfbuzz \
 之后再跑两步：
 
 ```bash
-# 桌面客户端图标：从 pwa-512x512.png 生成；tauri 还会写出各平台的一堆尺寸，
+# 桌面客户端图标：从 desktop/icon-source.png 生成；tauri 还会写出各平台的一堆尺寸，
 # 仓库只留 tauri.conf.json 列出的六个，其余用 git clean 删掉
 pnpm --dir desktop icons
 git clean -fdq -- desktop/src-tauri/icons
