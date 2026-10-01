@@ -1,11 +1,9 @@
-"""知道一个 id 不等于持有凭据：这四条路由过去只要 id 就办事。
+"""知道一个 id 不等于持有凭据：这三条路由过去只要 id 就办事。
 
 一次在飞分支之外的审计扫出这一族。调用者是 ``off_the_street`` 造出来的 ——
 同一套 integration fixture 的 ``client``，把 ``X-Cheese-Token`` 摘掉，于是真的是
 「什么凭据都没有」。改动前，这些请求各自拿到了 200：
 
-    DELETE /milestones/{id}        硬删任意项目的里程碑（模型没有软删字段，
-                                   repository 的 delete 就是 session.delete）
     POST  /blocks/{id}/reactions   以任意 handle 给任意一条消息加/删表情
     POST  /blocks/{id}/upgrade     在别人的房间里落一张卡，created_by 自己填谁是谁
     GET   /spaces/{id}/dashboard   这个 Space 下每个队伍的项目卡（space id 是小整数）
@@ -15,15 +13,15 @@
 
 口径（与 `test_project_reads_need_membership.py` 同一条）：要补的是「没有凭据也能
 进来」。沙箱 token 是这个部署里可信的开发凭据，``ActorResolver`` 放行它
-（`app.api.auth`），所以下面有两半：摘掉头就进不来，而 `test_milestones.py` /
-`test_project_tree.py` / `test_dashboard.py` 那些带着它的用例照旧是绿的。
+（`app.api.auth`），所以下面有两半：摘掉头就进不来，而 `test_project_tree.py` /
+`test_dashboard.py` 那些带着它的用例照旧是绿的。
 
 「谁能冒名」是后来补上的另一半：表情和升级过去把请求体里的 ``author`` /
 ``created_by`` 当成是谁在做这件事，于是一个登录的成员能以别人的名义点表情、能把
 升级出来的卡记到别人名下。现在这两栏不在请求体里了，人由凭据说 —— 文件末尾的几条
 钉住这一半。
 
-``upgrade`` 比另外三条多一层：它在**别人的房间**里造东西。所以它除了凭据，还要在
+``upgrade`` 比另外两条多一层：它在**别人的房间**里造东西。所以它除了凭据，还要在
 ``block.topic_id`` 那个房间里站得住 —— 这一层由最后的
 ``test_a_block_id_alone_does_not_dispatch_a_card`` 之外的正反两半一起钉住。
 """
@@ -92,20 +90,6 @@ def _board(client, owner: str = "alice") -> tuple[int, dict]:
         json={"name": "队伍A", "external_task_id": task_id, "owner_handle": owner},
     ).json()["data"]
     return space_id, project
-
-
-def test_a_milestone_id_alone_does_not_delete_it(client):
-    p = _project(client)
-    milestone = client.post(
-        f"/projects/{p['id']}/milestones", json={"title": "中期检查"}
-    ).json()["data"]
-
-    with off_the_street(client) as anon:
-        assert anon.delete(f"/milestones/{milestone['id']}").status_code == 401
-
-    # 门关上了，里程碑还在 —— 这条才是这半句的重点。
-    left = client.get(f"/projects/{p['id']}/milestones").json()["data"]
-    assert [m["id"] for m in left["data"]] == [milestone["id"]], left
 
 
 def test_a_block_id_alone_does_not_add_a_reaction(client):

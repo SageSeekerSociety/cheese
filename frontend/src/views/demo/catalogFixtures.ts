@@ -580,7 +580,7 @@ export const RAIL_ROOT_TOPIC: Topic = {
 export const RAIL_PAGES = [
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
   { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
-  { key: 'calendar', label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
+  { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
 ]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */

@@ -140,18 +140,17 @@ def test_default_is_todays_interface_verbatim() -> None:
     """
     default = CATALOG[DEFAULT_SHELL_NAME]
     assert default.home == "workspace-running"
-    # 侧栏那一面：资料库和名册是常驻那两格，日历默认收进项目名旁边那个 ⋯ 菜单。
+    # 侧栏那一面：资料库和名册是常驻那两格，例行和技能默认收进项目名旁边那个 ⋯ 菜单。
     # 看板不在里面 —— 它就是 home，项目名那一行点下去就到。名册回到侧栏是
     # 「退出项目」的可发现性：那颗按钮长在名册页上，名册收进 ⋯ 之后没人找得到
     # 怎么退出。un-hiding 就是壳的「开」，仍在四条拨盘之内。
     assert default.nav.project == (
-        "calendar",
         "project-library",
         "project-routines",
         "project-members",
         "project-skills",
     )
-    assert default.hidden == ("calendar", "project-routines", "project-skills")
+    assert default.hidden == ("project-routines", "project-skills")
     assert default.terms == {}
     assert default.nav.rail == ("home", "projects", "add")
     assert default.nav.tabs == ("home", "workspace", "inbox")
@@ -164,7 +163,6 @@ def test_every_shell_names_only_known_keys() -> None:
     # The project pages a 壳 may name — the route names of `workspaceRoutes.ts`.
     known_project = {
         "workspace-running",
-        "calendar",
         "project-library",
         "project-routines",
         "project-members",

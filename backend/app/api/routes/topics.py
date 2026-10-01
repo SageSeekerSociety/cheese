@@ -932,9 +932,9 @@ async def get_topic_overview(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """总览房间的自动区（#1889）：②~④，结构化，给文档面板正文下方那一栏。
+    """总览房间的自动区（#1889）：②③，结构化，给文档面板正文下方那一栏。
 
-    总览文档是四块：① 写在文档正文里，②~④ 由平台现拼。注入 agent 提示词的
+    总览文档是三块：① 写在文档正文里，②③ 由平台现拼。注入 agent 提示词的
     那一份是同一批数据的 markdown 排版（`topic/overview.py`），这里给的是能
     逐个点击的结构化条目。
 

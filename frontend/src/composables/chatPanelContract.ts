@@ -14,7 +14,7 @@ import type { MemberActivityLine } from '../lib/memberActivity'
 export interface ChatPanelEmit {
   // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
   (e: 'back'): void
-  // A cheese command changed a platform resource (doc/topics/milestone/...) —
+  // A cheese command changed a platform resource (doc/topics/...) —
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
@@ -44,7 +44,7 @@ export interface ChatPanelEmit {
   (e: 'mention-click', name: string): void
   // A <&path> file chip was clicked — the parent opens it in the 文件 drawer.
   (e: 'open-file', path: string, taskId?: string | null): void
-  // An action card's button (milestone → calendar, changes → diff tab…).
+  // An action card's button (doc → highlight the turn, changes → diff tab…).
   (e: 'open-resource', resource: string, turnId?: string): void
 }
 

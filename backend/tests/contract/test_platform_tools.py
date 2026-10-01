@@ -77,11 +77,6 @@ CALLS = {
         "POST",
         f"/topics/fixture/tasks/{TASK}/messages",
     ),
-    "cheese_milestone": (
-        {"title": "中期汇报"},
-        "POST",
-        "/projects/fixture-project/milestones",
-    ),
     "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
     "cheese_notify": (
         {"title": "看一眼"},

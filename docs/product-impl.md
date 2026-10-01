@@ -60,7 +60,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ## 2. 界面与行为
 
-顶栏（`frontend/src/App.vue`）：品牌 + 导航 Tab（工作台 / 项目总览 / 日历 / 机构看板）+ 项目切换 + 记一笔 + 通知铃 + 用户。
+顶栏（`frontend/src/App.vue`）：品牌 + 导航 Tab（工作台 / 项目总览 / 机构看板）+ 项目切换 + 记一笔 + 通知铃 + 用户。
 对标产品保真（spec §1）：工作台=Cursor/Replit，对话=飞书群聊，文档=飞书文档，总览/看板=Linear，个人主页=LinkedIn/GitHub，整体=Vuetify Material。设计语言克制：95% 中性灰 + 琥珀橙 `#F57F17` 只点主按钮/激活态/品牌。
 
 | 界面 | 组件 | 行为 |
@@ -71,8 +71,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/周报/记忆) + 成员(私聊从名册进)；右缘可拖拽调宽 |
 | 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定（一叠卡，一次摆一条）+ 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
 | 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Office 文档比的是正文（`domain/documents/text.py`），其余按字节 |
-| 日历 | `views/CalendarView.vue` | 里程碑倒排 |
-| 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |
+| 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/状态 |
 | 个人主页 | `views/ProfileView.vue` | `/users/:handle` 与 `/projects/:id/members/:handle` 两个入口同一页：头像/简介/团队 + 一年活动图（点一周筛话题）+ 项目 + 最近参与的话题；自己的页多「编辑资料」和芝士眼中的你（可删）；从项目进来多「在这个项目里」 |
 | 项目文档 | `views/ProjectDocsView.vue` | 章程/周报集/记忆；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |
 
@@ -103,7 +102,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
-- **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
+- **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、派活、发通知/决策请求、递验收卡、回流结论）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。
 - **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（`AgentRuntime.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
 
@@ -148,12 +147,6 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
 - **分级限流**：今天没有分级限流在起作用，没有通知因为超额被丢掉。反馈提案卡有自己的配额（`settings.feedback_proposals_per_topic_per_day`）。
 - **实现**：`ProjectNotificationService`（`backend/app/domain/notification/`，与人对人的通知同住 `notification` 一张表）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`，通知 id 是 bigint。前端 `components/NeedsYou.vue`。
-
-### 3.8 里程碑 / 日历  ✅ / 🟡
-
-- **行为**：芝士 `cheese_milestone` 钉关键节点 → 排进日历、冒泡到机构看板；**逾期里程碑自动转 `missed`**（读时惰性，`MilestoneRepository.mark_overdue`），日历/下个里程碑只显未来项。
-- **调度**：没有调度部件（结论 16）。总览房间里的芝士自己决定什么时候看；平台这边留下的只有定时任务那张清单（`backend/app/core/background.py`）。
-- **实现**：`MilestoneRepository`、接口 `GET /api/projects/{id}/milestones`、`/calendar`。
 
 ### 3.9 仪表盘（总览 / 看板 / 个人主页）  ✅ / 🟡
 
@@ -203,7 +196,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ## 5. 实现现状总览
 
-- ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)、反馈（中心/详情/我的反馈/管理端 + 芝士提案卡 + 指纹去重与每日配额）。
+- ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)、反馈（中心/详情/我的反馈/管理端 + 芝士提案卡 + 指纹去重与每日配额）。
 - ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = git worktree（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 走 git。activity/summary/私聊 全路径统一走沙箱+cheese。
 - 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、记忆自动提取、总览风险板块、改文档对话事件、资源包发放。
 - ⛔ **依赖外部基础设施**：会议 ASR。
@@ -223,7 +216,6 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 验收   POST /api/topics/{id}/accept-card · GET 同路径 · POST /api/accept-cards/{id}/{accept,reject,reassign,revoke}
 通知   GET /api/projects/{id}/{notifications,inbox} · POST /api/projects/{id}/notifications
        POST /api/notifications/{id}/{read,feedback,resolve}
-里程碑 GET/POST /api/projects/{id}/milestones · GET /{id}/calendar · PUT/DELETE /api/milestones/{id}
 成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · DELETE .../membership（自己退出） · GET .../{handle}/summary
 机构   POST/GET /api/spaces · GET /spaces/{id}/dashboard · POST/GET /api/spaces/{id}/templates
 任务   POST/GET /api/templates/{id}/tasks · POST/GET/DELETE /api/projects/{id}/tasks[/{task_id}]

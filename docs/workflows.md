@@ -75,7 +75,7 @@ PYTHONPATH=. uv run python scripts/smoke_tools.py    # 芝士真的调工具改�
 ```
 
 ### 截图工具
-`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/日历/看板/个人主页/章程/决策/私聊）。
+`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/看板/个人主页/章程/决策/私聊）。
 
 ```bash
 # 服务要先起好 + seed

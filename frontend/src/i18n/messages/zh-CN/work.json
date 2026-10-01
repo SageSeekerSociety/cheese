@@ -318,13 +318,6 @@
     },
     "overviewAuto": {
       "badge": "平台自动生成，不可编辑",
-      "milestone": {
-        "upcoming": "进行中",
-        "done": "已完成",
-        "missed": "已逾期",
-        "due": "截止 {date}",
-        "noDue": "日期待定"
-      },
       "failed": "无法加载这部分内容"
     },
     "accept": {
@@ -412,7 +405,6 @@
         "doc": "查看文档",
         "split": "查看任务",
         "undo": "撤销",
-        "milestone": "查看日历",
         "accept": "审阅"
       },
       "filesChanged": "改动了 {n} 个文件",

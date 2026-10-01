@@ -39,7 +39,6 @@ import type {
   MarketNodes,
   MarketPools,
   MemberSummary,
-  MilestoneFull,
   OAuthConnectionInfo,
   OverviewAuto,
   PrChecks,
@@ -1831,7 +1830,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -2336,18 +2335,6 @@ export function sayOnRoomTask(roomId: string, taskId: string, content: string, a
     method: 'POST',
     body: JSON.stringify({ content, author }),
   })
-}
-
-// ---- 日历 / 里程碑 (§7.2) ----
-
-// Upcoming milestones (already sorted by due date).
-export function getCalendar(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/calendar`)
-}
-
-// All milestones (any status), for showing done ones faded.
-export function listMilestones(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
 }
 
 // ---- 反馈 (feedback) ----

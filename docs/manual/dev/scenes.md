@@ -126,7 +126,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | 页面 | 档 | 卡在哪 |
 |---|---|---|
 | `views/404.vue` | A | 只吃 props 和事件 |
-| `views/CalendarView.vue` | C | 直接取数（`api.ts`） |
 | `views/ConnectView.vue` | D | 读路由；直接取数（`api.ts`） |
 | `views/InboxView.vue` | C | 直接取数（`api.ts`） |
 | `views/MarketView.vue` | C | 直接取数（`api.ts`） |

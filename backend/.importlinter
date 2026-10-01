@@ -304,7 +304,6 @@ ignore_imports =
     app.domain.mentions -> app.domain.membership.roster
     app.domain.mentions -> app.domain.topic.models
     app.domain.mentions -> app.domain.topic.repositories
-    app.domain.milestone.services -> app.domain.project.repositories
     app.domain.notification.legacy_queue -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.notification.maintenance

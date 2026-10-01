@@ -110,18 +110,6 @@ export const workspaceRoutes: RouteRecordRaw = {
       redirect: (to) => ({ name: 'workspace-running', params: { projectId: to.params.projectId } }),
     },
     {
-      name: 'calendar',
-      path: 'calendar',
-      component: () => import('@/views/CalendarView.vue'),
-      props: true,
-      meta: {
-        titleKey: 'navigation.project.calendar',
-        hideTabs: true,
-        backTo: 'workspace-project',
-        palette: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
-      },
-    },
-    {
       // 资料库：用户给这个项目的文件。项目级，所以它在项目这个框里，不在某个话题
       // 下面——引用它的那条消息可能来自任何一个房间。
       name: 'project-library',
