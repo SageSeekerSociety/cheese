@@ -22,7 +22,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.core.ownership import Ownership
+from app.core.ownership import OWNER_LOCK, Ownership
 from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 from app.domain.agent.runtime import (
     AgentWorkRunner,
@@ -72,17 +72,39 @@ async def test_one_backend_owns_the_running_work_and_the_next_takes_it_over(
 @pytest.mark.anyio
 async def test_a_backend_that_dies_hands_the_work_over_too(db_factory):
     """No goodbye: its database connection is simply gone, as when the
-    container is killed."""
+    container is killed.
+
+    The kill names its one victim: the session holding the owner lock in THIS
+    test's database. The test cluster is shared — every xdist worker has its
+    own database on it, and other tests hold advisory locks of their own (a
+    room-file write takes ``pg_advisory_xact_lock``) — so a kill that matched
+    any advisory lock on the server ended other workers' connections mid-test.
+    A bigint advisory key shows in ``pg_locks`` as its high half in ``classid``,
+    its low half in ``objid``, and ``objsubid = 1``."""
     dying, incoming = Ownership(_url(db_factory)), Ownership(_url(db_factory))
     try:
         assert await dying.try_acquire()
         async with db_factory() as session:
-            await session.execute(
-                text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_locks"
-                    " WHERE locktype = 'advisory' AND pid <> pg_backend_pid()"
+            killed = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT pg_terminate_backend(l.pid) FROM pg_locks l"
+                            " JOIN pg_database d ON d.oid = l.database"
+                            " WHERE d.datname = current_database()"
+                            " AND l.locktype = 'advisory' AND l.granted"
+                            " AND l.classid = (CAST(:key AS bigint) >> 32)::oid"
+                            " AND l.objid = (CAST(:key AS bigint) & 4294967295)::oid"
+                            " AND l.objsubid = 1"
+                            " AND l.pid <> pg_backend_pid()"
+                        ),
+                        {"key": OWNER_LOCK},
+                    )
                 )
+                .scalars()
+                .all()
             )
+        assert killed == [True], killed
         await asyncio.wait_for(incoming.acquire(), timeout=5)
         assert not await dying.still_held()
     finally:
