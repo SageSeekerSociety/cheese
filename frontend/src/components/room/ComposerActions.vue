@@ -29,7 +29,7 @@ const props = defineProps<{
   summonReady: boolean
   agentName: string
   /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
-  canRemind: boolean
+  canRemind?: boolean
 }>()
 
 const emit = defineEmits<{
