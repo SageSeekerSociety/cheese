@@ -10,8 +10,8 @@ const context = { topicId: 'room', path: 'deck.pptx', source: 'committed' as con
 vi.mock('./preview/PreviewSlides.vue', () => ({
   default: {
     props: ['data', 'context'],
-    emits: ['quote', 'pageContext', 'download'],
-    template: `<div data-testid="slides"><button @click="$emit('quote', {text: '${'q'.repeat(250)}', page: 2})">quote</button><button @click="$emit('pageContext', {text: '${'Whole page original PDF text '.repeat(30)}', page: 2, scope: 'page', context})">page</button><button @click="$emit('download')">original</button></div>`,
+    emits: ['quote', 'pageContext'],
+    template: `<div data-testid="slides"><button @click="$emit('quote', {text: '${'q'.repeat(250)}', page: 2})">quote</button><button @click="$emit('pageContext', {text: '${'Whole page original PDF text '.repeat(30)}', page: 2, scope: 'page', context})">page</button></div>`,
   },
 }))
 vi.mock('./preview/PreviewPages.vue', () => ({ default: { template: '<div data-testid="pages" />' } }))
@@ -83,7 +83,7 @@ it('mounts the slides branch and keeps quote normalization capped at 200 charact
   const message = payload[0]
   expect(message).toContain('q'.repeat(200))
   expect(message).not.toContain('q'.repeat(201))
-  await fireEvent.click(ui.getByText('original'))
+  await fireEvent.click(ui.getByRole('button', { name: '下载', exact: true }))
   expect(ui.emitted().download).toHaveLength(1)
 })
 it('sends whole-page PDF context with complete text and the verified file identity', async () => {
