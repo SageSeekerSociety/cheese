@@ -131,7 +131,9 @@ def test_replies_include_parent_reactions_and_nested_reply_links(client):
     )
     for block_id in (parent, child):
         response = client.post(
-            f"/blocks/{block_id}/reactions", json={"emoji": "👍", "author": "alice"}
+            f"/blocks/{block_id}/reactions",
+            json={"emoji": "👍"},
+            headers=session_auth_headers("alice"),
         )
         assert response.status_code == 200, response.text
     data = _history(client, room, reply_to=str(parent))
@@ -278,7 +280,11 @@ def test_the_replies_tool_reads_through_the_real_route(client):
             },
         ],
     )
-    client.post(f"/blocks/{child}/reactions", json={"emoji": "👍", "author": "alice"})
+    client.post(
+        f"/blocks/{child}/reactions",
+        json={"emoji": "👍"},
+        headers=session_auth_headers("alice"),
+    )
 
     class Host:
         """The session host, with this app as its backend."""

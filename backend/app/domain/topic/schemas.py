@@ -98,7 +98,6 @@ class TopicOut(BaseModel):
 
 
 class UpgradeBlockIn(BaseModel):
-    created_by: str | None = None
     reviewer_handle: str | None = Field(default=None, max_length=64)
 
 

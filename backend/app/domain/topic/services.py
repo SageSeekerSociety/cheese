@@ -919,11 +919,10 @@ class TopicService:
             upgraded_from_block_id=block.id,
         )
         # Same fallback ladder as create()/dispatch_task — 升级 is usually the
-        # 分身's own suggestion, and this route does not resolve an actor at all
-        # (it trusts body.created_by, which the web UI leaves empty when its
-        # session token is missing). Passing that straight to seed() — which drops
-        # None and every agent handle — was the last path still minting ownerless
-        # rooms after create()/dispatch were fixed.
+        # 分身's own suggestion, and ``created_by`` is None whenever the caller is
+        # not a verified person (the route passes only an authenticated actor's
+        # handle). Passing that straight to seed() — which drops None and every
+        # agent handle — would mint an ownerless room.
         await self._members.seed(
             new_room.id,
             agent_handle=await self._starting_agent_handle(new_room),

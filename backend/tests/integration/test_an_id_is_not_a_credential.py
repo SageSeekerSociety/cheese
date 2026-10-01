@@ -14,11 +14,14 @@
 它回 401 —— 所以这些 200 不是「摘法把整条请求弄坏了」，是门真的不在。
 
 口径（与 `test_project_reads_need_membership.py` 同一条）：要补的是「没有凭据也能
-进来」，不是「谁能冒名」。沙箱 token 是这个部署里可信的开发凭据，``ActorResolver``
-放行它（`app.api.auth`），所以下面有两半：摘掉头就进不来，而 `test_reactions.py` /
-`test_milestones.py` / `test_project_tree.py` / `test_dashboard.py` 那些带着它的用例
-照旧是绿的。``body.author`` / ``body.created_by`` 仍然是请求体说了算 —— 那件事是
-另一个产品口径，这次不动。
+进来」。沙箱 token 是这个部署里可信的开发凭据，``ActorResolver`` 放行它
+（`app.api.auth`），所以下面有两半：摘掉头就进不来，而 `test_milestones.py` /
+`test_project_tree.py` / `test_dashboard.py` 那些带着它的用例照旧是绿的。
+
+「谁能冒名」是后来补上的另一半：表情和升级过去把请求体里的 ``author`` /
+``created_by`` 当成是谁在做这件事，于是一个登录的成员能以别人的名义点表情、能把
+升级出来的卡记到别人名下。现在这两栏不在请求体里了，人由凭据说 —— 文件末尾的几条
+钉住这一半。
 
 ``upgrade`` 比另外三条多一层：它在**别人的房间**里造东西。所以它除了凭据，还要在
 ``block.topic_id`` 那个房间里站得住 —— 这一层由最后的
@@ -36,7 +39,11 @@ from tests.conftest import (
     seed_user,
     wait_work_idle,
 )
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_project,
+    session_auth_headers,
+)
 from tests.integration.test_project_reads_need_membership import off_the_street
 
 
@@ -164,3 +171,86 @@ def test_the_board_opens_for_the_projects_it_lists_and_nobody_else(client):
         f"/spaces/{space_id}/dashboard", headers=session_auth_headers("mallory")
     )
     assert r.status_code == 403, r.text
+
+
+# --- 请求体里写的名字不是凭据 ------------------------------------------------------
+#
+# 下面的调用者都是真登录的成员（会话 token），请求体里却写着另一个成员的名字。
+# 改动前请求体赢：表情记到 bob 头上，升级出来的卡归 bob。
+
+
+def _team(client) -> dict:
+    """``owner`` 的项目，alice 和 bob 都在它的团队里 —— 两个都够得着根房间。"""
+    p = _project(client, owner="owner")
+    for member in ("alice", "bob"):
+        join_project_team(client, p["id"], member)
+    return p
+
+
+def test_a_member_who_names_someone_else_upgrades_a_card_as_themselves(client):
+    p = _team(client)
+    block = _insert_block(client, p["id"], p["root_topic_id"])
+
+    r = client.post(
+        f"/blocks/{block}/upgrade",
+        json={"created_by": "bob", "reviewer_handle": "owner"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    room = f"/topics/{p['root_topic_id']}"
+    cards = client.get(f"{room}/tasks").json()["data"]["data"]
+    assert [(c["id"], c["owner_handle"]) for c in cards] == [
+        (r.json()["data"]["id"], "alice")
+    ]
+
+
+def test_a_member_who_names_someone_else_upgrades_a_room_as_themselves(client):
+    """私聊里的一条升级出来的是一个房间：房间的主人同样是升级的那个人。"""
+    p = _team(client)
+    dm = client.get(
+        f"/projects/{p['id']}/private-chat",
+        params={"user_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert dm.status_code == 200, dm.text
+    block = _insert_block(client, p["id"], dm.json()["data"]["id"])
+
+    r = client.post(
+        f"/blocks/{block}/upgrade",
+        json={"created_by": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    roster = client.get(f"/topics/{r.json()['data']['id']}/members").json()["data"]
+    owners = [m["member_handle"] for m in roster["data"] if m["role"] == "owner"]
+    assert owners == ["alice"]
+
+
+def test_a_member_who_names_someone_else_reacts_as_themselves(client):
+    p = _team(client)
+    block = _insert_block(client, p["id"], p["root_topic_id"])
+
+    r = client.post(
+        f"/blocks/{block}/reactions",
+        json={"emoji": "👍", "author": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["reactions"] == [
+        {"emoji": "👍", "count": 1, "authors": ["alice"]}
+    ]
+
+
+def test_the_dev_credential_alone_names_nobody_to_react_as(client):
+    """沙箱 token 开得了门，但它不是任何人：没有人可以把表情记在他名下。"""
+    p = _team(client)
+    block = _insert_block(client, p["id"], p["root_topic_id"])
+
+    r = client.post(f"/blocks/{block}/reactions", json={"emoji": "👍"})
+    assert r.status_code == 401, r.text
+    blocks = client.get(f"/topics/{p['root_topic_id']}/blocks").json()["data"]["data"]
+    assert next(b for b in blocks if b["id"] == block)["reactions"] == []

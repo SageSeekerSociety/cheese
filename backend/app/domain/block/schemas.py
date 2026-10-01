@@ -17,10 +17,9 @@ class ReactionOut(BaseModel):
 
 
 class ReactionToggleIn(BaseModel):
-    """POST /blocks/{id}/reactions — Slack semantics: toggles (emoji, author)."""
+    """POST /blocks/{id}/reactions — Slack semantics: toggles (emoji, caller)."""
 
     emoji: str = Field(min_length=1, max_length=32)
-    author: str = Field(min_length=1, max_length=128)
 
 
 class OptionAnswerIn(BaseModel):

@@ -890,11 +890,11 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
 /** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
- *  私聊里的变成一个新房间（回来的是 Topic）。 */
-export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic | RoomTask> {
+ *  私聊里的变成一个新房间（回来的是 Topic）。升级的人由会话认，不由请求体说。 */
+export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
   return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
-    body: JSON.stringify({ created_by: createdBy }),
+    body: JSON.stringify({}),
   })
 }
 
@@ -1329,17 +1329,17 @@ export function listBlocks(
   return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
 }
 
-// Emoji reactions (Slack semantics): toggles (emoji, author) on a block and
-// returns the block's fresh aggregate. Other clients get the same aggregate
-// pushed as a `reaction` WS frame on the topic channel.
+// Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and
+// returns the block's fresh aggregate. The caller is whoever the session names.
+// Other clients get the same aggregate pushed as a `reaction` WS frame on the
+// topic channel.
 export function toggleReaction(
   blockId: string,
-  emoji: string,
-  author: string
+  emoji: string
 ): Promise<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }> {
   return request<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }>(
     `/blocks/${encodeURIComponent(blockId)}/reactions`,
-    { method: 'POST', body: JSON.stringify({ emoji, author }) }
+    { method: 'POST', body: JSON.stringify({ emoji }) }
   )
 }
 

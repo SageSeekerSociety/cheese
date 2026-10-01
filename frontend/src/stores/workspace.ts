@@ -515,7 +515,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
    *  房间。调用方要据此决定去哪儿——钻进那张卡，还是跳进那个房间。 */
   async function upgradeMessage(messageId: string): Promise<{ kind: 'card' | 'room'; id: string } | null> {
     try {
-      const made = await upgradeBlock(messageId, myHandle())
+      const made = await upgradeBlock(messageId)
       await refreshTopics()
       // 卡带着「我挂在哪个房间」，房间没有这个问题——这就是分辨它们的那一位。
       const kind = 'room_id' in made ? 'card' : 'room'

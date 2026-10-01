@@ -120,7 +120,7 @@ def test_the_agent_reacts_to_a_message_in_its_room(client, room):
     assert asked.status_code == 200, asked.text
     block = asked.json()["data"]["id"]
 
-    agent.call("POST", f"/blocks/{block}/reactions", {"emoji": "👍", "author": seat})
+    agent.call("POST", f"/blocks/{block}/reactions", {"emoji": "👍"})
 
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     reactions = next(b for b in blocks if b["id"] == block)["reactions"]
