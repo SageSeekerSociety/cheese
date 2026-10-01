@@ -1,0 +1,5 @@
+
+> frontend@0.0.0 lint:i18n
+> node scripts/i18n-cjk-ratchet.mjs
+
+total: 125 line(s) of hardcoded Chinese, baseline allows 125

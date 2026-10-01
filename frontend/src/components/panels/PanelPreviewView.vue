@@ -70,7 +70,7 @@ const props = withDefaults(
     docError: string
     docRendererMissing: boolean
   }>(),
-  { path: null }
+  { path: null, frames: undefined, displayedFrame: null, navigation: 'idle', navigationError: '' }
 )
 const emit = defineEmits<{
   (e: 'frame-load', id: number, event: Event): void
@@ -268,11 +268,17 @@ function sendLocator() {
     <div v-else-if="frames ? frames.length > 0 : previewUrl" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">
         <span class="text-medium-emphasis">{{ displayedFrame?.label || previewAppNote || previewFile?.path }}</span>
-        <span v-if="displayedFrame?.version" class="text-medium-emphasis ms-2">{{ displayedFrame.version }}</span>
-        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">{{
-          t('work.room.preview.runningApp')
-        }}</v-chip>
-        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
+        <span v-if="displayedFrame?.version" class="text-medium-emphasis ms-2">{{
+          t('work.room.preview.readVersion', { version: displayedFrame.version })
+        }}</span>
+        <v-chip
+          v-if="displayedFrame ? displayedFrame.live && !navigationError : previewAppNote"
+          size="x-small"
+          variant="tonal"
+          class="ms-2"
+          >{{ t('work.room.preview.runningApp') }}</v-chip
+        >
+        <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ displayedFrame?.mime || previewMime }}</v-chip>
         <!-- 指定了文件的那一格：它不跟着当前预览走，所以顶栏那些动作（发布、新标签
              页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
         <template v-if="path">
@@ -300,14 +306,12 @@ function sendLocator() {
         role="status"
         class="px-3 py-2 text-caption"
       >
-        {{ navigation === 'authorizing' ? '正在获取预览授权…' : '正在等待页面导航加载；尚未确认应用就绪。' }}
+        {{ t(navigation === 'authorizing' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
       </div>
       <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
         {{ navigationError || previewError || previewReadError }}
-        <span v-if="displayedFrame"
-          >仍显示{{ displayedFrame.live ? '上次加载的实时页面' : '上次加载的旧版页面' }}；不是固定资源快照。</span
-        >
-        <v-btn size="small" variant="text" @click="emit('refresh')">重试当前目标</v-btn>
+        <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
+        <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
       </div>
       <v-btn v-if="path" size="small" variant="text" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
         t('work.room.preview.refresh')
@@ -343,7 +347,7 @@ function sendLocator() {
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
       <div>{{ t('work.room.preview.loadFailed') }}</div>
       <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
-      <v-btn size="small" variant="text" @click="emit('refresh')">重试当前目标</v-btn>
+      <v-btn size="small" variant="text" @click="emit('refresh')">{{ t('work.room.preview.retryTarget') }}</v-btn>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>

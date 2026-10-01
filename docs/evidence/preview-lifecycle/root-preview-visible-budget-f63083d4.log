@@ -1,0 +1,33 @@
+
+ RUN  v2.1.9 D:/0_Study/rep/cheese/.worktrees/preview-lifecycle-review-20261001/frontend
+
+Browserslist: browsers data (caniuse-lite) is 15 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ ❯ src/composables/usePreviewFrames.review.spec.ts (1 test | 1 failed) 13ms
+   × does not count a stalled hidden interval when the page becomes visible 13ms
+     → expected 'failed' to be 'navigating' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/composables/usePreviewFrames.review.spec.ts > does not count a stalled hidden interval when the page becomes visible
+AssertionError: expected 'failed' to be 'navigating' // Object.is equality
+
+Expected: "navigating"
+Received: "failed"
+
+ ❯ src/composables/usePreviewFrames.review.spec.ts:36:33
+     34|   document.dispatchEvent(new Event('visibilitychange'))
+     35|   tick!()
+     36|   expect(host.navigation.value).toBe('navigating')
+       |                                 ^
+     37|   expect(host.error.value).toBe('')
+     38| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  07:46:51
+   Duration  795ms (transform 100ms, setup 64ms, collect 320ms, tests 13ms, environment 148ms, prepare 89ms)
+

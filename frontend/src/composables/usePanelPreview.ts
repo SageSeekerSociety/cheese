@@ -68,7 +68,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   const downloadError = ref('')
   // 路上那一次属于哪一代：话题换了、或者又按了一次刷新，先前那一次的结果就不再算数
   // （它带的是上一份内容，落下来就是「刚切换的这一格显示着上一格的东西」）。
-  let loadedArtifact: string | null = null
   let generation = 0
 
   // ---- 这一份是什么 ----
@@ -87,7 +86,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   async function loadFile(path: string, opts: { silent?: boolean; reload?: boolean } = {}) {
     const tid = props.topicId
     if (!tid) return
-    if (opts.silent && !opts.reload && (loading.value || refreshing.value || host.navigation.value === 'failed')) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
     const current = ++generation
     if (opts.silent) refreshing.value = true
     else loading.value = true
@@ -104,7 +103,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewNamed.value = true
       previewNamedPath.value = path
       if (!isWebPage(path)) previewMime.value = ''
-      loadedArtifact = null
       previewFile.value = content
       if (isWebPage(path)) await mountWebPage(tid, path, content, current, opts)
     } catch (e) {
@@ -125,7 +123,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   //
   // 网页不由展示组件渲染：`readPreviewFile` 拿回来的只有那几行源码，挂上去读者看到的
   // 是标签本身。字节交给 iframe。
-  let webMountedIdentity: string | null = null
 
   async function mountWebPage(
     tid: string,
@@ -134,19 +131,15 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     current: number,
     opts: { silent?: boolean; reload?: boolean }
   ) {
-    // Only a known version proves unchanged bytes; path and topic also belong to
-    // the identity. Explicit reload always navigates, even at the same version.
-    const identity = content.version ? JSON.stringify([tid, path, content.version]) : null
-    if (
-      opts.silent &&
-      !opts.reload &&
-      previewUrl.value &&
-      identity &&
-      identity === webMountedIdentity &&
-      host.navigation.value !== 'failed'
-    )
-      return
-    host.authorize()
+    // This is metadata identity, not a server snapshot or entry precondition.
+    // Reuse only a loaded/pending context with a known version; POST is not load.
+    const identity = content.version ? JSON.stringify([tid, path, content.version]) : undefined
+    if (opts.silent && !opts.reload && identity) {
+      if (host.failedIdentity.value === identity) return
+      if (host.incoming.value?.identity === identity) return
+      if (host.displayed.value?.identity === identity && host.navigation.value !== 'failed') return
+    }
+    host.authorize(identity)
     let session: Awaited<ReturnType<typeof requestPreviewSession>>
     try {
       session = await requestPreviewSession(tid)
@@ -168,17 +161,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         mime: previewMime.value,
         version: content.version ?? null,
         live: false,
+        identity,
       },
       () => current === generation,
       roomFileDestination(path)
     )
-    if (current === generation) webMountedIdentity = identity
   }
 
   async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     if (props.path) return loadFile(props.path, opts)
     // Metadata polling must not cancel an explicit refresh's pending grant.
-    if (opts.silent && !opts.reload && (loading.value || refreshing.value || host.navigation.value === 'failed')) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
     const tid = props.topicId
     const pid = props.projectId
     if (!tid || !pid) return
@@ -207,19 +200,28 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         previewUrl.value = null
         previewFile.value = null
         previewAppNote.value = ''
-        loadedArtifact = null
         return
       }
-      const identity = `${art.kind ?? 'file'}:${art.artifact_id ?? art.path}:${art.url ?? ''}:${art.version ?? ''}`
+      const identity = JSON.stringify([
+        tid,
+        art.kind ?? 'file',
+        art.artifact_id ?? art.path,
+        art.url,
+        art.version ?? null,
+      ])
+      const known = art.kind === 'app' || !!art.version
       const unchanged =
-        identity === loadedArtifact && art.url === previewUrl.value && host.navigation.value !== 'failed'
+        known &&
+        (host.incoming.value?.identity === identity ||
+          (host.displayed.value?.identity === identity && host.navigation.value !== 'failed'))
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
       if (art.kind === 'app') {
         previewFile.value = null
-        if (!art.url) {
+        if (!art.url || !art.tunnel_up) {
           previewUrl.value = null
-          loadedArtifact = null
+          host.authorize(identity)
+          host.fail(t('tasks.preview.unavailable'))
           return
         }
       } else {
@@ -256,14 +258,14 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           return
         }
       }
-      if (unchanged && !opts.reload) return
+      if (!opts.reload && (unchanged || (opts.silent && host.failedIdentity.value === identity))) return
       if (!art.url) {
         previewUrl.value = null
         previewError.value = t('work.room.preview.urlUnavailable')
         return
       }
       try {
-        host.authorize()
+        host.authorize(identity)
         const session = await requestPreviewSession(tid)
         if (!stillCurrent()) return
         previewUrl.value = art.url
@@ -275,10 +277,10 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
             mime: art.mime || 'text/html',
             version: art.version ?? null,
             live: art.kind === 'app',
+            identity,
           },
           stillCurrent
         )
-        if (stillCurrent()) loadedArtifact = identity
       } catch (e) {
         if (!stillCurrent()) return
         if (!host.displayed.value) previewUrl.value = null
@@ -304,8 +306,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         refreshing.value = false
         if (!host.displayed.value) {
           previewUrl.value = null
-          loadedArtifact = null
-          webMountedIdentity = null
         }
       }
     },
@@ -322,8 +322,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewReadError.value = null
       previewNamed.value = false
       previewAppNote.value = ''
-      loadedArtifact = null
-      webMountedIdentity = null
       loading.value = false
       refreshing.value = false
       if (props.active) void load()

@@ -293,7 +293,7 @@ it('keeps the displayed v1 context and announces failed v2 authorization', async
   await rerender({ refreshTick: 1 })
   const alert = await findByRole('alert')
   expect(alert.textContent).toContain('授权被拒绝')
-  expect(alert.textContent).toContain('仍显示上次加载的旧版页面')
+  expect(alert.textContent).toContain('当前仍显示上次打开的页面')
   expect(container.querySelector('iframe')).toBe(oldFrame)
   expect(container.textContent).toContain('v1')
   expect(container.textContent).not.toContain('v2')
@@ -310,13 +310,86 @@ it('performs a true manual navigation for unchanged named HTML', async () => {
   expect(container.querySelector('iframe')).not.toBe(oldFrame)
 })
 
+// Independent reviewer regressions, reproduced through the owning component.
+it('retries canceled pending v2 after reactivating a pane displaying v1', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>one</p>', version: 'v1' })
+  const { container, rerender } = mountFile('site/index.html')
+  await waitFor(() => expect(container.textContent).toContain('v1'))
+  vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
+    submissions.push({ action: this.action, target: this.target, body: '' })
+  })
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>two</p>', version: 'v2' })
+  await rerender({ refreshTick: 1 })
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  const canceledFrame = container.querySelector(`iframe[name="${submissions[1].target}"]`)!
+  expect(container.querySelectorAll('iframe')).toHaveLength(2)
+  await rerender({ active: false })
+  expect(container.querySelectorAll('iframe')).toHaveLength(1)
+  opaqueNavigation(canceledFrame)
+  await rerender({ active: true })
+  await waitFor(() => expect(submissions).toHaveLength(3))
+  expect(container.textContent).toContain('v1')
+  opaqueNavigation(container.querySelector(`iframe[name="${submissions[2].target}"]`)!)
+  await waitFor(() => expect(container.textContent).toContain('v2'))
+})
+
+it('exposes app unavailability while retaining a previously displayed page', async () => {
+  const { container, rerender, findByRole } = mount()
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  const oldFrame = container.querySelector('iframe')
+  getPreview.mockResolvedValue({ ...artifact('app'), url: null, tunnel_up: false })
+  await rerender({ refreshTick: 1 })
+  const alert = await findByRole('alert')
+  expect(alert.textContent).toContain('应用预览暂不可用')
+  expect(alert.textContent).toContain('当前仍显示上次打开的页面')
+  expect(container.querySelector('iframe')).toBe(oldFrame)
+  expect(container.textContent).not.toContain('运行中的应用')
+})
+
+it.each(['app', 'file'] as const)(
+  'keeps discovering new %s metadata after a failed target without retrying it automatically',
+  async (kind) => {
+    getPreview.mockResolvedValue({ ...artifact(kind), version: 'v1' })
+    const { container, rerender, findByRole } = mount()
+    await waitFor(() => expect(submissions).toHaveLength(1))
+    getPreview.mockResolvedValue({ ...artifact(kind, 'artifact-b'), version: 'v2' })
+    requestPreviewSession.mockRejectedValueOnce(new Error('denied-v2'))
+    await rerender({ refreshTick: 1 })
+    expect((await findByRole('alert')).textContent).toContain('denied-v2')
+    await rerender({ refreshTick: 2 })
+    await waitFor(() => expect(getPreview).toHaveBeenCalledTimes(3))
+    expect(requestPreviewSession).toHaveBeenCalledTimes(2)
+    getPreview.mockResolvedValue({ ...artifact(kind, 'artifact-c'), version: 'v3' })
+    await rerender({ refreshTick: 3 })
+    await waitFor(() => expect(submissions).toHaveLength(2))
+    await waitFor(() => expect(container.textContent).toContain('v3'))
+  }
+)
+
+it('keeps reading named metadata after failure and navigates a new version', async () => {
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: 'one', version: 'v1' })
+  const { rerender, findByRole, container } = mountFile('site/index.html')
+  await waitFor(() => expect(submissions).toHaveLength(1))
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: 'two', version: 'v2' })
+  requestPreviewSession.mockRejectedValueOnce(new Error('denied-v2'))
+  await rerender({ refreshTick: 1 })
+  await findByRole('alert')
+  await rerender({ refreshTick: 2 })
+  await waitFor(() => expect(readPreviewFile).toHaveBeenCalledTimes(3))
+  expect(requestPreviewSession).toHaveBeenCalledTimes(2)
+  readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: 'three', version: 'v3' })
+  await rerender({ refreshTick: 3 })
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  await waitFor(() => expect(container.textContent).toContain('v3'))
+})
+
 it('waits for navigation load rather than treating a grant as readiness', async () => {
   vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
     submissions.push({ action: this.action, target: this.target, body: '' })
   })
   const { container, findByRole, queryByRole } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
-  expect((await findByRole('status')).textContent).toContain('尚未确认应用就绪')
+  expect((await findByRole('status')).textContent).toContain('正在加载新页面')
   const frame = container.querySelector('iframe')!
   await fireEvent.load(frame)
   expect(queryByRole('status')).toBeTruthy()
@@ -337,7 +410,7 @@ it('keeps the old frame during replacement, rejects failed navigation and ignore
   const nextFrame = container.querySelector(`iframe[name="${submissions[1].target}"]`)!
   expect(container.querySelectorAll('iframe')).toHaveLength(2)
   await fireEvent.error(nextFrame)
-  expect((await findByRole('alert')).textContent).toContain('上次加载的实时页面')
+  expect((await findByRole('alert')).textContent).toContain('当前仍显示上次打开的页面')
   expect(container.querySelector('iframe')).toBe(oldFrame)
   await fireEvent.load(nextFrame)
   expect(container.querySelector('iframe')).toBe(oldFrame)
