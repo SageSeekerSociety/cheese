@@ -4,7 +4,7 @@
     "subtitle": "架构还债进度：每道检查现在是多少、冻结了多少、比起点好了还是差了"
   },
   "action": {
-    "refresh": "刷新",
+    "refresh": "刷新"
   },
   "prov": {
     "collected": "采集提交",
