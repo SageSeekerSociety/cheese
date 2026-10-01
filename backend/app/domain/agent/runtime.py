@@ -27,7 +27,12 @@ from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
 from app.domain.agent import dispatch_log
-from app.domain.agent.admission import QUEUED_META, queued_text, wait_for_host
+from app.domain.agent.admission import (
+    HOST_BUSY_META,
+    QUEUED_META,
+    queued_text,
+    wait_for_host,
+)
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
@@ -1958,7 +1963,7 @@ class AgentWorkRunner:
             self._host_has_room if policy.get("on_session_host") else None,
             topic_id,
             lambda text: self._post_event(
-                chat_service, topic_id, turn_id, text, meta=QUEUED_META
+                chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
             ),
         )
         key = policy["project_id"]

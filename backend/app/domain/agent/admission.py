@@ -43,6 +43,14 @@ QUEUED_META = notice(
     detail=say("turnQueuedDetail"),
     detail_label=say("labelWhatHappensNext"),
 )
+#: 整机内存不够时排队：前面不一定有别的轮次，等的是资源。
+HOST_BUSY_META = notice(
+    EVENT_TURN_QUEUED,
+    severity=SEVERITY_INFO,
+    who=WHO_PLATFORM,
+    detail=say("turnQueuedHostBusyDetail"),
+    detail_label=say("labelWhatHappensNext"),
+)
 
 
 def queued_text(ahead: int) -> str:
