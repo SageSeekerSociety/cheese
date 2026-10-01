@@ -23,6 +23,7 @@ from typing import Any, Final, Literal, Protocol
 import httpx
 
 from app.core.config import settings
+from app.core.forge_http import forge_client
 from app.domain.agent.github_app import GitHubAppTokens
 from app.domain.review.pr_signals import ReviewSignal
 
@@ -623,7 +624,7 @@ class HttpxGitHubPrClient:
         body: str,
         token: str,
     ) -> PullRequest:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.post(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls",
                 headers=self._headers(token),
@@ -704,7 +705,7 @@ class HttpxGitHubPrClient:
     async def check_state(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> tuple[CheckState, str]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
                 headers=self._headers(token),
@@ -772,9 +773,7 @@ class HttpxGitHubPrClient:
     ) -> str:
         """The error slice of one Actions job's log, or "" if unreachable."""
         try:
-            async with httpx.AsyncClient(
-                transport=self._transport, timeout=30.0
-            ) as client:
+            async with forge_client(transport=self._transport, timeout=30.0) as client:
                 resp = await client.get(
                     f"{self._api_base}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
                     headers=self._headers(token),
@@ -861,7 +860,7 @@ class HttpxGitHubPrClient:
     async def _check_suites(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> list[dict]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-suites",
                 headers=self._headers(token),
@@ -877,7 +876,7 @@ class HttpxGitHubPrClient:
     async def compare_files(
         self, *, owner: str, repo: str, base: str, head: str, token: str
     ) -> list[tuple[str, str]] | None:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/compare/{base}...{head}",
                 headers=self._headers(token),
@@ -906,7 +905,7 @@ class HttpxGitHubPrClient:
     async def pull_request_head_sha(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> str:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}",
                 headers=self._headers(token),
@@ -920,7 +919,7 @@ class HttpxGitHubPrClient:
     async def pull_request_status(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> PullRequestStatus:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}",
                 headers=self._headers(token),
@@ -952,7 +951,7 @@ class HttpxGitHubPrClient:
             # 合的是人看到的那个 commit (#718): GitHub 409s when the PR head no
             # longer matches, instead of merging whatever is there now.
             body["sha"] = sha
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             queued = await _enqueue_if_required(
                 client, self._api_base, self._headers(token), owner, repo, number, sha
             )
@@ -983,14 +982,14 @@ class HttpxGitHubPrClient:
         )
 
     async def merge_queue_entry(self, *, owner, repo, number, token) -> bool:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             pr = await _queue_pr(
                 client, self._api_base, self._headers(token), owner, repo, number
             )
         return bool(pr.get("mergeQueueEntry"))
 
     async def dequeue_pull_request(self, *, owner, repo, number, token) -> None:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             pr = await _queue_pr(
                 client, self._api_base, self._headers(token), owner, repo, number
             )
@@ -1006,7 +1005,7 @@ class HttpxGitHubPrClient:
     async def list_check_runs(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> list[dict]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
                 headers=self._headers(token),
@@ -1023,7 +1022,7 @@ class HttpxGitHubPrClient:
     async def workflow_run_state(
         self, *, owner: str, repo: str, workflow_file: str, head_sha: str, token: str
     ) -> tuple[CheckState, str]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/actions/workflows/"
                 f"{workflow_file}/runs",
@@ -1051,7 +1050,7 @@ class HttpxGitHubPrClient:
     async def recent_workflow_runs(
         self, *, owner: str, repo: str, workflow_file: str, token: str, limit: int = 30
     ) -> list[WorkflowRun]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/actions/workflows/"
                 f"{workflow_file}/runs",
@@ -1089,7 +1088,7 @@ class HttpxGitHubPrClient:
     async def workflow_run_jobs(
         self, *, owner: str, repo: str, run_id: int, token: str
     ) -> list[WorkflowJob]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
                 headers=self._headers(token),
@@ -1123,7 +1122,7 @@ class HttpxGitHubPrClient:
     async def compare_status(
         self, *, owner: str, repo: str, base: str, head: str, token: str
     ) -> str | None:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/compare/{base}...{head}",
                 headers=self._headers(token),
@@ -1142,7 +1141,7 @@ class HttpxGitHubPrClient:
     async def check_run_names(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> set[str]:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
                 headers=self._headers(token),
@@ -1190,7 +1189,7 @@ class HttpxGitHubPrClient:
         down with it.
         """
         try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as c:
+            async with forge_client(transport=self._transport, timeout=30.0) as c:
                 resp = await c.get(
                     url, headers=self._headers(token), params={"per_page": 100}
                 )
@@ -1210,7 +1209,7 @@ class HttpxGitHubPrClient:
     async def update_branch(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> bool:
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.put(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/update-branch",
                 headers=self._headers(token),
@@ -1544,7 +1543,7 @@ class GitHubPRClient:
         }
         if draft:
             payload["draft"] = True
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.post(
                 self._url("/pulls"), json=payload, headers=self._headers(app_token)
             )
@@ -1567,7 +1566,7 @@ class GitHubPRClient:
     @_as_pr_error
     async def pr_view(self, number: int) -> dict:
         token, _ = await self._tokens.write_token()
-        async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
+        async with forge_client(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 self._url(f"/pulls/{number}"), headers=self._headers(token)
             )
@@ -1609,7 +1608,7 @@ class GitHubPRClient:
         change (#735 landed a description the review had already corrected).
         """
         token, _ = await self._tokens.write_token()
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.patch(
                 self._url(f"/pulls/{number}"),
                 json={
@@ -1648,7 +1647,7 @@ class GitHubPRClient:
         for them.
         """
         token, _ = await self._tokens.write_token()
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.post(
                 f"{self._api_base}/graphql",
                 json={
@@ -1681,7 +1680,7 @@ class GitHubPRClient:
         GitHubPRError.
         """
         token, _ = await self._tokens.write_token()
-        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
             try:
                 queued = await _enqueue_if_required(
                     client,
@@ -1723,7 +1722,7 @@ class GitHubPRClient:
         named write set does not (`github_app._WRITE_PERMISSIONS`).
         """
         token, _ = await self._tokens.installation_token()
-        async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
+        async with forge_client(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 self._url(f"/commits/{ref}/check-runs"),
                 params={"per_page": 50},

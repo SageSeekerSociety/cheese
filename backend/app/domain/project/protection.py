@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.core.forge_http import forge_client
 from app.domain.block.notice_text import say
 from app.domain.project.models import Project
 
@@ -294,7 +295,7 @@ async def github_repo_snapshot(
         "Accept": "application/vnd.github+json",
     }
     try:
-        async with httpx.AsyncClient(
+        async with forge_client(
             transport=transport, timeout=10.0, headers=headers
         ) as client:
             r = await client.get(f"{api_base}/repos/{repo}")

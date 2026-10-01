@@ -66,6 +66,7 @@ import type {
   WaitingItem,
   WorkspaceFile,
 } from './cx_types'
+import type { SitePage } from './types/site'
 
 import { desktopAppHeaders } from './lib/desktopApp'
 import { refusalText } from './lib/noticeText'
@@ -1948,15 +1949,13 @@ export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
   opts: { limit?: number; before?: string; author?: string | null } = {}
-): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
+): Promise<SitePage> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
   if (opts.author) q.set('author', opts.author)
   const qs = q.toString()
-  return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
-    `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`
-  )
+  return request<SitePage>(`/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`)
 }
 
 // 现场一步打印出来的东西：后端只留末尾一截（至多 8 KiB，凭据已抹掉）。列表和

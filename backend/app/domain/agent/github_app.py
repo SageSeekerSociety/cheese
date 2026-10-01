@@ -33,6 +33,7 @@ import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.forge_http import forge_client
 from app.domain.project.repositories import ProjectGitInstallationRepository
 
 # What PR-based accept needs (#188 §5.1): push the topic branch, open and merge
@@ -171,7 +172,7 @@ class GitHubAppTokens:
 
     async def _fetch_granted_permissions(self) -> dict[str, str]:
         """Ask GitHub what this installation was granted, via the App JWT."""
-        async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
+        async with forge_client(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 f"{self._api_base}/app/installations/{self._installation_id}",
                 headers={
@@ -193,7 +194,7 @@ class GitHubAppTokens:
         against the quota, so asking costs nothing that is being counted.
         """
         token, _ = await self.installation_token()
-        async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
+        async with forge_client(transport=self._transport, timeout=10.0) as client:
             resp = await client.get(
                 f"{self._api_base}/rate_limit",
                 headers={
@@ -226,9 +227,7 @@ class GitHubAppTokens:
                 token, exp = cached
                 return token, _iso(exp)
             permissions = await resolve()
-            async with httpx.AsyncClient(
-                transport=self._transport, timeout=20.0
-            ) as client:
+            async with forge_client(transport=self._transport, timeout=20.0) as client:
                 resp = await client.post(
                     f"{self._api_base}/app/installations/"
                     f"{self._installation_id}/access_tokens",
@@ -321,7 +320,7 @@ async def github_app_read_token_for_project(
 async def _user_installation_items(token: str, path: str, key: str) -> list[dict]:
     """Read all pages using the user's authority, never the platform App JWT."""
     items: list[dict] = []
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with forge_client(timeout=20.0) as client:
         page = 1
         while True:
             response = await client.get(

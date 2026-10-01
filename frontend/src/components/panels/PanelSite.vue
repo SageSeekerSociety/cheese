@@ -77,6 +77,15 @@ const transcript = ref<Block[]>([])
 // 更早的现场还在库里没拉。和对话栏一样，只在读的人自己往上翻时才拉。
 const hasOlder = ref(false)
 const loadingOlder = ref(false)
+// 每一轮从什么时候开始（毫秒），读到的每一页都带着它那几轮的。组头的用时从这里算起。
+const turnStarts = ref<Record<string, number>>({})
+
+function noteStarts(starts: Record<string, string> | undefined): void {
+  const parsed = Object.entries(starts ?? {}).map(([id, at]) => [id, Date.parse(at)] as const)
+  const fresh = parsed.filter(([id, at]) => Number.isFinite(at) && turnStarts.value[id] !== at)
+  if (fresh.length) turnStarts.value = { ...turnStarts.value, ...Object.fromEntries(fresh) }
+}
+
 // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
 // 不是一回事了，重读时不能再和它合。
 let loadedFor: string | null = null
@@ -99,6 +108,7 @@ async function loadOlder() {
     // 这个人的时间线。
     if (props.topic?.id !== tid || viewing.value !== author) return
     noteAgents(page.data)
+    noteStarts(page.turn_starts)
     transcript.value = [...page.data, ...transcript.value]
     hasOlder.value = page.has_more === true
     // Prepending grows the content ABOVE the viewport; without this the reader
@@ -190,6 +200,7 @@ async function load() {
     if (props.topic?.id !== tid || viewing.value !== author) return
     loadedFor = author
     noteAgents(tx.data)
+    noteStarts(tx.turn_starts)
     transcript.value = mergeSite(tx.data, transcript.value, switched)
     if (switched || !quiet) hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
@@ -402,7 +413,17 @@ function onSayClick(event: MouseEvent, b: Block): void {
   else if (chip.dataset.file) emit('open-file', chip.dataset.file, b.task_id ?? null)
 }
 
-const turns = computed(() => groupByTurn(visible.value))
+// 在跑的那一轮，这一页读回来时可能还没登记：对话栏从 socket 上知道它从什么时候开始。
+// 记下来，这一轮停了、重读还没回来的那一会儿，用时也不缩回去。
+watch(
+  () => props.runningTurns,
+  (running) => {
+    const unseen = Object.entries(running ?? {}).filter(([id]) => !(id in turnStarts.value))
+    if (unseen.length) turnStarts.value = { ...Object.fromEntries(unseen), ...turnStarts.value }
+  },
+  { immediate: true }
+)
+const turns = computed(() => groupByTurn(visible.value, turnStarts.value))
 
 // 这一组还在跑吗：它的轮次在对话栏听到的在跑的轮次里。只看「房间有没有活」的话，
 // 新一轮还没落下第一行时，上一轮的那一组会被说成进行中。

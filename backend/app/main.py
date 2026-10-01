@@ -309,10 +309,15 @@ async def lifespan(_: FastAPI):
         name="gateway model catalogue",
     )
 
+    from app.core.forge_http import reuse_forge_connections
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
 
-    async with reuse_connections(), reuse_s3_connections():
+    async with (
+        reuse_connections(),
+        reuse_s3_connections(),
+        reuse_forge_connections(),
+    ):
         try:
             yield
         finally:

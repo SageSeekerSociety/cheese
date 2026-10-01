@@ -14,6 +14,7 @@ connection is the project's, kept by name.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -23,20 +24,32 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core import background
+from app.core.errors import GatewayUnavailableError
+from app.domain.textfile import MAX_TEXT_BYTES, decode_text
 
 logger = logging.getLogger(__name__)
 
 #: `${VAR}` and `${VAR:-default}`, as Claude Code expands them in `.mcp.json`.
 _VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
-#: How long one read of `.mcp.json` answers for a project. A session start and
-#: the prompt of the same turn ask within the same second; the settings page
-#: always reads fresh.
-_CACHE_S = 60
-_cache: dict[uuid.UUID, tuple[float, Declared]] = {}
+#: How long one read of `.mcp.json` is taken as current. An older answer is
+#: still given, and read again behind it (`read`).
+_FRESH_S = 60
+#: A refresh still unanswered after this long is taken as lost.
+_REFRESH_GIVE_UP_S = 120
+
+
+@dataclass
+class _Entry:
+    read_at: float
+    declared: Declared
+    refresh_started: float | None = None
+
+
+_cache: dict[uuid.UUID, _Entry] = {}
 
 
 @dataclass(frozen=True)
@@ -159,31 +172,75 @@ def with_types(found: Declared, types: Iterable) -> Declared:
 async def read(
     db: AsyncSession, project_id: uuid.UUID, *, fresh: bool = False
 ) -> Declared:
-    """The remote servers the project's default branch declares."""
+    """The remote servers the project's default branch declares.
+
+    Answered from the last read whenever there is one: a read older than
+    `_FRESH_S` is refreshed in the background, and the caller does not wait
+    for it. Only a project never read before, or `fresh` (the settings page,
+    where a member has just changed something), waits for the forge."""
     now = time.monotonic()
-    cached = _cache.get(project_id)
-    if not fresh and cached and now - cached[0] < _CACHE_S:
-        return cached[1]
-    from app.domain.repository.forge_files import ProjectFiles
+    entry = _cache.get(project_id)
+    if fresh or entry is None:
+        try:
+            declared = await _fetch(db, project_id)
+        except Exception:  # noqa: BLE001 — a forge outage must not fail a session
+            logger.warning("remote_mcp: .mcp.json unreadable project=%s", project_id)
+            # The last answer stands while the forge is down. A session's
+            # servers are part of what it was started with, so answering "none"
+            # for the length of an outage would relaunch every idle session twice.
+            return entry.declared if entry else Declared(problem="unreadable")
+        _cache[project_id] = _Entry(now, declared)
+        return declared
+    if now - entry.read_at >= _FRESH_S and not _refreshing(entry, now):
+        entry.refresh_started = now
+        background.spawn(_refresh(_engine_of(db), project_id), name="read .mcp.json")
+    return entry.declared
 
+
+def _refreshing(entry: _Entry, now: float) -> bool:
+    # A refresh that never reported back (its event loop is gone) stops
+    # counting once it is older than any read could take.
+    started = entry.refresh_started
+    return started is not None and now - started < _REFRESH_GIVE_UP_S
+
+
+def _engine_of(db: AsyncSession) -> AsyncEngine:
+    bind = db.bind
+    return bind if isinstance(bind, AsyncEngine) else bind.engine
+
+
+async def _refresh(engine: AsyncEngine, project_id: uuid.UUID) -> None:
+    # Its own session on the caller's engine: the caller's session is the
+    # turn's, and is closed or committed long before the forge answers.
+    started = time.monotonic()
     try:
-        read = await ProjectFiles(db, project_id, None).text(".mcp.json", "committed")
-    except NotFoundError:
-        declared = Declared(problem="missing")
-    except Exception:  # noqa: BLE001 — a forge outage must not fail a session
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            declared = await _fetch(session, project_id)
+    except Exception:  # noqa: BLE001 — the last answer stands, as in `read`
         logger.warning("remote_mcp: .mcp.json unreadable project=%s", project_id)
-        # The last answer stands while the forge is down. A session's servers
-        # are part of what it was started with, so answering "none" for the
-        # length of an outage would relaunch every idle session twice.
-        return cached[1] if cached else Declared(problem="unreadable")
-    else:
-        content = read.get("content")
-        declared = (
-            parse(content) if content is not None else Declared(problem="invalid")
-        )
-    _cache[project_id] = (now, declared)
-    return declared
+        entry = _cache.get(project_id)
+        if entry is not None:
+            # Asked again after another window, not on every turn of an outage.
+            entry.read_at, entry.refresh_started = time.monotonic(), None
+        return
+    entry = _cache.get(project_id)
+    if entry is None or entry.read_at <= started:
+        # A read the settings page made meanwhile is newer than this one.
+        _cache[project_id] = _Entry(time.monotonic(), declared)
 
 
-def forget(project_id: uuid.UUID) -> None:
-    _cache.pop(project_id, None)
+async def _fetch(db: AsyncSession, project_id: uuid.UUID) -> Declared:
+    """One read of `.mcp.json` on the default branch: the contents endpoint,
+    which GitHub and Forgejo both answer from the default branch when no ref
+    is named. A directory, symlink or submodule there is not a file."""
+    from app.domain.project import forge
+
+    found = await forge.repository_data(project_id, db, "/contents/.mcp.json")
+    if not isinstance(found, dict) or found.get("type") != "file":
+        return Declared(problem="missing")
+    if (found.get("size") or 0) > MAX_TEXT_BYTES:
+        return Declared(problem="invalid")
+    if found.get("encoding") != "base64":
+        raise GatewayUnavailableError("代码托管服务没有返回文件内容")
+    text = decode_text(base64.b64decode(found.get("content") or ""))
+    return parse(text) if text is not None else Declared(problem="invalid")
