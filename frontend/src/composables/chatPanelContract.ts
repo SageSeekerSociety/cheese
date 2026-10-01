@@ -5,6 +5,7 @@
 // the panel itself is the socket, the window of history and the timers, and a
 // list of events is neither.
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
+import type { MemberActivityLine } from '../lib/memberActivity'
 
 /** The events this panel surfaces to whoever owns the address it is rendered at. */
 // Surface AI activity so the parent can refresh the living doc / topic list
@@ -22,15 +23,15 @@ export interface ChatPanelEmit {
   // 走：干出来的东西是干活的**证据**，不是干活的**开始**，而右边那格「现场」得
   // 在开工那一刻就在那儿——它就是用来看它在干什么的。
   (e: 'working', working: boolean): void
-  // 正在干活的队友们的名字：一间房几个座位并行在跑就几个名字。帧不带座位的
-  // （老后端）这项是空的，界面退回 agentName 的单数说法。
-  (e: 'working-agents', names: string[]): void
+  // 此刻谁在这个房间里忙（打字的人、干活的队友），已经配好名字和此刻那一步。
+  // 现场那一格画同一份（`MemberActivity`）。
+  (e: 'activity', lines: MemberActivityLine[]): void
   // 会话状态（任务、模型）动了：socket 上的这一帧转给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket
   // 在这一栏，现场自己听不到。
   (e: 'site-block', block: Block): void
-  // 正在跑的轮次，各自从什么时候开始（毫秒）。现场的状态条靠它说「已用多久」。
+  // 正在跑的轮次，各自从什么时候开始（毫秒）。现场靠它分出哪一组还在进行。
   (e: 'site-turns', turns: Record<string, number>): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void

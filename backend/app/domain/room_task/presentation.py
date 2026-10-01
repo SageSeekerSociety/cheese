@@ -243,9 +243,9 @@ class CardFacts:
     merge_state_word: str | None = None
     merge_who: str | None = None
     #: 人已经采纳过这张卡（`decided_by`），或者布防了「绿了自动合」
-    #: （`auto_merge_armed_by`）—— 和 `card_is_merging` 同一份判据，也是「这一步
-    #: 交出去了」的那条线。它要和镜像合起来读：合并队列里的 PR，GitHub 对合并态
-    #: 报的是 unknown，没有这一位那张卡会掉进默认格，被说成「等你审阅」(#2046)。
+    #: （`auto_merge_armed_by`）—— 「这一步交出去了」的那条线。它要和镜像合起来
+    #: 读：合并队列里的 PR，GitHub 对合并态报的是 unknown，没有这一位那张卡会
+    #: 掉进默认格，被说成「等你审阅」(#2046)。
     decided: bool = False
 
 
@@ -544,21 +544,6 @@ def agent_fix_kind(card: "AcceptCard") -> str | None:
 _BOUNCED_TO_AGENT = frozenset({"rejected", "gate_failed", "gate_blocked"})
 
 
-def card_is_merging(card: "AcceptCard") -> bool:
-    """人已经采纳（或布防了绿了自动合），这张卡在等检查 / 合并队列走完。
-
-    侧栏的绿灯常亮读它：没有人要动手，也没有 AI 在干活，只是在等合并落地。合并
-    完卡就结算了，灯随之熄灭。还没人采纳时在跑的检查不算 —— 那不是「在等合并」。
-    """
-    if not (card.decided_by or card.auto_merge_armed_by):
-        return False
-    facts = facts_for_card(card)
-    return facts is not None and _card_presentation(facts) in (
-        _show(Delivering.awaiting_checks),
-        _show(Delivering.updating_branch),
-    )
-
-
 # —— 一条活 ————————————————————————————————————————————————————
 
 
@@ -621,14 +606,6 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.has_conclusion:
         return _show(Building.returned)
     return _show(_parked(facts))
-
-
-def task_is_running(facts: TaskFacts, *, now: datetime) -> bool:
-    """这条活此刻在不在看板的「运行中」那一格 —— 给房间问「我名下有没有活在跑」用。
-
-    不另写一套判据：同一条活在侧栏和看板上必须是同一个说法。
-    """
-    return task_presentation(facts, now=now) == _show(Building.running)
 
 
 def _parked(facts: TaskFacts) -> Building:

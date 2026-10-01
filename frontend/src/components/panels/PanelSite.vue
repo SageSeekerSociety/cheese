@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 现场 tab: 芝士 干活的实况 —— 会话的控制条，加上重建出来的 transcript 时间线。
 import type { AgentControlState, Block, Topic } from '../../cx_types'
+import type { MemberActivityLine } from '../../lib/memberActivity'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -23,9 +24,9 @@ import {
 import { isPlatformEvent } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import MemberActivity from '../room/MemberActivity.vue'
 import SessionInspector from '../SessionInspector.vue'
 
-import SiteStatusBar from './SiteStatusBar.vue'
 import SiteStepOutput from './SiteStepOutput.vue'
 
 import { t } from '@/i18n'
@@ -44,13 +45,14 @@ const props = withDefaults(
     working?: boolean
     // 房间 socket 上最近一帧会话状态（对话栏收到，经 TopicView 转过来）。
     agentControl?: AgentControlState | null
-    // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」、
-    // 状态条上「已用多久」都读它。
+    // 在跑的轮次 id → 开始时间（毫秒），对话栏从 socket 上算的。哪一组「进行中」读它。
     runningTurns?: Record<string, number>
     // 一轮结束时加一：趁这时把这一段安静地重读一遍，补上 socket 断开时漏掉的行。
     refreshTick?: number
     /** 名册里查不到名字的 AI 发言按这个名字称呼（项目 AI 队友的名字）。 */
     agentName?: string
+    /** 此刻谁在这个房间里忙（`MemberActivity` 那一份）。 */
+    activity?: MemberActivityLine[]
   }>(),
   {
     active: false,
@@ -58,6 +60,7 @@ const props = withDefaults(
     working: false,
     agentControl: null,
     agentName: () => t('work.room.defaultAgentName'),
+    activity: () => [],
   }
 )
 
@@ -314,28 +317,11 @@ function agentLabel(handle: string): string {
   return props.memberNames[handle] || (isAgentHandle(handle) ? props.agentName : handle)
 }
 
-// 在跑的轮次里，最近一行是谁做的：「全部」下状态条说的是这个队友。
-const activeAgent = computed(() => {
-  const running = props.runningTurns ?? {}
-  let last: Block | undefined
-  for (const b of transcript.value) {
-    if (b.turn_id && b.turn_id in running && agents.value.includes(b.author)) last = b
-  }
-  return last?.author ?? null
-})
-// 选中的队友在不在干活：房间在干活，而且在跑的轮次里有它的行。在跑的轮次还一
-// 行都没有时说不出是谁的，就不替任何一个说「没在干」。
-const viewingWorking = computed(() => {
-  if (!props.working || viewing.value === null) return props.working
-  const running = props.runningTurns ?? {}
-  const rows = transcript.value.filter((b) => b.turn_id && b.turn_id in running)
-  return rows.length === 0 || rows.some((b) => b.author === viewing.value)
-})
-const statusAgentHandle = computed(() => {
-  if (agents.value.length < 2) return null
-  return viewing.value ?? activeAgent.value ?? null
-})
-const statusAgent = computed(() => (statusAgentHandle.value ? agentLabel(statusAgentHandle.value) : ''))
+// 此刻在干活的队友（对话栏从 socket 上学来，和输入框下面那一行是同一份）：只看
+// 一个队友时只说它。
+const workingLines = computed(() =>
+  props.activity.filter((l) => l.kind === 'working' && (viewing.value === null || l.handle === viewing.value))
+)
 
 // Opening the tab loads it, exactly like opening the drawer used to. 它读的是
 // 「现在看的是谁」，所以要等在 `viewing` 之后 —— immediate 的那一次是当场跑的。
@@ -466,13 +452,7 @@ function isLive(index: number): boolean {
           {{ agentLabel(a) }}
         </button>
       </div>
-      <SiteStatusBar
-        :blocks="visible"
-        :working="viewingWorking"
-        :turns="runningTurns ?? {}"
-        :agent="statusAgent"
-        :agent-handle="statusAgentHandle"
-      />
+      <MemberActivity :lines="workingLines" class="site-activity" />
       <div v-if="transcript.length === 0" class="text-center text-medium-emphasis py-6">
         {{ t('work.room.site.empty') }}
       </div>
@@ -587,6 +567,15 @@ function isLive(index: number): boolean {
 </template>
 
 <style scoped>
+/* 谁在干活，贴在这一栏的顶上：往上翻旧的记录时，它仍然说着此刻的事。 */
+.site-activity {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
 /* 按队友看：一排文字按钮，选中的那个换底色和墨色，不用琥珀——这里不是主操作。 */
 /* 钉在滚动层顶上：现场一长，切队友不该先滚回去。 */
 .site-agents {

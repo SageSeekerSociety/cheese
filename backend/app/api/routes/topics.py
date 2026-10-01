@@ -21,10 +21,11 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.agent.activity import WORKING
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.liveness import task_liveness
 from app.domain.agent.runtime import (
     AgentWorkRunner,
+    InProcessBroker,
     addressed_to_agent,
     announce_stale,
 )
@@ -37,8 +38,9 @@ from app.domain.block.models import (
     checklist_text,
 )
 from app.domain.block.notice_text import say
-from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
+from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut, OptionAnswerIn
+from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -67,6 +69,8 @@ from app.domain.topic.repositories import (
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
+    MemberActivityOut,
+    MemberWaitOut,
     SplitIn,
     TopicCreate,
     TopicOut,
@@ -163,7 +167,7 @@ async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[Accep
     return await AcceptCardRepository(db).list_recent_for_places(
         room_ids,
         open_statuses=archive.OPEN_CARD_STATUSES,
-        settled_since=datetime.now(UTC) - BlockRepository.REPLY_LOOKBACK,
+        settled_since=datetime.now(UTC) - REPLY_LOOKBACK,
     )
 
 
@@ -185,50 +189,6 @@ def _latest_per_place(cards: list[AcceptCard]) -> dict[tuple, AcceptCard]:
     """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
     结算，它说的不代表现在。"""
     return {(c.topic_id, c.task_id): c for c in cards}
-
-
-def _merging(cards: list[AcceptCard]) -> set[uuid.UUID]:
-    """名下有一张已采纳、在等检查 / 合并队列的卡的房间（`card_is_merging`）。"""
-    return {
-        room
-        for (room, _), card in _latest_per_place(cards).items()
-        if presentation.card_is_merging(card)
-    }
-
-
-async def _rooms_with_running_work(
-    db: AsyncSession, chat: ChatService, room_ids: list[uuid.UUID], now: datetime
-) -> set[uuid.UUID]:
-    """名下有一条活正在「运行中」的房间 —— 一次查完。
-
-    房间自己那一轮结束了，它派出去的分身可能还在干：只看 `running_topic_ids()`
-    的话，侧栏的绿点在主 agent 收尾那一刻就灭了，人以为没人在做事。判据和看板
-    同一个函数（`presentation.task_is_running`），所以两边不会说出两种话。
-
-    卡不喂进去：「运行中」排在卡前面判，卡对这个答案没有影响。
-    """
-    tasks = await TaskRepository(db).list_worked_open_for_rooms(room_ids)
-    if not tasks:
-        return set()
-    task_ids = [t.id for t in tasks]
-    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
-    asked = await BlockRepository(db).tasks_awaiting_an_answer(task_ids)
-    live = await task_liveness(chat, db, tasks)
-    return {
-        t.room_id
-        for t in tasks
-        if presentation.task_is_running(
-            presentation.facts_for_task(
-                t,
-                None,
-                beats.get(t.id),
-                room_screen_live=live[t.id].screen,
-                worker_live=live[t.id].worker,
-                awaiting_answer=t.id in asked,
-            ),
-            now=now,
-        )
-    }
 
 
 def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
@@ -255,15 +215,12 @@ def _topic_out(
     managed_ids: set[uuid.UUID] | None = None,
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
-    working_ids: set[uuid.UUID] | None = None,
-    merging_ids: set[uuid.UUID] | None = None,
-    waiting: Mapping[uuid.UUID, ReplyWait] | None = None,
-    failed: Mapping[uuid.UUID, datetime] | None = None,
+    activity: list[dict] | None = None,
+    waits: list[MemberWait] | None = None,
 ) -> dict:
-    """TopicOut plus the signals the ORM row cannot carry: the in-memory
-    turn-running flag (separate from `status`/归档 — see TopicOut.running: a
-    topic can be active-and-idle or active-and-mid-turn, and only this tells
-    them apart), 最后活动时间, which is derived from the topic's blocks, and
+    """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
+    derived from the topic's blocks; who is busy in it right now and whom it is
+    waiting on (`activity` / `waits` — about members, never about the room); and
     与我的相关性, which depends on WHO is asking and so cannot live on the row
     at all.
 
@@ -278,18 +235,15 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    wait = (waiting or {}).get(topic.id)
-    # 检查红了但 AI 此刻正在这个房间（或名下的活）里干活：它就是在处理，不算没人管。
-    if (
-        wait is not None
-        and wait.source == "card"
-        and (topic.id in running_ids or topic.id in (working_ids or set()))
-    ):
-        wait = None
-    out.awaiting_reply_since = wait.since if wait else None
-    out.reply_wait_reason = wait.reason if wait else None
-    out.reply_wait_pr = wait.pr if wait else None
-    out.turn_failed_at = (failed or {}).get(topic.id)
+    out.activity = [MemberActivityOut(**entry) for entry in activity or []]
+    # A member working here right now is not one the room is waiting on: it is
+    # the one handling it.
+    working = {a.member for a in out.activity if a.kind == WORKING}
+    out.waits = [
+        MemberWaitOut(member=w.member, reason=w.reason, since=w.since, pr=w.pr)
+        for w in waits or []
+        if w.member is None or w.member not in working
+    ]
     mine = (relevance or {}).get(topic.id, TopicRelevance())
     # 芝士停在一道只有我能回答的问题上，同样是「在等我」——而且比一张卡更急：卡是
     # 一轮结束后的状态，提问是一轮**停在半路**。它也蕴含参与，理由同上。
@@ -297,11 +251,6 @@ def _topic_out(
     out.i_participate = mine.i_participate or asking_me
     out.awaits_me = mine.awaits_me or asking_me
     data = out.model_dump(mode="json")
-    # 侧栏的绿点：房间自己那一轮在跑，或它名下有一条活在跑。看板那一格
-    # （下面的 facts_for_room）仍只看房间自己——活在看板上有自己的一格。
-    data["running"] = topic.id in running_ids or topic.id in (working_ids or set())
-    # 绿灯常亮：已采纳、在等合并落地。有 AI 在干活时让位给「在跑」（闪）。
-    data["merging"] = not data["running"] and topic.id in (merging_ids or set())
     facts = presentation.facts_for_room(
         topic,
         running_ids,
@@ -319,7 +268,7 @@ async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-    chat: Annotated[ChatService, Depends(get_chat_service)],
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -357,15 +306,9 @@ async def list_topics(
     asks_me = _asks_me(asked, _viewer(actor))
     # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
     now = datetime.now(UTC)
-    working = await _rooms_with_running_work(db, chat, [t.id for t in topics], now)
-    # 侧栏红灯的两个来源，各一次查完：有人点了 AI 的名还没人接；最近一轮报错了。
-    waiting = await BlockRepository(db).rooms_awaiting_a_reply(
-        [t.id for t in topics],
-        now=now,
-        stuck_rooms=_stuck_on_checks(live),
-    )
-    failed = await BlockRepository(db).rooms_with_a_failed_turn(
-        [t.id for t in topics], now=now
+    # 每个房间在等哪几位成员，一次查完。
+    waits = await MemberWaits(db).for_rooms(
+        [t.id for t in topics], now=now, stuck_rooms=_stuck_on_checks(live)
     )
     items = [
         _topic_out(
@@ -378,10 +321,8 @@ async def list_topics(
             managed,
             asked,
             asks_me,
-            working,
-            merging_ids=_merging(live),
-            waiting=waiting,
-            failed=failed,
+            activity=broker.activity.snapshot(str(t.id)),
+            waits=waits.get(t.id),
         )
         for t in topics
     ]
@@ -432,7 +373,7 @@ async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-    chat: Annotated[ChatService, Depends(get_chat_service)],
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One room's header.
@@ -447,7 +388,7 @@ async def get_topic(
     just by holding its id. Measured, not inferred.
 
     Carries 与我的相关性 too, for the same reason it carries `last_activity_at`
-    and `running`: this route and `list_topics` are the pair that fill the
+    and `activity`: this route and `list_topics` are the pair that fill the
     derived fields, and a header opened directly (deep link, refresh) would
     otherwise report `awaits_me: false` on a topic that IS waiting on you.
     Every OTHER endpoint returning a TopicOut leaves them at their default.
@@ -466,7 +407,9 @@ async def get_topic(
         else set()
     )
     asked = await BlockRepository(db).rooms_awaiting_an_answer([topic.id])
-    working = await _rooms_with_running_work(db, chat, [topic.id], datetime.now(UTC))
+    waits = await MemberWaits(db).for_rooms(
+        [topic.id], now=datetime.now(UTC), stuck_rooms=_stuck_on_checks(live)
+    )
     return ok(
         _topic_out(
             topic,
@@ -477,16 +420,8 @@ async def get_topic(
             managed_ids=managed,
             asked=asked,
             asks_me=_asks_me(asked, _viewer(actor)),
-            working_ids=working,
-            merging_ids=_merging(live),
-            waiting=await BlockRepository(db).rooms_awaiting_a_reply(
-                [topic.id],
-                now=datetime.now(UTC),
-                stuck_rooms=_stuck_on_checks(live),
-            ),
-            failed=await BlockRepository(db).rooms_with_a_failed_turn(
-                [topic.id], now=datetime.now(UTC)
-            ),
+            activity=broker.activity.snapshot(str(topic.id)),
+            waits=waits.get(topic.id),
         )
     )
 

@@ -272,68 +272,72 @@ describe('行左边那一个槽', () => {
     expect(container.querySelector('.pinned-row .row-glyph')).not.toBeNull()
   })
 
-  it('没有子话题、也没有状态的行，槽是空的', () => {
+  it('没有子话题、也没有人等你的行，槽是空的', () => {
     const { container } = mount()
     const slot = slotsOf(topicRowFor(container, 'a'))[0]
     expect(slot.querySelector('.await-dot')).toBeNull()
-    expect(slot.querySelector('.running-dot')).toBeNull()
     expect(slot.querySelector('.v-icon')).toBeNull()
   })
 
-  it('等你处理压过芝士在跑，两者都压不过折叠开关', () => {
-    const both = topics.map((t) => (t.id === 'a' ? ({ ...t, awaits_me: true, running: true } as Topic) : t))
-    const { container } = mount({ topics: both })
-    const slot = slotsOf(topicRowFor(container, 'a'))[0]
-    expect(slot.querySelector('.await-dot')).not.toBeNull()
-    expect(slot.querySelector('.running-dot')).toBeNull()
+  it('房间没有「在跑」的点：在干活的是一位队友，画在右边，带它的名字', () => {
+    const busy = topics.map((t) =>
+      t.id === 'a'
+        ? ({ ...t, awaits_me: true, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
+        : t
+    )
+    const { container } = mount({ topics: busy })
+    const row = topicRowFor(container, 'a')
+    // 等你处理还在左边那个槽里：等的是读这一行的人自己
+    expect(slotsOf(row)[0].querySelector('.await-dot')).not.toBeNull()
+    const marks = Array.from(row.querySelectorAll('[data-state]'))
+    expect(marks.map((m) => m.getAttribute('data-state'))).toEqual(['working'])
+    expect(marks[0].getAttribute('title')).toContain('正在这里工作')
+    expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
 
     // 同一个话题一旦有了子话题，槽让给折叠开关
-    const withChild = [...both, topic('a-sub', 'a')]
+    const withChild = [...busy, topic('a-sub', 'a')]
     const second = mount({ topics: withChild })
     const parent = topicRowFor(second.container, 'a')
     expect(parent.querySelector('button.subtree-toggle')).not.toBeNull()
     expect(parent.querySelector('.await-dot')).toBeNull()
   })
 
-  it('有人等 AI 回话超过五分钟亮红灯，压过等你处理和在跑；还没满五分钟不亮', () => {
+  it('打字的人不画在侧栏上：这份列表隔一阵才读一次，打字几秒就过去了', () => {
+    const typing = topics.map((t) =>
+      t.id === 'a' ? ({ ...t, activity: [{ member: 'zhang', kind: 'typing', since: 1, expires_in: 5 }] } as Topic) : t
+    )
+    const { container } = mount({ topics: typing })
+    expect(topicRowFor(container, 'a').querySelector('[data-state]')).toBeNull()
+  })
+
+  it('有人等一位队友回话超过五分钟，红的是那位队友；还没满五分钟不红', () => {
     const longAgo = new Date(Date.now() - 6 * 60_000).toISOString()
     const justNow = new Date(Date.now() - 60_000).toISOString()
     const rows = topics.map((t) =>
       t.id === 'a'
-        ? ({ ...t, awaits_me: true, running: true, awaiting_reply_since: longAgo } as Topic)
+        ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'mention', since: longAgo }] } as Topic)
         : t.id === 'b'
-          ? ({ ...t, running: true, awaiting_reply_since: justNow } as Topic)
+          ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'mention', since: justNow }] } as Topic)
           : t
     )
     const { container } = mount({ topics: rows })
-    const stalled = slotsOf(topicRowFor(container, 'a'))[0]
-    expect(stalled.querySelector('.stalled-dot')).not.toBeNull()
-    expect(stalled.querySelector('.await-dot')).toBeNull()
-    expect(stalled.querySelector('.running-dot')).toBeNull()
-
-    const fresh = slotsOf(topicRowFor(container, 'b'))[0]
-    expect(fresh.querySelector('.stalled-dot')).toBeNull()
-    expect(fresh.querySelector('.running-dot')).not.toBeNull()
+    const stalled = Array.from(topicRowFor(container, 'a').querySelectorAll('[data-state]'))
+    expect(stalled.map((m) => m.getAttribute('data-state'))).toEqual(['stalled'])
+    expect(stalled[0].getAttribute('title')).toMatch(/有人 @ 了.*分钟/)
+    // 槽里没有房间级的红灯：卡住的是成员
+    expect(slotsOf(topicRowFor(container, 'a'))[0].children.length).toBe(0)
+    expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
   })
 
-  it('已采纳在等合并、没有 AI 在干活时绿灯常亮；有 AI 在干活时让位给呼吸点', () => {
-    const rows = topics.map((t) => (t.id === 'a' ? ({ ...t, merging: true } as Topic) : t))
+  it('一位队友那一轮报错了，不等五分钟立刻红，悬停说是它那一轮', () => {
+    const rows = topics.map((t) =>
+      t.id === 'a'
+        ? ({ ...t, waits: [{ member: 'cheese-a1', reason: 'failed', since: new Date().toISOString() }] } as Topic)
+        : t
+    )
     const { container } = mount({ topics: rows })
-    const slot = slotsOf(topicRowFor(container, 'a'))[0]
-    expect(slot.querySelector('.merging-dot')).not.toBeNull()
-    expect(slot.querySelector('.running-dot')).toBeNull()
-
-    const busy = topics.map((t) => (t.id === 'a' ? ({ ...t, merging: true, running: true } as Topic) : t))
-    const second = mount({ topics: busy })
-    const busySlot = slotsOf(topicRowFor(second.container, 'a'))[0]
-    expect(busySlot.querySelector('.running-dot')).not.toBeNull()
-    expect(busySlot.querySelector('.merging-dot')).toBeNull()
-  })
-
-  it('最近一轮报错了，不等五分钟立刻亮红灯', () => {
-    const rows = topics.map((t) => (t.id === 'a' ? ({ ...t, turn_failed_at: new Date().toISOString() } as Topic) : t))
-    const { container } = mount({ topics: rows })
-    expect(slotsOf(topicRowFor(container, 'a'))[0].querySelector('.stalled-dot')).not.toBeNull()
+    const mark = topicRowFor(container, 'a').querySelector('[data-state="stalled"]')
+    expect(mark?.getAttribute('title')).toContain('最近一轮报错了')
   })
 
   it('选中的行和有未读的行给的不是同一个标记', () => {

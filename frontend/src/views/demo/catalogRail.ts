@@ -12,7 +12,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { AGENT_NAME, RAIL_ACTIONS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_TERMS } from './catalogFixtures'
+import { RAIL_ACTIONS, RAIL_MARKS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_TERMS } from './catalogFixtures'
 
 import TopicRailArchivedGroup from '@/components/topic-sidebar/TopicRailArchivedGroup.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
@@ -23,10 +23,6 @@ import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
 
-/** 侧栏那几行看的是「当下的钟」：红灯、等了多久都按它算。固定一个时刻，免得预览
- *  站上那一格的红灯开着开着自己变了。 */
-const RAIL_NOW = Date.parse('2026-09-29T09:00:00Z')
-
 /** 一行话题那些不变的 props：每一格换的只是 `row` 和它那几个开关。 */
 function rowProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -36,8 +32,6 @@ function rowProps(over: Record<string, unknown> = {}): Record<string, unknown> {
     menuOpen: false,
     stalled: false,
     toggleTitle: '收起',
-    now: RAIL_NOW,
-    agentName: AGENT_NAME,
     actions: () => RAIL_ACTIONS,
     ...over,
   }
@@ -86,7 +80,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-row',
     title: 'TopicRailRow',
-    about: '话题列表里的一行：左边一个 16px 状态槽，右边未读和 hover 才浮现的 ⋯。',
+    about: '话题列表里的一行：左边一个 16px 槽，右边在忙的成员、未读和 hover 才浮现的 ⋯。',
     file: 'src/components/topic-sidebar/TopicRailRow.vue',
     component: TopicRailRow,
     // 一行不认识路由、也不取数：状态、折叠、未读全在 props 里（`row` 是
@@ -94,9 +88,9 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     needs: UI,
     states: [
       {
-        name: '芝士在跑',
-        note: '绿呼吸点。人凭它判断啥时候该派下一个任务——和归档/采纳状态无关。',
-        props: rowProps({ row: RAIL_ROWS.running }),
+        name: '有队友在干活',
+        note: '右边是那位队友的小头像，带一颗绿点。房间自己没有「在跑」这种状态，在干活的是成员。',
+        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working }),
         expect: '写第 4 章的教案',
       },
       {
@@ -106,9 +100,9 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expect: '决定这学期用哪本教材',
       },
       {
-        name: '出了故障',
-        note: '红灯 + 一圈淡红晕。红的判据（报错 / 等太久）是父级带钟算的，hover 才说得出是哪一种。',
-        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true }),
+        name: '一位成员卡住了',
+        note: '房间在等的那位成员，小头像带红点和一圈淡红晕。判据（报错 / 等太久）是父级带钟算的，hover 说出是谁、为什么。',
+        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true, marks: RAIL_MARKS.stalled }),
         expect: '把成绩单导出成 CSV',
       },
       {
@@ -124,15 +118,9 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expect: '第 3 题：为什么天空是蓝的',
       },
       {
-        name: '已采纳，在等合并',
-        note: '常亮的空心绿圈：和呼吸点靠「动不动」「实心还是空心」两样分开，关掉动效也分得开。',
-        props: rowProps({ row: RAIL_ROWS.merging }),
-        expect: '重排第一章的目录',
-      },
-      {
         name: '整页形态（手机）',
         note: '行更高（44px），没有那颗 hover 才出现的 ⋯ —— 那里长按一行打开同一组操作（见 TopicSidebar.longPress）。',
-        props: rowProps({ row: RAIL_ROWS.running, page: true, selected: true }),
+        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, page: true, selected: true }),
         expect: '写第 4 章的教案',
       },
     ],

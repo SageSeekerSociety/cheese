@@ -1,5 +1,6 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
 
 export interface Project {
@@ -77,9 +78,9 @@ export interface Topic {
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
-  // In-memory session activity, independent of topic status and archival state.
-  // Present only on topic list/get responses.
-  running?: boolean
+  // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
+  // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
+  activity?: MemberActivity[]
   // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
   // 四者取一。只有 list/get 话题时才带。
   i_participate?: boolean
@@ -88,24 +89,12 @@ export interface Topic {
   // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
-  // 有人点了 AI 的名、到现在还没有 AI 回话：最早那条没人接的消息的时间（ISO），
-  // 没有就 null。侧栏按当下的钟判它等了多久（`lib/replyWait.ts`）。只有 list/get
-  // 话题时才带。
-  awaiting_reply_since?: string | null
-  // 上面那段等待多半为什么还没人回：mention / check，或机器/环境事件类型
-  // （machine_provisioning / device_waiting / sandbox_rebuilt / environment_repaired）。
-  reply_wait_reason?: string | null
-  // 卡停在检查没过 / 冲突 / 被退回 / 闸门红上时，那张卡的 PR 号。
-  reply_wait_pr?: number | null
-  // 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那次
-  // 报错的时间，没有就 null。侧栏见到它立刻亮红灯。只有 list/get 话题时才带。
-  turn_failed_at?: string | null
-  // 已采纳、在等检查 / 合并队列走完，而此刻没有 AI 在干活：侧栏绿灯常亮。只有
-  // list/get 话题时才带。
-  merging?: boolean
+  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
+  // 当下的钟判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
+  waits?: MemberWait[]
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
-  // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
+  // 和上面 `activity` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
   // 着，而屏幕上那个颜色是哪一个算出来的，谁也说不清。
@@ -360,6 +349,9 @@ export type WsServerFrame =
   | { type: 'turn_active'; turn_ids?: string[]; since?: Record<string, number>; agents?: Record<string, string> }
   // A just-persisted block turned out to be a provider-error echo — remove it.
   | { type: 'retract_block'; block_id: string }
+  // 一位成员开始 / 停下打字或干活；连上时有人在忙，先来一帧此刻的全部。
+  | ({ type: 'activity'; active: boolean } & MemberActivity)
+  | { type: 'activity_snapshot'; members: MemberActivity[] }
   // An existing block's data changed in place (e.g. an option question got
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
@@ -395,8 +387,9 @@ export interface ChatAttachment {
   mime: string
 }
 
-// The client sends only the liveness probe on the room's socket; a message is a POST.
-export type WsClientMessage = { type: 'ping' }
+// The client sends only the liveness probe and `typing` (I am composing here;
+// `active: false` = stopped; who is the socket's credential) — a message is a POST.
+export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean }
 
 // POST /topics/{id}/messages. 请求体上没有「叫不叫芝士」这一位：这条消息点了谁的名，
 // 由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要叫它，
