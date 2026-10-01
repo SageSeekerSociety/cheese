@@ -11,13 +11,15 @@ Protocol:
   connect → /api/topics/{id}/chat?token=<session token>   (required)
   client → {"type":"ping"}  →  server → {"type":"pong"}
   server → user_block / reaction / tool / todo / state / event_block /
-           assistant_block / error / done
+           assistant_block / live / error / done
 (The ping is the browser's liveness probe. A socket can sit OPEN for minutes
 after its path stopped carrying frames — the browser only learns when TCP
 gives up — so the client asks every few seconds and replaces the socket when
 no answer comes; the reply is the whole point, it carries nothing.)
-(No token streaming: explicit chat publications arrive as assistant_block
-messages; terminal output arrives as activity event_block records.)
+(A chat publication arrives whole, as an assistant_block message; while an
+agent is still writing one, `live` frames carry what it has written so far,
+unstored, and the block replaces them (`live_frames.py`). Terminal output
+arrives as activity event_block records.)
 
 The `?token=` is not optional and a socket the connect check refuses is closed
 (1008) after one `error` frame carrying `code: auth_required` (no token),

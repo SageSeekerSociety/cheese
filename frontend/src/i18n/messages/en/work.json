@@ -864,6 +864,7 @@
       "undoFailed": "Couldn't undo",
       "downloadFailed": "Couldn't download",
       "sending": "Sending…",
+      "typing": "Typing…",
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",

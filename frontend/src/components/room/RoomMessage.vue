@@ -115,14 +115,17 @@ function renderPlain(text: string): string {
 }
 
 // 芝士的回复里每个代码块右上角一颗「复制」。按钮是渲染之后加上去的，文字取自
-// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。
+// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。还没落库的那条（正在写、
+// 正在送）不带：它的代码块还在长。
 const agentHtml = computed(() =>
-  renderMarkdown(props.block.content)
-    .replaceAll(
-      '<pre>',
-      `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
-    )
-    .replaceAll('</pre>', '</pre></div>')
+  props.outgoing
+    ? renderMarkdown(props.block.content)
+    : renderMarkdown(props.block.content)
+        .replaceAll(
+          '<pre>',
+          `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
+        )
+        .replaceAll('</pre>', '</pre></div>')
 )
 
 const COPIED_MS = 1500

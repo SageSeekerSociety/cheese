@@ -363,12 +363,12 @@ export type WsServerFrame =
   // An existing block's data changed in place (e.g. an option question got
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
-  // Answer to the client's liveness ping; carries nothing.
-  | { type: 'pong' }
+  | { type: 'pong' } // answer to the client's liveness ping; carries nothing
   // The room's session state moved: a task started or finished (the harness's
   // own, or a command the executor runs), or the session reported its model.
   // The same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
+  | import('./types/live').LiveFrame
 
 export interface AgentControlState {
   id: string | null

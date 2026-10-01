@@ -119,6 +119,7 @@ const {
   outgoingState,
   retrySend,
   outbox,
+  typingRows,
   clearReply,
   noticeAgent,
   parentOf,
@@ -259,6 +260,7 @@ defineExpose({ send, connected })
         :agent-name="agentName"
         :refs="refMaps"
         :outbox="outbox"
+        :typing="typingRows"
         :editing-id="editingId"
         :edit-saving="editSaving"
         :ask-busy="askBusy"
