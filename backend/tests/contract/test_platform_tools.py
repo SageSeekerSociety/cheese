@@ -73,9 +73,9 @@ CALLS = {
     ),
     "cheese_ready": ({"task": TASK}, "POST", f"/topics/fixture/tasks/{TASK}/ready"),
     "cheese_tell": (
-        {"target": "数据清洗", "message": "口径改了"},
+        {"target": TASK, "message": "口径改了"},
         "POST",
-        "/topics/fixture/tell",
+        f"/topics/fixture/tasks/{TASK}/messages",
     ),
     "cheese_milestone": (
         {"title": "中期汇报"},

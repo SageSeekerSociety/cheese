@@ -923,14 +923,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "payload": {"options": options} if options else {},
             },
         }
-    if tool == "cheese_tell":
-        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body
-        # 里，由后端校验它确实是这个房间派出的活。
-        return {
-            "method": "POST",
-            "path": f"/topics/{topic}/tell",
-            "body": {"target": args["target"], "content": args["message"]},
-        }
     if tool == "cheese_milestone":
         # The room it came from: a room's token authenticates only with its room
         # named, and a re-sent milestone is deduplicated against that room's turn.
@@ -1353,6 +1345,49 @@ def _accept_request(args: dict, host) -> str:
     return "\n".join(lines)
 
 
+def _tell(args: dict, host) -> str:
+    """在一条活的时间线上说一句：和人在卡下面说话走同一条路由。
+
+    说话的是房间的 AI 队友，所以后端只把这句落在那条活上，不叫醒谁。`target` 是
+    id、`<#id>` 或标题；标题只在这个房间的活里找。"""
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    if not topic:
+        raise PlatformToolError("Missing CHEESE_TOPIC")
+    room = urllib.parse.quote(topic, safe="")
+    wanted = args["target"].strip()
+    if wanted.startswith("<#") and wanted.endswith(">"):
+        wanted = wanted[2:-1].strip()
+    try:
+        task_id, title = str(uuid.UUID(wanted)), None
+    except ValueError:
+        listing = host.request(
+            {"method": "GET", "path": f"/topics/{room}/tasks?limit=1"}
+        )
+        tasks = ((listing.get("data") or {}).get("data")) or []
+        exact = [t for t in tasks if (t.get("title") or "").strip() == wanted]
+        loose = exact or [t for t in tasks if wanted in (t.get("title") or "")]
+        if not loose:
+            names = "、".join(t.get("title") or "" for t in tasks) or "（没有）"
+            raise PlatformToolError(
+                f"这个房间的活里没有叫「{wanted}」的。可选的是：{names}"
+            )
+        if len(loose) > 1:
+            names = "、".join(t.get("title") or "" for t in loose)
+            raise PlatformToolError(f"「{wanted}」对上了多条活（{names}），用 id 指明")
+        task_id, title = loose[0]["id"], loose[0].get("title")
+    host.request(
+        {
+            "method": "POST",
+            "path": f"/topics/{room}/tasks/{urllib.parse.quote(task_id)}/messages",
+            "body": {"content": args["message"]},
+        }
+    )
+    return (
+        f"已写在「{title or args['target']}」上。"
+        "没有人被叫醒——做这条活的分身在你自己的会话里，要它动就直接给它发消息。"
+    )
+
+
 _STEPS = {
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
@@ -1361,6 +1396,7 @@ _STEPS = {
     "cheese_doc_get": _doc_get,
     "cheese_doc_set": _doc_set,
     "cheese_accept_request": _accept_request,
+    "cheese_tell": _tell,
 }
 
 
@@ -1570,10 +1606,6 @@ _SAY = {
     "cheese_lock": _say_lock,
     "cheese_unlock": lambda a, d, e: (
         "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
-    ),
-    "cheese_tell": lambda a, d, e: (
-        f"已写在「{(d or {}).get('target_title') or a['target']}」上。"
-        "没有人被叫醒——做这条活的分身在你自己的会话里，要它动就直接给它发消息。"
     ),
     "cheese_milestone": lambda a, d, e: f"已钉里程碑：{a['title']}",
     "cheese_title": lambda a, d, e: (

@@ -114,10 +114,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 讨论升级为话题（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 幂等(双击返回同话题)；原块变可点活引用(前端 ChatPanel)；归档话题禁升级；私聊块升级重挂到根(Batch J) |
 | 从上往下派活（A2） | `POST /api/topics/{id}/split` | ✅ 在房间里开一条支线（`tasks` 一行）；🟡 发起拆解的 todo 块**未**变成活引用(缺 source_block_id) |
 | 活的结论回流（C4） | `POST /api/topics/{room}/tasks/{task}/conclude` | ✅ 由**房间**替它派出的活落结论（分身没有自己的会话，也就没有 token）；开一张结论卡，本轮结束默认采信 |
-| 给一条活留话（`cheese_tell`） | `POST /api/topics/{id}/tell` | ✅ URL 里的 topic 是**发方**，收方在 body（id/`<#id>`/标题），只认「房间 → 它派出的活」；只落块，**不叫醒任何人**——做那条活的分身就在房间自己的会话里，房间直接给它发消息即可 |
+| 给一条活留话（`cheese_tell`） | `POST /api/topics/{room}/tasks/{task}/messages` | ✅ 和人在卡下面说话是同一条路由；`cheese_tell` 的 `target` 可以是 id、`<#id>` 或标题，标题由工具在这个房间的活里找。房间的 AI 队友说的话只落块，**不叫醒任何人**（做那条活的分身就在房间自己的会话里，房间直接给它发消息即可），上限 4000 字；人说的话会叫醒房间去转达 |
 
-实现：`TopicService.upgrade_block_to_place / dispatch_task / return_conclusion`、
-`app/domain/topic/relay.py`（留话；为什么不能用 `/comments` 见该模块 docstring）。
+实现：`TopicService.upgrade_block_to_place / dispatch_task / return_conclusion`；
+留话是 `topics_tasks.say_on_task`。
 升级出一条活时叫醒的是**房间**（起分身、把这条活的线程标识写进它的 prompt、给活起名字），不是那条活——
 活没有自己的会话，朝它开一轮就是给它起一整个容器。
 

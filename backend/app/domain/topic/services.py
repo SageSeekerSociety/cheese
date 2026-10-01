@@ -1491,26 +1491,3 @@ class TopicService:
                     node_type=node.node_type,
                     struct_order=order,
                 )
-
-    async def add_relay_block(
-        self, *, target: Task, sender: Place, label: str, text: str
-    ) -> Block:
-        """母子传话's message block (see `app.domain.topic.relay`).
-
-        Lives here, not in `relay.py`, for one reason: writing a Block from
-        another domain's repository is the debt `tests/unit/test_domain_import_
-        guard.py` ratchets down, and this service already carries that exemption.
-        The ROOM's 芝士 is the author: a message from someone who is not on the
-        roster reads as a ghost. `refs` links back to the sender.
-        """
-        author = await self._members.resolve_agent_handle(target.room_id)
-        return await self._blocks.add(
-            project_id=target.project_id,
-            topic_id=target.room_id,
-            task_id=target.id,
-            author=author,
-            author_type=AuthorType.participant,
-            content=f"【{label}｜{sender.title}】\n{text}",
-            kind=BlockKind.message,
-            refs=[str(sender.room_id)],
-        )
