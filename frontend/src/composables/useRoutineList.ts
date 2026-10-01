@@ -22,6 +22,8 @@ import {
   updateRoutine,
 } from '../api/routines'
 
+import { t } from '@/i18n'
+
 export interface RoutineListOptions {
   projectId: string
   /** 只看这一个房间；`null` / 不给 = 整个项目的总览。 */
@@ -60,7 +62,7 @@ export function useRoutineList(options: RoutineListOptions) {
       const listed = await listProjectRoutines(options.projectId, options.topicId)
       routines.value = listed.data
     } catch (e) {
-      fail(e, '未能读取定时与触发规则')
+      fail(e, t('routines.loadFailed'))
     } finally {
       loading.value = false
     }
@@ -77,7 +79,7 @@ export function useRoutineList(options: RoutineListOptions) {
       const detail = await getRoutine(r.id)
       runs.value = { ...runs.value, [r.id]: detail.runs }
     } catch (e) {
-      fail(e, '未能读取执行记录')
+      fail(e, t('routines.runsFailed'))
     }
   }
 
@@ -89,7 +91,7 @@ export function useRoutineList(options: RoutineListOptions) {
       if (action === 'run-now') await toggleRuns(r, true)
       else routines.value = routines.value.map((x) => (x.id === r.id ? (out as Routine) : x))
     } catch (e) {
-      fail(e, '操作没有成功')
+      fail(e, t('routines.actionFailed'))
     } finally {
       busy.value = ''
     }
@@ -102,7 +104,7 @@ export function useRoutineList(options: RoutineListOptions) {
       await deleteRoutine(r.id)
       routines.value = routines.value.filter((x) => x.id !== r.id)
     } catch (e) {
-      fail(e, '未能删除')
+      fail(e, t('routines.deleteFailed'))
     } finally {
       busy.value = ''
     }
@@ -155,7 +157,7 @@ export function useRoutineList(options: RoutineListOptions) {
   /** 表单存下去。出错写在这张表里，人改了字段就地再存一次。 */
   async function submit(payload: { room: string; body: RoutineInput }) {
     if (!editing.value && !payload.room) {
-      formError.value = '先选一个房间：工作在那个房间里执行，结果也放在那里'
+      formError.value = t('routines.pickRoom')
       return
     }
     saving.value = true
@@ -164,7 +166,7 @@ export function useRoutineList(options: RoutineListOptions) {
       await save({ id: editing.value?.id, room: payload.room, body: payload.body })
       formOpen.value = false
     } catch (e) {
-      formError.value = e instanceof Error ? e.message : '没有保存成功'
+      formError.value = e instanceof Error ? e.message : t('routines.saveFailed')
     } finally {
       saving.value = false
     }

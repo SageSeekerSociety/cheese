@@ -80,7 +80,7 @@ async function loadRooms() {
     if (props.projectId !== projectId) return
     rooms.value = topics.data.filter((tp) => tp.status !== 'archived')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未能读取这个项目的房间'
+    error.value = e instanceof Error ? e.message : t('routines.roomsFailed')
   }
 }
 
@@ -112,7 +112,7 @@ watch(
 useCommands(() => [
   {
     id: 'routines.refresh',
-    title: '刷新',
+    title: t('routines.action.refresh'),
     palette: false,
     icon: 'mdi-refresh',
     loading: loading.value,
@@ -121,7 +121,7 @@ useCommands(() => [
   },
   {
     id: 'routines.new',
-    title: '新建',
+    title: t('routines.action.new'),
     icon: 'mdi-plus',
     disabled: !rooms.value.length,
     header: { primary: true, accent: true },
@@ -133,10 +133,7 @@ useCommands(() => [
 <template>
   <AppPage :title="t('navigation.project.routines')">
     <div>
-      <p class="t-body c-muted mb-6">
-        到点或项目里发生某件事时，房间里的 AI 队友自己开工，做完把结果放进房间并通知你。
-        在房间里说「每周一早上整理一次进展」，芝士也会起草一条，等你在这里确认
-      </p>
+      <p class="t-body c-muted mb-6">{{ t('routines.intro') }}</p>
 
       <RoutineBoard
         :routines="routines"

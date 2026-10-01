@@ -17,7 +17,7 @@ import type { Block, Topic } from '../cx_types'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { ApiError, getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../api'
+import { addComment, ApiError, getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../api'
 import {
   autosavePaused,
   docSaveStatus,
@@ -29,6 +29,8 @@ import {
 } from '../lib/docEditState'
 import { compareRoundTrip } from '../lib/docMarkdown'
 import { myHandle } from '../me'
+
+import { t } from '@/i18n'
 
 export interface PanelDocProps {
   topic: Topic | null
@@ -122,9 +124,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     })
   )
   const pausedHint = computed(() =>
-    editable.value
-      ? '这篇文档包含编辑器无法显示的格式，自动保存已暂停。在源码模式下编辑可以保存'
-      : '只读模式下不会自动保存，回到编辑后可以保存这些改动'
+    editable.value ? t('work.room.doc.pausedEditable') : t('work.room.doc.pausedReadOnly')
   )
 
   // 手机上不提供源码模式：软键盘配 Monaco 不是能救的组合。而源码模式恰恰是
@@ -263,7 +263,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
       // A2 badges + 常驻评论区: refresh nodes/comments for the new doc.
       void loadComments(topicId).catch(() => {})
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : '加载文档失败'
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.doc.loadFailed')
     } finally {
       loading.value = false
     }
@@ -374,7 +374,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
         // default: show the same conflict bar and let the person choose.
         await showConflictWithServerDoc(topic.id)
       } else {
-        errorMsg.value = e instanceof Error ? e.message : '保存失败'
+        errorMsg.value = e instanceof Error ? e.message : t('work.room.doc.saveFailed')
       }
     } finally {
       saving.value = false
@@ -391,7 +391,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
       docVersion.value = block?.doc_version ?? 0
       externalDoc.value = block?.content ?? ''
     } catch {
-      errorMsg.value = '文档已在别处更新，本次未保存'
+      errorMsg.value = t('work.room.doc.changedElsewhere')
     }
   }
 
@@ -605,6 +605,9 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
     commentMarkIndex,
     // 动作
     refreshComments,
+    commentAuthor: AUTHOR,
+    sendComment: (topicId: string, content: string, anchor?: string, quote?: string) =>
+      addComment(topicId, content, AUTHOR, anchor, quote),
     save,
     confirmLossySave,
     onBlur,

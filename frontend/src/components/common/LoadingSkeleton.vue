@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 // 内容在路上时，先画出它的形状。
 //
 // 判据（工作台的加载态都按这条挑）：**你知道等会儿长什么样，就画骨架；不知道要
@@ -69,7 +70,7 @@ function width(i: number): string {
   <!-- aria-busy + 一句给读屏软件的话：骨架对眼睛说「在加载」，对屏幕阅读器
        什么都没说——它读到的只是一堆空 div。 -->
   <div class="skel" :class="`skel--${variant}`" role="status" aria-busy="true" aria-live="polite">
-    <span class="skel__sr">加载中</span>
+    <span class="skel__sr">{{ t('shell.loading') }}</span>
 
     <!-- 聊天：消息是平铺的，人和芝士都靠左，所以骨架也是头像 + 名字 + 一两行字。
          行高逐条抄自真的那一行，到货那一刻整列不跳。 -->
@@ -331,20 +332,20 @@ function width(i: number): string {
   height: 16px;
   flex: none;
 }
-/* 头像、状态点的尺寸和圆角照抄真东西：ChatPanel 的 .im-avatar 是 28px / 8px，
-   TopicMembers 的 .roster__avatar 是 26px / 8px，看板的 .board-dot 是 10px 的圆。
+/* 头像、状态点的尺寸和形状照抄真东西：ChatPanel 的 .im-avatar 是 28px 的圆（人），
+   TopicMembers 的 .roster__avatar 是 26px 的圆，看板的 .board-dot 是 10px 的圆。
    对不上的话内容到达那一刻整行会挪一下，而骨架存在的意义正是不让它挪。 */
 .skel__bone--avatar {
   width: 28px;
   height: 28px;
   flex: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
 }
 .skel__bone--face {
   width: 26px;
   height: 26px;
   flex: none;
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
 }
 .skel__bone--dot {
   width: 10px;
@@ -433,7 +434,7 @@ function width(i: number): string {
 }
 
 /* RunningWorkView 的 .board-card：padding 10px、margin-bottom 8px、gap 4px、
-   1px 边框 + --radius-md，坐在 --canvas 上。里面四样东西照着卡自己的顺序来：
+   1px 边框 + --radius-md，白底，坐在 --fill 的泳道里。里面四样东西照着卡自己的顺序来：
    标题（可两行，这里画一行）/ 房间·队友·负责人 / 一条分隔线 / 状态 + 时间。
    合计 10+23+4+19+4+7+4+19+10+2 = 102px，真卡 101px。 */
 .skel__card {
@@ -444,7 +445,7 @@ function width(i: number): string {
   margin-bottom: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--canvas);
+  background: var(--surface);
 }
 /* 卡里的标题行盒 22.7px（.t-body 14px × 1.62），比正文默认那根少 1px —— 两张卡
    叠起来那 1px 就会看出来。 */

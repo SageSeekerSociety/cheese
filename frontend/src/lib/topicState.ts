@@ -17,13 +17,13 @@ export interface TopicStateBadge {
 }
 
 export function topicStateBadge(status?: string | null): TopicStateBadge {
-  if (status === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
-  if (status === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
+  if (status === 'archived') return { label: t('work.topicState.accepted'), cls: 'pr-state--merged' }
+  if (status === 'draft') return { label: t('work.topicState.draft'), cls: 'pr-state--draft' }
   // 支线只有 open / closed 两个状态，和房间那三个不是一套词。closed 是「这件活
   // 做完了」——不是归档（支线不归档），所以既不能落到 archived，也不能不管它掉进
   // 「进行中」，那会把一条已经收工的支线说成还在跑。
-  if (status === 'closed') return { label: '已完成', cls: 'pr-state--merged' }
-  return { label: '进行中', cls: 'pr-state--open' }
+  if (status === 'closed') return { label: t('work.topicState.done'), cls: 'pr-state--merged' }
+  return { label: t('work.topicState.open'), cls: 'pr-state--open' }
 }
 
 /** 采纳卡处在哪一段. The card owns its own data; everyone else needs one word. */
@@ -54,13 +54,13 @@ export function topicPhase({ status, working, card }: TopicPhaseInput): TopicPha
 }
 
 export function topicPhaseBadge(phase: TopicPhase): TopicStateBadge {
-  if (phase === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
-  if (phase === 'closed') return { label: '已完成', cls: 'pr-state--merged' }
-  if (phase === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
-  if (phase === 'working') return { label: '施工中', cls: 'pr-state--working' }
-  if (phase === 'delivering') return { label: '交付中', cls: 'pr-state--delivering' }
-  if (phase === 'reviewing') return { label: '待审阅', cls: 'pr-state--reviewing' }
-  return { label: '进行中', cls: 'pr-state--open' }
+  if (phase === 'archived') return { label: t('work.topicState.accepted'), cls: 'pr-state--merged' }
+  if (phase === 'closed') return { label: t('work.topicState.done'), cls: 'pr-state--merged' }
+  if (phase === 'draft') return { label: t('work.topicState.draft'), cls: 'pr-state--draft' }
+  if (phase === 'working') return { label: t('work.topicState.working'), cls: 'pr-state--working' }
+  if (phase === 'delivering') return { label: t('work.topicState.delivering'), cls: 'pr-state--delivering' }
+  if (phase === 'reviewing') return { label: t('work.topicState.reviewing'), cls: 'pr-state--reviewing' }
+  return { label: t('work.topicState.open'), cls: 'pr-state--open' }
 }
 
 /** The short id a topic is referred to by on screen ("#a1b2c3"). */
@@ -72,7 +72,11 @@ export function topicShortId(id?: string | null): string {
  * 一个话题在屏幕上叫什么。项目本身那个房间（kind = root）在侧栏上叫「全局」，
  * 点进去页头也得叫「全局」——它存着的标题是建项目时写下的「<项目名> · 项目总览」，
  * 照着写就是同一个房间两个名字。
+ *
+ * 还没人起名的话题（`title_source = placeholder`）按读者的语言叫「新话题」：库里
+ * 那份占位标题是写给 agent 读的中文，认它靠的是这一位，不是那几个字。
  */
-export function topicTitle(topic: { kind?: string | null; title: string }): string {
-  return topic.kind === 'root' ? t('navigation.project.general') : topic.title
+export function topicTitle(topic: { kind?: string | null; title: string; title_source?: string | null }): string {
+  if (topic.kind === 'root') return t('navigation.project.general')
+  return topic.title_source === 'placeholder' ? t('work.topic.untitled') : topic.title
 }

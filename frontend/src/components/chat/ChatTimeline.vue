@@ -14,6 +14,9 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
 
+import { computed } from 'vue'
+
+import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { editableText } from '../../lib/renderMessage'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import DispatchedMarker from '../DispatchedMarker.vue'
@@ -23,8 +26,9 @@ import RoomNotice from '../room/RoomNotice.vue'
 import TimelineMark from '../TimelineMark.vue'
 
 import UserRef from '@/components/common/UserRefLink.vue'
+import { t } from '@/i18n'
 
-defineProps<{
+const props = defineProps<{
   topic: Topic | null
   rows: NoticeRow[]
   dayLabels: Map<string, string>
@@ -47,6 +51,8 @@ defineProps<{
   /** Index of the one row the retry button may sit on (the last one), or -1. */
   retryIndex: number
   retryBusy: boolean
+  /** 房间里有队友正在跑这一轮。 */
+  working: boolean
   showStarters: boolean
   starterPrompts: { label: string; text: string }[]
   agentSeat: { handle?: string } | undefined
@@ -102,6 +108,36 @@ const emit = defineEmits<{
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
 
+// 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
+// 「正在做」，也是上一轮没走完的，不该跟着转。
+const liveChecklists = computed(() => {
+  const ids = new Set<string>()
+  if (!props.working) return ids
+  const seen = new Set<string>()
+  for (let i = props.rows.length - 1; i >= 0; i--) {
+    const b = props.rows[i].block
+    if (!b.meta?.checklist || seen.has(b.author)) continue
+    seen.add(b.author)
+    ids.add(b.id)
+  }
+  return ids
+})
+
+// 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
+// 名字和时间。断开的条件和消息一样（chatGrouping.ts）：中间插了别的行、换了一天、
+// 隔了一小时以上。和消息之间照旧断开。
+const noticeCont = computed(() =>
+  props.rows.map((row, i) => {
+    const prev = props.rows[i - 1]
+    if (!row.notice || !prev?.notice) return false
+    const name = props.noticeAgentName(row.block, row.notice)
+    if (!name || name !== props.noticeAgentName(prev.block, prev.notice)) return false
+    if (props.splitMarkers.before.has(row.block.id) || row.block.id === props.unreadAnchorId) return false
+    if (dayKey(prev.block.created_at) !== dayKey(row.block.created_at)) return false
+    return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
+  })
+)
+
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
 // template stays a table of rows instead of a wall of arrows.
@@ -151,11 +187,11 @@ function emitOutboxLeave(el: Element, done: () => void) {
         <LoadingSkeleton v-if="loadingHistory" variant="chat" />
       </Transition>
 
-      <section v-if="showStarters" class="chat-start px-5 py-8" aria-label="开始项目协作">
-        <h2 class="t-title mb-2">从一件具体的事开始</h2>
-        <p class="t-body c-muted mb-4">
-          <UserRef :handle="agentSeat?.handle" :name="agentName" />可以查找资料、起草文档，或和你一起拆分任务
-        </p>
+      <section v-if="showStarters" class="chat-start px-5 py-8" :aria-label="t('work.room.chat.startAria')">
+        <h2 class="t-title mb-2">{{ t('work.room.chat.startTitle') }}</h2>
+        <i18n-t scope="global" keypath="work.room.chat.startBody" tag="p" class="t-body c-muted mb-4">
+          <template #agent><UserRef :handle="agentSeat?.handle" :name="agentName" /></template>
+        </i18n-t>
         <div class="d-flex flex-wrap ga-2">
           <v-btn
             v-for="prompt in starterPrompts"
@@ -179,7 +215,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
         class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
         data-testid="chat-older-loader"
       >
-        {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
+        {{ loadingOlder ? t('work.room.chat.loadingOlder') : t('work.room.chat.older') }}
       </div>
 
       <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
@@ -190,7 +226,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
                这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
         <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
           <v-icon size="12">mdi-arrow-down</v-icon>
-          以下是新消息
+          {{ t('work.room.chat.newMessagesBelow') }}
         </TimelineMark>
         <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
@@ -208,6 +244,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :notice="notice"
           :run="run"
           :name="noticeAgentName(m, notice)"
+          :cont="noticeCont[i]"
           :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
           :agent-name="agentName"
           :refs="refs"
@@ -246,6 +283,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :viewer="viewer"
           :active="bar.shown && bar.id === m.id"
           :ask-busy="askBusy === m.id"
+          :live="liveChecklists.has(m.id)"
           :editing="editingId === m.id"
           :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
           :saving="editSaving"

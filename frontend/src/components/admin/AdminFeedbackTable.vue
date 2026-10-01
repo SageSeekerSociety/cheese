@@ -160,7 +160,7 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
 </script>
 
 <template>
-  <div class="aft">
+  <div class="aft admin-card">
     <div class="aft__scroll">
       <table
         ref="tableEl"
@@ -289,12 +289,17 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-lg);
-  border-bottom-left-radius: var(--radius-lg);
+  /* 卡片的形状由 `.admin-card` 给（和 `.qlist` 同一份定义）；这里只留这一页自己的
+     布局：整块填满剩下的高度，滚动在 `.aft__scroll` 里（表头 sticky 的参照物）。 */
+  margin: 16px 24px 24px;
+}
+
+/* 内缩 16/24：数字和 `.admin-page__body` 的 padding 是同一套。 */
+@media (max-width: 700px) {
+  .aft {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
 }
 
 .aft__scroll {

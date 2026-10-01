@@ -15,8 +15,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn v-if="dialog.showCancel" variant="text" @click="onCancel(dialog)">取消</v-btn>
-          <v-btn color="primary" variant="flat" @click="onConfirm(dialog)">确定</v-btn>
+          <v-btn v-if="dialog.showCancel" variant="text" @click="onCancel(dialog)">{{ t('global.cancel') }}</v-btn>
+          <v-btn color="primary" variant="flat" @click="onConfirm(dialog)">{{ t('shell.dialog.ok') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -26,6 +26,7 @@
 <script lang="ts" setup>
 import type { DialogInstance } from '@/plugins/dialog'
 
+import { t } from '@/i18n'
 import { closeDialog, dialogs } from '@/plugins/dialog'
 
 const onDialogClose = (id: number, isOpen: boolean) => {

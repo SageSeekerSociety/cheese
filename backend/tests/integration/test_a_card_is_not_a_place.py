@@ -67,7 +67,7 @@ def test_a_card_is_read_through_the_room_it_belongs_to(client):
     assert got["title"] == "接口分页"
     assert got["brief"] == "加 cursor 参数"
     # 状态词是后端算的那一句，和它在看板上显示的是同一句。
-    assert got["presentation"]["display_status"]
+    assert got["presentation"]["phrase"]
     assert got["blocks"] == []
 
 
@@ -151,7 +151,7 @@ def test_a_card_that_kept_its_old_topic_id_still_renders(client):
 
     listed = client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]
     assert [t["id"] for t in listed] == [str(inherited_id)]
-    assert listed[0]["presentation"]["display_status"]
+    assert listed[0]["presentation"]["phrase"]
 
     one = client.get(f"/topics/{room_id}/tasks/{inherited_id}")
     assert one.status_code == 200, one.text

@@ -15,6 +15,11 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
+// 断言读的是中文界面上的那一行字，语言钉在中文上。
+beforeEach(() => setLocale('zh-CN'))
+
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
@@ -79,7 +84,7 @@ function mountPanel(id: string) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0 },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 

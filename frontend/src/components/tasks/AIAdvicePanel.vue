@@ -10,18 +10,20 @@
       class="border-0"
       icon="mdi-alert"
       color="warning"
-      text="本建议由 AI 生成，仅供参考。请结合实际情况二次验证内容准确性，如有疑问请咨询领域专家。"
+      :text="t('tasks.advicePanel.disclaimer')"
     ></v-alert>
 
     <v-card-text v-if="loading" class="text-center py-8">
       <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
-      <div class="mt-4 text-body-1">AI 正在分析题目，请稍候...</div>
+      <div class="mt-4 text-body-1">{{ t('tasks.advicePanel.analyzing') }}</div>
     </v-card-text>
 
     <v-card-text v-else-if="error" class="text-center py-8">
       <v-icon color="error" size="64">mdi-alert-circle</v-icon>
-      <div class="mt-4 text-body-1">获取建议失败：{{ error }}</div>
-      <v-btn class="mt-4" color="primary" variant="flat" @click="$emit('retry')">重试</v-btn>
+      <div class="mt-4 text-body-1">{{ t('tasks.advicePanel.failed', { error }) }}</div>
+      <v-btn class="mt-4" color="primary" variant="flat" @click="$emit('retry')">{{
+        t('tasks.loadError.retry')
+      }}</v-btn>
     </v-card-text>
 
     <template v-else>
@@ -32,7 +34,7 @@
             <v-card flat rounded="lg" class="pb-2 h-100 advice-card">
               <v-card-title class="bg-primary-lighten-4 rounded-t-lg text-subtitle-1 py-3 px-4 d-flex align-center">
                 <v-icon size="20" class="me-2" color="primary">mdi-text-box-search</v-icon>
-                <span class="font-weight-medium">主题总结</span>
+                <span class="font-weight-medium">{{ t('tasks.advicePanel.summary') }}</span>
               </v-card-title>
               <v-card-text class="px-4 pt-4">
                 <div class="text-h6 text-primary mb-3 font-weight-medium">{{ advice?.topic_summary.title }}</div>
@@ -57,7 +59,7 @@
             <v-card flat rounded="lg" class="pb-2 h-100 advice-card">
               <v-card-title class="bg-primary-lighten-4 rounded-t-lg text-subtitle-1 py-3 px-4 d-flex align-center">
                 <v-icon size="20" class="me-2" color="primary">mdi-lightbulb-on</v-icon>
-                <span class="font-weight-medium">知识领域</span>
+                <span class="font-weight-medium">{{ t('tasks.advicePanel.knowledge') }}</span>
               </v-card-title>
               <v-card-text class="pa-4">
                 <div class="d-flex flex-column gap-3">
@@ -105,7 +107,7 @@
             <v-card flat rounded="lg" class="pb-2 h-100 advice-card">
               <v-card-title class="bg-primary-lighten-4 rounded-t-lg text-subtitle-1 py-3 px-4 d-flex align-center">
                 <v-icon size="20" class="me-2" color="primary">mdi-map-marker-path</v-icon>
-                <span class="font-weight-medium">学习路径</span>
+                <span class="font-weight-medium">{{ t('tasks.advicePanel.learningPaths') }}</span>
               </v-card-title>
               <v-card-text class="pa-4">
                 <v-timeline density="compact" align="start" side="end" class="learning-timeline pa-0">
@@ -169,7 +171,7 @@
             <v-card flat rounded="lg" class="pb-2 h-100 advice-card">
               <v-card-title class="bg-primary-lighten-4 rounded-t-lg text-subtitle-1 py-3 px-4 d-flex align-center">
                 <v-icon size="20" class="me-2" color="primary">mdi-puzzle</v-icon>
-                <span class="font-weight-medium">实践方法论</span>
+                <span class="font-weight-medium">{{ t('tasks.advicePanel.methodology') }}</span>
               </v-card-title>
               <v-card-text class="pa-4">
                 <v-timeline density="compact" align="start" side="end" class="methodology-timeline pa-0">
@@ -191,7 +193,7 @@
                       <div class="text-body-2">{{ step.description }}</div>
                       <div class="text-caption text-medium-emphasis mt-1">
                         <v-icon size="14" class="me-1">mdi-clock-outline</v-icon>
-                        预计耗时：{{ step.estimated_time }}
+                        {{ t('tasks.advicePanel.estimatedTime', { time: step.estimated_time }) }}
                       </div>
                       <div v-if="step.followup_questions?.length" class="mt-2">
                         <div class="d-flex flex-wrap gap-1">
@@ -220,7 +222,7 @@
             <v-card flat rounded="lg" class="pb-2 advice-card">
               <v-card-title class="bg-primary-lighten-4 rounded-t-lg text-subtitle-1 py-3 px-4 d-flex align-center">
                 <v-icon size="20" class="me-2" color="primary">mdi-account-group</v-icon>
-                <span class="font-weight-medium">团队协作建议</span>
+                <span class="font-weight-medium">{{ t('tasks.advicePanel.teamTips') }}</span>
               </v-card-title>
               <v-card-text class="pa-4">
                 <v-row dense>
@@ -234,7 +236,7 @@
                           <div class="text-body-2">{{ tip.description }}</div>
                           <v-divider class="my-3" />
                           <div class="text-body-2">
-                            <span class="font-weight-medium">协作要点：</span>
+                            <span class="font-weight-medium">{{ t('tasks.advicePanel.collaboration') }}</span>
                             {{ tip.collaboration_tips }}
                           </div>
                           <div v-if="tip.followup_questions?.length" class="mt-3">
@@ -281,8 +283,11 @@
 import type { TaskAIAdvice, TaskAIAdviceConversationContext } from '@/network/api/tasks/types'
 
 import { inject } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { TaskSubmitterType } from '@/types'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   taskId: number

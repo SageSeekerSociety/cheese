@@ -8,6 +8,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { addPlatformAdmin, listPlatformAdmins, removePlatformAdmin, searchAdminCandidates } from '@/api'
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminGrid from '@/components/admin/AdminGrid.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -276,8 +277,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="am">
-    <div class="am__inner">
+  <div class="am admin-page">
+    <div class="am__inner admin-page__col page-container--admin">
       <AdminPageHeader :title="t('members.header.title')" :sub="t('members.header.subtitle')">
         <template #tools>
           <span class="t-meta-read t-num am__count">{{ countLine }}</span>
@@ -296,20 +297,17 @@ onMounted(load)
         </template>
       </AdminPageHeader>
 
-      <div class="am__body">
+      <div class="am__body admin-page__body">
         <!-- 读不到名单时**不在这里说话**：那一条画在表格自己的位置上（列头下面、
              重试按钮就在旁边）。两处说同一件事，人会以为是两次失败。 -->
-        <div v-if="error && roster" class="am__flash am__flash--bad" role="alert">
-          <v-icon icon="mdi-alert-circle-outline" size="16" class="am__flashIcon" />
-          <span class="am__flashText">{{ error }}</span>
-        </div>
-        <div v-else-if="notice" class="am__flash am__flash--ok" role="status">
-          <v-icon icon="mdi-check-circle-outline" size="16" class="am__flashIcon" />
-          <span class="am__flashText">{{ notice }}</span>
-          <button type="button" class="am__flashClose" :aria-label="t('members.notice.dismiss')" @click="notice = null">
-            <v-icon icon="mdi-close" size="14" />
-          </button>
-        </div>
+        <AdminFlash v-if="error && roster" tone="error" :text="error" />
+        <AdminFlash
+          v-else-if="notice"
+          tone="ok"
+          :text="notice"
+          :dismiss-aria="t('members.notice.dismiss')"
+          @dismiss="notice = null"
+        />
 
         <div class="am__gridwrap">
           <AdminGrid
@@ -334,12 +332,15 @@ onMounted(load)
             </template>
 
             <!-- 读失败那一条就画在列头下面：位置说明「这张表没读出来」，而重试按钮
-                 就在原因旁边。 -->
+                 就在原因旁边。中性标题说清是哪一页，服务端原话落到说明行 —— 原话当标题会被
+                 长句撑得不像标题，也把「是哪一页出的事」盖掉了。原话取不到时（`error` 里
+                 只剩兜底那句）不再重复一遍标题。 -->
             <template #error>
               <AdminEmptyState
                 compact
                 tone="error"
-                :title="error ?? ''"
+                :title="t('members.error.loadFailed')"
+                :desc="error && error !== t('members.error.loadFailed') ? error : undefined"
                 :action="t('members.error.retry')"
                 @action="load"
               />
@@ -369,7 +370,13 @@ onMounted(load)
                    `aria-hidden` 而不是把属性透传给 `UserAvatar` —— 它的根是组件，
                    属性不保证落到底层的 `<img>`/`<div>` 上。 -->
                   <span class="am__pfp" aria-hidden="true">
-                    <UserAvatar class="am__avatar" :name="row.handle" :avatar="avatarUrl(row.avatarId)" :size="20" />
+                    <UserAvatar
+                      class="am__avatar"
+                      :name="row.handle"
+                      :avatar="avatarUrl(row.avatarId)"
+                      :size="20"
+                      :kind="row.isAgent ? 'agent' : 'person'"
+                    />
                   </span>
                   <span class="am__name-main">{{ row.primary }}</span>
                   <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
@@ -431,7 +438,13 @@ onMounted(load)
               <td class="am__cell" data-card="primary" :title="row.label">
                 <span class="am__who">
                   <span class="am__pfp" aria-hidden="true">
-                    <UserAvatar class="am__avatar" :name="row.handle" :avatar="avatarUrl(row.avatarId)" :size="20" />
+                    <UserAvatar
+                      class="am__avatar"
+                      :name="row.handle"
+                      :avatar="avatarUrl(row.avatarId)"
+                      :size="20"
+                      :kind="row.isAgent ? 'agent' : 'person'"
+                    />
                   </span>
                   <span class="am__name-main">{{ row.primary }}</span>
                   <span v-if="row.secondary" class="am__name-sub">{{ row.secondary }}</span>
@@ -589,35 +602,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 三段式和反馈管理同一套：页头（`AdminPageHeader`）自带 24px 内边距和底下那条
-   发丝线，内容区接着往下排。宽度和队列页一样锁 `--page-w-admin` 并居中 —— 这一页
-   的右边没有东西，靠左会让不同视口下的列宽差出一截（同 `.qpage__inner` 那条注）。 */
-.am {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  background: var(--canvas);
-}
-
-.am__inner {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  min-height: 0;
-  margin: 0 auto;
-}
-
-.am__body {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-  padding: 16px 24px 24px;
-}
-
 /* 人数：页头工具槽里的一格元信息。`min-height` 是给「名单还没回来」那一帧留位，
    否则数字到货时工具槽会长一行、页头跟着跳一下。 */
 .am__count {
@@ -628,65 +612,6 @@ onMounted(load)
 /* 一条横条（错误 / 提示）。**不是 `v-alert`**：那套默认样（大圆角、实色底、整块
    染色）在这一页的表格旁边像另一个产品。这里只留一条：左侧一道 3px 的色标说这是
    哪一类，其余全是这一页自己的底色与描边。 */
-.am__flash {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left-width: 3px;
-  border-radius: var(--radius-md);
-}
-
-.am__flash--bad {
-  border-left-color: var(--danger);
-}
-
-.am__flash--bad .am__flashIcon {
-  color: var(--danger);
-}
-
-.am__flash--ok {
-  border-left-color: var(--ok);
-}
-
-.am__flash--ok .am__flashIcon {
-  color: var(--ok);
-}
-
-.am__flashText {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.am__flashClose {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.am__flashClose:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-
-.am__flashClose:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
 
 /* 名单只有几行，所以这一张卡**贴着内容**，不撑满剩下的高度（反馈那一页相反：它一屏
    十七行，表格自己领滚动）。外面的这一层负责「能缩」—— 名单长起来时它先让位，然后

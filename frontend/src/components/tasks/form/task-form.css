@@ -1,0 +1,42 @@
+/* 发题表单那几张卡共用的一层皮（#2143）。
+ *
+ * 每一张卡都 `scoped src` 引这一份（和 `components/accept/accept-card.css` 是同一个
+ * 办法）：一份规矩，谁画都不走样。写在某一个组件里、靠宿主的 scoped 属性落到别人
+ * 身上，那是一条看不见的边 —— 哪天那张卡挪个地方，样式就静悄悄地没了。
+ *
+ * `v-card-text` 那条也在这里：垫在卡里的那一栏是每张卡自己写的，scoped 属性跟着写
+ * 它的那个组件走，所以这条规矩必须跟着卡一起走。
+ */
+
+/* 一张卡：白底、一圈细边，指上去抬一点点（不是换色）。 */
+.form-card {
+  border: 1px solid rgba(var(--v-border-color), 0.12);
+  background-color: rgb(var(--v-theme-surface));
+  transition: all 0.2s ease;
+}
+
+.form-card:hover {
+  border-color: rgba(var(--v-theme-primary), 0.15);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
+}
+
+/* 卡与卡之间收窄到 12px（Vuetify 自己的 mb-4 是 16px）。 */
+.mb-4 {
+  margin-bottom: 12px !important;
+}
+
+/* 卡里的一段到下一段之间同样是 12px。 */
+.mt-4 {
+  margin-top: 12px !important;
+}
+
+.v-card-text {
+  padding-top: 12px;
+  padding-bottom: 16px;
+}
+
+/* 浅琥珀底的圆（实名那一块里的那几个图标）。 */
+.primary-soft {
+  background-color: rgba(var(--v-theme-primary), 0.08);
+}

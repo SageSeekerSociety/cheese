@@ -71,7 +71,7 @@ it('saves a selected model and displays it after reloading', async () => {
 it('shows the deployment default while staging a reset and saves null', async () => {
   api.getProjectDefaultModel.mockResolvedValue({ ...state, model: 'deepseek-flash' })
   const view = mount()
-  await fireEvent.click(await view.findByRole('button', { name: '恢复部署默认' }))
+  await fireEvent.click(await view.findByRole('button', { name: '恢复默认模型' }))
   expect(await view.findByText('Claude Sonnet 5')).toBeTruthy()
   expect(api.setProjectDefaultModel).not.toHaveBeenCalled()
   await fireEvent.click(view.getByRole('button', { name: '保存' }))

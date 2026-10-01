@@ -10,6 +10,11 @@ import { describe, expect, it } from 'vitest'
 
 import LoadingSkeleton from './LoadingSkeleton.vue'
 
+import { setLocale } from '@/i18n'
+
+// 这组用例读的是中文界面上的字。
+setLocale('zh-CN')
+
 const Skeleton = LoadingSkeleton as unknown as Component
 
 /** 每种形态自己那一行的类名。数「一共画了几个盒子」是不行的：有的形态除了行还

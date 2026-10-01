@@ -5,7 +5,15 @@ import type {
 } from '@/network/api/tasks/types'
 import type { ChatMessage, ChatService, ChatStreamOptions, ContextChip, ConversationSummary } from '../types'
 
+import { t } from '@/i18n'
 import { TasksApi } from '@/network/api/tasks'
+
+type Section = 'knowledge' | 'learningPath' | 'methodology' | 'teamTips'
+
+function sectionLabel(section: Section, name?: string | null): string {
+  const label = t(`aiChat.section.${section}`)
+  return name ? t('aiChat.section.named', { label, name }) : label
+}
 
 /**
  * 任务AI建议聊天服务 - 将通用Chat组件适配到任务AI建议API
@@ -116,28 +124,28 @@ export class TaskAIAdviceChatService implements ChatService<TaskAIAdviceConversa
       switch (context.section) {
         case 'knowledge_fields':
           chips.push({
-            label: context.displayName ? `知识领域：${context.displayName}` : '知识领域',
+            label: sectionLabel('knowledge', context.displayName),
             icon: 'mdi-lightbulb-on',
             color: 'warning',
           })
           break
         case 'learning_paths':
           chips.push({
-            label: context.displayName ? `学习路径：${context.displayName}` : '学习路径',
+            label: sectionLabel('learningPath', context.displayName),
             icon: 'mdi-map-marker-path',
             color: 'success',
           })
           break
         case 'methodology':
           chips.push({
-            label: context.displayName ? `实践方法论：${context.displayName}` : '实践方法论',
+            label: sectionLabel('methodology', context.displayName),
             icon: 'mdi-puzzle',
             color: 'secondary',
           })
           break
         case 'team_tips':
           chips.push({
-            label: context.displayName ? `团队协作建议：${context.displayName}` : '团队协作建议',
+            label: sectionLabel('teamTips', context.displayName),
             icon: 'mdi-account-group',
             color: 'info',
           })

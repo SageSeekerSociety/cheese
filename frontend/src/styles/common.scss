@@ -9,21 +9,45 @@ body,
   scrollbar-gutter: auto;
 }
 
+/* 外框和内容区（docs/design-system.md §1.4）：一级导航、侧栏、顶栏是 canvas，内容区
+ * 是一整块 surface。侧栏左边那条线和顶栏下面那条线在侧栏左上角拐一个圆角，这就是
+ * 「工作区从这里开始」的那个角；没有侧栏的页面，这个角落在内容区自己身上。
+ * 几条线都用 --line：Vuetify 的边框色是半透明的，压在 canvas 和 surface 上深浅不
+ * 一样，接缝处看得出来。 */
 .page-sidebar {
   border-top-left-radius: 12px;
+}
+
+.page-sidebar.v-navigation-drawer {
+  border-color: var(--line);
 }
 
 .page-sidebar.rounded-0 {
   border-top-left-radius: 0;
 }
 
+.app-pane {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+@media (min-width: 960px) {
+  .app-pane {
+    border-left: 1px solid var(--line);
+  }
+
+  .app-pane--alone {
+    border-top-left-radius: 12px;
+  }
+}
+
 :root {
   --app-page-header-height: 48px;
   --app-page-header-bg-opacity: 0;
   /* 页头底线。屏幕上侧栏顶栏和内容区页头是并排的，两条底线接成一条横贯全宽的
-     线，所以颜色必须由一处给：三处页头各写各的时候它们已经分叉了——话题头用的
-     是 --line，和另外两处的 Vuetify 边框 token 不是一个灰度，接缝处看得出断层。 */
-  --app-page-header-rule: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+     线，所以颜色必须由一处给。它左半截压在 canvas 上、右半截压在 surface 上，所以
+     是不透明的 --line：半透明的边框色在两种底上深浅不同，接缝处看得出断层。 */
+  --app-page-header-rule: 1px solid var(--line);
 }
 
 /* 手机上所有页头都是 56px —— 那是系统顶栏 (MobileAppBar) 的高度，而一个人在手机上
@@ -74,6 +98,89 @@ body,
   }
 }
 
+
+/* 侧栏里的一行：首页、空间、个人设置三处的目录都挂这个类，项目侧栏的 .nav-row
+ * （topic-sidebar/TopicRailPinnedRows.vue）是同一套数。四处侧栏长得一样，从一处切
+ * 到另一处，行高、图标、选中态都不跳。
+ *
+ * 三态：静默透明（露出侧栏的 --canvas）/ 悬停 --fill-2 / 选中 --line-2 加粗。选中
+ * 不用琥珀：琥珀在导航里只留给左栏那一格「当前在哪」和未读。 */
+.side-nav {
+  .v-list-item {
+    transition: background-color var(--dur-quick) var(--ease-standard);
+  }
+
+  /* 桌面上 36px，和项目侧栏的话题行一样高；手机上手指点的行至少 44px（§10.1）。 */
+  .v-list-item {
+    min-height: 44px;
+  }
+
+  @media (min-width: 960px) {
+    .v-list-item {
+      min-height: 36px;
+    }
+  }
+
+  .v-list-item:hover {
+    background: var(--fill-2);
+  }
+
+  .v-list-item--active,
+  .v-list-item--active:hover {
+    background: var(--line-2);
+  }
+
+  .v-list-item--active > .v-list-item__overlay {
+    opacity: 0 !important;
+  }
+
+  .v-list-item-title {
+    color: var(--text);
+    font-size: 14px;
+    line-height: var(--lh-14);
+  }
+
+  .v-list-item--active .v-list-item-title {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* 图标和字之间 8px：Vuetify 默认的 32px 把两列拉得太开。 */
+  .v-list-item__spacer {
+    width: 8px !important;
+  }
+
+  .v-list-item__prepend > .v-icon {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    color: var(--faint);
+    font-size: 16px;
+    opacity: 1;
+  }
+
+  .v-list-subheader {
+    min-height: 28px;
+    margin-top: 8px;
+    color: var(--faint);
+    font-size: 12px;
+    font-weight: 600;
+  }
+}
+
+/* 行尾的件数（待办、待审核）：属于「等你处理」那一族，所以是 --warn。 */
+.side-nav__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+  color: var(--inverse-surface);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
 
 @property --s1 {
   syntax: '<percentage>';

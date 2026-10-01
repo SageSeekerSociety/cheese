@@ -66,3 +66,19 @@ describe('时间线上的说明', () => {
     expect(container.querySelector('.fb-step__note a')).toBeNull()
   })
 })
+
+describe('不修复', () => {
+  it('梯子画到「不修复」就停，不再画「已修复」「已上线」', () => {
+    const { container } = mountTimeline(
+      [
+        { status: 'received', by_handle: 'someone', at: '2026-09-20T00:00:00Z', note: null },
+        { status: 'in_progress', by_handle: 'admin', at: '2026-09-21T00:00:00Z', note: null },
+        { status: 'declined', by_handle: 'admin', at: '2026-09-22T00:00:00Z', note: null },
+      ],
+      'declined'
+    )
+    const titles = Array.from(container.querySelectorAll('.fb-step__title'), (el) => el.textContent?.trim())
+    expect(titles).toEqual(['已收录', '处理中', '不修复'])
+    expect(container.querySelector('.fb-step--current .fb-step__title')?.textContent?.trim()).toBe('不修复')
+  })
+})

@@ -15,6 +15,10 @@ exposes no way to click, submit, or run caller-supplied JavaScript. That matters
 before any credential is ever attached to it: a page can carry instructions
 aimed at whoever is reading it, and a browser that can only read cannot be
 talked into acting.
+
+It reaches the public internet only: every connection goes through the proxy in
+``egress.py``, so a page cannot redirect or navigate the browser into the
+network this service runs in.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
+
+import egress
 
 #: A Cloudflare interstitial answers immediately and resolves seconds later.
 #: Returning at DOMContentLoaded reads the interstitial and reports the page as
@@ -47,14 +53,14 @@ async def lifespan(app: FastAPI):
     from crawl4ai import AsyncWebCrawler, BrowserConfig
 
     _slots = asyncio.Semaphore(MAX_CONCURRENT)
+    # Every connection Chrome makes goes through `egress`, which reaches public
+    # addresses only (and the machine's own egress proxy, if it has one).
+    gate = await egress.start()
     _crawler = AsyncWebCrawler(
         config=BrowserConfig(
             headless=True,
             verbose=False,
-            # The machine's egress, if it has one. Playwright does NOT read
-            # HTTPS_PROXY on its own — without this, a proxied host silently
-            # fails to reach most of the web and the browser looks useless.
-            proxy=os.environ.get("HTTPS_PROXY") or None,
+            proxy=f"http://127.0.0.1:{gate.sockets[0].getsockname()[1]}",
             extra_args=[
                 "--ignore-certificate-errors",
                 "--disable-gpu",
@@ -67,6 +73,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await _crawler.__aexit__(None, None, None)
+        gate.close()
 
 
 app = FastAPI(lifespan=lifespan, title="cheese browser-render")

@@ -104,7 +104,7 @@ async function fullscreen() {
     // Fullscreen keeps the same browsing context, including unsaved app state.
     await toggleFullscreen()
   } catch {
-    fullscreenError.value = '无法进入全屏，请在新标签页打开'
+    fullscreenError.value = t('work.room.preview.fullscreenFailed')
   }
 }
 
@@ -177,20 +177,29 @@ function onQuote(payload: { text: string; page: number }) {
   // 一整页的选中没有指向性，当作没指。
   const quote = payload.text.replace(/\s+/g, ' ').trim()
   if (quote.length < 2) return
-  openLocator(`第 ${payload.page} 页`, quote.slice(0, 200), `第 ${payload.page} 页`)
+  const page = t('work.room.preview.page', { page: payload.page })
+  openLocator(page, quote.slice(0, 200), page)
 }
 
 function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
-  openLocator(where, payload.value || '（空）', where)
+  openLocator(where, payload.value || t('work.room.preview.emptyCell'), where)
 }
 
 function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
-  emit('locate', `在 ${props.previewFile?.path ?? ''} 的 ${target.address}（「${target.quote}」）：${note}`)
+  emit(
+    'locate',
+    t('work.room.preview.locateMessage', {
+      path: props.previewFile?.path ?? '',
+      address: target.address,
+      quote: target.quote,
+      note,
+    })
+  )
   clearLocator()
 }
 </script>
@@ -210,7 +219,7 @@ function sendLocator() {
         variant="text"
         color="medium-emphasis"
       >
-        发布网站
+        {{ t('work.room.preview.publishSite') }}
       </v-btn>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
@@ -219,7 +228,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          title="在新标签页打开"
+          :title="t('work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
         <v-btn
@@ -228,7 +237,7 @@ function sendLocator() {
           size="small"
           variant="text"
           color="medium-emphasis"
-          :title="previewFull ? '退出全屏' : '全屏预览'"
+          :title="previewFull ? t('work.room.preview.exitFullscreen') : t('work.room.preview.fullscreen')"
           @click="fullscreen"
         />
       </template>
@@ -237,7 +246,7 @@ function sendLocator() {
         size="small"
         variant="text"
         color="medium-emphasis"
-        title="刷新"
+        :title="t('work.room.preview.refresh')"
         :loading="refreshing"
         @click="emit('refresh')"
       />
@@ -252,7 +261,9 @@ function sendLocator() {
     <div v-else-if="previewUrl" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">
         <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
-        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">{{
+          t('work.room.preview.runningApp')
+        }}</v-chip>
         <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
         <!-- 指定了文件的那一格：它不跟着当前预览走，所以顶栏那些动作（发布、新标签
              页打开）都不给它——这一份自己的两条留在这里，和文档条上那两条一样。 -->
@@ -263,7 +274,7 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="在新标签页打开"
+            :title="t('work.room.preview.openInNewTab')"
             @click="openPreviewInNewTab(path)"
           />
           <v-btn
@@ -271,7 +282,7 @@ function sendLocator() {
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="下载"
+            :title="t('work.room.preview.download')"
             @click="emit('download')"
           />
         </template>
@@ -280,21 +291,27 @@ function sendLocator() {
       <iframe
         :name="frameName"
         class="preview-frame"
-        title="话题预览"
+        :title="t('work.room.preview.frameTitle')"
         sandbox="allow-scripts allow-forms allow-same-origin"
       />
     </div>
     <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
-      <div>预览加载失败</div>
+      <div>{{ t('work.room.preview.loadFailed') }}</div>
       <div class="text-caption mt-1">{{ previewError }}</div>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>无法读取文件</div>
-      <div v-if="path" class="text-caption mt-1">{{ path }}：{{ previewReadError }}</div>
+      <div>{{ t('work.room.preview.readFailed') }}</div>
+      <div v-if="path" class="text-caption mt-1">
+        {{ t('work.room.preview.pathError', { path, error: previewReadError }) }}
+      </div>
       <div v-else class="text-caption mt-1">
-        {{ previewNamedPath ? `${previewNamedPath}：` : '' }}{{ previewReadError }}
+        {{
+          previewNamedPath
+            ? t('work.room.preview.pathError', { path: previewNamedPath, error: previewReadError })
+            : previewReadError
+        }}
       </div>
     </div>
     <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
@@ -326,7 +343,7 @@ function sendLocator() {
           data-testid="edit-file"
           @click="editing = previewFile.path"
         >
-          编辑
+          {{ t('work.room.preview.edit') }}
         </v-btn>
         <v-btn
           v-if="previewFile && !previewFile.path.startsWith('library/')"
@@ -337,7 +354,7 @@ function sendLocator() {
           data-testid="file-history"
           @click="showHistory = !showHistory"
         >
-          历史
+          {{ t('work.room.preview.history') }}
         </v-btn>
         <v-btn
           size="small"
@@ -346,7 +363,7 @@ function sendLocator() {
           prepend-icon="mdi-download"
           @click="emit('download')"
         >
-          下载
+          {{ t('work.room.preview.download') }}
         </v-btn>
       </div>
       <RoomFileHistory
@@ -362,7 +379,7 @@ function sendLocator() {
       </v-alert>
       <!-- 刷新失败但屏幕上还留着上一版：说清楚看到的不是最新的。 -->
       <v-alert v-else-if="docError && docBytes" type="warning" density="compact" class="mx-3 mb-2">
-        刷新失败，当前显示的是上一次的内容：{{ docError }}
+        {{ t('work.room.preview.staleDoc', { error: docError }) }}
       </v-alert>
 
       <!-- Markdown 排在最前面：它不走 docBytes 那条路（loadDocument 直接跳过），
@@ -387,11 +404,11 @@ function sendLocator() {
            这个文件转换不了（别的文件仍然能看）。 -->
       <div v-else-if="docRendererMissing && !docBytes" class="doc__state doc__state--text">
         <v-icon size="28" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-        <div>文档预览未启用</div>
+        <div>{{ t('work.room.preview.docPreviewDisabled') }}</div>
       </div>
       <div v-else-if="docError && !docBytes" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-        <div>无法显示这个文件</div>
+        <div>{{ t('work.room.preview.cantDisplay') }}</div>
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
       <div v-else class="doc__body">
@@ -421,19 +438,19 @@ function sendLocator() {
             v-model="locatorNote"
             class="locator__input"
             autocomplete="off"
-            placeholder="说明要改什么"
+            :placeholder="t('work.room.preview.locatorPlaceholder')"
             @keydown.enter.prevent="sendLocator"
             @keydown.esc.prevent="clearLocator"
           />
           <v-btn size="small" color="primary" variant="flat" :disabled="!locatorNote.trim()" @click="sendLocator">
-            发送
+            {{ t('work.room.preview.send') }}
           </v-btn>
           <v-btn
             icon="mdi-close"
             size="small"
             variant="text"
             color="medium-emphasis"
-            title="取消"
+            :title="t('work.room.preview.cancel')"
             @click="clearLocator"
           />
         </div>
@@ -446,8 +463,8 @@ function sendLocator() {
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>这个文件不是文本</div>
-      <div class="text-caption mt-1">{{ previewFile.path }} 无法作为网页显示，可以在新窗口打开</div>
+      <div>{{ t('work.room.preview.notText') }}</div>
+      <div class="text-caption mt-1">{{ t('work.room.preview.notTextDetail', { path: previewFile.path }) }}</div>
       <!-- 指定了文件的那一格也走这条路：内容域按路径服务房间里的任意一份，所以那
            一句话在这一格同样成立——它带着文件自己的地址过去。 -->
       <v-btn
@@ -457,12 +474,12 @@ function sendLocator() {
         prepend-icon="mdi-open-in-new"
         @click="openPreviewInNewTab(path)"
       >
-        在新窗口打开
+        {{ t('work.room.preview.openInNewWindow') }}
       </v-btn>
     </div>
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-      <div>暂无预览</div>
+      <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结

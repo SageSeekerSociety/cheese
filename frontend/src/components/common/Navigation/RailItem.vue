@@ -29,7 +29,12 @@
     @dragover="onDragOver"
     @drop="onDrop"
     @dragend="emit('dragEnd')"
+    @contextmenu="openMenuAt"
   >
+    <!-- 右键弹出的操作（项目格子才有），弹在鼠标那一点上。 -->
+    <AdaptiveMenu v-if="menu.length" v-model="menuOpen" :actions="menu" :point="menuPoint" :title="item.title">
+      <template #activator />
+    </AdaptiveMenu>
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
     <v-tooltip activator="parent" location="end" content-class="rail-flyout">
       <div class="rail-flyout__inner">
@@ -68,7 +73,7 @@
 <script lang="ts" setup>
 import type { DropEdge } from '@/lib/projectOrder'
 
-import { computed, toRefs } from 'vue'
+import { computed, ref, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -76,6 +81,7 @@ import { useNavigation } from '@/composables/useNavigation'
 import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 
@@ -119,6 +125,16 @@ const current = computed(() => {
   if (item.value.type !== 'item' || !item.value.match) return undefined
   return item.value.match(nav?.route?.path ?? '') ? 'page' : undefined
 })
+
+const menu = computed(() => (item.value.type === 'item' ? item.value.menu ?? [] : []))
+const menuOpen = ref(false)
+const menuPoint = ref<[number, number] | null>(null)
+function openMenuAt(e: MouseEvent) {
+  if (!menu.value.length) return
+  e.preventDefault()
+  menuPoint.value = [e.clientX, e.clientY]
+  menuOpen.value = true
+}
 
 function onDragStart(e: DragEvent) {
   const id = projectId.value
@@ -199,13 +215,15 @@ function warmDestination() {
 
     .cheese-icon {
       // logo size set via CSS (the width/height props on the ?component SVG don't
-      // reliably apply). ~32px in the 48px square ≈ the proportion in Image #63 —
-      // the tile is a clear 方块 thanks to the rounded='lg' prop, not by shrinking
-      // the logo, so it can sit comfortably large.
-      width: 32px !important;
-      height: 32px !important;
+      // reliably apply). The mark is a solid disc: at 32px and near-full ink it
+      // was the heaviest thing in the rail, and an unselected home tile read as
+      // the selected one. So it sits a size down and faded until the tile is
+      // hovered or current, where the brand paint below takes over. The ink is
+      // on-surface, so "faded" means lighter in light theme and dimmer in dark.
+      width: 26px !important;
+      height: 26px !important;
       fill: rgb(var(--v-theme-on-surface));
-      opacity: var(--v-medium-high-opacity);
+      opacity: 0.45;
       transition:
         fill var(--dur-quick) var(--ease-standard),
         opacity var(--dur-quick) var(--ease-standard);
@@ -217,11 +235,11 @@ function warmDestination() {
     // change is the ink on top — it used to be `on-primary`, a value Vuetify
     // derives from `primary`, which differs between the themes (#F57F17 vs the
     // lightened #FFA733) and could flip the glyph to white on this bright
-    // yellow. Pinning it to one dark ink keeps the logo at
-    // 7.0:1 against the #ff9500 stop and 12.2:1 against #ffe600, in BOTH themes.
+    // amber. Pinning it to one dark ink keeps the logo at 7.7:1 against the
+    // brand colour, in BOTH themes.
     &:hover,
     &[aria-current] {
-      background: linear-gradient(to bottom, #ff9500, #ffe600);
+      background: #ffa20f;
 
       .cheese-icon {
         fill: #23242a;
@@ -357,25 +375,21 @@ function warmDestination() {
   border-radius: var(--radius-pill);
 }
 
-/* Discord-style hover flyout, tuned to our light/amber aesthetic. Rendered at the
-   <body>, so this is global (the style block is unscoped). */
-.rail-flyout.rail-flyout {
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  opacity: 1;
+/* Discord-style hover flyout. The inverse block itself is every v-tooltip's
+   (style.css); the rail's one is a size up — it names a whole destination and
+   carries a shortcut. Rendered at the <body>, so this is global (the style block
+   is unscoped). */
+.v-tooltip.v-tooltip > .v-overlay__content.rail-flyout {
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  box-shadow: var(--shadow-2);
 }
 .rail-flyout .rail-flyout__inner {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--inverse-surface);
-  color: var(--inverse-ink);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: var(--shadow-2);
 }
 .rail-flyout .rail-flyout__kbd {
   display: inline-flex;

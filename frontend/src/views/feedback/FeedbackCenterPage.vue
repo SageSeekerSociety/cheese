@@ -12,6 +12,7 @@ import { kindLabel, statusLabel } from '@/components/feedback/feedbackLabels'
 import FeedbackList from '@/components/feedback/FeedbackList.vue'
 import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import { t } from '@/i18n'
+import { allStatuses } from '@/lib/feedbackMeta'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈中心首页 (/feedback)。
@@ -85,7 +86,7 @@ const kindOptions = computed(() => [
 ])
 const statusOptions = computed(() => [
   { value: null, title: t('feedback.center.filter.any') },
-  ...store.statusLadder.map((value) => ({ value, title: statusLabel(value) })),
+  ...allStatuses(store.meta?.statuses).map((value) => ({ value, title: statusLabel(value) })),
 ])
 const dayOptions = computed(() => [
   { value: null, title: t('feedback.center.filter.any') },

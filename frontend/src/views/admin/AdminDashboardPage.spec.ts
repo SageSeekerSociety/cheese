@@ -39,7 +39,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import AdminDashboardPage from './AdminDashboardPage.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { installPreviewFetch } from '@/proto-feedback-fixtures'
+import { installPreviewFetch } from '@/proto-preview-transport'
 import { useFeedbackStore } from '@/stores/feedback'
 
 /** 三条看板接口。**整段相等**匹配，不用前缀：`/api/admin/stats/feedback` 和

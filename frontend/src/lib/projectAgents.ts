@@ -45,7 +45,7 @@ export function findType(types: AgentType[], name: string | null | undefined): A
 }
 
 export function typeLabel(types: AgentType[], name: string | null | undefined): string {
-  if (!name) return '通用'
+  if (!name) return t('work.projectSettings.agents.typeGeneral')
   return findType(types, name)?.title || name
 }
 
@@ -56,12 +56,12 @@ const HANDLE_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
 export function handleError(handle: string): string | null {
   if (!handle) return null // 留空 = 由后端按名字/类型生成
-  return HANDLE_RE.test(handle) ? null : '只能用小写字母、数字和 . _ -，且以字母或数字开头'
+  return HANDLE_RE.test(handle) ? null : t('work.projectSettings.agents.editor.handleInvalid')
 }
 
 export function displayNameError(name: string): string | null {
   const trimmed = name.trim()
-  if (!trimmed) return '请填写名字'
-  if (trimmed.length > 64) return '名字最长 64 个字'
+  if (!trimmed) return t('work.projectSettings.agents.editor.nameRequired')
+  if (trimmed.length > 64) return t('work.projectSettings.agents.editor.nameTooLong', { max: 64 })
   return null
 }

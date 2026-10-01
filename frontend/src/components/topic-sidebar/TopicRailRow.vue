@@ -21,7 +21,11 @@ import { computed, ref, watch } from 'vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 
+import { menuActionOf } from '@/commands'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { t } from '@/i18n'
 import { stallReasonText } from '@/lib/replyWait'
+import { topicTitle } from '@/lib/topicState'
 import { TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { countLabel } from '@/lib/topicTree'
 
@@ -67,7 +71,7 @@ const rowMerging = computed(() => props.row.topic.merging === true || props.row.
 // 红灯 hover 那一句：最近一轮报错了就直说报错，不然说的是「多半为什么还没回话」。
 const stalledTitle = computed(() => {
   const topic = props.row.topic
-  if (topic.turn_failed_at) return `${props.agentName}最近一轮报错了`
+  if (topic.turn_failed_at) return t('work.sidebar.turnFailed', { agent: props.agentName })
   return stallReasonText(
     { reason: topic.reply_wait_reason, since: topic.awaiting_reply_since, pr: topic.reply_wait_pr },
     props.agentName,
@@ -78,8 +82,8 @@ const stalledTitle = computed(() => {
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
 // small neutral dot + text, never a colored chip.
 function statusBadge(status: string): string | null {
-  if (status === 'archived') return '已归档'
-  if (status === 'draft') return '草稿'
+  if (status === 'archived') return t('work.sidebar.archived')
+  if (status === 'draft') return t('work.topicState.draft')
   return null
 }
 
@@ -89,10 +93,25 @@ const draftTitle = ref('')
 watch(
   () => props.renaming,
   (on) => {
-    if (on) draftTitle.value = props.row.topic.title
+    // 还没名字的话题从空白开始改：占位标题不是谁起的名字。
+    if (on) draftTitle.value = props.row.topic.title_source === 'placeholder' ? '' : props.row.topic.title
   },
   { immediate: true }
 )
+
+// 右键一行，弹出的就是 ⋯ 那一份操作，只是弹在鼠标那一点上。正在改名时右键留给
+// 输入框（复制、粘贴）。点 ⋯ 打开时照旧挂在 ⋯ 下面。
+const menuPoint = ref<[number, number] | null>(null)
+function openMenuAt(e: MouseEvent) {
+  if (props.page || props.renaming) return
+  e.preventDefault()
+  menuPoint.value = [e.clientX, e.clientY]
+  emit('update:menu-open', true)
+}
+function onMenuToggle(open: boolean) {
+  if (!open) menuPoint.value = null
+  emit('update:menu-open', open)
+}
 </script>
 
 <template>
@@ -115,6 +134,7 @@ watch(
     @click="emit('select', row.topic.id)"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
+    @contextmenu="openMenuAt"
   >
     <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），身份靠标题本身，
          种类标签不要（缩进表达层级），操作 hover 才浮现。原先这里还有一颗每行都
@@ -149,17 +169,17 @@ watch(
            每行都亮，灯就没意义了；未读有右边的数字。排在「在跑」前面——芝士在忙
            是它的事，等你做事才是你的事。 -->
       <span v-else-if="row.topic.awaits_me" class="row-slot">
-        <span class="await-dot" title="有待处理的事项" />
+        <span class="await-dot" :title="t('work.sidebar.awaitsTip')" />
       </span>
       <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个任务——
            和归档/采纳状态无关，只是这会儿有没有跑完。 -->
       <span v-else-if="row.topic.running" class="row-slot">
-        <span class="running-dot" :title="`${agentName}正在这个话题里工作`" />
+        <span class="running-dot" :title="t('work.sidebar.runningTip', { agent: agentName })" />
       </span>
       <!-- 绿灯常亮：已采纳，在等检查 / 合并队列走完，此刻没有 AI 在干活。合并完就
            灭。空心圈：关掉动效时呼吸点也不动，靠形状分开。 -->
       <span v-else-if="row.topic.merging" class="row-slot">
-        <span class="merging-dot" title="已采纳，在等合并" />
+        <span class="merging-dot" :title="t('work.sidebar.mergingTip')" />
       </span>
       <span v-else class="row-slot" />
     </template>
@@ -183,14 +203,14 @@ watch(
         <span
           class="text-truncate"
           :class="{ 'title-unread': row.unreadTotal > 0 }"
-          :title="row.topic.title_source === 'auto' ? '标题由平台自动命名，话题方向变了会更新' : undefined"
-          >{{ row.topic.title }}</span
+          :title="row.topic.title_source === 'auto' ? t('work.sidebar.autoTitle') : undefined"
+          >{{ topicTitle(row.topic) }}</span
         >
         <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
         <span
           v-if="row.collapsed && row.hiddenCount > 0"
           class="subtree-count ms-2"
-          :title="`收起了 ${row.hiddenCount} 项`"
+          :title="t('work.sidebar.hiddenCount', { count: row.hiddenCount })"
           >{{ countLabel(row.hiddenCount) }}</span
         >
         <span v-if="statusBadge(row.topic.status)" class="d-inline-flex align-center ga-1 c-faint topic-status ms-2">
@@ -204,15 +224,17 @@ watch(
       <TopicRailBadge
         v-if="row.unreadTotal > 0"
         :count="row.unreadTotal"
-        :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
+        :title="row.hiddenUnread > 0 ? t('work.sidebar.hiddenUnread', { count: row.hiddenUnread }) : undefined"
       />
       <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
            整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
       <div v-if="!page" class="row-actions" @click.stop>
-        <v-menu
+        <AdaptiveMenu
           :model-value="menuOpen"
-          location="bottom end"
-          @update:model-value="(open: boolean) => emit('update:menu-open', open)"
+          :actions="actions(row.topic).map(menuActionOf)"
+          :title="topicTitle(row.topic)"
+          :point="menuPoint"
+          @update:model-value="onMenuToggle"
         >
           <template #activator="{ props: menuProps }">
             <v-btn
@@ -222,20 +244,11 @@ watch(
               variant="text"
               color="on-surface-variant"
               density="comfortable"
-              title="更多操作"
+              :title="t('work.sidebar.moreActions')"
               class="row-actions__btn"
             />
           </template>
-          <v-list density="compact" nav>
-            <v-list-item
-              v-for="action in actions(row.topic)"
-              :key="action.id"
-              :prepend-icon="action.icon"
-              :title="action.title"
-              @click="action.run?.()"
-            />
-          </v-list>
-        </v-menu>
+        </AdaptiveMenu>
       </div>
     </template>
   </v-list-item>
@@ -249,7 +262,7 @@ watch(
    1.4em ≈ 19.6px）比 16px 的行盒还高，标题又自带 overflow: hidden —— 高出来的
    那 1.8px 上下各切一刀，g / y / p 这些下伸的字母下缘就被切平。汉字不下伸，
    所以只有拉丁字母看得出来。行盒高度是字号阶梯的属性（docs/design-system.md
-   §3.2），这里照 --lh-14 取，和 .menu-list 里那条同名的规则一致。 */
+   §3.2），这里照 --lh-14 取，和 style.css 里菜单列表项那条规则一致。 */
 .topic-row :deep(.v-list-item-title) {
   font-size: 14px;
   line-height: var(--lh-14);

@@ -1,8 +1,10 @@
 """Gateway virtual keys the platform mints for its own small jobs.
 
 问芝士 and topic naming each call the LiteLLM gateway on a key of their own,
-with its own budget and rate limit, so one feature cannot spend another's money
-and the deployment's upstream keys never leave the gateway. Minting is not
+with its own rate limit, so the deployment's upstream keys never leave the
+gateway. A key for work the platform does on its own (topic naming) also
+carries a budget; 问芝士's does not, because each question is paid for by the
+person who asked it. Minting is not
 idempotent on the gateway, so a key is minted once — concurrent first calls
 across processes serialise on an advisory lock, and the loser reads the
 winner's key — and kept in ``service_credentials``.
@@ -28,7 +30,7 @@ class KeySpec:
     name: str  # the row in service_credentials
     alias: str  # the gateway's key_alias, and metadata.purpose
     model: str
-    budget_usd: float  # per 30 days
+    budget_usd: float | None  # per 30 days; None for no budget on the key
     rpm: int
 
 
@@ -72,10 +74,13 @@ async def service_key(
                 json={
                     "key_alias": spec.alias,
                     "models": [spec.model],
-                    "max_budget": spec.budget_usd,
-                    "budget_duration": "30d",
                     "rpm_limit": spec.rpm,
                     "metadata": {"purpose": spec.alias},
+                    **(
+                        {"max_budget": spec.budget_usd, "budget_duration": "30d"}
+                        if spec.budget_usd is not None
+                        else {}
+                    ),
                 },
             )
             r.raise_for_status()

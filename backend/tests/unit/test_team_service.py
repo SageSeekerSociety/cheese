@@ -44,6 +44,7 @@ def _make_team(**overrides):
         "intro": "intro",
         "description": "desc",
         "avatar_id": 10,
+        "personal_owner_user_id": None,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,
@@ -93,6 +94,9 @@ def _team_repo_mock() -> AsyncMock:
     repo._session.flush = AsyncMock()
     # create_team draws the new team's id from team_seq before inserting.
     repo._session.scalar = AsyncMock(return_value=77)
+    # A shared team unless a test says otherwise; a bare mock would read as a
+    # personal team, since its personal_owner_user_id is never None.
+    repo.get_by_id.return_value = _make_team()
     return repo
 
 

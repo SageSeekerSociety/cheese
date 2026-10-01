@@ -12,6 +12,8 @@ import { ref } from 'vue'
 import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailGroupToggle from './TopicRailGroupToggle.vue'
 
+import { t } from '@/i18n'
+import { topicTitle } from '@/lib/topicState'
 import { kindLabel } from '@/lib/topicTree'
 
 defineProps<{
@@ -38,47 +40,47 @@ const open = ref(false)
 <template>
   <template v-if="rows.length">
     <TopicRailGroupToggle
-      label="已归档"
+      :label="t('work.sidebar.archived')"
       :count="rows.length"
       :open="open"
       :unread="unread"
-      unread-title="归档话题里有新消息"
+      :unread-title="t('work.sidebar.archivedUnread')"
       archived
       @toggle="open = !open"
     />
     <v-list v-if="open" density="compact" nav class="py-0">
       <v-list-item
-        v-for="t in rows"
-        :key="t.id"
-        :active="t.id === selectedTopicId"
+        v-for="topic in rows"
+        :key="topic.id"
+        :active="topic.id === selectedTopicId"
         rounded="lg"
-        :data-row-actions="t.id"
+        :data-row-actions="topic.id"
         class="topic-row topic-row--archived"
-        :class="{ 'is-active': t.id === selectedTopicId }"
-        @click="emit('select-topic', t.id)"
-        @mouseenter="emit('hover-topic', t.id)"
+        :class="{ 'is-active': topic.id === selectedTopicId }"
+        @click="emit('select-topic', topic.id)"
+        @mouseenter="emit('hover-topic', topic.id)"
         @mouseleave="emit('leave-topic')"
       >
         <template #prepend>
           <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
         </template>
         <v-list-item-title class="d-flex align-center ga-2 topic-title">
-          <span class="text-truncate">{{ t.title }}</span>
-          <span class="kind-text">{{ kindLabel(t) }}</span>
+          <span class="text-truncate">{{ topicTitle(topic) }}</span>
+          <span class="kind-text">{{ kindLabel(topic) }}</span>
         </v-list-item-title>
         <template #append>
-          <TopicRailBadge v-if="unreadOf(t.id) > 0" class="me-1" :count="unreadOf(t.id)" />
+          <TopicRailBadge v-if="unreadOf(topic.id) > 0" class="me-1" :count="unreadOf(topic.id)" />
           <v-btn
-            v-if="t.can_archive"
+            v-if="topic.can_archive"
             icon="mdi-archive-arrow-up-outline"
             size="small"
             variant="text"
             color="on-surface-variant"
             density="comfortable"
-            title="取消归档"
+            :title="t('work.room.menu.unarchive')"
             class="split-btn"
             :class="{ 'tap-target': page }"
-            @click.stop="emit('unarchive-topic', t.id)"
+            @click.stop="emit('unarchive-topic', topic.id)"
           />
         </template>
       </v-list-item>

@@ -795,7 +795,7 @@ onMounted(() => {
   bottom: 0;
   margin-top: 24px;
   padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
-  background: var(--canvas);
+  background: var(--surface);
   border-top: 1px solid var(--line);
 }
 /* 对话框壳：操作条在原地，对话框自己会滚。 */

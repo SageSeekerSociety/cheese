@@ -59,6 +59,8 @@ import { toast } from 'vuetify-sonner'
 
 import InviteCodes from './InviteCodes.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const SPACE_ID = 11
 
 function code(over: Record<string, unknown> = {}) {
@@ -77,6 +79,7 @@ function code(over: Record<string, unknown> = {}) {
 /** 挂起来并等到某一串出现在屏幕上 —— 用例各自关心的那串不一样，
  *  钉不住「加载完了」就只在等一个超时。 */
 async function mount(expectText = 'ABCD2345EF') {
+  setLocale('zh-CN')
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/spaces/:spaceId/manage/invite-codes', component: InviteCodes }],
@@ -84,7 +87,7 @@ async function mount(expectText = 'ABCD2345EF') {
   await router.push(`/spaces/${SPACE_ID}/manage/invite-codes`)
   await router.isReady()
   const utils = render(defineComponent({ render: () => h(RouterView) }), {
-    global: { plugins: [createVuetify({ components, directives }), router] },
+    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
   })
   await waitFor(() => expect(document.body.textContent).toContain(expectText))
   return utils

@@ -24,6 +24,8 @@
  *   }
  *
  * **文案在前端，后端只发码** —— 和 platform_failures.py 的 code + copy contract 同一条规矩。
+ * 平台自己说的那几格（content / detail / detail_label / title）后端存的是中文原句，
+ * 另在 `meta.i18n` 里带着它的键和参数；显示时一律经 `noticeText()` 按读者的语言渲染。
  *
  * 缺少结构化字段的事件仍保留原文；没有作者或类别依据时，不猜它属于哪个 agent。
  */
@@ -32,7 +34,10 @@ import type { BackendErrorPresentation } from './backendErrorEvent'
 import type { PlatformErrorPresentation } from './platformEvents'
 
 import { backendErrorPresentation } from './backendErrorEvent'
+import { noticeText } from './noticeText'
 import { platformErrorPresentation } from './platformEvents'
+
+import { t } from '@/i18n'
 
 /**
  * 这条事件在对话里露不露面。
@@ -89,10 +94,11 @@ function changeSummary(block: Block): ChangeSummary | null {
   }
 }
 
+// Catalog keys, looked up when a row is built so a language switch re-reads them.
 const WHO_LABEL: Record<WhoTag, string> = {
-  platform: '平台已处理',
-  cheese: '芝士处理中',
-  human: '需要手动处理',
+  platform: 'work.room.notice.who.platform',
+  cheese: 'work.room.notice.who.cheese',
+  human: 'work.room.notice.who.human',
 }
 
 // These events describe the room agent's work or execution environment. `who`
@@ -158,9 +164,71 @@ export interface NoticeOccurrence {
   detail: string
 }
 
+/** 芝士写好、等邮箱主人确认的一封邮件（`meta.mail`）。 */
+export interface MailDraftView {
+  draftId: string
+  owner: string
+  account: string
+  to: string[]
+  cc: string[]
+  subject: string
+  body: string
+  attachments: { name: string; size: number | null }[]
+}
+
+/** 那封草稿后来怎样了（`mail_result` 事件）。 */
+export interface MailOutcome {
+  status: 'sent' | 'failed' | 'discarded'
+  sentAt: string | null
+  reason: string | null
+}
+
+function mailDraftView(block: Block): MailDraftView | null {
+  const m = meta(block)
+  if (str(m?.event_type) !== 'mail_drafted') return null
+  const mail = m?.mail as Record<string, unknown> | undefined
+  const draftId = str(m?.mail_draft_id)
+  if (!mail || !draftId) return null
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : [])
+  return {
+    draftId,
+    owner: str(mail.owner),
+    account: str(mail.account),
+    to: list(mail.to),
+    cc: list(mail.cc),
+    subject: str(mail.subject),
+    body: str(mail.body),
+    attachments: Array.isArray(mail.attachments)
+      ? mail.attachments.map((a) => {
+          const item = a as Record<string, unknown>
+          return { name: str(item.name), size: typeof item.size === 'number' ? item.size : null }
+        })
+      : [],
+  }
+}
+
+/** 房间里每封草稿的下落：draft id → 最后一条结果。 */
+export function mailOutcomes(blocks: Block[]): Map<string, MailOutcome> {
+  const found = new Map<string, MailOutcome>()
+  for (const block of blocks) {
+    const m = meta(block)
+    if (block.kind !== 'event' || str(m?.event_type) !== 'mail_result') continue
+    const status = str(m?.status)
+    if (status !== 'sent' && status !== 'failed' && status !== 'discarded') continue
+    found.set(str(m?.mail_draft_id), {
+      status,
+      sentAt: str(m?.sent_at) || null,
+      reason: str(m?.detail) || null,
+    })
+  }
+  return found
+}
+
 export type PlatformNotice =
   /** 现场抽屉的东西（前端报错），房间里不显示。 */
   | { mode: 'hidden' }
+  /** 芝士写好的一封邮件：在房间里看全、由邮箱主人在这里确认发送。 */
+  | { mode: 'mail-draft'; mail: MailDraftView; outcome: MailOutcome | null }
   /** 基础设施事故卡：正文压成一行，剩下的进展开区。 */
   | {
       mode: 'incident'
@@ -222,7 +290,7 @@ function whoTag(block: Block): WhoTag | '' {
 
 function whoLabel(block: Block): string {
   const who = whoTag(block)
-  return who ? WHO_LABEL[who] : ''
+  return who ? t(WHO_LABEL[who]) : ''
 }
 
 /**
@@ -238,7 +306,9 @@ export function actionResource(block: Block): string | null {
 
 /** meta.action 事件的 content 自带主语（张衡/芝士 编辑了文档）；老卡片要补「芝士」。 */
 function actionText(block: Block): string {
-  return typeof meta(block)?.action === 'string' ? block.content : `芝士${block.content}`
+  return typeof meta(block)?.action === 'string'
+    ? noticeText(block)
+    : t('topic.notice.legacyAction', { action: block.content })
 }
 
 /** 卡面上留一句就够了，超过这个长度就切断 —— 切掉的部分原样进展开区，不丢。 */
@@ -271,11 +341,10 @@ function splitLead(text: string): { lead: string; rest: string } {
 }
 
 function occurrenceOf(block: Block): NoticeOccurrence {
-  const m = meta(block)
   return {
-    line: block.content,
-    label: str(m?.detail_label),
-    detail: str(m?.detail),
+    line: noticeText(block),
+    label: noticeText(block, 'detail_label'),
+    detail: noticeText(block, 'detail'),
   }
 }
 
@@ -297,14 +366,14 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   const incident = platformErrorPresentation(block)
   if (incident) {
     const { lead, rest } = splitLead(incident.body)
-    const detail = str(m?.detail)
+    const detail = noticeText(block, 'detail')
     return {
       mode: 'incident',
       incident,
       lead,
       // 被切掉的正文和 detail 都收进同一个展开区：卡面只留一句，原文一个字不少。
       rest: [rest, detail].filter(Boolean).join('\n\n'),
-      detailLabel: str(m?.detail_label),
+      detailLabel: noticeText(block, 'detail_label'),
     }
   }
 
@@ -314,24 +383,32 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
       mode: 'action',
       resource,
       text: actionText(block),
-      detail: str(m?.detail),
-      detailLabel: str(m?.detail_label),
+      detail: noticeText(block, 'detail'),
+      detailLabel: noticeText(block, 'detail_label'),
     }
 
   const error = backendErrorPresentation(block)
   if (error) return { mode: 'backend-error', error }
+
+  const mail = mailDraftView(block)
+  if (mail) return { mode: 'mail-draft', mail, outcome: null }
 
   if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) {
     const latest = run[run.length - 1] ?? block
     const state = str(meta(latest)?.state)
     return {
       mode: 'agent-status',
-      line: state === 'ready' ? '工作电脑已就绪' : state === 'waiting' ? '正在准备工作电脑' : latest.content,
+      line:
+        state === 'ready'
+          ? t('work.room.notice.machineReady')
+          : state === 'waiting'
+            ? t('work.room.notice.machinePreparing')
+            : noticeText(latest),
       updatedAt: latest.created_at,
       occurrences: run.map((item) => ({
-        line: item.content,
-        label: item.content,
-        detail: str(meta(item)?.detail),
+        line: noticeText(item),
+        label: noticeText(item),
+        detail: noticeText(item, 'detail'),
       })),
     }
   }
@@ -339,7 +416,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   if (str(m?.detail)) {
     return {
       mode: 'fold',
-      line: block.content,
+      line: noticeText(block),
       who: whoTag(block),
       whoLabel: whoLabel(block),
       count: run.length,
@@ -378,6 +455,8 @@ export function confirmTarget(block: Block, projectId: string | null | undefined
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
 function foldKey(block: Block): string | null {
   const m = meta(block)
+  // 每封草稿是一张要单独确认的卡，折在一起就只剩一张能点。
+  if (str(m?.event_type) === 'mail_drafted') return null
   // Cloud lifecycle updates share one row even when the final event has no detail.
   if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) return 'cloud_provisioning'
   // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
@@ -456,7 +535,12 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     rows.push({ block, run: [block], notice: null })
   }
 
-  for (const row of rows) row.notice = platformNotice(row.block, row.run)
+  // 草稿卡片的下落记在后来的 `mail_result` 事件里，只有看得到整条块流的这里对得上。
+  const mailEnds = mailOutcomes(blocks)
+  for (const row of rows) {
+    row.notice = platformNotice(row.block, row.run)
+    if (row.notice?.mode === 'mail-draft') row.notice.outcome = mailEnds.get(row.notice.mail.draftId) ?? null
+  }
   return foldTurnSummary(rows)
 }
 

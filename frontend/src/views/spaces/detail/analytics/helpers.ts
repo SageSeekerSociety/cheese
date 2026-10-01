@@ -3,9 +3,14 @@ import type { AnalyticsDistribution, AnalyticsDistributionItem, SpaceLearningExc
 
 import dayjs from 'dayjs'
 
-export const formatCount = (value?: number | null) => new Intl.NumberFormat('zh-CN').format(value || 0)
+import i18n, { t } from '@/i18n'
+
+export const formatCount = (value?: number | null) => new Intl.NumberFormat(i18n.global.locale.value).format(value || 0)
 
 export const formatPercent = (value?: number | null, digits = 1) => `${((value || 0) * 100).toFixed(digits)}%`
+
+/** 表里的日期：只到日，数字写法，中英文一样。 */
+export const formatDate = (value: number) => dayjs(value).format('YYYY-MM-DD')
 
 export const withDistributionPercent = (distribution?: AnalyticsDistribution | null) => {
   const items = distribution?.items || []
@@ -17,16 +22,30 @@ export const withDistributionPercent = (distribution?: AnalyticsDistribution | n
   }))
 }
 
+/**
+ * 后端按状态码分组（APPROVED、NO_PARTICIPANTS、WITH_REAL_NAME …），画出来要换成人读的
+ * 名字；分类、年级这类本来就是名字的原样留着。
+ */
+export const labelDistributionCodes = (
+  items: AnalyticsDistributionItem[],
+  t: (key: string) => string,
+  te: (key: string) => boolean
+) =>
+  items.map((item) =>
+    te(`spaces.analytics.distribution.${item.label}`)
+      ? { ...item, label: t(`spaces.analytics.distribution.${item.label}`) }
+      : item
+  )
+
 // ---------------------------------------------------------------------------
 // 学习那一格: 没归类、时间、勾选顺序、原文坐标
 // ---------------------------------------------------------------------------
 
 /** 没挂到任何知识点上的发言与卡点 —— 后端把这一类回来成 null。 */
-export const LEARNING_UNCLASSIFIED = '未归类'
+export const knowledgePointLabel = (value?: string | null) => value || t('spaces.analytics.learning.unclassified')
 
-export const knowledgePointLabel = (value?: string | null) => value || LEARNING_UNCLASSIFIED
-
-export const formatLearningTime = (value?: null | number) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '暂无')
+export const formatLearningTime = (value?: null | number) =>
+  value ? dayjs(value).format('YYYY-MM-DD HH:mm') : t('spaces.analytics.learning.noTime')
 
 /**
  * 提纲里的讲次顺序 = 勾选顺序（后端按传过去的 blockIds 先后分节），所以这里**只

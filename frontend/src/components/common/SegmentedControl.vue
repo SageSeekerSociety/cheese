@@ -6,13 +6,15 @@ defineProps<{
   modelValue: T
   options: ReadonlyArray<{ value: T; label: string; ariaLabel?: string; lang?: string }>
   label: string
+  // md 和 32px 的输入框、下拉并排时用（题目列表的工具栏）；默认那一号是偏好设置里的。
+  size?: 'sm' | 'md'
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
 </script>
 
 <template>
-  <div class="segmented" role="radiogroup" :aria-label="label">
+  <div class="segmented" :class="{ 'segmented--md': size === 'md' }" role="radiogroup" :aria-label="label">
     <button
       v-for="option in options"
       :key="option.value"
@@ -54,6 +56,13 @@ const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
   transition:
     background-color var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);
+}
+
+.segmented--md .segmented__option {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 .segmented__option:hover {

@@ -20,7 +20,7 @@ const isNew = computed(() => props.agent === null)
 const displayName = ref('')
 const handle = ref('')
 const presetName = ref<string | null>(null)
-const draft = ref<AgentConfiguration>({ body: '', skills: [], mcp_servers: [] })
+const draft = ref<AgentConfiguration>({ body: '', skills: [] })
 const saving = ref(false)
 const error = ref<string | null>(null)
 const submitted = ref(false)
@@ -40,7 +40,7 @@ async function loadModels() {
   }
 }
 const presetItems = computed(() => [
-  { title: '自行填写', value: null },
+  { title: t('work.projectSettings.agents.editor.presetCustom'), value: null },
   ...props.types.map((preset) => ({ title: preset.title || preset.name, value: preset.name })),
 ])
 const nameProblem = computed(() => displayNameError(displayName.value))
@@ -51,7 +51,6 @@ function applyPreset(name: string | null) {
   draft.value = {
     body: preset?.body ?? '',
     skills: [...(preset?.skills ?? [])],
-    mcp_servers: [...(preset?.mcp_servers ?? [])],
     model: draft.value.model ?? null,
   }
 }
@@ -102,7 +101,7 @@ async function save() {
     emit('saved')
     close()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存失败'
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.agents.editor.saveFailed')
   } finally {
     saving.value = false
   }
@@ -113,8 +112,10 @@ async function save() {
   <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
   <AdaptiveDialog
     :model-value="modelValue"
-    :title="isNew ? '新建 AI 队友' : '修改 AI 队友'"
-    primary-label="保存"
+    :title="
+      isNew ? t('work.projectSettings.agents.editor.titleNew') : t('work.projectSettings.agents.editor.titleEdit')
+    "
+    :primary-label="t('work.projectSettings.agents.editor.save')"
     :primary-loading="saving"
     :max-width="720"
     @update:model-value="emit('update:modelValue', $event)"
@@ -124,7 +125,7 @@ async function save() {
     <v-text-field
       v-model="displayName"
       autocomplete="off"
-      label="名字"
+      :label="t('work.projectSettings.agents.editor.name')"
       variant="outlined"
       :error-messages="submitted && nameProblem ? [nameProblem] : []"
     />
@@ -132,21 +133,29 @@ async function save() {
       v-if="isNew"
       v-model="handle"
       autocomplete="off"
-      label="标识（英文，可留空）"
+      :label="t('work.projectSettings.agents.editor.handle')"
       variant="outlined"
       :error-messages="submitted && handleProblem ? [handleProblem] : []"
     />
-    <div v-else class="t-meta c-muted mb-4">标识 · {{ agent?.handle }}</div>
+    <div v-else class="t-meta c-muted mb-4">
+      {{ t('work.projectSettings.agents.editor.handleReadonly', { handle: agent?.handle }) }}
+    </div>
     <v-select
       v-if="isNew"
       v-model="presetName"
       autocomplete="off"
       :items="presetItems"
-      label="从内置配置开始"
+      :label="t('work.projectSettings.agents.editor.preset')"
       variant="outlined"
       @update:model-value="applyPreset"
     />
-    <v-textarea v-model="draft.body" autocomplete="off" label="角色设定（可留空）" rows="6" variant="outlined" />
+    <v-textarea
+      v-model="draft.body"
+      autocomplete="off"
+      :label="t('work.projectSettings.agents.editor.body')"
+      rows="6"
+      variant="outlined"
+    />
     <v-checkbox v-model="specifyModel" :label="t('work.models.assign')" hide-details />
     <v-select
       v-if="specifyModel"
@@ -162,6 +171,6 @@ async function save() {
       autocomplete="off"
     />
     <p v-else class="t-meta c-muted mb-4">{{ t('work.models.inheritHint') }}</p>
-    <p v-if="!isNew" class="t-meta c-muted">修改只影响这个队友，下次运行时生效，已有记忆保留</p>
+    <p v-if="!isNew" class="t-meta c-muted">{{ t('work.projectSettings.agents.editor.editHint') }}</p>
   </AdaptiveDialog>
 </template>

@@ -114,11 +114,13 @@ test.describe('Topic naming', () => {
     await openFirstProject(page);
     const projectId = projectIdOf(page);
     try {
-      await page.goto(`/projects/${projectId}/settings`);
+      await page.goto(`/projects/${projectId}/settings/topic-naming`);
       const manual = page.getByRole('radio', { name: /手动命名/ });
       await manual.click();
       await expect(manual).toHaveAttribute('aria-checked', 'true');
 
+      // Settings cover the app until closed; the rail underneath takes no clicks.
+      await page.keyboard.press('Escape');
       await openFirstProject(page);
       await newRoom(page);
       await say(page, '帮我排查 dev 机器外网访问很慢');

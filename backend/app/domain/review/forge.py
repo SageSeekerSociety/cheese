@@ -142,6 +142,12 @@ class GitHubForge(Forge):
         await service._refresh_github_unseen_head(card, topic, action)
 
     async def poll(self, service, card, topic, *, chat_service, runner) -> None:
+        from app.domain.project.forge import background_may_use_forge
+
+        # A tick is background work: it leaves the installation's last share of
+        # quota to the people delivering and merging cards.
+        if not await background_may_use_forge(topic.project_id, service._session):
+            return
         await service._advance_github_card(
             card, topic, chat_service=chat_service, runner=runner
         )

@@ -1,6 +1,7 @@
 <template>
-  <SettingsToolbar :title="t('spaces.settings.sections.topics')">
-    <v-btn color="primary" prepend-icon="mdi-plus">
+  <!-- 画在「分类」那一块下面，隔开一段。 -->
+  <SettingsToolbar :title="t('spaces.settings.sections.topics')" class="mt-8">
+    <v-btn variant="text" prepend-icon="mdi-plus">
       {{ t('spaces.detail.manageTopics.addTopics') }}
 
       <v-dialog v-model="addTopicsDialog" activator="parent" width="800">
@@ -23,19 +24,23 @@
       </v-dialog>
     </v-btn>
   </SettingsToolbar>
-  <v-sheet flat rounded="lg">
-    <v-list v-if="classificationTopics.length > 0" rounded="lg">
+  <div class="settings-card">
+    <v-list v-if="classificationTopics.length > 0" class="settings-list" bg-color="transparent">
       <v-list-item v-for="(topic, index) in classificationTopics" :key="index" :title="topic.name">
         <template #append>
-          <v-btn icon="mdi-delete" variant="text" @click="deleteClassificationTopic(topic.id)"></v-btn>
+          <v-btn
+            icon="mdi-delete-outline"
+            variant="text"
+            size="small"
+            :aria-label="t('spaces.detail.manageTopics.delete')"
+            @click="deleteClassificationTopic(topic.id)"
+          ></v-btn>
         </template>
       </v-list-item>
     </v-list>
 
-    <v-sheet v-else class="pa-4 text-center">
-      <p class="text-medium-emphasis">{{ t('spaces.detail.manageTopics.noTopics') }}</p>
-    </v-sheet>
-  </v-sheet>
+    <p v-else class="settings-empty">{{ t('spaces.detail.manageTopics.noTopics') }}</p>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -70,3 +75,5 @@ const confirmAddTopics = async () => {
   }
 }
 </script>
+
+<style scoped src="@/styles/settings-card.css"></style>

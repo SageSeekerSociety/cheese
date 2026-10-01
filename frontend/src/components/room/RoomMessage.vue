@@ -52,6 +52,8 @@ const props = defineProps<{
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
   active?: boolean
   askBusy: boolean
+  /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
+  live?: boolean
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
@@ -159,7 +161,16 @@ async function onAgentTextClick(e: MouseEvent) {
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
-      <template v-if="runStart">
+      <!-- 头像和名字点下去和正文里的 @chip 一样：去这个人的成员页。点击由房间委派
+           （useChatPanel 的 onMessagesClick 认 data-handle），去处只有一处定义。 -->
+      <button
+        v-if="runStart"
+        type="button"
+        class="im-person"
+        :data-handle="block.author"
+        :aria-label="authorName"
+        :title="authorName"
+      >
         <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" />
         <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
            底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
@@ -174,7 +185,7 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(block.author) }">
           {{ avatarInitial(authorName) }}
         </div>
-      </template>
+      </button>
       <!-- 续话没有名字那一行，时间在悬停时出现在头像列里，和正文第一行对齐。 -->
       <span v-else-if="!outgoing" class="im-gutter-time">{{ time }}</span>
     </div>
@@ -184,14 +195,14 @@ async function onAgentTextClick(e: MouseEvent) {
 
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
-        <span class="im-name">{{ authorName }}</span>
+        <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
         <ExternalTag v-if="external && !isAgent" />
         <span class="im-time">{{ time }}</span>
       </div>
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
-        回复 {{ parentName }}：{{ replySnippet(parent, refs) }}
+        {{ t('work.room.composer.replyTo', { name: parentName, text: replySnippet(parent, refs) }) }}
       </button>
       <!-- 图片输入: an attachment block renders as the image itself
          (click opens the original in a new tab). 字节在 AttachmentImage
@@ -203,7 +214,7 @@ async function onAgentTextClick(e: MouseEvent) {
         prepend-icon="mdi-file-document-outline"
         append-icon="mdi-download-outline"
         class="text-none im-file-link"
-        :title="`下载 ${artifactName(block)}`"
+        :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
         @click="emit('download', block)"
       >
         <span class="text-truncate">{{ artifactName(block) }}</span>
@@ -217,7 +228,7 @@ async function onAgentTextClick(e: MouseEvent) {
         v-else-if="block.kind === 'artifact'"
         type="button"
         class="im-artifact"
-        :title="`打开 ${artifactName(block)}`"
+        :title="t('work.room.message.openFile', { name: artifactName(block) })"
         @click="emit('open-file', block.content, block.task_id ?? null)"
       >
         <span class="att-face im-artifact__face">
@@ -241,6 +252,7 @@ async function onAgentTextClick(e: MouseEvent) {
         :checklist="checklist"
         :updated-at="block.meta?.edited_at ?? block.created_at"
         :edited="edited"
+        :live="!!live"
       />
       <template v-else-if="isAgent">
         <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />
@@ -282,8 +294,12 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-else-if="askOptions(block)" key="answered" class="ask-row">
           <div class="ask-answered">
             <v-icon size="13" class="c-ok">mdi-check-circle</v-icon>
-            <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
-            选了「{{ askAnswered(block)!.option }}」
+            <i18n-t scope="global" keypath="work.room.message.askAnswered" tag="span">
+              <template #who>
+                <UserRef :handle="askAnswered(block)!.by" :name="refs.mentionNames[askAnswered(block)!.by]" />
+              </template>
+              <template #option>{{ askAnswered(block)!.option }}</template>
+            </i18n-t>
           </div>
         </div>
       </Transition>
@@ -301,7 +317,7 @@ async function onAgentTextClick(e: MouseEvent) {
         "
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        {{ block.upgraded_to_task_id ? '已转为任务' : '已转为话题' }}
+        {{ block.upgraded_to_task_id ? t('work.room.message.upgradedToTask') : t('work.room.message.upgradedToTopic') }}
       </button>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
@@ -312,7 +328,7 @@ async function onAgentTextClick(e: MouseEvent) {
           type="button"
           class="rx-chip"
           :class="{ 'rx-chip--mine': r.authors.includes(viewer) }"
-          :title="r.authors.join('、')"
+          :title="r.authors.join(t('work.room.roster.listSeparator'))"
           @click="emit('react', block, r.emoji)"
         >
           <span class="rx-emoji">{{ r.emoji }}</span>

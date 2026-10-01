@@ -8,7 +8,9 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useDesktopApp } from '@/composables/useDesktopApp'
 
 import UserMenuCard from './UserMenuCard.vue'
 
@@ -37,7 +39,7 @@ async function mount(intro = '') {
       { path: '/users/:handle', name: 'UserPage', component: stub },
       { path: '/download', name: 'Download', component: stub },
       { path: '/archived-projects', name: 'my-archived-projects', component: stub },
-      { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
+      { path: '/users/settings', name: 'UserSettings', component: stub },
     ],
   })
   await router.push('/')
@@ -56,7 +58,7 @@ describe('「我」的菜单', () => {
     // 主页按 handle 找人，和 @提及、成员名册同一种地址。
     expect(view.getByText('个人主页').closest('a')?.getAttribute('href')).toBe('#/users/alice')
     // 上传头像的地方：以前菜单里没有这一项，得先进个人主页再点资料卡上的编辑。
-    expect(view.getByText('设置').closest('a')?.getAttribute('href')).toBe('#/users/settings/profile')
+    expect(view.getByText('设置').closest('a')?.getAttribute('href')).toBe('#/users/settings')
     expect(view.getByText('下载客户端').closest('a')?.getAttribute('href')).toBe('#/download')
     // 归档了的项目不在任何列表里，这里是所有者找回它们的地方。
     expect(view.getByText('已归档的项目').closest('a')?.getAttribute('href')).toBe('#/archived-projects')
@@ -84,5 +86,25 @@ describe('「我」的菜单', () => {
     const view = await mount()
     expect(view.getByText('爱丽丝')).toBeTruthy()
     expect(view.getByText('UID 42')).toBeTruthy()
+  })
+})
+
+// 桌面 app 已经装在这台电脑上了：菜单里不再劝人下载，只留下还有意义的手机那一块。
+describe('「我」的菜单，在桌面 app 里', () => {
+  beforeEach(() => {
+    setLocale('zh-CN')
+    ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+  })
+  afterEach(() => {
+    delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
+  })
+
+  it('不给下载，给「在手机上使用」的扫码框', async () => {
+    const view = await mount()
+    expect(view.queryByText('下载客户端')).toBeNull()
+    const { phoneOpen } = useDesktopApp()
+    expect(phoneOpen.value).toBe(false)
+    await fireEvent.click(view.getByText('在手机上使用'))
+    expect(phoneOpen.value).toBe(true)
   })
 })

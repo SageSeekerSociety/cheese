@@ -33,6 +33,8 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
 
+from app.domain.block.notice_text import say
+
 #: The script ships to rooms from here; see `agent.skills._NATIVE_SKILL_SRC`.
 _SCRIPT = (
     Path(__file__).resolve().parents[3]
@@ -133,7 +135,7 @@ def package(raw: bytes, path: str, office: Any, *, kinds: tuple[str, ...] = ("wo
         raise RevisionsFailed(str(exc)) from exc
     if opened.kind() not in kinds:
         temporary.unlink(missing_ok=True)
-        raise RevisionsUnsupported("只有 Word 文档带修订记录")
+        raise RevisionsUnsupported(say("revisionsWordOnly"))
     return opened, temporary
 
 
@@ -144,7 +146,7 @@ def revisions_in(raw: bytes, path: str) -> list[Revision]:
     try:
         rows = office._revision_rows(opened, "word")
     except Exception as exc:  # noqa: BLE001 — a malformed part reads as unreadable
-        raise RevisionsFailed(f"读不出这份文档的修订：{exc}") from exc
+        raise RevisionsFailed(say("revisionsUnreadable", error=exc)) from exc
     finally:
         temporary.unlink(missing_ok=True)
     return [
@@ -187,8 +189,11 @@ def decide(
     unknown = sorted(n for n in chosen if n not in known)
     if unknown:
         raise RevisionsFailed(
-            f"没有第 {'、'.join(str(n) for n in unknown)} 处修订，"
-            f"这份文档一共 {len(known)} 处——清单可能已经变了，重新读一次。"
+            say(
+                "revisionNumbersMissing",
+                rows="、".join(str(n) for n in unknown),
+                total=len(known),
+            )
         )
 
     opened, temporary = package(raw, path, office)

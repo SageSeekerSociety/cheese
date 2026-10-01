@@ -4,6 +4,7 @@
 的先后反了」和「某一格没人想到」。一张表让缺的那一格是可数的。
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -54,7 +55,12 @@ def room(**kw) -> RoomFacts:
 
 
 def card(status: AcceptStatus, **kw) -> CardFacts:
-    base = {"note_code": None, "merge_state_word": None, "merge_who": None}
+    base = {
+        "note_code": None,
+        "merge_state_word": None,
+        "merge_who": None,
+        "decided": False,
+    }
     return CardFacts(status=status, **{**base, **kw})
 
 
@@ -245,6 +251,41 @@ TASK_CASES = [
         Column.delivering,
         Delivering.resolving_conflict,
     ),
+    # 采纳已经点过、PR 进了 GitHub 的合并队列：这个窗口里 GitHub 对合并态报的是
+    # unknown，人会去读那张卡（读卡又会补一次快照），所以镜像随时可能被写成
+    # unknown/平台 (#2046)。那一步在平台和队列手上，不是把球交回给人。
+    (
+        "已采纳，合并态还没算完",
+        task(
+            card=card(
+                AcceptStatus.pending,
+                merge_state_word="unknown",
+                merge_who="platform",
+                decided=True,
+            )
+        ),
+        Column.delivering,
+        Delivering.awaiting_checks,
+    ),
+    # 平台入队时亲手记下的那一笔比轮询读到的 unknown 硬：有它就不看镜像了。
+    (
+        "note 记着已进合并队列",
+        task(card=card(AcceptStatus.pending, note_code=NoteCode.waiting_merge_queue)),
+        Column.delivering,
+        Delivering.awaiting_checks,
+    ),
+    # 没采纳的卡读到 unknown 是另一回事：那是「还没算出来 / 读不出来」，采纳按钮
+    # 还在人手上，不能因为读不出来就替他把球收走。
+    (
+        "没采纳，合并态读不出来",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="unknown", merge_who="platform"
+            )
+        ),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
+    ),
     (
         "等人采纳",
         task(card=card(AcceptStatus.pending)),
@@ -304,7 +345,7 @@ TASK_CASES = [
 def test_a_thread_lands_in_one_column_with_one_phrase(facts, column, phrase):
     shown = task_presentation(facts, now=NOW)
     assert shown.column == column
-    assert shown.display_status == phrase
+    assert shown.phrase == phrase
 
 
 # —— 事实是从行上读出来的 ————————————————————————————————————————
@@ -371,7 +412,7 @@ ROOM_CASES = [
 def test_a_room_lands_in_one_column_with_one_phrase(facts, column, phrase):
     shown = room_presentation(facts, now=NOW)
     assert shown.column == column
-    assert shown.display_status == phrase
+    assert shown.phrase == phrase
 
 
 def test_every_column_is_reachable():
@@ -394,7 +435,7 @@ def test_delivery_beats_everything():
         ),
         now=NOW,
     )
-    assert (shown.column, shown.display_status) == (Column.done, Done.accepted)
+    assert (shown.column, shown.phrase) == (Column.done, Done.accepted)
 
 
 def test_the_live_fact_beats_the_paperwork():
@@ -407,7 +448,7 @@ def test_the_live_fact_beats_the_paperwork():
         ),
         now=NOW,
     )
-    assert (shown.column, shown.display_status) == (Column.building, Building.running)
+    assert (shown.column, shown.phrase) == (Column.building, Building.running)
 
 
 def test_an_unanswered_question_beats_the_live_fact():
@@ -425,7 +466,7 @@ def test_an_unanswered_question_beats_the_live_fact():
         ),
         now=NOW,
     )
-    assert (shown.column, shown.display_status) == (
+    assert (shown.column, shown.phrase) == (
         Column.needs_you,
         NeedsYou.awaiting_answer,
     )
@@ -434,7 +475,7 @@ def test_an_unanswered_question_beats_the_live_fact():
 def test_delivery_still_beats_an_unanswered_question():
     """已交付压过它 —— 已经采纳，那个旧问题不再挡住任何事。"""
     shown = task_presentation(task(awaiting_answer=True, accepted_at=JUST_NOW), now=NOW)
-    assert (shown.column, shown.display_status) == (Column.done, Done.accepted)
+    assert (shown.column, shown.phrase) == (Column.done, Done.accepted)
 
 
 def test_a_room_with_an_unanswered_question_beats_running_too():
@@ -448,7 +489,7 @@ def test_a_room_with_an_unanswered_question_beats_running_too():
         ),
         now=NOW,
     )
-    assert (shown.column, shown.display_status) == (
+    assert (shown.column, shown.phrase) == (
         Column.needs_you,
         NeedsYou.awaiting_answer,
     )
@@ -483,7 +524,7 @@ SETTLED = [
 def test_a_settled_card_stops_answering(status):
     """一张已经结算的卡不是这条活此刻的状态 —— 它被驳回之后，活回到施工中。"""
     shown = task_presentation(task(card=card(status)), now=NOW)
-    assert (shown.column, shown.display_status) == (
+    assert (shown.column, shown.phrase) == (
         Column.building,
         Building.not_started,
     )
@@ -511,14 +552,10 @@ def test_no_phrase_can_appear_under_a_column_it_does_not_belong_to():
 
     for _, facts, column, phrase in TASK_CASES:
         assert phrase in COLUMN_PHRASES[column]
-        assert (
-            task_presentation(facts, now=NOW).display_status in COLUMN_PHRASES[column]
-        )
+        assert task_presentation(facts, now=NOW).phrase in COLUMN_PHRASES[column]
     for _, facts, column, phrase in ROOM_CASES:
         assert phrase in COLUMN_PHRASES[column]
-        assert (
-            room_presentation(facts, now=NOW).display_status in COLUMN_PHRASES[column]
-        )
+        assert room_presentation(facts, now=NOW).phrase in COLUMN_PHRASES[column]
 
 
 def test_every_phrase_is_reachable():
@@ -542,7 +579,7 @@ def test_a_worker_that_stopped_reporting_is_not_a_worker_that_finished():
     quiet = task(has_worker=True, last_signal_at=LONG_AGO)
     shown = task_presentation(quiet, now=NOW)
     assert shown.column is Column.building, "断了联系不等于干完了"
-    assert shown.display_status == Building.lost
+    assert shown.phrase == Building.lost
 
     gone = task_presentation(
         task(has_worker=True, last_signal_at=JUST_NOW, room_screen_live=False), now=NOW
@@ -553,9 +590,9 @@ def test_a_worker_that_stopped_reporting_is_not_a_worker_that_finished():
 def test_a_finished_thread_still_reads_as_finished_with_a_worker_on_it():
     """反过来也得成立：绑过分身不能盖掉真正的终态。"""
     closed = task(has_worker=True, status=TaskStatus.closed, last_signal_at=LONG_AGO)
-    assert task_presentation(closed, now=NOW).display_status == Done.closed
+    assert task_presentation(closed, now=NOW).phrase == Done.closed
     delivered = task(has_worker=True, accepted_at=JUST_NOW, last_signal_at=LONG_AGO)
-    assert task_presentation(delivered, now=NOW).display_status == Done.accepted
+    assert task_presentation(delivered, now=NOW).phrase == Done.accepted
 
 
 def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
@@ -573,7 +610,7 @@ def test_a_thread_waiting_on_a_person_is_not_out_of_contact():
             card=card(status),
         )
         shown = task_presentation(quiet, now=NOW)
-        assert shown.display_status != "失联", f"{status} 的卡被失联抢答了"
+        assert shown.phrase != "lost", f"{status} 的卡被失联抢答了"
         assert shown.column in (Column.delivering, Column.needs_you)
 
 
@@ -584,6 +621,64 @@ def test_it_reads_nothing_but_the_facts_it_was_given():
     assert first == task_presentation(facts, now=NOW)
     # 只有「现在几点」变了，同一行事实就换了一格 —— 时间是参数，不是它自己去读的。
     assert (
-        task_presentation(facts, now=LONG_AGO + timedelta(minutes=1)).display_status
+        task_presentation(facts, now=LONG_AGO + timedelta(minutes=1)).phrase
         == Building.running
     )
+
+
+def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():
+    """窄读入口交出来的 `RailCard` 和 ORM 那一行，读成同一份事实。
+
+    路由不再把 ORM 行带出去，但它要的答案必须一模一样 —— 否则同一条活在侧栏和
+    别处会说出两种话。每一位都要覆盖到：`note_code` 挑格子、`merge_state` 里的
+    state/who 说这一步在谁手上、`decided_by`/`auto_merge_armed_by` 说这一步已经
+    交出去了。`CardFacts` 是纯值，所以两边相等就是这一层的契约。
+    """
+    from app.domain.review.models import AcceptCard
+    from app.domain.review.queries import RailCard
+    from app.domain.room_task.presentation import facts_for_card
+
+    def both(**spec) -> tuple[CardFacts | None, CardFacts | None]:
+        shared = {
+            "status": spec.get("status", AcceptStatus.pending),
+            "pr_number": spec.get("pr_number"),
+            "pr_url": spec.get("pr_url"),
+            "note_code": spec.get("note_code"),
+            "merge_state": spec.get("merge_state"),
+            "decided_by": spec.get("decided_by"),
+            "auto_merge_armed_by": spec.get("auto_merge_armed_by"),
+        }
+        card_id = uuid.uuid4()
+        row = AcceptCard(
+            id=card_id, topic_id=uuid.uuid4(), reviewer_handle="alice", **shared
+        )
+        return facts_for_card(row), facts_for_card(RailCard(id=card_id, **shared))
+
+    specs = [
+        {},
+        {"note_code": NoteCode.waiting_merge_queue},
+        {"merge_state": {"state": "behind", "who": "platform"}},
+        {
+            "merge_state": {"state": "unknown", "who": "platform"},
+            "decided_by": "alice",
+        },
+        {
+            "merge_state": {"state": "unknown", "who": "platform"},
+            "auto_merge_armed_by": "alice",
+        },
+        {"status": AcceptStatus.accepted, "pr_number": 7, "pr_url": "u"},
+    ]
+    for spec in specs:
+        from_orm, from_rail = both(**spec)
+        assert from_rail is not None
+        assert from_rail == from_orm
+
+    # 不是「两边都算成 None」就等于：拿一位具体的事实对下来。
+    _, rail_facts = both(
+        merge_state={"state": "behind", "who": "platform"}, decided_by="alice"
+    )
+    assert rail_facts is not None
+    assert rail_facts.status == "pending"
+    assert rail_facts.merge_state_word == "behind"
+    assert rail_facts.merge_who == "platform"
+    assert rail_facts.decided is True

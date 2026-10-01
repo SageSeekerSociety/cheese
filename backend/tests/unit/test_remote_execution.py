@@ -293,7 +293,8 @@ def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
 def test_the_build_runs_bash_and_its_own_tasks_and_its_words_reach_the_model():
     """Bash, TaskStop and a read of the build's own output files are the
     build's to run (the shell prefix carries Bash to the executor); only the
-    file tools go to the executor. What the build writes about a command
+    file tools go to the executor, and Bash asks it first whether the
+    project's deny rules refuse the call. What the build writes about a command
     reaches the model as the build wrote it: the session sees the project at
     the executor's path, so there is nothing to respell."""
     source = _proxy_source().replace(
@@ -345,7 +346,7 @@ def test_the_build_runs_bash_and_its_own_tasks_and_its_words_reach_the_model():
             tool: 'Read', tool_use_id: 'r', file_path: path,
           }, async () => { throw new Error('read on the session host: ' + path) });
         }
-        assert.deepEqual(forwarded, ['Read', 'Read', 'Read']);
+        assert.deepEqual(forwarded, ['Bash', 'Read', 'Read', 'Read']);
     """,
             base64.b64encode(source.encode()).decode(),
         ],

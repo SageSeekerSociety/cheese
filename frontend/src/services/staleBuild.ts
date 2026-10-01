@@ -10,9 +10,16 @@
  * module: .../assets/TopicView-DngyVzs7.js` — that file is gone; the running
  * build ships TopicView-DBolMOEy.js.)
  *
- * Reloading is the entire fix, because index.html is NOT content-hashed: the
- * new one names the new chunks.
+ * Reloading is the fix, because index.html is NOT content-hashed: the new one
+ * names the new chunks. But the reload has to reach the new index.html, and
+ * while the previous service worker still controls the tab it can come back
+ * with the old one: that worker's navigation route falls back to its own
+ * cached index.html whenever the network fetch fails, and a tab open across
+ * the 2026-09-30 releases did reload onto the old build and could not open a
+ * topic. So the new worker takes over first (`takeWaitingWorker`), then the
+ * tab reloads.
  */
+import { takeWaitingWorker } from '@/pwa'
 
 // Set before the reload and cleared once the app mounts again, so a failure
 // that survives a reload — a chunk genuinely missing from the current build,
@@ -41,7 +48,7 @@ export function reloadForNewBuild(reason: unknown): boolean {
     // without the guard beats leaving the tab dead: looping needs the failure
     // to outlive the reload, and a deploy's does not.
   }
-  window.location.reload()
+  void takeWaitingWorker({ check: true }).finally(() => window.location.reload())
   return true
 }
 

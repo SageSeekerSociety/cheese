@@ -2230,8 +2230,15 @@ def _deliver_task_branch(
 
     Anything to push while the PR is in the merge queue (`queued_pr`) is
     refused up front: the forge locks a queued branch.
+
+    `head` already in the branch as this checkout last pushed or fetched it
+    needs no forge call at all. Asking anyway turned a forge that could not be
+    reached for a moment into "not pushed back" for work it already had, once
+    for every sync while the outage lasted.
     """
     remote = f"refs/remotes/origin/{branch}"
+    if _is_ancestor(worktree, head, remote):
+        return
     if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
         _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
         return

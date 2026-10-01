@@ -57,6 +57,11 @@ vi.mock('@/stores/workspace', () => ({
 
 import RunningWorkView from './RunningWorkView.vue'
 
+import { setLocale } from '@/i18n'
+
+// 断言按中文文案写：默认 locale 是 en，这里钉回 zh-CN。
+beforeEach(() => setLocale('zh-CN'))
+
 const Board = RunningWorkView as unknown as Component
 
 function task(over: Partial<RoomTask> = {}): RoomTask {
@@ -69,7 +74,7 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
-    presentation: { column: 'needs_you', display_status: '待审阅' },
+    presentation: { column: 'needs_you', phrase: 'awaiting_review' },
     ...over,
   }
 }
@@ -83,7 +88,7 @@ const MIXED = [
     id: 'd',
     title: '别人在施工',
     owner_handle: 'ligan',
-    presentation: { column: 'building', display_status: '运行中' },
+    presentation: { column: 'building', phrase: 'running' },
   }),
 ]
 
@@ -193,7 +198,7 @@ describe('筛完之后板还是一块板', () => {
 
   it('「排队中」数的是整块板，不是筛过的那一份', async () => {
     // 房间满没满和「这是谁的活」无关。按筛过的结果数，开关一开这个提示就凭空没了。
-    const running = { column: 'building', display_status: '运行中' } as const
+    const running = { column: 'building', phrase: 'running' } as const
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({
       data: [
@@ -201,7 +206,7 @@ describe('筛完之后板还是一块板', () => {
           id: 'mine',
           title: '我的',
           owner_handle: 'n1ctheboy',
-          presentation: { column: 'building', display_status: '待开工' },
+          presentation: { column: 'building', phrase: 'not_started' },
         }),
         ...['w', 'x', 'y', 'z'].map((id) => task({ id, owner_handle: 'ligan', presentation: { ...running } })),
       ],
@@ -217,8 +222,8 @@ describe('已完成那条折叠行', () => {
     query = { mine: '1' }
     listProjectTasks.mockResolvedValue({
       data: [
-        task({ id: 'a', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已关闭' } }),
-        task({ id: 'b', owner_handle: 'ligan', presentation: { column: 'done', display_status: '已关闭' } }),
+        task({ id: 'a', owner_handle: 'ligan', presentation: { column: 'done', phrase: 'closed' } }),
+        task({ id: 'b', owner_handle: 'ligan', presentation: { column: 'done', phrase: 'closed' } }),
       ],
       total: 2,
     })

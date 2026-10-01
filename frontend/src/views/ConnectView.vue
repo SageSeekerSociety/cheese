@@ -12,6 +12,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { authToken, connectDevice, deviceProposedName } from '../api'
+import { t } from '../i18n'
 
 const route = useRoute()
 const code = computed(() => String(route.query.code ?? ''))
@@ -42,7 +43,7 @@ onMounted(async () => {
 
 async function approve() {
   if (!code.value) {
-    error.value = '缺少设备码，请从命令行打开的链接进入'
+    error.value = t('project.connect.missingCode')
     return
   }
   loading.value = true
@@ -50,7 +51,7 @@ async function approve() {
   try {
     approved.value = await connectDevice(code.value, deviceName.value.trim() || undefined)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '审批失败'
+    error.value = e instanceof Error ? e.message : t('project.connect.failed')
   } finally {
     loading.value = false
   }
@@ -63,34 +64,36 @@ async function approve() {
       <div class="mb-6">
         <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
         <template v-if="$vuetify.display.mdAndUp">
-          <div class="t-eyebrow mb-1">设备连接</div>
-          <h1 class="t-page-title">批准这台设备</h1>
+          <div class="t-eyebrow mb-1">{{ t('project.connect.eyebrow') }}</div>
+          <h1 class="t-page-title">{{ t('project.connect.title') }}</h1>
         </template>
         <div class="t-body c-muted mt-1">
-          这台机器请求接入芝士，成为归你所有的设备。批准后，芝士就可以把任务派到它上面运行。
+          {{ t('project.connect.intro') }}
         </div>
       </div>
 
       <v-alert v-if="!code" type="warning" density="comfortable" class="mb-4">
-        链接里没有设备码，请从 <code>cheesehost link connect</code> 打开的地址进入
+        <i18n-t keypath="project.connect.noCode" tag="span">
+          <template #command><code>cheesehost link connect</code></template>
+        </i18n-t>
       </v-alert>
 
       <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
-        请先登录，再批准这台设备归你所有
+        {{ t('project.connect.signInFirst') }}
         <template #append>
-          <v-btn size="small" color="primary" variant="tonal" :to="loginLink">去登录</v-btn>
+          <v-btn size="small" color="primary" variant="tonal" :to="loginLink">{{ t('project.connect.signIn') }}</v-btn>
         </template>
       </v-alert>
 
       <v-card v-else-if="!approved" class="pa-4">
-        <div class="t-caption c-muted mb-1">设备码</div>
+        <div class="t-caption c-muted mb-1">{{ t('project.connect.code') }}</div>
         <div class="device-code mb-4">{{ code || '—' }}</div>
 
         <v-text-field
           v-model="deviceName"
           autocomplete="off"
-          label="设备名称"
-          placeholder="例如：andy-macbook"
+          :label="t('project.connect.nameLabel')"
+          :placeholder="t('project.connect.namePlaceholder')"
           variant="outlined"
           density="comfortable"
           hide-details
@@ -103,20 +106,27 @@ async function approve() {
           {{ error }}
         </v-alert>
 
-        <v-btn color="primary" :loading="loading" :disabled="!code" block @click="approve"> 批准并绑定到我 </v-btn>
+        <v-btn color="primary" :loading="loading" :disabled="!code" block @click="approve">{{
+          t('project.connect.approve')
+        }}</v-btn>
       </v-card>
 
       <v-card v-else class="pa-5 text-center">
         <v-icon size="40" color="success" class="mb-2"> mdi-check-circle-outline </v-icon>
-        <h2 class="t-title mb-1">设备已连接</h2>
+        <h2 class="t-title mb-1">{{ t('project.connect.done') }}</h2>
         <div class="t-body c-muted mb-3">
-          设备「<strong>{{ approved.device_name }}</strong
-          >」已绑定到你
+          <i18n-t keypath="project.connect.bound" tag="span">
+            <template #name
+              ><strong>{{ approved.device_name }}</strong></template
+            >
+          </i18n-t>
         </div>
         <div class="t-caption c-muted mb-4">
-          命令行里的 <code>cheesehost link connect</code> 会接着完成接入，设备随即保持在线、接受任务
+          <i18n-t keypath="project.connect.finishing" tag="span">
+            <template #command><code>cheesehost link connect</code></template>
+          </i18n-t>
         </div>
-        <v-btn variant="tonal" :to="{ name: 'UserSettingsDevices' }"> 查看设备 </v-btn>
+        <v-btn variant="tonal" :to="{ name: 'UserSettingsDevices' }">{{ t('project.connect.viewDevices') }}</v-btn>
       </v-card>
     </v-container>
   </div>

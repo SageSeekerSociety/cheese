@@ -11,6 +11,7 @@ import { computed, ref } from 'vue'
 
 import RoutineRow from './RoutineRow.vue'
 
+import { t } from '@/i18n'
 import { routineRoomTarget } from '@/lib/routine'
 
 const props = withDefaults(
@@ -56,6 +57,14 @@ const emit = defineEmits<{
   (e: 'navigate', target: UserRefTarget): void
 }>()
 
+/** 房间名：项目总览页给的名册里查不到（房间已经没了），就写「已不在的房间」；
+ *  房间右侧那一格不给名册（`linkRooms` 是 false），那一格里的每一条都是这个房间的，不写。 */
+function roomNameOf(r: Routine): string | undefined {
+  const name = props.roomNames[r.topic_id]
+  if (name) return name
+  return props.linkRooms ? t('routines.goneRoom') : undefined
+}
+
 const drafts = computed(() => props.routines.filter((r) => r.state === 'draft'))
 const others = computed(() => props.routines.filter((r) => r.state !== 'draft'))
 // 删一条规则不可撤销（执行记录一起删），所以问一句再动手。问的这一条留在这里。
@@ -77,20 +86,20 @@ function confirmDelete() {
   <div>
     <p v-if="error" role="alert" class="t-body c-danger mb-4">{{ error }}</p>
 
-    <div v-if="loading && !routines.length" class="py-8 text-center" role="status" aria-label="读取规则">
+    <div v-if="loading && !routines.length" class="py-8 text-center" role="status" :aria-label="t('routines.loading')">
       <v-progress-circular indeterminate size="28" color="primary" />
     </div>
 
     <template v-else>
       <section v-if="drafts.length" class="mb-6">
-        <h2 class="t-section mb-2">等你确认</h2>
+        <h2 class="t-section mb-2">{{ t('routines.waiting') }}</h2>
         <ul class="routine-list">
           <RoutineRow
             v-for="r in drafts"
             :key="r.id"
             :routine="r"
             :busy="busy"
-            :room-name="roomNames[r.topic_id]"
+            :room-name="roomNameOf(r)"
             :user-names="userNames"
             @confirm="emit('confirm', r)"
             @edit="emit('edit', r)"
@@ -108,7 +117,7 @@ function confirmDelete() {
           :runs="runs[r.id]"
           :open="isOpen(r)"
           :busy="busy"
-          :room-name="roomNames[r.topic_id]"
+          :room-name="roomNameOf(r)"
           :room-to="linkRooms ? routineRoomTarget(r) : undefined"
           :user-names="userNames"
           @pause="emit('pause', r)"
@@ -122,19 +131,19 @@ function confirmDelete() {
       </ul>
 
       <div v-if="!routines.length && !error" class="py-8 text-center">
-        <p class="t-body c-muted">还没有定时或触发规则</p>
-        <p class="t-meta c-faint mt-1">点「新建」，或在房间里让芝士帮你起草一条</p>
+        <p class="t-body c-muted">{{ t('routines.empty') }}</p>
+        <p class="t-meta c-faint mt-1">{{ t('routines.emptyHint') }}</p>
       </div>
     </template>
 
     <v-dialog :model-value="!!confirming" max-width="420" @update:model-value="confirming = null">
       <v-card v-if="confirming">
-        <v-card-title class="t-dialog-title">删除「{{ confirming.title }}」</v-card-title>
-        <v-card-text class="t-body">删除后不再执行，执行记录也一起删除；已经放进房间的结果文件保留</v-card-text>
+        <v-card-title class="t-dialog-title">{{ t('routines.deleteTitle', { title: confirming.title }) }}</v-card-title>
+        <v-card-text class="t-body">{{ t('routines.deleteBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirming = null">取消</v-btn>
-          <v-btn variant="text" color="error" @click="confirmDelete">删除</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="confirming = null">{{ t('routines.cancel') }}</v-btn>
+          <v-btn variant="text" color="error" @click="confirmDelete">{{ t('routines.action.delete') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

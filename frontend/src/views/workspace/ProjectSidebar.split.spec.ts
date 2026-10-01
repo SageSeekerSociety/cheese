@@ -72,7 +72,6 @@ vi.mock('@/lib/routePrefetch', () => ({ prefetchOnHover: vi.fn(), cancelPrefetch
 
 const store = reactive({
   accessDenied: null,
-  railWidth: 280,
   projects: [],
   projectId: 'p1',
   topics: [
@@ -82,7 +81,6 @@ const store = reactive({
   loadingTopics: false,
   unreadMap: {},
   privateUnreadMap: {},
-  setRailWidth: vi.fn(),
 })
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 

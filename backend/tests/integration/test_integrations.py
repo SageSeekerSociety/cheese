@@ -184,6 +184,46 @@ def test_a_draft_waits_for_the_owner_and_what_is_sent_is_what_was_drafted(
     assert again.status_code >= 400 and len(mailbox.sent) == 1
 
 
+def _room_events(client, room, person, event_type):
+    blocks = client.get(f"/topics/{room}/blocks", headers=person).json()["data"]
+    rows = blocks["data"] if isinstance(blocks, dict) else blocks
+    return [b for b in rows if (b.get("meta") or {}).get("event_type") == event_type]
+
+
+def test_the_room_card_shows_the_draft_and_learns_how_it_ended(client, mailbox):
+    """chiruotong, 2026-09-27: confirming in 「我的连接」 is too far away. The
+    room shows the whole draft where it was written, the owner is told where to
+    find it, and the card learns the outcome."""
+    person, project, room = _setup(client)
+    row = _connect(client, person, [project])
+
+    first = _draft(client, row, room).json()["data"]
+    [card] = _room_events(client, room, person, "mail_drafted")
+    mail = card["meta"]["mail"]
+    assert mail["owner"] == OWNER
+    assert mail["to"] == ["bob@x.test"]
+    assert mail["subject"] == "第三季度预算"
+    assert mail["body"] == "附件是核对后的预算表。"
+    assert card["meta"]["mail_draft_id"] == first["id"]
+
+    inbox = client.get(f"/projects/{project}/alerts", headers=person).json()["data"][
+        "data"
+    ]
+    [told] = [n for n in inbox if "邮件草稿待你确认" in n["title"]]
+    assert told["topic_id"] == room
+    assert "房间" in told["body"]
+
+    client.post(f"/me/mail-drafts/{first['id']}/send", headers=person)
+    second = _draft(client, row, room).json()["data"]
+    client.post(f"/me/mail-drafts/{second['id']}/discard", headers=person)
+
+    outcomes = {
+        e["meta"]["mail_draft_id"]: e["meta"]["status"]
+        for e in _room_events(client, room, person, "mail_result")
+    }
+    assert outcomes == {first["id"]: "sent", second["id"]: "discarded"}
+
+
 def test_an_attachment_changed_after_drafting_is_not_sent(client, mailbox):
     person, project, room = _setup(client)
     row = _connect(client, person, [project])

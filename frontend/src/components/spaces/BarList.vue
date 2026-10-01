@@ -3,6 +3,7 @@
 //
 // 选横向而不是竖向柱：这一屏的分类名和题目名是中文长串，竖向柱的轴标签要斜着写才放得下。
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   rows: { label: string; value: number; hint?: string }[]
@@ -11,6 +12,8 @@ const props = defineProps<{
   /** 空态文案。 */
   empty?: string
 }>()
+
+const { t } = useI18n()
 
 const max = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
 </script>
@@ -26,10 +29,12 @@ const max = computed(() => Math.max(1, ...props.rows.map((r) => r.value)))
       <span class="bars__value">{{ row.value }}{{ unit ?? '' }}</span>
     </div>
     <p v-if="rows.some((r) => r.hint)" class="bars__foot">
-      <span v-for="r in rows.filter((x) => x.hint)" :key="r.label">{{ r.label }}：{{ r.hint }}</span>
+      <span v-for="r in rows.filter((x) => x.hint)" :key="r.label">{{
+        t('spaces.barList.hint', { label: r.label, hint: r.hint })
+      }}</span>
     </p>
   </div>
-  <v-empty-state v-else icon="mdi-chart-bar" :title="empty ?? '暂无数据'" />
+  <v-empty-state v-else icon="mdi-chart-bar" :title="empty ?? t('spaces.barList.empty')" />
 </template>
 
 <style scoped lang="scss">

@@ -8,14 +8,18 @@
  * 这里不认识消息，也不认识通知档位——那些是房间壳的事。这里只回答 handle → 名字。
  */
 
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { Block, ProjectMemberRow, Topic, TopicMemberRow } from '../../../cx_types'
 
 import { computed, ref, watch } from 'vue'
+import { tryOnScopeDispose } from '@vueuse/core'
 
 import { listTopicMembers } from '../../../api'
+import { t } from '../../../i18n'
 import { agentNames } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
+import { onTopicRosterChange } from '../../../lib/topicRosterChanges'
 import { getAvatarUrl } from '../../../utils/materials'
 
 export function useRoomRoster(options: {
@@ -63,11 +67,18 @@ export function useRoomRoster(options: {
     } catch {
       // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
       // 芝士」，而屏幕上没有任何东西说明为什么。
-      options.onError('成员名单加载失败，@ 补全可能不全')
+      options.onError(t('work.room.roster.mentionLoadFailed'))
     }
   }
 
   watch(() => options.topic()?.id, loadRoster, { immediate: true })
+  // 名册抽屉里加人、移人、改角色，这份副本跟着重拉：只在切话题时拉的话，刚加进来
+  // 的队友要等切走再切回来才 @ 得到。重拉期间旧名单留着（`rosterFor` 不动），不闪。
+  tryOnScopeDispose(
+    onTopicRosterChange((topicId) => {
+      if (options.topic()?.id === topicId) void loadRoster()
+    })
+  )
 
   // 名册那一行有三种形状：话题名册是 member_handle，项目名册是 user_handle，而 @
   // 补全名单已经把它们归一到 handle 了。这里只关心「它叫什么、它的 handle 是哪个」。
@@ -103,10 +114,10 @@ export function useRoomRoster(options: {
   )
 
   /** 界面上称呼它用的名字。名册没到时谁也不猜，就写「芝士」。 */
-  const agentName = computed(() => agentSeat.value?.label || '芝士')
+  const agentName = computed(() => agentSeat.value?.label || t('work.room.defaultAgentName'))
 
-  /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的**人**。 */
-  const mentionPool = computed(() => {
+  /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的**人**（带 `outsideTopic`）。 */
+  const mentionPool = computed<MentionPoolEntry[]>(() => {
     // 名册没到（切话题的那一瞬间）房间那半就是空的：宁可少一行，也不能把**上一个
     // 房间**的座位留在名单里——那一位的名字也写着「芝士」，@ 出来却是个不在这儿的
     // handle。人在项目名册上照样 @ 得到，缺的只是这一个房间自己的那几行。
@@ -115,11 +126,15 @@ export function useRoomRoster(options: {
       label: m.name || m.member_handle,
       agent: !!m.agent,
       external: isExternal(m.member_handle),
+      role: m.role,
     }))
     const inRoom = new Set(room.map((r) => r.handle))
     // 不在这间房里的 AI 队友不列：它只在自己坐着的房间里被 @ 叫得动，在这里 @ 它
     // 什么也不会发生（后端点名只认这间房的席位），列出来就是一个点了没反应的名字。
     // 已停用的也不列：停用就是为了挡住新的活，补全菜单是派活的入口。
+    //
+    // 这些人 @ 得到，但他不在这个话题里——候选上要说出来（「不在话题中」）。名册
+    // 没到时说不准谁在谁不在，那一刻不挂：挂错了，读的人会以为房间里的人被移出去了。
     const rest = options
       .members()
       .filter((m) => !inRoom.has(m.user_handle) && !m.agent && m.active !== false)
@@ -128,6 +143,7 @@ export function useRoomRoster(options: {
         label: m.name || m.user_handle,
         agent: !!m.agent,
         external: isExternalMember(m),
+        outsideTopic: rosterLoaded.value,
       }))
     return [...room, ...rest]
   })
@@ -168,7 +184,7 @@ export function useRoomRoster(options: {
     return agentNameMap.value.get(handle) ?? null
   }
   function agentDisplayName(handle: string): string {
-    return agentNameOf(handle) || '芝士'
+    return agentNameOf(handle) || t('work.room.defaultAgentName')
   }
   function displayName(m: Block): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)

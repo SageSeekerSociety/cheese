@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import Block
+from app.domain.block.notice_text import say
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
@@ -91,11 +92,46 @@ class TaskService:
     async def require_in_room(self, room_id: uuid.UUID, task_id: uuid.UUID) -> Task:
         task = await self.get(task_id)
         if task is None or task.room_id != room_id:
-            raise NotFoundError("这个房间里没有这条任务")
+            raise NotFoundError(say("taskNotFoundInRoom"))
         return task
 
+    async def require_source_in_room(
+        self, room_id: uuid.UUID, task_id: uuid.UUID
+    ) -> None:
+        """这份来源要是这个房间的一条「已经开了分支」的活。
+
+        和 `require_in_room` 分开，因为**答复不一样**：一个是「这个房间里没有这
+        条任务」，一个是「这不是一条能读文件的活」。读文件的那几个接口对外发的是
+        后者，措辞不能跟着一个更严的同名检查走样 —— 卡在、房间也对、只是还没开
+        分支，那是另一件事。
+
+        `room_id` 是房间（也就是话题）：一份来源不是一个自由填的 id，要指名某个
+        房间的某条活。"""
+        task = await self.get(task_id)
+        if task is None or task.room_id != room_id or task.branch_name is None:
+            raise NotFoundError("Task not found")
+
     async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
+        """这个项目里的活，最老的在前。
+
+        交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
+        侧栏就是拿这批行就地折出展示态的（`presentation.facts_for_task`），行本身
+        不出这个进程、更不上线。等这边也开了 `queries.py`，这条就该只交纯值。
+        """
         return await self._repo.list_for_project(project_id)
+
+    async def last_block_at_for_tasks(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """These threads' heartbeats, newest block per task, in one query.
+
+        A narrow read out of this domain for callers that hold ids and need the
+        liveness signal the board draws from — the project rail is the one that
+        does. It is on the service and not on the repository because the
+        repository is this domain's own drawer and stays inside it: a caller
+        outside `room_task` reaches for the service.
+        """
+        return await self._repo.last_block_at_for_tasks(task_ids)
 
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.

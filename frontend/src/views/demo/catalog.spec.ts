@@ -16,6 +16,10 @@ import { render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 夹具（页签名、状态标）在模块加载时就取了词，所以语言要在 import 之前定下来：
+// 断言按中文写，测试环境默认是英文界面。
+vi.hoisted(() => localStorage.setItem('cheese:locale', 'zh-CN'))
+
 // 演示页那一套（`DemoView.spec.ts` 同款）：验收卡自己去接口取数，happy-dom 里模块内
 // 的 fetch 不走测试替身，所以读卡的两个函数直接接到演示后端的路由表上。
 vi.mock('@/api', async () => {

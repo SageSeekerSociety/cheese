@@ -19,18 +19,20 @@
 
 ```json
 "presentation": { "column": "building|delivering|needs_you|done|archived",
-                  "display_status": "<可直接显示的中文>" }
+                  "phrase": "<短语的码，如 running / awaiting_review>" }
 ```
+
+短语是码，不是字：卡面上那句话由读者的屏幕按他选的语言画（前端词条 `work.board.phrase.<码>`，`lib/board.ts` 的 `phraseLabel`）。
 
 **列的判据是「该谁动」，不是「进行到哪一步」。** 同一个客观事实会因为下一步归谁而落在不同列：CI 红了，平台已经派芝士去修就是 `delivering`（「修复检查」），芝士推不上去、那个红没人能清就是 `needs_you`（「检查未通过」）。
 
 | 列 | 产出的短语 |
 |---|---|
-| `building` 施工中 | 运行中 / **失联** / 已动工 / 待开工 / 已交回（活）；空闲 / 草稿（房间） |
-| `delivering` 交付中 | 检查运行中 / 等待检查 / 修复检查 / 解决冲突 / 平台更新分支 |
-| `needs_you` 等你 | 检查未通过 / 待审阅 / 已退回 / 待回答 |
-| `done` 已完成 | 已采纳 / 已关闭 |
-| `archived` 已归档 | 已归档 |
+| `building` 施工中 | 运行中 `running` / **失联** `lost` / 已动工 `started` / 待开工 `not_started` / 已交回 `returned`（活）；空闲 `idle` / 草稿 `draft`（房间） |
+| `delivering` 交付中 | 检查运行中 `gate_running` / 等待检查 `awaiting_checks` / 修复检查 `fixing_checks` / 解决冲突 `resolving_conflict` / 平台更新分支 `updating_branch` |
+| `needs_you` 等你 | 检查未通过 `checks_failed` / 待审阅 `awaiting_review` / 已退回 `bounced` / 待回答 `awaiting_answer` |
+| `done` 已完成 | 已采纳 `accepted` / 已关闭 `closed` |
+| `archived` 已归档 | 已归档 `archived` |
 
 ## 几个关键决定
 

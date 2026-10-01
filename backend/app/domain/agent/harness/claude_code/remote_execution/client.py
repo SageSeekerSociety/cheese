@@ -42,6 +42,7 @@ if __package__:
         RemoteClient,
         read_file_on_the_machine,
         session_path,
+        session_servers,
         stat_file_on_the_machine,
     )
 else:
@@ -57,6 +58,7 @@ else:
         RemoteClient,
         read_file_on_the_machine,
         session_path,
+        session_servers,
         stat_file_on_the_machine,
     )
 
@@ -480,12 +482,9 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    # The room machine's stdio servers and the project's remote ones take the
-    # same bridge; `RemoteClient.call` sends each to where it is served.
-    bridged = [
-        *target.get("mcp_servers", []),
-        *(target.get("remote_mcp") or {}).get("servers", []),
-    ]
+    # The machine's stdio servers, the type's and the remote ones share one
+    # bridge; `RemoteClient.call` sends each where it is served.
+    bridged = session_servers(target)
     for name in bridged:
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
@@ -1313,7 +1312,7 @@ MAX_SEND_USER_FILE_BYTES = 10 * 1024 * 1024
 # What the tool result promises the caller about the file: `isImage` for the
 # suffixes that are pictures, `media_type` for what the bytes are. The room
 # types the artifact off the path on `POST /topics/{id}/shown`
-# (`topics._ARTIFACT_MIME`); this tool never declares `as`, so that table is
+# (`room_files.ARTIFACT_MIME`); this tool never declares `as`, so that table is
 # the only one that names a kind. These two fields describe the file to the
 # caller — they are not a second copy of the room's kind table.
 _SEND_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -1693,6 +1692,11 @@ def transport(config, target_path):
                             },
                         },
                         {
+                            "name": "permission",
+                            "description": "Internal. Call Bash instead.",
+                            "inputSchema": {"type": "object"},
+                        },
+                        {
                             "name": "send_user_file",
                             "description": (
                                 "Internal delivery transport for the built-in "
@@ -1732,6 +1736,7 @@ def transport(config, target_path):
                 tool = request["params"]["name"]
                 if tool not in (
                     "invoke",
+                    "permission",
                     "platform_request",
                     "send_user_file",
                     "project_tools",
@@ -1751,24 +1756,15 @@ def transport(config, target_path):
                         "tool": "mcp__native__" + tool,
                         "args": {k: payload[k] for k in picked[tool] if k in payload},
                     }
-                elif tool == "send_user_file":
-                    payload = {
-                        "id": payload["id"],
-                        "session_id": payload["session_id"],
-                        "tool": "SendUserFile",
-                        "args": {
-                            key: value
-                            for key, value in payload.items()
-                            if key not in ("id", "session_id")
-                        },
-                    }
-                elif tool in cheese.PLATFORM_TOOLS:
+                elif tool == "send_user_file" or tool in cheese.PLATFORM_TOOLS:
                     # Every other row of the table. Membership, not a `cheese_`
                     # prefix, decides: `todo_write` carries none.
                     payload = {
                         "id": payload["id"],
                         "session_id": payload["session_id"],
-                        "tool": "mcp__native__" + tool,
+                        "tool": "SendUserFile"
+                        if tool == "send_user_file"
+                        else "mcp__native__" + tool,
                         "args": {
                             key: value
                             for key, value in payload.items()
@@ -1812,6 +1808,8 @@ def transport(config, target_path):
                         if tool == "platform_request"
                         else client.publish_message(payload, args)
                         if tool == "chat_send"
+                        else client.permission(payload, args, notice)
+                        if tool == "permission"
                         else invoke(payload, args, abandoned)
                     )
                 if "error" in receipt:
@@ -1964,7 +1962,8 @@ def main():
 
         release(config)
     elif args.mode == "bridge":
-        remote = (config.get("remote_mcp") or {}).get("servers", [])
+        # Remote servers and a type's own, whose definition rides each call.
+        remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
         if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
                 from .runtime import bridge

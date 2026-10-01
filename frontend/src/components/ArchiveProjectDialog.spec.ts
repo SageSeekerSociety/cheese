@@ -25,6 +25,8 @@ vi.mock('vue-router', async () => ({
 
 import ArchiveProjectDialog from './ArchiveProjectDialog.vue'
 
+import { setLocale } from '@/i18n'
+
 const Dialog = ArchiveProjectDialog as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
 
@@ -54,6 +56,7 @@ beforeAll(() => {
 afterEach(cleanup)
 
 beforeEach(() => {
+  setLocale('zh-CN')
   archiveProject.mockReset().mockResolvedValue({})
   refreshProjects.mockReset().mockResolvedValue(undefined)
   push.mockReset().mockResolvedValue(undefined)

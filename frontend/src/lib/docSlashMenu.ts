@@ -16,6 +16,8 @@ import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
 
+import { t } from '@/i18n'
+
 export interface SlashItem {
   key: string
   label: string
@@ -34,7 +36,9 @@ export interface SlashItem {
 export const SLASH_ITEMS: SlashItem[] = [
   {
     key: 'text',
-    label: '正文',
+    get label() {
+      return t('work.room.doc.slash.text')
+    },
     icon: 'mdi-format-paragraph',
     hint: 'text',
     keywords: ['text', 'paragraph', 'p', 'zw', 'zhengwen'],
@@ -42,7 +46,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'h1',
-    label: '标题 1',
+    get label() {
+      return t('work.room.doc.slash.h1')
+    },
     icon: 'mdi-format-header-1',
     hint: 'h1',
     keywords: ['h1', 'heading1', 'title', 'bt1', 'biaoti'],
@@ -50,7 +56,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'h2',
-    label: '标题 2',
+    get label() {
+      return t('work.room.doc.slash.h2')
+    },
     icon: 'mdi-format-header-2',
     hint: 'h2',
     keywords: ['h2', 'heading2', 'bt2', 'biaoti'],
@@ -58,7 +66,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'h3',
-    label: '标题 3',
+    get label() {
+      return t('work.room.doc.slash.h3')
+    },
     icon: 'mdi-format-header-3',
     hint: 'h3',
     keywords: ['h3', 'heading3', 'bt3', 'biaoti'],
@@ -66,7 +76,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'bullet',
-    label: '无序列表',
+    get label() {
+      return t('work.room.doc.slash.bullet')
+    },
     icon: 'mdi-format-list-bulleted',
     hint: 'list',
     keywords: ['ul', 'list', 'bullet', 'wxlb', 'liebiao'],
@@ -74,7 +86,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'ordered',
-    label: '有序列表',
+    get label() {
+      return t('work.room.doc.slash.ordered')
+    },
     icon: 'mdi-format-list-numbered',
     hint: '1.',
     keywords: ['ol', 'list', 'ordered', 'number', 'yxlb', 'liebiao'],
@@ -82,7 +96,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'task',
-    label: '任务列表',
+    get label() {
+      return t('work.room.doc.slash.task')
+    },
     icon: 'mdi-format-list-checks',
     hint: 'todo',
     keywords: ['todo', 'task', 'checkbox', 'list', 'rwlb', 'renwu', 'liebiao'],
@@ -90,7 +106,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'code',
-    label: '代码块',
+    get label() {
+      return t('work.room.doc.slash.code')
+    },
     icon: 'mdi-code-tags',
     hint: 'code',
     keywords: ['code', 'codeblock', 'pre', 'dmk', 'daima'],
@@ -98,7 +116,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'quote',
-    label: '引用',
+    get label() {
+      return t('work.room.doc.slash.quote')
+    },
     icon: 'mdi-format-quote-close',
     hint: 'quote',
     keywords: ['quote', 'blockquote', 'yy', 'yinyong'],
@@ -106,7 +126,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'table',
-    label: '表格',
+    get label() {
+      return t('work.room.doc.slash.table')
+    },
     icon: 'mdi-table',
     hint: 'table',
     keywords: ['table', 'bg', 'biaoge'],
@@ -114,7 +136,9 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     key: 'hr',
-    label: '分割线',
+    get label() {
+      return t('work.room.doc.slash.hr')
+    },
     icon: 'mdi-minus',
     hint: '---',
     keywords: ['hr', 'divider', 'line', 'fgx', 'fengexian'],

@@ -149,6 +149,10 @@ def post_project(client, json: dict | None = None, *, headers=None, **kwargs):
     body["owner_handle"] = owner
     if body.get("team_id") is None:
         _register(client, owner)
+    if body.get("external_task_id") is not None and caller is None:
+        # A project built from a task needs a signed-in creator who claimed it;
+        # the owner is that person unless the test says who is calling.
+        headers = {**(headers or {}), **session_auth_headers(owner)}
     return client.post("/projects", json=body, headers=headers, **kwargs)
 
 

@@ -17,6 +17,7 @@ import httpx
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
+from app.domain.block.notice_text import say
 
 logger = logging.getLogger("cheesex.review.pr_poll")
 
@@ -87,7 +88,7 @@ async def poll_uncarded_task_prs(
         WHO_PLATFORM,
         notice,
     )
-    from app.domain.project.forge import proposal_client
+    from app.domain.project.forge import background_may_use_forge, proposal_client
     from app.domain.review.models import AcceptCard
     from app.domain.room_task.checkouts import after_close
     from app.domain.room_task.models import Task, TaskStatus
@@ -136,6 +137,8 @@ async def poll_uncarded_task_prs(
                 if task is None or task.pr_number is None:
                     continue
                 number, project = task.pr_number, task.project_id
+                if not await background_may_use_forge(project, session):
+                    continue
                 client = await proposal_client(project, session)
             if client is None:
                 continue
@@ -167,7 +170,7 @@ async def poll_uncarded_task_prs(
                 await announce(
                     session,
                     place_id=task.room_id,
-                    content=f"PR #{number} 已在代码仓库合并，任务已交付",
+                    content=say("prMergedDelivered", pr=number),
                     meta=notice(
                         EVENT_ACCEPT_DONE,
                         severity=SEVERITY_INFO,

@@ -80,6 +80,7 @@
                  (LeftAppRail) 同一套兜底。 -->
             <v-avatar
               size="28"
+              rounded="circle"
               :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
             >
               <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
@@ -98,7 +99,9 @@
       </v-menu>
 
       <!-- 未登录时的登录按钮 -->
-      <v-btn v-else-if="!backTo" to="/account/signin" variant="text" prepend-icon="mdi-account">登录</v-btn>
+      <v-btn v-else-if="!backTo" to="/account/signin" variant="text" prepend-icon="mdi-account">{{
+        t('account.signIn.submit')
+      }}</v-btn>
     </template>
   </v-app-bar>
 </template>

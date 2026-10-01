@@ -110,6 +110,9 @@ PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 # cli/internal/link/link.go), and how long its link may go unheard before it is
 # taken as lost: three missed beats (`DeviceHub.silence_allowed`).
 HEARTBEAT_S = 15.0
+# How much longer than a command's own deadline `exec` waits for the machine's
+# reply before it gives up and raises `TimeoutError`.
+EXEC_REPLY_SLACK_S = 5
 LINK_SILENCE_S = 3 * HEARTBEAT_S
 
 
@@ -639,7 +642,7 @@ class DeviceHub:
                     stdin=stdin,
                 )
             )
-            return await asyncio.wait_for(fut, timeout=timeout + 5)
+            return await asyncio.wait_for(fut, timeout=timeout + EXEC_REPLY_SLACK_S)
         except TimeoutError:
             await device.send(device_link.exec_cancel(eid))
             raise

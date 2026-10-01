@@ -28,7 +28,7 @@ vi.mock('@/api', async () => {
 
 import ChatPanel from './ChatPanel.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 const topic = {
   id: 'room',
@@ -130,7 +130,7 @@ async function flush() {
 function mount() {
   return render(ChatPanel, {
     props: { topic, topicList: [topic], members },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 
@@ -138,7 +138,7 @@ function mount() {
 // 是谁，和它说的话。平台自己的那一行两样都没有。
 function notices(container: Element) {
   return Array.from(container.querySelectorAll('.notice-row')).map((row) => ({
-    avatar: row.querySelector('.notice-row__mark[role="img"]')?.getAttribute('aria-label') ?? null,
+    avatar: row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null,
     name: row.querySelector('.notice-row__name')?.textContent?.trim() ?? null,
     text: row.textContent ?? '',
   }))

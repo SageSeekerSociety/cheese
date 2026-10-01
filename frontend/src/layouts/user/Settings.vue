@@ -1,66 +1,97 @@
 <template>
-  <!-- 手机上没有左边那条侧栏（SettingsSidebar 只在桌面画），这几块在内容上方排成
-       一行标签，和项目文档那一页的标签同一个样子。 -->
-  <nav v-if="!mdAndUp" class="settings-sections">
-    <v-tabs :model-value="route.name" density="compact" color="on-surface" slider-color="primary">
-      <v-tab
-        v-for="section in SETTINGS_SECTIONS"
-        :key="section.route.name"
-        :value="section.route.name"
-        :to="section.route"
-        class="text-none"
-        >{{ section.label() }}</v-tab
-      >
-    </v-tabs>
-  </nav>
-  <router-view />
+  <SettingsOverlay
+    :label="t('account.settings.title')"
+    :groups="groups"
+    :active="active"
+    :index-to="{ name: 'UserSettings' }"
+    :close-label="t('account.settings.close')"
+    :close-title="t('account.settings.closeHint')"
+    :back-label="t('account.settings.back')"
+    @close="close"
+  >
+    <template #head>
+      <div class="me">
+        <UserAvatar :avatar="avatar" :name="user?.nickname || user?.username" size="32" />
+        <div class="me__text">
+          <span class="me__name">{{ user?.nickname || user?.username }}</span>
+          <span v-if="user" class="me__handle">@{{ user.username }}</span>
+        </div>
+      </div>
+    </template>
+    <router-view />
+  </SettingsOverlay>
 </template>
 
 <script lang="ts" setup>
-import type { User } from '@/types/users'
-
-import { onMounted, provide, ref } from 'vue'
-import { useRoute } from 'vue-router'
+// 个人设置：一层盖在整个窗口上的浮层（components/common/SettingsOverlay）。
+// 关掉回到打开之前的那一页；直接从链接打开、之前没有页面时回首页。
+import { computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { UserApi } from '@/network/api/users'
-import { currentUserId } from '@/services/account'
-import { SETTINGS_SECTIONS } from '@/views/user/settings/sections'
+import { getAvatarUrl } from '@/utils/materials'
 
+import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import { pageBeforeSettings } from '@/lib/settingsReturn'
+import AccountService from '@/services/account'
+import { settingsGroups } from '@/views/user/settings/sections'
+
+const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const { mdAndUp } = useDisplay()
-const userData = ref<User>()
-const loaded = ref(false)
 
-const fetchData = async () => {
-  if (!currentUserId.value) {
-    loaded.value = true
-    return
-  }
-  const {
-    data: { user },
-  } = await UserApi.getUserInfo(currentUserId.value)
-  userData.value = user
-  loaded.value = true
+const user = AccountService._user
+const avatar = computed(() => (user.value?.avatarId ? getAvatarUrl(user.value.avatarId) : undefined))
+
+const groups = computed(() => settingsGroups())
+
+/** 停在「个人设置」这一条自己的地址上时没有当前项：手机上那就是目录。 */
+const active = computed(() => (route.name === 'UserSettings' ? null : String(route.name)))
+
+// 桌面上没有单独的目录页，目录一直在左边：落到第一项。
+watch(
+  [() => route.name, mdAndUp],
+  ([name, desktop]) => {
+    if (name === 'UserSettings' && desktop) router.replace({ name: 'UserSettingsProfile' })
+  },
+  { immediate: true }
+)
+
+function close() {
+  router.push(pageBeforeSettings({ name: 'HomeHub' }))
 }
-
-onMounted(async () => {
-  await fetchData()
-})
-
-provide('userData', userData)
 </script>
 
 <style scoped>
-/* 左右和下面各页的内容对齐：页面自己在 600 以下留 16，以上留 32（settings-card.css）。 */
-.settings-sections {
-  max-width: calc(var(--page-w) - 64px);
-  margin: 8px 32px 0;
-  border-bottom: 1px solid var(--line);
+.me {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 0 10px 4px;
 }
-@media (width < 600px) {
-  .settings-sections {
-    margin-inline: 16px;
-  }
+
+.me__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.me__name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me__handle {
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
 }
 </style>

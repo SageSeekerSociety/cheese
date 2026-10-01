@@ -1,92 +1,75 @@
 <template>
-  <div class="analytics-section">
-    <div class="section-toolbar">
-      <div>
-        <h2 class="section-toolbar__title">学习</h2>
-        <p class="section-toolbar__hint">成员与 AI 对话时卡住的地方，用来挑下一讲要讲的内容</p>
-      </div>
+  <div class="an-section">
+    <p class="an-note">{{ t('spaces.analytics.learning.lede') }}</p>
+
+    <div class="an-bar">
+      <v-select
+        v-model="studentModel"
+        autocomplete="off"
+        :items="studentItems"
+        :prefix="t('spaces.analytics.learning.student')"
+        :aria-label="t('spaces.analytics.learning.student')"
+        density="compact"
+        hide-details
+        variant="outlined"
+      />
+      <v-select
+        v-model="knowledgePointModel"
+        autocomplete="off"
+        :items="knowledgePointItems"
+        :prefix="t('spaces.analytics.learning.knowledgePoint')"
+        :aria-label="t('spaces.analytics.learning.knowledgePoint')"
+        density="compact"
+        hide-details
+        variant="outlined"
+      />
+      <span v-if="learningFilters" class="lr__summary">{{ summary }}</span>
     </div>
 
-    <v-card flat rounded="lg" class="toolbar-card">
-      <div class="toolbar-grid">
-        <v-select
-          v-model="studentModel"
-          autocomplete="off"
-          :items="studentItems"
-          label="成员"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-        <v-select
-          v-model="knowledgePointModel"
-          autocomplete="off"
-          :items="knowledgePointItems"
-          label="知识点"
-          density="comfortable"
-          hide-details
-          variant="outlined"
-        />
-      </div>
+    <v-progress-linear v-if="loading && !queues" indeterminate color="primary" />
 
-      <div v-if="learningFilters" class="toolbar-summary">{{ summary }}</div>
-    </v-card>
-
-    <v-progress-linear v-if="loading && !queues" indeterminate color="primary" class="mt-4" />
-
-    <v-empty-state
-      v-if="learningFilters && learningFilters.projectCount === 0"
-      icon="mdi-account-search-outline"
-      title="暂无可查看的成员项目"
-      text="当前账号还读不到这门课下的成员项目，因此没有对话可以展示。"
-    />
+    <p v-if="learningFilters && learningFilters.projectCount === 0" class="an-note">
+      {{ t('spaces.analytics.learning.noProjects') }}
+    </p>
 
     <template v-else>
-      <section class="learning-block">
-        <div class="block-head">
-          <h3 class="block-head__title">待处理队列</h3>
-          <p class="block-head__hint">共性卡点按有多少个成员撞上排序</p>
-        </div>
+      <section class="lr__block">
+        <h3 class="an-card__title">{{ t('spaces.analytics.learning.queue.title') }}</h3>
+        <p class="lr__hint">{{ t('spaces.analytics.learning.queue.hint') }}</p>
 
-        <v-card v-if="queues" flat rounded="lg" class="queue-card">
-          <div class="queue-card__title">成员标记「这道题我答不了」的问题</div>
+        <div v-if="queues" class="an-card">
+          <div class="lr__card-title">{{ t('spaces.analytics.learning.queue.flagged') }}</div>
 
           <template v-if="queues.reviewFlag.available">
             <LearningQuoteItem v-for="item in queues.reviewFlag.items" :key="item.blockId" :excerpt="item" />
-            <p v-if="!queues.reviewFlag.items.length" class="queue-card__note">暂无成员标记的问题</p>
+            <p v-if="!queues.reviewFlag.items.length" class="an-note lr__gap">
+              {{ t('spaces.analytics.learning.queue.noFlagged') }}
+            </p>
           </template>
 
           <template v-else>
-            <p class="queue-card__note">暂无可显示的内容</p>
-            <p class="queue-card__reason">{{ queues.reviewFlag.reason }}</p>
+            <p class="an-note lr__gap">{{ t('spaces.analytics.learning.queue.unavailable') }}</p>
+            <p class="lr__reason">{{ queues.reviewFlag.reason }}</p>
           </template>
-        </v-card>
+        </div>
 
-        <div v-if="queues?.stuckPoints.length" class="stuck-grid">
+        <div v-if="queues?.stuckPoints.length" class="an-grid">
           <LearningStuckPointCard
             v-for="point in queues.stuckPoints"
-            :key="point.knowledgePoint ?? '未归类'"
+            :key="point.knowledgePoint ?? '-'"
             :point="point"
             :checked="isSelected(point.example.blockId)"
             @update:checked="(value) => setSelected(point.example.blockId, value)"
           />
         </div>
-
-        <v-empty-state
-          v-else-if="queues"
-          icon="mdi-check-circle-outline"
-          title="暂无共性卡点"
-          text="当前筛选范围下没有成员卡在同一处。"
-        />
+        <p v-else-if="queues" class="an-note">{{ t('spaces.analytics.learning.queue.noStuck') }}</p>
       </section>
 
-      <section class="learning-block">
-        <div class="block-head">
-          <h3 class="block-head__title">成员发言</h3>
-          <p class="block-head__hint">共 {{ questions.length }} 条，勾选要带进提纲的</p>
-        </div>
+      <section class="lr__block">
+        <h3 class="an-card__title">{{ t('spaces.analytics.learning.questions.title') }}</h3>
+        <p class="lr__hint">{{ t('spaces.analytics.learning.questions.hint', { n: questions.length }) }}</p>
 
-        <v-card v-if="questions.length" flat rounded="lg" class="quote-card">
+        <div v-if="questions.length" class="an-card lr__quotes">
           <LearningQuoteItem
             v-for="question in questions"
             :key="question.blockId"
@@ -95,39 +78,31 @@
             :checked="isSelected(question.blockId)"
             @update:checked="(value) => setSelected(question.blockId, value)"
           />
-        </v-card>
-
-        <v-empty-state
-          v-else-if="!loading"
-          icon="mdi-comment-outline"
-          title="暂无成员发言"
-          text="当前筛选范围下没有成员的发言记录。"
-        />
+        </div>
+        <p v-else-if="!loading" class="an-note">{{ t('spaces.analytics.learning.questions.empty') }}</p>
       </section>
 
-      <v-card flat rounded="lg" class="outline-actions">
-        <span class="outline-actions__count">已选 {{ selected.length }} 条发言</span>
-        <div class="outline-actions__buttons">
-          <v-btn v-if="selected.length" variant="text" rounded="lg" @click="clearSelection">清空</v-btn>
+      <div class="an-card lr__actions">
+        <span class="lr__count">{{ t('spaces.analytics.learning.selected', { n: selected.length }) }}</span>
+        <div class="lr__buttons">
+          <v-btn v-if="selected.length" variant="text" @click="clearSelection">
+            {{ t('spaces.analytics.learning.clear') }}
+          </v-btn>
           <v-btn
             color="primary"
             variant="flat"
-            rounded="lg"
             :loading="outlineLoading"
             :disabled="!selected.length"
             @click="buildOutline"
           >
-            生成讲解提纲
+            {{ t('spaces.analytics.learning.buildOutline') }}
           </v-btn>
         </div>
-      </v-card>
+      </div>
 
-      <section v-if="outline" class="learning-block">
-        <div class="block-head">
-          <h3 class="block-head__title">{{ outline.title }}</h3>
-          <p class="block-head__hint">讲次按勾选顺序排列</p>
-        </div>
-
+      <section v-if="outline" class="lr__block">
+        <h3 class="an-card__title">{{ outline.title }}</h3>
+        <p class="lr__hint">{{ t('spaces.analytics.learning.outlineHint') }}</p>
         <LearningOutlineCard :outline="outline" />
       </section>
     </template>
@@ -143,6 +118,7 @@ import type {
 } from '@/network/api/spaces/types'
 
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import LearningOutlineCard from './components/LearningOutlineCard.vue'
@@ -154,6 +130,7 @@ import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
 import { SpacesApi } from '@/network/api/spaces'
 
+const { t } = useI18n()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
@@ -182,24 +159,24 @@ watch([studentModel, knowledgePointModel], async () => {
 })
 
 const studentItems = computed(() => [
-  { title: '全部成员', value: null },
+  { title: t('spaces.analytics.learning.allStudents'), value: null },
   ...(learningFilters.value?.students ?? []).map((student) => ({ title: student.name, value: student.handle })),
 ])
 
 const knowledgePointItems = computed(() => [
-  { title: '全部知识点', value: null },
+  { title: t('spaces.analytics.learning.allKnowledgePoints'), value: null },
   ...(learningFilters.value?.knowledgePoints ?? []).map((point) => ({ title: point.name, value: point.categoryId })),
 ])
 
 const summary = computed(() => {
   if (!learningFilters.value) return ''
 
-  return [
-    `可查看的成员项目 ${formatCount(learningFilters.value.projectCount)} 个`,
-    `成员 ${formatCount(learningFilters.value.students.length)} 人`,
-    `发言 ${formatCount(questions.value.length)} 条`,
-    `共性卡点 ${formatCount(queues.value?.stuckPoints.length ?? 0)} 个`,
-  ].join(' · ')
+  return t('spaces.analytics.learning.summary', {
+    projects: formatCount(learningFilters.value.projectCount),
+    students: formatCount(learningFilters.value.students.length),
+    questions: formatCount(questions.value.length),
+    stuck: formatCount(queues.value?.stuckPoints.length ?? 0),
+  })
 })
 
 const loadFilters = async () => {
@@ -208,7 +185,7 @@ const loadFilters = async () => {
     learningFilters.value = data
   } catch (error) {
     console.error('load learning filters failed', error)
-    toast.error('加载学习筛选条件失败')
+    toast.error(t('spaces.analytics.learning.toast.filtersFailed'))
   }
 }
 
@@ -218,7 +195,7 @@ const loadQueues = async () => {
     queues.value = data
   } catch (error) {
     console.error('load learning queues failed', error)
-    toast.error('加载待处理队列失败')
+    toast.error(t('spaces.analytics.learning.toast.queuesFailed'))
   }
 }
 
@@ -231,7 +208,7 @@ const loadQuestions = async () => {
     questions.value = data.questions
   } catch (error) {
     console.error('load learning questions failed', error)
-    toast.error('加载成员发言失败')
+    toast.error(t('spaces.analytics.learning.toast.questionsFailed'))
   }
 }
 
@@ -289,152 +266,78 @@ const buildOutline = async () => {
     outline.value = data
   } catch (error) {
     console.error('build learning outline failed', error)
-    toast.error('生成讲解提纲失败')
+    toast.error(t('spaces.analytics.learning.toast.outlineFailed'))
   } finally {
     outlineLoading.value = false
   }
 }
 </script>
 
-<style scoped lang="scss">
-.analytics-section {
-  display: flex;
-  flex-direction: column;
-}
+<style scoped src="./analytics.css"></style>
 
-.section-toolbar {
-  margin-bottom: 16px;
-}
-
-.section-toolbar__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-}
-
-.section-toolbar__hint {
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.toolbar-card {
-  padding: 16px;
-  background-color: rgba(var(--v-theme-surface), 1);
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.toolbar-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.toolbar-summary {
-  margin-top: 12px;
+<style scoped>
+.lr__summary {
+  color: var(--faint);
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
 }
 
-.learning-block {
-  margin-top: 24px;
-}
-
-.block-head {
-  margin-bottom: 12px;
-}
-
-.block-head__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-}
-
-.block-head__hint {
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.queue-card {
-  padding: 16px;
-  background-color: rgba(var(--v-theme-surface), 1);
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.queue-card__title {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  color: var(--text);
-}
-
-.queue-card__note {
-  margin: 8px 0 0;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
-}
-
-.queue-card__reason {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--faint);
-}
-
-.stuck-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.quote-card {
-  padding: 4px 16px;
-  background-color: rgba(var(--v-theme-surface), 1);
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.outline-actions {
+.lr__block {
   display: flex;
-  padding: 16px;
-  margin-top: 24px;
-  background-color: rgba(var(--v-theme-surface), 1);
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.lr__block > .an-card__title {
+  margin: 0;
+}
+
+.lr__hint {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.lr__card-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+}
+
+.lr__gap {
+  margin-top: 8px;
+}
+
+.lr__reason {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.lr__quotes {
+  padding-block: 4px;
+}
+
+.lr__actions {
+  display: flex;
   gap: 16px;
   justify-content: space-between;
   align-items: center;
 }
 
-.outline-actions__count {
+.lr__count {
+  color: var(--text);
   font-size: 14px;
   line-height: var(--lh-14);
-  color: var(--text);
 }
 
-.outline-actions__buttons {
+.lr__buttons {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-
-@media (max-width: 960px) {
-  .toolbar-grid,
-  .stuck-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .outline-actions {
-    flex-direction: column;
-    align-items: flex-start;
-  }
 }
 </style>

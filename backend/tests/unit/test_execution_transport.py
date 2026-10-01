@@ -19,7 +19,7 @@ import pytest
 from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
-from app.domain.agent.harness.claude_code.remote_execution import runtime
+from app.domain.agent.harness.claude_code.remote_execution import mcp_process, runtime
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
 from tests.support import executor_release, wire
@@ -357,7 +357,7 @@ def central_transport(executor, tmp_path):
         )
     )
     log = (tmp_path / "central.log").open("w")
-    process = runtime.MCPProcess(
+    process = mcp_process.MCPProcess(
         [sys.executable, central.__file__, "transport", str(config)],
         str(tmp_path),
         {
@@ -1635,7 +1635,7 @@ def test_a_claude_code_file_tool_waiting_for_its_machine_says_so_once(
         )
     )
     log = (tmp_path / "bridge.log").open("w")
-    bridge = runtime.MCPProcess(
+    bridge = mcp_process.MCPProcess(
         [sys.executable, central.__file__, "transport", str(config)],
         str(tmp_path),
         {
@@ -1726,7 +1726,7 @@ def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
         )
     )
     with (tmp_path / "transport.log").open("w") as log:
-        process = runtime.MCPProcess(
+        process = mcp_process.MCPProcess(
             [sys.executable, central.__file__, "transport", str(config)],
             str(tmp_path),
             {

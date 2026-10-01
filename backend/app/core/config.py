@@ -315,16 +315,14 @@ class Settings(BaseSettings):
     # this platform's own code ("owner/repo", case-insensitive).
     docs_dev_repositories: list[str] = ["SageSeekerSociety/cheese"]
     # The gateway model 问芝士 answers with. Its virtual key is minted through
-    # `llm_gateway_admin_base` and capped at this budget per 30 days.
+    # `llm_gateway_admin_base`; what it spends is charged to the asker's
+    # personal credits, so the model must be priced on the gateway.
     docs_assistant_model: str = "deepseek-flash"
-    docs_assistant_budget_usd: float = 20.0
     # Whether 问芝士 searches and reads the docs itself, over the three tools in
     # `docs_site/tools.py`, instead of answering from one round of retrieval.
     # False keeps the old path, for a deployment that wants the cheaper one.
     docs_assistant_agentic: bool = True
-    # Per signed-in user, and across one backend process.
-    docs_assistant_hourly_limit: int = 20
-    docs_assistant_daily_limit: int = 100
+    # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
     docs_question_retention_days: int = 90
     # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
@@ -365,9 +363,10 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
-    # Handles that are platform administrators — the people who read and route
-    # the whole feedback queue (`/admin/feedback`) and who manage everything else
-    # that turns out to need an admin. JSON list in env, e.g. '["alice","bob"]'.
+    # Handles that are platform administrators — the people who run the admin
+    # screens (members, models, stats, spaces, integrations). Feedback triage is
+    # a separate roster, `feedback_triage_handles` below. JSON list in env,
+    # e.g. '["alice","bob"]'.
     # A settings list rather than a role because no production path assigns
     # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
     # and lock the surface for everyone.
@@ -396,6 +395,25 @@ class Settings(BaseSettings):
             "PLATFORM_ADMIN_HANDLES", "FEEDBACK_ADMIN_HANDLES"
         ),
     )
+    # Who works the feedback queue: the triage page (`/admin/feedback`), status
+    # changes, internal notes, private and security reports, deleting other
+    # people's reports and comments. A roster of its own, NOT the platform admins
+    # above: private feedback is what people chose not to show everyone, and the
+    # platform admins are a working group who need the admin screens for other
+    # jobs. Being one does not make you a reader of every private report.
+    #
+    # Deployment config only — there is no page that adds to it, so nobody can
+    # widen it from inside the product. JSON list in env, e.g. '["alice"]'. The
+    # dev deploy writes it (`deploy-dev.yml`); another deployment sets it in its
+    # own env file (`deploy/.env.prod.example`).
+    #
+    # Empty means nobody administers feedback: submissions still work and every
+    # admin-only branch stays closed. Not a boot failure, unlike the platform
+    # roster above: that one is the only way into the admin screens at all,
+    # while this one only gates a queue whose readers are a choice. Mind the
+    # name: `FEEDBACK_ADMIN_HANDLES` above is the OLD spelling of the PLATFORM
+    # roster, which is why this one is not called that.
+    feedback_triage_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
     # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
@@ -697,6 +715,9 @@ class Settings(BaseSettings):
     # usage is folded into credits and deducted from the project's grants
     # (oldest grant first). Default: 1 credit = 10k tokens.
     compute_credit_tokens: int = 10_000
+    # Credits each person gets every calendar month for the AI they ask for
+    # outside any project (问芝士 on the docs site). Unused credits lapse.
+    personal_credits_monthly: float = 200.0
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].
@@ -829,6 +850,21 @@ class Settings(BaseSettings):
     # means draft PR / branch protection and silently switching would both mask
     # those and produce merge commits in repos that allow several methods.
     accept_pr_merge_method: str = "squash"
+
+    # --- the architecture ratchet (后台「棘轮」页) ---
+    # The repository whose snapshots the page shows. The platform's own: the
+    # ratchet answers 「平台自己的债还得怎么样」, and `arch-metrics.yml` collects
+    # there. Configurable so a fork or a second deployment is not a code change.
+    ratchet_repository: str = "SageSeekerSociety/cheese"
+    #: How often the backend pulls new `ratchet-snapshot` artifacts. The page
+    #: reads the table and never GitHub, so this clock is what makes a merge
+    #: visible there; 0 disables the pull and leaves the table as it stands.
+    #: 15 minutes is the design's interval — one listing call per tick, and a
+    #: merge does not need to appear faster than a person can read the page.
+    ratchet_ingest_interval_s: int = 900
+    #: How many points the page draws. A bound on one response, and the window
+    #: the direction is computed over; the archive keeps everything.
+    ratchet_series_points: int = 60
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
@@ -1095,7 +1131,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_platform_admins_on_deployment(self) -> "Settings":
-        """Fail the boot when a deployment has nobody who can work the queue.
+        """Fail the boot when a deployment has nobody who can run the admin screens.
 
         ``platform_admin_handles`` is the **root** admin list, and it is still
         the only way in: no role behind it, no default member set, nothing in the
@@ -1103,19 +1139,10 @@ class Settings(BaseSettings):
         (`platform_admins`, the 成员管理 block) — but **adding one is itself an
         admin action**, so an empty root list is not "we have not got round to
         appointing an admin yet". It is a deployment where nobody can ever
-        appoint one. Read from every seat in the product, it says *nobody is
-        looking at this*:
+        appoint one:
 
-        - A submitter writes a report, watches its status stay at 已收录, and has
-          no way to tell that apart from "someone will get to it". The feedback
-          centre looks fully functional while being a write-only table.
-        - The admin page is unreachable for everyone including the operator, who
-          finds this out by opening it and reading "你的账号不在管理员名单里" —
-          a sentence that names the wrong problem.
-        - The agent-side proposal path still spends its daily quota filing
-          proposals that no one can act on.
         - 成员管理 — the screen whose whole job is adding the next admin — is
-          admin-only too, so there is no way back in from the product at all.
+          admin-only, so there is no way back in from the product at all.
           This is why the root list is the half the page cannot delete: one
           mis-click on a list that was the only copy would lock everyone out
           permanently.
@@ -1164,18 +1191,14 @@ class Settings(BaseSettings):
                 if self.deployed_via_compose
                 else ""
             )
-            + "). This is the only thing that opens /admin/feedback — the page "
+            + "). This is the only way into the admin screens — the page "
             "itself can add admins, but only an admin can do that, so an empty "
-            "list here is a deployment nobody can get into: no one can read or "
-            "route the feedback queue, and neither a submitter nor the agent "
-            "path can tell that apart from 'nobody has picked it up yet'. The "
-            "whole feedback surface looks healthy and is write-only. Set it to "
-            "the handles that should administer feedback (they are the ones the "
-            "page cannot remove), as a JSON list: "
+            "list here is a deployment nobody can get into. Set it to the "
+            "handles that should run the platform (they are the ones the page "
+            "cannot remove), as a JSON list: "
             'PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\' (see '
-            "deploy/.env.prod.example). If you are sure nobody should administer "
-            "feedback, set it to a handle you control rather than leaving it "
-            "empty."
+            "deploy/.env.prod.example). If you are sure nobody should, set it "
+            "to a handle you control rather than leaving it empty."
         )
 
     @model_validator(mode="after")

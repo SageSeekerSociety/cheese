@@ -3,12 +3,12 @@
     <!-- 侧栏头：‹ 回到首页，后面是这个空间。和右边的标题行等高，底线连成一条。 -->
     <router-link :to="{ name: 'inbox' }" class="sidebar-header space-head" :aria-label="t('spaces.sidebar.back')">
       <v-icon size="18" class="space-head__back">mdi-chevron-left</v-icon>
-      <v-avatar size="22" rounded="sm" :image="getAvatarUrl(space?.avatarId)" />
-      <span class="space-head__name">{{ space?.name }}</span>
+      <v-avatar size="20" rounded="sm" :image="getAvatarUrl(space?.avatarId)" />
+      <span class="space-head__name t-title">{{ space?.name }}</span>
     </router-link>
 
     <!-- 手机上侧栏是抽屉，每一行至少 44px 高，手指点得准；桌面上用紧凑行。 -->
-    <v-list nav :density="mdAndUp ? 'compact' : 'default'" :lines="false" class="space-nav pa-2" bg-color="transparent">
+    <v-list nav :density="mdAndUp ? 'compact' : 'default'" :lines="false" class="side-nav pa-2" bg-color="transparent">
       <v-list-item
         rounded="lg"
         prepend-icon="mdi-bullhorn-outline"
@@ -43,7 +43,7 @@
           :title="t('spaces.sidebar.audit')"
         >
           <template v-if="pendingAuditCount" #append>
-            <span class="space-nav__count">{{ pendingAuditCount > 99 ? '99+' : pendingAuditCount }}</span>
+            <span class="side-nav__count">{{ pendingAuditCount > 99 ? '99+' : pendingAuditCount }}</span>
           </template>
         </v-list-item>
         <v-list-item
@@ -123,46 +123,7 @@ function isTasksLinkActive(query: Record<string, string> = {}): boolean {
 
 .space-head__name {
   overflow: hidden;
-  font-size: 15px;
-  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 选中与悬停都是中性色，同首页侧栏：琥珀在导航里只留给左栏那一格「当前在哪」。 */
-.space-nav .v-list-item {
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-
-.space-nav .v-list-item:hover {
-  background: var(--fill-2);
-}
-
-.space-nav .v-list-item--active,
-.space-nav .v-list-item--active:hover {
-  background: var(--line-2);
-}
-
-.space-nav .v-list-item--active :deep(.v-list-item__overlay) {
-  opacity: 0 !important;
-}
-
-/* 待审核的件数：属于「等你处理」那一族，和首页待办的角标同色。 */
-.space-nav__count {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-pill);
-  background: var(--warn);
-  color: var(--inverse-surface);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-}
-
-.space-nav .v-list-item--active :deep(.v-list-item-title) {
-  color: var(--ink);
-  font-weight: 600;
 }
 </style>

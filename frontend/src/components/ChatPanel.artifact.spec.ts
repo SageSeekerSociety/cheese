@@ -17,6 +17,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Panel = ChatPanel as unknown as Component
 const ME = 'me'
 const SEAT = 'cheese-t1'
@@ -59,6 +61,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   history = []
   localStorage.setItem('user', JSON.stringify({ id: 1, username: ME, nickname: '我' }))
   vi.stubGlobal(
@@ -100,7 +104,7 @@ const settle = async () => {
 async function open() {
   const rendered = render(Panel, {
     props: { topic: topicOf('t1'), showComposer: false },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
   await settle()
   return rendered

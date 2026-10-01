@@ -134,7 +134,12 @@ jobs:
         working-directory: backend
         run: uv run alembic upgrade head
 
+      - name: Verify forge fixture CI pull behavior
+        run: python3 backend/tests/forgejo/test_pull_ci.py
+
       - name: Start the isolated project forge
+        env:
+          FORGEJO_TEST_CI_PULL_RETRY: "1"
         run: bash backend/tests/forgejo/start.sh
 
       # alice (seeded by the migration above) owns no project until this runs;

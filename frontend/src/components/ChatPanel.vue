@@ -20,6 +20,8 @@ import ChatTimeline from './chat/ChatTimeline.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
@@ -93,6 +95,7 @@ const {
   // binding shadowing a prop is an error here (vue/no-dupe-keys).
   agentName,
   agentSeat,
+  awaitingReply,
   prShortId,
   prState,
   composerHint,
@@ -208,7 +211,7 @@ defineExpose({ send, connected })
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
-        <div>选择一个话题开始对话</div>
+        <div>{{ t('work.room.chat.pickTopic') }}</div>
       </div>
     </div>
     <template v-else>
@@ -246,6 +249,7 @@ defineExpose({ send, connected })
         :loading-older="loadingOlder"
         :retry-index="retryIndex"
         :retry-busy="retryBusy"
+        :working="awaitingReply"
         :show-starters="showStarters"
         :starter-prompts="starterPrompts"
         :agent-seat="agentSeat ?? undefined"

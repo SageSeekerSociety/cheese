@@ -108,8 +108,8 @@ const feedbackColumns = computed(() => {
   ]
 })
 
-/** 梯子上的四级，全量并排。条的长度按四级里最大的那一级算 —— 四级是**同一量纲**的
- *  划分（加起来等于 `total.all`），所以可以同轴比长短。 */
+/** 每种状态一行（梯子四级加「不修复」），全量并排。条的长度按最大的那一行算 —— 它们是
+ *  **同一量纲**的划分（加起来等于 `total.all`），所以可以同轴比长短。 */
 const feedbackStatusRows = computed(() => {
   const s = feedback.value?.status
   if (!s) return []
@@ -118,6 +118,7 @@ const feedbackStatusRows = computed(() => {
     { key: 'in_progress', label: t('feedback.dashboard.status.inProgress'), value: s.in_progress },
     { key: 'resolved', label: t('feedback.dashboard.status.resolved'), value: s.resolved },
     { key: 'deployed', label: t('feedback.dashboard.status.deployed'), value: s.deployed },
+    { key: 'declined', label: t('feedback.dashboard.status.declined'), value: s.declined },
   ]
   return rows
 })
@@ -272,8 +273,8 @@ function onSelectDay(index: number) {
 .ad__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 24px;
-  margin-top: 24px;
+  gap: 16px;
+  margin-top: 16px;
 }
 
 /* 两块并排要各到 ~300px 以上，图里的刻度才不互相压 —— 所以双栏从 720 容器宽开始。 */
@@ -301,7 +302,7 @@ function onSelectDay(index: number) {
    筛选视角，不该和「四个各自独立的数」争同一档视觉重量。 */
 
 .ad__split {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .ad__split-grid {

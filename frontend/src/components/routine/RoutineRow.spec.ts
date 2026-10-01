@@ -10,12 +10,16 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import RoutineRow from './RoutineRow.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const Row = RoutineRow as unknown as Component
 const vuetify = createVuetify({ components, directives })
+
+beforeEach(() => setLocale('zh-CN'))
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
@@ -54,7 +58,7 @@ const base: Routine = {
 }
 
 function mount(routine: Routine, props: Record<string, unknown> = {}) {
-  return render(Row, { props: { routine, ...props }, global: { plugins: [vuetify] } })
+  return render(Row, { props: { routine, ...props }, global: { plugins: [vuetify, i18n] } })
 }
 
 /** 这一行上画出来的按钮（桌面上那一排文字按钮；手机上收进 ⋯，那里没有按钮）。 */

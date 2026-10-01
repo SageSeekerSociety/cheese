@@ -40,6 +40,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block
+from app.domain.block.notice_text import say
 from app.domain.delivery.addressing import Event
 from app.domain.policy.gate import Call, Proposal
 from app.domain.room_task.place import PlaceResolver
@@ -100,12 +101,14 @@ async def propose(
             EVENT_POLICY_PROPOSAL,
             severity=SEVERITY_WARN,
             who=WHO_HUMAN,
-            detail=(
-                f"资源：{proposal.call.label}（{proposal.call.subject}）\n"
-                f"档位：{proposal.call.tier}\n"
-                f"发起：{proposal.asked_by}"
+            detail=say(
+                "policyProposalDetail",
+                label=proposal.call.label,
+                subject=proposal.call.subject,
+                tier=proposal.call.tier,
+                asked_by=proposal.asked_by,
             ),
-            detail_label="提议详情",
+            detail_label=say("labelProposalDetail"),
         )
         | {META_PROPOSAL_ID: str(proposal_id)},
         points_at=Event(asked=proposal.approver),

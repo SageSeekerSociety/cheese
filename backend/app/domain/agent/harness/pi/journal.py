@@ -30,8 +30,17 @@ GAVE_UP = "cheese_gave_up"
 #: / ``compaction_end``). pi writes a compaction entry only once it is over, and
 #: the minutes before that are the ones a room has to hear about.
 COMPACTING = "cheese_compacting"
+#: A subagent the session started (``subagents.py``) began its work, or ended
+#: it — finished, failed, or stopped by its parent. pi has no subagents of its
+#: own, so nothing in pi's log can say either.
+SUBAGENT_STARTED = "cheese_subagent_started"
+SUBAGENT_STOPPED = "cheese_subagent_stopped"
 #: Every record the runner writes; none of them is an id pi knows.
-RUNNER_RECORDS = (RETRYING, GAVE_UP, COMPACTING)
+RUNNER_RECORDS = (RETRYING, GAVE_UP, COMPACTING, SUBAGENT_STARTED, SUBAGENT_STOPPED)
+#: The key on every record of a subagent's thread: which subagent, and the
+#: label of the card its work lands on (``subagents.py`` stamps it). A record
+#: without it is the session's own.
+THREAD = "subagent"
 
 
 class Journal(journal.Journal):
@@ -47,11 +56,17 @@ class Journal(journal.Journal):
         );
     """
 
-    def import_entries(self, entries: list[dict]) -> None:
+    def import_entries(
+        self, entries: list[dict], *, cursor: tuple[str, str] | None = None
+    ) -> None:
         """Land a page, then advance the cursor we ask pi from.
 
         In that order: the cursor may only claim what is already durable, or a
         crash between the two loses entries nobody will ask for again.
+
+        ``cursor`` names a cursor other than the session's own, and where it
+        now stands: a subagent is a pi of its own, asked from its own place in
+        its own log (``subagents.py``).
         """
         with self.connection:
             for entry in entries:
@@ -60,11 +75,18 @@ class Journal(journal.Journal):
                     "VALUES (?, ?, ?, ?)",
                     (
                         entry["id"],
-                        (entry.get("message") or {}).get("role", ""),
+                        # A subagent's prompt is not a person starting a turn
+                        # of the session (`turn_started_at`).
+                        ""
+                        if entry.get(THREAD)
+                        else (entry.get("message") or {}).get("role", ""),
                         datetime.now(UTC).isoformat(),
                         json.dumps(entry, ensure_ascii=False),
                     ),
                 )
+            if cursor is not None:
+                self.remember(*cursor)
+                return
             # The cursor pi is asked from names pi's own entries only: the
             # runner's records (``RETRYING``, ``GAVE_UP``) are ids pi never saw.
             ours = [e for e in entries if e.get("type") not in RUNNER_RECORDS]

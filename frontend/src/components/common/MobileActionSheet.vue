@@ -244,10 +244,6 @@ const panelStyle = computed(() => (offset.value ? { transform: `translateY(${off
   max-width: 640px;
   box-shadow: none;
 }
-.v-bottom-sheet.action-sheet > .v-overlay__scrim {
-  background: var(--overlay);
-  opacity: 1;
-}
 /* 选择器写到四级是为了压过 VBottomSheet.css 里那条三级的 transition-duration: .2s。 */
 .v-bottom-sheet.action-sheet > .v-overlay__content.action-sheet-enter-active {
   transition: transform var(--dur-base) var(--ease-standard);

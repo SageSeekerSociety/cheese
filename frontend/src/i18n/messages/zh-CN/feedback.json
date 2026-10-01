@@ -46,7 +46,6 @@
     },
     "error": {
       "title": "队列加载失败",
-      "desc": "检查网络后重试。",
       "retry": "重试"
     },
     "filtered": {
@@ -128,7 +127,6 @@
     },
     "error": {
       "title": "表格加载失败",
-      "desc": "检查网络后重试。",
       "retry": "重试"
     },
     "filtered": {
@@ -263,7 +261,8 @@
       "received": "已收录",
       "inProgress": "处理中",
       "resolved": "已修复",
-      "deployed": "已上线"
+      "deployed": "已上线",
+      "declined": "不修复"
     },
     "health": {
       "title": "平台健康",
@@ -524,14 +523,15 @@
       "title": "你还没有提过反馈，也没有指派给你的",
       "action": "提交一条"
     },
-    "foot": "办完的反馈（已修复、已上线）留在列表里，但不再接受支持；私密的那几种只有你、平台管理员、以及提出它时在那个房间里的人看得到"
+    "foot": "办完的反馈（已修复、已上线、不修复）留在列表里，但不再接受支持；私密的那几种只有你、平台管理员、以及提出它时在那个房间里的人看得到"
   },
   "status": {
     "received": "已收录",
     "in_progress": "处理中",
     "resolved": "已修复",
     "deployed": "已上线",
-    "unknown": "未知"
+    "unknown": "未知",
+    "declined": "不修复"
   },
   "timeline": {
     "notStarted": "未开始"
@@ -540,6 +540,12 @@
     "bug": "Bug",
     "suggestion": "建议",
     "other": "其他"
+  },
+  "priority": {
+    "low": "低",
+    "normal": "普通",
+    "high": "高",
+    "urgent": "紧急"
   },
   "source": {
     "user": "用户提交",
@@ -726,5 +732,19 @@
       "restored": "已恢复上次没写完的草稿",
       "discard": "丢弃草稿"
     }
+  },
+  "errors": {
+    "listLoadFailed": "反馈列表加载失败",
+    "loadMoreFailed": "加载更多失败",
+    "mineLoadFailed": "「我的反馈」加载失败",
+    "openFailed": "这条反馈打不开",
+    "actionFailed": "操作失败",
+    "commentSendFailed": "评论发送失败",
+    "commentsLoadFailed": "评论加载失败",
+    "repliesLoadFailed": "回复加载失败",
+    "deleteFailed": "删除失败",
+    "submitFailed": "提交失败",
+    "queueLoadFailed": "管理队列加载失败",
+    "dashboardLoadFailed": "看板加载失败"
   }
 }

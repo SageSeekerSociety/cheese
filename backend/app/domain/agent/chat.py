@@ -71,6 +71,7 @@ from app.domain.agent.harness.prompt import (
     attachment_prompt_line,
     build_system_prompt,
     fit_doc_to_budget,
+    is_inline_image,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -145,7 +146,7 @@ from app.domain.agent.prompt import (
     _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _REPLAY_NOTICE_AT,  # noqa: F401
     _REPLAY_NOTICE_EVERY,  # noqa: F401
-    PLACEHOLDER_TITLE,
+    PLACEHOLDER_TITLE,  # noqa: F401
     _addressed_to,
     _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
     _is_pending_input,  # noqa: F401
@@ -159,6 +160,7 @@ from app.domain.agent.prompt import (
     _sandbox_limits,
     _session_opening_lines,
     _topic_ref_lists,
+    offered_attachments,
     project_overview,
 )
 
@@ -227,6 +229,7 @@ from app.domain.block.models import (
     BlockKind,
     prompted_turn,
 )
+from app.domain.block.notice_text import exception_text, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -261,7 +264,7 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic import doc_nudge, naming
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import TitleSource, Topic, TopicKind, TopicStatus
 from app.domain.topic.overview import project_brief
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -384,10 +387,10 @@ MEMORY_TURNS_KEPT = 512
 # those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
 # to them is the same fact told twice, worse.
 _ACTION_LABEL = {
-    "decision": "记录了决策",
-    "topics": "更新了这个房间的任务",
-    "milestone": "添加了里程碑",
-    "notify": "发送了通知",
+    "decision": "actionDecision",
+    "topics": "actionTopics",
+    "milestone": "actionMilestone",
+    "notify": "actionNotify",
 }
 
 
@@ -425,38 +428,38 @@ def _proposal_frames(landed: dict | None) -> list[dict]:
 # 被读成 AI 的回答,谁也不知道该找谁。
 #
 # 英文原话一个字都不丢,收进「服务原话」的折叠区 —— 它是唯一的一份。
+#
+# 每一条是 (那一行的键, severity, who, 说明的键)，句子在 `notice_messages.json`。
 _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
     PROVIDER_UNREACHABLE_CODE: (
-        "无法连接 AI 服务，这一步未完成",
+        "cliProviderUnreachable",
         SEVERITY_ERROR,
         WHO_PLATFORM,
-        "通常不会自行恢复：可能是这台机器上的隧道助手断开了，也可能是中继连接不稳定。"
-        "可以先重试一次；仍然连不上就需要有人检查机器，不要反复重试。",
+        "cliProviderUnreachableHint",
     ),
     PROVIDER_OVERLOADED_CODE: (
-        "AI 服务暂时过载，这一步未完成",
+        "cliProviderOverloaded",
         SEVERITY_WARN,
         WHO_PLATFORM,
-        "这是服务端的问题，通常很快恢复。稍后可以重试。",
+        "cliProviderOverloadedHint",
     ),
     MODEL_LIMIT_REACHED_CODE: (
-        "这个模型的额度已用完",
+        "cliModelLimitReached",
         SEVERITY_ERROR,
         WHO_HUMAN,
-        "需要换一个模型，或者等额度恢复。重试没有作用。",
+        "cliModelLimitReachedHint",
     ),
     TOOL_UNAVAILABLE_CODE: (
-        "一个工具无法使用",
+        "cliToolUnavailable",
         SEVERITY_WARN,
         WHO_PLATFORM,
-        "工具在等待授权，但授权提示出现在容器的终端里，房间里无法操作。"
-        "这说明这台机器上的工具配置有误，需要有人检查，重试不会有变化。",
+        "cliToolUnavailableHint",
     ),
     RESPONSE_TRUNCATED_CODE: (
-        "上一条回复没有完整发出",
+        "cliResponseTruncated",
         SEVERITY_WARN,
         WHO_PLATFORM,
-        "上一条回复可能不完整，重试会让它接着说。",
+        "cliResponseTruncatedHint",
     ),
 }
 
@@ -473,12 +476,12 @@ def _cli_notice(text: str) -> tuple[str, dict] | None:
     if failure is None:
         return None
     line, severity, who, hint = _CLI_NOTICE_COPY[failure]
-    return line, notice(
+    return say(line), notice(
         EVENT_TURN_FAILED,
         severity=severity,
         who=who,
-        detail=f"{hint}\n\n服务原话：\n{text.strip()}",
-        detail_label="详细说明",
+        detail=say("hintAndServiceWords", hint=say(hint), said=text.strip()),
+        detail_label=say("labelDetails"),
         retryable=failure in _CLI_RETRYABLE,
     )
 
@@ -852,7 +855,7 @@ class ChatService:
         if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
-            # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
+            # System-initiated turn (重发 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
             # instruction goes straight to the agent as the prompt.
             #
@@ -862,7 +865,7 @@ class ChatService:
             # glanceable while nothing is lost. `content` is untouched: it is
             # still the whole instruction 芝士 gets as its prompt.
             if is_resume and not nudge_event:
-                nudge_event = resume_reason or "平台重发了上一轮的消息"
+                nudge_event = resume_reason or say("turnResent")
             # 开场白留空 = 调用点已经自己写好了那一行。Cloud 机器接入就是这一种：
             # 那一行同时是房间的生命周期记录，必须在这一轮排队之前就落库，否则算力
             # 闸一拒就永远不写（见 api/deps.py 的 `deliver_held`）。这一轮照样不说
@@ -1076,19 +1079,17 @@ class ChatService:
         lines = []
         if content:
             lines.append(f"[{author}]: {strip_platform_notice(content)}")
-        images = [
-            {
-                "path": str(attachment.get("path") or ""),
-                "media_type": str(attachment.get("mime") or "image/png"),
-            }
-            for attachment in attachments or []
-            if attachment.get("path")
+        files = [
+            {"path": str(a["path"]), "media_type": str(a.get("mime") or "")}
+            for a in attachments or []
+            if a.get("path")
         ]
+        images = [f for f in files if is_inline_image(f["media_type"])]
         lines.extend(
             attachment_prompt_line(
-                author, image["path"], embeds_images=True, mime=image["media_type"]
+                author, file["path"], embeds_images=True, mime=file["media_type"]
             )
-            for image in images
+            for file in files
         )
         if (replied := await self._reply_parent(user_block_ids)) is not None:
             lines.append(
@@ -1466,9 +1467,9 @@ class ChatService:
         return turn_id in self._active_turn_ids.get(topic_id, ())
 
     async def _unconnected_mcp(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str | None
     ) -> tuple[str, ...]:
-        """The project's remote MCP servers this room's session cannot use yet,
+        """The remote MCP servers this session cannot use yet, its type's too,
         each said once in the room: 「<name> 需要在项目设置里连接」."""
         from sqlalchemy import select
 
@@ -1478,7 +1479,7 @@ class ChatService:
         try:
             async with self._sessions() as session:
                 unusable = (
-                    await remote_mcp.session_servers(session, project_id)
+                    await remote_mcp.session_servers(session, project_id, agent_handle)
                 ).unusable
                 said = set(
                     await session.scalars(
@@ -1497,7 +1498,7 @@ class ChatService:
                     block = await announce(
                         session,
                         place_id=topic_id,
-                        content=f"{name} 需要在项目设置里连接",
+                        content=say("mcpNotConnected", server=name),
                         meta={
                             **notice(
                                 EVENT_MCP_NOT_CONNECTED,
@@ -2167,7 +2168,7 @@ class ChatService:
                 task_id=landed.task_id,
                 author=state.acting_agent,
                 author_type=AuthorType.platform,
-                content=f"<@{state.acting_agent}> {_ACTION_LABEL[resource]}",
+                content=say(_ACTION_LABEL[resource], actor=f"<@{state.acting_agent}>"),
                 kind=BlockKind.event,
                 turn_id=state.work_id,
                 meta={"platform": True, "action": resource},
@@ -2556,13 +2557,13 @@ class ChatService:
             await announce(
                 session,
                 place_id=project.root_topic_id,
-                content=f"记忆整理：项目共享记忆改了 {len(changed)} 条",
+                content=say("memoryDreamChanged", count=len(changed)),
                 meta=notice(
                     EVENT_MEMORY_CHANGED,
                     severity=SEVERITY_INFO,
                     who=WHO_PLATFORM,
                     detail="\n".join(f"- `{path}`" for path in changed),
-                    detail_label="改了哪些",
+                    detail_label=say("labelWhichChanged"),
                 ),
             )
             await session.commit()
@@ -2586,18 +2587,13 @@ class ChatService:
             await announce(
                 session,
                 place_id=project.root_topic_id,
-                content="记忆整理这一次没做：要删的条数超过了上限",
+                content=say("memoryDreamRefused"),
                 meta=notice(
                     EVENT_MEMORY_CHANGED,
                     severity=SEVERITY_WARN,
                     who=WHO_PLATFORM,
-                    detail=(
-                        "一次整理要删掉某个作用域超过一半、且超过 3 条时，平台按"
-                        "「这不像是整理，更像是那棵树出了事」处理：这一次一条都不写"
-                        "（记忆没有少）。记录：`memory_dream_runs` 里这一条 "
-                        f"（run id `{run_id}`）。"
-                    ),
-                    detail_label="为什么拦下来",
+                    detail=say("memoryDreamRefusedDetail", run_id=str(run_id)),
+                    detail_label=say("labelWhyStopped"),
                 ),
             )
             await session.commit()
@@ -3851,16 +3847,13 @@ class ChatService:
                 for b in pending
                 if claims_backlog or (b.meta or {}).get("agent_recipient") is not None
             ]
-            # 图片输入: every pending image is offered to the provider as
-            # {"path", "media_type"}. Whether it actually reaches the model as a
-            # native base64 block depends on the provider (`embeds_images`), and
-            # the prompt is built below — AFTER the provider is picked — so its
-            # wording can match what this backend really does.
-            turn_images = [
-                {"path": b.content, "media_type": b.mime_type or "image/png"}
-                for b in pending
-                if b.kind == BlockKind.attachment and b.content
-            ]
+            # 图片输入: every pending image is offered to the provider; whether it
+            # reaches the model as a native block depends on `embeds_images`, so
+            # the prompt is built below, after the provider is picked. A file
+            # that is gone is not offered (`offered_attachments`).
+            turn_images, gone_files = await asyncio.to_thread(
+                offered_attachments, pending, topic.project_id, topic_id
+            )
 
             # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
             # 方，问的都是下面两个答案之一，不再各自问一遍那个布尔。
@@ -3993,7 +3986,7 @@ class ChatService:
             # cannot — no gateway to call — is the agent still asked to, and
             # never in a project that chose to name its rooms by hand.
             untitled = (
-                topic.title == PLACEHOLDER_TITLE
+                topic.title_source == TitleSource.placeholder
                 and not naming.available()
                 and naming.naming_mode(project.settings if project else None) == "auto"
             )
@@ -4046,10 +4039,7 @@ class ChatService:
                                 topic_id=topic_id,
                                 turn_id=turn_id,
                                 session=session,
-                                text=(
-                                    f"本话题选的机器上没有部署 {wanted_harness}，"
-                                    "本轮没有开始。"
-                                ),
+                                text=say("harnessNotDeployed", harness=wanted_harness),
                             ),
                         },
                         {"type": "done"},
@@ -4182,10 +4172,8 @@ class ChatService:
                                 # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
                                 "severity": SEVERITY_INFO,
                                 "who": WHO_PLATFORM,
-                                "detail": (
-                                    "本话题会保留这条消息，机器就绪后自动继续。"
-                                ),
-                                "detail_label": "接下来会发生什么",
+                                "detail": say("cloudProvisioningDetail"),
+                                "detail_label": say("labelWhatHappensNext"),
                                 "event_type": "cloud_provisioning",
                                 "state": "waiting",
                             },
@@ -4229,6 +4217,7 @@ class ChatService:
                     embeds_images=embeds_images,
                     replied=replied.get(b.id),
                     recipient=agent.handle,
+                    gone=b.id in gone_files,
                 )
                 for b in pending
             )
@@ -4435,7 +4424,7 @@ class ChatService:
             teaching=teaching,
             session_opening=_session_opening_lines(
                 unconnected_mcp=(
-                    await self._unconnected_mcp(project_id, topic_id)
+                    await self._unconnected_mcp(project_id, topic_id, acting_agent)
                     if needs_place
                     else ()
                 ),
@@ -4654,7 +4643,7 @@ class ChatService:
                 topic_id,
                 turn_id,
                 AgentResult(
-                    text=str(exc) or "本轮没能把消息送进机器上的会话",
+                    text=exception_text(exc) or "本轮没能把消息送进机器上的会话",
                     session_id=resume_session_id,
                     is_error=True,
                     failure_code=failure_code,
@@ -4689,7 +4678,7 @@ class ChatService:
             marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
             payload = await self.post_system_event(
                 topic_id,
-                "机器上的会话正在启动，消息已就位，会自动发送",
+                say("sessionStartingMessageQueued"),
                 marked_work_id,
             )
             if payload is not None:
@@ -4909,7 +4898,7 @@ class ChatService:
                 task_id=landed.task_id,
                 author=await self._agent_handle(session, root_topic_id),
                 author_type=AuthorType.participant,
-                content=f"【巡检决策日志】\n{final_text}",
+                content=say("heartbeatDecisionLog", log=final_text),
                 kind=BlockKind.event,
                 meta={"in_room": False},
             )

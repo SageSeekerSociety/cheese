@@ -22,6 +22,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import NeedsYou from './NeedsYou.vue'
 
+import { setLocale } from '@/i18n'
+
 vi.mock('@/api', () => ({
   getInbox: vi.fn(),
   markRead: vi.fn(),
@@ -121,7 +123,19 @@ function button(container: Element, label: string): HTMLElement | undefined {
   return buttons(container, label)[0]
 }
 
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
+
 describe('等你回答', () => {
+  it('reads in English under the en locale', async () => {
+    setLocale('en')
+    vi.mocked(getInbox).mockResolvedValue({ data: three(), total: 3 })
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('Waiting for your answer'))
+    expect(button(container, 'Next')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Helpful"]')).toBeTruthy()
+  })
+
   it('问的是什么、给了哪几个选项，都摆在卡上', async () => {
     const { container } = mount()
 

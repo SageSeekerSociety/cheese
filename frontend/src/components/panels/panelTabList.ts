@@ -7,6 +7,8 @@
 //
 // 页签条的**画法**在 `PanelTabs.vue`，它只管画和量；这一份只管「有哪几格」。
 
+import { t } from '@/i18n'
+
 export type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview' | 'routines'
 
 export interface TabDef {
@@ -15,27 +17,38 @@ export interface TabDef {
   icon: string
 }
 
+// 名字是 getter：每次读都按当前语言取，切换语言后页签跟着变。
+function tab(key: TabKey, icon: string): TabDef {
+  return {
+    key,
+    icon,
+    get label() {
+      return t(`work.room.tabs.${key}`)
+    },
+  }
+}
+
 export const ALL_TABS: TabDef[] = [
-  { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
+  tab('chat', 'mdi-message-outline'),
   // 文档 和 任务 合成了一格。它们回答的是同一个问题的两半——「这个房间在干什么」
   // ——分成两格意味着看完一半得先想起来还有另一半，于是大多数人只看文档，房间里
   // 有几条活在跑就没人知道。
-  { key: 'overview', label: '总览', icon: 'mdi-file-document-outline' },
-  { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
-  { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
-  { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
+  tab('overview', 'mdi-file-document-outline'),
+  tab('site', 'mdi-hammer-wrench'),
+  tab('changes', 'mdi-source-branch'),
+  tab('preview', 'mdi-eye-outline'),
 ]
 
 /** 这一屏上有哪几格。手机上对话自己是一格，桌面上对话在左边那一栏里，不在面板上。 */
 export function panelTabs(withChat: boolean): TabDef[] {
-  return ALL_TABS.filter((t) => t.key !== 'chat' || withChat)
+  return ALL_TABS.filter((tabDef) => tabDef.key !== 'chat' || withChat)
 }
 
 // 「定时与触发」只有产品有，所以它不在上面那张共用表里：演示讲的是房间里的四件事
 // （文档、芝士怎么干活、改动、结果），规则那一格要连后端才画得出来，塞进演示只会
 // 多一格假的。于是它接在共用表后面，由 `workPanelTabs` 拼出话题页真正的那几格 ——
 // 演示照旧读 `panelTabs`，两边的四格仍然只有一个出处。
-export const ROUTINES_TAB: TabDef = { key: 'routines', label: '定时与触发', icon: 'mdi-clock-outline' }
+export const ROUTINES_TAB: TabDef = tab('routines', 'mdi-clock-outline')
 
 /** 话题页右侧有哪几格：共用的那几格 + 只有产品有的「定时与触发」。 */
 export function workPanelTabs(withChat: boolean): TabDef[] {

@@ -8,6 +8,15 @@ name: Architecture metrics
 # three checks in `.claude/rules/architecture.md` are what block a change, and
 # this exists so that "did the last month help" has an answer that is not an
 # argument.
+#
+# Since the ratchet board was added, this job also COLLECTS: it runs every gate
+# check against the merged commit and stores what each one said, beside the
+# commit and the fingerprint of the rules that decided it, as
+# ratchet-snapshot.json. The board alone could not answer the page's question —
+# it reads the baseline files, so "116 frontend boundary exemptions" was a
+# number about what had been frozen, not about the tree. The checks are run
+# here, after the merge, on purpose: a gate's own verdict on a PR is what blocks
+# the PR, and this records what the gate said about what actually landed.
 on:
   push:
     branches: [main]
@@ -28,7 +37,10 @@ concurrency:
 jobs:
   board:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The board alone was a minute of python. Collecting needs both toolchains
+    # installed and every check run: measured at 4m35s for the checks on a warm
+    # checkout, plus whatever pnpm and uv have to do on a cold one.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,9 +63,70 @@ jobs:
       # Job-level continue-on-error is not used: GitHub documents it for matrix
       # jobs, and a key that silently does nothing on the one job here is the
       # kind of yes that means no.
+      #
+      # The checks the snapshot records are the real gates, run by the same
+      # commands their own workflows use, so both toolchains have to be here.
+      # An install that failed leaves the checks it feeds `not_collected` in the
+      # snapshot, which is what happened and reads as such — better than a
+      # snapshot that quietly leaves them out.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        continue-on-error: true
+        with:
+          node-version: 22
+
+      # pnpm comes from frontend/package.json's `packageManager` field, same as
+      # frontend.yml — the repo pins the version, this job does not.
+      - name: Enable corepack
+        continue-on-error: true
+        run: corepack enable
+
+      # The same key frontend.yml restores; warm-caches.yml saves it on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install frontend dependencies
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      - name: Install uv
+        continue-on-error: true
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        continue-on-error: true
+        run: uv python install 3.13
+
+      # The dev group carries pytest and import-linter, which the contract check
+      # and the three ledger checks run on.
+      - name: Install backend dependencies
+        continue-on-error: true
+        working-directory: backend
+        run: uv sync --frozen --all-extras
+
       - name: Self-test
         continue-on-error: true
         run: python3 .claude/scripts/arch-metrics.py --self-test
+
+      # Same rule as the checks themselves: a collector nobody has watched
+      # mistake a check that did not run for a check that passed is not a
+      # collector. Uses git and the stdlib only, so the system python is enough.
+      - name: Self-test the collector
+        continue-on-error: true
+        run: python3 .claude/scripts/ratchet-snapshot.py --self-test
 
       # The comparison target is the last commit before the 30-day window, so
       # the delta always reads "this month". A checkout too young to have one
@@ -72,12 +145,91 @@ jobs:
             python3 .claude/scripts/arch-metrics.py --out "$OUT" --quiet
           fi
 
+      # What each gate check said about this commit, with the fingerprint of the
+      # rules that decided it.
+      #
+      # NOT through `uv run`, which is how this step used to start it: a failed
+      # setup-uv or a failed `uv sync` made that command fail before the
+      # collector was ever reached, so the run ended with no snapshot, nothing
+      # for the upload below to upload, and a green job. The collector itself
+      # needs git and the stdlib; the backend venv is only where the checks that
+      # need pytest and import-linter find them, so it is used when it is there
+      # and skipped when it is not. A check whose environment is missing is that
+      # check's own `not_collected` — a snapshot with holes in it, not a
+      # snapshot that disappears.
+      # `continue-on-error` is deliberately absent from this step and from the
+      # upload below: a run that collected nothing must not read as a run that
+      # succeeded. A check whose environment is missing is `not_collected`
+      # inside a snapshot; a collection that could not happen at all is this
+      # job going red, with the reason in the artifact and the summary.
+      - name: Collect the ratchet snapshot
+        env:
+          OUT: ${{ runner.temp }}
+        run: |
+          set -uo pipefail
+          interpreter=python3
+          if [ -x backend/.venv/bin/python ]; then
+            interpreter=backend/.venv/bin/python
+          fi
+          echo "the collector runs under $interpreter"
+          # `set -e` is on — GitHub runs the body of a `run:` step as `bash -e`
+          # — so the exit code is taken with `||` rather than read from `$?` on
+          # the next line. Under `-e` a non-zero command ends the step right
+          # there, which is precisely the case the record below exists for: the
+          # first version of this step exited 127 with no artifact at all, the
+          # failure it was written to describe.
+          code=0
+          "$interpreter" .claude/scripts/ratchet-snapshot.py \
+            --out "$OUT/ratchet-snapshot.json" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || code=$?
+          echo "the collector exited $code"
+          # The collector writes its own failure record whenever it runs at all.
+          # This is the last resort for the case where it could not start: the
+          # artifact is then a file saying so, never an absence.
+          if [ ! -s "$OUT/ratchet-snapshot.json" ]; then
+            {
+              echo "the ratchet snapshot was not collected"
+              echo "interpreter: $interpreter"
+              echo "exit code: $code"
+            } > "$OUT/ratchet-snapshot.failed.txt"
+          fi
+          # The collector exits 0 for any snapshot it managed to write, red
+          # checks included, and 2 when the collection itself failed. Carry
+          # that out of the step so a failed collection is a red job, not a
+          # green job with an empty series.
+          exit "$code"
+
       - name: Job summary
         continue-on-error: true
         if: always()
         env:
           OUT: ${{ runner.temp }}
-        run: cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -uo pipefail
+          # Also `bash -e`: an unguarded `cat` of a board that the Measure step
+          # never wrote ended the step there, so the note below — the one thing
+          # the summary exists to say when a run collected nothing — was the
+          # part that went missing.
+          if [ -s "$OUT/arch-metrics.md" ]; then
+            cat "$OUT/arch-metrics.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo ""
+              echo "## The board was not measured"
+              echo ""
+              echo "This run has no numbers in the summary; the artifact says"
+              echo "what happened."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ ! -s "$OUT/ratchet-snapshot.json" ]; then
+            {
+              echo ""
+              echo "## The ratchet snapshot was NOT collected"
+              echo ""
+              echo "This commit has no fingerprint series entry. The artifact"
+              echo "says what went wrong instead of a snapshot."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
@@ -88,4 +240,21 @@ jobs:
           # A weekly board is kept to be compared with, so the artifact matters
           # more than the retention default suggests — but not enough to fight
           # the organization's storage policy over.
+          retention-days: 90
+
+      # Kept at least as long as the board: a snapshot is only useful as a
+      # series, and the page reads this one. `if-no-files-found: error` on
+      # purpose — a run that uploads nothing is a run whose collection failed,
+      # and treating that as success is what let a hole in the series go
+      # unnoticed. The failure record is uploaded beside the snapshot, so the
+      # artifact says which of the two happened rather than leaving the reader
+      # to guess from an absence.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ratchet-snapshot
+          path: |
+            ${{ runner.temp }}/ratchet-snapshot.json
+            ${{ runner.temp }}/ratchet-snapshot.failed.txt
+          if-no-files-found: error
           retention-days: 90

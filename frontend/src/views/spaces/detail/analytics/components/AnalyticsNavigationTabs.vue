@@ -1,49 +1,36 @@
 <template>
-  <v-tabs class="analytics-tabs" color="primary" show-arrows>
-    <v-tab v-for="tab in tabs" :key="tab.name" :to="{ name: tab.name, params: { spaceId }, query }" :value="tab.name">
-      <v-icon start>{{ tab.icon }}</v-icon>
-      {{ tab.label }}
-    </v-tab>
-  </v-tabs>
+  <PageTabs :tabs="tabs" :active="active" :label="t('spaces.analytics.title')" />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { useNavigation } from '@/composables/useNavigation'
 
+import PageTabs from '@/components/common/PageTabs.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 
+const { t } = useI18n()
 const nav = useNavigation()
 
 const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
 /** 换一格不丢当前那一串筛选条件（query 原样带过去）。 */
 const query = computed(() => nav?.route?.query ?? {})
 
-const names = ANALYTICS_ROUTE_NAMES
+const KEYS = ['overview', 'alerts', 'publishers', 'tasks', 'participants', 'learning'] as const
 
-const tabs = [
-  { name: names.overview, label: '总览', icon: 'mdi-view-dashboard-outline' },
-  { name: names.alerts, label: '告警', icon: 'mdi-bell-alert-outline' },
-  { name: names.publishers, label: '出题人', icon: 'mdi-account-tie-outline' },
-  { name: names.tasks, label: '题目', icon: 'mdi-clipboard-text-outline' },
-  { name: names.participants, label: '参与者', icon: 'mdi-account-group-outline' },
-  { name: names.learning, label: '学习', icon: 'mdi-school-outline' },
-]
+const tabs = computed(() =>
+  KEYS.map((key) => ({
+    key: ANALYTICS_ROUTE_NAMES[key],
+    label: t(`spaces.analytics.tabs.${key}`),
+    to: { name: ANALYTICS_ROUTE_NAMES[key], params: { spaceId: spaceId.value }, query: query.value },
+  }))
+)
+
+// 当前这一格按路由名认：「总览」的地址就是数据页本身，按前缀认它在哪一格都亮着。
+const active = computed(() => {
+  const name = nav?.route?.name
+  return typeof name === 'string' ? name : null
+})
 </script>
-
-<style scoped lang="scss">
-.analytics-tabs {
-  :deep(.v-slide-group__content) {
-    gap: 6px;
-  }
-
-  :deep(.v-tab) {
-    border-radius: 8px;
-    min-height: 40px;
-    text-transform: none;
-    font-weight: 500;
-    letter-spacing: 0;
-  }
-}
-</style>

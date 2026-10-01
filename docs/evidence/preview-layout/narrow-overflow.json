@@ -1,0 +1,1084 @@
+{
+  "capturedAt": "2026-09-30T14:26:22.010Z",
+  "previewBase": "http://127.0.0.1:5210/feedback-proto.html",
+  "bundleLastModified": "Wed, 30 Sep 2026 14:21:53 GMT",
+  "route": "#/admin/spaces",
+  "samples": {
+    "longChinese": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的…(75字)",
+    "noSpaceText": "Averylongsinglewordwithoutanyspacesorbre…(220字符)"
+  },
+  "results": [
+    {
+      "label": "390 浅色",
+      "viewport": {
+        "width": 390,
+        "colorScheme": "light"
+      },
+      "asIs": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "main": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "C计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）申请人：@cais",
+          "textLength": 161
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "name": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+          "textLength": 50
+        },
+        "desc": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "本学期约 100 名学生使用。题目按周发布，每道题附评分脚本；助教 4 人负责批改。申请公开是为了让往届学生也能看到讲评",
+          "textLength": 89
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "longChinese": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "main": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "C名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行",
+          "textLength": 172
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "name": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "desc": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "noSpaceText": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "main": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "CAverylongsinglewordwithoutanyspacesorbreakopportunitiesAver",
+          "textLength": 462
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "name": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "desc": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "net": []
+    },
+    {
+      "label": "390 浅色（注回修掉的规则，自证判据有效）",
+      "viewport": {
+        "width": 390,
+        "colorScheme": "light"
+      },
+      "regressionInjected": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 644
+        },
+        "main": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "C计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）申请人：@cais",
+          "textLength": 161
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 644
+        },
+        "name": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+          "textLength": 50
+        },
+        "desc": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "本学期约 100 名学生使用。题目按周发布，每道题附评分脚本；助教 4 人负责批改。申请公开是为了让往届学生也能看到讲评",
+          "textLength": 89
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": false,
+          "listNoHorizontalOverflow": false,
+          "nameInsideRow": false,
+          "descInsideRow": false,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": false,
+          "descReadable": false,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "regressionInjectedLongChinese": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 1066
+        },
+        "main": {
+          "left": 33,
+          "right": 1083,
+          "width": 1050,
+          "clientWidth": 1050,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "C名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行",
+          "textLength": 172
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 1066
+        },
+        "name": {
+          "left": 33,
+          "right": 1083,
+          "width": 1050,
+          "clientWidth": 1050,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "desc": {
+          "left": 33,
+          "right": 1083,
+          "width": 1050,
+          "clientWidth": 1050,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": false,
+          "listNoHorizontalOverflow": false,
+          "nameInsideRow": false,
+          "descInsideRow": false,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": false,
+          "descReadable": false,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "regressionInjectedNoSpaceText": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 1701
+        },
+        "main": {
+          "left": 33,
+          "right": 1717.6,
+          "width": 1684.6,
+          "clientWidth": 1685,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "CAverylongsinglewordwithoutanyspacesorbreakopportunitiesAver",
+          "textLength": 462
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 1701
+        },
+        "name": {
+          "left": 33,
+          "right": 1717.6,
+          "width": 1684.6,
+          "clientWidth": 1685,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "desc": {
+          "left": 33,
+          "right": 1717.6,
+          "width": 1684.6,
+          "clientWidth": 1685,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": false,
+          "listNoHorizontalOverflow": false,
+          "nameInsideRow": false,
+          "descInsideRow": false,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": false,
+          "descReadable": false,
+          "nameEllipsizedByDesign": null
+        }
+      }
+    },
+    {
+      "label": "390 深色",
+      "viewport": {
+        "width": 390,
+        "colorScheme": "dark"
+      },
+      "asIs": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "main": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "C计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）申请人：@cais",
+          "textLength": 161
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "name": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+          "textLength": 50
+        },
+        "desc": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "本学期约 100 名学生使用。题目按周发布，每道题附评分脚本；助教 4 人负责批改。申请公开是为了让往届学生也能看到讲评",
+          "textLength": 89
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "longChinese": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "main": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "C名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行",
+          "textLength": 172
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "name": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "desc": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "noSpaceText": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "main": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "CAverylongsinglewordwithoutanyspacesorbreakopportunitiesAver",
+          "textLength": 462
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 356
+        },
+        "name": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "desc": {
+          "left": 33,
+          "right": 357,
+          "width": 324,
+          "clientWidth": 324,
+          "scrollWidth": 324,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "net": []
+    },
+    {
+      "label": "390 深色（注回修掉的规则，自证判据有效）",
+      "viewport": {
+        "width": 390,
+        "colorScheme": "dark"
+      },
+      "regressionInjected": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 644
+        },
+        "main": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "C计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）申请人：@cais",
+          "textLength": 161
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 644
+        },
+        "name": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+          "textLength": 50
+        },
+        "desc": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "本学期约 100 名学生使用。题目按周发布，每道题附评分脚本；助教 4 人负责批改。申请公开是为了让往届学生也能看到讲评",
+          "textLength": 89
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": false,
+          "listNoHorizontalOverflow": false,
+          "nameInsideRow": false,
+          "descInsideRow": false,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": false,
+          "descReadable": false,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "regressionInjectedLongChinese": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 1066
+        },
+        "main": {
+          "left": 33,
+          "right": 1083,
+          "width": 1050,
+          "clientWidth": 1050,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "C名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行",
+          "textLength": 172
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 1066
+        },
+        "name": {
+          "left": 33,
+          "right": 1083,
+          "width": 1050,
+          "clientWidth": 1050,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "desc": {
+          "left": 33,
+          "right": 1083,
+          "width": 1050,
+          "clientWidth": 1050,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": false,
+          "listNoHorizontalOverflow": false,
+          "nameInsideRow": false,
+          "descInsideRow": false,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": false,
+          "descReadable": false,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "regressionInjectedNoSpaceText": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "width": 356,
+          "clientWidth": 356,
+          "scrollWidth": 1701
+        },
+        "main": {
+          "left": 33,
+          "right": 1717.6,
+          "width": 1684.6,
+          "clientWidth": 1685,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "CAverylongsinglewordwithoutanyspacesorbreakopportunitiesAver",
+          "textLength": 462
+        },
+        "list": {
+          "clientWidth": 356,
+          "scrollWidth": 1701
+        },
+        "name": {
+          "left": 33,
+          "right": 1717.6,
+          "width": 1684.6,
+          "clientWidth": 1685,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "desc": {
+          "left": 33,
+          "right": 1717.6,
+          "width": 1684.6,
+          "clientWidth": 1685,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": false,
+          "listNoHorizontalOverflow": false,
+          "nameInsideRow": false,
+          "descInsideRow": false,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": false,
+          "descReadable": false,
+          "nameEllipsizedByDesign": null
+        }
+      }
+    },
+    {
+      "label": "700 浅色",
+      "viewport": {
+        "width": 700,
+        "colorScheme": "light"
+      },
+      "asIs": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 666,
+          "clientWidth": 666,
+          "scrollWidth": 666
+        },
+        "main": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "C计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）申请人：@cais",
+          "textLength": 161
+        },
+        "list": {
+          "clientWidth": 666,
+          "scrollWidth": 666
+        },
+        "name": {
+          "left": 33,
+          "right": 661,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+          "textLength": 50
+        },
+        "desc": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "本学期约 100 名学生使用。题目按周发布，每道题附评分脚本；助教 4 人负责批改。申请公开是为了让往届学生也能看到讲评",
+          "textLength": 89
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "longChinese": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 666,
+          "clientWidth": 666,
+          "scrollWidth": 666
+        },
+        "main": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "C名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行",
+          "textLength": 172
+        },
+        "list": {
+          "clientWidth": 666,
+          "scrollWidth": 666
+        },
+        "name": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "desc": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "noSpaceText": {
+        "row": {
+          "flexDirection": "column",
+          "alignItems": "stretch",
+          "width": 666,
+          "clientWidth": 666,
+          "scrollWidth": 666
+        },
+        "main": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "CAverylongsinglewordwithoutanyspacesorbreakopportunitiesAver",
+          "textLength": 462
+        },
+        "list": {
+          "clientWidth": 666,
+          "scrollWidth": 666
+        },
+        "name": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "desc": {
+          "left": 33,
+          "right": 667,
+          "width": 634,
+          "clientWidth": 634,
+          "scrollWidth": 634,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": true,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": null
+        }
+      },
+      "net": []
+    },
+    {
+      "label": "1440 浅色",
+      "viewport": {
+        "width": 1440,
+        "colorScheme": "light"
+      },
+      "asIs": {
+        "row": {
+          "flexDirection": "row",
+          "alignItems": "flex-start",
+          "width": 1190,
+          "clientWidth": 1190,
+          "scrollWidth": 1190
+        },
+        "main": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1038,
+          "lines": 1,
+          "text": "C计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）申请人：@cais",
+          "textLength": 161
+        },
+        "list": {
+          "clientWidth": 1190,
+          "scrollWidth": 1190
+        },
+        "name": {
+          "left": 271,
+          "right": 899,
+          "width": 628,
+          "clientWidth": 628,
+          "scrollWidth": 628,
+          "lines": 1,
+          "text": "计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）",
+          "textLength": 50
+        },
+        "desc": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1038,
+          "lines": 1,
+          "text": "本学期约 100 名学生使用。题目按周发布，每道题附评分脚本；助教 4 人负责批改。申请公开是为了让往届学生也能看到讲评",
+          "textLength": 89
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": true,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": false,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": false
+        }
+      },
+      "longChinese": {
+        "row": {
+          "flexDirection": "row",
+          "alignItems": "flex-start",
+          "width": 1190,
+          "clientWidth": 1190,
+          "scrollWidth": 1190
+        },
+        "main": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1038,
+          "lines": 1,
+          "text": "C名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行",
+          "textLength": 172
+        },
+        "list": {
+          "clientWidth": 1190,
+          "scrollWidth": 1190
+        },
+        "name": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1050,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "desc": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1038,
+          "lines": 1,
+          "text": "名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例名字很长的样例这段简介故意写得很长用来试窄屏换行，",
+          "textLength": 75
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": false,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": false,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": true
+        }
+      },
+      "noSpaceText": {
+        "row": {
+          "flexDirection": "row",
+          "alignItems": "flex-start",
+          "width": 1190,
+          "clientWidth": 1190,
+          "scrollWidth": 1190
+        },
+        "main": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1038,
+          "lines": 1,
+          "text": "CAverylongsinglewordwithoutanyspacesorbreakopportunitiesAver",
+          "textLength": 462
+        },
+        "list": {
+          "clientWidth": 1190,
+          "scrollWidth": 1190
+        },
+        "name": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1685,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "desc": {
+          "left": 241,
+          "right": 1279,
+          "width": 1038,
+          "clientWidth": 1038,
+          "scrollWidth": 1038,
+          "lines": 1,
+          "text": "AverylongsinglewordwithoutanyspacesorbreakopportunitiesAvery",
+          "textLength": 220
+        },
+        "checks": {
+          "rowNoHorizontalOverflow": true,
+          "listNoHorizontalOverflow": true,
+          "nameInsideRow": true,
+          "descInsideRow": true,
+          "nameFitsOwnBox": false,
+          "descFitsOwnBox": true
+        },
+        "verdict": {
+          "narrowLayout": false,
+          "nameReadable": true,
+          "descReadable": true,
+          "nameEllipsizedByDesign": true
+        }
+      },
+      "net": []
+    }
+  ]
+}

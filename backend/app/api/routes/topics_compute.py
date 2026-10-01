@@ -22,11 +22,7 @@ topics.py merely imports, and it is imported from topics.py rather than from
 `tests/unit/test_domain_import_guard.py` ratchets (route module, repository
 module) pairs, and a direct import would add a line to that ratchet. topics.py
 still reads `ProjectRepository` in three handlers of its own, so its line stays
-matched. `ProjectMachineRepository`, read once inside
-`set_topic_compute_profile`, is the one edge that really does leave topics.py:
-the guard's entry for it is relocated from `app.api.routes.topics` to
-`app.api.routes.topics_compute` -- the same debt under a new owner, so that
-ratchet gains no line and keeps its size. `.importlinter` is untouched: nothing
+matched. `.importlinter` is untouched: nothing
 here imports an `app.domain.*.models` module, so the C2 baseline does not move
 either.
 
@@ -75,6 +71,7 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
+from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.policy import gate
@@ -117,7 +114,7 @@ async def get_topic_compute_profile(
         choice.device_id = binding.device_id
         if topic.compute_config is None:
             named = next((d for d in devices if d.device_id == binding.device_id), None)
-            choice.name = named.name if named else "自有设备"
+            choice.name = named.name if named else None
     # #282 §四 / #358 · whether an agent in THIS room can see a whole enrolled
     # machine. 一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里的会话看的
     # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
@@ -249,7 +246,7 @@ async def set_topic_compute_profile(
         standard_choice,
         validate_choice,
     )
-    from app.domain.machine.repositories import ProjectMachineRepository
+    from app.domain.machine import session_work as work_lease
 
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
@@ -258,7 +255,7 @@ async def set_topic_compute_profile(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    await ProjectMachineRepository(db).lock_topic(topic_id)
+    await work_lease.lock_room(db, topic_id)
     # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
     # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
     from app.core.sandbox_auth import scoped_token_claims
@@ -297,7 +294,7 @@ async def set_topic_compute_profile(
     # now and waits for that exact box. The automatic option keeps the old rule and
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
-        raise ValidationError(f"这类工作电脑尚未接入，暂不可选：{name!r}")
+        raise ValidationError(say("computeKindUnavailable", name=repr(name)))
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
 
@@ -305,7 +302,7 @@ async def set_topic_compute_profile(
     if device_id is not None:
         scoped_devices = await device_service.list_devices_for_project(topic.project_id)
         if device_id not in {device.device_id for device in scoped_devices}:
-            raise ValidationError("设备不属于当前项目")
+            raise ValidationError(say("deviceNotInProject"))
 
     # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
     # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
@@ -367,8 +364,6 @@ async def set_topic_compute_profile(
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
     # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
     # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
-    from app.domain.machine import session_work as work_lease
-
     moved = await work_lease.request_choice(
         db,
         topic_id=topic_id,

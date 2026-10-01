@@ -29,9 +29,23 @@ network change and catches up on what it missed. The count of things waiting
 shows on the Dock icon (a dot on the Windows taskbar, and in the tray menu). Opening at login is off until the person turns it on
 under 设置 → 通用, a section only the app shows; launched that way the app
 starts out of sight. What the app can do is listed in
-`__CHEESE_APP__.can`, so a page never asks an older app for more. Updates are
-checked every six hours and installed only while the window is out of sight and
-no connection is in progress; the restarted app stays out of sight.
+`__CHEESE_APP__.can`, so a page never asks an older app for more.
+
+The app keeps itself current (`src-tauri/src/updates.rs`). It looks for a new
+version at launch, every six hours after, and when asked: 检查更新 in the
+page's 关于知是 dialog (帮助与反馈 menu), or, on macOS, "Check for Updates…" in
+the app menu, whose "About Cheese" opens the same dialog. The dialog shows the
+app's version and the commit the web build was made from. A new version
+downloads at once; the top bar then shows 重启以完成更新, and clicking it
+restarts into the new version. Left alone, the app installs it once the window
+is out of sight, and the restarted app stays out of sight. Neither happens while
+this computer is being connected.
+
+Inside the app the pages written for people who have not installed it yet — the
+public home page, 了解知是, 方案 and the download page — go back into the app
+(`frontend/src/router/home.ts`); the user menu offers the phone's QR code
+instead of the download, and the docs site at `/docs/` opens in the browser,
+since the window has no way back from it.
 
 Authorizing with another site happens in the person's browser, where their
 accounts are signed in and where Google agrees to show its page at all:
@@ -80,9 +94,7 @@ installer on every change here and, on main, replaces the assets of the
 `CHANGELOG.md` goes up with each build; the download page shows it, so a
 change to the app adds a line or two there, written for the people who use it.
 Each build is version `0.1.<run number>`, and the publish step uploads
-`latest.json` last. An installed app checks it at every start and, when a
-newer version is out, downloads it, waits for any connection in progress to
-finish, installs it and restarts. The updates are signed with a key held in
+`latest.json` last, which is what an installed app checks (see above). The updates are signed with a key held in
 the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; the app trusts only its public half
 (`plugins.updater.pubkey` in `tauri.conf.json`). Losing that key means no

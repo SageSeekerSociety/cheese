@@ -3,14 +3,13 @@
  * 必须与 `router/spaces.ts` 逐字一致。
  */
 export interface TaskRouteNames {
-  /** 题目详情这条路由本身。浏览器标题挂在这个名字上 —— `usePageTitle` 按路由名取
-   *  动态标题。 */
+  /** 题目详情的默认页，也就是「说明」页签。 */
   detail: string
   /** 回到题目详情（「返回概览」）。 */
   overview: string
-  /** 参与者管理（出题人与管理员才看得见的那一格）。 */
+  /** 「领取者」页签（出题人与管理员才看得见）。 */
   participants: string
-  /** 提交记录。 */
+  /** 「我的提交」页签。 */
   submissions: string
   /** 交作业。 */
   submit: string
@@ -18,7 +17,7 @@ export interface TaskRouteNames {
   aiAdvice: string
   /** 改题。 */
   edit: string
-  /** 单题分析。 */
+  /** 「数据」页签。 */
   insights: string
   /** 这个空间的入口 —— 面包屑里「回到空间」那一格。 */
   spaceHome: string

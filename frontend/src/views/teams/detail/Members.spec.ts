@@ -79,3 +79,20 @@ describe('who manages the team link', () => {
     expect(screen.queryByText('小队链接管理')).toBeNull()
   })
 })
+
+describe('bringing people in', () => {
+  it('the owner of a shared team can invite and review requests', async () => {
+    mount({ role: 'OWNER' })
+    await screen.findByRole('button', { name: /邀请成员/ })
+    expect(screen.getByText('加入申请')).toBeTruthy()
+    expect(screen.getByText('已发送邀请')).toBeTruthy()
+  })
+
+  it('the owner of a personal team is offered none of it', async () => {
+    mount({ role: 'OWNER', personal: true })
+    await waitFor(() => screen.getByText('成员列表'))
+    expect(screen.queryByRole('button', { name: /邀请成员/ })).toBeNull()
+    expect(screen.queryByText('加入申请')).toBeNull()
+    expect(screen.queryByText('已发送邀请')).toBeNull()
+  })
+})

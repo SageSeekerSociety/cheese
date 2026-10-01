@@ -226,7 +226,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               to: { name: 'project-members', params: { projectId } },
             },
           }
-        : { class: 'profile-site fill-height overflow-y-auto' }
+        : { class: 'fill-height overflow-y-auto' }
     "
   >
     <div class="profile" :class="{ 'profile--compact': compact, 'profile--in-project': !!projectId }">
@@ -494,9 +494,6 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
 </template>
 
 <style scoped>
-.profile-site {
-  background: var(--canvas);
-}
 .profile {
   --id-w: 232px;
   --col-gap: 48px;

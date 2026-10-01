@@ -7,6 +7,7 @@ import { useDisplay } from 'vuetify'
 
 import { getPrivateChat, listProjectAgents } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
+import { t } from '@/i18n'
 import { agentHandleOf } from '@/lib/dm'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -68,7 +69,7 @@ async function load() {
     store.markDmRead(fetched.id, props.peer)
   } catch (e) {
     if (props.projectId === pid && peerHandle.value === peer) {
-      error.value = e instanceof Error ? e.message : '打开私聊失败'
+      error.value = e instanceof Error ? e.message : t('work.topic.dmFailed')
     }
   } finally {
     if (props.projectId === pid && peerHandle.value === peer) loading.value = false
@@ -147,7 +148,7 @@ async function handleUpgradeMessage(messageId: string) {
       :hide-header="!mdAndUp"
       :always-summon="agentHandle !== null"
       :title-override="title"
-      back-label="成员"
+      :back-label="t('navigation.project.members')"
       :members="store.members"
       :topic-list="store.topics"
       :show-composer="true"

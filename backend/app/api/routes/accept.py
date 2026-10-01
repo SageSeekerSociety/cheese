@@ -22,6 +22,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner, announce_stale
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
@@ -230,7 +231,7 @@ async def download_card_deliverable(
     await resolver.authorize_project(actor, project_id=topic.project_id)
     if card.deliverable_kind is not DeliverableKind.file or not card.deliverable_name:
         # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
-        raise NotFoundError("这一版交出去的不是一份文件")
+        raise NotFoundError(say("versionNotAFile"))
     data = await asyncio.to_thread(
         library.read_artifact_snapshot,
         topic.project_id,
@@ -346,7 +347,7 @@ async def approve_card(
     """主分支保护 (spec §4.4): record one human approval toward the accept."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能批准")
+        raise AuthenticationRequiredError(say("approveSignIn"))
     svc = AcceptService(db)
     card = await svc.approve(card_id=card_id, approver_handle=actor.handle)
     return ok(await svc.describe(card))
@@ -361,7 +362,7 @@ async def accept_card(
 ) -> dict:
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能采纳")
+        raise AuthenticationRequiredError(say("acceptSignIn"))
     svc = AcceptService(db)
     card = await svc.accept(
         card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
@@ -379,7 +380,7 @@ async def reassign_card(
     """改验收人 (spec §4.4)."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能改由他人审阅")
+        raise AuthenticationRequiredError(say("reassignSignIn"))
     svc = AcceptService(db)
     card = await svc.reassign(
         admits_reviewer=_reviewer_admission(actor, resolver),
@@ -402,7 +403,7 @@ async def reject_card(
     """Record the rejection and its task-parent instruction in one transaction."""
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能退回")
+        raise AuthenticationRequiredError(say("returnSignIn"))
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
     described = await svc.describe(card)
@@ -429,14 +430,17 @@ async def reject_card(
         content=(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
-        headline=f"{decided_by} 退回了改动"
-        + ("，正在修改" if actionable else "，原任务已关闭"),
+        headline=(
+            say("cardRejectedFixing", who=decided_by)
+            if actionable
+            else say("cardRejectedClosed", who=decided_by)
+        ),
         meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
             who=WHO_CHEESE,
             detail=reason or None,
-            detail_label="退回理由",
+            detail_label=say("labelRejectReason"),
         ),
     )
     await db.commit()
@@ -465,7 +469,7 @@ async def void_card(
     """
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能作废")
+        raise AuthenticationRequiredError(say("voidSignIn"))
     svc = AcceptService(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
     return ok(await svc.describe(card))
@@ -493,7 +497,7 @@ async def merge_card_anyway(
     """
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能人工放行")
+        raise AuthenticationRequiredError(say("overrideSignIn"))
     svc = AcceptService(db)
     card = await svc.merge_despite_checks(
         card_id=card_id,
@@ -520,7 +524,7 @@ async def set_auto_merge(
     """
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能设置自动合并")
+        raise AuthenticationRequiredError(say("autoMergeSignIn"))
     svc = AcceptService(db)
     card = await svc.arm_auto_merge(
         card_id=card_id,
@@ -537,7 +541,7 @@ async def revoke_card(
 ) -> dict:
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("需要登录才能撤销采纳")
+        raise AuthenticationRequiredError(say("revokeAcceptSignIn"))
     svc = AcceptService(db)
     card = await svc.revoke(card_id=card_id, decided_by=actor.handle)
     return ok(await svc.describe(card))

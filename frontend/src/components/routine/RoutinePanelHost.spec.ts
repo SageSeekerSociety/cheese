@@ -10,6 +10,8 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n, { setLocale } from '@/i18n'
+
 vi.mock('../../api/routines', () => ({
   listProjectRoutines: vi.fn(),
   getRoutine: vi.fn(),
@@ -24,6 +26,8 @@ import RoutinePanelHost from './RoutinePanelHost.vue'
 const { createRoutine, listProjectRoutines } = await import('../../api/routines')
 
 const vuetify = createVuetify({ components, directives })
+
+beforeEach(() => setLocale('zh-CN'))
 
 afterEach(cleanup)
 
@@ -77,7 +81,7 @@ beforeEach(() => {
 function mount() {
   return render(RoutinePanelHost, {
     props: { topicId: 'room-1', projectId: 'p1' },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 

@@ -2,7 +2,7 @@
  * 队列页（`/admin/queue`，§4.1）。
  *
  * **这一组不 mock `@/api`，也不 mock store**：假数据接在 `window.fetch` 上（预览那套
- * fixture，`proto-feedback-fixtures.ts`），于是「api → store → 页 → 行组件」整条链子
+ * fixture 的出口，`proto-preview-transport.ts`），于是「api → store → 页 → 行组件」整条链子
  * 都真跑。手写一份 store 替身的话，断的就是「我调了我自己」—— 而这一页最贵的东西恰好
  * 是中间那几层：服务端栏位、页码、counts 的来路。
  *
@@ -28,7 +28,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import AdminQueuePage from './AdminQueuePage.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { installPreviewFetch } from '@/proto-feedback-fixtures'
+import { installPreviewFetch } from '@/proto-preview-transport'
 import { useFeedbackStore } from '@/stores/feedback'
 
 /** 管理端的列表路由。详情是 `/api/admin/feedback/{id}`，所以这里按**整段相等**匹配。 */
@@ -298,7 +298,7 @@ describe('行 meta 与列表脚', () => {
     // fb-1036 是普通优先级：缺省即普通，不画字。
     expect(rowOf(container, 'FB-1036').querySelector('.qrow__pri')).toBeNull()
 
-    // 安全栏那条手写的 urgent（proto-feedback-fixtures.ts:594，私密 + 安全问题，
+    // 安全栏那条手写的 urgent（`proto-feedback-fixtures.ts` 里那条 urgent，私密 + 安全问题，
     // 公共栏里看不见它，得换栏位 —— 换栏位是服务端的问法，会重新取数）。
     await fireEvent.click(getByRole('radio', { name: '安全' }))
     await waitFor(() =>

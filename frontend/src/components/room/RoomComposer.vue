@@ -8,27 +8,34 @@
 //
 // 草稿、回复对象和待发附件**不归它管**：那几样要跟着话题走、跨刷新活下来，而话题
 // 什么时候换只有房间知道。正文是 v-model，其余由房间传进来——它只负责画和发。
-import type { LibraryFile } from '../../api'
+//
+// 这一层现在只做三件事：把这几块拼在一起、处理键盘（回车到底是挑人、换行还是
+// 发送）、以及把拖进来的东西交给房间（#2143）。@ 补全的状态机在
+// `composables/useRoomMentionPicker.ts`，菜单、待发条和动作行各自是一件只管画的
+// 东西（`MentionMenu.vue` / `ComposerChipRow.vue` / `ComposerActions.vue`）。
+import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { listProjectLibrary } from '../../api'
-import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
-import { IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
-import { avatarColor, avatarInitial } from '../../utils/avatar'
-import ExternalTag from '../common/ExternalTag.vue'
+import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
+import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
-import AttachmentChip from './AttachmentChip.vue'
-import ComposerChip from './ComposerChip.vue'
+import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
+import { myHandle } from '../../me'
+
+import ComposerActions from './ComposerActions.vue'
+import ComposerChipRow from './ComposerChipRow.vue'
+import MentionMenu from './MentionMenu.vue'
+import OutsideMentionNotice from './OutsideMentionNotice.vue'
 
 import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
-  mentionPool: { handle: string; label: string; agent: boolean; external?: boolean }[]
+  mentionPool: MentionPoolEntry[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
   topicList: Topic[]
   /** 这个房间交给的那位 AI 队友。名册还没到时是 null，两个召唤入口都关着。 */
@@ -78,216 +85,43 @@ function onDropFiles(e: DragEvent) {
   dragOver.value = false
   emit('drop-files', e)
 }
+
 const composerInput = ref<{ focus?: () => void } | null>(null)
-const fileInput = ref<HTMLInputElement | null>(null)
-const imageInput = ref<HTMLInputElement | null>(null)
 const { mdAndUp } = useDisplay()
-function pickFiles() {
-  fileInput.value?.click()
-}
-// 手机上单开一个「照片」：系统的文件选择器里翻相册要好几步，而 accept=image/*
-// 直接进相册/相机。桌面上不给这一颗——那儿贴一张截图或者拖进来就完事了。
-function pickImages() {
-  imageInput.value?.click()
-}
-function onFilePicked(e: Event) {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) emit('files', Array.from(input.files))
-  input.value = '' // allow re-picking the same file
-}
-// @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
-// draft, and the teammates / topics / broadcast tokens it can complete to.
-// Mirrors TopicView's composer so the root-topic and 私聊 composers get the
-// same picker.
-const mentionQuery = computed(() => {
-  const m = draft.value.match(/@([^\s@]*)$/)
-  return m ? m[1] : null
-})
-interface MentionItem {
-  label: string
-  kind: 'member' | 'topic' | 'broadcast' | 'file' | 'category'
-  // Text written after the "@" when picked (a handle/name/token).
-  insert: string
-  // Secondary line: @handle for people, status for topics, hint for broadcast.
-  sub: string
-  agent: boolean
-  // 团队以外、被邀请进这个项目的人：候选里挂「外部」，@ 之前就知道他不是自己人。
-  external?: boolean
-  // 二级菜单里这一项属于哪一组（同一组的标题只画一次）。
-  group?: string
-  // 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。
-  handle?: string
-}
-// 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
-// at the top. expandMentions turns them into <@all>/<@here>.
-const BROADCAST_ITEMS: MentionItem[] = [
-  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
-  { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
-]
-// 资料库：项目给进来的文件，@ 一下就能带上这条消息。按需拉一次——打开一个房间的
-// 人不一定要引用文件，而打了 @ 的人正要挑东西。
-const libraryFiles = ref<LibraryFile[]>([])
-const libraryFor = ref<string | null>(null)
-// 菜单在第几级。没打字的时候资料库只是一行入口（`category`）：一个项目的文件会比
-// 房间里的人多得多，平铺进来等于把「@ 一个人」这件事挤掉。打了字就不分级了——那时
-// 人要的是搜索，人、话题、文件一起找。
-const mentionLevel = ref<'root' | 'library'>('root')
-// 这一格里「算不算图片」比预览域宽：gif / webp 浏览器也画得出来，而这里只是分组。
-const PICKER_IMAGE_SUFFIXES = new Set([...IMAGE_SUFFIXES, 'gif', 'webp'])
-function libraryItems(ql: string): MentionItem[] {
-  const rows = libraryFiles.value.filter((f) => f.path.toLowerCase().includes(ql))
-  const item = (f: LibraryFile, group: string): MentionItem => ({
-    label: f.path,
-    kind: 'file',
-    insert: f.path,
-    sub: group,
-    agent: false,
-    group,
-  })
-  return [
-    ...rows.filter((f) => !PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '文件')),
-    ...rows.filter((f) => PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '图片')),
-  ]
-}
-async function loadLibrary() {
-  const projectId = props.topic?.project_id
-  if (!projectId || libraryFor.value === projectId) return
-  libraryFor.value = projectId
-  try {
-    libraryFiles.value = (await listProjectLibrary(projectId)).data
-  } catch {
-    // 挑文件是输入栏里的一个便利，不是这条消息发不出去的理由。
-    libraryFiles.value = []
-    libraryFor.value = null
-  }
-}
-watch(
-  () => props.topic?.project_id,
-  () => {
-    libraryFiles.value = []
-    libraryFor.value = null
-  }
-)
-watch(
-  () => mentionQuery.value !== null,
-  (open) => {
-    if (open) void loadLibrary()
-    // 菜单关了就回到一级：下一次打 @ 的人不该落在上一次翻到的地方。
-    else mentionLevel.value = 'root'
-  },
-  // immediate: 草稿是恢复出来的（上次在这个房间打了一半的 @），输入区建起来的
-  // 那一刻菜单就已经是开着的。只等「变成开着」的话，这一次永远等不到，菜单开着
-  // 却一份文件都列不出来。
-  { immediate: true }
-)
+const mentionMenu = ref<InstanceType<typeof MentionMenu> | null>(null)
 
-const mentionMatches = computed<MentionItem[]>(() => {
-  const q = mentionQuery.value
-  if (q === null) return []
-  const ql = q.toLowerCase()
-  if (mentionLevel.value === 'library') return libraryItems(ql).slice(0, 12)
-  const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
-  const named: MentionItem[] = [
-    ...props.mentionPool.map((m) => ({
-      label: m.label,
-      kind: 'member' as const,
-      insert: m.label,
-      sub: `@${m.handle}`,
-      agent: m.agent,
-      external: !!m.external,
-      handle: m.handle,
-    })),
-    ...props.topicList
-      .filter((t) => t.kind !== 'root')
-      .map((t) => ({
-        label: t.title,
-        kind: 'topic' as const,
-        insert: t.title,
-        sub: t.status === 'archived' ? '已归档' : '进行中',
-        agent: false,
-      })),
-  ].filter((i) => i.label.toLowerCase().includes(ql))
-  // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
-  // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
-  // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
-  // 它还是那两个 token。
-  const agents = named.filter((i) => i.agent)
-  const rest = named.filter((i) => !i.agent)
-  // 没打字：资料库是一行入口。打了字：文件和人、话题一起被搜出来。
-  const files = ql ? libraryItems(ql) : []
-  const library: MentionItem[] =
-    !ql && libraryFiles.value.length
-      ? [
-          {
-            label: '资料库',
-            kind: 'category',
-            insert: 'library',
-            sub: `${libraryFiles.value.length} 份文件`,
-            agent: false,
-          },
-        ]
-      : []
-  return [...agents, ...library, ...broadcast, ...rest, ...files].slice(0, 7)
+// @ 补全那一整套（候选、两级菜单、资料库、高亮）在 composable 里；这里只把光标
+// 还给它，和把「挑中的是一份文件」转成往上发的那件事。
+const picker = useRoomMentionPicker({
+  draft,
+  topic: () => props.topic,
+  mentionPool: () => props.mentionPool,
+  topicList: () => props.topicList,
+  focus: () => composerInput.value?.focus?.(),
+  onAddLibraryFile: (path) => emit('add-library-file', path),
+  // ↑/↓ 换完之后把那一项滚进视野。菜单自己有高度上限、自己滚，所以这件事问它。
+  scrollActiveIntoView: () => mentionMenu.value?.scrollActiveIntoView(),
 })
-function pickMention(item: MentionItem) {
-  if (item.kind === 'category') {
-    mentionLevel.value = 'library'
-    void nextTick(() => composerInput.value?.focus?.())
-    return
-  }
-  if (item.kind === 'file') {
-    // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
-    // 名字都从正文里拿掉，文件去待发条里待着。
-    draft.value = draft.value.replace(/@([^\s@]*)$/, '')
-    emit('add-library-file', item.insert)
-    void nextTick(() => composerInput.value?.focus?.())
-    return
-  }
-  draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
-  // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
-  // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
-  // 完人还要再点一次输入框」是这个面板最烦人的地方。
-  void nextTick(() => composerInput.value?.focus?.())
-}
+// 拆开拿：模板里读 `picker.menuOpen` 拿到的是那个 ref 本身，不是它的值。
+const {
+  matches: mentionMatches,
+  level: mentionLevel,
+  menuOpen: mentionMenuOpen,
+  activeIndex: mentionActiveIndex,
+} = picker
 
-// @ 菜单里的键盘导航。鼠标划过和 ↑/↓ 改的是同一个下标——回车挑的就是它。分开存
-// 只会得到「鼠标指着第三个人、回车却挑了第一个」，而两条路谁也看不见对方存了什么。
-const mentionIndex = ref(0)
-// Esc 收起候选（@ 还留在正文里，那只是一次临时收起）。再打一个字它就重新打开。
-const mentionClosed = ref(false)
-const mentionMenuEl = ref<HTMLElement | null>(null)
-const mentionMenuOpen = computed(() => mentionMatches.value.length > 0 && !mentionClosed.value)
-// 读的时候夹一下：候选会自己变短（名册更新、资料库到货），下标不该指着一条已经不在
-// 列表里的项——那样回车一条也挑不动。
-const mentionActiveIndex = computed(() => Math.min(mentionIndex.value, Math.max(0, mentionMatches.value.length - 1)))
-// 查询词变了、或者进出一趟资料库，高亮都回到第一项：眼前是一份刚过滤出来的新名单，
-// 旧下标指的是另一个人。收起状态也跟着这两件事复位——打字就是在重新打开它。
-watch(mentionQuery, () => {
-  mentionIndex.value = 0
-  mentionClosed.value = false
-})
-watch(mentionLevel, () => {
-  mentionIndex.value = 0
-})
-
-function moveMention(delta: number) {
-  const n = mentionMatches.value.length
-  if (!n) return
-  mentionIndex.value = (mentionActiveIndex.value + delta + n) % n
-  void nextTick(scrollMentionIntoView)
-}
-// 菜单自己有高度上限、自己滚（见 .mention-menu）：不把高亮项滚进视野，按 ↓ 走到
-// 底之后高亮就跑到看不见的地方去了——那时键盘看起来又坏了。
-function scrollMentionIntoView() {
-  mentionMenuEl.value?.querySelector('.mention-menu-item.is-active')?.scrollIntoView?.({ block: 'nearest' })
-}
-// 回车挑的是高亮那一项；菜单收起了（Esc）返回 false，把这次回车还给「发送」。
 function pickActiveMention(): boolean {
-  const item = mentionMenuOpen.value ? mentionMatches.value[mentionActiveIndex.value] : undefined
-  if (!item) return false
-  pickMention(item)
-  return true
+  return picker.pickActive()
 }
+
+// 发出去的那条 @ 了不在话题里的人：输入框上方说一句，能管名册的人顺手拉进来。
+const outsidePrompt = useOutsideMentionPrompt({
+  topic: () => props.topic,
+  mentionPool: () => props.mentionPool,
+  me: myHandle,
+})
+const { outside: outsideMentioned, names: outsideNames, canAdd: canAddOutside } = outsidePrompt
+const { busy: addingOutside, error: addOutsideError } = outsidePrompt
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
@@ -331,13 +165,6 @@ function mentionsAgent(expanded: string): boolean {
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
-// 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
-const summonText = computed(() => ({
-  label: t('work.room.composer.summon', { name: props.agentName }),
-  short: t('work.room.composer.summonShort'),
-  on: t('work.room.composer.summonOn', { name: props.agentName }),
-  off: t('work.room.composer.summonOff', { name: props.agentName }),
-}))
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -368,6 +195,7 @@ function toggleSummon() {
   }
   void nextTick(() => composerInput.value?.focus?.())
 }
+
 let composing = false
 let compositionEndedAt = -1e9
 function onCompositionStart() {
@@ -390,9 +218,14 @@ coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.val
 
 function onComposerKey(e: KeyboardEvent) {
   // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
-  if (e.key === 'Escape' && mentionLevel.value === 'library') {
+  // ← 也是；`@` 后面什么都没打时的退格也是——那一下要是删掉了 `@`，整个菜单就没了，
+  // 人只是想回上一级。输入法选字时这几个键是给输入法的。
+  const back =
+    e.key === 'Escape' ||
+    ((e.key === 'ArrowLeft' || (e.key === 'Backspace' && picker.query.value === '')) && !isImeKey(e))
+  if (back && mentionLevel.value === 'library') {
     e.preventDefault()
-    mentionLevel.value = 'root'
+    picker.backToRoot()
     return
   }
   // 菜单开着时上下键换高亮。输入法正在选字时这两个键是给输入法的（翻候选词），
@@ -401,12 +234,12 @@ function onComposerKey(e: KeyboardEvent) {
   const arrow = e.key === 'ArrowDown' || e.key === 'ArrowUp'
   if (arrow && mentionMenuOpen.value && !isImeKey(e)) {
     e.preventDefault()
-    moveMention(e.key === 'ArrowDown' ? 1 : -1)
+    picker.move(e.key === 'ArrowDown' ? 1 : -1)
     return
   }
   if (e.key === 'Escape' && mentionMenuOpen.value) {
     e.preventDefault()
-    mentionClosed.value = true
+    picker.close()
     return
   }
   if (e.key !== 'Enter' || e.shiftKey) return
@@ -447,16 +280,11 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
+  outsidePrompt.noteSent(content)
 }
 
-// 拿掉的那一枚离开时脱出排版（absolute），后面的才能滑过来补位；脱出之前先把它钉
-// 在原来的位置上，不然它会跳到这一行的最左边再淡出。
-function pinLeaving(el: Element) {
-  const chip = el as HTMLElement
-  chip.style.left = `${chip.offsetLeft}px`
-  chip.style.top = `${chip.offsetTop}px`
-  chip.style.width = `${chip.offsetWidth}px`
-}
+// 发送键亮不亮：有字，或者有东西跟着走。
+const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0)
 
 defineExpose({
   /** @ 完人、点完按钮、起手草稿写完之后要把光标还回来——这是最烦人的一处。 */
@@ -476,94 +304,38 @@ defineExpose({
     @drop.prevent="onDropFiles"
   >
     <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
-    <Transition name="menu-rise">
-      <div v-if="mentionMenuOpen || mentionLevel === 'library'" ref="mentionMenuEl" class="mention-menu">
-        <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
-        <Transition :name="mentionLevel === 'library' ? 'level-in' : 'level-out'" mode="out-in">
-          <div :key="mentionLevel" class="mention-menu-level">
-            <div v-if="mentionLevel === 'library'" class="mention-menu-head" title="按 Esc 返回">
-              <v-icon size="13">mdi-folder-outline</v-icon>
-              <span class="mention-menu-name">资料库</span>
-            </div>
-            <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
-              <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
-                {{ mm.group }}
-              </div>
-              <button
-                type="button"
-                class="mention-menu-item"
-                :class="{ 'is-active': i === mentionActiveIndex }"
-                @click="pickMention(mm)"
-                @mouseenter="mentionIndex = i"
-              >
-                <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
-                  <v-icon size="13">mdi-bullhorn-outline</v-icon>
-                </span>
-                <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
-                  avatarInitial(mm.label)
-                }}</span>
-                <span
-                  v-else-if="mm.kind === 'member'"
-                  class="mention-avatar"
-                  :style="{ backgroundColor: avatarColor(mm.handle) }"
-                  >{{ avatarInitial(mm.label) }}</span
-                >
-                <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
-                  <v-icon size="13">mdi-folder-outline</v-icon>
-                </span>
-                <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
-                  <v-icon size="13">mdi-file-outline</v-icon>
-                </span>
-                <span v-else class="mention-avatar mention-avatar--topic">
-                  <v-icon size="13">mdi-pound</v-icon>
-                </span>
-                <span class="mention-menu-name">{{ mm.label }}</span>
-                <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
-                <ExternalTag v-else-if="mm.external" />
-                <span class="mention-menu-sub">{{ mm.sub }}</span>
-                <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
-                <span v-else-if="i === mentionActiveIndex && enterSends" class="mention-menu-hint">Enter</span>
-              </button>
-            </template>
-            <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">
-              暂无匹配的文件
-            </div>
-          </div>
-        </Transition>
-      </div>
-    </Transition>
+    <MentionMenu
+      ref="mentionMenu"
+      :open="mentionMenuOpen"
+      :matches="mentionMatches"
+      :active-index="mentionActiveIndex"
+      :level="mentionLevel"
+      :enter-sends="enterSends"
+      @pick="picker.pick"
+      @hover="picker.hover"
+      @back="picker.backToRoot"
+    />
+    <OutsideMentionNotice
+      v-if="outsideMentioned.length"
+      :names="outsideNames"
+      :can-add="canAddOutside"
+      :busy="addingOutside"
+      :error="addOutsideError"
+      @add="outsidePrompt.add"
+      @dismiss="outsidePrompt.dismiss"
+    />
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div class="composer-box">
-      <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。一行排开，
-           不换行——多了就在这一行里横着滚，每一个都还拿得掉。 -->
-      <!-- 这一行长出来、收回去都是高度过渡；里面的标签一个个弹进来，拿掉一个时
-           后面的滑过来补位。 -->
-      <Transition name="chip-row">
-        <div v-if="replyLabel || atts.length" class="chip-row">
-          <TransitionGroup tag="div" name="chip" class="chip-list" @before-leave="pinLeaving">
-            <ComposerChip
-              v-if="replyLabel"
-              key="reply"
-              class="reply-chip"
-              quiet
-              :label="replyLabel"
-              :remove-label="t('work.room.composer.cancelReply')"
-              @remove="emit('clear-reply')"
-            >
-              <template #face><v-icon size="13">mdi-reply</v-icon></template>
-            </ComposerChip>
-            <AttachmentChip
-              v-for="(a, i) in atts"
-              :key="a.path"
-              :topic-id="topic!.id"
-              :attachment="a"
-              @remove="emit('remove-att', i)"
-            />
-          </TransitionGroup>
-        </div>
-      </Transition>
+      <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。 -->
+      <ComposerChipRow
+        :reply-label="replyLabel"
+        :atts="atts"
+        :topic-id="topic?.id ?? null"
+        @remove-att="(i: number) => emit('remove-att', i)"
+        @clear-reply="emit('clear-reply')"
+      />
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
              半屏——而按钮的数量只会往上加。 -->
       <v-textarea
@@ -578,91 +350,34 @@ defineExpose({
         density="comfortable"
         class="composer-input"
         :placeholder="hint"
-        :title="
-          enterSends
-            ? `Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给${agentName}，可直接粘贴图片`
-            : '可直接粘贴图片'
-        "
+        :title="enterSends ? t('work.room.composer.keysHint', { name: agentName }) : t('work.room.composer.pasteHint')"
         @keydown="onComposerKey"
         @paste="emit('paste', $event)"
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
       />
-      <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
-             唯一的实心按钮，其余一律是安静的图标。 -->
-      <div class="composer-actions d-flex align-center" :class="enterSends ? 'ga-1' : 'ga-4'">
-        <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
-                 iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
-                 毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
-                 看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。 -->
-        <input ref="fileInput" type="file" multiple class="visually-hidden" @change="onFilePicked" />
-        <input ref="imageInput" type="file" accept="image/*" multiple class="visually-hidden" @change="onFilePicked" />
-        <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
-               时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
-        <v-btn
-          class="composer-icon"
-          icon="mdi-paperclip"
-          variant="text"
-          size="small"
-          color="medium-emphasis"
-          title="上传文件（每个最大 10MB）"
-          @click="pickFiles"
-        />
-        <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
-                 选择器里翻相册要绕好几步。 -->
-        <v-btn
-          v-if="!mdAndUp"
-          class="composer-icon"
-          icon="mdi-image-outline"
-          variant="text"
-          size="small"
-          color="medium-emphasis"
-          title="发送照片"
-          @click="pickImages"
-        />
-        <v-spacer />
-        <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
-               「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
-        <slot name="composer-chips" />
-        <!-- 「交给芝士」：它不是一个自己存着状态的开关，它是正文的镜子——
-               点一下把 @ 写进输入框（你看得见、也能自己删），手打 @ 它就自己
-               亮。一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会
-               让「这条到底算不算叫了它」变成没人答得上来的问题。 -->
-        <button
-          v-if="!alwaysSummon"
-          type="button"
-          class="summon-btn"
-          :class="{ 'summon-btn--on': summonOn }"
-          :disabled="!summonReady"
-          :aria-pressed="summonOn"
-          :aria-label="summonText.label"
-          :title="summonOn ? summonText.on : summonText.off"
-          @click="toggleSummon"
-        >
-          <v-icon size="14">mdi-at</v-icon>
-          <span class="summon-btn-label" aria-hidden="true">{{ summonText.label }}</span>
-          <span class="summon-btn-short" aria-hidden="true">{{ summonText.short }}</span>
-        </button>
-        <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
-               按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
-        <v-btn
-          class="composer-send"
-          color="primary"
-          variant="flat"
-          icon="mdi-send"
-          size="small"
-          title="发送"
-          :disabled="attsUploading || (!draft.trim() && !atts.length)"
-          @click="sendDraft()"
-        />
-      </div>
+      <ComposerActions
+        :uploading="attsUploading"
+        :can-send="canSend"
+        :show-image-picker="!mdAndUp"
+        :enter-sends="enterSends"
+        :always-summon="alwaysSummon"
+        :summon-on="summonOn"
+        :summon-ready="summonReady"
+        :agent-name="agentName"
+        @files="emit('files', $event)"
+        @toggle-summon="toggleSummon"
+        @send="sendDraft()"
+      >
+        <template #chips><slot name="composer-chips" /></template>
+      </ComposerActions>
     </div>
   </div>
 </template>
 
 <style scoped>
 .composer {
-  /* @ 菜单按它定位（见 .mention-menu）。 */
+  /* @ 菜单按它定位（见 MentionMenu.vue 的 .mention-menu）。 */
   position: relative;
   background: var(--surface);
   /* 手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
@@ -715,325 +430,5 @@ defineExpose({
 .composer-input :deep(.v-field__input) {
   -webkit-mask-image: none;
   mask-image: none;
-}
-/* 动作行的规矩，三条：
-   1. 一行一个高度。原来是 24 / 32 / 24 / 30 四种，这是它看起来像一堆零件的主因。
-   2. 静止时谁也不画边框、不画底色——状态用墨色说，不用盒子说。
-   3. 整行只有一个实心块，就是发送。
-   位置负责表达语义：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。 */
-.composer-actions {
-  min-height: 28px;
-  margin-top: 2px;
-}
-.composer-icon,
-.composer-send {
-  width: 28px;
-  height: 28px;
-}
-/* 能发了，灰色的键过渡成琥珀；按下去沉一下，不等松手。 */
-.composer-send {
-  transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    color var(--dur-quick) var(--ease-standard),
-    opacity var(--dur-quick) var(--ease-standard),
-    transform var(--dur-press) var(--ease-standard);
-}
-.composer-send:active:not(:disabled) {
-  transform: scale(0.92);
-}
-/* 「交给芝士」。它和发送并排，但绝不能也是实心琥珀——一行里只有一个实心块，
-   那个位置是发送的。亮起来只改一条描边和墨色，形态不变。 */
-.summon-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  font-size: 13px;
-  line-height: 1;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    color var(--dur-quick) var(--ease-standard),
-    background-color var(--dur-quick) var(--ease-standard);
-}
-.summon-btn:hover:not(:disabled) {
-  background: var(--fill);
-  color: var(--text);
-}
-.summon-btn:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-/* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
-   一条 1px 的描边抢不过旁边那颗实心的发送按钮，所以开态是填充的：比 hover 深一档
-   的底、墨色的字。只变底色，不加粗——字一加粗按钮就变宽，开关一下整行跟着挪。
-   不用琥珀：琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不出该点哪个。 */
-.summon-btn--on {
-  background: var(--line-2);
-  color: var(--ink);
-}
-.summon-btn--on:hover:not(:disabled) {
-  background: var(--line-2);
-  color: var(--ink);
-}
-/* 窄屏上名字收掉，留「交给」两个字：只剩一个 @ 图标的话，它读起来是「插入一个
-   @」，不是「这条交给它处理」。两个字加图标放得进这一行，不会换行。 */
-.summon-btn-short {
-  display: none;
-}
-@media (max-width: 480px) {
-  .summon-btn-label {
-    display: none;
-  }
-  .summon-btn-short {
-    display: inline;
-  }
-}
-
-/* 触屏上手指点得中（设计系统 §10.1）：几颗按钮画出来的样子不变，能点的范围撑到
-   44×44（同 style.css 的 .tap-target）。撑开的范围不能互相盖住，所以按钮之间拉开到
-   16px（模板里按输入方式换 ga-4）；这一行也长到 44px，不让它伸进上面的输入框。 */
-@media (pointer: coarse) {
-  .composer-actions {
-    min-height: 44px;
-  }
-  .summon-btn {
-    position: relative;
-  }
-  .composer-icon::before,
-  .composer-send::before,
-  .summon-btn::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: max(100%, 44px);
-    height: max(100%, 44px);
-    transform: translate(-50%, -50%);
-  }
-  .mention-menu-item {
-    min-height: 44px;
-  }
-  /* 回复、附件那一行横着滚，滚动的盒子会裁掉 ✕ 撑出去的范围：上下各留 8px。 */
-  .composer .chip-list {
-    padding-block: 8px;
-  }
-}
-
-/* @-autocomplete popup — mirrors TopicView's composer picker. */
-/* 浮在输入区上方，不占位置。它原来是输入区里的一个普通块：菜单一出现输入区就长高，
-   贴在输入框上面的验收横条被整条顶上去，菜单一收又掉回来。浮层本来就该带投影、
-   盖在别的东西上面。 */
-.mention-menu {
-  position: absolute;
-  right: 12px;
-  bottom: 100%;
-  left: 12px;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 4px;
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  /* 横向仍旧裁边（圆角靠它），纵向改自滚：规范只在某一侧是 `visible` 时才把另一
-     侧算成 `auto`，所以这两条不冲突。 */
-  overflow-x: hidden;
-  overflow-y: auto;
-  /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
-     就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
-     一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
-     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
-     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
-     lib/keyboardInset.ts）。 */
-  max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-}
-.mention-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  min-height: 36px;
-  text-align: left;
-  font-size: 13px;
-  cursor: pointer;
-}
-/* 高亮只有一套：鼠标划过（`@mouseenter` 把下标挪过去）和 ↑/↓ 改的是同一个下标。
-   两边各画一次的话，指针停在第三行、键盘走到第四行时屏幕上会同时亮着两行，
-   而回车只会挑其中一行。 */
-.mention-menu-item.is-active {
-  background: var(--fill);
-}
-.mention-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 600;
-  /* 底色是 avatarColor() 按 handle 算出来的定值，和时间线上这个人的头像一个颜色，
-     两套主题下都不变，所以上面的字也得是定值。 */
-  color: #fff;
-  flex: none;
-}
-/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来
-   是一颗琥珀圆——琥珀留给主操作，不给头像。 */
-.mention-avatar--agent {
-  color: var(--inverse-ink);
-  background: var(--inverse-surface);
-  border-radius: var(--radius-sm);
-}
-.mention-avatar--broadcast {
-  /* --ink inverts with the theme (near-black → near-white), so the ink on it
-     has to invert too; --surface is #fff in light (unchanged) and #1B1D20 dark. */
-  color: var(--surface);
-  background: var(--ink);
-}
-.mention-avatar--topic,
-.mention-avatar--file {
-  background: var(--fill);
-  color: var(--muted);
-}
-.menu-rise-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-}
-.menu-rise-leave-active {
-  transition: opacity var(--dur-quick) var(--ease-in);
-}
-.menu-rise-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-.menu-rise-leave-to {
-  opacity: 0;
-}
-.mention-menu-level {
-  display: flex;
-  flex-direction: column;
-}
-.level-in-enter-active,
-.level-out-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-}
-.level-in-leave-active,
-.level-out-leave-active {
-  transition:
-    opacity var(--dur-quick) var(--ease-in),
-    transform var(--dur-quick) var(--ease-in);
-}
-.level-in-enter-from,
-.level-out-leave-to {
-  opacity: 0;
-  transform: translateX(16px);
-}
-.level-in-leave-to,
-.level-out-enter-from {
-  opacity: 0;
-  transform: translateX(-16px);
-}
-/* 二级菜单的头，和它里面的分组标题：两条都不是可选项，所以不长得像可选项。 */
-.mention-menu-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--line-2);
-  color: var(--muted);
-}
-.mention-menu-group {
-  padding: 6px 12px 2px;
-  font-size: 12px;
-  color: var(--faint);
-}
-.mention-menu-name {
-  font-weight: 500;
-}
-.mention-agent-badge {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  background: var(--fill);
-}
-.mention-menu-sub {
-  font-size: 12px;
-  color: var(--faint);
-}
-.mention-menu-hint {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--faint);
-}
-
-.chip-row {
-  display: grid;
-  grid-template-rows: 1fr;
-}
-.chip-row-enter-active {
-  transition:
-    grid-template-rows var(--dur-base) var(--ease-out),
-    opacity var(--dur-base) var(--ease-out);
-}
-.chip-row-leave-active {
-  transition:
-    grid-template-rows var(--dur-quick) var(--ease-in),
-    opacity var(--dur-quick) var(--ease-in);
-}
-.chip-row-enter-from,
-.chip-row-leave-to {
-  grid-template-rows: 0fr;
-  opacity: 0;
-}
-/* 行高收到 0 时，里面那一行自己的上下内边距也得跟着收，不然最后剩 6px 再一跳。 */
-.chip-row-enter-active .chip-list {
-  transition: padding var(--dur-base) var(--ease-out);
-}
-.chip-row-leave-active .chip-list {
-  transition: padding var(--dur-quick) var(--ease-in);
-}
-.chip-row-enter-from .chip-list,
-.chip-row-leave-to .chip-list {
-  padding-block: 0;
-}
-.chip-enter-active {
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-}
-.chip-leave-active {
-  position: absolute;
-  transition:
-    opacity var(--dur-quick) var(--ease-in),
-    transform var(--dur-quick) var(--ease-in);
-}
-.chip-enter-from,
-.chip-leave-to {
-  opacity: 0;
-  transform: scale(0.9);
-}
-.chip-move {
-  transition: transform var(--dur-base) var(--ease-standard);
-}
-/* 回复和附件那一行。不换行：换了行输入框就被一截一截往上顶。多出来的横着滚——
-   裁掉的话，第四个附件既看不见也拿不掉。 */
-.chip-list {
-  position: relative;
-  min-height: 0;
-  display: flex;
-  gap: 6px;
-  padding: 2px 0 4px;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 </style>

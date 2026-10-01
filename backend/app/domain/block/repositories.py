@@ -24,6 +24,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.block.notice_text import with_keys
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
@@ -128,6 +129,9 @@ class BlockRepository:
             and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
+        # A platform sentence carries its key; the reader's screen renders it
+        # in the reader's language (`notice_text.py`).
+        meta = with_keys(meta, content=content)
         block = Block(
             project_id=project_id,
             topic_id=topic_id,
@@ -435,7 +439,7 @@ class BlockRepository:
         if block is None:
             return None
         block.content = content
-        block.meta = {**(block.meta or {}), **meta}
+        block.meta = with_keys({**(block.meta or {}), **meta}, content=content)
         await self._session.flush()
         return block
 
@@ -797,7 +801,7 @@ class BlockRepository:
         if not place_ids:
             return {}
         stmt = (
-            select(place_column, Block.meta, Block.created_at)
+            select(place_column, Block.meta, Block.created_at, Block.author)
             .where(
                 place_column.in_(place_ids),
                 Block.kind == BlockKind.message,
@@ -810,8 +814,8 @@ class BlockRepository:
             .distinct(place_column)
         )
         rows = [
-            (place_id, meta or {}, at)
-            for place_id, meta, at in (await self._session.execute(stmt)).all()
+            (place_id, meta or {}, at, asker)
+            for place_id, meta, at, asker in (await self._session.execute(stmt)).all()
             if place_id is not None and not (meta or {}).get("answered")
         ]
         if not rows:
@@ -821,7 +825,7 @@ class BlockRepository:
         spoke = (
             select(place_column, Block.author, func.max(Block.created_at))
             .where(
-                place_column.in_([place_id for place_id, _, _ in rows]),
+                place_column.in_([place_id for place_id, _, _, _ in rows]),
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
@@ -832,8 +836,28 @@ class BlockRepository:
         last_said: dict[uuid.UUID, dict[str, datetime]] = {}
         for place_id, author, at in (await self._session.execute(spoke)).all():
             last_said.setdefault(place_id, {})[author] = at
+        # 芝士问完，自己又在同一条线上接着说了一句 —— 那道题它自己已经绕过去了，
+        # 不该继续挂在被问的人身上 (#2046：芝士问完没等回答就自己做完、又发了几句
+        # 进展，房间却一直停在「待回答」，直到人真去点一下才灭)。人问的题不适用：
+        # 人问完再补一句，不等于他不用答了。所以这里只认**提问那条消息的作者**，
+        # 且他本人是芝士 —— 别的席位上有人说话，是那名参与者的发言，不是这道题的
+        # 提问者收回了它。
+        agent_spoke = (
+            select(place_column, Block.author, func.max(Block.created_at))
+            .where(
+                place_column.in_([place_id for place_id, _, _, _ in rows]),
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+                *extra,
+            )
+            .group_by(place_column, Block.author)
+        )
+        said_by_agent: dict[uuid.UUID, dict[str, datetime]] = {}
+        for place_id, author, at in (await self._session.execute(agent_spoke)).all():
+            said_by_agent.setdefault(place_id, {})[author] = at
         waiting: dict[uuid.UUID, str | None] = {}
-        for place_id, meta, asked_at in rows:
+        for place_id, meta, asked_at, asker in rows:
             asked = meta.get("asked")
             said = last_said.get(place_id, {})
             if asked:
@@ -842,6 +866,10 @@ class BlockRepository:
                 times = list(said.values())
             if any(at > asked_at for at in times):
                 continue
+            if looks_like_agent_handle(asker):
+                own = said_by_agent.get(place_id, {}).get(asker)
+                if own is not None and own > asked_at:
+                    continue
             waiting[place_id] = asked
         return waiting
 

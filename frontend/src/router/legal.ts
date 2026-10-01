@@ -13,14 +13,14 @@ const routes: RouteRecordRaw[] = [
     name: 'LegalTerms',
     component: () => import('@/views/legal/LegalDocumentView.vue'),
     props: { document: 'terms' },
-    meta: { title: '用户协议', publicLanding: true },
+    meta: { titleKey: 'navigation.pages.terms', publicLanding: true },
   },
   {
     path: '/legal/privacy',
     name: 'LegalPrivacy',
     component: () => import('@/views/legal/LegalDocumentView.vue'),
     props: { document: 'privacy' },
-    meta: { title: '隐私政策', publicLanding: true },
+    meta: { titleKey: 'publicSite.privacy', publicLanding: true },
   },
 ]
 

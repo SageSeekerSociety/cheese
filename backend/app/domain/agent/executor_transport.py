@@ -310,6 +310,41 @@ def register_project_hooks(config, hooks):
     return True
 
 
+def _remote_servers(target: dict) -> list[str]:
+    return list((target.get("remote_mcp") or {}).get("servers", []))
+
+
+def agent_servers(target: dict) -> list[str]:
+    """The teammate's type's own stdio servers (`agent_mcp`): they run on the
+    room's machine, which is handed each one's definition with the call. A name
+    the checkout's `.mcp.json` or a remote server already uses stays that
+    server's, as committed configuration decides."""
+    taken = {*target.get("mcp_servers", []), *_remote_servers(target)}
+    return [name for name in target.get("agent_mcp") or {} if name not in taken]
+
+
+def session_servers(target: dict) -> list[str]:
+    """Every MCP server a session lists: the machine's stdio servers and the
+    type's, once the session is on the machine, and the remote ones.
+
+    Before then (a session at the placeholder) it lists no stdio server at all,
+    the checkout's or the type's: listing one would take the machine for a turn
+    that may never need it. The session is relaunched onto the machine once it
+    has one, and lists them then."""
+    on_machine = not (
+        target.get("kind") == "deferred"
+        and target.get("workspace") == DEFERRED_WORKSPACE
+    )
+    return [
+        *(
+            [*target.get("mcp_servers", []), *agent_servers(target)]
+            if on_machine
+            else []
+        ),
+        *_remote_servers(target),
+    ]
+
+
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
         import threading
@@ -698,8 +733,32 @@ class RemoteClient:
             return {"value": value}
         return receipt
 
+    def permission(self, payload, args, preparing=None):
+        """Only the project's `permissions.deny`, read on the room's machine,
+        for a call the build is about to run itself and whose hooks it fires
+        itself, never having loaded the project's settings: a Claude Code
+        room's Bash (`proxy.js`). Returns what `call("invoke", …)` does."""
+        answer = self.control(
+            {
+                "subtype": "tool_hooks",
+                "event": "PreToolUse",
+                "tool": payload["tool"],
+                "args": args,
+                "request_id": payload["id"],
+                "fire": False,
+            },
+            preparing=preparing,
+        )
+        return {"error": answer["denied"]} if "denied" in answer else {"value": {}}
+
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
+
+    def agent_servers(self):
+        return agent_servers(self.config)
+
+    def session_servers(self):
+        return session_servers(self.config)
 
     def call(self, method, params=None, *, abandoned=None, preparing=None):
         """``abandoned`` says the caller has given the operation up (a cancelled
@@ -805,13 +864,11 @@ class RemoteClient:
             params = params or {}
             server = params.get("server")
             if not server:
-                return {
-                    "servers": [
-                        *self.config.get("mcp_servers", []),
-                        *self.remote_servers(),
-                    ]
-                }
-            if server not in self.config.get("mcp_servers", []):
+                return {"servers": self.session_servers()}
+            if server not in [
+                *self.config.get("mcp_servers", []),
+                *self.agent_servers(),
+            ]:
                 raise ValueError("Unknown project MCP server")
             tool = params.get("name")
             method = "mcp"
@@ -827,6 +884,12 @@ class RemoteClient:
                     else {}
                 ),
             }
+        if (
+            method in {"invoke", "mcp"}
+            and params
+            and params.get("server") in self.agent_servers()
+        ):
+            params = {**params, "spec": self.config["agent_mcp"][params["server"]]}
         if self.config.get("kind") == "device":
             deadline = min(
                 operation_deadline, time.monotonic() + CONNECT_RETRY_WINDOW_S

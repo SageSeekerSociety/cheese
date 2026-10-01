@@ -21,7 +21,8 @@ import NavLink from '../common/NavLink.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserRef from '@/components/common/UserRef.vue'
-import { formatRoutineTime, ROUTINE_RUN_LABEL, ROUTINE_STATE_LABEL } from '@/lib/routine'
+import { t } from '@/i18n'
+import { formatRoutineTime, routineRunLabel, routineStateLabel } from '@/lib/routine'
 import { userRefRoute } from '@/lib/userRef'
 
 const props = withDefaults(
@@ -62,14 +63,14 @@ const nameOf = (h: string) => props.userNames[h] || h
 const targetOf = (h: string) => userRefRoute(h, props.routine.project_id)
 
 const draft = computed(() => props.routine.state === 'draft')
-const stateLabel = computed(() => ROUTINE_STATE_LABEL[props.routine.state])
+const stateLabel = computed(() => routineStateLabel(props.routine.state))
 const running = computed(() => props.routine.state === 'active')
 /** 「下次 …」只在真有个下次的时候才说：随话题归档停下的规则没有下一回。 */
 const whenText = computed(() => {
-  if (props.routine.room_archived) return '已随话题归档停止'
+  if (props.routine.room_archived) return t('routines.archivedStopped')
   if (!running.value || props.routine.trigger !== 'schedule') return ''
   const at = formatRoutineTime(props.routine.next_run_at, props.routine.timezone)
-  return at === '—' ? '' : `下次 ${at}`
+  return at === '—' ? '' : t('routines.next', { time: at })
 })
 const busyOn = (action: string) => props.busy === action
 
@@ -79,28 +80,52 @@ const { mdAndUp } = useDisplay()
 function rowActions(): MenuAction[] {
   if (draft.value)
     return [
-      { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => emit('edit') },
-      { key: 'drop', label: '不要了', icon: 'mdi-delete-outline', danger: true, onSelect: () => emit('delete') },
+      { key: 'edit', label: t('routines.action.edit'), icon: 'mdi-pencil-outline', onSelect: () => emit('edit') },
+      {
+        key: 'drop',
+        label: t('routines.action.drop'),
+        icon: 'mdi-delete-outline',
+        danger: true,
+        onSelect: () => emit('delete'),
+      },
     ]
   return [
     running.value
-      ? { key: 'pause', label: '暂停', icon: 'mdi-pause', loading: busyOn('pause'), onSelect: () => emit('pause') }
-      : { key: 'resume', label: '恢复', icon: 'mdi-play', loading: busyOn('resume'), onSelect: () => emit('resume') },
+      ? {
+          key: 'pause',
+          label: t('routines.action.pause'),
+          icon: 'mdi-pause',
+          loading: busyOn('pause'),
+          onSelect: () => emit('pause'),
+        }
+      : {
+          key: 'resume',
+          label: t('routines.action.resume'),
+          icon: 'mdi-play',
+          loading: busyOn('resume'),
+          onSelect: () => emit('resume'),
+        },
     {
       key: 'run',
-      label: '立即执行一次',
+      label: t('routines.action.runNow'),
       icon: 'mdi-play-circle-outline',
       loading: busyOn('run-now'),
       onSelect: () => emit('run-now'),
     },
-    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => emit('edit') },
+    { key: 'edit', label: t('routines.action.edit'), icon: 'mdi-pencil-outline', onSelect: () => emit('edit') },
     {
       key: 'runs',
-      label: props.open ? '收起记录' : '执行记录',
+      label: props.open ? t('routines.action.hideRuns') : t('routines.action.showRuns'),
       icon: 'mdi-history',
       onSelect: () => emit('toggle-runs'),
     },
-    { key: 'delete', label: '删除', icon: 'mdi-delete-outline', danger: true, onSelect: () => emit('delete') },
+    {
+      key: 'delete',
+      label: t('routines.action.delete'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => emit('delete'),
+    },
   ]
 }
 /** 手机上摆在 ⋯ 里的那几件（桌面摆在行里）。 */
@@ -129,7 +154,7 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
             variant="text"
             color="on-surface-variant"
             class="tap-target"
-            aria-label="更多操作"
+            :aria-label="t('routines.action.more')"
           />
         </template>
       </AdaptiveMenu>
@@ -137,68 +162,79 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
 
     <!-- 草稿：摊开给人读的那几样。 -->
     <dl v-if="draft" class="routine-row__spec t-meta">
-      <dt>工作内容</dt>
+      <dt>{{ t('routines.spec.work') }}</dt>
       <dd>{{ routine.instructions }}</dd>
-      <dt>资料范围</dt>
-      <dd>{{ routine.context_scope || '未限定' }}</dd>
-      <dt>结果放在</dt>
-      <dd>房间 {{ routine.output_dir || '根目录' }}</dd>
-      <dt>执行者</dt>
-      <dd>
-        <UserRef
-          :handle="routine.agent_handle"
-          :name="nameOf(routine.agent_handle)"
-          :to="targetOf(routine.agent_handle)"
-          @navigate="emit('navigate', targetOf(routine.agent_handle))"
-        />（由
-        <UserRef
-          :handle="routine.proposed_by"
-          :name="nameOf(routine.proposed_by)"
-          :to="targetOf(routine.proposed_by)"
-          @navigate="emit('navigate', targetOf(routine.proposed_by))"
-        />
-        起草）
-      </dd>
+      <dt>{{ t('routines.spec.scope') }}</dt>
+      <dd>{{ routine.context_scope || t('routines.spec.unlimited') }}</dd>
+      <dt>{{ t('routines.spec.output') }}</dt>
+      <dd>{{ t('routines.spec.outputDir', { dir: routine.output_dir || t('routines.spec.rootDir') }) }}</dd>
+      <dt>{{ t('routines.spec.agent') }}</dt>
+      <i18n-t keypath="routines.spec.draftedBy" tag="dd" scope="global">
+        <template #agent>
+          <UserRef
+            :handle="routine.agent_handle"
+            :name="nameOf(routine.agent_handle)"
+            :to="targetOf(routine.agent_handle)"
+            @navigate="emit('navigate', targetOf(routine.agent_handle))"
+          />
+        </template>
+        <template #author>
+          <UserRef
+            :handle="routine.proposed_by"
+            :name="nameOf(routine.proposed_by)"
+            :to="targetOf(routine.proposed_by)"
+            @navigate="emit('navigate', targetOf(routine.proposed_by))"
+          />
+        </template>
+      </i18n-t>
     </dl>
 
     <div v-if="routine.can_manage" class="routine-row__actions">
       <template v-if="draft">
         <v-btn size="small" color="primary" variant="flat" :loading="busyOn('confirm')" @click="emit('confirm')">
-          确认启用
+          {{ t('routines.action.confirm') }}
         </v-btn>
         <template v-if="mdAndUp">
-          <v-btn size="small" variant="text" @click="emit('edit')">修改</v-btn>
-          <v-btn size="small" variant="text" color="on-surface-variant" @click="emit('delete')">不要了</v-btn>
+          <v-btn size="small" variant="text" @click="emit('edit')">{{ t('routines.action.edit') }}</v-btn>
+          <v-btn size="small" variant="text" color="on-surface-variant" @click="emit('delete')">
+            {{ t('routines.action.drop') }}
+          </v-btn>
         </template>
       </template>
       <template v-else-if="mdAndUp">
         <v-btn v-if="running" size="small" variant="text" :loading="busyOn('pause')" @click="emit('pause')">
-          暂停
+          {{ t('routines.action.pause') }}
         </v-btn>
-        <v-btn v-else size="small" variant="text" :loading="busyOn('resume')" @click="emit('resume')">恢复</v-btn>
-        <v-btn size="small" variant="text" :loading="busyOn('run-now')" @click="emit('run-now')">立即执行一次</v-btn>
-        <v-btn size="small" variant="text" @click="emit('edit')">修改</v-btn>
+        <v-btn v-else size="small" variant="text" :loading="busyOn('resume')" @click="emit('resume')">
+          {{ t('routines.action.resume') }}
+        </v-btn>
+        <v-btn size="small" variant="text" :loading="busyOn('run-now')" @click="emit('run-now')">
+          {{ t('routines.action.runNow') }}
+        </v-btn>
+        <v-btn size="small" variant="text" @click="emit('edit')">{{ t('routines.action.edit') }}</v-btn>
         <v-btn size="small" variant="text" @click="emit('toggle-runs')">
-          {{ open ? '收起记录' : '执行记录' }}
+          {{ open ? t('routines.action.hideRuns') : t('routines.action.showRuns') }}
         </v-btn>
-        <v-btn size="small" variant="text" color="on-surface-variant" @click="emit('delete')">删除</v-btn>
+        <v-btn size="small" variant="text" color="on-surface-variant" @click="emit('delete')">
+          {{ t('routines.action.delete') }}
+        </v-btn>
       </template>
     </div>
     <!-- 别人的规则：一颗按钮都不画，但要说清为什么 —— 一条没有按钮的规则和一条你没
          权限的规则，看起来不该是同一个东西。 -->
-    <p v-else class="t-meta c-faint routine-row__readonly">
-      这条规则由
-      <UserRef
-        :handle="routine.owner_handle"
-        :name="nameOf(routine.owner_handle)"
-        :to="targetOf(routine.owner_handle)"
-        @navigate="emit('navigate', targetOf(routine.owner_handle))"
-      />
-      管，只有他和项目管理员能改
-    </p>
+    <i18n-t v-else keypath="routines.readonly" tag="p" scope="global" class="t-meta c-faint routine-row__readonly">
+      <template #owner>
+        <UserRef
+          :handle="routine.owner_handle"
+          :name="nameOf(routine.owner_handle)"
+          :to="targetOf(routine.owner_handle)"
+          @navigate="emit('navigate', targetOf(routine.owner_handle))"
+        />
+      </template>
+    </i18n-t>
 
     <div v-if="open && !draft" class="routine-runs">
-      <p v-if="!runs.length" class="t-meta c-faint">还没有执行过</p>
+      <p v-if="!runs.length" class="t-meta c-faint">{{ t('routines.neverRun') }}</p>
       <ol v-else class="routine-runs__list">
         <li v-for="run in runs" :key="run.id" class="routine-run">
           <div class="routine-run__head t-meta">
@@ -207,22 +243,22 @@ const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
               variant="tonal"
               :color="run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'error' : undefined"
             >
-              {{ ROUTINE_RUN_LABEL[run.status] }}
+              {{ routineRunLabel(run.status) }}
             </v-chip>
             <span>{{ formatRoutineTime(run.scheduled_for || run.created_at, routine.timezone) }}</span>
             <span v-if="run.finished_at" class="c-faint">
-              结束于 {{ formatRoutineTime(run.finished_at, routine.timezone) }}
+              {{ t('routines.finishedAt', { time: formatRoutineTime(run.finished_at, routine.timezone) }) }}
             </span>
           </div>
           <div class="t-meta c-muted">{{ run.trigger_detail }}</div>
           <div v-if="run.status === 'failed' || run.status === 'skipped'" class="t-body c-danger">
-            {{ run.error || '没有给出原因' }}
+            {{ run.error || t('routines.noReason') }}
           </div>
           <div v-else-if="run.summary" class="t-body">{{ run.summary }}</div>
           <div v-if="run.outputs.length" class="t-meta">
-            结果：
-            <NavLink v-if="roomTo" :to="roomTo">{{ run.outputs.join('、') }}</NavLink>
-            <template v-else>{{ run.outputs.join('、') }}</template>
+            {{ t('routines.outputs') }}
+            <NavLink v-if="roomTo" :to="roomTo">{{ run.outputs.join(t('routines.listSeparator')) }}</NavLink>
+            <template v-else>{{ run.outputs.join(t('routines.listSeparator')) }}</template>
           </div>
         </li>
       </ol>

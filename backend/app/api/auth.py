@@ -37,6 +37,7 @@ from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
@@ -351,9 +352,9 @@ class ActorResolver:
                 raise ForbiddenError("不能查看或操作别人的通知")
             return actor.handle
         if self._bearer:
-            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+            raise AuthenticationRequiredError(say("sessionExpired"))
         if wanted is not None or not allow_anonymous:
-            raise AuthenticationRequiredError("访问个人通知需要先登录")
+            raise AuthenticationRequiredError(say("notificationsSignIn"))
         return "anonymous"
 
     def reject_failed_credential(self, actor: Actor) -> None:
@@ -381,7 +382,7 @@ class ActorResolver:
         what a stale bearer alongside it says.
         """
         if not actor.authenticated and self._bearer:
-            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+            raise AuthenticationRequiredError(say("sessionExpired"))
 
     async def require_verified_caller(
         self, *, project_id: uuid.UUID | None = None, topic_id: uuid.UUID | None = None
@@ -404,7 +405,7 @@ class ActorResolver:
         if actor.authenticated:
             return actor
         if self._bearer:
-            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+            raise AuthenticationRequiredError(say("sessionExpired"))
         if is_global_sandbox_token(self._cheese_token):
             return actor
         raise AuthenticationRequiredError("需要登录或有效的沙箱 token")
@@ -532,7 +533,7 @@ class ActorResolver:
             actor, project_id=project_id, topic_id=topic_id
         ):
             _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
-            raise ForbiddenError("你不是这个话题的成员，无权在此操作")
+            raise ForbiddenError(say("topicMemberOnly"))
 
     async def can_access_topic(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
@@ -644,9 +645,9 @@ class ActorResolver:
         if await self._is_project_member(project_id, actor.handle):
             return
         if await ProjectRepository(self._session).get(project_id) is None:
-            raise NotFoundError("项目不存在")
+            raise NotFoundError(say("projectNotFound"))
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
-        raise ForbiddenError("你不是这个项目的成员，无权查看")
+        raise ForbiddenError(say("projectMemberOnly"))
 
     async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
         """Require a verified caller who may see this 赛题.
@@ -685,7 +686,7 @@ class ActorResolver:
         ).can_view_task(task=task, user_id=user_id):
             return
         _log.info("task_access_denied", handle=actor.handle, task=task_id)
-        raise ForbiddenError("你不是这道赛题的相关人员，无权查看")
+        raise ForbiddenError(say("challengeViewForbidden"))
 
     async def authorize_team(self, actor: Actor, *, team_id: int) -> None:
         """Require a verified member of this team.
@@ -706,7 +707,7 @@ class ActorResolver:
         if await self._is_team_member(team_id, actor.handle):
             return
         _log.info("team_access_denied", handle=actor.handle, team=team_id)
-        raise ForbiddenError("你不是这个团队的成员，无权查看")
+        raise ForbiddenError(say("teamMemberOnly"))
 
     async def _is_team_member(self, team_id: int, handle: str) -> bool:
         """Team membership is keyed by user id while every other authorization

@@ -2,6 +2,7 @@
 import type { MarketPools, PoolListing } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getMarketPools } from '../api'
 import NodeBoard from '../components/NodeBoard.vue'
@@ -10,6 +11,8 @@ import NodeBoard from '../components/NodeBoard.vue'
 //   题目匹配 — Spaces publish 题目 (Task Templates), teams apply with a project.
 //   模型与工作电脑 — the catalog (AI models + work computers) a project can
 //   select from in its 设置. The compute tab also hosts the 节点状态 board.
+const { t } = useI18n()
+
 const tab = ref<'tasks' | 'pools'>('tasks')
 
 const pools = ref<MarketPools | null>(null)
@@ -17,12 +20,13 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 
 const TIER_LABEL: Record<string, string> = {
-  default: '默认 · 包含',
-  included: '包含',
-  testing: '内测',
-  byo: '自带凭证',
-  premium: '增值',
+  default: 'market.tier.default',
+  included: 'market.tier.included',
+  testing: 'market.tier.testing',
+  byo: 'market.tier.byo',
+  premium: 'market.tier.premium',
 }
+const tierLabel = (tier: string) => (TIER_LABEL[tier] ? t(TIER_LABEL[tier]) : tier)
 
 const aiPools = computed<PoolListing[]>(() => pools.value?.ai ?? [])
 const computePools = computed<PoolListing[]>(() => pools.value?.compute ?? [])
@@ -33,7 +37,7 @@ async function load() {
   try {
     pools.value = await getMarketPools()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载市场失败'
+    error.value = e instanceof Error ? e.message : t('market.loadFailed')
   } finally {
     loading.value = false
   }
@@ -43,34 +47,56 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="market-page fill-height overflow-y-auto">
+  <div class="fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 1080px">
       <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
       <div v-if="$vuetify.display.mdAndUp" class="mb-4">
-        <div class="t-eyebrow mb-1">市场</div>
-        <h1 class="t-page-title">匹配与资源</h1>
+        <div class="t-eyebrow mb-1">{{ t('market.eyebrow') }}</div>
+        <h1 class="t-page-title">{{ t('market.title') }}</h1>
       </div>
 
       <v-tabs v-model="tab" density="comfortable" color="primary" class="mb-5">
-        <v-tab value="tasks"> <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>题目匹配 </v-tab>
-        <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>模型与工作电脑 </v-tab>
+        <v-tab value="tasks">
+          <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>{{ t('market.tabs.tasks') }}
+        </v-tab>
+        <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>{{ t('market.tabs.pools') }} </v-tab>
       </v-tabs>
 
       <v-window v-model="tab">
         <!-- 题目匹配: Space 发布的题目 + 团队应征 (spec §13 阶段 6) -->
         <v-window-item value="tasks">
-          <p class="t-body c-muted mb-5" style="max-width: 660px">
-            机构把 <strong>题目</strong> 发布到市场；团队用自己的项目
-            <strong>应征</strong>。应征被接受后，项目自动链接到题目，资源包与条件即刻生效。
-          </p>
+          <i18n-t
+            scope="global"
+            keypath="market.tasksIntro"
+            tag="p"
+            class="t-body c-muted mb-5"
+            style="max-width: 660px"
+          >
+            <template #challenges>
+              <strong>{{ t('market.tasksIntroChallenges') }}</strong>
+            </template>
+            <template #apply>
+              <strong>{{ t('market.tasksIntroApply') }}</strong>
+            </template>
+          </i18n-t>
         </v-window-item>
 
         <!-- 模型与工作电脑: the catalog of AI models and work computers. -->
         <v-window-item value="pools">
-          <p class="t-body c-muted mb-5" style="max-width: 660px">
-            这里列出项目可用的 <strong>AI 模型</strong> 和 <strong>工作电脑</strong>。默认项由平台补贴，开箱即用；
-            接入你自己的设备后，它也会列在这里。
-          </p>
+          <i18n-t
+            scope="global"
+            keypath="market.poolsIntro"
+            tag="p"
+            class="t-body c-muted mb-5"
+            style="max-width: 660px"
+          >
+            <template #models>
+              <strong>{{ t('market.aiModels') }}</strong>
+            </template>
+            <template #computers>
+              <strong>{{ t('market.workComputers') }}</strong>
+            </template>
+          </i18n-t>
 
           <!-- 节点状态: live board of compute nodes (local + cheesed remote),
                self-contained in components/NodeBoard.vue. -->
@@ -87,8 +113,8 @@ onMounted(load)
             <div class="market-group">
               <div class="market-group__head">
                 <v-icon size="20" class="me-2 c-muted">mdi-brain</v-icon>
-                <h2 class="market-group__title">AI 模型</h2>
-                <span class="market-group__hint c-faint">每次对话使用的模型</span>
+                <h2 class="market-group__title">{{ t('market.aiModels') }}</h2>
+                <span class="market-group__hint c-faint">{{ t('market.aiModelsHint') }}</span>
               </div>
               <div class="market-grid">
                 <article
@@ -98,17 +124,17 @@ onMounted(load)
                   :class="{ 'pool-card--soon': !p.available }"
                 >
                   <div class="pool-card__top">
-                    <span class="pool-card__tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
-                    <span v-if="p.default" class="pool-card__default">默认</span>
+                    <span class="pool-card__tier">{{ tierLabel(p.tier) }}</span>
+                    <span v-if="p.default" class="pool-card__default">{{ t('market.default') }}</span>
                   </div>
                   <h3 class="pool-card__title">{{ p.label }}</h3>
                   <div class="pool-card__price">{{ p.price }}</div>
                   <p class="pool-card__desc c-muted">{{ p.description }}</p>
                   <div class="pool-card__foot">
                     <span v-if="p.available" class="pool-card__ok">
-                      <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
+                      <v-icon size="14">mdi-check-circle</v-icon> {{ t('market.available') }}
                     </span>
-                    <span v-else class="pool-card__soon-tag">暂未开通</span>
+                    <span v-else class="pool-card__soon-tag">{{ t('market.unavailable') }}</span>
                   </div>
                 </article>
               </div>
@@ -117,8 +143,8 @@ onMounted(load)
             <div class="market-group">
               <div class="market-group__head">
                 <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
-                <h2 class="market-group__title">工作电脑</h2>
-                <span class="market-group__hint c-faint">运行任务的机器</span>
+                <h2 class="market-group__title">{{ t('market.workComputers') }}</h2>
+                <span class="market-group__hint c-faint">{{ t('market.workComputersHint') }}</span>
               </div>
               <div class="market-grid">
                 <article
@@ -128,17 +154,17 @@ onMounted(load)
                   :class="{ 'pool-card--soon': !p.available }"
                 >
                   <div class="pool-card__top">
-                    <span class="pool-card__tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
-                    <span v-if="p.default" class="pool-card__default">默认</span>
+                    <span class="pool-card__tier">{{ tierLabel(p.tier) }}</span>
+                    <span v-if="p.default" class="pool-card__default">{{ t('market.default') }}</span>
                   </div>
                   <h3 class="pool-card__title">{{ p.label }}</h3>
                   <div class="pool-card__price">{{ p.price }}</div>
                   <p class="pool-card__desc c-muted">{{ p.description }}</p>
                   <div class="pool-card__foot">
                     <span v-if="p.available" class="pool-card__ok">
-                      <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
+                      <v-icon size="14">mdi-check-circle</v-icon> {{ t('market.available') }}
                     </span>
-                    <span v-else class="pool-card__soon-tag">暂未开通</span>
+                    <span v-else class="pool-card__soon-tag">{{ t('market.unavailable') }}</span>
                   </div>
                 </article>
               </div>
@@ -151,9 +177,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.market-page {
-  background: var(--canvas);
-}
 .market-group {
   margin-bottom: 34px;
 }

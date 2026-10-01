@@ -6,6 +6,7 @@ import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
 
+import { t } from '@/i18n'
 import { TasksApi } from '@/network/api/tasks'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
@@ -48,7 +49,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         await joinTaskAsIndividual(formData)
       }
     } catch (error) {
-      toast.error('信息提交失败')
+      toast.error(t('tasks.participation.submitInfoFailed'))
     }
   }
 
@@ -77,12 +78,12 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         teamId
       )
 
-      toast.success('报名已提交，项目已准备好')
+      toast.success(t('tasks.participation.joined'))
       await loadTaskData()
       events.emit('reload-joined-teams')
       await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
-      toast.error('团队领取题目失败')
+      toast.error(t('tasks.participation.teamClaimFailed'))
       console.error('Failed to join task as team:', error)
     }
   }
@@ -93,7 +94,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     try {
       const userId = AccountService.user?.id
       if (!userId) {
-        toast.error('请先登录')
+        toast.error(t('tasks.participation.signInFirst'))
         return
       }
 
@@ -106,11 +107,11 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         remark: undefined,
       })
 
-      toast.success('报名已提交，项目已准备好')
+      toast.success(t('tasks.participation.joined'))
       await loadTaskData()
       await router.push(`/projects/${result.data.project.id}`)
     } catch (error) {
-      toast.error('领取题目失败')
+      toast.error(t('tasks.participation.claimFailed'))
     }
   }
 
@@ -126,8 +127,8 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       } else if (joinedTeams.length === 1) {
         const teamId = joinedTeams[0].id
         const confirmed = await dialogs
-          .confirm(`确定要让团队"${joinedTeams[0].name}"退出该题目吗？`, {
-            title: '确认退出',
+          .confirm(t('tasks.participation.leaveTeamConfirm', { name: joinedTeams[0].name }), {
+            title: t('tasks.participation.leaveConfirmTitle'),
           })
           .wait()
 
@@ -135,12 +136,12 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
           await leaveTaskWithTeam(teamId)
         }
       } else {
-        toast.info('您没有代表团队参与此题目')
+        toast.info(t('tasks.participation.noTeamJoined'))
       }
     } else {
       const confirmed = await dialogs
-        .confirm('确定要退出该题目吗？', {
-          title: '确认退出',
+        .confirm(t('tasks.participation.leaveConfirm'), {
+          title: t('tasks.participation.leaveConfirmTitle'),
         })
         .wait()
 
@@ -159,10 +160,10 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
     try {
       await TasksApi.removeParticipantByMemberId(taskData.value.id, userId)
-      toast.success('退出题目成功')
+      toast.success(t('tasks.participation.left'))
       await loadTaskData()
     } catch (error) {
-      toast.error('退出题目失败')
+      toast.error(t('tasks.participation.leaveFailed'))
     }
   }
 
@@ -172,10 +173,10 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
     try {
       await TasksApi.removeParticipantByMemberId(taskData.value.id, teamId)
-      toast.success('团队已退出题目')
+      toast.success(t('tasks.participation.teamLeft'))
       await loadTaskData()
     } catch (error) {
-      toast.error('退出题目失败')
+      toast.error(t('tasks.participation.leaveFailed'))
       console.error('Failed to leave task:', error)
     }
   }

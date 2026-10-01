@@ -6,6 +6,7 @@ import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
 
+import { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 
 export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskData>) {
@@ -76,13 +77,13 @@ export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskDa
   // 获取团队验证状态
   const getTeamVerificationStatus = (team: TeamSummary): { status: string; color: string } => {
     if (!taskData.value?.requireRealName) {
-      return { status: '可参与', color: 'success' }
+      return { status: t('tasks.teamStatus.eligible'), color: 'success' }
     }
 
     if (team.allMembersVerified) {
-      return { status: '全部已认证', color: 'success' }
+      return { status: t('tasks.teamStatus.allVerified'), color: 'success' }
     } else {
-      return { status: '未全部认证', color: 'error' }
+      return { status: t('tasks.teamStatus.notAllVerified'), color: 'error' }
     }
   }
 
@@ -103,12 +104,12 @@ export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskDa
       updateTeamsFromTaskData()
 
       if (eligibleTeams.value.length === 0) {
-        toast.info('您没有符合条件的团队可以参与此题目')
+        toast.info(t('tasks.participation.noEligibleTeams'))
       }
 
       teamSelectionDialogOpen.value = true
     } catch (error) {
-      toast.error('获取团队信息失败')
+      toast.error(t('tasks.participation.loadTeamsFailed'))
       console.error('Failed to process teams:', error)
     } finally {
       loadingTeams.value = false
@@ -146,8 +147,8 @@ export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskDa
     const teamName = joinedTeams.value.find((team) => team.id === selectedLeaveTeamId.value)?.name
 
     const confirmed = await dialogs
-      .confirm(`确定要让团队"${teamName}"退出该题目吗？`, {
-        title: '确认退出',
+      .confirm(t('tasks.participation.leaveTeamConfirm', { name: teamName }), {
+        title: t('tasks.participation.leaveConfirmTitle'),
       })
       .wait()
 

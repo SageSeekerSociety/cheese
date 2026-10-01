@@ -5,10 +5,12 @@
 // 也算一次。这和 `lib/navTarget.ts`（`RouteLocationRaw` 只在那里 import 一次）是同一套
 // 做法：画的那一半认这个形状，取数的那一半（`api/routines.ts`）把它原样递给后端。
 //
-// 措辞（状态怎么叫、频率有哪几个、星期几写「周一」）也在这里：一条规则在项目总览页
-// 和房间右侧那一格里是同一个样子，改一个字只改这一处。
+// 措辞（状态怎么叫、频率有哪几个、星期几写「周一」）也只有一个出处：i18n 目录里的
+// `routines` 命名空间，这里的几个函数只是把 key 摆成调用方要的形状。改一个字只改目录。
 
 import type { NavTarget } from './navTarget'
+
+import { t } from '@/i18n'
 
 /** 一条规则。字段和后端 `GET /routines/{id}` 一一对应。 */
 export interface Routine {
@@ -76,35 +78,26 @@ export function routineRoomTarget(r: Pick<Routine, 'project_id' | 'topic_id'>): 
   return { name: 'workspace-topic', params: { projectId: r.project_id, topicId: r.topic_id } }
 }
 
-export const ROUTINE_STATE_LABEL: Record<RoutineState, string> = {
-  draft: '待确认',
-  active: '执行中',
-  paused: '已暂停',
+export function routineStateLabel(s: RoutineState): string {
+  return t(`routines.state.${s}`)
 }
 
-export const ROUTINE_RUN_LABEL: Record<RoutineRunStatus, string> = {
-  queued: '排队中',
-  running: '执行中',
-  succeeded: '已完成',
-  failed: '失败',
-  skipped: '未执行',
+export function routineRunLabel(s: RoutineRunStatus): string {
+  return t(`routines.run.${s}`)
 }
 
-export const ROUTINE_TRIGGERS: { value: RoutineTrigger; title: string }[] = [
-  { value: 'schedule', title: '按时间' },
-  { value: 'library_file_added', title: '资料库新增文件时' },
-  { value: 'task_closed', title: '任务完成时' },
-  { value: 'card_accepted', title: '成果被采纳时' },
-]
+export function routineTriggers(): { value: RoutineTrigger; title: string }[] {
+  const values: RoutineTrigger[] = ['schedule', 'library_file_added', 'task_closed', 'card_accepted']
+  return values.map((v) => ({ value: v, title: t(`routines.trigger.${v}`) }))
+}
 
-export const ROUTINE_FREQS = [
-  { value: 'daily', title: '每天' },
-  { value: 'weekly', title: '每周' },
-  { value: 'monthly', title: '每月' },
-  { value: 'hourly', title: '每小时' },
-]
+export function routineFreqs(): { value: string; title: string }[] {
+  return ['daily', 'weekly', 'monthly', 'hourly'].map((v) => ({ value: v, title: t(`routines.freq.${v}`) }))
+}
 
-export const ROUTINE_WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+export function routineWeekdays(): string[] {
+  return ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => t(`routines.weekday.${d}`))
+}
 
 /**
  * 一个时刻，按规则自己的时区写。

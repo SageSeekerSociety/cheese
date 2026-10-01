@@ -12,7 +12,8 @@ import type { Routine, RoutineInput, RoutineTrigger } from '@/lib/routine'
 import { reactive, ref, watch } from 'vue'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import { ROUTINE_FREQS, ROUTINE_TRIGGERS, ROUTINE_WEEKDAYS } from '@/lib/routine'
+import { t } from '@/i18n'
+import { routineFreqs, routineTriggers, routineWeekdays } from '@/lib/routine'
 
 const props = withDefaults(
   defineProps<{
@@ -52,7 +53,7 @@ const form = reactive({
 })
 
 const editing = ref<Routine | null>(null)
-const title = ref('新建规则')
+const title = ref('')
 
 // 打开的那一下把表单铺成这一条的样子。关上的这一下不动它：收起动画还在画刚才那张，
 // 半路清空会闪一下。
@@ -62,7 +63,7 @@ watch(
     if (!open) return
     const r = props.routine
     editing.value = r
-    title.value = r ? `修改「${r.title}」` : '新建规则'
+    title.value = r ? t('routines.editTitle', { title: r.title }) : t('routines.newTitle')
     const spec = (r?.spec ?? {}) as Record<string, unknown>
     Object.assign(form, {
       room: r?.topic_id || props.defaultRoom || props.rooms[0]?.id || '',
@@ -112,7 +113,7 @@ function submit() {
   <AdaptiveDialog
     :model-value="modelValue"
     :title="title"
-    primary-label="保存"
+    :primary-label="t('routines.save')"
     :primary-loading="saving"
     :max-width="560"
     @update:model-value="emit('update:modelValue', $event)"
@@ -126,37 +127,53 @@ function submit() {
         :items="rooms"
         item-title="title"
         item-value="id"
-        label="在哪个房间执行"
-        hint="执行者是这个房间里的 AI 队友，结果也放在这个房间"
+        :label="t('routines.form.room')"
+        :hint="t('routines.form.roomHint')"
         persistent-hint
         class="mb-3"
       />
-      <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：每周项目进展" />
+      <v-text-field
+        v-model="form.title"
+        autocomplete="off"
+        :label="t('routines.form.name')"
+        :placeholder="t('routines.form.namePlaceholder')"
+      />
       <v-textarea
         v-model="form.instructions"
         autocomplete="off"
-        label="要做的工作"
+        :label="t('routines.form.instructions')"
         rows="3"
         auto-grow
-        placeholder="例如：汇总本周各房间完成的任务、进行中的事和阻碍，写成一页周报"
+        :placeholder="t('routines.form.instructionsPlaceholder')"
       />
       <v-text-field
         v-model="form.context_scope"
         autocomplete="off"
-        label="使用哪些资料"
-        placeholder="例如：本项目所有房间的任务和决策；只用资料库里的文件"
+        :label="t('routines.form.context')"
+        :placeholder="t('routines.form.contextPlaceholder')"
       />
       <v-text-field
         v-model="form.output_dir"
         autocomplete="off"
-        label="结果放在房间的哪个目录"
-        placeholder="例如：周报"
+        :label="t('routines.form.outputDir')"
+        :placeholder="t('routines.form.outputDirPlaceholder')"
       />
-      <v-select v-model="form.trigger" autocomplete="off" :items="ROUTINE_TRIGGERS" label="什么时候开工" />
+      <v-select
+        v-model="form.trigger"
+        autocomplete="off"
+        :items="routineTriggers()"
+        :label="t('routines.form.trigger')"
+      />
       <template v-if="form.trigger === 'schedule'">
         <div class="routine-form__row">
-          <v-select v-model="form.freq" autocomplete="off" :items="ROUTINE_FREQS" label="频率" />
-          <v-text-field v-if="form.freq !== 'hourly'" v-model="form.time" autocomplete="off" type="time" label="时间" />
+          <v-select v-model="form.freq" autocomplete="off" :items="routineFreqs()" :label="t('routines.form.freq')" />
+          <v-text-field
+            v-if="form.freq !== 'hourly'"
+            v-model="form.time"
+            autocomplete="off"
+            type="time"
+            :label="t('routines.form.time')"
+          />
           <v-text-field
             v-else
             v-model.number="form.minute"
@@ -164,7 +181,7 @@ function submit() {
             type="number"
             min="0"
             max="59"
-            label="第几分钟"
+            :label="t('routines.form.minute')"
           />
           <v-text-field
             v-if="form.freq === 'monthly'"
@@ -173,28 +190,25 @@ function submit() {
             type="number"
             min="1"
             max="31"
-            label="几号"
+            :label="t('routines.form.day')"
           />
         </div>
         <v-chip-group v-if="form.freq === 'weekly'" v-model="form.weekdays" multiple column class="mb-2">
-          <v-chip v-for="(d, i) in ROUTINE_WEEKDAYS" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
+          <v-chip v-for="(d, i) in routineWeekdays()" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
         </v-chip-group>
-        <v-text-field v-model="form.timezone" autocomplete="off" label="时区" />
+        <v-text-field v-model="form.timezone" autocomplete="off" :label="t('routines.form.timezone')" />
       </template>
       <v-select
         v-else-if="form.trigger !== 'library_file_added'"
         v-model="form.scope"
         autocomplete="off"
         :items="[
-          { value: 'room', title: '只看这个房间' },
-          { value: 'project', title: '整个项目' },
+          { value: 'room', title: t('routines.form.scopeRoom') },
+          { value: 'project', title: t('routines.form.scopeProject') },
         ]"
-        label="范围"
+        :label="t('routines.form.scope')"
       />
-      <p class="t-meta c-faint">
-        AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
-        两小时内没开始会记为失败并通知你
-      </p>
+      <p class="t-meta c-faint">{{ t('routines.form.machineNote') }}</p>
       <p v-if="error" role="alert" class="t-body c-danger mt-2">{{ error }}</p>
     </template>
   </AdaptiveDialog>

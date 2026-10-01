@@ -169,9 +169,10 @@ async def call(
         ) from exc
     except TimeoutError as exc:
         # A device that holds a link but never answers. ``device_hub.exec``
-        # waits ``timeout + 5`` on the reply future and then raises; unclaimed,
-        # that reached the catch-all handler, which answers 500「服务器内部
-        # 错误」 — a fault in THIS process, which is the one thing it was not.
+        # waits ``timeout + EXEC_REPLY_SLACK_S`` on the reply future and then
+        # raises; unclaimed, that reached the catch-all handler, which answers
+        # 500「服务器内部错误」 — a fault in THIS process, which is the one
+        # thing it was not.
         # The caller then reported the device's silence under its own name
         # instead: `cleanup device inventory failed device=a3dc2940aee2` with a
         # bare `Server error '500'`, three times in 90 minutes on 2026-09-16.

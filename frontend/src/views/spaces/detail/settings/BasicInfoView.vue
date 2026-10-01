@@ -1,56 +1,105 @@
 <template>
-  <v-form class="basic-info" @submit.prevent="submit">
-    <div class="basic-info__avatar">
-      <avatar-uploader v-model="selectedAvatar" :src="getAvatarUrl(space?.avatarId)" />
+  <form class="settings-card" novalidate @submit.prevent="submit">
+    <div class="srow srow--field">
+      <span class="srow__k">{{ t('spaces.settings.basic.avatar') }}</span>
+      <div class="avatar-field">
+        <img
+          v-if="avatarPreview && !avatarBroken"
+          class="avatar-field__img"
+          :src="avatarPreview"
+          alt=""
+          @error="avatarBroken = true"
+        />
+        <span v-else class="avatar-field__img avatar-field__img--empty" aria-hidden="true">
+          <v-icon size="24">mdi-image-outline</v-icon>
+        </span>
+        <v-btn variant="outlined" color="on-surface" @click="avatarInput?.click()">
+          {{ t('spaces.settings.basic.changeAvatar') }}
+        </v-btn>
+        <input
+          ref="avatarInput"
+          class="avatar-field__input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          @change="onAvatarPicked"
+        />
+      </div>
     </div>
 
-    <div class="basic-info__fields">
-      <v-text-field v-model="name" autocomplete="off" :label="t('spaces.settings.basic.name')" v-bind="nameProps" />
+    <div class="srow srow--field">
+      <label class="srow__k" for="space-name">{{ t('spaces.settings.basic.name') }}</label>
+      <v-text-field
+        id="space-name"
+        v-model="name"
+        autocomplete="off"
+        variant="outlined"
+        density="compact"
+        hide-details="auto"
+        v-bind="nameProps"
+      />
+    </div>
+
+    <div class="srow srow--field">
+      <label class="srow__k" for="space-intro">{{ t('spaces.settings.basic.intro') }}</label>
       <v-textarea
+        id="space-intro"
         v-model="intro"
         autocomplete="off"
+        variant="outlined"
+        density="compact"
         rows="3"
         auto-grow
         :counter="255"
-        :label="t('spaces.settings.basic.intro')"
+        persistent-counter
         v-bind="introProps"
       />
+    </div>
 
-      <template v-if="isManager">
-        <div class="basic-info__label t-body">{{ t('spaces.settings.basic.visibleLimit') }}</div>
-        <v-radio-group v-model="visibleLimitMode" inline hide-details class="mb-2">
+    <div v-if="isManager" class="srow srow--field">
+      <span class="srow__k srow__k--stack">
+        {{ t('spaces.settings.basic.visibleLimitLabel') }}
+        <small class="field-note">{{ t('spaces.settings.basic.visibleLimit') }}</small>
+      </span>
+      <div class="limit-field">
+        <v-radio-group v-model="visibleLimitMode" inline hide-details density="compact">
           <v-radio :label="t('spaces.settings.basic.visibleLimitUnlimited')" value="unlimited" />
           <v-radio :label="t('spaces.settings.basic.visibleLimitLimited')" value="limited" />
         </v-radio-group>
         <v-text-field
+          v-if="visibleLimitMode === 'limited'"
           v-model="visibleTaskLimitInput"
+          class="limit-field__input"
           type="number"
           min="0"
           step="1"
-          :label="t('spaces.settings.basic.visibleLimitInput')"
-          density="compact"
           variant="outlined"
-          :disabled="visibleLimitMode === 'unlimited'"
+          density="compact"
+          hide-details="auto"
+          :aria-label="t('spaces.settings.basic.visibleLimitInput')"
           :error-messages="visibleTaskLimitError"
         />
-      </template>
-
-      <div class="basic-info__actions">
-        <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
-          {{ t('spaces.settings.basic.save') }}
-        </v-btn>
       </div>
     </div>
-  </v-form>
+
+    <div class="settings-foot">
+      <v-btn color="primary" variant="flat" :loading="saving" @click="submit">
+        {{ t('spaces.settings.basic.save') }}
+      </v-btn>
+    </div>
+  </form>
 
   <!-- 危险区只对创建者可见：后端 delete_space 走的是 allow_admin=False 那道闸，
        管理员点下去只会拿到 403，摆一颗必然失败的按钮比不摆更糟。 -->
-  <section v-if="isOwner" class="basic-info__danger">
-    <h3 class="t-title c-danger">{{ t('spaces.detail.dangerZone') }}</h3>
-    <p class="t-body c-muted mt-2 mb-4">{{ t('spaces.detail.deleteSpaceHint') }}</p>
-    <v-btn color="error" variant="flat" :loading="deleting" @click="emit('delete')">
-      {{ t('spaces.detail.deleteSpace') }}
-    </v-btn>
+  <section v-if="isOwner" class="settings-card danger">
+    <div class="srow">
+      <div class="danger__text">
+        <span class="srow__k">{{ t('spaces.detail.deleteSpace') }}</span>
+        <span class="field-note">{{ t('spaces.detail.deleteSpaceHint') }}</span>
+      </div>
+      <v-btn variant="outlined" color="error" :loading="deleting" @click="emit('delete')">
+        {{ t('spaces.detail.deleteSpace') }}
+      </v-btn>
+    </div>
   </section>
 </template>
 
@@ -59,7 +108,7 @@
 // `BasicInfo.vue` 把空间递进来，接住「保存」「删除」两件事去办。
 import type { Space } from '@/types'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
@@ -67,8 +116,6 @@ import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
 import { getAvatarUrl } from '@/utils/materials'
-
-import AvatarUploader from '@/components/common/AvatarUploader.vue'
 
 export interface BasicInfoChange {
   name: string
@@ -105,6 +152,26 @@ const { handleSubmit, defineField, resetForm } = useForm({
 const [name, nameProps] = defineField('name', vuetifyConfig)
 const [intro, introProps] = defineField('intro', vuetifyConfig)
 const selectedAvatar = ref<File>()
+const avatarInput = ref<HTMLInputElement | null>(null)
+const pickedPreview = ref<string>()
+/** 头像地址读不出图时画占位，不画一个破图标。 */
+const avatarBroken = ref(false)
+
+/** 选了新头像先预览，保存时随表单一起交上去。 */
+const avatarPreview = computed(
+  () => pickedPreview.value ?? (props.space?.avatarId ? getAvatarUrl(props.space.avatarId) : '')
+)
+
+function onAvatarPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (pickedPreview.value) URL.revokeObjectURL(pickedPreview.value)
+  selectedAvatar.value = file
+  pickedPreview.value = URL.createObjectURL(file)
+  avatarBroken.value = false
+}
 const visibleLimitMode = ref<'limited' | 'unlimited'>('unlimited')
 const visibleTaskLimitInput = ref<string | number>('0')
 const visibleTaskLimitError = ref('')
@@ -118,6 +185,8 @@ watch(
     visibleTaskLimitInput.value = String(value?.visibleTaskLimit ?? 0)
     visibleTaskLimitError.value = ''
     selectedAvatar.value = undefined
+    if (pickedPreview.value) URL.revokeObjectURL(pickedPreview.value)
+    pickedPreview.value = undefined
   },
   { immediate: true }
 )
@@ -151,44 +220,103 @@ const submit = handleSubmit((data) => {
 })
 </script>
 
+<style scoped src="@/styles/settings-card.css"></style>
+
 <style scoped>
-.basic-info {
+.settings-card + .settings-card {
+  margin-top: 24px;
+}
+
+/* 装控件的一行：标签对着控件的第一行。和个人设置同一种写法。 */
+.srow--field {
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  padding: 20px 24px;
+}
+
+.srow--field > .srow__k {
+  padding-top: 10px;
+}
+
+.srow__k--stack {
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.field-note {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.avatar-field {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.avatar-field__img {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
+.avatar-field__img--empty {
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  background: var(--fill-2);
+}
+
+.avatar-field__input {
+  display: none;
+}
+
+.limit-field {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  gap: 8px 16px;
+  align-items: center;
+  padding-top: 2px;
 }
 
-.basic-info__avatar {
-  width: 160px;
+.limit-field__input {
+  max-width: 140px;
 }
 
-.basic-info__fields {
+.settings-foot {
   display: flex;
-  flex: 1 1 320px;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.danger .srow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 16px 24px;
+}
+
+.danger__text {
+  display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
   min-width: 0;
 }
 
-.basic-info__label {
-  color: var(--text);
-}
+@media (max-width: 599.98px) {
+  .srow--field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 16px;
+  }
 
-.basic-info__actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* 危险区：红框红底，一眼看出这里跟上面那张表不是同一类操作 */
-.basic-info__danger {
-  margin-top: 24px;
-  padding: 16px;
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-md);
-  background: var(--danger-wash);
+  .srow--field > .srow__k {
+    padding-top: 0;
+  }
 }
 </style>

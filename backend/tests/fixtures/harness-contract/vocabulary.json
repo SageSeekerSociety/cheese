@@ -59,8 +59,8 @@
     }
   },
   "differences": {
-    "no-subagent-threads": "This harness runs no second worker inside a session, so nothing can be attributed to one.",
     "no-subagent-tool-return": "This harness reports that a subagent stopped, but never what it handed back as a tool return.",
+    "refusal-in-provider-words": "This harness words a refused model request as the provider answered it (`401: {...}`), not in Claude Code's own line; the turn still ends once, in failure, with the HTTP status on the result.",
     "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
   }
 }

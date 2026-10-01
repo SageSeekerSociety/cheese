@@ -20,7 +20,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.space.models import SpaceCategory
 from app.domain.task import teaching as teaching_context
 from app.domain.task.models import Task
-from tests.conftest import seed_task_with_protocol
+from tests.conftest import seed_claim, seed_task_with_protocol
 from tests.integration.conftest import post_project
 
 OWNER = "owner-1"
@@ -35,6 +35,7 @@ WEEK_THREE = {
 def _project(client, *, external_task_id: int | None = None, name: str = "团队") -> int:
     body: dict = {"name": name, "owner_handle": OWNER}
     if external_task_id is not None:
+        seed_claim(client, external_task_id, handle=OWNER)
         body["external_task_id"] = external_task_id
     return post_project(client, json=body).json()["data"]["id"]
 

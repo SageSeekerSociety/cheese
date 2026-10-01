@@ -14,6 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import i18n, { setLocale } from '@/i18n'
 import { loadComposerDraft, saveComposerDraft } from '@/lib/composerDrafts'
 
 const Panel = ChatPanel as unknown as Component
@@ -62,6 +63,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   history = []
   vi.stubGlobal(
     'WebSocket',
@@ -92,7 +95,7 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
   it('切走再回来，草稿还在；切到别的话题，输入框是空的', async () => {
     const { container, rerender } = render(Panel, {
       props: { topic: topicOf('draft-a'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -112,7 +115,7 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     history = [msg('m1', 'other', daysAgo(0), '这条被回复')]
     const { container, rerender } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -145,7 +148,7 @@ describe('刷新之后草稿还在', () => {
 
     const { container } = render(Panel, {
       props: { topic: topicOf('from-disk'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -155,7 +158,7 @@ describe('刷新之后草稿还在', () => {
   it('边打边存：不必等切话题/卸载，输入本身就落盘', async () => {
     const { container } = render(Panel, {
       props: { topic: topicOf('live-save'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -168,7 +171,7 @@ describe('刷新之后草稿还在', () => {
   it('没送出去的消息**不**落盘——它会在下次打开时被自动发出去', async () => {
     const { container } = render(Panel, {
       props: { topic: topicOf('out-persist'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -186,7 +189,7 @@ describe('刷新之后草稿还在', () => {
   it('发出去了就把落盘的那份也删掉', async () => {
     const { container } = render(Panel, {
       props: { topic: topicOf('sent-away'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -207,7 +210,7 @@ describe('发出去的消息立刻显示，没送到能重试', () => {
   it('socket 没开也能打字、也能发——消息进队列，屏幕上立刻有', async () => {
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
 
@@ -231,7 +234,7 @@ describe('发出去的消息立刻显示，没送到能重试', () => {
   it('待发的消息属于它被打出来的那个话题，不跟着你换房间', async () => {
     const { container, rerender } = render(Panel, {
       props: { topic: topicOf('out-a'), showComposer: true },
-      global: { plugins: [vuetify] },
+      global: { plugins: [vuetify, i18n] },
     })
     await settle()
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement

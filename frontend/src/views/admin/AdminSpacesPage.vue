@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { getAvatarUrl } from '@/utils/materials'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -41,8 +42,10 @@ const { t } = useI18n()
 const status = ref('PENDING')
 const items = ref<SpaceApplication[]>([])
 const loading = ref(false)
-/** 读这一页失败。它说的是「这一页没读到」，所以画在列表自己的位置上（不是页顶横幅）。 */
-const loadError = ref('')
+/** 读这一页失败时是**服务端原话**（原话取不到就空串）；`null` 表示没失败。
+ *  它说的是「这一页没读到」，所以画在列表自己的位置上（不是页顶横幅）。
+ *  失败与否和原话是两件事：原话为空时仍要给出错态，不能落进「暂无申请」那个空态。 */
+const loadError = ref<string | null>(null)
 /** 通过 / 驳回失败。和读失败分开：重试的不是同一件事。 */
 const writeError = ref('')
 const offset = ref(0)
@@ -59,14 +62,15 @@ const statusOptions = computed(() => [
 
 async function load() {
   loading.value = true
-  loadError.value = ''
+  loadError.value = null
   try {
     // 多要一条：见文件开头第 5 条。多的那一条只决定下一页按钮亮不亮。
     const { items: rows } = (await SpacesApi.reviews(status.value, offset.value, PAGE + 1)).data
     hasMore.value = rows.length > PAGE
     items.value = hasMore.value ? rows.slice(0, PAGE) : rows
-  } catch {
-    loadError.value = t('spaces.review.loadFailed')
+  } catch (e) {
+    // 原话存下来作说明行，不用「加载失败，请重试。」这种固定话把原因吞掉。
+    loadError.value = e instanceof Error && e.message ? e.message : ''
     items.value = []
     hasMore.value = false
   } finally {
@@ -132,8 +136,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="asp">
-    <div class="asp__inner">
+  <div class="asp admin-page">
+    <div class="asp__inner admin-page__col page-container--admin">
       <AdminPageHeader :title="t('spaces.review.title')" :sub="t('spaces.review.adminHelp')">
         <template #tools>
           <v-btn
@@ -155,29 +159,27 @@ onMounted(load)
         />
       </AdminPageHeader>
 
-      <div class="asp__body">
+      <div class="asp__body admin-page__body">
         <!-- 通过 / 驳回失败：一条 token 画的横条。驳回框开着时这一句在框里说
              （见下面的对话框），读的人不会去页面上找。 -->
-        <div v-if="writeError && !selected" class="asp__flash asp__flash--bad" role="alert">
-          <v-icon icon="mdi-alert-circle-outline" size="16" class="asp__flashIcon" />
-          <span class="asp__flashText">{{ writeError }}</span>
-          <button
-            type="button"
-            class="asp__flashClose"
-            :aria-label="t('spaces.review.dismiss')"
-            @click="writeError = ''"
-          >
-            <v-icon icon="mdi-close" size="14" />
-          </button>
-        </div>
+        <AdminFlash
+          v-if="writeError && !selected"
+          tone="error"
+          :text="writeError"
+          :dismiss-aria="t('spaces.review.dismiss')"
+          @dismiss="writeError = ''"
+        />
 
         <div class="asp__panel">
-          <!-- 读失败：一句话说清、重试就在旁边；**不**画成「暂无申请」。 -->
+          <!-- 读失败：中性标题说清是哪一页，服务端原话作说明行，重试就在旁边；**不**画成
+               「暂无申请」。判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，
+               仍要给出错态。 -->
           <AdminEmptyState
-            v-if="loadError"
+            v-if="loadError !== null"
             compact
             tone="error"
-            :title="loadError"
+            :title="t('spaces.review.loadFailed')"
+            :desc="loadError || undefined"
             :action="t('spaces.review.retry')"
             @action="load"
           />
@@ -194,7 +196,12 @@ onMounted(load)
                 <div class="asp__head">
                   <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。 -->
                   <span class="asp__pfp" aria-hidden="true">
-                    <UserAvatar :name="item.owner ?? item.name" :avatar="avatarUrl(item.avatarId)" :size="22" />
+                    <UserAvatar
+                      :name="item.owner ?? item.name"
+                      :avatar="avatarUrl(item.avatarId)"
+                      :size="22"
+                      kind="org"
+                    />
                   </span>
                   <span class="asp__name" :title="item.name">{{ item.name }}</span>
                   <span v-if="item.reviewStatus !== 'PENDING'" class="asp__chip">
@@ -252,10 +259,7 @@ onMounted(load)
         <v-card-title class="t-dialog-title px-4 pt-4 pb-2">{{ t('spaces.review.reject') }}</v-card-title>
         <v-card-text class="px-4">
           <p class="asp__who t-body">{{ selected?.name }}</p>
-          <div v-if="writeError" class="asp__flash asp__flash--bad" role="alert">
-            <v-icon icon="mdi-alert-circle-outline" size="16" class="asp__flashIcon" />
-            <span class="asp__flashText">{{ writeError }}</span>
-          </div>
+          <AdminFlash v-if="writeError" tone="error" :text="writeError" />
           <v-textarea
             v-model="reason"
             autocomplete="off"
@@ -285,82 +289,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 三段式和队列页同一套：页头（`AdminPageHeader`）自带内边距与底下那条发丝线，
-   内容区接着往下排；宽度锁 `--page-w-admin` 并居中（左边距不给具体的值，是靠
-   `margin: 0 auto` 均分 —— 靠左会让不同视口下列宽差出一截）。 */
-.asp {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  background: var(--canvas);
-}
-
-.asp__inner {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--page-w-admin);
-  margin: 0 auto;
-}
-
-.asp__body {
-  display: flex;
-  flex-direction: column;
-  padding: 16px 24px 24px;
-}
-
-/* 一条横条（写失败）。**不是 `v-alert`**：那套默认样（大圆角、实色底、整块染色）
-   在这一页旁边像另一个产品。这里只留一条：左侧一道 3px 的色标说这是哪一类。 */
-.asp__flash {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left-width: 3px;
-  border-radius: var(--radius-md);
-}
-
-.asp__flash--bad {
-  border-left-color: var(--danger);
-}
-
-.asp__flash--bad .asp__flashIcon {
-  color: var(--danger);
-}
-
-.asp__flashText {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.asp__flashClose {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.asp__flashClose:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-
 /* 列表是一张卡：外描边 + 圆角，行与行之间是发丝线。`overflow: hidden` 让首末两行
    自己不去画圆角（这里没有 sticky 表头，不存在 `AdminGrid` 那条坑）。 */
 .asp__panel {
@@ -407,12 +335,16 @@ onMounted(load)
   background: var(--fill-2);
 }
 
+/* 正文块。`overflow-wrap: anywhere` 是继承的，作用是让长中文和**无空格文本**也能断
+   行——否则一串没断点的字会把 min-content 顶到整句那么宽，父级的 fit-content 宽就跟着
+   被顶开（下面窄屏那一处的裁切就是这么来的）。 */
 .asp__main {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .asp__head {
@@ -502,7 +434,13 @@ onMounted(load)
 }
 
 /* 手机：一行里的两个按钮会把正文挤到一百多像素。动作挪到正文下面，仍然是这一行的
-   动作（不与别的行混）。 */
+   动作（不与别的行混）。
+
+   横轴在这里要重定一次：改成 `flex-direction: column` 之后 cross 轴变成水平，而上面那条
+   `align-items: flex-start` 还在，于是正文块只拿 fit-content 宽；标题又是 `nowrap`，
+   把那个宽度顶成整句那么宽，长卡的标题和说明整段从右边被 `.asp__list` 的
+   `overflow: hidden` 裁掉，连省略号都看不到。改成 stretch 让正文跟着行宽走，标题在
+   窄屏换行（要的是读得全，不是省略号）。行内动作和功能不动。 */
 @media (max-width: 700px) {
   .asp__body {
     padding: 12px 16px 16px;
@@ -510,7 +448,12 @@ onMounted(load)
 
   .asp__row {
     flex-direction: column;
+    align-items: stretch;
     gap: 8px;
+  }
+
+  .asp__name {
+    white-space: normal;
   }
 
   .asp__actions {

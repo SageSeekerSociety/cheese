@@ -203,7 +203,9 @@ jobs:
           # owns, so it neither depends on nor waits for the system's apt state.
           apt_state="$HOME/.cache/cheese-ci/apt-state"
           own_lists=(-o Dir::State::lists="$apt_state/lists" -o Dir::Cache="$apt_state/cache"
-            -o Acquire::GzipIndexes=true -o Acquire::Languages=none)
+            -o Acquire::GzipIndexes=true -o Acquire::Languages=none
+            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3
+            -o APT::Update::Error-Mode=any)
           mkdir -p "$apt_state/lists/partial" "$apt_state/cache/archives/partial" tmp/remote-execution/deps
           exec 9>"$apt_state/.lock"
           flock 9

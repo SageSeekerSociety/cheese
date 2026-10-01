@@ -1,20 +1,21 @@
 <script setup lang="ts">
-// 文档底部的常驻评论区（飞书 docs 风）：所有评论都在这儿，锚在某一段的带一颗引用
-// chip，点它回到那一段；页级评论平铺。
-//
-// 它从 PanelDoc 里搬出来，是因为规则 5 之后它自足了：写评论的输入框长在这里，发和
-// 收都在这里，外面只需要知道「有人点了某一段」和「刚发了一条」。评论的**拉取**仍
-// 归宿主 —— 同一次请求还要喂编辑器里的下划线装饰，拆开会变成两次请求两份真相。
+// Paragraph quote chips locate their document node; whole-document comments have no anchor.
+// The host fetches comments once for this list and the editor's underline decorations.
+import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { Block } from '../../../cx_types'
 
 import { nextTick, ref } from 'vue'
 
-import { addComment } from '../../../api'
+import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
+import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
-import { myHandle } from '../../../me'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string | null
+  author?: string
+  sendComment?: SendDocComment
   comments: Block[]
   /** The doc's paragraphs, so an anchored comment can name the one it points at. */
   anchorNodes: Block[]
@@ -27,7 +28,21 @@ const emit = defineEmits<{
   (e: 'posted'): void
 }>()
 
-const AUTHOR = myHandle()
+const {
+  draft,
+  text,
+  sending,
+  errorMsg,
+  open: openDraft,
+  cancel,
+  submit,
+} = useDocCommentDraft(
+  () => props.topicId,
+  () => props.author ?? '',
+  (...args) =>
+    props.sendComment ? props.sendComment(...args) : Promise.reject(new Error(t('work.room.comments.postFailed'))),
+  () => emit('posted')
+)
 
 // 页级评论折叠态 (Feishu-style, collapsed head keeps the doc quiet).
 const folded = ref(false)
@@ -36,8 +51,8 @@ const folded = ref(false)
 // has no quoted span. The node's own content is either AI- or human-authored
 // text; we only ever truncate it for display (never to derive semantics).
 function nodeLabel(content: string): string {
-  const t = content.replace(/^#+\s*/, '').trim()
-  return t.length > 22 ? t.slice(0, 22) + '…' : t || '（空段落）'
+  const label = content.replace(/^#+\s*/, '').trim()
+  return label.length > 22 ? label.slice(0, 22) + '…' : label || t('work.room.comments.emptyParagraph')
 }
 /** The paragraph a comment points at (or null for a whole-doc comment). */
 function commentAnchor(c: Block): Block | null {
@@ -47,50 +62,22 @@ function commentAnchor(c: Block): Block | null {
 // ---- 写评论 ----
 // 批注归批注，聊天归聊天: this input used to be the workspace's shared chat box,
 // silently retargeted by selecting text. It lives where the comments are now.
-const draft = ref<{ anchorId: string | null; quote: string } | null>(null)
-const text = ref('')
-const sending = ref(false)
-const errorMsg = ref<string | null>(null)
 const input = ref<{ focus?: () => void } | null>(null)
 
 function open(target: { anchorId: string | null; quote: string }) {
   folded.value = false
-  draft.value = target
-  text.value = ''
-  errorMsg.value = null
+  openDraft(target)
   void nextTick(() => input.value?.focus?.())
 }
 
-function cancel() {
-  draft.value = null
-  text.value = ''
-}
-
-async function submit() {
-  const tid = props.topicId
-  const target = draft.value
-  const body = text.value.trim()
-  if (!tid || !target || !body || sending.value) return
-  sending.value = true
-  errorMsg.value = null
-  try {
-    await addComment(tid, body, AUTHOR, target.anchorId ?? undefined, target.quote)
-    cancel()
-    emit('posted')
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '评论失败'
-  } finally {
-    sending.value = false
-  }
-}
-
 function onKey(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Escape') {
     e.preventDefault()
     cancel()
     return
   }
-  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   void submit()
 }
@@ -117,14 +104,14 @@ defineExpose({ open, locate })
       <button
         type="button"
         class="doc-comments__fold"
-        :title="folded ? '展开评论' : '收起评论'"
+        :title="folded ? t('work.room.comments.expand') : t('work.room.comments.collapse')"
         @click="folded = !folded"
       >
         <v-icon size="15" class="c-faint">
           {{ folded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
         </v-icon>
         <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
-        评论
+        {{ t('work.room.comments.title') }}
         <span v-if="comments.length" class="doc-comments__count">
           {{ comments.length }}
         </span>
@@ -135,7 +122,7 @@ defineExpose({ open, locate })
         size="x-small"
         variant="text"
         color="on-surface-variant"
-        title="写评论"
+        :title="t('work.room.comments.write')"
         @click="open({ anchorId: null, quote: '' })"
       />
     </div>
@@ -159,13 +146,15 @@ defineExpose({ open, locate })
           density="compact"
           autofocus
           class="comment-draft__input"
-          placeholder="输入评论…"
-          title="Enter 发送，Shift+Enter 换行"
+          :placeholder="t('work.room.comments.placeholder')"
+          :title="t('work.room.comments.keyHint')"
           @keydown="onKey"
         />
         <div v-if="errorMsg" class="comment-draft__error">{{ errorMsg }}</div>
         <div class="d-flex align-center ga-2 justify-end">
-          <v-btn size="small" variant="text" :disabled="sending" @click="cancel"> 取消 </v-btn>
+          <v-btn size="small" variant="text" :disabled="sending" @click="cancel">
+            {{ t('work.room.comments.cancel') }}
+          </v-btn>
           <v-btn
             size="small"
             color="primary"
@@ -174,12 +163,12 @@ defineExpose({ open, locate })
             :disabled="!text.trim()"
             @click="submit"
           >
-            评论
+            {{ t('work.room.comments.comment') }}
           </v-btn>
         </div>
       </div>
       <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-        <span class="doc-comments__avatar">
+        <span class="doc-comments__avatar" :class="{ 'doc-comments__avatar--agent': isAgentHandle(c.author ?? '') }">
           {{ (c.author || '?').slice(0, 1).toUpperCase() }}
         </span>
         <div class="doc-comments__main">
@@ -195,12 +184,14 @@ defineExpose({ open, locate })
             v-if="c.reply_to && commentAnchor(c)"
             type="button"
             class="doc-comments__chip"
-            title="定位到该段"
+            :title="t('work.room.comments.locate')"
             @click="emit('locate-node', c.reply_to!)"
           >
             {{ c.anchor_quote || nodeLabel(commentAnchor(c)!.content) }}
           </button>
-          <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">原段落已改动</div>
+          <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">
+            {{ t('work.room.comments.anchorChanged') }}
+          </div>
           <div class="doc-comments__text">{{ c.content }}</div>
         </div>
       </div>
@@ -363,6 +354,10 @@ defineExpose({ open, locate })
   color: #fff;
   /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
   background: #8a94a3;
+}
+/* AI 队友写的评论：圆角方块（人是圆的，形状照 GitHub 的规则）。 */
+.doc-comments__avatar--agent {
+  border-radius: var(--radius-sm);
 }
 .doc-comments__main {
   flex: 1 1 auto;

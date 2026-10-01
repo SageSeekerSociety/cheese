@@ -34,7 +34,10 @@
       class="bg-background h-100"
       :class="{ 'app-main--pending': firstRoutePending, 'app-main--phone': !$vuetify.display.mdAndUp }"
     >
-      <div class="border-t-sm bg-background h-100 overflow-hidden">
+      <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
+           左边那条线就是侧栏和内容的分界；没有侧栏的页面，这块面挨着一级导航，左上角
+           拐成和侧栏一样的圆角。 -->
+      <div class="app-pane h-100 overflow-hidden" :class="{ 'app-pane--alone': !hasSidebar }">
         <div id="app-scrollable" ref="contentRef" class="app-content h-100" @animationend="endPageMotion">
           <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
                「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
@@ -194,7 +197,7 @@
       </template>
     </AdaptiveDialog>
 
-    <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
+    <v-snackbar v-model="showProjectListWarning" :timeout="8000">
       {{ projectListWarning }}
       <template #actions>
         <v-btn variant="text" @click="loadCxProjects">{{ t('work.newProject.retry') }}</v-btn>
@@ -207,13 +210,19 @@
     <!-- 离线指示: shows only while offline, auto-hides when the network returns. -->
     <OfflineBanner />
 
-    <!-- 有新版本: shows while a new service worker waits for the user to click. -->
-    <UpdateBanner />
+    <!-- The desktop app's 关于 and 在手机上使用 dialogs, opened from menus that close as they do. -->
+    <template v-if="inApp">
+      <DesktopAboutDialog />
+      <DesktopPhoneDialog />
+    </template>
     <CommandPalette />
+    <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
+    <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
 </template>
 
 <script setup lang="ts">
+import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
 import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
@@ -242,15 +251,15 @@ import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
-import { copyLink } from '@/commands/copy'
+import { copyLink, linkOf } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts } from '@/commands/shortcuts'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
-import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { autoConnectThisComputer } from '@/lib/desktop'
@@ -258,6 +267,7 @@ import {
   desktopBadge,
   desktopListenForNotices,
   desktopStopNotices,
+  inDesktopApp,
   onDesktopOpenPage,
   tellDesktopTheme,
 } from '@/lib/desktopApp'
@@ -350,6 +360,9 @@ const keptAlivePages = ['ProjectDocsView', 'ProfileView', 'CalendarView']
 
 // 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
 const SudoDialog = defineAsyncComponent(() => import('./components/account/SudoDialog.vue'))
+const inApp = inDesktopApp()
+const DesktopAboutDialog = defineAsyncComponent(() => import('./components/common/DesktopAboutDialog.vue'))
+const DesktopPhoneDialog = defineAsyncComponent(() => import('./components/common/DesktopPhoneDialog.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true
@@ -361,6 +374,8 @@ const hideAppBar = computed(() => {
 
 // 页面栈的末端（话题页、私聊页）收起底栏：它们是栈里的一层，不是一级目的地。
 const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
+/** 这一页有没有侧栏：侧栏是路由上的 `sidebar` 命名视图，渲染它的是上面那个 router-view。 */
+const hasSidebar = computed(() => currentRoute.matched.some((record) => record.components?.sidebar))
 
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
@@ -504,11 +519,46 @@ const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
 watch(awaitingCount, desktopBadge)
 
+// 右键 rail 上一个项目：复制链接、打开项目设置，不是所有者的还能退出。都是别处已有
+// 的操作——项目菜单、成员页——这里只是把它们挂到那一格上，对的是那一格的项目，
+// 不一定是正开着的这个。
+const leaveOpen = ref(false)
+const leavingProjectId = ref<string | null>(null)
+function projectMenu(project: Project): MenuAction[] {
+  const actions: MenuAction[] = [
+    {
+      key: 'project.copyLink',
+      label: t('work.room.menu.copyLink'),
+      icon: 'mdi-link-variant',
+      onSelect: () => void copyLink(linkOf(router, { name: 'workspace-project', params: { projectId: project.id } })),
+    },
+    {
+      key: 'project.settings',
+      label: t('work.projectSettings.title'),
+      icon: 'mdi-cog-outline',
+      onSelect: () => void router.push({ name: 'project-settings', params: { projectId: project.id } }),
+    },
+  ]
+  if (project.owner_handle !== myHandle())
+    actions.push({
+      key: 'project.leave',
+      label: t('work.members.leave'),
+      icon: 'mdi-exit-to-app',
+      danger: true,
+      onSelect: () => {
+        leavingProjectId.value = project.id
+        leaveOpen.value = true
+      },
+    })
+  return actions
+}
+
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
   workspaceProjectId: workspaceProjectId.value,
   projectAvatar,
   createProject: createNewProject,
+  projectMenu,
   awaitingCount: awaitingCount.value,
   unreadActivity: unreadActivity.value > 0,
 }))
@@ -658,7 +708,7 @@ async function confirmNewProject() {
     await loadCxProjects()
     newProjectDialog.value = false
     if (newProjectForgeKind.value === 'github_app') {
-      router.push(`/projects/${project.id}/settings`)
+      router.push(`/projects/${project.id}/settings/repository`)
       return
     }
     // 直接落到大本营，而不是项目地址。一个刚建出来的项目没有任何活，而 /projects

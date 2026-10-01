@@ -10,6 +10,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import ProjectSkillsView from './ProjectSkillsView.vue'
 
+import i18n, { setLocale } from '@/i18n'
+
 const routeQuery: Record<string, string> = {}
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
 
@@ -69,6 +71,7 @@ const base = {
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.clearAllMocks()
   for (const k of Object.keys(routeQuery)) delete routeQuery[k]
   vi.mocked(listTopics).mockResolvedValue({
@@ -86,7 +89,7 @@ beforeEach(() => {
 })
 
 function mount() {
-  return render(ProjectSkillsView, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
+  return render(ProjectSkillsView, { props: { projectId: 'p1' }, global: { plugins: [vuetify, i18n] } })
 }
 
 function buttonIn(scope: Element, label: string): HTMLElement | undefined {

@@ -1,0 +1,18 @@
+{
+  "rawXhr": {
+    "get": {
+      "status": 200,
+      "readyState": 4,
+      "body": "{\"code\":200,\"message\":\"ok\",\"data\":{\"items\":[{\"id\":41,\"avatarId\":null,\"name\":\"算法竞赛周练\",\"intro\":\"每周一套题，赛后讲评。面向校队新人。\",\"reviewStatus\":\"PENDING\",\"description\":\"每周一套题，",
+      "len": 963
+    },
+    "post": {
+      "status": 200,
+      "readyState": 4,
+      "body": "{\"code\":200,\"message\":\"ok\",\"data\":{\"item\":{\"id\":42,\"avatarId\":null,\"name\":\"计算机系统基础 2026 秋季学期实验题目板（含 4 个大作业与每周小测的全部题目，名字很长的样例）\",\"intro\":\"本学期约 100 名学生使用。题目按周发布，每道",
+      "len": 504
+    }
+  },
+  "netCount": 0,
+  "net": []
+}

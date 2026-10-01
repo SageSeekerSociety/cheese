@@ -18,7 +18,7 @@ vi.mock('../api', async () => ({
 
 import ChatPanel from './ChatPanel.vue'
 
-import { t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 const sockets: TestSocket[] = []
 class TestSocket {
@@ -64,7 +64,7 @@ function scrollAway(pane: HTMLElement) {
 async function mountRoom() {
   const view = render(ChatPanel as unknown as Component, {
     props: { topic: { id: 't', project_id: 'p', title: 'Room', kind: 'topic' } as Topic },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await flush()
   sockets[0].onopen?.()
@@ -75,6 +75,8 @@ async function mountRoom() {
 const pill = (container: Element) => container.querySelector('.new-pill')
 
 beforeEach(() => {
+  // These assertions read the Chinese copy.
+  setLocale('zh-CN')
   vi.useFakeTimers()
   sockets.length = 0
   vi.stubGlobal('WebSocket', TestSocket)

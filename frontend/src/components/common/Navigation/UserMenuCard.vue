@@ -3,11 +3,11 @@
        一遍的时候，手机那份就漏掉了一项。
        四段：我是谁 / 我的东西 / 我的偏好 / 退出。「了解知是」讲的是产品而不是我，
        住在「帮助与反馈」菜单里。 -->
-  <v-card class="user-menu-card pa-0" rounded="lg" width="280">
+  <v-card class="pa-0" width="280">
     <div class="user-menu-head">
       <v-avatar
         size="40"
-        rounded="lg"
+        rounded="circle"
         :style="menu.avatar.value ? undefined : { backgroundColor: menu.avatarColor.value }"
       >
         <v-img v-if="menu.avatar.value" :src="menu.avatar.value">
@@ -30,17 +30,21 @@
 
     <v-divider />
 
-    <v-list class="menu-list" nav density="compact" bg-color="transparent">
+    <v-list>
       <v-list-item :to="{ name: 'UserPage', params: { handle: menu.currentUser.value?.username } }">
         <v-list-item-title>{{ t('navigation.userMenu.profile') }}</v-list-item-title>
       </v-list-item>
-      <v-list-item :to="{ name: 'UserSettingsProfile' }">
+      <v-list-item :to="{ name: 'UserSettings' }">
         <v-list-item-title>{{ t('navigation.userMenu.settings') }}</v-list-item-title>
       </v-list-item>
       <v-list-item :to="{ name: 'my-archived-projects' }">
         <v-list-item-title>{{ t('navigation.userMenu.archivedProjects') }}</v-list-item-title>
       </v-list-item>
-      <v-list-item :to="{ name: 'Download' }">
+      <!-- 桌面 app 里已经装好了，下载页剩下有意义的只有手机那一块：一个扫码的对话框。 -->
+      <v-list-item v-if="inApp" @click="phoneOpen = true">
+        <v-list-item-title>{{ t('navigation.userMenu.usePhone') }}</v-list-item-title>
+      </v-list-item>
+      <v-list-item v-else :to="{ name: 'Download' }">
         <v-list-item-title>{{ t('navigation.userMenu.download') }}</v-list-item-title>
       </v-list-item>
     </v-list>
@@ -54,7 +58,7 @@
 
     <v-divider />
 
-    <v-list class="menu-list" nav density="compact" bg-color="transparent">
+    <v-list>
       <v-list-item class="user-menu-logout" @click="menu.onLogout">
         <v-list-item-title>{{ t('navigation.userMenu.logout') }}</v-list-item-title>
       </v-list-item>
@@ -65,21 +69,20 @@
 <script setup lang="ts">
 import type { useUserMenu } from '@/composables/useUserMenu'
 
+import { useDesktopApp } from '@/composables/useDesktopApp'
+
 import LanguagePreference from '@/components/common/LanguagePreference.vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { t } from '@/i18n'
+import { inDesktopApp } from '@/lib/desktopApp'
 
 defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
+
+const inApp = inDesktopApp()
+const { phoneOpen } = useDesktopApp()
 </script>
 
 <style scoped>
-/* 菜单浮在页面之上，所以它（而不是卡片）可以有投影。 */
-.user-menu-card {
-  border: 1px solid var(--line);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-}
-
 .user-menu-head {
   display: flex;
   gap: 12px;
@@ -123,7 +126,7 @@ defineProps<{ menu: ReturnType<typeof useUserMenu> }>()
 }
 
 /* 偏好行（ThemeToggle / LanguagePreference）：左边是名字，右边是分段控件，高度
-   和列表项（style.css 的 .menu-list）一样是 36px。 */
+   和菜单里的列表项（style.css 的浮层规则）一样是 36px。 */
 .user-menu-prefs :deep(.pref-row) {
   display: flex;
   gap: 12px;

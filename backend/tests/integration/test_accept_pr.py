@@ -438,6 +438,11 @@ class _FakeTokens:
 
     minted_write = 0
     minted_read = 0
+    #: What GitHub's `/rate_limit` says is left of the installation's hour.
+    quota_left = 5000
+
+    async def core_quota(self) -> tuple[int, int]:
+        return type(self).quota_left, 5000
 
     async def write_token(self) -> tuple[str, str]:
         type(self).minted_write += 1
@@ -472,6 +477,7 @@ def app_world(client, monkeypatch):
     }
     _FakeTokens.minted_write = 0
     _FakeTokens.minted_read = 0
+    _FakeTokens.quota_left = 5000
 
     class _AppPrOpener:
         """`pr_publish` 用来开 PR 的那只 client（App token，大写 PR 的那个）。

@@ -96,7 +96,7 @@ const props = withDefaults(
     tab: undefined,
     phase: undefined,
     withChat: false,
-    agentName: '芝士',
+    agentName: () => t('work.room.defaultAgentName'),
     workingAgents: () => [],
   }
 )
@@ -209,7 +209,7 @@ watch(active, show)
 // 人看得出自己是往哪边走了。动的只是进来的那一格的外层：各格一直挂着（对话的滚动
 // 位置、键盘弹起时的贴底都在里面），不为了演一下重建。桌面上两栏并排，不演。
 const tabOrder = computed(() => [
-  ...tabs.value.map((t) => t.key as string),
+  ...tabs.value.map((tab) => tab.key as string),
   ...openFiles.value.map((f) => fileKey(f.path)),
 ])
 const entering = ref<{ key: string; from: 'left' | 'right' } | null>(null)
@@ -373,21 +373,26 @@ useCommands(() =>
 // 「现场」tab 上「谁正在工作」的说法：几个队友并行在干就把名字并列报出来
 // （对话栏按轮次帧学来的名单）；名单空着 = 帧没带座位（老后端），退回默认
 // 队友的单数说法，和从前一样。
-const workingNames = computed(() => (props.workingAgents.length ? props.workingAgents.join('、') : props.agentName))
+const workingNames = computed(() =>
+  props.workingAgents.length ? props.workingAgents.join(t('work.room.panel.nameSeparator')) : props.agentName
+)
 
 /** What the signal on a tab means, for people who reach it by hover or reader. */
-function tabTitle(t: TabDef): string {
-  if (t.key === 'site' && props.working) return `${t.label}（${workingNames.value}正在工作）`
-  if (t.key === 'overview' && threads.value.total) {
+function tabTitle(tab: TabDef): string {
+  const detailed = (detail: string) => t('work.room.panel.tabDetail', { label: tab.label, detail })
+  const pair = (first: string, second: string) => t('work.room.panel.detailPair', { first, second })
+  if (tab.key === 'site' && props.working) return detailed(t('work.room.panel.working', { names: workingNames.value }))
+  if (tab.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
-    return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`
+    const tasks = t('work.room.panel.taskCount', { count: total })
+    return detailed(open ? pair(tasks, t('work.room.panel.inProgress', { count: open })) : tasks)
   }
-  if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
-  if (t.key === 'changes' && summary.value.changedFiles.length) {
-    const n = summary.value.changedFiles.length
-    return changesHasNew.value ? `${t.label}（${n} 个文件，有新改动）` : `${t.label}（${n} 个文件）`
+  if (tab.key === 'preview' && previewHasNew.value) return detailed(t('work.room.panel.newContent'))
+  if (tab.key === 'changes' && summary.value.changedFiles.length) {
+    const files = t('work.room.panel.fileCount', { count: summary.value.changedFiles.length })
+    return detailed(changesHasNew.value ? pair(files, t('work.room.panel.newChanges')) : files)
   }
-  return t.label
+  return tab.label
 }
 
 /** 挂在页签上的那个信号。哪一格挂什么属于工作面板的账，`PanelTabs` 只负责画。 */
@@ -566,7 +571,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
-        <div>选择一个话题查看文档</div>
+        <div>{{ t('work.room.panel.pickTopic') }}</div>
       </div>
     </div>
 

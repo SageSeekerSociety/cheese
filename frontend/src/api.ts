@@ -68,6 +68,7 @@ import type {
 } from './cx_types'
 
 import { desktopAppHeaders } from './lib/desktopApp'
+import { refusalText } from './lib/noticeText'
 import { refreshSession } from './lib/session'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 import { isTransportFailure, transportFailureMessage } from './lib/transportFailure'
@@ -344,8 +345,7 @@ async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
       // #450 rule 2 (frontend edition): the backend's errors carry a human
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
-      const said = body as { message?: string; error?: { message?: string } }
-      const serverSaid = said.error?.message || said.message || ''
+      const serverSaid = refusalText(body, details.error?.message || details.message || '')
       throw new ApiError(
         res.status,
         serverSaid || `请求失败（HTTP ${res.status}）`,
@@ -411,7 +411,7 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const said = body as { message?: string; error?: { name?: string; message?: string } }
-    const serverSaid = said.message || said.error?.message || ''
+    const serverSaid = refusalText(body, said.message || said.error?.message || '')
     throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
   const envelope = body as ApiEnvelope<T>
@@ -798,8 +798,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, title }
+export function createTopic(projectId: string, title?: string, parentId?: string): Promise<Topic> {
+  const body: Record<string, string> = { project_id: projectId, ...(title ? { title } : {}) }
   if (parentId) body.parent_id = parentId
   return request<Topic>('/topics', {
     method: 'POST',
@@ -2333,31 +2333,8 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
   return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
-export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
-  return request<TopicMemberRow>(`/topics/${encodeURIComponent(topicId)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ handle, role, actor }),
-  })
-}
-
-export function updateTopicMemberRole(
-  topicId: string,
-  handle: string,
-  role: string,
-  actor: string
-): Promise<TopicMemberRow> {
-  return request<TopicMemberRow>(`/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ role, actor }),
-  })
-}
-
-export function removeTopicMember(topicId: string, handle: string, actor: string): Promise<{ deleted: boolean }> {
-  return request<{ deleted: boolean }>(
-    `/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}?actor=${encodeURIComponent(actor)}`,
-    { method: 'DELETE' }
-  )
-}
+// 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
+export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
 // 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
 // `getRoomTask`（房间的地址 + 卡的 id）。
@@ -2639,7 +2616,7 @@ export interface StatsFeedback {
   /** 队列那四栏，重拼成计数。**加起来不等于 `total.all`**，理由见上。 */
   columns: { public: number; private: number; agent: number; security: number }
   /** 梯子上的每一级，全量。这是四处里唯一并排展示四级状态的地方。 */
-  status: { received: number; in_progress: number; resolved: number; deployed: number }
+  status: { received: number; in_progress: number; resolved: number; deployed: number; declined: number }
   /** 这个管理员自己的未读数 —— 人各一份，和板子有多大无关。 */
   unread: number
   /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */
@@ -3490,10 +3467,10 @@ export function copyIntoRoom(
   })
 }
 
-/** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 说为什么打不开。 */
+/** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 是为什么打不开的码。 */
 export interface RoomFileEditorSession {
   enabled: boolean
-  reason?: string
+  reason?: 'not_configured' | 'unsupported' | 'library_original'
   copyable?: boolean
   editable?: boolean
   api_url?: string

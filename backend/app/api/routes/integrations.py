@@ -24,15 +24,19 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, ValidationError
 from app.domain.agent.platform_notices import (
     EVENT_MAIL_DRAFTED,
+    EVENT_MAIL_RESULT,
     SEVERITY_INFO,
+    SEVERITY_WARN,
     WHO_CHEESE,
+    WHO_HUMAN,
     notice,
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say, with_keys
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
-from app.domain.integration.models import Integration
+from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
     FeishuAppService,
     IntegrationService,
@@ -109,7 +113,7 @@ class FeishuEditIn(BaseModel):
 async def _person(resolver: ActorResolver) -> Actor:
     actor = await resolver.resolve(fallback_handle=None)
     if actor.via != "token" or actor.user_id is None:
-        raise AuthenticationRequiredError("连接只能由本人登录后管理")
+        raise AuthenticationRequiredError(say("integrationSignInOwner"))
     return actor
 
 
@@ -351,6 +355,48 @@ async def my_drafts(
     return ok(page(items, len(items)))
 
 
+def _mail_outcome(draft: MailDraft, by: str) -> Block | None:
+    """Tell the room how the draft it saw ended, so its card stops asking."""
+    if draft.topic_id is None:
+        return
+    if draft.status == "sent":
+        line = say("mailSent", actor=by, subject=draft.subject)
+        severity = SEVERITY_INFO
+    elif draft.status == "failed":
+        line = say("mailFailed", subject=draft.subject)
+        severity = SEVERITY_WARN
+    elif draft.status == "discarded":
+        line = say("mailDiscarded", actor=by, subject=draft.subject)
+        severity = SEVERITY_INFO
+    else:
+        return
+    return Block(
+        id=uuid.uuid4(),
+        project_id=draft.project_id,
+        topic_id=draft.topic_id,
+        author="system",
+        author_type=AuthorType.platform,
+        kind=BlockKind.event,
+        content=line,
+        # A row, not `BlockRepository.add`: the line's key is recorded here.
+        meta=with_keys(
+            {
+                **notice(
+                    EVENT_MAIL_RESULT,
+                    severity=severity,
+                    who=WHO_HUMAN,
+                    detail=draft.error or None,
+                    detail_label=say("labelReason") if draft.error else None,
+                ),
+                "mail_draft_id": str(draft.id),
+                "status": draft.status,
+                "sent_at": draft.sent_at.isoformat() if draft.sent_at else None,
+            },
+            content=line,
+        ),
+    )
+
+
 @router.post("/me/mail-drafts/{draft_id}/send")
 async def send_draft(
     draft_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -363,6 +409,9 @@ async def send_draft(
     try:
         result = await service.send(draft, owner_user_id=actor.user_id, by=actor.handle)
     finally:
+        outcome = _mail_outcome(draft, actor.handle)
+        if outcome is not None:
+            db.add(outcome)
         await db.commit()
     return ok(result)
 
@@ -377,6 +426,9 @@ async def discard_draft(
     draft = await service.discard(
         await service.get_draft(draft_id), owner_user_id=actor.user_id
     )
+    outcome = _mail_outcome(draft, actor.handle)
+    if outcome is not None:
+        db.add(outcome)
     await db.commit()
     return ok(draft_view(draft))
 
@@ -485,31 +537,55 @@ async def mail_draft(
         attachments=body.attachments,
         in_reply_to=body.in_reply_to,
     )
-    summary = f"收件人：{', '.join(draft.to)}\n主题：{draft.subject}"
-    if draft.attachments:
-        summary += "\n附件：" + "、".join(a["name"] for a in draft.attachments)
+    summary = (
+        say(
+            "mailDraftSummaryWithFiles",
+            to=", ".join(draft.to),
+            subject=draft.subject,
+            files="、".join(a["name"] for a in draft.attachments),
+        )
+        if draft.attachments
+        else say("mailDraftSummary", to=", ".join(draft.to), subject=draft.subject)
+    )
+    line = say("mailDrafted", account=row.label, owner=row.owner_handle)
+    block_id = uuid.uuid4()
     db.add(
         Block(
-            id=uuid.uuid4(),
+            id=block_id,
             project_id=project,
             topic_id=room,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
-            content=(
-                f"芝士在 {row.label} 里写好了一封草稿，"
-                f"等 {row.owner_handle} 确认后才会发送"
+            content=line,
+            # A row, not `BlockRepository.add`: the line's key is recorded here.
+            meta=with_keys(
+                {
+                    **notice(
+                        EVENT_MAIL_DRAFTED,
+                        severity=SEVERITY_INFO,
+                        who=WHO_CHEESE,
+                        detail=summary,
+                        detail_label=say("labelMailDraft"),
+                    ),
+                    "mail_draft_id": str(draft.id),
+                    # The room's confirm card is drawn from this: what the owner
+                    # checks is what the teammate wrote, in the room it was written.
+                    "mail": {
+                        "owner": row.owner_handle,
+                        "account": row.label,
+                        "to": draft.to,
+                        "cc": draft.cc,
+                        "subject": draft.subject,
+                        "body": draft.body,
+                        "attachments": [
+                            {"name": a["name"], "size": a.get("size")}
+                            for a in draft.attachments
+                        ],
+                    },
+                },
+                content=line,
             ),
-            meta={
-                **notice(
-                    EVENT_MAIL_DRAFTED,
-                    severity=SEVERITY_INFO,
-                    who=WHO_CHEESE,
-                    detail=summary,
-                    detail_label="草稿",
-                ),
-                "mail_draft_id": str(draft.id),
-            },
         )
     )
     await ProjectNotificationService(db).create(
@@ -517,10 +593,10 @@ async def mail_draft(
         level=NotificationLevel.light,
         kind=NotificationType.CHANGE_ALERT,
         title=f"邮件草稿待你确认：{draft.subject}",
-        body=summary + "\n到「我的连接 → 待发送」核对后再发送",
+        body=summary + "\n在房间里的卡片上核对后点「确认发送」",
         target_handle=row.owner_handle,
         topic_id=room,
-        payload={"mail_draft_id": str(draft.id)},
+        payload={"mail_draft_id": str(draft.id), "block_id": str(block_id)},
     )
     await db.commit()
     return ok(
