@@ -75,13 +75,32 @@ jobs:
       - name: dev-db.sh tests
         run: bash .claude/scripts/test-dev-db.sh
 
-      # This discover also picks up test_ci_fast.py, which drives real
-      # pre-commit against fixture repos — hand it the same uvx invocation
-      # the guard hooks below use (uv is installed above).
+      # Every helper test beside the scripts in .github/scripts, minus the two
+      # owned by Required CI itself (test_required_ci.py runs in the scope job,
+      # test_ci_fast.py in the cifast job of required-ci.yml — that one drives
+      # real pre-commit and is too slow for this lane). The exclusion is by
+      # name, so a helper test added tomorrow is collected here automatically;
+      # it must not need a list edit somewhere to start running.
       - name: CI helper tests
-        env:
-          CI_FAST_PRECOMMIT: uvx pre-commit
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+        run: |
+          python3 - <<'PYEOF'
+          import importlib.util
+          import pathlib
+          import unittest
+
+          OWNED_BY_REQUIRED_CI = {"test_required_ci", "test_ci_fast"}
+          loader = unittest.TestLoader()
+          suite = unittest.TestSuite()
+          for path in sorted(pathlib.Path(".github/scripts").glob("test_*.py")):
+              if path.stem in OWNED_BY_REQUIRED_CI:
+                  continue
+              spec = importlib.util.spec_from_file_location(path.stem, path)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              suite.addTests(loader.loadTestsFromModule(module))
+          result = unittest.TextTestRunner().run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PYEOF
 
       # Run through pre-commit rather than calling the scripts directly, so
       # this job and a developer's commit are the same list by construction.
