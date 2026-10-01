@@ -117,8 +117,11 @@ def test_an_uncapped_session_is_not_put_in_a_scope(tmp_path):
 
 
 def test_a_sessions_temporary_files_are_on_the_machines_disk_and_leave_with_the_room(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
+    # The shipped cleanup program runs as its own process and looks where it
+    # always does, so the launcher has to put them there too.
+    monkeypatch.setattr(machine_launcher, "SESSION_TMP", cleanup.SESSION_TMP)
     machine, project, resource, env = _room(tmp_path)
     seen = tmp_path / "tmpdir.seen"
 
@@ -127,7 +130,7 @@ def test_a_sessions_temporary_files_are_on_the_machines_disk_and_leave_with_the_
     )
     assert result.returncode == 0, result.stderr
     tmpdir = seen.read_text().strip()
-    assert tmpdir.startswith(str(machine / ".cheese"))
+    assert tmpdir == f"/var/tmp/cheese-{os.getuid()}/{resource}"
     assert os.path.exists(f"{tmpdir}/left")
 
     removed = subprocess.run(

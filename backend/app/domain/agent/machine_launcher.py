@@ -43,6 +43,7 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.resource_cleanup import SESSION_TMP
 
 # The launcher below spells the platform's own directory literally, because the
 # script is one long shell string and a name threaded through sixty paths would
@@ -595,13 +596,17 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
-# The session's temporary files go on disk, in a directory of the room's own
-# that its cleanup removes with it. The machine's `/tmp` is often a tmpfs:
-# what a session leaves there is memory nothing can reclaim, and a room that
-# ends leaves it behind. Kept off the room's home and short, because programs
-# make sockets in TMPDIR and a socket path stops at 108 bytes.
-TD="$REAL_HOME/.cheese/tmp/${{CH##*/}}"
-if mkdir -p "$TD" 2>/dev/null; then
+# The session's temporary files go where the system keeps those it keeps on
+# disk (`/var/tmp`), one directory per room that its cleanup removes with it.
+# The machine's `/tmp` is often a tmpfs: what a session leaves there is memory
+# nothing can reclaim, and a room that ends leaves it behind. `/var/tmp` is
+# every account's, so the rooms sit under a directory only this one owns;
+# one somebody else made, or a link, leaves the session on the system default.
+# Short, because programs make sockets in TMPDIR and a path stops at 108 bytes.
+TB="{SESSION_TMP}/cheese-$(id -u)"
+TD="$TB/${{CH##*/}}"
+if mkdir -p -m 700 "$TB" 2>/dev/null && [ ! -L "$TB" ] && [ -O "$TB" ] \
+    && mkdir -p "$TD" 2>/dev/null; then
   export TMPDIR="$TD"
 fi
 # With the stores redirected above, the copies these tools left in the room's

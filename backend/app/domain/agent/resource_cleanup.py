@@ -27,6 +27,9 @@ if sys.platform != "win32":
 # tree unreachable to the teardown, and the teardown reports success on paths
 # that never existed while the real hundreds of gigabytes stay on the machine.
 FOOTPRINT_ROOT = ".cheese"
+# Where a session's temporary files go: on disk, outside the footprint, because
+# the system keeps its on-disk temporary files there. The launcher reads it here.
+SESSION_TMP = "/var/tmp"
 
 # The checkout inside a room's home — a copy of `place.CHECKOUT_DIR`, held to it
 # by test_footprint_root.py. The teardown has to look in the same directory the
@@ -491,10 +494,11 @@ def resource_paths(
     return paths[0], paths[1]
 
 
-def resource_tmp(machine_home: Path, resource: str) -> Path:
-    """The room's TMPDIR, where the launcher pointed its sessions: by resource
-    alone, so a socket made inside it still fits a socket path."""
-    path = machine_home / FOOTPRINT_ROOT / "tmp" / str(uuid.UUID(resource))
+def resource_tmp(resource: str) -> Path:
+    """The room's TMPDIR, where the launcher pointed its sessions: under this
+    account's own directory in `/var/tmp`, by resource alone, so a socket made
+    inside it still fits a socket path."""
+    path = Path(SESSION_TMP) / f"cheese-{os.getuid()}" / str(uuid.UUID(resource))
     if path.is_symlink() or path.parent.is_symlink():
         raise RuntimeError("resource path is a symlink")
     return path
@@ -750,7 +754,7 @@ def main() -> None:
             retain_transcripts(
                 home, retained_transcripts(Path.home(), project, room, resource)
             )
-        for path in (work, home, resource_tmp(Path.home(), resource)):
+        for path in (work, home, resource_tmp(resource)):
             if path.exists():
                 remove_tree(path)
         print(json.dumps({"removed": True}))
