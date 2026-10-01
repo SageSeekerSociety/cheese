@@ -216,7 +216,7 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, load_scenario, load_skills
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent.turn_speakers import turn_speakers
-from app.domain.agent.work_policy import work_policy
+from app.domain.agent.work_policy import resolve_compute_id, work_policy
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -396,15 +396,6 @@ _ACTION_LABEL = {
 # HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
 # blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
-
-
-def _resolve_compute_id(project_settings: dict | None, topic=None) -> str | None:
-    """A room keeps its choice; otherwise use the explicit project default."""
-    from app.domain.agent.compute_configs import project_configs, room_choice
-
-    if topic is not None:
-        return room_choice(topic, project_settings).profile
-    return project_configs(project_settings).default.profile
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -2365,7 +2356,7 @@ class ChatService:
                 session, project_id, tokens_at_start=tokens, now=now
             )
             run_id = run.id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = resolve_compute_id(project.settings)
             agent_handle = await self._agent_handle(session, root_topic_id)
             await session.commit()
         logger.info(
@@ -3893,7 +3884,7 @@ class ChatService:
             # 骨架是这个项目在这台机器上跑的那一个（结论 28），不是这个参与者的属
             # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
             # 各自解析一次就够把一条会话拆成两条。
-            compute_id = _resolve_compute_id(
+            compute_id = resolve_compute_id(
                 project.settings if project else None, topic
             )
             wanted_harness, provider = self._compute.choose(
@@ -4703,7 +4694,7 @@ class ChatService:
             )
             memory = await memory_index(session, project_id, speaker_handles=[author])
             topic_id = topic.id
-            compute_id = _resolve_compute_id(
+            compute_id = resolve_compute_id(
                 project.settings,
             )
             await session.commit()
@@ -4793,7 +4784,7 @@ class ChatService:
             agents = AgentInstanceService(session)
             agent = await agents.for_project(project)
             role = await agents.system_prompt(agent)
-            compute_id = _resolve_compute_id(
+            compute_id = resolve_compute_id(
                 project.settings,
             )
 

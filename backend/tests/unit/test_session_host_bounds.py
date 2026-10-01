@@ -214,12 +214,14 @@ async def _room_on(db_factory, harness: str) -> uuid.UUID:
 
 @pytest.mark.anyio
 async def test_only_a_turn_whose_session_starts_on_the_session_host_is_gated_there(
-    db_factory,
+    db_factory, monkeypatch
 ):
+    from app.core.config import settings
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.harness import CLAUDE_CODE, PI
     from app.domain.agent.work_policy import work_policy
 
+    monkeypatch.setattr(settings, "agent_harnesses", [CLAUDE_CODE, PI])
     pool = build_compute_pool()
     beside = await work_policy(db_factory, pool, await _room_on(db_factory, PI))
     central = await work_policy(

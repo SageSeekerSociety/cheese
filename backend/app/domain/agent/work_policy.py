@@ -8,11 +8,17 @@ close a loop through the harness packages.
 import uuid
 
 from app.core.config import settings
-from app.domain.agent.compute_configs import room_choice
-from app.domain.agent.harness import harness_for
+from app.domain.agent.compute_configs import project_configs, room_choice
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.repositories import ComputeGrantRepository
+
+
+def resolve_compute_id(project_settings: dict | None, topic=None) -> str | None:
+    """A room keeps its choice; otherwise use the explicit project default."""
+    if topic is not None:
+        return room_choice(topic, project_settings).profile
+    return project_configs(project_settings).default.profile
 
 
 async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
@@ -31,12 +37,11 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
     override = (project_settings or {}).get("max_concurrent_turns")
     if isinstance(override, int) and override > 0:
         max_concurrent = override
-    # The backend the turn will run on, chosen as the turn chooses it. Only one
-    # whose hands are elsewhere starts its session on the session host; a
+    # The backend the turn will run on, chosen by the call the turn makes. Only
+    # one whose hands are elsewhere starts its session on the session host; a
     # harness that runs beside its workspace (pi) starts it on that machine.
-    provider = compute.select(
-        provider_id=room_choice(topic, project_settings).profile,
-        harness=harness_for(project_settings),
+    _harness, provider = compute.choose(
+        project_settings, resolve_compute_id(project_settings, topic)
     )
     return {
         "project_id": str(topic.project_id),
