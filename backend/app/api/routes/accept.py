@@ -22,6 +22,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner, announce_stale
+from app.domain.block.notice_text import say
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
@@ -429,14 +430,17 @@ async def reject_card(
         content=(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
-        headline=f"{decided_by} 退回了改动"
-        + ("，正在修改" if actionable else "，原任务已关闭"),
+        headline=(
+            say("cardRejectedFixing", who=decided_by)
+            if actionable
+            else say("cardRejectedClosed", who=decided_by)
+        ),
         meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
             who=WHO_CHEESE,
             detail=reason or None,
-            detail_label="退回理由",
+            detail_label=say("labelRejectReason"),
         ),
     )
     await db.commit()

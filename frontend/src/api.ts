@@ -2410,31 +2410,8 @@ export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemb
   return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
-export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
-  return request<TopicMemberRow>(`/topics/${encodeURIComponent(topicId)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ handle, role, actor }),
-  })
-}
-
-export function updateTopicMemberRole(
-  topicId: string,
-  handle: string,
-  role: string,
-  actor: string
-): Promise<TopicMemberRow> {
-  return request<TopicMemberRow>(`/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ role, actor }),
-  })
-}
-
-export function removeTopicMember(topicId: string, handle: string, actor: string): Promise<{ deleted: boolean }> {
-  return request<{ deleted: boolean }>(
-    `/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}?actor=${encodeURIComponent(actor)}`,
-    { method: 'DELETE' }
-  )
-}
+// 加人、改角色、移出在 `api/topicMembers.ts`：它们写成功要通知手上有名册副本的地方。
+export { addTopicMember, removeTopicMember, updateTopicMemberRole } from './api/topicMembers'
 
 // 一个 id 指向一个房间。**卡不是地点**：拿卡的 id 问这条接口是 404，卡走
 // `getRoomTask`（房间的地址 + 卡的 id）。

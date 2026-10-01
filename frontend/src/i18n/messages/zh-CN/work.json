@@ -356,7 +356,37 @@
       "platform": "平台",
       "changedFiles": "改动的文件",
       "moreFiles": "另 {n} 个文件",
-      "goConfirm": "去确认"
+      "goConfirm": "去确认",
+      "who": {
+        "platform": "平台已处理",
+        "cheese": "芝士处理中",
+        "human": "需要手动处理"
+      },
+      "working": "{name}正在处理",
+      "machineReady": "工作电脑已就绪",
+      "machinePreparing": "正在准备工作电脑",
+      "incident": {
+        "title": "工作电脑暂时不可用",
+        "cleaning": "正在自动清理",
+        "recovering": "正在恢复",
+        "retryable": "可以重试",
+        "needsAdmin": "需要管理员处理"
+      },
+      "action": {
+        "doc": "查看文档",
+        "decision": "查看决策记录",
+        "split": "查看任务",
+        "undo": "撤销",
+        "milestone": "查看日历",
+        "accept": "审阅"
+      },
+      "filesChanged": "改动了 {n} 个文件",
+      "viewChanges": "查看改动",
+      "showDetail": "展开详情",
+      "detail": "详情",
+      "docDiff": "文档修改对比",
+      "added": "新增",
+      "removed": "删除"
     },
     "message": {
       "copy": "复制",
@@ -677,6 +707,20 @@
       "copied": "已复制",
       "copyCode": "复制代码",
       "emptyPlaceholder": "AI 队友会在这里维护文档，你也可以直接编辑",
+      "format": {
+        "label": "文档格式",
+        "unavailable": "当前选区不支持此格式",
+        "bold": "加粗",
+        "italic": "斜体",
+        "strike": "删除线",
+        "code": "行内代码",
+        "h1": "标题 1",
+        "h2": "标题 2",
+        "bullet": "无序列表",
+        "ordered": "有序列表",
+        "task": "任务列表",
+        "quote": "引用"
+      },
       "slash": {
         "text": "正文",
         "h1": "标题 1",
@@ -748,7 +792,6 @@
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
       "agentBadge": "AI 队友",
-      "mark": "（{tag}）",
       "role": {
         "owner": "拥有者",
         "admin": "管理员",
@@ -782,7 +825,12 @@
       "discardFailed": "没有放弃成功"
     },
     "mention": {
-      "escBack": "按 Esc 返回",
+      "back": "返回上一级",
+      "notInTopic": "不在话题中",
+      "outsideNotice": "{names} 不在话题中，他们不会收到通知",
+      "addToTopic": "拉进话题",
+      "dismissOutside": "知道了",
+      "nameJoiner": "、",
       "library": "资料库",
       "noFiles": "暂无匹配的文件",
       "all": "所有人",
@@ -1416,5 +1464,44 @@
     "deleteTitle": "删除「{title}」",
     "deleteHint": "删除后之后的房间不再带着它，历史版本也一起删除",
     "cancel": "取消"
+  },
+  "nodeBoard": {
+    "loadFailed": "加载机器状态失败",
+    "title": "机器状态",
+    "hint": "工作电脑现在是否可用",
+    "active": "全平台进行中 {count} 轮",
+    "online": "在线",
+    "offline": "离线",
+    "device": "自有设备",
+    "cloud": "云端",
+    "current": "没有选择时落在这里"
+  },
+  "needsYou": {
+    "changeAlert": "变更提醒",
+    "waiting": "等你回答",
+    "answerFailed": "未能答复",
+    "dismissFailed": "未能收起",
+    "feedbackFailed": "未能提交反馈",
+    "next": "下一条",
+    "open": "去话题",
+    "dismiss": "收起",
+    "helpful": "有帮助",
+    "notHelpful": "没帮助"
+  },
+  "push": {
+    "ask": "这次运行时间可能较长，完成后通知你",
+    "enable": "开启通知",
+    "decline": "暂不开启"
+  },
+  "image": {
+    "alt": "图片",
+    "failed": "图片加载失败"
+  },
+  "agentAvatar": {
+    "defaultName": "芝士"
+  },
+  "liveView": {
+    "connecting": "连接现场中…",
+    "closed": "现场已断开"
   }
 }

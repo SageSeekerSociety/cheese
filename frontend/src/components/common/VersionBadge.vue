@@ -8,11 +8,11 @@
   <div
     v-if="version?.badge && version.short"
     class="version-badge"
-    :title="`部署版本 ${version.sha}（点击复制）`"
+    :title="t('shell.version.title', { sha: version.sha })"
     @click="copySha"
   >
     <span class="version-badge__dot" />
-    {{ copied ? '已复制' : version.short }}
+    {{ copied ? t('navigation.copy.done') : version.short }}
   </div>
 </template>
 
@@ -20,6 +20,7 @@
 import { onMounted, ref } from 'vue'
 
 import { type AppVersion, getAppVersion } from '@/api'
+import { t } from '@/i18n'
 
 const version = ref<AppVersion | null>(null)
 const copied = ref(false)

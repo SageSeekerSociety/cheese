@@ -199,13 +199,15 @@ function warmDestination() {
 
     .cheese-icon {
       // logo size set via CSS (the width/height props on the ?component SVG don't
-      // reliably apply). ~32px in the 48px square ≈ the proportion in Image #63 —
-      // the tile is a clear 方块 thanks to the rounded='lg' prop, not by shrinking
-      // the logo, so it can sit comfortably large.
-      width: 32px !important;
-      height: 32px !important;
+      // reliably apply). The mark is a solid disc: at 32px and near-full ink it
+      // was the heaviest thing in the rail, and an unselected home tile read as
+      // the selected one. So it sits a size down and faded until the tile is
+      // hovered or current, where the brand paint below takes over. The ink is
+      // on-surface, so "faded" means lighter in light theme and dimmer in dark.
+      width: 26px !important;
+      height: 26px !important;
       fill: rgb(var(--v-theme-on-surface));
-      opacity: var(--v-medium-high-opacity);
+      opacity: 0.45;
       transition:
         fill var(--dur-quick) var(--ease-standard),
         opacity var(--dur-quick) var(--ease-standard);

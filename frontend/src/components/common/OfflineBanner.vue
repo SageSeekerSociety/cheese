@@ -9,6 +9,8 @@
 // `useOnline` tracks navigator.onLine + the window online/offline events.
 import { useOnline } from '@vueuse/core'
 
+import { t } from '@/i18n'
+
 const online = useOnline()
 </script>
 
@@ -16,7 +18,7 @@ const online = useOnline()
   <Transition name="offline-slide">
     <div v-if="!online" class="offline-banner" role="status" aria-live="polite">
       <v-icon size="16" class="offline-banner__icon">mdi-wifi-off</v-icon>
-      <span>离线中 · 无法收发新消息，恢复网络后会自动重连</span>
+      <span>{{ t('shell.offline') }}</span>
     </div>
   </Transition>
 </template>

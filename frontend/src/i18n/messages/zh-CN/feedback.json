@@ -541,6 +541,12 @@
     "suggestion": "建议",
     "other": "其他"
   },
+  "priority": {
+    "low": "低",
+    "normal": "普通",
+    "high": "高",
+    "urgent": "紧急"
+  },
   "source": {
     "user": "用户提交",
     "agent": "Agent 发现"
@@ -726,5 +732,19 @@
       "restored": "已恢复上次没写完的草稿",
       "discard": "丢弃草稿"
     }
+  },
+  "errors": {
+    "listLoadFailed": "反馈列表加载失败",
+    "loadMoreFailed": "加载更多失败",
+    "mineLoadFailed": "「我的反馈」加载失败",
+    "openFailed": "这条反馈打不开",
+    "actionFailed": "操作失败",
+    "commentSendFailed": "评论发送失败",
+    "commentsLoadFailed": "评论加载失败",
+    "repliesLoadFailed": "回复加载失败",
+    "deleteFailed": "删除失败",
+    "submitFailed": "提交失败",
+    "queueLoadFailed": "管理队列加载失败",
+    "dashboardLoadFailed": "看板加载失败"
   }
 }

@@ -28,6 +28,8 @@
 
 import type { FeedbackKind, FeedbackPriority, FeedbackStatus } from '@/cx_types'
 
+import { t } from '@/i18n'
+
 export interface StatusMeta {
   label: string
   wash: string
@@ -35,8 +37,18 @@ export interface StatusMeta {
   dot: string
 }
 
+/** 一份呈现。`label` 是 getter：这些表在 import 时就建好了，名字要跟着之后切换的语言走。 */
+const shown = (key: string, wash: string, ink: string, dot: string): StatusMeta => ({
+  get label() {
+    return t(key)
+  },
+  wash,
+  ink,
+  dot,
+})
+
 /** 中性色：服务端给了一个这里没见过的取值时用它。 */
-const NEUTRAL: StatusMeta = { label: '未知', wash: 'var(--fill)', ink: 'var(--muted)', dot: 'var(--faint)' }
+const NEUTRAL: StatusMeta = shown('feedback.status.unknown', 'var(--fill)', 'var(--muted)', 'var(--faint)')
 
 /**
  * 四级：收录 → 处理 → 修复 → 上线（服务端 `STATUS_LADDER` 是同一份的权威来源）。
@@ -60,11 +72,11 @@ const NEUTRAL: StatusMeta = { label: '未知', wash: 'var(--fill)', ink: 'var(--
  * 和颜色。别按「越淡越像还没开始」把它调回去。
  */
 export const STATUS_META: Record<FeedbackStatus, StatusMeta> = {
-  received: { label: '已收录', wash: 'var(--fill)', ink: 'var(--muted)', dot: 'var(--muted)' },
-  in_progress: { label: '处理中', wash: 'var(--warn-wash)', ink: 'var(--warn-ink)', dot: 'var(--warn)' },
-  resolved: { label: '已修复', wash: 'var(--ok-wash)', ink: 'var(--ok-ink)', dot: 'var(--ok)' },
-  deployed: { label: '已上线', wash: 'var(--ok-wash)', ink: 'var(--ok-ink)', dot: 'var(--ok)' },
-  declined: { label: '不修复', wash: 'var(--fill)', ink: 'var(--muted)', dot: 'var(--faint)' },
+  received: shown('feedback.status.received', 'var(--fill)', 'var(--muted)', 'var(--muted)'),
+  in_progress: shown('feedback.status.in_progress', 'var(--warn-wash)', 'var(--warn-ink)', 'var(--warn)'),
+  resolved: shown('feedback.status.resolved', 'var(--ok-wash)', 'var(--ok-ink)', 'var(--ok)'),
+  deployed: shown('feedback.status.deployed', 'var(--ok-wash)', 'var(--ok-ink)', 'var(--ok)'),
+  declined: shown('feedback.status.declined', 'var(--fill)', 'var(--muted)', 'var(--faint)'),
 }
 
 /** 状态梯子的**兜底**顺序，给 meta 还没到的那一帧用。 */
@@ -108,24 +120,62 @@ export const CLOSED_STATUSES: FeedbackStatus[] = ['resolved', 'deployed', 'decli
 export const isClosed = (status: FeedbackStatus | undefined): boolean => !!status && CLOSED_STATUSES.includes(status)
 
 export const KIND_LABEL: Record<FeedbackKind, string> = {
-  bug: 'Bug',
-  suggestion: '建议',
-  other: '其他',
+  get bug() {
+    return t('feedback.kind.bug')
+  },
+  get suggestion() {
+    return t('feedback.kind.suggestion')
+  },
+  get other() {
+    return t('feedback.kind.other')
+  },
 }
 
 export const PRIORITY_META: Record<FeedbackPriority, StatusMeta> = {
-  low: { label: '低', wash: 'var(--fill)', ink: 'var(--muted)', dot: 'var(--faint)' },
-  normal: { label: '普通', wash: 'var(--fill-2)', ink: 'var(--text)', dot: 'var(--muted)' },
-  high: { label: '高', wash: 'var(--warn-wash)', ink: 'var(--warn-ink)', dot: 'var(--warn)' },
-  urgent: { label: '紧急', wash: 'var(--danger-wash)', ink: 'var(--danger-ink)', dot: 'var(--danger)' },
+  low: {
+    get label() {
+      return t('feedback.priority.low')
+    },
+    wash: 'var(--fill)',
+    ink: 'var(--muted)',
+    dot: 'var(--faint)',
+  },
+  normal: {
+    get label() {
+      return t('feedback.priority.normal')
+    },
+    wash: 'var(--fill-2)',
+    ink: 'var(--text)',
+    dot: 'var(--muted)',
+  },
+  high: {
+    get label() {
+      return t('feedback.priority.high')
+    },
+    wash: 'var(--warn-wash)',
+    ink: 'var(--warn-ink)',
+    dot: 'var(--warn)',
+  },
+  urgent: {
+    get label() {
+      return t('feedback.priority.urgent')
+    },
+    wash: 'var(--danger-wash)',
+    ink: 'var(--danger-ink)',
+    dot: 'var(--danger)',
+  },
 }
 
 /** 来源。**不是**一个字段 —— 后端给的是 `author_is_agent`，因为它和
  *  「谁按的发送」是两件事（提案卡：agent 写的、人发的）。 */
 export const SOURCE_LABEL = {
-  user: '用户提交',
-  agent: 'Agent 发现',
-} as const
+  get user() {
+    return t('feedback.source.user')
+  },
+  get agent() {
+    return t('feedback.source.agent')
+  },
+}
 
 /** 拿一个状态的呈现，取不到就回中性。见文件开头第 2 条理由。 */
 export function statusMeta(status: FeedbackStatus | undefined): StatusMeta {

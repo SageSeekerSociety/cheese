@@ -4,26 +4,37 @@
 // 它不取数也不筛：三个筛选各自把新值报上去（`update:*`），再加一个 `change`
 // 说「刚才那一下是筛选」，由页决定要不要重取一页。分开报而不是在件里判断，
 // 是因为「哪三个算筛选」是这一页的事，不是这一行控件的事。
+import type { KnowledgeType } from '@/types'
+
+import { computed } from 'vue'
+
+import { t } from '@/i18n'
+import { knowledgeTypeLabel } from '@/lib/knowledgeFormat'
+
 defineOptions({ name: 'KnowledgeToolbar' })
 
-defineProps<{
+const props = defineProps<{
   searchQuery: string | null
-  typeFilter: string | null
+  typeFilter: KnowledgeType | null
   tagFilter: string | null
   viewMode: string
-  resourceTypes: string[]
+  resourceTypes: KnowledgeType[]
   availableTags: string[]
 }>()
 
 const emit = defineEmits<{
   'update:searchQuery': [value: string | null]
-  'update:typeFilter': [value: string | null]
+  'update:typeFilter': [value: KnowledgeType | null]
   'update:tagFilter': [value: string | null]
   'update:viewMode': [value: string]
   /** 三个筛选里的任何一个变了值：外面据此重取一页。 */
   change: []
   upload: []
 }>()
+
+const resourceTypeItems = computed(() =>
+  props.resourceTypes.map((type) => ({ title: knowledgeTypeLabel(type), value: type }))
+)
 
 // 清空（`clearable` 那颗叉）会报 null 回来，原样往上递：请求里「没有 query」
 // 和「query 是空串」是同一件事，但状态里留着 null 才是这一页一直以来的样子。
@@ -33,7 +44,7 @@ function pickSearch(value: unknown) {
 }
 
 function pickType(value: unknown) {
-  emit('update:typeFilter', (value as string | null) ?? null)
+  emit('update:typeFilter', (value as KnowledgeType | null) ?? null)
   emit('change')
 }
 
@@ -48,7 +59,7 @@ function pickTag(value: unknown) {
     <v-text-field
       :model-value="searchQuery"
       autocomplete="off"
-      label="搜索知识库"
+      :label="t('teams.knowledge.searchLabel')"
       prepend-inner-icon="mdi-magnify"
       density="compact"
       variant="solo"
@@ -62,14 +73,14 @@ function pickTag(value: unknown) {
     <v-select
       :model-value="typeFilter"
       autocomplete="off"
-      label="资料类型"
+      :label="t('teams.knowledge.resourceTypeLabel')"
       density="compact"
       variant="solo"
       flat
       hide-details
       rounded="lg"
       clearable
-      :items="resourceTypes"
+      :items="resourceTypeItems"
       class="resource-type-filter"
       @update:model-value="pickType"
     ></v-select>
@@ -77,7 +88,7 @@ function pickTag(value: unknown) {
     <v-select
       :model-value="tagFilter"
       autocomplete="off"
-      label="标签"
+      :label="t('teams.knowledge.tagLabel')"
       density="compact"
       variant="solo"
       flat
@@ -91,7 +102,9 @@ function pickTag(value: unknown) {
 
     <v-spacer></v-spacer>
 
-    <v-btn color="primary" prepend-icon="mdi-upload" class="mr-2" @click="emit('upload')"> 上传资料 </v-btn>
+    <v-btn color="primary" prepend-icon="mdi-upload" class="mr-2" @click="emit('upload')">{{
+      t('teams.knowledge.upload')
+    }}</v-btn>
 
     <v-btn-toggle
       :model-value="viewMode"

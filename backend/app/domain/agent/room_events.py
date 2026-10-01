@@ -49,6 +49,7 @@ from app.domain.agent.step_output import output_tail
 from app.domain.agent.tool_preview import tool_detail, tool_preview, work_subpath
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.room_task.models import Task
@@ -305,13 +306,13 @@ async def _persist_worker_event(
         # so `platform`, the same as every other line the platform says out
         # loud. Attributing it to 芝士 would make the room's history contain
         # a remark 芝士 never made.
-        content, author_type = "分身开工", AuthorType.platform
+        content, author_type = say("subagentStart"), AuthorType.platform
         meta: dict = {"event_type": "subagent_start"}
     else:
         # The closing message in full, and it IS the worker's own words. It
         # reaches the platform exactly once, here — the room's transcript
         # does not contain it and the worker's dies with its container.
-        content = event.text.strip() or "分身交回了一次结果（没有留话）"
+        content = event.text.strip() or say("subagentStopEmpty")
         author_type = AuthorType.participant
         meta = {"event_type": "subagent_stop"}
         if event.transcript_path:

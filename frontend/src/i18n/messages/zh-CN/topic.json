@@ -1,0 +1,21 @@
+{
+  "time": {
+    "justNow": "刚刚"
+  },
+  "notice": {
+    "legacyAction": "芝士{action}"
+  },
+  "accept": {
+    "notMergingNow": "现在采纳不会合并",
+    "separator": "：",
+    "approveFailed": "批准失败",
+    "reassignFailed": "改由他人审阅失败",
+    "conflict": "与主分支冲突，未能合并。{agent}正在处理，完成后可以重新采纳",
+    "createPrFailed": "创建 PR 失败",
+    "acceptFailed": "采纳失败",
+    "undoFailed": "撤回采纳失败",
+    "autoMergeFailed": "设置自动合并失败",
+    "returnFailed": "退回失败",
+    "voidFailed": "作废失败"
+  }
+}

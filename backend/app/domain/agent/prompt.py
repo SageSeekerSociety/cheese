@@ -27,7 +27,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.harness.prompt import platform_prompt, strip_platform_notice
+from app.domain.agent.harness.prompt import (
+    is_inline_image,
+    platform_prompt,
+    strip_platform_notice,
+)
 from app.domain.agent.platform_notices import (
     EVENT_CONTEXT_COMPACT,
     SEVERITY_INFO,
@@ -44,6 +48,7 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
+from app.domain.block.notice_text import say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import service as library
 from app.domain.project.models import Project
@@ -298,9 +303,9 @@ def offered_attachments(
         if not library.attachment_exists(project_id, room_id, b.content)
     }
     images = [
-        {"path": b.content, "media_type": b.mime_type or "image/png"}
+        {"path": b.content, "media_type": b.mime_type}
         for b in attachments
-        if b.id not in gone
+        if b.id not in gone and is_inline_image(b.mime_type)
     ]
     return images, gone
 
@@ -353,18 +358,16 @@ def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
     if attempt > _REPLAY_NOTICE_AT and attempt % _REPLAY_NOTICE_EVERY != 0:
         return None
     first = pending[0] if pending else None
+    head: str
     if first is None:
         head = ""
     elif first.kind == BlockKind.attachment:
-        head = f"，最早的一条是 [{first.author}] 发的图片"
+        head = say("promptReplayedOldestImage", author=first.author)
     else:
         text = " ".join((first.content or "").split())
         clipped = f"{text[:24]}…" if len(text) > 24 else text
-        head = f"，最早的一条是 [{first.author}]「{clipped}」"
-    return (
-        f"这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
-        f"前面几次都没跑完{head}。"
-    )
+        head = say("promptReplayedOldestText", author=first.author, text=clipped)
+    return say("promptReplayed", count=len(pending), attempt=attempt, oldest=head)
 
 
 def _compaction_notice(event: AgentCompacting) -> tuple[str, dict]:
@@ -373,13 +376,13 @@ def _compaction_notice(event: AgentCompacting) -> tuple[str, dict]:
     One line per compaction, restated in place: it says why the session is
     silent while it runs, and whether it came back once it has ended."""
     if not event.done:
-        content = "对话太长，正在整理上下文；整理完会接着处理，期间不会回复"
+        content = say("contextCompactRunning")
         severity, detail = SEVERITY_INFO, None
     elif event.error:
-        content = "上下文整理没有完成"
+        content = say("contextCompactFailed")
         severity, detail = SEVERITY_WARN, event.error
     else:
-        content = "上下文已整理，接着处理"
+        content = say("contextCompactDone")
         severity, detail = SEVERITY_INFO, None
     meta = {
         **notice(
@@ -387,7 +390,7 @@ def _compaction_notice(event: AgentCompacting) -> tuple[str, dict]:
             severity=severity,
             who=WHO_PLATFORM,
             detail=detail,
-            detail_label="原因" if detail else None,
+            detail_label=say("labelReason") if detail else None,
         ),
         "state": "over" if event.done else "running",
         "at": datetime.now(UTC).isoformat(),

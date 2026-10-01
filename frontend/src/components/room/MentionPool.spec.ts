@@ -50,4 +50,26 @@ describe('@ 候选', () => {
     expect(handles).toContain('bob')
     expect(handles).not.toContain('cheese-reviewer')
   })
+
+  it('不在这个话题里的人挂「不在话题中」，话题里的人不挂', async () => {
+    const r = useRoomRoster({
+      topic: () => ({ id: 't1' }) as Topic,
+      members: () => MEMBERS,
+      author: 'alice',
+      onError: () => {},
+    })
+    await new Promise((resolve) => setTimeout(resolve))
+    const outside = Object.fromEntries(r.mentionPool.value.map((p) => [p.handle, !!p.outsideTopic]))
+    expect(outside).toEqual({ alice: false, 'cheese-planner': false, bob: true })
+  })
+
+  it('名册还没到时谁也不挂：那一刻说不准谁在谁不在', () => {
+    const r = useRoomRoster({
+      topic: () => ({ id: 't1' }) as Topic,
+      members: () => MEMBERS,
+      author: 'alice',
+      onError: () => {},
+    })
+    expect(r.mentionPool.value.some((p) => p.outsideTopic)).toBe(false)
+  })
 })

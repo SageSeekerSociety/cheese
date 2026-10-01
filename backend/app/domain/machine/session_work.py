@@ -32,6 +32,7 @@ from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.notice_text import say
 from app.domain.device.supply import (
     Supply,
     Visibility,
@@ -490,7 +491,7 @@ async def push_before_switch(
     printed = said.partition("\n")[2]
     failed = _failed_tasks(printed)
     if failed and keeps_files and all(closed for closed, _ in failed):
-        return [f"{line}（已结束的任务，文件还在原来那台上）" for _, line in failed]
+        return [say("workLeftClosedTask", line=line) for _, line in failed]
     detail = "\n".join(line for _, line in failed) or printed.strip()[-600:] or said
     raise ConflictError(f"推送失败，没有更换：{detail}")
 
@@ -517,7 +518,12 @@ def _failed_tasks(printed: str) -> list[tuple[bool, str]]:
                 first = line.strip().removeprefix("[cheese] ")
             continue
         closed, task, reason = ended.groups()
-        failed.append((closed is not None, f"任务 {task}：{first or reason}"))
+        failed.append(
+            (
+                closed is not None,
+                say("workTaskSyncFailed", task=task, reason=first or reason),
+            )
+        )
         first = None
     return failed
 
@@ -708,13 +714,13 @@ async def _tell_room_what_stayed_behind(db, topic_id, warnings: list[str]) -> No
     await announce(
         db,
         place_id=topic_id,
-        content="已换工作电脑；有已结束任务的文件没能备份，只留在原来那台上",
+        content=say("workLeftOnMachine"),
         meta=notice(
             EVENT_WORK_LEFT_ON_MACHINE,
             severity=SEVERITY_WARN,
             who=WHO_HUMAN,
-            detail="\n".join(warnings),
-            detail_label="没能备份的任务",
+            detail=say("lines", items=warnings),
+            detail_label=say("labelTasksNotBackedUp"),
         ),
     )
 

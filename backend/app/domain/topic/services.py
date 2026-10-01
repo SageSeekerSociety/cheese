@@ -36,6 +36,7 @@ from app.domain.block.models import (
     Block,
     BlockKind,
 )
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import (
     CHEESE_NAME,
@@ -681,7 +682,7 @@ class TopicService:
                 task_id=landed.task_id,
                 author=by,
                 author_type=AuthorType.platform,
-                content=f"随父话题「{topic.title}」一同归档",
+                content=say("threadArchivedWithRoom", room=topic.title),
                 kind=BlockKind.event,
                 meta={"platform": True},
             )
@@ -739,9 +740,9 @@ class TopicService:
             by=by,
         )
         note = (
-            f"房间「{topic.title}」随父话题「{cascaded_from}」一同归档"
+            say("roomArchivedWithParent", room=topic.title, parent=cascaded_from)
             if cascaded_from
-            else f"<@{by}> 归档了房间「{topic.title}」"
+            else say("roomArchived", actor=f"<@{by}>", room=topic.title)
         )
         # 房间归档是项目的事，不是这个房间的事（结论 14）：房间关掉之后没人再打开
         # 它的时间线，而「少了一个房间」恰恰是项目总览要记的一行。
@@ -801,7 +802,7 @@ class TopicService:
             task_id=landed.task_id,
             author=by,
             author_type=AuthorType.platform,
-            content=f"<@{by}> 取消归档，房间「{topic.title}」恢复活跃",
+            content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
             kind=BlockKind.event,
             meta={"platform": True},
         )
@@ -1010,7 +1011,7 @@ class TopicService:
             task_id=landed.task_id,
             author="system",
             author_type=AuthorType.platform,
-            content=f"派出一条活：{task.title}",
+            content=say("taskDispatched", title=task.title),
             kind=BlockKind.event,
             meta={"platform": True, "action": "split", "task_id": str(task.id)},
         )
@@ -1411,12 +1412,11 @@ class TopicService:
             return doc, None
         # A human actor is emitted as the structured <@handle> token so the
         # client renders it as a clickable mention chip (resolving handle→name
-        # via the roster) — NOT prose we later pattern-match. 芝士 stays plain
-        # product copy: every topic's 分身 authors under its own
-        # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
-        # should see — one familiar name, whichever 分身 wrote it.
+        # via the roster) — NOT prose we later pattern-match. 芝士 is one familiar
+        # name whichever 分身 wrote it: each authors under its own
+        # ``cheese-<topic hex>`` handle, which is not what a reader should see.
         by_agent = looks_like_agent_handle(author)
-        actor = "芝士" if by_agent else f"<@{author}>"
+        actor = say("actorCheese") if by_agent else f"<@{author}>"
         # What the same event says to 芝士, written here because this is the code
         # that moved the document. It locates the change and does NOT carry it:
         # a document pushed into a running turn displaces the work instead of
@@ -1444,7 +1444,7 @@ class TopicService:
             task_id=landed.task_id,
             author=author,
             author_type=AuthorType.platform,
-            content=f"{actor} 编辑了文档",
+            content=say("docEdited", actor=actor),
             kind=BlockKind.event,
             refs=[str(doc.id)],
             # action:"doc" → the client renders the 看文档 link on this SAME
@@ -1454,7 +1454,7 @@ class TopicService:
                 "action": "doc",
                 "doc_version": doc.doc_version,
                 AGENT_NOTICE_META_KEY: for_agent,
-                "detail_label": "查看本次修改",
+                "detail_label": say("labelDocEditDiff"),
                 "detail": "\n".join(
                     difflib.unified_diff(
                         before_lines,

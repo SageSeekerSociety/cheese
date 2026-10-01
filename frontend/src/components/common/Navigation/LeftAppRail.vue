@@ -75,7 +75,7 @@
         <template #prepend>
           <v-icon icon="mdi-login" size="20" />
         </template>
-        登录
+        {{ t('account.signIn.submit') }}
       </v-btn>
     </template>
   </v-navigation-drawer>
@@ -90,6 +90,7 @@ import RailItem from './RailItem.vue'
 import { NavBarProps, NavGenericItem } from './types'
 import UserMenuCard from './UserMenuCard.vue'
 
+import { t } from '@/i18n'
 import { type DropEdge, dropTargetAt } from '@/lib/projectOrder'
 
 const navBarProps = withDefaults(defineProps<NavBarProps>(), {

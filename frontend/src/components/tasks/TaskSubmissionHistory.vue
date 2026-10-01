@@ -1,12 +1,18 @@
 <template>
   <div class="d-flex flex-column ga-2 w-100 align-stretch">
     <v-card v-if="submissions.length" flat rounded="lg" :class="{ border: outlined, 'mb-4': !isDialog }">
-      <template v-if="!hideTitle" #title> {{ title || '最新提交' }} </template>
+      <template v-if="!hideTitle" #title> {{ title || t('tasks.submissionHistory.latest') }} </template>
       <template #text>
         <v-card border flat rounded="lg" class="pa-4" :class="{ 'gradient-card': highlightLatest }">
           <div class="d-flex flex-row align-center mb-2">
             <v-chip color="primary" variant="tonal" size="small"> #{{ latestSubmission.version }} </v-chip>
-            <span class="ml-2"> 提交于 {{ dayjs(latestSubmission.createdAt).format('YYYY-MM-DD HH:mm') }} </span>
+            <span class="ml-2">
+              {{
+                t('tasks.submissionHistory.submittedAt', {
+                  time: dayjs(latestSubmission.createdAt).format('YYYY-MM-DD HH:mm'),
+                })
+              }}
+            </span>
             <div class="flex-grow-1"></div>
             <v-chip
               v-if="latestSubmission.review"
@@ -26,20 +32,43 @@
         </v-card>
 
         <v-card v-if="reviewable" flat rounded="lg" border class="mt-4">
-          <template #title> {{ latestSubmission.review?.reviewed ? '修改评审' : '评审' }} </template>
+          <template #title>
+            {{
+              latestSubmission.review?.reviewed
+                ? t('tasks.submissionHistory.editReview')
+                : t('tasks.submissionHistory.review')
+            }}
+          </template>
           <template #text>
             <v-form @submit.prevent="submitReview">
-              <v-radio-group v-model="accepted" inline label="是否通过" v-bind="acceptedProps">
-                <v-radio label="通过" :value="true"></v-radio>
-                <v-radio label="驳回" :value="false"></v-radio>
+              <v-radio-group
+                v-model="accepted"
+                inline
+                :label="t('tasks.submissionHistory.passed')"
+                v-bind="acceptedProps"
+              >
+                <v-radio :label="t('tasks.submissionHistory.accept')" :value="true"></v-radio>
+                <v-radio :label="t('tasks.submissionHistory.reject')" :value="false"></v-radio>
               </v-radio-group>
-              <v-text-field v-model.number="score" label="评分" type="number" min="0" max="100" v-bind="scoreProps" />
-              <v-textarea v-model="comment" autocomplete="off" label="评论" v-bind="commentProps" />
+              <v-text-field
+                v-model.number="score"
+                :label="t('tasks.submissionHistory.score')"
+                type="number"
+                min="0"
+                max="100"
+                v-bind="scoreProps"
+              />
+              <v-textarea
+                v-model="comment"
+                autocomplete="off"
+                :label="t('tasks.submissionHistory.comment')"
+                v-bind="commentProps"
+              />
             </v-form>
           </template>
           <template #actions>
             <v-btn v-if="latestSubmission.review?.reviewed" color="error" variant="tonal" @click="cancelReview">
-              撤销评审
+              {{ t('tasks.submissionHistory.cancelReview') }}
             </v-btn>
             <v-btn
               color="primary"
@@ -48,7 +77,7 @@
               :disabled="isSubmitting"
               @click="submitReview"
             >
-              提交
+              {{ t('tasks.submissionHistory.submit') }}
             </v-btn>
           </template>
         </v-card>
@@ -57,7 +86,9 @@
     </v-card>
 
     <v-card v-if="showHistory" flat rounded="lg" :class="{ border: outlined }">
-      <template v-if="submissions.length && !hideHistoryTitle" #title> {{ historyTitle || '历史提交' }} </template>
+      <template v-if="submissions.length && !hideHistoryTitle" #title>
+        {{ historyTitle || t('tasks.submissionHistory.history') }}
+      </template>
       <infinite-scroll
         :has-more="hasMore"
         :loading="loadingMore"
@@ -67,7 +98,7 @@
         @load-more="loadMore"
       >
         <template #empty>
-          <v-empty-state :title="emptyText" />
+          <v-empty-state :title="emptyText || t('tasks.submissionHistory.empty')" />
         </template>
         <v-expansion-panels>
           <template v-for="submission in submissions.slice(1)" :key="submission.id">
@@ -76,8 +107,12 @@
                 <div class="d-flex flex-row align-center">
                   <v-chip color="primary" variant="tonal" size="small"> #{{ submission.version }} </v-chip>
                   <span class="ml-2">
-                    {{ submission.submitter.nickname }} 提交于
-                    {{ dayjs(submission.createdAt).format('YYYY-MM-DD HH:mm') }}
+                    {{
+                      t('tasks.submissionHistory.submittedBy', {
+                        name: submission.submitter.nickname,
+                        time: dayjs(submission.createdAt).format('YYYY-MM-DD HH:mm'),
+                      })
+                    }}
                   </span>
                   <div class="flex-grow-1"></div>
                   <v-chip
@@ -111,6 +146,7 @@
 import type { TaskSubmissionReview } from '@/types'
 
 import { computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import dayjs from 'dayjs'
@@ -125,6 +161,8 @@ import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { TasksApi } from '@/network/api/tasks'
+
+const { t } = useI18n()
 
 interface Props {
   taskId: number
@@ -148,7 +186,7 @@ const props = withDefaults(defineProps<Props>(), {
   hideHistoryTitle: false,
   title: '',
   historyTitle: '',
-  emptyText: '暂无历史提交记录',
+  emptyText: '',
   outlined: false,
   highlightLatest: false,
   isDialog: false,
@@ -190,9 +228,9 @@ const calcSubmissionReviewColor = (review: TaskSubmissionReview) => {
 
 const calcSubmissionReviewText = (review: TaskSubmissionReview) => {
   if (!review || !review.reviewed) {
-    return '未评审'
+    return t('tasks.submissionHistory.notReviewed')
   }
-  return review.detail.accepted ? '通过' : '驳回'
+  return review.detail.accepted ? t('tasks.submissionHistory.accept') : t('tasks.submissionHistory.reject')
 }
 
 const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
@@ -213,9 +251,9 @@ const submitReview = handleSubmit(async (values) => {
   if (latestSubmission.value.review && latestSubmission.value.review.reviewed) {
     try {
       await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
-      toast.success('修改评审成功')
+      toast.success(t('tasks.submissionHistory.reviewUpdated'))
     } catch (error) {
-      toast.error('修改评审失败')
+      toast.error(t('tasks.submissionHistory.reviewUpdateFailed'))
       console.error(error)
     } finally {
       refresh()
@@ -223,9 +261,9 @@ const submitReview = handleSubmit(async (values) => {
   } else {
     try {
       await TasksApi.postSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
-      toast.success('评审成功')
+      toast.success(t('tasks.submissionHistory.reviewed'))
     } catch (error) {
-      toast.error('评审失败')
+      toast.error(t('tasks.submissionHistory.reviewFailed'))
       console.error(error)
     } finally {
       refresh()
@@ -237,9 +275,9 @@ const cancelReview = async () => {
   if (latestSubmission.value.review) {
     try {
       await TasksApi.deleteSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id)
-      toast.success('取消评审成功')
+      toast.success(t('tasks.submissionHistory.reviewCanceled'))
     } catch (error) {
-      toast.error('取消评审失败')
+      toast.error(t('tasks.submissionHistory.reviewCancelFailed'))
       console.error(error)
     } finally {
       refresh()

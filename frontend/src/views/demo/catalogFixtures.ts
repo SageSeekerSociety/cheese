@@ -840,6 +840,7 @@ const CHAT_BASE = {
   loadingOlder: false,
   retryIndex: -1,
   retryBusy: false,
+  working: false,
   showStarters: false,
   starterPrompts: [] as { label: string; text: string }[],
   agentSeat: undefined as { handle?: string } | undefined,

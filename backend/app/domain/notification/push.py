@@ -116,7 +116,9 @@ def push_text(type_: NotificationType, payload: dict[str, Any]) -> tuple[str, st
     """(标题, 正文) —— 推送上显示的那两行。
 
     标题就是后端已经算好的那一句，不在这里拼模板：`ROOM_NOTICE` 的 `content` 是房
-    间里那一行，`CHEESE_QUESTION` 的 `question` 是芝士问的原话。正文说「在哪个房
+    间里那一行，`CHEESE_QUESTION` 的 `question` 是芝士问的原话。`content` 是那一行
+    的中文：屏幕按读者的语言渲染它的键（`payload["message"]`），推送却是服务端加密
+    好发出去的，而服务端不知道收件人选了哪种语言（选择只存在浏览器里）。正文说「在哪个房
     间」，因为推送脱离了上下文出现在系统通知栏里，而「是哪件工作」正是人判断要不要
     立刻打开的依据。
     """

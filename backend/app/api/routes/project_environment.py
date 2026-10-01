@@ -27,6 +27,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import addressed_to_agent
+from app.domain.block.notice_text import say
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
@@ -387,7 +388,7 @@ async def repair_environment(
             addressed=addressed_to_agent(seat),
             # 房间里看见的是一条系统事件，不是一句署名 system 的聊天消息：上面那
             # 段是提示词，只给 agent 看（平台提示统一契约，见 platform_notices）。
-            nudge_event="环境配置已修复，正在继续之前的消息",
+            nudge_event=say("environmentRepaired"),
             nudge_meta=notice(
                 EVENT_ENVIRONMENT_REPAIRED,
                 severity=SEVERITY_INFO,

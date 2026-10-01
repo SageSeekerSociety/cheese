@@ -32,6 +32,8 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'pick', item: MentionItem): void
   (e: 'hover', index: number): void
+  /** 从资料库退回一级（二级菜单头上那颗 ‹）。 */
+  (e: 'back'): void
 }>()
 
 const menuEl = ref<HTMLElement | null>(null)
@@ -55,10 +57,19 @@ defineExpose({ scrollActiveIntoView })
       <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
       <Transition :name="level === 'library' ? 'level-in' : 'level-out'" mode="out-in">
         <div :key="level" class="mention-menu-level">
-          <div v-if="level === 'library'" class="mention-menu-head" :title="t('work.room.mention.escBack')">
-            <v-icon size="13">mdi-folder-outline</v-icon>
+          <!-- 整个头就是「退回一级」那颗按钮：进来了就得有路回去。键盘上是 Esc、←，
+               或者 @ 后面没打字时的退格（RoomComposer 的 onComposerKey）。 -->
+          <button
+            v-if="level === 'library'"
+            type="button"
+            class="mention-menu-head"
+            :aria-label="t('work.room.mention.back')"
+            :title="t('work.room.mention.back')"
+            @click="emit('back')"
+          >
+            <v-icon size="16">mdi-chevron-left</v-icon>
             <span class="mention-menu-name">{{ t('work.room.mention.library') }}</span>
-          </div>
+          </button>
           <template v-for="(mm, i) in matches" :key="mm.kind + mm.insert">
             <div v-if="mm.group && mm.group !== matches[i - 1]?.group" class="mention-menu-group">
               {{ mm.group }}
@@ -73,9 +84,14 @@ defineExpose({ scrollActiveIntoView })
               <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
               </span>
-              <span v-else-if="mm.kind === 'member' && mm.agent" class="mention-avatar mention-avatar--agent">{{
-                avatarInitial(mm.label)
-              }}</span>
+              <!-- AI 队友的底色按名字算（和 CheeseAvatar 一样）：几位都叫「芝士…」的队友
+                   首字相同，只能靠颜色分开。 -->
+              <span
+                v-else-if="mm.kind === 'member' && mm.agent"
+                class="mention-avatar"
+                :style="{ backgroundColor: avatarColor(mm.label) }"
+                >{{ avatarInitial(mm.label) }}</span
+              >
               <span
                 v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
@@ -95,6 +111,7 @@ defineExpose({ scrollActiveIntoView })
               <span v-if="mm.agent" class="mention-agent-badge">{{ t('work.room.roster.agentBadge') }}</span>
               <ExternalTag v-else-if="mm.external" />
               <span class="mention-menu-sub">{{ mm.sub }}</span>
+              <span v-if="mm.outsideTopic" class="mention-menu-outside">{{ t('work.room.mention.notInTopic') }}</span>
               <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
               <span v-else-if="i === activeIndex && enterSends" class="mention-menu-hint">Enter</span>
             </button>
@@ -171,13 +188,6 @@ defineExpose({ scrollActiveIntoView })
   color: #fff;
   flex: none;
 }
-/* AI 队友在 @ 菜单里和在对话里一个样子（CheeseAvatar）：反色的圆角方块。它原来
-   是一颗琥珀圆——琥珀留给主操作，不给头像。 */
-.mention-avatar--agent {
-  color: var(--inverse-ink);
-  background: var(--inverse-surface);
-  border-radius: var(--radius-sm);
-}
 .mention-avatar--broadcast {
   /* --ink inverts with the theme (near-black → near-white), so the ink on it
      has to invert too; --surface is #fff in light (unchanged) and #1B1D20 dark. */
@@ -235,14 +245,23 @@ defineExpose({ scrollActiveIntoView })
   opacity: 0;
   transform: translateX(-16px);
 }
-/* 二级菜单的头，和它里面的分组标题：两条都不是可选项，所以不长得像可选项。 */
+/* 二级菜单的头是「退回一级」那颗按钮，不是一个候选：它不参与 ↑/↓ 的高亮，
+   只在指针划过时变底色。 */
 .mention-menu-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: 4px;
+  padding: 7px 12px 7px 8px;
+  min-height: 36px;
   border-bottom: 1px solid var(--line-2);
   color: var(--muted);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.mention-menu-head:hover {
+  background: var(--fill);
 }
 .mention-menu-group {
   padding: 6px 12px 2px;
@@ -264,6 +283,17 @@ defineExpose({ scrollActiveIntoView })
   font-size: 12px;
   color: var(--faint);
 }
+/* 「不在话题中」：@ 得到，但他读不到这段对话。靠右、次要色——是一句要读的说明，
+   不是状态标签，所以不上底色。 */
+.mention-menu-outside {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.mention-menu-outside + .mention-menu-hint {
+  margin-left: 8px;
+}
 .mention-menu-hint {
   margin-left: auto;
   font-size: 12px;
@@ -271,7 +301,8 @@ defineExpose({ scrollActiveIntoView })
 }
 /* 触屏上手指点得中（设计系统 §10.1）：行画出来的样子不变，能点的范围撑到 44px 高。 */
 @media (pointer: coarse) {
-  .mention-menu-item {
+  .mention-menu-item,
+  .mention-menu-head {
     min-height: 44px;
   }
 }

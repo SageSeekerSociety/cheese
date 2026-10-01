@@ -26,20 +26,19 @@ import { orderedNav, termParams } from '@/lib/shell'
 const inHome = (path: string) =>
   path === '/inbox' || path === '/home' || path.startsWith('/teams') || path.startsWith('/spaces')
 
-const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/inbox', icon: 'cheese', match: inHome }
+const HOME: Omit<NavItem, 'title'> = { key: 'Home', type: 'item', to: '/inbox', icon: 'cheese', match: inHome }
 
 // 手机底栏的「首页」：团队和空间的目录（HomeHub）。待办在手机上自己占一格。
-const HUB: NavItem = {
+const HUB: Omit<NavItem, 'title'> = {
   key: 'Hub',
   type: 'item',
-  title: '首页',
   to: '/home',
   icon: 'mdi-home-outline',
   match: (path) => path === '/home' || path.startsWith('/teams') || path.startsWith('/spaces'),
 }
 
 // 手机底栏的「待办」。桌面上没有这一格：待办就是首页那一格点开的那一页。
-const INBOX: NavItem = { key: 'Inbox', type: 'item', title: '待办', to: '/inbox', icon: 'mdi-inbox-outline' }
+const INBOX: Omit<NavItem, 'title'> = { key: 'Inbox', type: 'item', to: '/inbox', icon: 'mdi-inbox-outline' }
 
 export interface NavSources {
   projects: Project[]
@@ -111,6 +110,10 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
         title: p.name,
         projectId: p.id,
         to: `/projects/${p.id}`,
+        // 项目里的每一页（话题、看板、设置）都算站在这一格上。选中框靠这个画：
+        // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
+        // 会盖掉链接本来算出的激活态。
+        match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
         img: src.projectAvatar(p.name),
       })),
     ],

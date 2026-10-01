@@ -3,25 +3,29 @@
     <v-banner v-if="hasSavedInfo" class="mb-4" lines="one">
       <template #text>
         <div class="d-flex align-center justify-space-between">
-          <span>检测到您之前保存的联系方式，是否填入？</span>
+          <span>{{ t('tasks.verifyForm.savedFound') }}</span>
         </div>
       </template>
       <template #actions>
-        <v-btn variant="text" @click="hasSavedInfo = false">忽略</v-btn>
-        <v-btn color="primary" variant="flat" append-icon="mdi-lightning-bolt" @click="fillSavedInfo"> 一键填入 </v-btn>
+        <v-btn variant="text" @click="hasSavedInfo = false">{{ t('tasks.verifyForm.ignore') }}</v-btn>
+        <v-btn color="primary" variant="flat" append-icon="mdi-lightning-bolt" @click="fillSavedInfo">{{
+          t('tasks.verifyForm.fill')
+        }}</v-btn>
       </template>
     </v-banner>
 
     <v-form ref="verifyForm" @submit.prevent="submitForm">
       <div class="contact-section">
         <div class="d-flex align-center mb-2">
-          <span class="text-subtitle-2">联系方式</span>
-          <v-chip class="ms-2" size="small" color="primary" variant="tonal">至少填写一项</v-chip>
+          <span class="text-subtitle-2">{{ t('tasks.verifyForm.contact') }}</span>
+          <v-chip class="ms-2" size="small" color="primary" variant="tonal">{{
+            t('tasks.verifyForm.atLeastOne')
+          }}</v-chip>
           <v-tooltip v-if="requireRealName" location="top" max-width="300">
             <template #activator="{ props }">
               <v-icon v-bind="props" color="info" size="18" class="ms-2">mdi-information-outline</v-icon>
             </template>
-            <span>此题目要求实名参与，您的联系方式将用于身份验证和通知</span>
+            <span>{{ t('tasks.verifyForm.realNameTip') }}</span>
           </v-tooltip>
         </div>
 
@@ -31,8 +35,8 @@
               v-model="formData.phone"
               autocomplete="tel"
               name="phone"
-              label="手机号"
-              :hint="!formData.email ? '请至少填写手机号或邮箱中的一项' : undefined"
+              :label="t('tasks.verifyForm.phone')"
+              :hint="!formData.email ? t('tasks.verifyForm.phoneOrEmail') : undefined"
               :required="!formData.email"
               prepend-inner-icon="mdi-phone"
               v-bind="phoneProps"
@@ -43,8 +47,8 @@
               v-model="formData.email"
               autocomplete="email"
               name="email"
-              label="邮箱"
-              :hint="!formData.phone ? '请至少填写手机号或邮箱中的一项' : undefined"
+              :label="t('tasks.verifyForm.email')"
+              :hint="!formData.phone ? t('tasks.verifyForm.phoneOrEmail') : undefined"
               :required="!formData.phone"
               prepend-inner-icon="mdi-email"
               v-bind="emailProps"
@@ -56,9 +60,9 @@
       <v-textarea
         v-model="formData.applyReason"
         autocomplete="off"
-        label="申请理由"
+        :label="t('tasks.verifyForm.applyReason')"
         v-bind="applyReasonProps"
-        hint="请简要说明参与题目的目的和期望"
+        :hint="t('tasks.verifyForm.applyReasonHint')"
         rows="3"
         auto-grow
       ></v-textarea>
@@ -66,7 +70,7 @@
       <div class="d-flex align-center">
         <v-checkbox
           v-model="saveToLocal"
-          label="保存联系方式到本地，下次自动填写"
+          :label="t('tasks.verifyForm.saveLocal')"
           color="primary"
           hide-details
           density="compact"
@@ -77,9 +81,9 @@
             <v-icon v-bind="props" color="primary" size="18" class="ms-2"> mdi-shield-check </v-icon>
           </template>
           <div class="text-body-2">
-            为方便您下次填写，可选择将联系方式保存在浏览器本地。<br />
-            这些信息仅存储在您的设备上，平台不会收集或保存。<br />
-            申请理由不会被保存。
+            {{ t('tasks.verifyForm.saveLocalTip1') }}<br />
+            {{ t('tasks.verifyForm.saveLocalTip2') }}<br />
+            {{ t('tasks.verifyForm.saveLocalTip3') }}
           </div>
         </v-tooltip>
       </div>
@@ -89,6 +93,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
@@ -96,6 +101,8 @@ import { z } from 'zod'
 import { vuetifyConfig } from '@/utils/form'
 
 import { useEvents } from '@/views/tasks/events'
+
+const { t } = useI18n()
 
 defineProps<{
   requireRealName: boolean
@@ -120,12 +127,12 @@ const { handleSubmit, defineField, isSubmitting, setFieldValue } = useForm({
   validationSchema: toTypedSchema(
     z
       .object({
-        phone: z.string().regex(phoneRegex, '请输入正确的手机号').optional().or(z.literal('')),
-        email: z.string().regex(emailRegex, '请输入正确的邮箱地址').optional().or(z.literal('')),
-        applyReason: z.string().max(500, '理由最多500个字符').optional().or(z.literal('')),
+        phone: z.string().regex(phoneRegex, t('tasks.verifyForm.phoneInvalid')).optional().or(z.literal('')),
+        email: z.string().regex(emailRegex, t('tasks.verifyForm.emailInvalid')).optional().or(z.literal('')),
+        applyReason: z.string().max(500, t('tasks.verifyForm.reasonTooLong')).optional().or(z.literal('')),
       })
       .refine((data) => data.phone || data.email, {
-        message: '请至少填写手机号或邮箱中的一项',
+        message: t('tasks.verifyForm.phoneOrEmail'),
         path: ['phone'], // 将错误消息显示在手机号字段
       })
   ),

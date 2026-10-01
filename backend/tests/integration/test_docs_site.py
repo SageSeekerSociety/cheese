@@ -2,11 +2,12 @@
 
 /docs/dev/ is for platform admins: the pass is issued only to them, every
 check re-asks, and losing admin closes the door. 问芝士 needs a signed-in
-person, mints its gateway key once, records every question, and refuses past
-its limits. Over the model's own searches it reads the public pages and answers
-from them (``docs_assistant_agentic``); with the switch off it answers from one
-round of retrieval, and never calls the model when the docs have nothing to
-say. The gateway and the frontend's index are stubbed with one MockTransport.
+person, mints its gateway key once, records every question, and charges it to
+the asker's personal credits at the model's price. Over the model's own
+searches it reads the public pages and answers from them
+(``docs_assistant_agentic``); with the switch off it answers from one round of
+retrieval, and never calls the model when the docs have nothing to say. The
+gateway and the frontend's index are stubbed with one MockTransport.
 """
 
 import asyncio
@@ -23,6 +24,8 @@ from app.core.config import settings
 from app.domain.docs_site import access, assistant, retrieval
 from app.domain.docs_site.limits import AskLimits
 from app.domain.docs_site.models import DocsQuestion, ServiceCredential
+from app.domain.feature_stats import pricing
+from app.domain.usage.models import ComputeGrant, ResourceUsage
 from tests.conftest import seed_user
 from tests.integration.conftest import session_auth_headers
 
@@ -74,6 +77,10 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
         "answer": "文档里没有讲到。",
         "deltas": ("采纳就是合并，", "见 [验收与采纳](/docs/accept#is-merge)。"),
         "usage": (300, 20),
+        # Of the prompt tokens, how many the provider served from its cache.
+        "cached": 0,
+        # USD per input, output and cached input token for 问芝士's model.
+        "rates": (1e-6, 2e-6, 1e-8),
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -81,6 +88,21 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
         if path == "/docs/ask-index.json":
             seen["index"] += 1
             return httpx.Response(200, json=INDEX)
+        if path == "/model/info":
+            rows = []
+            if seen["rates"] is not None:
+                inp, out, cache_read = seen["rates"]
+                rows.append(
+                    {
+                        "model_name": settings.docs_assistant_model,
+                        "litellm_params": {
+                            "input_cost_per_token": inp,
+                            "output_cost_per_token": out,
+                            "cache_read_input_token_cost": cache_read,
+                        },
+                    }
+                )
+            return httpx.Response(200, json={"data": rows})
         if path == "/key/generate":
             seen["mints"] += 1
             seen["mint_body"] = json.loads(request.content)
@@ -94,7 +116,11 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
             sent = json.loads(request.content)
             seen["completions"].append((request.headers["authorization"], sent))
             prompt, completion = seen["usage"]
-            usage = {"prompt_tokens": prompt, "completion_tokens": completion}
+            usage = {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "prompt_tokens_details": {"cached_tokens": seen["cached"]},
+            }
             if sent.get("tools"):
                 at = seen["tool_rounds"]
                 seen["tool_rounds"] += 1
@@ -153,6 +179,8 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch) -> dict:
     )
     monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway")
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
+    monkeypatch.setattr(settings, "llm_gateway_credit_usd", 1e-5)
+    pricing.forget()
     # Questions are recorded after the response, on a session of their own.
     monkeypatch.setattr(route, "async_session_factory", client.test_request_factory)
     # TestClient without a ``with`` block runs each request on its own loop, so
@@ -302,8 +330,8 @@ def test_an_answer_is_grounded_streamed_and_recorded(
     assert "<docs>" in sent["messages"][-1]["content"]
     # No tools on the old path: the sections were chosen here, not by the model.
     assert "tools" not in sent and "thinking" not in sent
-    # The key is minted with a budget, once.
-    assert gateway["mint_body"]["max_budget"] == settings.docs_assistant_budget_usd
+    # The asker pays for the question, so the key carries no budget of its own.
+    assert "max_budget" not in gateway["mint_body"]
     [row] = _rows(client)
     assert (row.outcome, row.page, row.prompt_tokens, row.completion_tokens) == (
         "answered",
@@ -399,18 +427,110 @@ def test_a_question_the_docs_do_not_cover_is_refused_without_reading_anything(
     assert row.outcome == "answered" and row.sources == []
 
 
-def test_past_the_hourly_limit_the_answer_is_429(client, asker, gateway, monkeypatch):
-    monkeypatch.setattr(settings, "docs_assistant_hourly_limit", 1)
-    assert (
-        client.post(
-            "/docs/ask", json={"question": "今天天气"}, headers=asker
-        ).status_code
-        == 200
+def _ledger(client) -> tuple[list[ComputeGrant], list[ResourceUsage]]:
+    async def read():
+        async with client.test_factory() as s:
+            grants = (
+                await s.execute(
+                    select(ComputeGrant).where(ComputeGrant.user_id.is_not(None))
+                )
+            ).scalars()
+            usage = (await s.execute(select(ResourceUsage))).scalars()
+            return list(grants), list(usage)
+
+    return asyncio.run(read())
+
+
+def _ask(client, asker) -> httpx.Response:
+    r = client.post(
+        "/docs/ask",
+        json={"question": "采纳和合并是一回事吗", "page": "accept"},
+        headers=asker,
     )
-    _rows(client)  # the first question's lock is released once its row is written
-    r = client.post("/docs/ask", json={"question": "今天天气"}, headers=asker)
+    _rows(client)  # settled once the question's row is written
+    return r
+
+
+@pytest.mark.parametrize("rates", [(1e-6, 2e-6, 1e-8), (4e-6, 8e-6, 4e-8)])
+def test_a_question_is_paid_for_by_the_asker_at_the_models_price(
+    client, asker, gateway, rates
+):
+    gateway["rates"] = rates
+    gateway["usage"] = (300, 20)
+    assert _ask(client, asker).status_code == 200
+
+    [grant], [spent] = _ledger(client)
+    # Priced at what the model charges, so a dearer model costs more credits
+    # for the same tokens.
+    cost = 300 * rates[0] + 20 * rates[1]
+    assert grant.credits_used == pytest.approx(cost / settings.llm_gateway_credit_usd)
+    assert grant.credits_total == settings.personal_credits_monthly
+    # Outside any project, against the person who asked.
+    assert spent.project_id is None and spent.user_id == grant.user_id
+    assert (spent.input_tokens, spent.output_tokens) == (300, 20)
+    assert spent.cost_usd == pytest.approx(cost)
+
+
+def test_prompt_tokens_served_from_the_cache_cost_the_cache_price(
+    client, asker, gateway
+):
+    gateway["rates"] = (1e-6, 2e-6, 1e-8)
+    gateway["usage"] = (300, 20)
+    gateway["cached"] = 200
+    assert _ask(client, asker).status_code == 200
+
+    [grant], [spent] = _ledger(client)
+    cost = 100 * 1e-6 + 200 * 1e-8 + 20 * 2e-6
+    assert spent.cost_usd == pytest.approx(cost)
+    assert grant.credits_used == pytest.approx(cost / settings.llm_gateway_credit_usd)
+
+
+def test_a_month_gives_one_grant_however_many_questions(client, asker, gateway):
+    assert _ask(client, asker).status_code == 200
+    assert _ask(client, asker).status_code == 200
+    grants, spent = _ledger(client)
+    assert len(grants) == 1 and len(spent) == 2
+
+
+def test_with_no_credits_left_the_question_is_refused_until_the_month_turns(
+    client, asker, gateway, monkeypatch
+):
+    # One question overdraws the month; the next is refused before the model.
+    monkeypatch.setattr(settings, "personal_credits_monthly", 1.0)
+    assert _ask(client, asker).status_code == 200
+    calls = len(gateway["completions"])
+
+    r = client.post(
+        "/docs/ask",
+        json={"question": "采纳和合并是一回事吗", "page": "accept"},
+        headers=asker,
+    )
     assert r.status_code == 429
+    assert "额度已用完" in r.json()["message"]
     assert int(r.headers["retry-after"]) >= 60
+    assert len(gateway["completions"]) == calls
+    # Refusing released the person's slot: the answer is the same, not "busy".
+    again = client.post(
+        "/docs/ask",
+        json={"question": "采纳和合并是一回事吗", "page": "accept"},
+        headers=asker,
+    )
+    assert again.status_code == 429 and "额度已用完" in again.json()["message"]
+
+
+def test_a_model_with_no_price_cannot_be_charged_so_it_is_not_asked(
+    client, asker, gateway
+):
+    gateway["rates"] = None
+    r = client.post(
+        "/docs/ask",
+        json={"question": "采纳和合并是一回事吗", "page": "accept"},
+        headers=asker,
+    )
+    assert r.status_code == 503
+    assert gateway["completions"] == []
+    _, spent = _ledger(client)
+    assert spent == []
 
 
 def test_without_a_gateway_the_assistant_says_it_is_not_open(

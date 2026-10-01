@@ -24,6 +24,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.block.notice_text import with_keys
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
@@ -128,6 +129,9 @@ class BlockRepository:
             and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
+        # A platform sentence carries its key; the reader's screen renders it
+        # in the reader's language (`notice_text.py`).
+        meta = with_keys(meta, content=content)
         block = Block(
             project_id=project_id,
             topic_id=topic_id,
@@ -435,7 +439,7 @@ class BlockRepository:
         if block is None:
             return None
         block.content = content
-        block.meta = {**(block.meta or {}), **meta}
+        block.meta = with_keys({**(block.meta or {}), **meta}, content=content)
         await self._session.flush()
         return block
 

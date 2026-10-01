@@ -57,7 +57,7 @@ const teamLockingPolicyItems = computed(() => [
 </script>
 
 <template>
-  <TaskFormSection icon="mdi-information-outline" title="基本信息">
+  <TaskFormSection icon="mdi-information-outline" :title="t('tasks.form.basicInfo')">
     <v-row dense>
       <v-col cols="12">
         <v-text-field
@@ -104,7 +104,7 @@ const teamLockingPolicyItems = computed(() => [
         <div class="d-flex align-center">
           <v-text-field
             v-model.number="participantLimit"
-            :label="submitterType === 'TEAM' ? '队伍数量限制' : '参与者人数限制'"
+            :label="submitterType === 'TEAM' ? t('tasks.form.teamLimit') : t('tasks.form.participantLimit')"
             type="number"
             min="1"
             :disabled="participantLimitUnlimited"
@@ -121,7 +121,7 @@ const teamLockingPolicyItems = computed(() => [
                —— 锁上之后就看得见「这个数现在不算数」。 -->
           <v-checkbox
             v-model="participantLimitUnlimited"
-            label="不限"
+            :label="t('tasks.form.unlimited')"
             density="compact"
             hide-details
             class="ms-4 flex-grow-0"
@@ -166,7 +166,7 @@ const teamLockingPolicyItems = computed(() => [
         <v-col cols="12" md="6">
           <v-text-field
             v-model.number="minTeamSize"
-            label="最小队伍人数"
+            :label="t('tasks.form.minTeamSize')"
             type="number"
             required
             min="1"
@@ -180,7 +180,7 @@ const teamLockingPolicyItems = computed(() => [
         <v-col cols="12" md="6">
           <v-text-field
             v-model.number="maxTeamSize"
-            label="最大队伍人数"
+            :label="t('tasks.form.maxTeamSize')"
             type="number"
             required
             min="1"
@@ -202,10 +202,18 @@ const teamLockingPolicyItems = computed(() => [
           >
             <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.teamMemberManagement') }}</div>
             <p class="text-body-2 mb-0">
-              • 系统会在参与申请被审核通过时<strong>记录当前的队伍成员名单</strong><br />
-              • 无论选择哪种策略，最终的参与记录都只会基于审核通过时的成员名单<br />
-              • <strong>允许自由调整</strong>：队伍可以继续添加/移除成员，但这些变动不会影响已记录的参与情况<br />
-              • <strong>审核通过后锁定</strong>：队伍成员将被锁定，无法再进行任何成员变更
+              •
+              <i18n-t scope="global" keypath="tasks.form.teamNote.recorded" tag="span">
+                <template #roster>
+                  <strong>{{ t('tasks.form.teamNote.roster') }}</strong>
+                </template>
+              </i18n-t>
+              <br />
+              • {{ t('tasks.form.teamNote.basis') }}<br />
+              • <strong>{{ t('tasks.form.teamLockingPolicyNoLock') }}</strong
+              >{{ t('tasks.form.teamNote.noLock') }}<br />
+              • <strong>{{ t('tasks.form.teamLockingPolicyLockOnApproval') }}</strong
+              >{{ t('tasks.form.teamNote.lockOnApproval') }}
             </p>
           </v-alert>
         </v-col>

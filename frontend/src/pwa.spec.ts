@@ -1,100 +1,76 @@
-// @vitest-environment node
-import { describe, expect, it, vi } from 'vitest'
+// 新版本在下一次应用内跳转时换上：不在原地刷新，也不弹提示问人。
+import type { RegisterSWOptions } from 'virtual:pwa-register'
 
-const captured = vi.hoisted(() => ({ options: null as unknown }))
-vi.mock('vite-plugin-pwa', () => ({
-  VitePWA: (options: unknown) => {
-    captured.options = options
-    return { name: 'pwa-config-test' }
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const sw = vi.hoisted(() => ({
+  options: null as RegisterSWOptions | null,
+  activate: vi.fn(async () => {}),
+}))
+
+vi.mock('virtual:pwa-register', () => ({
+  registerSW: (options: RegisterSWOptions) => {
+    sw.options = options
+    return sw.activate
   },
 }))
 
-import '../vite.config'
+const blank = { template: '<div />' }
 
-type NavigationRoute = {
-  urlPattern: (context: { url: URL; request: { mode: string }; sameOrigin: boolean }) => boolean
-  handler: string
-  options: { fetchOptions: { cache: string }; precacheFallback: { fallbackURL: string } }
+async function start() {
+  vi.resetModules()
+  const { registerPwa } = await import('./pwa')
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/a', component: blank },
+      { path: '/b', component: blank },
+    ],
+  })
+  registerPwa(router)
+  await router.push('/a')
+  return router
 }
 
-describe('online workspace navigation', () => {
-  it('fetches current HTML for deep links and retains the precached offline fallback', () => {
-    const { workbox } = captured.options as {
-      workbox: { navigateFallback: unknown; runtimeCaching: NavigationRoute[] }
-    }
-    expect(workbox.navigateFallback).toBeNull()
-    const route = workbox.runtimeCaching[0]
-    for (const path of ['/', '/about', '/projects/project/docs', '/spaces/4/tasks/12/submit']) {
-      expect(
-        route.urlPattern({
-          url: new URL(path, 'https://example.test'),
-          request: { mode: 'navigate' },
-          sameOrigin: true,
-        })
-      ).toBe(true)
-    }
-    for (const path of ['/api/tasks/12', '/connector/ws', '/users/auth/login']) {
-      expect(
-        route.urlPattern({
-          url: new URL(path, 'https://example.test'),
-          request: { mode: 'navigate' },
-          sameOrigin: true,
-        })
-      ).toBe(false)
-    }
-    expect(route.handler).toBe('NetworkOnly')
-    expect(route.options.fetchOptions.cache).toBe('no-cache')
-    expect(route.options.precacheFallback.fallbackURL).toBe('index.html')
-  })
+let assign: ReturnType<typeof vi.fn>
+
+beforeEach(() => {
+  sw.activate.mockClear()
+  assign = vi.fn()
+  vi.stubGlobal('location', { ...window.location, assign })
 })
 
-// 更新策略和安装信息都写在这个配置里，而它们的错法都是**安静的**：多写一行
-// skipWaiting 就是「每次发版开着的页面自己刷新」，少写一条 manifest 字段就是
-// 「手机上装出来的东西没有名字/没有快捷方式」。所以在这里钉住。
-describe('新旧版本交接与安装信息', () => {
-  type Workbox = {
-    skipWaiting?: unknown
-    clientsClaim?: unknown
-    globIgnores: string[]
-  }
-  type Manifest = {
-    id?: string
-    categories?: string[]
-    shortcuts?: { name: string; url: string }[]
-    screenshots?: { src: string; sizes: string; form_factor?: string }[]
-    start_url?: string
-    scope?: string
-  }
-
-  const options = () => captured.options as { registerType: string; workbox: Workbox; manifest: Manifest }
-
-  it('更新要问过用户：registerType 是 prompt，且没有偷偷 skipWaiting', () => {
-    expect(options().registerType).toBe('prompt')
-    // 这两个值若被重新写上，新 worker 会立刻接管，提示条根本没机会出现。
-    expect(options().workbox.skipWaiting).toBeUndefined()
-    expect(options().workbox.clientsClaim).toBeUndefined()
+describe('新版本怎么换上', () => {
+  it('没有新版本时，跳转照常在页面里完成', async () => {
+    const router = await start()
+    await router.push('/b')
+    expect(router.currentRoute.value.path).toBe('/b')
+    expect(assign).not.toHaveBeenCalled()
   })
 
-  it('安装信息：有稳定的应用身份、分类、以及两个进得去的快捷方式', () => {
-    const { manifest } = options()
-    expect(manifest.id).toBe('/')
-    expect(manifest.categories).toContain('productivity')
-    // 快捷方式的 url 必须在 scope 里，而且要是打开就能到的顶层路由。
-    const urls = (manifest.shortcuts ?? []).map((s) => s.url)
-    expect(urls).toContain('/inbox')
-    expect(urls).toContain('/spaces')
-    for (const url of urls) expect(url.startsWith(manifest.scope ?? '/')).toBe(true)
+  it('新版本下好之后，下一次跳转整页加载到目标地址，并让新版本接管', async () => {
+    const router = await start()
+    sw.options!.onNeedRefresh!()
+    await router.push('/b')
+    expect(assign).toHaveBeenCalledWith('/b')
+    expect(sw.activate).toHaveBeenCalledOnce()
+    expect(router.currentRoute.value.path).toBe('/a')
   })
 
-  it('安装截图只被安装弹窗取用，不进 precache', () => {
-    const { workbox, manifest } = options()
-    const shots = manifest.screenshots ?? []
-    expect(shots.length).toBeGreaterThan(0)
-    for (const shot of shots) {
-      // 每一张都得有尺寸（浏览器按它挑图），并且整条路径被排除在预缓存之外。
-      expect(shot.sizes).toMatch(/^\d+x\d+$/)
-      expect(shot.src).toMatch(/^screenshots\//)
-      expect(workbox.globIgnores).toContain('screenshots/**')
-    }
+  // 新 worker 被别的标签页换上之后，这一页不刷新，下一次跳转再整页加载。
+  it('别的标签页换上了新版本：这一页不刷新，下一次跳转整页加载', async () => {
+    const router = await start()
+    sw.options!.onNeedReload!()
+    expect(assign).not.toHaveBeenCalled()
+    await router.push('/b')
+    expect(assign).toHaveBeenCalledWith('/b')
+  })
+
+  it('只换 query 的跳转不算离开这一页', async () => {
+    const router = await start()
+    sw.options!.onNeedRefresh!()
+    await router.push('/a?tab=2')
+    expect(assign).not.toHaveBeenCalled()
   })
 })

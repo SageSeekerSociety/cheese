@@ -67,6 +67,7 @@ from app.api.routes.topics import (
 from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -174,9 +175,9 @@ async def add_comment(
             ),
             addressed=addressed_to_agent(seat),
             nudge_event=(
-                f"{author} 评论了文档，已交给 <@{seat}>"
+                say("docCommentedHandedTo", actor=author, seat=f"<@{seat}>")
                 if seat
-                else f"{author} 评论了文档"
+                else say("docCommented", actor=author)
             ),
             provision_actor=actor,
         )

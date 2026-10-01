@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 // 「实名信息隐私保护」那段说明：出题人第一次要求实名信息、要交卷时弹出来，读完点
 // 「了解并接受」才真的交上去。
 //
@@ -20,12 +24,12 @@ const emit = defineEmits<{
     <v-card rounded="lg">
       <v-card-title class="d-flex align-center px-4 pt-4 pb-2">
         <v-icon color="primary" class="mr-3" size="28">mdi-shield-check</v-icon>
-        <span class="text-h5 font-weight-medium">实名信息隐私保护</span>
+        <span class="text-h5 font-weight-medium">{{ t('tasks.form.privacy.title') }}</span>
       </v-card-title>
 
       <v-card-text class="px-4 pb-2">
         <p class="text-subtitle-2 font-weight-medium mb-4">
-          为保护参与者隐私，我们对需要实名信息的题目采取了多重保护措施：
+          {{ t('tasks.form.privacy.intro') }}
         </p>
 
         <!-- 信息保护卡片 -->
@@ -38,9 +42,11 @@ const emit = defineEmits<{
                     <v-icon icon="mdi-eye-off" size="20" color="primary"></v-icon>
                   </v-avatar>
                   <div>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">匿名参与</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('tasks.form.privacy.anonymousTitle') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis mb-0">
-                      平台上的日常活动保持匿名，其他用户无法看到参与者的真实身份信息
+                      {{ t('tasks.form.privacy.anonymousBody') }}
                     </p>
                   </div>
                 </div>
@@ -52,9 +58,11 @@ const emit = defineEmits<{
                     <v-icon icon="mdi-file-document-outline" size="20" color="primary"></v-icon>
                   </v-avatar>
                   <div>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">用途限制</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('tasks.form.privacy.purposeTitle') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis mb-0">
-                      实名信息仅用于身份验证、学分认定和评优评奖等必要场景
+                      {{ t('tasks.form.privacy.purposeBody') }}
                     </p>
                   </div>
                 </div>
@@ -66,9 +74,11 @@ const emit = defineEmits<{
                     <v-icon icon="mdi-shield-lock" size="20" color="primary"></v-icon>
                   </v-avatar>
                   <div>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">加密存储</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('tasks.form.privacy.encryptionTitle') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis mb-0">
-                      采用端到端加密技术存储和传输实名信息，防止未授权访问
+                      {{ t('tasks.form.privacy.encryptionBody') }}
                     </p>
                   </div>
                 </div>
@@ -80,9 +90,9 @@ const emit = defineEmits<{
                     <v-icon icon="mdi-history" size="20" color="primary"></v-icon>
                   </v-avatar>
                   <div>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">访问记录</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.accessTitle') }}</div>
                     <p class="text-body-2 text-medium-emphasis mb-0">
-                      所有对实名信息的访问都被记录，参与者可随时查看访问记录
+                      {{ t('tasks.form.privacy.accessBody') }}
                     </p>
                   </div>
                 </div>
@@ -93,7 +103,7 @@ const emit = defineEmits<{
 
         <!-- 使用场景 -->
         <div class="mb-4">
-          <div class="text-subtitle-2 font-weight-medium mb-3">信息使用场景</div>
+          <div class="text-subtitle-2 font-weight-medium mb-3">{{ t('tasks.form.privacy.scenariosTitle') }}</div>
           <v-row dense>
             <v-col cols="12" md="4">
               <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
@@ -103,8 +113,12 @@ const emit = defineEmits<{
                       <v-icon icon="mdi-account-check" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">身份验证</div>
-                      <p class="text-body-2 text-medium-emphasis mb-0">验证参与者身份，帮助出题人了解成员背景</p>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.verificationTitle') }}
+                      </div>
+                      <p class="text-body-2 text-medium-emphasis mb-0">
+                        {{ t('tasks.form.privacy.verificationBody') }}
+                      </p>
                     </div>
                   </div>
                 </v-card-text>
@@ -119,8 +133,12 @@ const emit = defineEmits<{
                       <v-icon icon="mdi-certificate-outline" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">项目认证</div>
-                      <p class="text-body-2 text-medium-emphasis mb-0">用于题目结题后的证书发放和学分认定</p>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.certificationTitle') }}
+                      </div>
+                      <p class="text-body-2 text-medium-emphasis mb-0">
+                        {{ t('tasks.form.privacy.certificationBody') }}
+                      </p>
                     </div>
                   </div>
                 </v-card-text>
@@ -135,8 +153,10 @@ const emit = defineEmits<{
                       <v-icon icon="mdi-trophy" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">评奖评优</div>
-                      <p class="text-body-2 text-medium-emphasis mb-0">用于题目结题后的奖项评定与项目评选</p>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.awardsTitle') }}
+                      </div>
+                      <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.form.privacy.awardsBody') }}</p>
                     </div>
                   </div>
                 </v-card-text>
@@ -147,18 +167,17 @@ const emit = defineEmits<{
 
         <!-- 合规承诺 -->
         <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
-          <div class="text-subtitle-2 font-weight-medium mb-1">合规承诺</div>
+          <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.commitmentTitle') }}</div>
           <p class="text-body-2 mb-0">
-            作为题目发布者，您应当严格遵守隐私保护规范，只有在必要的场景下才能查看参与者的实名信息。
-            平台会记录每次查看行为，并对滥用行为采取相应处罚。
+            {{ t('tasks.form.privacy.commitmentBody') }}
           </p>
         </v-alert>
       </v-card-text>
 
       <v-card-actions class="pa-4 pt-2">
         <v-spacer></v-spacer>
-        <v-btn color="secondary" variant="text" @click="emit('cancel')">取消</v-btn>
-        <v-btn color="primary" variant="flat" @click="emit('confirm')">了解并接受</v-btn>
+        <v-btn color="secondary" variant="text" @click="emit('cancel')">{{ t('global.cancel') }}</v-btn>
+        <v-btn color="primary" variant="flat" @click="emit('confirm')">{{ t('tasks.form.privacy.understood') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

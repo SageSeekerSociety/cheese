@@ -27,6 +27,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.compute_configs import ComputeChoice, room_choice
+from app.domain.block.notice_text import say
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -279,7 +280,7 @@ class MachineService:
             )
             if warm is not None:
                 await startup_progress(
-                    topic_id, "已选中预热机器，正在分配给本话题", machine_id=warm.id
+                    topic_id, say("cloudWarmPicked"), machine_id=warm.id
                 )
                 return warm
         # The platform needs its own way in to enroll the machine later. The
@@ -321,14 +322,16 @@ class MachineService:
         )
         async with _create_locks.setdefault(session_id or topic_id, asyncio.Lock()):
             await self._session.commit()
-            await startup_progress(topic_id, "正在请求创建机器", machine_id=machine.id)
+            await startup_progress(
+                topic_id, say("cloudCreateRequested"), machine_id=machine.id
+            )
             try:
                 created = await self._client.create_machine(body)
             except BaseException:
                 # Nothing was created, so nothing is owed: give the slot back.
                 await startup_progress(
                     topic_id,
-                    "创建请求未完成，无法确认机器状态",
+                    say("cloudCreateUnconfirmed"),
                     machine_id=machine.id,
                     failed=True,
                 )
@@ -345,7 +348,7 @@ class MachineService:
             )
             await self._session.commit()
             await startup_progress(
-                topic_id, "创建请求已受理，等待机器启动", machine_id=machine.id
+                topic_id, say("cloudCreateAccepted"), machine_id=machine.id
             )
         return machine
 
@@ -745,9 +748,9 @@ class MachineService:
             status = _as_status(remote.get("status"))
             if status != machine.status:
                 text = {
-                    MachineStatus.starting: "机器正在启动",
-                    MachineStatus.running: "机器已启动，等待接入任务",
-                    MachineStatus.error: "机器供应方报告创建失败",
+                    MachineStatus.starting: say("cloudMachineStarting"),
+                    MachineStatus.running: say("cloudMachineRunning"),
+                    MachineStatus.error: say("cloudMachineError"),
                 }.get(status)
                 if text:
                     await startup_progress(
@@ -922,7 +925,7 @@ class MachineService:
             await startup_progress(machine.topic_id, text, machine_id=machine.id)
 
         await progress(
-            f"机器已启动，开始接入（第 {(machine.enroll_attempts or 0) + 1} 次尝试）"
+            say("cloudEnrollStarted", attempt=(machine.enroll_attempts or 0) + 1)
         )
         try:
             output = await enrollment.run_bootstrap(
@@ -937,27 +940,29 @@ class MachineService:
             reason = enrollment.redact(str(exc), device.token)
             logger.warning("enrolling machine %s failed: %s", machine.hostname, reason)
             failure = (
-                "连接或安装超时"
+                say("cloudEnrollTimedOut")
                 if "timed out" in reason
-                else "连接或传输失败"
+                else say("cloudEnrollTransferFailed")
                 if "transfer" in reason
-                else "启动脚本执行失败"
+                else say("cloudEnrollScriptFailed")
             )
             await startup_progress(
                 machine.topic_id,
-                failure
-                + "；"
-                + (
-                    "已达到重试上限"
-                    if (machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS
-                    else "等待自动重试"
+                say(
+                    "cloudEnrollFailed",
+                    failure=failure,
+                    next=(
+                        say("cloudEnrollGaveUp")
+                        if (machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS
+                        else say("cloudEnrollWillRetry")
+                    ),
                 ),
                 machine_id=machine.id,
                 failed=(machine.enroll_attempts or 0) + 1 >= MAX_ENROLL_ATTEMPTS,
             )
             return await self._repo.mark_enroll_failed(machine, error=reason)
 
-        await progress("连接器安装完成，等待平台确认连接")
+        await progress(say("cloudConnectorInstalled"))
         logger.info(
             "enrolled machine %s as device %s: %s",
             machine.hostname,

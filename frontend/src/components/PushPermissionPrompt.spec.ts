@@ -16,6 +16,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import PushPermissionPrompt from './PushPermissionPrompt.vue'
 
+import { setLocale } from '@/i18n'
+
 const enablePush = vi.fn(() => Promise.resolve(true))
 const pushAvailable = vi.fn(() => Promise.resolve(true))
 const pushSupported = vi.fn(() => true)
@@ -61,6 +63,9 @@ async function advance(ms: number) {
   await vi.advanceTimersByTimeAsync(ms)
   for (let i = 0; i < 12; i += 1) await Promise.resolve()
 }
+
+// These assertions read the Chinese copy; the English rendering is checked in its own case.
+beforeEach(() => setLocale('zh-CN'))
 
 describe('问推送权限的时机', () => {
   it('一轮刚开始不问 —— 绝大多数轮次几秒就完了', async () => {

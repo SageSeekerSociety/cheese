@@ -9,14 +9,21 @@
  * 所以 `inject` 必须在页的 setup 里发生：`useTeamKnowledge()` 只能从 setup 调。
  */
 import type { KnowledgeDraft } from '@/lib/knowledgeDraft'
-import type { CreateKnowledgeRequest, Knowledge, KnowledgeContentData, ListKnowledgesParams, Page } from '@/types'
+import type {
+  CreateKnowledgeRequest,
+  Knowledge,
+  KnowledgeContentData,
+  KnowledgeType,
+  ListKnowledgesParams,
+  Page,
+} from '@/types'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
+import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { knowledgeDraftContent, materialKindForFile } from '@/lib/knowledgeDraft'
-import { resourceTypeCode } from '@/lib/knowledgeFormat'
 import { KnowledgesApi } from '@/network/api/knowledges'
 import { MaterialsApi } from '@/network/api/materials'
 import { useDialog } from '@/plugins/dialog'
@@ -44,7 +51,7 @@ export function useTeamKnowledge() {
 
   // 筛选：三个都是一改就重取，没有本地过滤那一层。
   const searchQuery = ref<string | null>('')
-  const filter = ref<{ type: string | null; tag: string | null }>({ type: null, tag: null })
+  const filter = ref<{ type: KnowledgeType | null; tag: string | null }>({ type: null, tag: null })
 
   // 上传
   const uploadDialog = ref(false)
@@ -85,7 +92,7 @@ export function useTeamKnowledge() {
       }
 
       if (filter.value.type) {
-        params.type = resourceTypeCode(filter.value.type)
+        params.type = filter.value.type
       }
 
       if (filter.value.tag) {
@@ -105,7 +112,7 @@ export function useTeamKnowledge() {
         total: fetchedPage.total || 0,
       }
     } catch (error) {
-      console.error('获取知识库资源失败', error)
+      console.error('Failed to load knowledge resources', error)
       knowledges.value = []
     } finally {
       loading.value = false
@@ -133,8 +140,8 @@ export function useTeamKnowledge() {
   /** 删除：先问一句，确认之后打接口并把这一条从页上摘掉（不重新取一页）。 */
   const confirmDeleteResource = async (resource: Knowledge) => {
     const result = await dialog
-      .confirm(`确定要删除资源"${resource.name}"吗？此操作不可撤销。`, {
-        title: '删除资源',
+      .confirm(t('teams.knowledge.deleteConfirm', { name: resource.name }), {
+        title: t('teams.knowledge.deleteTitle'),
       })
       .wait()
 
@@ -148,8 +155,8 @@ export function useTeamKnowledge() {
           resourceDetailDialog.value = false
         }
       } catch (error) {
-        console.error('删除资源失败', error)
-        dialog.alert('删除资源失败，请稍后重试。')
+        console.error('Failed to delete the resource', error)
+        dialog.alert(t('teams.knowledge.deleteFailed'))
       }
     }
   }
@@ -167,13 +174,13 @@ export function useTeamKnowledge() {
   const createKnowledge = async (draft: KnowledgeDraft): Promise<boolean> => {
     // 表单校验兜住的是格式；这三条兜的是「这一档缺了它就不能成立」。
     if (draft.type === 'MATERIAL' && !draft.file) {
-      toast.error('请选择要上传的文件')
+      toast.error(t('teams.knowledge.fileNotChosen'))
       return false
     } else if (draft.type === 'LINK' && !draft.url) {
-      toast.error('请输入有效的链接地址')
+      toast.error(t('teams.knowledge.linkUrlInvalidToast'))
       return false
     } else if (draft.type === 'CODE' && !draft.code) {
-      toast.error('请输入代码内容')
+      toast.error(t('teams.knowledge.codeRequired'))
       return false
     }
 
@@ -205,11 +212,11 @@ export function useTeamKnowledge() {
       // 新的一条在最前面：这一页是倒序的，和 sort_order 一致。
       knowledges.value = [response.data.knowledge, ...knowledges.value]
 
-      toast.success('资料上传成功')
+      toast.success(t('teams.knowledge.uploadSuccess'))
       return true
     } catch (error) {
-      console.error('上传资料失败', error)
-      toast.error('上传资料失败，请稍后重试')
+      console.error('Failed to upload the resource', error)
+      toast.error(t('teams.knowledge.uploadFailed'))
       return false
     } finally {
       uploading.value = false

@@ -3,7 +3,9 @@ import type { AnalyticsDistribution, AnalyticsDistributionItem, SpaceLearningExc
 
 import dayjs from 'dayjs'
 
-export const formatCount = (value?: number | null) => new Intl.NumberFormat('zh-CN').format(value || 0)
+import i18n, { t } from '@/i18n'
+
+export const formatCount = (value?: number | null) => new Intl.NumberFormat(i18n.global.locale.value).format(value || 0)
 
 export const formatPercent = (value?: number | null, digits = 1) => `${((value || 0) * 100).toFixed(digits)}%`
 
@@ -40,11 +42,10 @@ export const labelDistributionCodes = (
 // ---------------------------------------------------------------------------
 
 /** 没挂到任何知识点上的发言与卡点 —— 后端把这一类回来成 null。 */
-export const LEARNING_UNCLASSIFIED = '未归类'
+export const knowledgePointLabel = (value?: string | null) => value || t('spaces.analytics.learning.unclassified')
 
-export const knowledgePointLabel = (value?: string | null) => value || LEARNING_UNCLASSIFIED
-
-export const formatLearningTime = (value?: null | number) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '暂无')
+export const formatLearningTime = (value?: null | number) =>
+  value ? dayjs(value).format('YYYY-MM-DD HH:mm') : t('spaces.analytics.learning.noTime')
 
 /**
  * 提纲里的讲次顺序 = 勾选顺序（后端按传过去的 blockIds 先后分节），所以这里**只

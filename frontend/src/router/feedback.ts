@@ -43,13 +43,13 @@ export default [
     path: '/feedback',
     name: 'FeedbackCenter',
     component: () => import('@/views/feedback/FeedbackCenterPage.vue'),
-    meta: { title: '反馈中心', isFullPage: true },
+    meta: { titleKey: 'navigation.feedback.center', isFullPage: true },
   },
   {
     path: '/feedback/mine',
     name: 'FeedbackMine',
     component: () => import('@/views/feedback/FeedbackMinePage.vue'),
-    meta: { title: '我的反馈', isFullPage: true },
+    meta: { titleKey: 'navigation.feedback.mine', isFullPage: true },
   },
   {
     path: '/feedback/new',
@@ -58,7 +58,7 @@ export default [
     // `hideTabs`：这一页和详情页都是**页面栈里的一层**（从反馈中心推进来的），按仓库
     // 自己的移动端规范（`docs/plans/2026-08-18-mobile-shell-design.md` §4 第 4 条）层级
     // 进页面栈、不进底栏；去掉底栏那 56px，底部留给表单自己那条黏底的操作条。
-    meta: { title: '提交反馈', isFullPage: true, hideTabs: true },
+    meta: { titleKey: 'feedback.submit.title', isFullPage: true, hideTabs: true },
   },
   {
     path: '/feedback/:id',
@@ -66,7 +66,7 @@ export default [
     component: () => import('@/views/feedback/FeedbackDetailPage.vue'),
     // 同上：栈里的一层。详情页底部本来就叠着「评论框 + 操作栏」两层，再挂一条 56px
     // 的一级导航，手机上近三成屏幕被底部吃掉。
-    meta: { title: '反馈详情', isFullPage: true, hideTabs: true },
+    meta: { titleKey: 'navigation.pages.feedbackDetail', isFullPage: true, hideTabs: true },
   },
   {
     path: '/admin',
@@ -78,13 +78,13 @@ export default [
         path: 'queue',
         name: 'AdminQueue',
         component: () => import('@/views/admin/AdminQueuePage.vue'),
-        meta: { title: '反馈队列', isFullPage: true },
+        meta: { titleKey: 'feedback.queue.label', isFullPage: true },
       },
       {
         path: 'dashboard',
         name: 'AdminDashboard',
         component: () => import('@/views/admin/AdminDashboardPage.vue'),
-        meta: { title: '看板', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.dashboard', isFullPage: true },
       },
       {
         // 「功能数据」的目录页（`/admin/feature-stats`）：有哪些功能的数据页。
@@ -92,7 +92,7 @@ export default [
         path: 'feature-stats',
         name: 'AdminFeatureStats',
         component: () => import('@/views/admin/AdminFeatureStatsPage.vue'),
-        meta: { title: '功能数据', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.featureStats', isFullPage: true },
       },
       {
         // 各个功能自己的数据页：`:id` 由前端注册表（`views/admin/features/registry.ts`）
@@ -102,7 +102,7 @@ export default [
         name: 'AdminFeature',
         component: () => import('@/views/admin/AdminFeaturePage.vue'),
         // 顶栏那行字对整块是同一个名字：从目录点进某一页时，它不该闪成另一句话。
-        meta: { title: '功能数据', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.featureStats', isFullPage: true },
       },
       {
         // 架构还债进度（`/admin/ratchet`）。和看板、功能数据一样是**读**的页面，
@@ -111,14 +111,14 @@ export default [
         path: 'ratchet',
         name: 'AdminRatchet',
         component: () => import('@/views/admin/AdminRatchetPage.vue'),
-        meta: { title: '棘轮', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.ratchet', isFullPage: true },
       },
       {
         // 网关模型管理那一页。和其它分区一样是壳里的一块，不是独立域名。
         path: 'models',
         name: 'AdminModels',
         component: () => import('@/views/admin/AdminModelsPage.vue'),
-        meta: { title: '模型管理', isFullPage: true },
+        meta: { titleKey: 'navigation.pages.adminModels', isFullPage: true },
       },
       {
         // main 后加的这一块（开板申请：有人申请开一个新题目板，平台管理员批准 / 驳回），
@@ -126,7 +126,7 @@ export default [
         path: 'spaces',
         name: 'AdminSpaces',
         component: () => import('@/views/admin/AdminSpacesPage.vue'),
-        meta: { title: '空间申请', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.spaces', isFullPage: true },
       },
       {
         // 老地址，见文件头。渲染的是同一个队列，所以标题也跟它一致 —— 顶栏上那行字
@@ -134,13 +134,13 @@ export default [
         path: 'feedback',
         name: 'AdminFeedback',
         component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
-        meta: { title: '反馈队列', isFullPage: true },
+        meta: { titleKey: 'feedback.queue.label', isFullPage: true },
       },
       {
         path: 'members',
         name: 'AdminMembers',
         component: () => import('@/views/admin/AdminMembersPage.vue'),
-        meta: { title: '成员管理', isFullPage: true },
+        meta: { titleKey: 'navigation.pages.adminMembers', isFullPage: true },
       },
       {
         // 平台上唯一一处飞书应用凭据：管理员填一次，成员在「我的连接」里点一下就连上。
@@ -148,7 +148,7 @@ export default [
         path: 'integrations',
         name: 'AdminIntegrations',
         component: () => import('@/views/admin/AdminIntegrationsPage.vue'),
-        meta: { title: '飞书应用', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.integrations', isFullPage: true },
       },
     ],
   },

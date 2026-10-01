@@ -49,6 +49,7 @@ from app.core.text import markdown_preview
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.membership.roster import roster_rows
@@ -313,7 +314,7 @@ async def announce_mentions(
             task_id=landed.task_id,
             author=author,
             author_type=AuthorType.participant,
-            content=f"未能通知 <@{bad}>：项目中没有这个成员",
+            content=say("mentionUnknownMember", member=f"<@{bad}>"),
             kind=BlockKind.event,
             turn_id=block.turn_id,
             meta={"in_room": False},

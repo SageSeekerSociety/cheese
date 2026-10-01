@@ -4,6 +4,7 @@ import type { ResponseDataType } from '../../types'
 import ApiInstance from '../../api'
 import { messageFailed } from '../../utils/showMessage'
 
+import { t } from '@/i18n'
 import { refreshSession } from '@/lib/session'
 import router from '@/router'
 
@@ -27,7 +28,7 @@ export default async function refreshToken(error: AxiosError<ResponseDataType>) 
   }
   if (outcome.kind === 'rejected') {
     // The sign-in is over; the account service has already let go of it.
-    messageFailed('身份过期，请重新登录')
+    messageFailed(t('shell.errors.sessionExpired'))
     router.replace('/account/signin')
   }
   return Promise.reject(error)

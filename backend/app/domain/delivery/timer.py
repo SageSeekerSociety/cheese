@@ -23,6 +23,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.notice_text import say, with_keys
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
 from app.domain.delivery.models import TimedDelivery
@@ -31,7 +32,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.services import user_by_handle
 
-DELIVERED_AS_ASKED = "你请平台在这个时刻把它递给你"
+DELIVERED_AS_ASKED = say("timedDelivery")
 
 
 def _utcnow() -> datetime:
@@ -126,12 +127,16 @@ async def deliver_due(
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
                     content=DELIVERED_AS_ASKED,
-                    meta=notice(
-                        EVENT_TIMED_DELIVERY,
-                        severity=SEVERITY_INFO,
-                        who=WHO_CHEESE,
-                        detail=row.content,
-                        detail_label="你当时写下的",
+                    # A row, not `BlockRepository.add`: the key is recorded here.
+                    meta=with_keys(
+                        notice(
+                            EVENT_TIMED_DELIVERY,
+                            severity=SEVERITY_INFO,
+                            who=WHO_CHEESE,
+                            detail=row.content,
+                            detail_label=say("labelTimedDeliveryNote"),
+                        ),
+                        content=DELIVERED_AS_ASKED,
                     ),
                 )
             )

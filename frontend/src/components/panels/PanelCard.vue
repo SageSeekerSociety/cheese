@@ -13,6 +13,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ApiError, editMessage, getProgress, getRoomTask, sayOnRoomTask } from '../../api'
 import { isAgentBlock, isAgentHandle } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
+import { noticeText } from '../../lib/noticeText'
 import { type PlatformNotice, platformNotice } from '../../lib/platformNotice'
 import { relTime } from '../../lib/relTime'
 import { editableText, type RefMaps, renderMarkdown as renderWithRefs, renderPlain } from '../../lib/renderMessage'
@@ -448,7 +449,11 @@ async function send() {
               class="card-msg__text card-markdown t-body"
               v-html="renderMarkdown(e.block.content)"
             />
-            <span v-else class="card-msg__text t-body" v-html="renderPlain(e.block.content, refs)" />
+            <span
+              v-else
+              class="card-msg__text t-body"
+              v-html="renderPlain(e.block.kind === 'event' ? noticeText(e.block) : e.block.content, refs)"
+            />
             <span v-if="e.block.meta?.edited_at && editingId !== e.block.id" class="card-msg__edited">{{
               t('work.room.message.edited')
             }}</span>

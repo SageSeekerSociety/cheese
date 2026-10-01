@@ -210,8 +210,6 @@
     <!-- 离线指示: shows only while offline, auto-hides when the network returns. -->
     <OfflineBanner />
 
-    <!-- 有新版本: shows while a new service worker waits for the user to click. -->
-    <UpdateBanner />
     <!-- The desktop app's 关于 and 在手机上使用 dialogs, opened from menus that close as they do. -->
     <template v-if="inApp">
       <DesktopAboutDialog />
@@ -257,7 +255,6 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
-import UpdateBanner from '@/components/common/UpdateBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'

@@ -52,9 +52,13 @@ import Detail from '../../Detail.vue'
 import BasicInfo from './BasicInfo.vue'
 
 import DialogContainer from '@/components/common/DialogContainer.vue'
+import { setLocale } from '@/i18n'
 import { dialogs } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'
+
+// The confirm dialog's buttons are read by their Chinese labels below.
+setLocale('zh-CN')
 
 const SPACE_ID = 11
 const OWNER_ID = 4

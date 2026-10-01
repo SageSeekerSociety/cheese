@@ -20,11 +20,7 @@ from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import (
-    ForbiddenError,
-    NotFoundError,
-    ValidationError,
-)
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.liveness import task_liveness
 from app.domain.agent.runtime import (
@@ -40,6 +36,7 @@ from app.domain.block.models import (
     BlockKind,
     agent_notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -1214,9 +1211,9 @@ async def summon_agent(
         # 因此恰好有它一个，这一轮才跑得起来。
         addressed=addressed_to_agent(seat),
         nudge_event=(
-            f"<@{actor.handle}> 把之前的消息交给了 <@{seat}>"
+            say("pendingHandedTo", actor=f"<@{actor.handle}>", seat=f"<@{seat}>")
             if seat
-            else f"<@{actor.handle}> 交出了之前的消息"
+            else say("pendingHandedOver", actor=f"<@{actor.handle}>")
         ),
         provision_actor=actor,
     )

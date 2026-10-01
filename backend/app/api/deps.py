@@ -200,6 +200,7 @@ def get_cloud_wakeup() -> CloudWakeup:
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
         from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
+        from app.domain.block.notice_text import say
 
         block = await chat.post_system_event(
             topic_id,
@@ -209,11 +210,8 @@ def get_cloud_wakeup() -> CloudWakeup:
                 "state": "failed",
                 "severity": SEVERITY_ERROR,
                 "who": WHO_HUMAN,
-                "detail": (
-                    "这条消息还在，平台不会自动换一台机器。"
-                    "可以在项目设置里查看这台设备的状态，处理后重试。"
-                ),
-                "detail_label": "下一步",
+                "detail": say("cloudProvisioningFailedDetail"),
+                "detail_label": say("labelNextStep"),
                 "retryable": True,
             },
         )

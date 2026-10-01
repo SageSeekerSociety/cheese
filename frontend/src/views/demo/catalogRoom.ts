@@ -11,7 +11,7 @@
  * 要 socket。拆开之后每一件都只吃 props、只往上发事件，于是能单独摆在预览站里。
  *
  * 这里没有重复登记整张输入区：`components/` 下的东西（`panels/` 以外）本来就不是
- * 场景，`scene-ratchet.py` 不看它，预览站里也没有它的条目。登记的是拆出来的三件。
+ * 场景，`scene-ratchet.py` 不看它，预览站里也没有它的条目。登记的是拆出来的那几件。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `ROOM_ENTRIES` 这个
  * 值，运行时不构成循环。
@@ -24,8 +24,9 @@ import { AGENT_NAME } from './catalogFixtures'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
+import OutsideMentionNotice from '@/components/room/OutsideMentionNotice.vue'
 
-/** 这三件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
+/** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
@@ -45,6 +46,17 @@ const PEOPLE: MentionItem[] = [
   { label: 'Alice', kind: 'member', insert: 'Alice', sub: '@alice', agent: false, handle: 'alice' },
   { label: '波比', kind: 'member', insert: '波比', sub: '@bobby', agent: false, external: true, handle: 'bobby' },
 ]
+
+/** 项目里的人，但不在这个话题里：@ 得到，候选上说一句他不在。 */
+const OUTSIDER: MentionItem = {
+  label: '陈卡',
+  kind: 'member',
+  insert: '陈卡',
+  sub: '@carol',
+  agent: false,
+  outsideTopic: true,
+  handle: 'carol',
+}
 
 /** 群播：两个 fixed-literal token，`expandMentions` 把它们变成 `<@all>` / `<@here>`。 */
 const BROADCAST: MentionItem[] = [
@@ -113,6 +125,18 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         expect: '资料库',
       },
       {
+        name: '有人不在这个话题里',
+        note: '项目里的人都 @ 得到，但话题里的人排在前面；不在话题里的跟在后面，右边挂「不在话题中」——他读不到这段对话。',
+        props: {
+          open: true,
+          matches: [PEOPLE[0], ...BROADCAST, PEOPLE[1], OUTSIDER],
+          activeIndex: 4,
+          level: 'root',
+          enterSends: true,
+        },
+        expect: '不在话题中',
+      },
+      {
         name: '高亮移到别人身上',
         note: '高亮只有一套：鼠标划过和 ↑/↓ 改的是同一个下标，所以「Enter」那个提示永远长在真的会被挑中的那一行上。',
         props: { open: true, matches: PEOPLE, activeIndex: 2, level: 'root', enterSends: true },
@@ -132,7 +156,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '进了资料库这一层',
-        note: '二级菜单带一个头（按 Esc 退回一级），文件按「文件 / 图片」分组，每组标题只画一次。',
+        note: '二级菜单的头就是「‹ 资料库」那颗退回按钮（键盘上是 Esc、←，或 @ 后面没打字时的退格），文件按「文件 / 图片」分组，每组标题只画一次。',
         props: { open: true, matches: FILES, activeIndex: 0, level: 'library', enterSends: true },
         expect: '图片',
       },
@@ -141,6 +165,28 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '菜单不消失：人在这一层里，说一句「暂无匹配的文件」比整块收起来诚实。',
         props: { open: true, matches: [], activeIndex: 0, level: 'library', enterSends: false },
         expect: '暂无匹配的文件',
+      },
+    ],
+  },
+  {
+    id: 'room-outside-mention-notice',
+    title: 'OutsideMentionNotice',
+    about: '刚发出去的那条 @ 了不在话题里的人：说一句他们收不到通知，能管名册的人顺手拉进来。',
+    file: 'src/components/room/OutsideMentionNotice.vue',
+    component: OutsideMentionNotice,
+    needs: UI_T,
+    states: [
+      {
+        name: '能管名册的人',
+        note: '话题的 owner / admin 看到「拉进话题」：走的是名册抽屉「添加成员」那一条接口，加完 @ 候选立刻跟上。',
+        props: { names: '陈卡、波比', canAdd: true, busy: false, error: '' },
+        expect: '拉进话题',
+      },
+      {
+        name: '普通成员',
+        note: '只有那句话，没有按钮——按下去后端也会拒。',
+        props: { names: '陈卡', canAdd: false, busy: false, error: '' },
+        expect: '不在话题中',
       },
     ],
   },

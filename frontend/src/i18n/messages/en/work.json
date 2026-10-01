@@ -356,7 +356,37 @@
       "platform": "Platform",
       "changedFiles": "Changed files",
       "moreFiles": "{n} more files",
-      "goConfirm": "Review and confirm"
+      "goConfirm": "Review and confirm",
+      "who": {
+        "platform": "Handled by the platform",
+        "cheese": "Cheese is on it",
+        "human": "Needs a person"
+      },
+      "working": "{name} is on it",
+      "machineReady": "Work computer ready",
+      "machinePreparing": "Preparing the work computer",
+      "incident": {
+        "title": "Work computer temporarily unavailable",
+        "cleaning": "Cleaning up automatically",
+        "recovering": "Recovering",
+        "retryable": "Can retry",
+        "needsAdmin": "Needs an admin"
+      },
+      "action": {
+        "doc": "View doc",
+        "decision": "View decisions",
+        "split": "View task",
+        "undo": "Undo",
+        "milestone": "View calendar",
+        "accept": "Review"
+      },
+      "filesChanged": "Changed files: {n}",
+      "viewChanges": "View changes",
+      "showDetail": "Show details",
+      "detail": "Details",
+      "docDiff": "Document changes",
+      "added": "Added",
+      "removed": "Removed"
     },
     "message": {
       "copy": "Copy",
@@ -677,6 +707,20 @@
       "copied": "Copied",
       "copyCode": "Copy code",
       "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
+      "format": {
+        "label": "Document formatting",
+        "unavailable": "This format is unavailable for the selection",
+        "bold": "Bold",
+        "italic": "Italic",
+        "strike": "Strikethrough",
+        "code": "Inline code",
+        "h1": "Heading 1",
+        "h2": "Heading 2",
+        "bullet": "Bulleted list",
+        "ordered": "Numbered list",
+        "task": "Task list",
+        "quote": "Quote"
+      },
       "slash": {
         "text": "Text",
         "h1": "Heading 1",
@@ -748,7 +792,6 @@
       "loadFailed": "Couldn't load members",
       "count": "No members | 1 member | {count} members",
       "agentBadge": "AI teammate",
-      "mark": " ({tag})",
       "role": {
         "owner": "Owner",
         "admin": "Admin",
@@ -782,7 +825,12 @@
       "discardFailed": "Couldn't discard"
     },
     "mention": {
-      "escBack": "Press Esc to go back",
+      "back": "Back",
+      "notInTopic": "Not in topic",
+      "outsideNotice": "{names} aren't in this topic and won't be notified",
+      "addToTopic": "Add to topic",
+      "dismissOutside": "Dismiss",
+      "nameJoiner": ", ",
       "library": "Library",
       "noFiles": "No matching files",
       "all": "Everyone",
@@ -1416,5 +1464,44 @@
     "deleteTitle": "Delete \"{title}\"",
     "deleteHint": "Later rooms will no longer get it, and its version history is deleted too",
     "cancel": "Cancel"
+  },
+  "nodeBoard": {
+    "loadFailed": "Couldn't load machine status",
+    "title": "Machine status",
+    "hint": "Whether work computers are available now",
+    "active": "{count} runs in progress across the platform",
+    "online": "Online",
+    "offline": "Offline",
+    "device": "Own device",
+    "cloud": "Cloud",
+    "current": "Used when nothing is chosen"
+  },
+  "needsYou": {
+    "changeAlert": "Change alert",
+    "waiting": "Waiting for your answer",
+    "answerFailed": "Couldn't answer",
+    "dismissFailed": "Couldn't dismiss",
+    "feedbackFailed": "Couldn't send feedback",
+    "next": "Next",
+    "open": "Open topic",
+    "dismiss": "Dismiss",
+    "helpful": "Helpful",
+    "notHelpful": "Not helpful"
+  },
+  "push": {
+    "ask": "This run may take a while. Get notified when it finishes",
+    "enable": "Turn on notifications",
+    "decline": "Not now"
+  },
+  "image": {
+    "alt": "Image",
+    "failed": "Couldn't load the image"
+  },
+  "agentAvatar": {
+    "defaultName": "Cheese"
+  },
+  "liveView": {
+    "connecting": "Connecting to the live view…",
+    "closed": "Live view disconnected"
   }
 }
