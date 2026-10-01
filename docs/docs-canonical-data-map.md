@@ -22,7 +22,7 @@ Pre-journal deployed snapshots are seeded on the first successful update. Earlie
 
 A deferred PostgreSQL constraint refuses an operation transaction that commits without its receipt, rolling back root/nodes/history/events/refreshes together. Operation-specific authorization is enforced even when the legacy room-auth flag is disabled. Ordinary legacy clients remain unchanged.
 
-Migration `e9c2a71d4b60` chains `c4d7e2a9f158`; `f7a31e6b920c` adds database enforcement and refresh storage. The fetched main now has a newer migration tip, so this unmerged branch must be rechained before its PR checks. Production migration execution is normal CI/CD only. Local tests build the isolated test schema through existing fixtures, not manual production migration commands.
+Migration `e9c2a71d4b60` now chains main's `e5c1a9f7b204`; `f7a31e6b920c` adds database enforcement and refresh storage. Main `a6da0d256` was merged normally, preserving its reminder-route extraction and retired-model removal. One head and no duplicate HTTP routes were verified. Production migration execution is normal CI/CD only. Local tests build the isolated test schema through existing fixtures, not manual production migration commands.
 
 ## Actual verification
 
@@ -36,8 +36,10 @@ Exclusive machine: cheese-de808b-46. Resolved implementation: `/home/cheese/docs
 - Module boundary checker: three contracts kept, no baseline/exemption expansion. One Alembic head verified. Focused seeded-brief regression: 1 passed / 5 unselected, exit 0.
 - Durable journal suite with ordinary doc API: 21 passed, exit 0. Database rejects raw-history update/delete and incomplete-receipt commit; independent sessions replay one operation once or reject a mismatched payload; failed refresh publish leaves a recoverable row and retained reconnect cursor. The subsequent stable-id/authentication and injected post-commit failure run plus ordinary node/notice/nudge regressions passed 45 tests, exit 0. It rejects anonymous and outsider operations even with the legacy auth flag off, ignores spoofed body authorship, and queries/replays a write whose broker publish threw after commit.
 
+- Integrated-main journal/API/ordinary-writer/raw-span/import-guard run: 75 passed, exit 0. The added real database test rejects completed-receipt, actor and fingerprint rewrites. PostgreSQL also freezes operation claim identity before completion; completion is the only allowed update.
+
 Original logs and exit files are in `/home/cheese/docs-evidence/runs`. The first test PostgreSQL initialization exited 1 during its temporary-server shutdown; that container and full original log are retained, not restarted. A separate container with a longer initialization timeout reached readiness.
 
 ## Remaining boundaries
 
-No latest-head Required CI or independent canonical-stage review yet. No canonical-stage merge/deploy claimed. Receipt immutability after completion, UI reconnect transport, source-map selection issuance/node validation, AI persisted lease/recovery, tool-less project-bound completion and authenticated-human acceptance remain to implement and test. Runtime and actual-page checks are not replaced by these PostgreSQL/API tests.
+No latest-head Required CI or independent canonical-stage review yet. No canonical-stage merge/deploy claimed. UI reconnect transport, source-map selection issuance/node validation, AI persisted lease/recovery, tool-less project-bound completion and authenticated-human acceptance remain to implement and test. Runtime and actual-page checks are not replaced by these PostgreSQL/API tests.

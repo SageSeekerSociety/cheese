@@ -365,6 +365,43 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
         assert sum(block.kind == BlockKind.doc_node for block in blocks) == 1
 
 
+@pytest.mark.anyio
+async def test_completed_receipt_and_claim_identity_cannot_be_rewritten(
+    business_db_factory,
+):
+    factory = business_db_factory
+    room = await seed(factory)
+    operation_id = uuid.uuid4()
+    async with factory() as session:
+        journal = DocumentJournal(session)
+        operation = await journal.claim(
+            room_id=room,
+            actor="alice",
+            action="replace",
+            operation_id=operation_id,
+            payload={"content": "原回执"},
+        )
+        await journal.finish(operation, {"version": 1, "content": "原回执"})
+        await session.commit()
+    for fields in [
+        {"receipt": {"version": 2}},
+        {"actor": "someone"},
+        {"fingerprint": "f" * 64},
+    ]:
+        async with factory() as session:
+            with pytest.raises(IntegrityError, match="receipt is immutable"):
+                await session.execute(
+                    update(DocumentOperation)
+                    .where(DocumentOperation.operation_id == operation_id)
+                    .values(**fields)
+                )
+            await session.rollback()
+    async with factory() as session:
+        assert await DocumentJournal(session).receipt(
+            room_id=room, actor="alice", action="replace", operation_id=operation_id
+        ) == {"version": 1, "content": "原回执"}
+
+
 def test_operation_requires_real_owner_and_ignores_claimed_author(client, monkeypatch):
     from app.core.config import settings
     from tests.conftest import seed_user

@@ -59,6 +59,29 @@ def upgrade() -> None:
         DEFERRABLE INITIALLY DEFERRED
         FOR EACH ROW EXECUTE FUNCTION living_doc_receipt_complete()
     """)
+    op.execute("""
+        CREATE FUNCTION living_doc_receipt_immutable() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF OLD.receipt IS NOT NULL AND OLD.receipt::text <> 'null' THEN
+                RAISE EXCEPTION 'document receipt is immutable'
+                    USING ERRCODE = '23514';
+            END IF;
+            IF (NEW.room_id, NEW.actor, NEW.action, NEW.operation_id, NEW.fingerprint)
+                IS DISTINCT FROM
+                (OLD.room_id, OLD.actor, OLD.action, OLD.operation_id, OLD.fingerprint) THEN
+                RAISE EXCEPTION 'document claim identity is immutable'
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+    """)
+    op.execute("""
+        CREATE TRIGGER living_doc_receipt_immutable
+        BEFORE UPDATE ON living_doc_operations
+        FOR EACH ROW EXECUTE FUNCTION living_doc_receipt_immutable()
+    """)
     op.create_table(
         "living_doc_refreshes",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -88,6 +111,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("living_doc_refreshes")
+    op.execute("DROP TRIGGER living_doc_receipt_immutable ON living_doc_operations")
+    op.execute("DROP FUNCTION living_doc_receipt_immutable()")
     op.execute("DROP TRIGGER living_doc_receipt_complete ON living_doc_operations")
     op.execute("DROP FUNCTION living_doc_receipt_complete()")
     op.execute("DROP TRIGGER living_doc_history_immutable ON living_doc_versions")
