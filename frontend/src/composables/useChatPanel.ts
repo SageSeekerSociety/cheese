@@ -43,7 +43,7 @@ import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useTimeline } from '../components/room/composables/useTimeline'
-import { previewBlock, useTypingPreview } from '../components/room/composables/useTypingPreview'
+import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
@@ -141,8 +141,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const { awaitingReply, turnAgentName, turnAgentHandle } = turns
   watch(awaitingReply, (v) => emit('working', v))
   watch(turns.turnStarts, (v) => emit('site-turns', v))
-  // 队友正在写给房间的那条消息 —— 见 room/composables/useTypingPreview。
-  const typing = useTypingPreview()
   // 现场那一格只收房间自己的事件行：分身的记在它那张卡上，消息在对话栏。
   function toSite(b: Block) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
@@ -328,7 +326,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     historyChanges?.set(b.id, b)
     const landing = timeline.append(b)
     if (landing === 'known' || historyChanges !== null || b.author === AUTHOR) return
-    if (landing === 'shown' && !delivered.has(b.id)) arrived.add(b.id)
+    if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
   }
 
@@ -370,8 +368,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
       }
       case 'assistant_block':
         // One complete 芝士 message (Slack-style) — a turn may land several.
-        // 它替下正在写的那条：从淡的那一档恢复，不再从下面升上来一次。
-        if (typing.landed(frame.block)) delivered.add(frame.block.id)
         pushBlock(frame.block)
         // Compatibility with an older backend that has no lifecycle markers.
         turns.settleIfIdle()
@@ -389,15 +385,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // A persisted turn failure is already in the timeline as an event block
         // (现场即事实记录); only un-persisted errors need the floating banner.
         if (!frame.persisted) errorMsg.value = frame.message
-        typing.turnEnded(null, turns.settleIfIdle())
+        turns.settleIfIdle()
         break
       case 'done':
         // Mid-session messages fold into the existing Claude run and emit no
         // separate completion frame. Lifecycle markers own the running indicator.
-        if (turns.settleIfIdle()) {
-          typing.clear()
-          emit('turn-done')
-        }
+        if (turns.settleIfIdle()) emit('turn-done')
         autoScroll()
         break
       case 'retract_block':
@@ -419,16 +412,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'turn_started':
         turns.started(frame.turn_id, frame.agent)
         break
-      case 'live':
-        typing.onLive(frame)
-        break
       case 'turn_finished': {
-        typing.turnEnded(frame.turn_id, turns.finished(frame.turn_id), frame.agent)
+        turns.finished(frame.turn_id)
         emit('turn-done')
         autoScroll()
         break
       }
     }
+    typing.follow(frame, !awaitingReply.value)
   }
 
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
@@ -863,19 +854,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       })
     )
   )
-  // 正在写的那几条接在发件箱后面，只在看着最新一段时画：它们是马上要落下的最新一条。
-  const typingRows = computed(() => {
-    const room = topic()
-    if (!room || hasNewer.value) return []
-    let prev = outbox.value.length ? undefined : visible.value.at(-1)
-    return typing.previews.value.map((p, i) => {
-      const block = previewBlock(p, room.id)
-      const broken = i === 0 && (outbox.value.length > 0 || splitMarkers.value.tail.length > 0)
-      const edge = runEdgeBetween(prev, block, { broken })
-      prev = block
-      return { block, edge }
-    })
-  })
+  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, splitMarkers, arrived, delivered }) // 队友正在写的那条
   function outboxEdge(index: number): RunEdge {
     if (index > 0) return 'cont'
     const last = visible.value.at(-1)
@@ -965,7 +944,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     outgoingState,
     retrySend,
     outbox,
-    typingRows,
+    typingRows: typing.rows,
     noticeAgent,
     parentOf,
     showReplyCue,

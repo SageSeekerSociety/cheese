@@ -13,14 +13,18 @@
  *   等不到（被拦下、调用失败）就撤；
  * - 那一轮结束，或这个房间已经没有在跑的轮次 → 撤；
  * - STALE_MS 没有新帧 → 撤（帧只在内容变化时才来，断了不会有人说）。
- * 换房间、重连由房间壳调 `clear()`。
+ * 换房间、重连由房间壳调 `clear()`。房间壳把它收到的每一帧在自己处理完之后交给
+ * `follow`；`rows` 是时间线末尾要画的那几行。
  */
 
-import type { Block } from '../../../cx_types'
+import type { ComputedRef, Ref } from 'vue'
+import type { Block, WsServerFrame } from '../../../cx_types'
+import type { Outgoing } from '../../../lib/composerDrafts'
 import type { LiveFrame } from '../../../types/live'
 
-import { onScopeDispose, ref } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 
+import { type RunEdge, runEdgeBetween } from '../../../lib/chatGrouping'
 import { partialStringField } from '../../../lib/partialJson'
 
 /** 正文写完、消息还没到时最多等多久。 */
@@ -75,7 +79,20 @@ export function previewBlock(p: TypingPreview, topicId: string): Block {
   }
 }
 
-export function useTypingPreview() {
+/** 房间壳那边、决定这几行画在哪、接在谁后面的东西。 */
+export interface TypingView {
+  topic: () => { id: string } | null | undefined
+  /** 停在历史中间：时间线底部不是最新，不画。 */
+  hasNewer: Ref<boolean>
+  outbox: Ref<Outgoing[]>
+  visible: ComputedRef<Block[]>
+  splitMarkers: ComputedRef<{ tail: unknown[] }>
+  /** 时间线的入场动画集合：替下预览的那条消息不再入场一次，而是从淡的那一档恢复。 */
+  arrived: Set<string>
+  delivered: Set<string>
+}
+
+export function useTypingPreview(view: TypingView) {
   const previews = ref<TypingPreview[]>([])
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   /** 正文写完、已经从帧里消失、在等消息落下的那几位。 */
@@ -151,7 +168,33 @@ export function useTypingPreview() {
     previews.value = []
   }
 
+  /** 房间壳处理完一帧之后交过来。`idle`：此刻这个房间已经没有在跑的轮次。 */
+  function follow(frame: WsServerFrame, idle: boolean) {
+    if (frame.type === 'live') onLive(frame)
+    else if (frame.type === 'assistant_block' && landed(frame.block)) {
+      view.arrived.delete(frame.block.id)
+      view.delivered.add(frame.block.id)
+    } else if (frame.type === 'turn_finished') turnEnded(frame.turn_id, idle, frame.agent)
+    else if (frame.type === 'done' || frame.type === 'error') turnEnded(null, idle)
+  }
+
+  // 正在写的那几条接在发件箱后面，只在看着最新一段时画：它们是马上要落下的最新一条。
+  const rows = computed<{ block: Block; edge: RunEdge }[]>(() => {
+    const room = view.topic()
+    if (!room || view.hasNewer.value) return []
+    const queued = view.outbox.value.length > 0
+    let prev = queued ? undefined : view.visible.value.at(-1)
+    return previews.value.map((p, i) => {
+      const block = previewBlock(p, room.id)
+      const edge = runEdgeBetween(prev, block, {
+        broken: i === 0 && (queued || view.splitMarkers.value.tail.length > 0),
+      })
+      prev = block
+      return { block, edge }
+    })
+  })
+
   onScopeDispose(clear)
 
-  return { previews, onLive, landed, turnEnded, clear }
+  return { previews, rows, onLive, landed, turnEnded, follow, clear }
 }
