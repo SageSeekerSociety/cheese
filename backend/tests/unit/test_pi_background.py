@@ -51,8 +51,8 @@ def alive(pid: int) -> bool:
     return True
 
 
-async def started(tmp_path: Path, target: dict) -> Runner:
-    runner = Runner(tmp_path / "state")
+async def started(tmp_path: Path, target: dict, **options) -> Runner:
+    runner = Runner(tmp_path / "state", **options)
     await runner.start(
         Opening("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
@@ -150,6 +150,23 @@ async def test_closing_the_room_takes_its_background_jobs_with_it(tmp_path):
         child = int(pids.read_text())
         await runner.close()
         await until(lambda: not alive(child))
+
+
+async def test_a_session_with_a_job_running_on_the_machine_is_not_let_go(tmp_path):
+    """An idle session is let go (`driven/runner.py`), but one whose job still
+    runs on the machine is not idle: letting it go would leave the job with
+    nobody reading it, and the executor stops what nobody reads."""
+    with room_machine(tmp_path / "machine") as target:
+        runner = await started(tmp_path, target, idle_exit_s=0.5)
+        try:
+            job = (await call(runner.state, "job_start", {"command": "sleep 3"}))["id"]
+            assert runner.process is not None
+            await asyncio.sleep(2)
+            assert runner.process.returncode is None, "let go with a job running"
+            await until(lambda: ended(runner, job) is not None)
+            await asyncio.wait_for(runner.process.wait(), 20)
+        finally:
+            await runner.close()
 
 
 async def test_a_runner_that_comes_back_picks_a_job_up_where_it_was(tmp_path):
