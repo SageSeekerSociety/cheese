@@ -169,7 +169,12 @@ async def finish_deferred_message(
             assert default_seat not in {row.recipient_handle for row in rows}
             ordinary = await session.get(Block, ordinary_id)
             assert consumed_turn(ordinary) is None and prompt_attempts(ordinary) == 0
-            assert await session.get(AgentTurn, ordinary_id) is None
+            turn = await session.get(AgentTurn, ordinary_id)
+            if mode == "ordinary-prepare-removed":
+                assert turn is not None and turn.stopped_at is not None
+                assert turn.delivered_at is None and turn.agent_handle is None
+            else:
+                assert turn is None
         assert operations.count("send") == sends and operations.count("steer") == 0
         assert native_runner.session_id == native and native_runner.process is process
         return chat, runtime
