@@ -37,7 +37,7 @@ const getDoc = vi.fn()
 const readPreviewFile = vi.fn()
 const listFiles = vi.fn()
 const readFile = vi.fn()
-const previewDocumentPdf = vi.fn()
+const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 
 vi.mock('../../api', async () => {
@@ -50,7 +50,7 @@ vi.mock('../../api', async () => {
     readPreviewFile: (...a: unknown[]) => readPreviewFile(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
-    previewDocumentPdf: (...a: unknown[]) => previewDocumentPdf(...a),
+    previewDocumentPdfSnapshot: (...a: unknown[]) => previewDocumentPdfSnapshot(...a),
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
     getPreview: vi.fn().mockResolvedValue(null),
     requestPreviewSession: vi.fn().mockResolvedValue({ url: 'https://p.example/s', grant: 'g' }),
@@ -149,7 +149,7 @@ beforeEach(() => {
     too_large: false,
   })
   readPreviewFile.mockRejectedValue(new Error('file not found'))
-  previewDocumentPdf.mockResolvedValue(new ArrayBuffer(2048))
+  previewDocumentPdfSnapshot.mockResolvedValue({ bytes: new ArrayBuffer(2048), sourceVersion: null })
   documentRevisions.mockResolvedValue({ path: '', version: 'v1', revisions: [] })
 })
 
