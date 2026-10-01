@@ -22,7 +22,13 @@ from app.domain.agent.compute_configs import standard_choice
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.machine.microcloud import MicroCloudError
-from app.domain.machine.models import AiStatus, MachineStatus
+from app.domain.machine.models import (
+    AI_TRANSITIONAL,
+    GONE,
+    TRANSITIONAL,
+    AiStatus,
+    MachineStatus,
+)
 from app.domain.machine.services import MachineService, customer_ref, derive_hostname
 from app.domain.machine.supply import read_supply
 
@@ -182,6 +188,29 @@ class FakeRepo:
 
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
+
+    async def list_due(self, limit, *, seen_before):
+        def changing(r):
+            return (
+                r.status in TRANSITIONAL
+                or r.status == MachineStatus.unknown
+                or r.ai_status in AI_TRANSITIONAL
+                or r.ai_status == AiStatus.unknown
+            )
+
+        dormant = {*GONE, MachineStatus.suspended}
+        live = [r for r in self.rows if r.status not in dormant]
+        moving = [r for r in live if changing(r)][:limit]
+        stale = [
+            r
+            for r in live
+            if not changing(r)
+            and r.machine_id is not None
+            and not r.warm_claim_pending
+            and (r.last_seen_at is None or r.last_seen_at < seen_before)
+        ][:limit]
+        gone = [r for r in self.rows if r.status in GONE and r.released_at is None]
+        return moving + stale + gone
 
     async def list_for_team(self, _team_id):
         return self.rows
@@ -727,7 +756,7 @@ async def test_a_machine_asked_for_without_a_key_still_gets_the_platforms():
     assert "cheese-bootstrap" in client.created[0]["sshPubkey"]
 
 
-async def test_reading_a_project_picks_up_progress_made_while_nobody_looked():
+async def test_the_sweep_picks_up_progress_made_while_nobody_looked():
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
@@ -738,7 +767,7 @@ async def test_reading_a_project_picks_up_progress_made_while_nobody_looked():
     client.machines[machine.machine_id].update(
         status="running", ip="10.0.0.5", aiStatus="ready"
     )
-    await service.list_for_project(project_id)
+    await service.refresh_due()
 
     assert machine.status == MachineStatus.running
     assert machine.ip == "10.0.0.5"
@@ -787,12 +816,12 @@ async def test_a_running_machine_with_ai_still_provisioning_keeps_being_polled()
     )
 
     client.machines[machine.machine_id].update(status="running", ip="10.0.0.5")
-    await service.list_for_project(project_id)
+    await service.refresh_due()
     assert machine.status == MachineStatus.running
     assert machine.ai_status == AiStatus.provisioning
 
     client.machines[machine.machine_id]["aiStatus"] = "ready"
-    await service.list_for_project(project_id)
+    await service.refresh_due()
     assert machine.ai_status == AiStatus.ready
 
 
@@ -816,9 +845,9 @@ async def test_polling_stops_once_both_lifecycles_settle():
     client.machines[machine.machine_id].update(
         status="running", ip="10.0.0.5", aiStatus="ready"
     )
-    await service.list_for_project(project_id)
+    await service.refresh_due()
     settled = client.reads
-    await service.list_for_project(project_id)
+    await service.refresh_due()
     assert client.reads == settled
 
     # …but "settled" is not "never asked again". It used to be, and that is how
@@ -827,7 +856,7 @@ async def test_polling_stops_once_both_lifecycles_settle():
     # slots. Once the last answer is old enough, it is re-checked.
     for row in service._repo.rows:  # type: ignore[attr-defined]
         row.last_seen_at = datetime.now(UTC) - timedelta(hours=1)
-    await service.list_for_project(project_id)
+    await service.refresh_due()
     assert client.reads > settled
 
 
@@ -885,9 +914,9 @@ async def test_a_destroyed_machine_stops_occupying_the_projects_slot():
             project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
         )
 
-    # Destroy one for real: MicroCloud forgets it, and the next read notices.
+    # Destroy one for real: MicroCloud forgets it, and the next sweep notices.
     await service.destroy(made[0])
-    await service.list_for_project(project_id)
+    await service.refresh_due()
 
     replacement = await service.provision(
         project_id=project_id, topic_id=uuid.uuid4(), requested_by="andy"
@@ -904,6 +933,7 @@ async def test_a_forgotten_machine_disappears_from_the_listing():
     )
 
     client.machines.clear()  # MicroCloud no longer knows it
+    await service.refresh_due()
     remaining = await service.list_for_project(project_id)
 
     assert remaining == [], "a tombstone is not a machine anyone can use"
@@ -926,7 +956,7 @@ async def test_forgetting_an_enrolled_machine_removes_its_device():
     )
 
     client.machines.clear()
-    await service.list_for_project(project_id)
+    await service.refresh_due()
 
     assert service._devices.deleted == ["cloud-device"]
     assert machine not in await service._repo.list_for_project(project_id)
@@ -948,7 +978,7 @@ async def test_forgetting_never_deletes_a_device_owned_by_somebody_else():
     )
 
     client.machines.clear()
-    await service.list_for_project(project_id)
+    await service.refresh_due()
 
     assert service._devices.deleted == []
     assert "reassigned-device" in service._devices.devices
@@ -957,10 +987,10 @@ async def test_forgetting_never_deletes_a_device_owned_by_somebody_else():
 async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(caplog):
     """#282 供给形式不变量, at the reclaim path that actually runs today.
 
-    `forget` fires from `list_for_project` — a GET. So a `self_hosted` device
-    found here must be refused LOUDLY and the listing must still work: raising
-    would wedge machine listing for the whole project over one bad row. The
-    machine row is still reaped; only the human's box survives.
+    `forget` fires from the background sweep. So a `self_hosted` device found
+    here must be refused LOUDLY and the sweep must keep going: raising would
+    stall every other machine's refresh over one bad row. The machine row is
+    still reaped; only the human's box survives.
     """
     client = FakeMicroCloud()
     service = build_service(client)
@@ -977,7 +1007,7 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
     )
 
     client.machines.clear()
-    await service.list_for_project(project_id)
+    await service.refresh_due()
 
     assert service._devices.deleted == []
     assert "someones-own-box" in service._devices.devices
