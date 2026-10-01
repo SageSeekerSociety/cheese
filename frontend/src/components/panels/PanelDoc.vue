@@ -77,6 +77,8 @@ const {
   liveRefIndex,
   commentMarkIndex,
   refreshComments,
+  commentAuthor,
+  sendComment,
   save,
   confirmLossySave,
   onBlur: handleBlur,
@@ -149,6 +151,8 @@ defineExpose({ pulse, highlightTurn })
     :has-pending-edits="hasPendingEdits"
     :external-doc="externalDoc"
     :comments="comments"
+    :comment-author="commentAuthor"
+    :send-comment="sendComment"
     :anchor-nodes="anchorNodes"
     :live-ref-index="liveRefIndex"
     :comment-mark-index="commentMarkIndex"
