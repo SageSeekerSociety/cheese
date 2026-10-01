@@ -409,10 +409,10 @@ async def project_overview(
     all_topics: list[Topic],
     roster: list[dict],
 ) -> str:
-    """注入用的项目总览：① 从总览文档来，②~④ 从结构化数据现拼（#1889）。
+    """注入用的项目总览：① 从总览文档来，②③ 从结构化数据现拼（#1889）。
 
-    在总览房间（项目根话题）里，总览就是本房间的实况文档，四块都拼给它；别的
-    房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余三块要哪一块就自己
+    在总览房间（项目根话题）里，总览就是本房间的实况文档，三块都拼给它；别的
+    房间只注入 ① —— 它们读到「这个项目是什么」就够了，其余两块要哪一块就自己
     去查哪一块，不必每轮往每间房塞一份项目快照。
     """
     in_overview_room = project.root_topic_id == room_id
@@ -421,7 +421,7 @@ async def project_overview(
     if in_overview_room:
         from app.domain.topic.services import TopicService
 
-        # ②~④ 的取数在 topic 领域，和前端那一条
+        # ②③ 的取数在 topic 领域，和前端那一条
         # （`TopicService.overview_auto`）是同一份：两个读者，一份来源。
         auto = render_overview_auto(
             **await TopicService(session).overview_auto_data(

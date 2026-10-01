@@ -260,14 +260,12 @@ function handleStateChanged(resource: string) {
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
-  else activityTick.value += 1 // doc / milestone / notify → reload
+  else activityTick.value += 1 // doc / notify → reload
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).
 async function handleOpenResource(resource: string, turnId?: string) {
-  if (resource === 'milestone') {
-    void router.push({ name: 'calendar', params: { projectId: props.projectId } })
-  } else if (resource === 'site') {
+  if (resource === 'site') {
     // 对话里在动的那个头像：它此刻在干什么，去现场看。
     focusMode.value = false
     onPanelTab('site')
@@ -419,7 +417,6 @@ void openPlace()
           @open-card="onOpenCard"
           @review="onReview"
           @mention-click="handleMentionClick"
-          @open-resource="handleOpenResource"
           @update:tab="onPanelTab"
           @locate="onLocate"
         >

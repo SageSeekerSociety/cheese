@@ -81,10 +81,10 @@ class Shell:
 #: sidebar to 资料库 and sent 日历 / 成员 into the ⋯ menu beside the project name
 #: (总览 and 导出与发布 stopped being pages at all), and then 成员 came back out
 #: — 收起名册 put 「退出项目」 (which lives on that page) two menus deep past the
-#: one ⋯ people already miss, so nobody could find how to leave. 日历 stays in
-#: the menu: a schedule is still a 一年点几次 page. `hidden` carries these moves
-#: rather than a list of seven, so what stays hidden is one click away in the
-#: menu — still 收起, never 禁止. Un-hiding is 「open」, the dial a 壳 has.
+#: one ⋯ people already miss, so nobody could find how to leave. `hidden`
+#: carries these moves rather than a list of seven, so what stays hidden is one
+#: click away in the menu — still 收起, never 禁止. Un-hiding is 「open」, the dial
+#: a 壳 has.
 #:
 #: 看板 is the 壳's `home` and lives in no `nav.project` list: the project name
 #: itself is the way to it, exactly as upstream argues beside the menu it draws.
@@ -95,19 +95,16 @@ _DEFAULT = Shell(
         rail=("home", "projects", "add"),
         tabs=("home", "workspace", "inbox"),
         project=(
-            "calendar",
             "project-library",
             "project-routines",
             "project-members",
             "project-skills",
         ),
     ),
-    hidden=("calendar", "project-routines", "project-skills"),
+    hidden=("project-routines", "project-skills"),
 )
 
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
-#: 日历 is collapsed — a team workspace does not put one person's schedule in
-#: everyone's sidebar — but it stays one click away.
 _WORKBENCH = Shell(
     name="workbench",
     home="workspace-running",
@@ -115,7 +112,6 @@ _WORKBENCH = Shell(
         rail=("home", "projects", "add"),
         tabs=("workspace", "home", "inbox"),
         project=(
-            "calendar",
             "project-library",
             "project-routines",
             "workspace-running",
@@ -123,7 +119,7 @@ _WORKBENCH = Shell(
             "project-skills",
         ),
     ),
-    hidden=("calendar",),
+    hidden=(),
     terms={"project": "工作", "topic": "议题"},
 )
 
@@ -140,13 +136,12 @@ _COURSE_STUDENT = Shell(
         tabs=("workspace", "inbox", "home"),
         project=(
             "project-library",
-            "calendar",
             "project-members",
             "workspace-running",
             "project-routines",
         ),
     ),
-    hidden=("calendar", "project-members", "project-routines"),
+    hidden=("project-members", "project-routines"),
     terms={"project": "课程", "topic": "提问"},
 )
 
@@ -162,7 +157,6 @@ _COURSE_TEACHER = Shell(
             "workspace-running",
             "project-members",
             "project-library",
-            "calendar",
             "project-routines",
         ),
     ),

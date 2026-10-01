@@ -333,7 +333,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         emit('state-changed', frame.resource)
         break
       case 'event_block':
-        // A persisted, clickable action card (milestone/doc/...) for this turn.
+        // A persisted, clickable action card (doc/topics/...) for this turn.
         pushBlock(frame.block)
         toSite(frame.block)
         autoScroll()

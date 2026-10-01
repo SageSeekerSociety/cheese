@@ -45,7 +45,6 @@ async def main() -> None:
         await shot(f"/project/{proj}", "01_workspace_root")
         await shot(f"/project/{proj}", "02_workspace_topic", click="搭建推荐")
         await shot(f"/project/{proj}/overview", "03_overview")
-        await shot(f"/project/{proj}/calendar", "04_calendar")
         await shot(f"/space/{space}", "05_board")
         await shot(f"/project/{proj}/members/user-1", "06_profile")
         await shot(f"/project/{proj}/charter", "07_charter")

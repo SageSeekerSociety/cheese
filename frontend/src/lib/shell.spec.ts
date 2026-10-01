@@ -11,7 +11,7 @@ import { t } from '@/i18n'
 //
 // 它比加壳那天短了：main 的 #1330/#1339 把总览与导出与发布并进了首页，AI 队友
 // 也不再是一页，于是那三个 key 从这里消失，default 壳的声明跟着一起收窄。
-const KNOWN = ['workspace-running', 'calendar', 'project-library', 'project-members']
+const KNOWN = ['workspace-running', 'project-routines', 'project-library', 'project-members']
 
 function project(id: string, shell?: unknown): Project {
   return { id, name: id, created_at: '', ...(shell ? { shell } : {}) } as Project
@@ -70,9 +70,13 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   it('default 壳下三个面逐格就是今天的样子', () => {
     expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual(['home', 'projects', 'add'])
     expect(orderedNav(DEFAULT_SHELL, 'tabs', ['home', 'workspace', 'inbox'])).toEqual(['home', 'workspace', 'inbox'])
-    // 侧栏那一面：资料库和名册是常驻那两格，日历默认收进项目名旁边那个 ⋯ 菜单。
+    // 侧栏那一面：资料库和名册是常驻那两格，定时与触发默认收进项目名旁边那个 ⋯ 菜单。
     // 看板不在里面——它就是首页，项目名那一行点下去就到。
-    expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual(['calendar', 'project-library', 'project-members'])
+    expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual([
+      'project-library',
+      'project-routines',
+      'project-members',
+    ])
   })
 })
 
@@ -103,37 +107,37 @@ describe('termParams: 词表切文案，壳没说就回落 catalog', () => {
 describe('projectPagePlan: 收起是「收起」，永远不是「禁止」', () => {
   it('default 壳下侧栏摆资料库和名册，其余全在「更多」里', () => {
     // 「更多」就是项目名旁边那个 ⋯ 菜单（`TopicSidebar.vue` 的 menuPages）。
-    // default 下它是 看板 / 日历 —— 一格都没丢，只是不占那条竖线。名册不在里头：
+    // default 下它是 看板 / 定时与触发 —— 一格都没丢，只是不占那条竖线。名册不在里头：
     // 「退出项目」长在名册页上，收进 ⋯ 就是把「怎么退出」也一起藏了。
     const plan = projectPagePlan(DEFAULT_SHELL, KNOWN, new Set())
     expect(plan.visible).toEqual(['project-library', 'project-members'])
-    expect(plan.more).toEqual(['workspace-running', 'calendar'])
+    expect(plan.more).toEqual(['workspace-running', 'project-routines'])
   })
 
   it('hidden 里的页落进「更多」', () => {
     const shell = shellLike({
       nav: { ...DEFAULT_SHELL.nav, project: KNOWN },
-      hidden: ['calendar', 'project-members'],
+      hidden: ['project-routines', 'project-members'],
     })
     const plan = projectPagePlan(shell, KNOWN, new Set())
     expect(plan.visible).toEqual(['workspace-running', 'project-library'])
-    expect(plan.more).toEqual(['calendar', 'project-members'])
+    expect(plan.more).toEqual(['project-routines', 'project-members'])
   })
 
   it('他手动打开过一次，这一页就回到外面（个人级压过壳）', () => {
-    const shell = shellLike({ hidden: ['calendar'] })
-    expect(projectPagePlan(shell, KNOWN, new Set(['calendar'])).visible).toContain('calendar')
-    expect(projectPagePlan(shell, KNOWN, new Set(['calendar'])).more).not.toContain('calendar')
+    const shell = shellLike({ hidden: ['project-routines'] })
+    expect(projectPagePlan(shell, KNOWN, new Set(['project-routines'])).visible).toContain('project-routines')
+    expect(projectPagePlan(shell, KNOWN, new Set(['project-routines'])).more).not.toContain('project-routines')
   })
 
   it('壳写错了 key、或者前端多出一页 —— 那一页在「更多」里，不是凭空消失', () => {
     // 壳只认得两格，剩下两格（包括壳压根没听说过的那个新页）全都收着，但都在。
     const shell = shellLike({
-      nav: { ...DEFAULT_SHELL.nav, project: ['workspace-running', 'calendar'] },
+      nav: { ...DEFAULT_SHELL.nav, project: ['workspace-running', 'project-routines'] },
       hidden: [],
     })
     const plan = projectPagePlan(shell, KNOWN, new Set())
-    expect(plan.visible).toEqual(['workspace-running', 'calendar'])
+    expect(plan.visible).toEqual(['workspace-running', 'project-routines'])
     expect(plan.more).toEqual(['project-library', 'project-members'])
   })
 
@@ -141,11 +145,11 @@ describe('projectPagePlan: 收起是「收起」，永远不是「禁止」', ()
     const shells = [
       DEFAULT_SHELL,
       shellLike({ hidden: ['workspace-running', 'project-members'] }),
-      shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['calendar', 'project-members'] } }),
-      shellLike({ hidden: ['calendar'], nav: { ...DEFAULT_SHELL.nav, project: ['calendar'] } }),
+      shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-routines', 'project-members'] } }),
+      shellLike({ hidden: ['project-routines'], nav: { ...DEFAULT_SHELL.nav, project: ['project-routines'] } }),
     ]
     for (const shell of shells) {
-      const revealed = new Set(['calendar'])
+      const revealed = new Set(['project-routines'])
       const { visible, more } = projectPagePlan(shell, KNOWN, revealed)
       expect([...visible, ...more].sort()).toEqual([...KNOWN].sort())
       expect(new Set([...visible, ...more]).size).toBe(KNOWN.length)

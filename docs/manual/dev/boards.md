@@ -1,19 +1,18 @@
 ---
-title: 看板与里程碑
+title: 看板
 kind: 参考
-summary: 项目看板、待我处理、里程碑日历和平台统计，都从当下的事实现算。
+summary: 项目看板、待我处理和平台统计，都从当下的事实现算。
 covers:
   - backend/app/domain/dashboard/
-  - backend/app/domain/milestone/
   - backend/app/domain/platform_stats/
   - backend/app/api/routes/dashboard.py
   - backend/app/api/routes/admin_stats.py
   - backend/app/api/routes/awaiting.py
 ---
 
-# 看板与里程碑 {#boards}
+# 看板 {#boards}
 
-项目看板、跨项目的「待我处理」、里程碑日历、平台看板的三个分类，以及它们共同的一条纪律：这些数都不存，每次从当下的事实现算。
+项目看板、跨项目的「待我处理」、平台看板的三个分类，以及它们共同的一条纪律：这些数都不存，每次从当下的事实现算。
 
 > 讲：每一块读哪几张表、判据在哪、窗口和口径怎么定。不讲：看板那一列的判据本身（见[任务与工作目录](/dev/tasks)），交付链路上每一步的顺序（见[任务 → 分支 → PR → 验收合并](/dev/delivery)），通知怎么发出去（见[通知与待办](/dev/notifications)）。
 
@@ -46,12 +45,6 @@ covers:
 
 一个容易写错的地方：房间里那张卡要看 `task_id is None` 才是**房间自己**的（`_room_cards`）。一条活递的卡把房间记在 `topic_id` 上，不过滤的话，一条活在等验收会让它上面那个房间也显示成等验收。哪些状态算「还没结算」不在这里数，那张表由 `review/archive.py` 的 `OPEN_CARD_STATUSES` 维护。访客拿到空列表、不是错误——这个清单的定义就是「点到我的那些」，而没有身份的调用者没有被任何一件事点到。
 
-## 里程碑 {#milestones}
-
-`domain/milestone/` 的项目日历与倒计时（spec §7.2）。`Milestone` 三个状态：`upcoming` / `done` / `missed`；带 `source_topic_id`（从哪个话题来的）和 `auto_pinned`（是不是芝士自动钉的）。
-
-一条不显眼但必须是这样写的规则：**过期的 `upcoming` 在读到的时候才被翻成 `missed`**（`MilestoneRepository.mark_overdue`，一条 `UPDATE`），而且是在 `list_for_project` / `list_calendar` 里先翻再读。没有定时任务去扫它，因为「过期」这件事不需要谁记得去改——它只需要在有人来看的时候不能把过去的日子说成「临近」。`list_calendar` 只回 `upcoming` 且 `due_date` 非空的那些，升序，给倒计时（`next_milestone`）用，所以那里永远不会出现一个过去的日期。列表那条按 `due_date` 升序、没日期的排最后。
-
 ## 平台统计 {#platform-stats}
 
 `domain/platform_stats/` 是管理员看板，三个分类（反馈 / 用量 / 平台）在页面上是三个控件，切到哪一类才拉哪一类，所以是**一个服务被三条路由各问一次**（`/admin/stats/{feedback,usage,platform}`），不是一条接口把所有东西一次吐出来——一次吐出来意味着切到第二、三类时读的是几十秒前的数，而那三类里有两类读的是全平台增长最快的表。（另有 `performance` / `pipeline` / `product` / `integrations` 四条，各读各的。）
@@ -69,7 +62,7 @@ covers:
 
 `domain/dashboard/services.py` 是「往上抽一层」的读汇总（spec §7.2/§7.3），**只读**，数据仍然归各领域的表所有。
 
-- 项目卡片（`_project_card`）：话题数按状态分、最近一次活动、人/AI 贡献比、临近的里程碑。
+- 项目卡片（`_project_card`）：话题数按状态分、最近一次活动、人/AI 贡献比。
 - **贡献比读署名，不读事件行的档位**：档位只分得出「参与者」和「平台」，而这张活跃度问的正是参与者里的哪一种——按档位分组再滤掉平台事件，剩下的全是同一个档，两个数字都归零。判据是 `looks_like_agent_handle(author)`。
 - 机构看板（`space_board`）：这个空间下每个团队一行。它走 **Space → 赛题 → 项目**（`list_ids_for_space_tasks`），不再走 Space → 模板 → 任务 → 关联表那条和赛题平行的层级（#370）。
 - 个人页（`user_profile`）：一年的热力图按 UTC 天、按项目，每个项目再切出最近 12 周的 sparkline（`_SPARKLINE_WEEKS`），和 `platform_stats/windows.py` 用的是同一个「一天」。私人一对一聊天不算任何话题列表的一部分，在本人自己的页面上也不算（`_listed_topic`）。
@@ -79,6 +72,4 @@ covers:
 - **看板不存状态，每一列都是当时算的**。没有哪张表记着「这条活现在在待处理列」——存一份就有一个必须在每条路上记得改的地方。
 - **列与短语绑死**。加一个短语就是加一个枚举成员，它自动落进它那一列、自动进 `COLUMN_PHRASES`；想让它出现在别列，只能改它的类型，而那是唯一一处。
 - **「失联」是心跳，不是结论**。它说的是「做这条活的那个分身此刻还在不在」（`worker_live`），不是这条活做到哪一步；判据是没人知道它在不在、且最后一次说话已经超过 `LOST_SIGNAL_AFTER`，所以一条隧道断掉的活和一条真的没人找它的活会落进同一格——提示词里说的下一步该怎么写，得看人自己判断。
-- **过期里程碑不会自己变**。它只在有人读这个项目的里程碑/日历时被翻成 `missed`；直接查库拿到的是旧状态。
 - **管理员看板的每个数都绑定在一个窗口上**。看到「新增 3」时说的是那个 `days` 窗口里的 3，而不是总量；卡片的总量和曲线的窗口是两套口径，方法说明里会分开写。
-- **`list_calendar` 只回有的日期的 `upcoming`**。没写 `due_date` 的里程碑在倒计时里不存在，这不是数据丢了。

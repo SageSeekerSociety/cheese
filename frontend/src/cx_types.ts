@@ -421,11 +421,6 @@ export interface TopicRef {
   kind: string
 }
 
-export interface Milestone {
-  title: string
-  due_date: string | null
-}
-
 export interface ProjectMember {
   handle: string
   role: string
@@ -536,8 +531,6 @@ export interface SpaceTeam {
   owner_handle: string
   topic_count: number
   topics_by_status: Record<string, number>
-  next_milestone: Milestone | null
-  upcoming_milestones: Milestone[]
   last_activity_at?: string | null
   contributions?: { human: number; ai: number }
   [key: string]: unknown
@@ -854,24 +847,9 @@ export interface Notification {
   created_at: string
 }
 
-// ---- 日历 / 里程碑 (§7.2) ----
-
-// GET /projects/{id}/calendar and /projects/{id}/milestones.
-export interface MilestoneFull {
-  id: string
-  project_id: string
-  title: string
-  description: string
-  due_date: string | null
-  status: string
-  source_topic_id: string | null
-  auto_pinned: boolean
-  created_at: string
-}
-
 // ---- 项目总览的自动区 (GET /topics/{root_topic_id}/overview, #1889) ----
 
-// 总览是四块：①「项目是什么」写在文档正文里，②~④ 由平台现拼。这一份是 ②~④
+// 总览是三块：①「项目是什么」写在文档正文里，②③ 由平台现拼。这一份是 ②③
 // 的结构化形态，给总览房间文档正文下面那一栏 —— 每条带着自己去的地方，人点得动。
 // 注入 AI 队友提示词的那一份 markdown 读的是同一次取数（backend
 // `domain/topic/overview.py`），所以两边不会各说各的。
@@ -890,21 +868,10 @@ export interface OverviewTopicItem {
   conclusion: string | null
 }
 
-export interface OverviewMilestoneItem {
-  kind: 'milestone'
-  /** 去处：日历上的这一条。 */
-  milestone_id: string | null
-  title: string
-  /** `YYYY-MM-DD`，没定就是没有。 */
-  due: string | null
-  /** 原值 `upcoming` / `done` / `missed`，怎么说是界面的事。 */
-  status: string | null
-}
-
-export type OverviewAutoItem = OverviewTopicItem | OverviewMilestoneItem
+export type OverviewAutoItem = OverviewTopicItem
 
 export interface OverviewAutoBlock {
-  /** `active_topics` / `milestones` / `closed_topics`。 */
+  /** `active_topics` / `closed_topics`。 */
   key: string
   title: string
   items: OverviewAutoItem[]

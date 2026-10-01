@@ -62,7 +62,7 @@ describe('本轮摘要', () => {
   it('同一轮的动作行和改动摘要折成一行，带上文件数和增删', () => {
     const rows = collapseNotices([
       evt('a', '更新了文档', { action: 'doc' }, 'turn-1'),
-      evt('b', '添加了里程碑', { action: 'milestone' }, 'turn-1'),
+      evt('b', '发送了通知', { action: 'notify' }, 'turn-1'),
       evt('c', '这一轮改了 3 个文件（+120 -8）', CHANGES, 'turn-1'),
     ])
 
@@ -80,7 +80,7 @@ describe('本轮摘要', () => {
       ],
       filesOmitted: 1,
     })
-    expect(notice.actions.map((a) => a.resource)).toEqual(['doc', 'milestone'])
+    expect(notice.actions.map((a) => a.resource)).toEqual(['doc', 'notify'])
     expect(notice.turnId).toBe('turn-1')
   })
 
@@ -112,7 +112,7 @@ describe('本轮摘要', () => {
   it('分不出轮次的老块不参与折叠', () => {
     const rows = collapseNotices([
       evt('a', '更新了文档', { action: 'doc' }, null),
-      evt('b', '添加了里程碑', { action: 'milestone' }, null),
+      evt('b', '发送了通知', { action: 'notify' }, null),
     ])
     expect(rows.map((r) => r.notice?.mode)).toEqual(['action', 'action'])
   })

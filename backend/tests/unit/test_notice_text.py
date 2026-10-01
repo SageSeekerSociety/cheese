@@ -140,11 +140,12 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
         test_every_sentence_in_the_catalog_is_said_somewhere()
 
 
-def test_only_the_retired_comment_and_decision_notices_are_historical():
+def test_only_the_retired_comment_decision_and_milestone_notices_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
         "docCommented",
         "docCommentedHandedTo",
         "actionDecision",
+        "actionMilestone",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()
@@ -161,6 +162,7 @@ def test_only_the_retired_comment_and_decision_notices_are_historical():
             "ana😀 评论了文档，已交给 <@cheese-test>",
         ),
         ("actionDecision", {"actor": "<@cheese-test>"}, "<@cheese-test> 记录了决策"),
+        ("actionMilestone", {"actor": "<@cheese-test>"}, "<@cheese-test> 添加了里程碑"),
     ],
 )
 def test_historical_descriptor_replays_without_allowing_generation(key, params, stored):

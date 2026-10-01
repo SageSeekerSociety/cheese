@@ -116,12 +116,6 @@ function handleMentionClick(handle: string) {
   void router.push(userRefRoute(handle, props.projectId))
 }
 
-function handleOpenResource(resource: string) {
-  if (resource === 'milestone') {
-    void router.push({ name: 'calendar', params: { projectId: props.projectId } })
-  }
-}
-
 async function handleUpgradeMessage(messageId: string) {
   const upgraded = await store.upgradeMessage(messageId)
   if (upgraded) openTopic(upgraded.id)
@@ -154,7 +148,6 @@ async function handleUpgradeMessage(messageId: string) {
       @turn-done="handleTurnDone"
       @state-changed="handleStateChanged"
       @mention-click="handleMentionClick"
-      @open-resource="handleOpenResource"
       @upgrade-message="handleUpgradeMessage"
       @open-topic="openTopic"
     />

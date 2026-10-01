@@ -299,19 +299,22 @@ def test_it_reaches_the_cheese_write_surface_in_every_topic(client):
         assert r.json()["data"]["author"].startswith("cheese")
 
 
-def test_it_reaches_the_project_level_write_surface(client):
-    """Same widening on the project-scoped half of the gated surface."""
+def test_it_reaches_a_project_level_write(client):
+    """Same widening on a write addressed to the project rather than a topic."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
 
     r = client.post(
-        f"/projects/{pid}/milestones",
-        json={"title": "内测上线"},
+        f"/projects/{pid}/alerts",
+        json={
+            "title": "内测上线",
+            "kind": "change_alert",
+            "level": "light",
+            "target_handle": "alice",
+        },
         headers=_cred(token),
     )
     assert r.status_code == 200, r.text
-    listed = client.get(f"/projects/{pid}/milestones").json()["data"]["data"]
-    assert [m["title"] for m in listed] == ["内测上线"]
 
 
 def test_the_gate_still_refuses_another_project_s_credential(client):
@@ -329,11 +332,16 @@ def test_the_gate_still_refuses_another_project_s_credential(client):
     assert topic_level.status_code == 403
 
     project_level = client.post(
-        f"/projects/{theirs}/milestones",
-        json={"title": "别人的里程碑"},
+        f"/projects/{theirs}/alerts",
+        json={
+            "title": "别人的提醒",
+            "kind": "change_alert",
+            "level": "light",
+            "target_handle": "bob",
+        },
         headers=_cred(token),
     )
-    assert project_level.status_code == 401
+    assert project_level.status_code == 403
 
 
 def test_it_is_a_member_not_a_lead(client):

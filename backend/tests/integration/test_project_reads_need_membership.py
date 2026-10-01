@@ -33,8 +33,8 @@ from tests.integration.test_team_member_enters_team_project import (
 # The reads a non-member must not get. Named by what a person loses if it leaks.
 #
 # The second group is the same family found later: each one answered a project id
-# with the project's own data and had no door at all. `/tasks`, `/contributions`,
-# `/calendar` and `/milestones` are what the workspace page loads when it opens,
+# with the project's own data and had no door at all. `/tasks` and `/contributions`
+# are what the workspace page loads when it opens,
 # `/upstream` names the repository the project pushes to, and the agents family
 # is who works in it.
 READS = {
@@ -44,8 +44,6 @@ READS = {
     "资源用量": "/projects/{pid}/usage",
     "任务列表": "/projects/{pid}/tasks",
     "贡献聚合（AI 摘要）": "/projects/{pid}/contributions",
-    "里程碑": "/projects/{pid}/milestones",
-    "项目日历": "/projects/{pid}/calendar",
     "上游仓库": "/projects/{pid}/upstream",
     "智能体名册": "/projects/{pid}/agents",
     "分支保护": "/projects/{pid}/branch-protection",
