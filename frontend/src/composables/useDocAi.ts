@@ -122,6 +122,7 @@ export function useDocAi(context: Context) {
     const generation = epoch
     const topic = room
     if (!active(generation)) return
+    const replayingUnknown = unknown.value !== null
     busy.value = true
     error.value = ''
     try {
@@ -142,7 +143,9 @@ export function useDocAi(context: Context) {
     } catch (cause) {
       if (!active(generation)) return
       error.value = message(cause)
-      if (definitelyRejected(cause)) persist(null)
+      // A replay rejected before receipt lookup proves nothing about the first
+      // attempt. Retain the frozen identity until a successful receipt arrives.
+      if (!replayingUnknown && definitelyRejected(cause)) persist(null)
     } finally {
       if (active(generation)) busy.value = false
     }

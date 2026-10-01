@@ -7,6 +7,8 @@ const flushPromises = async () => {
 }
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '../api'
+
 import { useDocAi } from './useDocAi'
 
 const api = vi.hoisted(() => ({
@@ -80,6 +82,49 @@ describe('document AI operation recovery', () => {
     expect(ai.question.value).toBe('new typing')
     expect(ai.unknown.value).toBeNull()
   })
+  it.each(['request', 'accept'] as const)(
+    'retains unknown %s across denied recovery and only replays the original ID',
+    async (kind) => {
+      const { ai, reload } = setup()
+      await ai.prepare(null)
+      ai.question.value = 'explain'
+      const accepted = {
+        kind: 'accept',
+        proposal: 'p',
+        body: { operation_id: crypto.randomUUID(), expected_version: 4, revision: 2 },
+      } as const
+      if (kind === 'accept') ai.unknown.value = accepted
+      const send = kind === 'request' ? api.createDocAiRequest : api.acceptDocAiProposal
+      const committed = new Set<string>()
+      let attempt = 0
+      send.mockImplementation(async (...args: unknown[]) => {
+        const body = args[kind === 'request' ? 1 : 2] as { operation_id: string }
+        attempt++
+        if (attempt === 2) throw new ApiError(403, 'membership revoked before receipt lookup')
+        committed.add(body.operation_id)
+        if (attempt === 1) throw new TypeError('response lost after server commit')
+        return kind === 'request' ? { request_id: 'r', state: 'pending' } : { doc_version: 5 }
+      })
+      if (kind === 'request') await ai.submit('ask')
+      else await ai.recover()
+      const original = JSON.parse(JSON.stringify(ai.unknown.value))
+      const stored = localStorage.getItem('cheese.doc-ai.v1:human:room:operation')
+      await ai.recover()
+      expect(ai.unknown.value).toEqual(original)
+      expect(localStorage.getItem('cheese.doc-ai.v1:human:room:operation')).toBe(stored)
+      expect(ai.error.value).toContain('membership revoked')
+      await ai.submit('ask')
+      await ai.accept('p')
+      expect(send).toHaveBeenCalledTimes(2)
+      await ai.recover()
+      const payloads = send.mock.calls.map((args) => args[kind === 'request' ? 1 : 2])
+      expect(payloads).toEqual([original.body, original.body, original.body])
+      expect(committed.size).toBe(1)
+      expect(ai.unknown.value).toBeNull()
+      expect(localStorage.getItem('cheese.doc-ai.v1:human:room:operation')).toBeNull()
+      if (kind === 'accept') expect(reload).toHaveBeenCalledWith('room')
+    }
+  )
   it('never installs acceptance receipt and rereads canonical through the protected reload', async () => {
     const { ai, reload, blocked } = setup()
     await flushPromises()

@@ -43,6 +43,7 @@ export function useDocThreads(topic: () => string | null) {
     const generation = epoch
     const topicId = room
     if (!topicId || state.busy || !active(generation)) throw new Error('Thread context changed')
+    const replayingUnknown = operation !== null
     state.busy = true
     try {
       persist(value)
@@ -55,7 +56,8 @@ export function useDocThreads(topic: () => string | null) {
       if (active(generation)) {
         state.errors[value.id] = cause instanceof Error ? cause.message : String(cause)
         if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500 && cause.status !== 408) {
-          persist(null)
+          // A rejected replay cannot disprove the original committed write.
+          if (!replayingUnknown) persist(null)
           if (cause.status === 409) await load(value.id)
         }
       }
