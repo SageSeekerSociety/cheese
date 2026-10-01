@@ -19,14 +19,24 @@ adds ``<-loopback>`` to the bypass list), so ``localhost`` is not a way around.
 
 If the machine has its own egress proxy (``HTTPS_PROXY``), connections are
 tunnelled through it to the checked address, so the egress is kept.
+
+On a machine whose DNS answers every name with a fake-IP placeholder
+(``198.18.0.0/15``, left for a transparent proxy to map back to the name), the
+placeholder says nothing about the real destination. Such a name is asked again
+over DNS over HTTPS (``FETCH_DNS_OVER_HTTPS``) and the real address is checked
+and connected to; if that answer cannot be had, the name is refused. The backend
+applies the same rule (``backend/app/domain/fetch/guard.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import os
 import socket
+import urllib.parse
+import urllib.request
 from urllib.parse import urlsplit
 
 HEAD_LIMIT = 64 * 1024
@@ -38,6 +48,33 @@ _DROP = {b"proxy-connection", b"proxy-authorization", b"connection", b"keep-aliv
 
 class Refused(Exception):
     """The host is not on the public internet."""
+
+
+#: Where fake-IP DNS hands out its placeholders (the benchmarking range).
+PLACEHOLDERS = ipaddress.ip_network("198.18.0.0/15")
+DNS_OVER_HTTPS = os.environ.get("FETCH_DNS_OVER_HTTPS", "https://223.5.5.5/resolve")
+
+
+def is_placeholder(address: str) -> bool:
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    return isinstance(ip, ipaddress.IPv4Address) and ip in PLACEHOLDERS
+
+
+def _ask_over_https(host: str) -> list[str]:
+    query = urllib.parse.urlencode({"name": host, "type": "A"})
+    request = urllib.request.Request(
+        f"{DNS_OVER_HTTPS}?{query}", headers={"accept": "application/dns-json"}
+    )
+    # No proxy from the environment: the resolver is asked directly, like the
+    # destination is connected to directly.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=8) as reply:
+        answers = json.load(reply).get("Answer") or []
+    return [a["data"] for a in answers if a.get("type") == 1 and a.get("data")]
+
+
+async def resolve_over_https(host: str) -> list[str]:
+    return await asyncio.to_thread(_ask_over_https, host)
 
 
 def is_public(address: str) -> bool:
@@ -60,6 +97,11 @@ async def public_address(host: str, port: int) -> str:
         addresses = await resolve(host, port)
     except OSError as exc:
         raise Refused(host) from exc
+    if addresses and all(is_placeholder(a) for a in addresses):
+        try:
+            addresses = await resolve_over_https(host)
+        except Exception as exc:  # noqa: BLE001 — unknown means refused
+            raise Refused(host) from exc
     if not addresses or not all(is_public(a) for a in addresses):
         raise Refused(host)
     return next((a for a in addresses if ":" not in a), addresses[0])

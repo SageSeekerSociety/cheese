@@ -264,6 +264,10 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
+    # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
+    # to see the real address to know it is public. See domain/fetch/guard.py.
+    fetch_dns_over_https: str = "https://223.5.5.5/resolve"
 
     # LibreOffice, reached over HTTP for the same reasons as the browser above:
     # it is ~800MB and wants a writable profile directory, which rules it out of

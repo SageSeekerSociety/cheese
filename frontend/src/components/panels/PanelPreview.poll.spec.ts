@@ -77,6 +77,11 @@ function setHidden(hidden: boolean) {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.useFakeTimers()
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+    const frame = document.querySelector(`iframe[name="${this.target}"]`)!
+    Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null })
+    queueMicrotask(() => frame.dispatchEvent(new Event('load')))
+  })
   getPreview.mockResolvedValue(artifact())
   readPreviewFile.mockResolvedValue({
     path: 'report.html',
