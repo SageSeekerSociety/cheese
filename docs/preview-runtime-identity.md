@@ -1,0 +1,37 @@
+# Resource-bound preview runtime
+
+The formal right-hand preview uses independent resource origins, signed resource grants and displayed identity. The live/latest content host remains available for existing callers. A retained DOM is not a snapshot.
+
+## Resource and instance contract
+
+A selected file grant binds its room path, MIME and entry SHA-256 prefix. Every subsequent request uses that directory rather than the latest artifact. Reading changed entry bytes returns 409; sibling assets are still mutable. There is no resource-closure snapshot, immutable archive, offline copy or complete reproducibility claim.
+
+An app grant binds artifact, teammate and actual Linux IPv4 listening socket identity. The helper hashes kernel boot ID, locally declared port and listening socket inode. Reconnecting the helper leaves the listener identity unchanged. Changing the listener or declared port invalidates old fixed requests. The helper checks before dial and after native connect, before HTTP headers or WS handshake bytes. Ports are never selected by the wire. An already connected stream stays bound to its native socket; it is not migrated. Linux hosts without readable socket identity and non-Linux helpers expose only live routing, explicitly labeled as not fixed. Socket-inode reuse is not a cryptographic process-incarnation guarantee.
+
+The resource hash is part of one 63-character DNS label under the existing content-domain wildcard. Grants and host-only cookies bind their exact origin. Authorizing a new resource cannot replace an old resource's session cookie. Every content request still checks current topic membership. The fixed host never falls back to latest. A new-tab live link still opens latest, as its label says.
+
+## Navigation, runtime and reconnection
+
+Navigation load promotes the iframe but does not assert application readiness. Cooperating pages can explicitly include `/_cheese/runtime.js` from their authorized content origin. After their own initialization they call `window.CheesePreviewRuntime.ready()` or `.error(message)`. The bridge caches the result until the parent hello arrives. It validates parent window and configured platform origin. The parent validates exact content origin, current iframe WindowProxy, protocol/version and random navigation session ID. Arbitrary pages remain readiness-unconfirmed; HTML, CSP, forms and scripts are not rewritten.
+
+Metadata polling observes disconnection, same-listener recovery and replacement. Same-instance recovery does not POST or remount, preserving focus and form state. Application WS reconnection remains the application's responsibility; the host does not pretend a transport probe restores app state. Replacement is labeled gone until explicit refresh selects the current instance. Hidden panels do not poll. Transport cancellation, streaming and authorization contracts are retained.
+
+## Actual-source mapping
+
+References were extracted and read, not executed:
+
+- Claude Desktop 2.16120.0, `readable/frame-shell-Xw_NSXzx.js:4075-4086`: origin and current contentWindow ownership. Cheese maps this to `usePreviewFrames.runtimeMessage` plus a per-navigation session.
+- Same file `4092-4137`: outgoing/incoming frame split; Cheese retains its existing displayed/incoming named frames.
+- Same file `4530-4546` and `5082-5129`: explicit ready signal and load/ready separation; Cheese exposes navigation loaded versus opt-in runtime confirmed. It does not reproduce Claude's native runtime or assert universal readiness.
+- Codex Desktop 26.928.2636.0, `readable/webview/assets/site-preview-8c609cddd865.js:208-305`: source/origin/channel/version/session checks; Cheese applies the same ownership dimensions to its smaller readiness protocol.
+- `readable/webview/assets/webview-c2903727b841.js:21-86`: native tab mountGeneration; Cheese uses displayed resource identity plus navigation serial, not a native Owl host.
+
+Codex Sites being present in a bundle does not prove availability. The reference audit reports its availability gate false. Cheese implements its own formal preview interfaces rather than restoring private services.
+
+## Verification scope
+
+Initial backend targeted run: 49 passed, including native listening socket identity/replacement, before-app-byte guards, existing message/hub/relay boundaries and real database content-host file isolation. Final incremental run: 8 passed, including same-port listener replacement, execution of the actual bridge in Node's JS VM, authorized bridge GET/HEAD and method rejection, and production app grant/host/hub routing with a controlled wire peer. The latter checks latest changes, helper loss, same-instance reconnect, replaced instance and missing capability. It is not a native end-to-end app test.
+
+Frontend final run: 11 passed, including origin/source/session negatives, same-frame connection recovery and readiness session renewal on displayed-document reload. The actual bridge script was executed in a controlled JS VM, not a browser navigation. Selected backend pyright and full frontend type ratchet both reported zero errors. Changed-file Ruff and ESLint exited zero (ESLint retains three pre-existing warnings); i18n passed without baseline changes. Original logs and exit records accompany the source handoff.
+
+Review must still consider listener inode reuse, SO_REUSEPORT, IPv6 and connect/check races; the implementation is not a cryptographic server-incarnation guarantee. HTTP error pages can produce iframe load; the host reports navigation observed and readiness unconfirmed, not application success. Runtime-ready has no universal deadline. Authorization tests for existing live hosts are retained, but the full negative authorization suite has not been rerun against new resource hosts. Full CI, formal browser deployment observation and immutable resource closure remain unverified.

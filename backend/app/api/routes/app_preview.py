@@ -254,7 +254,9 @@ def _response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(k, v) for k, v in headers if k.lower() not in dropped]
 
 
-async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Response:
+async def relay_http(
+    topic_id: uuid.UUID, seat: str, request: Request, *, instance: str | None = None
+) -> Response:
     """Forward an already authorized content-host request without URL rewriting,
     to the app ``seat`` (the teammate who declared it) is serving."""
     body = bytearray()
@@ -276,6 +278,7 @@ async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Respon
             path=_upstream_path(request),
             headers=_app_headers(request),
             body=bytes(body),
+            instance=instance,
         )
     )
     gone = asyncio.create_task(disconnected())
@@ -321,18 +324,24 @@ async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Respon
                 await upstream.aclose()
 
 
-async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID, seat: str) -> None:
+async def relay_ws(
+    websocket: WebSocket, topic_id: uuid.UUID, seat: str, *, instance: str | None = None
+) -> None:
     """Pump the authorized preview's HMR socket without holding a DB session."""
     stream = preview_hub.open_stream(topic_id, seat)
     if stream is None:
         await websocket.close(code=1011)
         return
     try:
+        if instance and "instance-v1" not in stream._machine.capabilities:
+            await websocket.close(code=1008)
+            return
         await stream.send(
             wire.OP_WS_OPEN,
             wire.encode_meta(
                 {
                     "path": _upstream_path(websocket),
+                    **({"instance": instance} if instance else {}),
                     "headers": [
                         [k, v]
                         for k, v in _app_headers(websocket)

@@ -1,3 +1,5 @@
+import type { PreviewSession } from '../api'
+
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
 import { t } from '../i18n'
@@ -13,6 +15,11 @@ export interface PreviewFrame {
   live: boolean
   posted: boolean
   identity?: string
+  resourceId?: string
+  instance?: string
+  runtime?: 'unconfirmed' | 'ready' | 'failed'
+  connection?: 'online' | 'disconnected' | 'gone'
+  runtimeError?: string
 }
 
 export type PreviewNavigation = 'idle' | 'authorizing' | 'navigating' | 'loaded' | 'failed'
@@ -31,6 +38,31 @@ export function usePreviewFrames(frameName: string) {
   let elapsed = 0
   let lastTick = 0
   let visible = false
+  let runtimeWindow: Window | null = null
+  let runtimeSession = ''
+
+  function runtimeMessage(event: MessageEvent) {
+    const frame = displayed.value
+    if (!frame || !runtimeWindow || event.source !== runtimeWindow || event.origin !== new URL(frame.url).origin) return
+    const data = event.data
+    if (!data || data.channel !== 'cheese-preview-runtime' || data.version !== 1 || data.sessionId !== runtimeSession)
+      return
+    if (data.type === 'ready') {
+      frame.runtime = 'ready'
+      frame.runtimeError = ''
+    } else if (data.type === 'error' && typeof data.message === 'string') {
+      frame.runtime = 'failed'
+      frame.runtimeError = data.message.slice(0, 1000)
+    }
+  }
+  window.addEventListener('message', runtimeMessage)
+
+  function observeConnection(instance: string | null | undefined, online: boolean) {
+    const frame = displayed.value
+    if (!frame?.live) return
+    frame.connection = !online ? 'disconnected' : frame.instance && instance !== frame.instance ? 'gone' : 'online'
+    // Recovery updates status only: never POST/remount a loaded browsing context.
+  }
 
   function stopTimer() {
     if (timer) clearInterval(timer)
@@ -68,7 +100,7 @@ export function usePreviewFrames(frameName: string) {
   }
 
   async function navigate(
-    session: { url: string; grant: string },
+    session: PreviewSession,
     page: Pick<PreviewFrame, 'url' | 'label' | 'mime' | 'version' | 'live' | 'identity'>,
     stillCurrent: () => boolean,
     path?: string
@@ -76,7 +108,17 @@ export function usePreviewFrames(frameName: string) {
     stopTimer()
     attemptIdentity = page.identity ?? null
     const id = ++serial
-    incoming.value = { ...page, id, name: `${frameName}-${id}`, posted: false }
+    incoming.value = {
+      ...page,
+      url: session.url,
+      id,
+      name: `${frameName}-${id}`,
+      posted: false,
+      resourceId: session.resource_id,
+      instance: session.resource?.instance,
+      runtime: 'unconfirmed',
+      connection: 'online',
+    }
     navigation.value = 'navigating'
     error.value = ''
     await nextTick()
@@ -100,7 +142,7 @@ export function usePreviewFrames(frameName: string) {
   }
 
   function loaded(id: number, event: Event) {
-    const frame = incoming.value
+    const frame = incoming.value?.id === id ? incoming.value : displayed.value
     if (!frame || frame.id !== id || !frame.posted) return
     if (!(event.target instanceof HTMLIFrameElement) || event.target.name !== frame.name) return
     // A newly mounted blank document can finish after POST was scheduled.
@@ -110,11 +152,33 @@ export function usePreviewFrames(frameName: string) {
     } catch {
       // The authorized content origin is intentionally different from the host.
     }
-    stopTimer()
-    displayed.value = frame
-    incoming.value = null
-    failedIdentity.value = null
-    navigation.value = 'loaded'
+    if (incoming.value?.id === id) {
+      stopTimer()
+      displayed.value = frame
+      incoming.value = null
+      failedIdentity.value = null
+      navigation.value = 'loaded'
+    }
+    // A document reload keeps its frame but must establish a fresh runtime session.
+    frame.runtime = 'unconfirmed'
+    frame.runtimeError = ''
+    runtimeWindow = event.target.contentWindow
+    runtimeSession = crypto.randomUUID()
+    try {
+      runtimeWindow?.postMessage(
+        {
+          channel: 'cheese-preview-runtime',
+          version: 1,
+          type: 'hello',
+          sessionId: runtimeSession,
+          resourceId: frame.resourceId ?? null,
+        },
+        new URL(frame.url).origin
+      )
+    } catch {
+      // A replaced or opaque document cannot acknowledge; remain unconfirmed.
+      runtimeWindow = null
+    }
   }
 
   function failed(id: number, event: Event) {
@@ -132,6 +196,8 @@ export function usePreviewFrames(frameName: string) {
 
   function reset() {
     serial += 1
+    runtimeWindow = null
+    runtimeSession = ''
     stopTimer()
     displayed.value = null
     incoming.value = null
@@ -141,7 +207,10 @@ export function usePreviewFrames(frameName: string) {
     error.value = ''
   }
 
-  onBeforeUnmount(reset)
+  onBeforeUnmount(() => {
+    reset()
+    window.removeEventListener('message', runtimeMessage)
+  })
   return {
     displayed,
     incoming,
@@ -149,6 +218,7 @@ export function usePreviewFrames(frameName: string) {
     navigation,
     error,
     failedIdentity,
+    observeConnection,
     authorize,
     navigate,
     loaded,

@@ -1,6 +1,6 @@
 # Preview transport checkpoint
 
-This transport-only branch is separate from merged frontend PR #2303 and has merged current main. The PR diff does not change frontend or SlidesDesign files. No network merge or deployed-image verification is claimed.
+Transport PR #2314 merged as 1eb1b355 after exact-head and queue RequiredCI success. The deployment owner verified the normal deploy-dev log for that SHA. The frozen experiments below describe their original checkpoints, not the entire production deployment. The subsequent resource/runtime work is documented in preview-runtime-identity.md.
 
 ## Implemented boundaries
 
@@ -37,6 +37,6 @@ The repository live suite is under tests/unit and receives its pure layer marker
 
 Four test_preview_transport_bounds.py cases passed against independent raw TCP app peers. Sixteen pending HTTP streams reject the seventeenth and admit a replacement after cancel; sixteen WS streams separately reject the seventeenth while an HTTP sibling succeeds, then admit a WS replacement after cancel. Canceled app peers observe EOF and owned workers/writers join. A non-reading app WS peer receives a bounded outbox flood while an HTTP sibling still completes; after release the app observes EOF and reader/writer exit. A non-reading shared tunnel with a reduced socket send buffer and a shortened deadline verifies timer teardown: the actual tunnel and app sockets close, and the helper session/worker join. The author logs do not observe native sendall entry or establish kernel write blocking. An independent Windows run entered native sendall with fd=-1 and duration zero because the timer had already closed the socket during Python masking; this does not establish the same timing in the author's Linux run. The test does not prove kernel write blocking, real WAN timing or all admission races.
 
-## Still required
+## Final transport boundaries
 
-This checkpoint is not complete transport acceptance. Content-host authorization integration and early-connect/request-write cancellation races remain to verify. Overflow cancellation tasks are now tracked on the machine, canceled on abandonment and reaped by the tunnel route; stopped machines refuse new streams. Metadata/frame limits and post-cancel DATA races still need further hardening. No fixed-instance routing, immutable resource snapshot or controlled runtime-ready protocol is introduced.
+The final 501ad3d9 checkpoint adds production content-host grant/cookie/database integration, gated native connect/request-body cancellation, metadata/request/WS bounds, canceled queued DATA suppression and shared-send failure stopping admission and closing the idle tunnel. The final targeted set passed 63 cases; the production authorization set passed 67 cases at b8d459e3. These observations do not establish kernel-blocked writes or real WAN timing. Already-started frames remain in flight. Fixed resource routing and runtime readiness belong to the subsequent checkpoint; immutable resource closure remains unimplemented.
