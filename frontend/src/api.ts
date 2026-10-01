@@ -1967,14 +1967,8 @@ export function getStepOutput(topicId: string, blockId: string): Promise<{ outpu
   )
 }
 
-export interface PreviewSession {
-  url: string
-  grant: string
-}
-
-export function requestPreviewSession(topicId: string): Promise<PreviewSession> {
-  return request<PreviewSession>(`/topics/${encodeURIComponent(topicId)}/preview-session`, { method: 'POST' })
-}
+export { requestPreviewSession } from './api/preview'
+export type { PreviewSelection, PreviewSession } from './types/preview'
 
 export interface AgentControlResult {
   request_id: string

@@ -143,7 +143,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     host.authorize(identity)
     let session: Awaited<ReturnType<typeof requestPreviewSession>>
     try {
-      session = await requestPreviewSession(tid)
+      session = await requestPreviewSession(tid, { path, version: content.version })
     } catch (e) {
       // 文件读到了、只是这一次授权没签下来。说成「这个文件读不到」是假话——它读到了。
       if (current !== generation) return
@@ -209,6 +209,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         art.artifact_id ?? art.path,
         art.url,
         art.version ?? null,
+        art.instance ?? null,
       ])
       const known = art.kind === 'app' || !!art.version
       const unchanged =
@@ -218,6 +219,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       previewAppNote.value = art.kind === 'app' ? art.path : ''
       previewTunnelUp.value = !!art.tunnel_up
       if (art.kind === 'app') {
+        host.observeConnection(art.instance, !!art.url && !!art.tunnel_up)
+        const displayed = host.displayed.value
+        if (
+          !opts.reload &&
+          displayed?.live &&
+          displayed.instance &&
+          displayed.identity &&
+          JSON.parse(displayed.identity)[2] === (art.artifact_id ?? art.path)
+        ) {
+          return
+        }
         previewFile.value = null
         if (!art.url || !art.tunnel_up) {
           previewUrl.value = null
@@ -268,7 +280,14 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       }
       try {
         host.authorize(identity)
-        const session = await requestPreviewSession(tid)
+        const session = await requestPreviewSession(
+          tid,
+          art.kind === 'app'
+            ? art.instance
+              ? { artifact_id: art.artifact_id, instance: art.instance }
+              : undefined
+            : { artifact_id: art.artifact_id, version: art.version, path: art.path }
+        )
         if (!stillCurrent()) return
         previewUrl.value = art.url
         await host.navigate(

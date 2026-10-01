@@ -135,7 +135,11 @@ it('shows a png in the frame instead of calling it unreadable', async () => {
   const { container } = mount()
 
   await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy())
-  expect(requestPreviewSession).toHaveBeenCalledWith('topic-a')
+  expect(requestPreviewSession).toHaveBeenCalledWith('topic-a', {
+    artifact_id: 'artifact-output/趋势图.png',
+    path: 'output/趋势图.png',
+    version: undefined,
+  })
   expect(postPreviewSession).toHaveBeenCalled()
   expect(screen.queryByText('这个文件不是文本')).toBeNull()
   // 面板顶上写着这条预览是什么类型的字节。

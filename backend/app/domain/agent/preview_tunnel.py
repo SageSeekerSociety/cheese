@@ -39,6 +39,7 @@ the wire instead of two that drift.
 
 import argparse
 import base64
+import hashlib
 import http.client
 import json
 import logging
@@ -261,6 +262,7 @@ def open_ws(
     timeout: float = _HANDSHAKE_TIMEOUT_S,
     idle_timeout: float | None = None,
     publish=None,
+    validate=lambda: None,
 ) -> tuple[socket.socket, dict[str, str]]:
     """A connected, upgraded WebSocket, plus the response headers (lower-cased).
 
@@ -286,6 +288,7 @@ def open_ws(
         publish(raw)
         try:
             raw.connect((host, port))
+            validate()
         except BaseException:
             _shutdown(raw)
             raise
@@ -355,6 +358,39 @@ class PortSource:
     def __init__(self, path: str) -> None:
         self._path = path
 
+    def instance(self, port: int | None = None) -> str:
+        """Identity of the actual IPv4 listening socket, not the helper connection.
+
+        Fixed instances are available on Linux where the kernel exposes socket
+        inodes. Other hosts retain live routing; they must not claim fixation.
+        No process inspection or wire-supplied port widens loopback authority.
+        """
+        # A stream validates the port it captured, never a later declaration.
+        if port is None:
+            port = self.get()
+        try:
+            with open("/proc/sys/kernel/random/boot_id") as handle:
+                boot = handle.read().strip()
+            with open("/proc/net/tcp") as handle:
+                for line in handle:
+                    fields = line.split()
+                    if len(fields) < 10 or fields[3] != "0A":
+                        continue
+                    address, number = fields[1].split(":")
+                    if address in {"00000000", "0100007F"} and int(number, 16) == port:
+                        return hashlib.sha256(
+                            f"{boot}:{port}:{fields[9]}".encode()
+                        ).hexdigest()
+        except (OSError, ValueError) as exc:
+            raise PreviewError(
+                "fixed preview identity unavailable on this host"
+            ) from exc
+        raise PreviewError("preview instance gone")
+
+    def check(self, expected: str | None, *, port: int | None = None) -> None:
+        if expected is not None and self.instance(port) != expected:
+            raise PreviewError("preview instance gone")
+
     def get(self) -> int:
         try:
             with open(self._path) as handle:
@@ -415,7 +451,7 @@ _WRITE_TIMEOUT_S = 5.0
 _DRAIN_TIMEOUT_S = 5.0
 CAPS_HEADER = "x-cheese-preview-caps"
 CAPABILITIES = frozenset(
-    {"http-stream-v1", "http-cancel-v1", "raw-http-v1", "ws-close-v1"}
+    {"http-stream-v1", "http-cancel-v1", "raw-http-v1", "ws-close-v1", "instance-v1"}
 )
 
 
@@ -470,9 +506,10 @@ class _StreamState:
 
 
 class _OwnedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, port: int, publish):
+    def __init__(self, port: int, publish, validate=lambda: None):
         super().__init__("127.0.0.1", port, timeout=_REQUEST_TIMEOUT_S)
         self._publish = publish
+        self._validate = validate
 
     def connect(self) -> None:
         raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -480,6 +517,7 @@ class _OwnedHTTPConnection(http.client.HTTPConnection):
         self._publish(raw)
         try:
             raw.connect(("127.0.0.1", self.port))
+            self._validate()
             self.sock = raw
         except BaseException:
             _shutdown(raw)
@@ -685,11 +723,31 @@ class Session:
             self.send(OP_ERR, stream, str(exc).encode())
             return
         try:
+            if meta.get("inspect_instance"):
+                instance = self._ports.instance()
+                self.send(
+                    OP_RESP,
+                    stream,
+                    encode_meta(
+                        {"status": 200, "headers": [["x-cheese-instance", instance]]}
+                    ),
+                )
+                self.send(OP_END, stream)
+                return
+            expected = meta.get("instance")
             port = self._ports.get()
+            if expected is not None:
+                self._ports.check(expected, port=port)
         except PreviewError as exc:
             self.send(OP_ERR, stream, str(exc).encode())
             return
-        conn = _OwnedHTTPConnection(port, lambda sock: self._publish(state, sock))
+        conn = _OwnedHTTPConnection(
+            port,
+            lambda sock: self._publish(state, sock),
+            lambda: (
+                self._ports.check(expected, port=port) if expected is not None else None
+            ),
+        )
         try:
             headers = {k: v for k, v in meta.get("headers") or []}
             conn.request(
@@ -743,7 +801,10 @@ class Session:
     def _serve_ws(self, stream: int, payload: bytes, state: _StreamState) -> None:
         try:
             meta, _ = decode_meta(payload)
+            expected = meta.get("instance")
             port = self._ports.get()
+            if expected is not None:
+                self._ports.check(expected, port=port)
         except (ValueError, PreviewError) as exc:
             self.send(OP_ERR, stream, str(exc).encode())
             return
@@ -753,6 +814,11 @@ class Session:
                 f"ws://127.0.0.1:{port}{meta.get('path', '/')}",
                 headers=headers,
                 publish=lambda sock: self._publish(state, sock),
+                validate=lambda: (
+                    self._ports.check(expected, port=port)
+                    if expected is not None
+                    else None
+                ),
             )
         except (OSError, PreviewError) as exc:
             self.send(OP_ERR, stream, f"{exc}".encode())

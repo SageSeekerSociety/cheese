@@ -363,7 +363,11 @@ function sendLocator() {
           t('work.room.preview.readVersion', { version: displayedFrame.version })
         }}</span>
         <v-chip
-          v-if="displayedFrame ? displayedFrame.live && !navigationError : previewAppNote"
+          v-if="
+            displayedFrame
+              ? displayedFrame.live && displayedFrame.connection === 'online' && !navigationError
+              : previewAppNote
+          "
           size="x-small"
           variant="tonal"
           class="ms-2"
@@ -391,6 +395,34 @@ function sendLocator() {
             @click="emit('download')"
           />
         </template>
+      </div>
+      <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
+        <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
+          t('work.room.preview.resourceIdentity', { id: displayedFrame.resourceId.slice(0, 12) })
+        }}</span>
+        <span v-if="displayedFrame.instance">
+          · {{ t('work.room.preview.instanceIdentity', { id: displayedFrame.instance.slice(0, 12) }) }}</span
+        >
+        <span v-else>
+          · {{ t(displayedFrame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile') }}</span
+        >
+        <span>
+          ·
+          {{
+            t(
+              displayedFrame.runtime === 'ready'
+                ? 'work.room.preview.runtimeReady'
+                : displayedFrame.runtime === 'failed'
+                  ? 'work.room.preview.runtimeFailed'
+                  : 'work.room.preview.runtimeUnconfirmed'
+            )
+          }}</span
+        >
+        <span v-if="displayedFrame.connection === 'disconnected'">
+          · {{ t('work.room.preview.instanceDisconnected') }}</span
+        >
+        <span v-if="displayedFrame.connection === 'gone'"> · {{ t('work.room.preview.instanceGone') }}</span>
+        <div v-if="displayedFrame.runtimeError" role="alert">{{ displayedFrame.runtimeError }}</div>
       </div>
       <div
         v-if="navigation === 'authorizing' || navigation === 'navigating'"
@@ -714,6 +746,9 @@ function sendLocator() {
      transparent — the page controls its own colours, we only back it. */
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #fff;
+}
+.preview-runtime-status {
+  overflow-wrap: anywhere;
 }
 .preview-frames {
   position: relative;
