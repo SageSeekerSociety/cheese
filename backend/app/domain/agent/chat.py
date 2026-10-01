@@ -4416,14 +4416,7 @@ class ChatService(SessionRecovery):
         self._session_model[topic_id] = model_kwargs["model"]
         while len(self._session_model) > _SESSION_ROUTES_KEPT:
             del self._session_model[next(iter(self._session_model))]
-        # And on the turn itself: the backend that ends this turn may not be
-        # this one (`_begin_self_started_turn`), and it remembers neither.
-        await self._note_turn_context(
-            turn_id,
-            route=route,
-            reply_to=user_block_id,
-            agent_handle=prepared.agent.handle,
-        )
+
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.
@@ -4520,6 +4513,18 @@ class ChatService(SessionRecovery):
             harness=prepared.harness,
             nonce=nonce,
             at=datetime.now(UTC),
+        )
+        # And on the turn itself: the backend that ends this turn may not be
+        # this one (`_begin_self_started_turn`), and it remembers neither.
+        # AFTER the interval exists (FB-56): a direct converse opens its row
+        # just above, and an UPDATE ahead of that insert deterministically
+        # found zero rows — delivered with no agent_handle, a row no death
+        # evidence can ever match.
+        await self._note_turn_context(
+            turn_id,
+            route=route,
+            reply_to=user_block_id,
+            agent_handle=prepared.agent.handle,
         )
         summoned = False
         if user_block_id is not None and not is_resume and not platform_turn:
