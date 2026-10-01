@@ -3,16 +3,19 @@ import type { AskFormState } from './askPresentation'
 import type { AskAction } from './askPresentation'
 
 import { groupKey } from './askGroup'
+import { questionIdentity } from './askState'
 
 export interface AskGroupPending {
   account: string
   scope: string
   payload: AskGroupSubmission
+  questions?: Record<string, string>
 }
 export interface AskGroupState {
   scope: AskGroupScope
   anchor: string
   data: AskGroupData | null
+  confirmedOperation?: Pick<AskGroupData, 'settlement' | 'receipt'>
   forms: Record<string, AskFormState>
   pending: AskGroupPending | null
   busy: boolean
@@ -22,10 +25,12 @@ export interface AskGroupState {
   confirm: boolean
   conflict: boolean
   unavailable: boolean
+  rejectedOperation?: string
+  questionChanged?: boolean
 }
 export type AskGroupAction =
   | { type: 'question'; blockId: string; action: AskAction }
-  | { type: 'refresh' | 'submit' | 'confirm' | 'back' }
+  | { type: 'refresh' | 'submit' | 'confirm' | 'back' | 'resolve-conflict' }
   | { type: 'later'; blockId: string }
 
 export function groupPendingKey(account: string, scope: AskGroupScope): string {
@@ -71,6 +76,8 @@ export function loadGroupPending(storage: Storage, account: string, scope: AskGr
     )
   )
     throw new Error('ask-pending-unreadable')
+  if (pending.questions && scope.members.some((id) => typeof pending.questions![id] !== 'string'))
+    throw new Error('ask-pending-unreadable')
   return pending
 }
 
@@ -78,10 +85,32 @@ export function groupAcknowledged(data: AskGroupData, pending: AskGroupPending, 
   const s = data.settlement
   const p = pending.payload
   if (!s || s.client_op_id !== p.client_op_id || s.by !== handle || s.v !== p.expect_version + 1) return false
-  const sameIds = (a: string[], b: Array<{ block_id: string }>) =>
-    JSON.stringify([...a].sort()) === JSON.stringify(b.map((i) => i.block_id).sort())
-  if (!sameIds(s.answered, p.answered) || !sameIds(s.later, p.later) || !sameIds(s.unanswered, p.unanswered))
-    return false
+  const operation = s.operation
+  if (!operation || operation.group_id !== data.group.id || pending.scope !== groupKey(data.group)) return false
+  const canonical = (value: AskGroupSubmission) =>
+    JSON.stringify({
+      topic_id: value.topic_id,
+      asked_by: value.asked_by,
+      expect_version: value.expect_version,
+      client_op_id: value.client_op_id,
+      answered: value.answered
+        .map((i) => ({
+          block_id: i.block_id,
+          kind: i.kind.trim(),
+          option: (i.option ?? '').trim(),
+          note: (i.note ?? '').trim(),
+          client_op_id: i.client_op_id.trim(),
+          expect_version: i.expect_version,
+        }))
+        .sort((a, b) => a.block_id.localeCompare(b.block_id)),
+      later: value.later
+        .map((i) => ({ block_id: i.block_id, client_op_id: i.client_op_id }))
+        .sort((a, b) => a.block_id.localeCompare(b.block_id)),
+      unanswered: value.unanswered
+        .map((i) => ({ block_id: i.block_id, client_op_id: i.client_op_id }))
+        .sort((a, b) => a.block_id.localeCompare(b.block_id)),
+    })
+  if (canonical(operation) !== canonical(p)) return false
   return p.answered.every((item) =>
     data.blocks
       .find((b) => b.id === item.block_id)
@@ -91,8 +120,12 @@ export function groupAcknowledged(data: AskGroupData, pending: AskGroupPending, 
           a.by === handle &&
           a.v === item.expect_version + 1 &&
           a.kind === item.kind &&
-          (a.option ?? '') === (item.option ?? '') &&
-          (a.note ?? '') === (item.note ?? '')
+          (a.option ?? '') === (item.option ?? '').trim() &&
+          (a.note ?? '') === (item.note ?? '').trim()
       )
   )
+}
+
+export function groupQuestionChanged(data: AskGroupData, pending: AskGroupPending): boolean {
+  return data.blocks.some((block) => pending.questions?.[block.id] !== questionIdentity(block))
 }

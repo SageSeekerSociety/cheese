@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { AskReceipt } from '../../lib/askGroup'
 import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
 
 import { computed, ref, watch } from 'vue'
@@ -50,15 +51,15 @@ const unansweredCount = computed(
 )
 const allowed = computed(() => blocks.value.some((b) => canAnswer(b, props.viewer)))
 const receipt = computed(() => props.state.data?.receipt)
-const receiptText = computed(() => {
-  const r = receipt.value
+const receiptText = computed(() => receiptLabel(receipt.value))
+function receiptLabel(r: AskReceipt | null | undefined) {
   if (!r || r.state === 'unavailable') return t('ask.flow.continuationUnknown')
   if (r.state === 'received' && r.completed_at) return t('ask.group.completed')
   if (r.state === 'received' && r.received_at) return t('ask.group.received')
   if (r.state === 'failed') return t('ask.group.deliveryFailed')
   if (r.state === 'uncertain') return t('ask.group.uncertain')
   return t('ask.group.awaitingReceipt')
-})
+}
 </script>
 
 <template>
@@ -120,8 +121,30 @@ const receiptText = computed(() => {
         <p role="status">{{ receiptText }}</p>
         <p v-if="receipt?.last_error" class="ask-group__error">{{ receipt.last_error }}</p>
       </template>
-      <p v-if="state.conflict" role="alert">{{ t('ask.group.conflict') }}</p>
-      <p v-if="state.pending" role="status">{{ t('ask.flow.unconfirmed') }}</p>
+      <template
+        v-if="
+          state.confirmedOperation?.settlement &&
+          state.confirmedOperation.settlement.client_op_id !== state.data.settlement?.client_op_id
+        "
+      >
+        <p role="status">{{ t('ask.group.operationConfirmed', { version: state.confirmedOperation.settlement.v }) }}</p>
+        <p>{{ receiptLabel(state.confirmedOperation.receipt) }}</p>
+      </template>
+      <p v-if="state.questionChanged" role="alert">{{ t('ask.flow.questionChanged') }}</p>
+      <template v-if="state.rejectedOperation">
+        <p role="status">{{ t('ask.group.rejected') }}</p>
+        <button
+          type="button"
+          :disabled="state.busy || !state.fresh"
+          @click="emit('action', { type: 'resolve-conflict' })"
+        >
+          {{ t('ask.form.revise') }}
+        </button>
+      </template>
+      <p v-else-if="state.conflict" role="alert">{{ t('ask.group.conflict') }}</p>
+      <p v-if="state.pending && !state.rejectedOperation && !state.questionChanged" role="status">
+        {{ t('ask.flow.unconfirmed') }}
+      </p>
       <div v-if="state.confirm" class="ask-group__confirm">
         <p>{{ t('ask.group.incomplete', { count: unansweredCount }) }}</p>
         <button type="button" @click="emit('action', { type: 'back' })">{{ t('ask.group.back') }}</button>
@@ -133,7 +156,14 @@ const receiptText = computed(() => {
         v-else-if="allowed"
         type="button"
         class="ask-group__primary"
-        :disabled="state.busy || !state.fresh || state.storageBlocked || (state.conflict && !state.pending)"
+        :disabled="
+          state.busy ||
+          !state.fresh ||
+          state.storageBlocked ||
+          !!state.rejectedOperation ||
+          state.questionChanged ||
+          (state.conflict && !state.pending)
+        "
         @click="emit('action', { type: 'submit' })"
       >
         {{ state.pending ? t('ask.form.retry') : t('ask.group.submit') }}

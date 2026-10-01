@@ -192,7 +192,10 @@ def test_deferred_member_remains_in_waiting_list_with_exact_block(client, group)
     data, _ = group
     response = settle(client, data, submission(data))
     assert response.status_code == 200, response.text
-    waiting = client.get("/awaiting-me", headers=session_auth_headers("user-1"))
+    waiting = client.get(
+        "/awaiting-me",
+        headers={**session_auth_headers("user-1"), "X-Cheese-Token": ""},
+    )
     assert waiting.status_code == 200, waiting.text
     item = next(
         row

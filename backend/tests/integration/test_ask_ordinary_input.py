@@ -39,6 +39,7 @@ def test_replacement_cannot_register_an_ordinary_prompt_with_original_ask(
         factory = client.test_request_factory
         async with factory() as session:
             identity, effects, delivery = await ordinary(session, result)
+            delivery_id = delivery.id
             with pytest.raises(ValidationError, match="replacement"):
                 await register_input(
                     session,
@@ -48,7 +49,7 @@ def test_replacement_cannot_register_an_ordinary_prompt_with_original_ask(
             await session.rollback()
         async with factory() as session:
             assert await session.scalar(select(NativeInput)) is None
-            assert (await session.get(Delivery, delivery.id)).state == "pending"
+            assert (await session.get(Delivery, delivery_id)).state == "pending"
 
     client.portal.call(run)
 

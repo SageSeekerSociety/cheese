@@ -1,0 +1,17 @@
+Downloading openai (2.0MiB)
+Downloading pydantic-ai-slim (2.0MiB)
+ Downloaded openai
+ Downloaded pydantic-ai-slim
+Prepared 7 packages in 4.94s
+Uninstalled 3 packages in 63ms
+Installed 7 packages in 67ms
+ - distro==1.9.0
+ + genai-prices==0.1.9
+ + griffelib==2.3.0
+ + logfire-api==5.1.1
+ - openai==2.44.0
+ + openai==3.22.1
+ + opentelemetry-api==1.45.0
+ + pydantic-ai-slim==2.52.0
+ + pydantic-graph==2.52.0
+ - tqdm==4.68.3

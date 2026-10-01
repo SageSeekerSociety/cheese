@@ -8,7 +8,7 @@ import { onScopeDispose, reactive, watch } from 'vue'
 import { ApiError } from '../api'
 import { t } from '../i18n'
 import { groupKey, groupOf, makeGroupSubmission } from '../lib/askGroup'
-import { groupAcknowledged, groupPendingKey, loadGroupPending } from '../lib/askGroupState'
+import { groupAcknowledged, groupPendingKey, groupQuestionChanged, loadGroupPending } from '../lib/askGroupState'
 import {
   answerVersion,
   askDraftKey,
@@ -33,6 +33,9 @@ export function useAskGroups(options: {
   let epoch = 0
   let stopped = false
   const identities = new Map<string, string>()
+  const questionRevisions = new Map<string, number>()
+  const identityOf = (block: Block) =>
+    JSON.stringify([questionIdentity(block), block.meta?.answer_log, block.meta?.group_settle])
   const reads = new Map<string, symbol>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   onScopeDispose(() => {
@@ -62,6 +65,7 @@ export function useAskGroups(options: {
     () => {
       epoch++
       identities.clear()
+      questionRevisions.clear()
       reads.clear()
       for (const timer of timers.values()) clearTimeout(timer)
       timers.clear()
@@ -103,39 +107,148 @@ export function useAskGroups(options: {
         } else if (!options.blocks().some((b) => b.id === groups[key]!.anchor)) {
           groups[key]!.anchor = block.id
         }
-        const identity = JSON.stringify([block.meta?.answer_log, block.meta?.group_settle])
+        const identity = identityOf(block)
         const changed = identities.has(block.id) && identities.get(block.id) !== identity
         identities.set(block.id, identity)
-        if (changed) void refresh(scope, true)
+        if (changed) {
+          questionRevisions.set(block.id, (questionRevisions.get(block.id) ?? 0) + 1)
+          const state = groups[key]!
+          if (state.data) {
+            const live = {
+              ...state.data,
+              blocks: state.data.blocks.map((b) =>
+                b.id === block.id && answerVersion(block) >= answerVersion(b) ? block : b
+              ),
+            }
+            const settle = block.meta?.group_settle as AskGroupData['settlement']
+            if (settle && settle.v > (live.settlement?.v ?? 0)) {
+              live.settlement = settle
+              live.receipt = null
+            }
+            adopt(state, live, false)
+          }
+          void refresh(scope, true)
+        }
       }
     },
     { immediate: true, deep: true }
   )
 
-  function adopt(state: AskGroupState, data: AskGroupData): void {
-    const owner = options.account()
-    const ack = state.pending && groupAcknowledged(data, state.pending, options.viewer())
-    if (ack && state.pending) {
-      for (const item of state.pending.payload.answered) {
-        const block = data.blocks.find((b) => b.id === item.block_id)!
-        localStorage.removeItem(askDraftKey(owner, block, item.expect_version))
+  function acknowledge(state: AskGroupState, data: AskGroupData): Set<string> {
+    const cleared = new Set<string>()
+    const pending = state.pending
+    if (!pending || !groupAcknowledged(data, pending, options.viewer())) return cleared
+    state.confirmedOperation = { settlement: data.settlement, receipt: data.receipt }
+    for (const item of pending.payload.answered) {
+      const matches = (draft: AskDraft | undefined) =>
+        draft &&
+        !draft.later &&
+        draft.kind === item.kind &&
+        (draft.option || '') === (item.option ?? '') &&
+        draft.note === (item.note ?? '')
+      const block = data.blocks.find((b) => b.id === item.block_id)!
+      const key = askDraftKey(options.account(), block, item.expect_version)
+      try {
+        const stored = localStorage.getItem(key)
+        if (stored) {
+          const saved = JSON.parse(stored)
+          if (saved.question === pending.questions?.[item.block_id] && matches(saved.draft))
+            localStorage.removeItem(key)
+        }
+      } catch {
+        state.storageBlocked = true
+        state.error = t('ask.group.cleanupError')
       }
-      localStorage.removeItem(groupPendingKey(owner, state.scope))
-      state.pending = null
+      if (
+        state.data?.blocks.some(
+          (b) =>
+            b.id === item.block_id &&
+            answerVersion(b) === item.expect_version &&
+            questionIdentity(b) === pending.questions?.[item.block_id]
+        ) &&
+        matches(state.forms[item.block_id]?.draft)
+      )
+        cleared.add(item.block_id)
     }
+    try {
+      localStorage.removeItem(groupPendingKey(options.account(), state.scope))
+    } catch {
+      state.storageBlocked = true
+      state.error = t('ask.group.cleanupError')
+    }
+    state.pending = null
+    state.conflict = false
+    state.rejectedOperation = undefined
+    return cleared
+  }
+
+  // A replay confirms its own operation, not that its snapshot is still current.
+  // Merge against both the group reader and live timeline before rendering it.
+  function visibleData(state: AskGroupState, incoming: AskGroupData, revisions?: Map<string, number>): AskGroupData {
+    const known = [...(state.data?.blocks ?? []), ...options.blocks()]
+    const blocks = incoming.blocks.map((block) =>
+      known.reduce(
+        (latest, candidate) =>
+          candidate.id === block.id &&
+          candidate.topic_id === block.topic_id &&
+          (answerVersion(candidate) > answerVersion(latest) ||
+            (answerVersion(candidate) === answerVersion(latest) &&
+              revisions &&
+              (questionRevisions.get(candidate.id) ?? 0) > (revisions.get(candidate.id) ?? 0)))
+            ? candidate
+            : latest,
+        block
+      )
+    )
+    let settlement = incoming.settlement
+    const candidates = [
+      state.data?.settlement,
+      ...known
+        .filter((b) => {
+          const scope = groupOf(b)
+          return scope && groupKey(scope) === groupKey(state.scope)
+        })
+        .map((b) => b.meta?.group_settle as AskGroupData['settlement']),
+    ]
+    for (const candidate of candidates) {
+      if (candidate && Number.isInteger(candidate.v) && candidate.v > (settlement?.v ?? 0)) settlement = candidate
+    }
+    const receipt =
+      [incoming.receipt, state.data?.receipt].find((r) => r && r.event_id === settlement?.delivery_event_id) ?? null
+    return { ...incoming, blocks, settlement, receipt }
+  }
+
+  function adopt(
+    state: AskGroupState,
+    incoming: AskGroupData,
+    authoritative = true,
+    revisions?: Map<string, number>
+  ): void {
+    const owner = options.account()
+    const confirmed = authoritative && !!state.pending && groupAcknowledged(incoming, state.pending, options.viewer())
+    const cleared = authoritative ? acknowledge(state, incoming) : new Set<string>()
+    const data = visibleData(state, incoming, revisions)
     const previous = state.data
     state.data = data
-    state.fresh = true
-    state.conflict = !!state.pending && (data.settlement?.v ?? 0) !== state.pending.payload.expect_version && !ack
+    state.fresh =
+      authoritative &&
+      data.settlement?.v === incoming.settlement?.v &&
+      data.blocks.every(
+        (b, i) =>
+          answerVersion(b) === answerVersion(incoming.blocks[i]!) &&
+          questionIdentity(b) === questionIdentity(incoming.blocks[i]!)
+      )
+    state.conflict = !!state.pending && (data.settlement?.v ?? 0) !== state.pending.payload.expect_version
     state.unavailable = false
+    state.questionChanged = !!state.pending && groupQuestionChanged(data, state.pending)
     for (const block of data.blocks) {
       const oldBlock = previous?.blocks.find((b) => b.id === block.id)
       const oldForm = state.forms[block.id]
       const keep =
-        !ack &&
+        !cleared.has(block.id) &&
         oldBlock &&
         oldForm &&
-        answerVersion(oldBlock) === answerVersion(block) &&
+        (confirmed || answerVersion(oldBlock) === answerVersion(block)) &&
         questionIdentity(oldBlock) === questionIdentity(block)
       let draft = keep ? oldForm.draft : emptyAskDraft()
       try {
@@ -147,7 +260,7 @@ export function useAskGroups(options: {
       const pendingAnswer = state.pending?.payload.answered.find((a) => a.block_id === block.id)
       if (!keep && !state.pending && !draft.kind && !draft.note && data.settlement?.later.includes(block.id))
         draft.later = true
-      if (pendingAnswer)
+      if (pendingAnswer && !state.questionChanged && answerVersion(block) === pendingAnswer.expect_version)
         draft = {
           kind: pendingAnswer.kind,
           option: pendingAnswer.option ?? '',
@@ -166,7 +279,7 @@ export function useAskGroups(options: {
         conflict: false,
         storageBlocked: state.storageBlocked,
       }
-      identities.set(block.id, JSON.stringify([block.meta?.answer_log, block.meta?.group_settle]))
+      identities.set(block.id, identityOf(block))
       options.replace(block)
     }
   }
@@ -191,6 +304,7 @@ export function useAskGroups(options: {
         state.pending = pending
         state.storageBlocked = false
       }
+      const revisions = new Map(questionRevisions)
       const data = await readAskGroup(scope)
       if (!owns() || (quiet && state.busy)) return
       const latestBlocks = [...options.blocks(), ...(state.data?.blocks ?? [])]
@@ -206,7 +320,7 @@ export function useAskGroups(options: {
         }
         return
       }
-      adopt(state, data)
+      adopt(state, data, true, revisions)
     } catch (error) {
       if (!owns() || (quiet && state.busy)) return
       state.unavailable = error instanceof ApiError && [404, 501].includes(error.status)
@@ -229,7 +343,16 @@ export function useAskGroups(options: {
   }
 
   async function submit(state: AskGroupState, confirmed: boolean): Promise<void> {
-    if (!state.data || !state.fresh || state.busy || state.storageBlocked || (state.conflict && !state.pending)) return
+    if (
+      !state.data ||
+      !state.fresh ||
+      state.busy ||
+      state.storageBlocked ||
+      state.questionChanged ||
+      state.rejectedOperation ||
+      (state.conflict && !state.pending)
+    )
+      return
     const owner = options.account(),
       generation = epoch
     const drafts: Record<string, AskDraft | undefined> = {}
@@ -261,7 +384,12 @@ export function useAskGroups(options: {
         if (!canAnswer(block, options.viewer())) return
       }
       if (!state.pending) {
-        const pending = { account: owner, scope: groupKey(state.scope), payload }
+        const pending = {
+          account: owner,
+          scope: groupKey(state.scope),
+          payload,
+          questions: Object.fromEntries(state.data.blocks.map((b) => [b.id, questionIdentity(b)])),
+        }
         localStorage.setItem(groupPendingKey(owner, state.scope), JSON.stringify(pending))
         state.pending = pending
       }
@@ -275,17 +403,26 @@ export function useAskGroups(options: {
     state.confirm = false
     state.error = null
     for (const form of Object.values(state.forms)) form.busy = true
+    const pending = state.pending!
+    const revisions = new Map(questionRevisions)
+    const owns = () => current(owner, generation) && groups[groupKey(state.scope)] === state
     try {
-      const data = await settleAskGroup(state.scope, state.pending!.payload)
-      if (!current(owner, generation)) return
-      if (!groupAcknowledged(data, state.pending!, options.viewer())) throw new Error(t('ask.flow.unconfirmed'))
-      adopt(state, data)
+      const data = await settleAskGroup(state.scope, pending.payload)
+      if (!owns()) return
+      if (!groupAcknowledged(data, pending, options.viewer())) throw new Error(t('ask.flow.unconfirmed'))
+      adopt(state, data, true, revisions)
     } catch (error) {
-      if (!current(owner, generation)) return
+      if (!owns()) return
       state.error = error instanceof Error ? error.message : t('ask.flow.unconfirmed')
-      if (error instanceof ApiError && error.status === 409) state.fresh = false
+      if (error instanceof ApiError && error.status === 409) {
+        state.fresh = false
+        // The server checks historical operation IDs before this exact rejection.
+        // Other 409s (including reused IDs) do not prove that the op is absent.
+        if (error.message === '问题组版本不对，请重新获取' && state.pending === pending)
+          state.rejectedOperation = pending.payload.client_op_id
+      }
     } finally {
-      if (current(owner, generation)) {
+      if (owns()) {
         state.busy = false
         for (const form of Object.values(state.forms)) form.busy = !!state.pending
         schedule(state)
@@ -301,6 +438,22 @@ export function useAskGroups(options: {
       return
     }
     if (!state.data || state.busy) return
+    if (action.type === 'resolve-conflict') {
+      if (!state.fresh || !state.pending || state.rejectedOperation !== state.pending.payload.client_op_id) return
+      try {
+        localStorage.removeItem(groupPendingKey(options.account(), scope))
+      } catch {
+        state.error = t('ask.flow.storageError')
+        return
+      }
+      state.pending = null
+      state.rejectedOperation = undefined
+      state.questionChanged = false
+      state.conflict = false
+      state.error = null
+      for (const form of Object.values(state.forms)) form.busy = false
+      return
+    }
     if (action.type === 'back') {
       state.confirm = false
       return

@@ -3,9 +3,10 @@ import type { AskGroupData, AskGroupSubmission } from '../lib/askGroup'
 import { effectScope, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '../api'
 import { groupKey, makeGroupSubmission } from '../lib/askGroup'
 import { groupAcknowledged, groupPendingKey, loadGroupPending } from '../lib/askGroupState'
-import { emptyAskDraft } from '../lib/askState'
+import { emptyAskDraft, loadAskDraft, saveAskDraft } from '../lib/askState'
 
 import { useAskGroups } from './useAskGroups'
 
@@ -14,7 +15,12 @@ vi.mock('../services/askGroups', () => ({ readAskGroup: mocks.read, settleAskGro
 vi.mock('../me', () => ({ myId: () => mocks.account }))
 vi.mock('../api', () => ({
   ApiError: class extends Error {
-    status = 500
+    constructor(
+      readonly status: number,
+      message: string
+    ) {
+      super(message)
+    }
   },
 }))
 
@@ -56,9 +62,18 @@ function result(data: AskGroupData, payload: AskGroupSubmission): AskGroupData {
     by: 'alice',
     at: null,
     payload_hash: 'server-hash',
-    answered: payload.answered.map((i) => i.block_id),
-    later: payload.later.map((i) => i.block_id),
-    unanswered: payload.unanswered.map((i) => i.block_id),
+    operation: {
+      ...JSON.parse(JSON.stringify(payload)),
+      group_id: data.group.id,
+      answered: payload.answered.map((i) => ({ ...i, option: (i.option ?? '').trim(), note: (i.note ?? '').trim() })),
+    },
+    answered: updated.blocks.filter((b) => b.meta?.answer_log?.length).map((b) => b.id),
+    later: payload.later
+      .filter((i) => !updated.blocks.find((b) => b.id === i.block_id)?.meta?.answer_log?.length)
+      .map((i) => i.block_id),
+    unanswered: payload.unanswered
+      .filter((i) => !updated.blocks.find((b) => b.id === i.block_id)?.meta?.answer_log?.length)
+      .map((i) => i.block_id),
     client_op_id: payload.client_op_id,
     delivery_event_id: 'event',
   }
@@ -114,6 +129,141 @@ afterEach(() => {
 })
 
 describe('atomic Ask group controller', () => {
+  it('confirms delayed POST v1 without rolling back websocket v2 or its new draft', async () => {
+    const h = setup()
+    await flush()
+    h.choose()
+    h.choose('q2')
+    const post = deferred<AskGroupData>()
+    mocks.settle.mockReturnValue(post.promise)
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    const payload = mocks.settle.mock.calls[0]![1] as AskGroupSubmission
+    const v1 = result(h.data, payload)
+    v1.receipt = {
+      event_id: 'event',
+      state: 'received',
+      attempts: 1,
+      last_error: null,
+      sent_at: null,
+      received_at: '2026-10-01T18:00:00Z',
+      completed_at: null,
+    }
+    const correction = makeGroupSubmission(v1, { q1: { ...emptyAskDraft(), kind: 'option', option: 'B' } })
+    const v2 = result(v1, correction)
+    v2.settlement!.delivery_event_id = 'event-v2'
+    for (const block of v2.blocks) block.meta!.group_settle = v2.settlement
+    const draft = { ...emptyAskDraft(), kind: 'option' as const, option: 'A', note: 'new v2 draft' }
+    saveAskDraft(localStorage, 'alice-id', v2.blocks[0]!, draft)
+    h.blocks.value = v2.blocks
+    await flush()
+    h.replace.mockClear()
+    post.resolve(v1)
+    await flush()
+    expect(h.state().pending).toBeNull()
+    expect(loadGroupPending(localStorage, 'alice-id', h.data.group)).toBeNull()
+    expect(h.state().error).toBeNull()
+    expect(h.state().confirmedOperation).toEqual({ settlement: v1.settlement, receipt: v1.receipt })
+    expect(h.state().data!.settlement!.v).toBe(2)
+    expect(h.state().data!.receipt).toBeNull()
+    expect(h.state().data!.blocks[0]!.meta!.answer_log!.at(-1)!.v).toBe(2)
+    expect(h.replace.mock.calls.every(([block]) => block.id !== 'q1' || block.meta.answer_log.at(-1).v === 2)).toBe(
+      true
+    )
+    expect(h.state().forms.q1!.draft).toEqual(draft)
+    expect(loadAskDraft(localStorage, 'alice-id', v2.blocks[0]!)).toEqual(draft)
+    expect(h.state().fresh).toBe(false)
+  })
+
+  it('confirms incremental answers using operation snapshot, not effective result lists', async () => {
+    const h = setup()
+    await flush()
+    h.choose()
+    h.askGroupAction(h.data.group, { type: 'later', blockId: 'q2' })
+    mocks.settle.mockImplementation((_scope, payload) => Promise.resolve(result(h.data, payload)))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    const first = JSON.parse(JSON.stringify(h.state().data)) as AskGroupData
+    h.choose('q2')
+    mocks.settle.mockImplementation((_scope, payload) => Promise.resolve(result(first, payload)))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    const payload = mocks.settle.mock.calls[1]![1] as AskGroupSubmission
+    expect(payload.answered.map((i) => i.block_id)).toEqual(['q2'])
+    expect(payload.unanswered.map((i) => i.block_id)).toEqual(['q1'])
+    expect(h.state().data!.settlement!.answered).toEqual(['q1', 'q2'])
+    expect(h.state().pending).toBeNull()
+    expect(h.state().error).toBeNull()
+  })
+
+  it('releases only an explicit version rejection after refresh and user action', async () => {
+    const h = setup()
+    await flush()
+    h.choose()
+    h.choose('q2')
+    mocks.settle.mockRejectedValue(new Error('lost response'))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    const original = JSON.parse(JSON.stringify(h.state().pending!.payload))
+    const other = result(
+      h.data,
+      makeGroupSubmission(h.data, { q1: { ...emptyAskDraft(), kind: 'option', option: 'B' } })
+    )
+    mocks.read.mockResolvedValue(other)
+    h.askGroupAction(h.data.group, { type: 'refresh' })
+    await flush()
+    h.askGroupAction(h.data.group, { type: 'resolve-conflict' })
+    expect(h.state().pending).not.toBeNull()
+    mocks.settle.mockRejectedValue(new ApiError(409, '同一个组 client_op_id 换了内容'))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    expect(h.state().rejectedOperation).toBeUndefined()
+    h.askGroupAction(h.data.group, { type: 'refresh' })
+    await flush()
+    mocks.settle.mockRejectedValue(new ApiError(409, '问题组版本不对，请重新获取'))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    expect(mocks.settle.mock.calls.at(-1)![1]).toEqual(original)
+    expect(h.state().rejectedOperation).toBe(original.client_op_id)
+    h.askGroupAction(h.data.group, { type: 'resolve-conflict' })
+    expect(h.state().pending).not.toBeNull()
+    h.askGroupAction(h.data.group, { type: 'refresh' })
+    await flush()
+    h.askGroupAction(h.data.group, { type: 'resolve-conflict' })
+    expect(h.state().pending).toBeNull()
+    expect(loadGroupPending(localStorage, 'alice-id', h.data.group)).toBeNull()
+  })
+
+  it('updates same-version questions and preserves unknown operation without blind retry', async () => {
+    const h = setup()
+    await flush()
+    h.choose()
+    h.choose('q2')
+    mocks.settle.mockRejectedValue(new Error('lost response'))
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    await flush()
+    const original = JSON.parse(JSON.stringify(h.state().pending))
+    const stale = deferred<AskGroupData>()
+    mocks.read.mockReturnValueOnce(stale.promise)
+    h.askGroupAction(h.data.group, { type: 'refresh' })
+    const edited = fixture()
+    edited.blocks[1]!.content = 'Updated question, same answer version'
+    h.blocks.value = [edited.blocks[1]!]
+    await flush()
+    expect(h.state().data!.blocks[1]!.content).toBe(edited.blocks[1]!.content)
+    stale.resolve(fixture())
+    await flush()
+    expect(h.state().data!.blocks[1]!.content).toBe(edited.blocks[1]!.content)
+    mocks.read.mockResolvedValue(edited)
+    h.askGroupAction(h.data.group, { type: 'refresh' })
+    await flush()
+    expect(h.state().questionChanged).toBe(true)
+    h.askGroupAction(h.data.group, { type: 'submit' })
+    h.askGroupAction(h.data.group, { type: 'resolve-conflict' })
+    expect(mocks.settle).toHaveBeenCalledTimes(1)
+    expect(h.state().pending).toEqual(original)
+    expect(loadGroupPending(localStorage, 'alice-id', h.data.group)).toEqual(original)
+  })
+
   it('loads fixed membership, selection sends nothing, back sends nothing, confirm sends one batch', async () => {
     const h = setup()
     await flush()

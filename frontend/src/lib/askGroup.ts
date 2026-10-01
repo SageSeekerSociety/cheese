@@ -25,6 +25,7 @@ export interface AskSettlement {
   later: string[]
   unanswered: string[]
   payload_hash: string
+  operation?: AskGroupSubmission & { group_id: string }
   client_op_id: string
   delivery_event_id: string
 }
