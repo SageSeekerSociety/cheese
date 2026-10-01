@@ -779,7 +779,6 @@
       "write": "写评论",
       "placeholder": "输入评论…",
       "keyHint": "Enter 发送，Shift+Enter 换行",
-      "cancel": "取消",
       "locate": "定位到该段",
       "anchorChanged": "原段落已改动",
       "anchorAmbiguous": "这段引用出现多次，无法确定原选区",
