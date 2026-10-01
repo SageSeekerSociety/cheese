@@ -1,12 +1,22 @@
-"""cheese ask: option questions in the chat, one-click structured answers."""
+"""Option questions in the chat, one-click structured answers.
+
+Any member of a room asks one: the room's agent through `cheese_ask`, a person
+from the composer.
+"""
+
+import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import seed_user
 from tests.integration.conftest import (
     chat_ws_url,
+    join_project_team,
     post_project,
+    room_agent_headers,
     room_agent_seat,
     session_auth_headers,
 )
+from tests.turn_log import open_turn
 
 
 def _topic(client) -> str:
@@ -200,3 +210,151 @@ def test_answer_validates_option_and_single_shot(client):
         json={"option": "pageStart", "author": "user-2"},
     )
     assert r.status_code == 422
+
+
+# ---- A person's question: any member asks the room, the answer goes back to them.
+
+
+def _shared_room(client) -> tuple[str, str]:
+    """A room of alice's project that bob is also in; returns (room, project)."""
+    project = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]
+    join_project_team(client, project["id"], "bob")
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "周会", "created_by": "alice"},
+    ).json()["data"]
+    return room["id"], project["id"]
+
+
+def _person_asks(client, room: str, handle: str):
+    return client.post(
+        f"/topics/{room}/ask",
+        json={"question": "周会挪到周四行吗？", "options": ["行", "不行"]},
+        headers=session_auth_headers(handle),
+    )
+
+
+def _answer(client, block_id: str, option: str, handle: str):
+    return client.post(
+        f"/topics/blocks/{block_id}/answer",
+        json={"option": option},
+        headers=session_auth_headers(handle),
+    )
+
+
+def _messages_by(client, room: str, handle: str) -> list[str]:
+    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+    return [b["content"] for b in blocks if b["author"] == handle]
+
+
+def test_a_member_puts_an_option_question_to_the_room(client):
+    room, _ = _shared_room(client)
+
+    asked = _person_asks(client, room, "alice")
+
+    assert asked.status_code == 200, asked.text
+    blk = asked.json()["data"]
+    assert blk["author"] == "alice"
+    assert blk["meta"]["options"] == ["行", "不行"]
+    assert "周会挪到周四行吗？" in _messages_by(client, room, "alice")
+
+
+def test_the_answer_to_a_persons_question_goes_back_to_them(client):
+    """bob 点了 alice 那道题的选项：这句话 @ 的是 alice，不叫醒房间里的 AI 队友，
+    alice 收到一条点名她的通知。"""
+    room, project = _shared_room(client)
+    blk = _person_asks(client, room, "alice").json()["data"]
+
+    answered = _answer(client, blk["id"], "行", "bob")
+
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["data"]["meta"]["answered"] == "行"
+    assert answered.json()["data"]["meta"]["answered_by"] == "bob"
+    assert _messages_by(client, room, "bob") == ["<@alice> 行"]
+    seat = room_agent_seat(client, room)
+    assert not any(seat in text for text in _messages_by(client, room, "bob"))
+    inbox = client.get(
+        f"/projects/{project}/alerts", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert any("bob" in row["title"] for row in inbox), inbox
+
+
+def test_nobody_answers_their_own_question(client):
+    room, _ = _shared_room(client)
+    blk = _person_asks(client, room, "alice").json()["data"]
+
+    refused = _answer(client, blk["id"], "行", "alice")
+
+    assert refused.status_code == 403, refused.text
+    shown = next(
+        b
+        for b in client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+        if b["id"] == blk["id"]
+    )
+    assert not shown["meta"].get("answered")
+    # It stays open for everyone else.
+    assert _answer(client, blk["id"], "不行", "bob").status_code == 200
+
+
+def test_someone_outside_the_room_cannot_ask_in_it(client):
+    room, _ = _shared_room(client)
+
+    refused = _person_asks(client, room, "mallory")
+
+    assert refused.status_code == 403, refused.text
+    assert "mallory" not in {
+        b["author"] for b in client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+    }
+
+
+def test_two_equal_options_are_refused(client):
+    room, _ = _shared_room(client)
+    r = client.post(
+        f"/topics/{room}/ask",
+        json={"question": "选哪个？", "options": ["行", "行"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 422
+
+
+def test_a_persons_question_does_not_wait_on_whoever_started_the_turn(client):
+    """芝士问的题等的是这一轮背后的那个人；人问的题问的是整个房间，不挂在谁一个人
+    的待办上，也不给谁发「芝士在等你回答」。"""
+    bob = seed_user(client, "bob")
+    room, _ = _shared_room(client)
+    client.portal.call(
+        lambda: open_turn(client.test_request_factory, uuid.UUID(room), author="bob")
+    )
+
+    blk = _person_asks(client, room, "alice").json()["data"]
+
+    assert blk["meta"]["asked"] is None
+    mine = client.get("/awaiting-me", headers=session_auth_headers("bob"))
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["data"]["data"] == []
+    questions = client.get(
+        "/notifications",
+        params={"type": "CHEESE_QUESTION"},
+        headers={"Authorization": f"Bearer {bob}"},
+    )
+    assert questions.status_code == 200, questions.text
+    assert questions.json()["data"]["notifications"] == []
+
+
+def test_the_agent_asks_with_its_own_credential_and_its_answer_wakes_it(client):
+    room, _ = _shared_room(client)
+    seat = room_agent_seat(client, room)
+    asked = client.post(
+        f"/topics/{room}/ask",
+        json={"question": "分页方案选哪个？", "options": ["cursor", "pageStart"]},
+        headers=room_agent_headers(client, room),
+    )
+    assert asked.status_code == 200, asked.text
+    blk = asked.json()["data"]
+    assert blk["author"] == seat
+
+    assert _answer(client, blk["id"], "cursor", "alice").status_code == 200
+
+    assert _messages_by(client, room, "alice") == [f"<@{seat}> cursor"]

@@ -25,6 +25,7 @@ import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
 import { myHandle } from '../../me'
 
+import AskDialog from './AskDialog.vue'
 import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
@@ -54,9 +55,12 @@ const props = defineProps<{
   replyLabel?: string | null
   /** 发一张自己的清单；不给就没有这个入口。 */
   postChecklist?: (steps: string[]) => Promise<boolean>
+  /** 问房间一道带选项的题；没发成就抛错。不给就没有这个入口。 */
+  postAsk?: (question: string, options: string[]) => Promise<void>
 }>()
 
 const checklistOpen = ref(false)
+const askOpen = ref(false)
 
 const emit = defineEmits<{
   /** 发这一条。附件由房间补上——它才知道此刻待发条里有什么。 */
@@ -385,16 +389,19 @@ defineExpose({
         :summon-ready="summonReady"
         :agent-name="agentName"
         :can-checklist="!!postChecklist"
+        :can-ask="!!postAsk && !alwaysSummon"
         :can-remind="!!topic"
         @files="emit('files', $event)"
         @checklist="checklistOpen = true"
         @toggle-summon="toggleSummon"
         @remind="reminderOpen = true"
+        @ask="askOpen = true"
         @send="sendDraft()"
       >
         <template #chips><slot name="composer-chips" /></template>
       </ComposerActions>
       <ComposerChecklistDialog v-if="postChecklist" v-model="checklistOpen" :post="postChecklist" />
+      <AskDialog v-if="postAsk" v-model="askOpen" :post="postAsk" />
     </div>
     <ReminderDialog v-if="topic" v-model="reminderOpen" :topic-id="topic.id" @set="onReminderSet" />
     <v-snackbar :model-value="reminderSetFor !== null" :timeout="4000" @update:model-value="reminderSetFor = null">

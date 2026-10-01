@@ -44,7 +44,12 @@ from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.conftest import StubChannel, finish_turn, settle_turn
-from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    registered,
+    room_agent_headers,
+    session_auth_headers,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -407,7 +412,7 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     said = client.post(
         f"/topics/{topic}/ask",
         json={"question": "先记一句", "options": ["记", "不记"]},
-        headers=alice,
+        headers=room_agent_headers(client, topic),
     )
     assert said.status_code == 200, said.text
 

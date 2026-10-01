@@ -22,7 +22,6 @@ import type { ChatPanelOptions } from './chatPanelContract'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import {
-  answerOptions,
   ApiError,
   attachmentRawUrl,
   downloadFile,
@@ -58,6 +57,7 @@ import { myHandle } from '../me'
 
 import { useChatComposer } from './useChatComposer'
 import { useChatPaging } from './useChatPaging'
+import { useOptionQuestions } from './useOptionQuestions'
 import { useOwnChecklist } from './useOwnChecklist'
 
 import { t } from '@/i18n'
@@ -146,33 +146,30 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (b.kind === 'event' && !b.task_id) emit('site-block', b)
   }
 
-  // ---- 选项问题 (cheese_ask): buttons under the message; one click answers
-  // and summons 芝士 to continue. Answered state renders for everyone. ----
-  const askBusy = ref<string | null>(null)
-  async function pickOption(m: Block, option: string) {
-    if (askBusy.value) return
-    askBusy.value = m.id
-    try {
-      const updated = await answerOptions(m.id, option, AUTHOR)
-      if (timeline.find(m.id)) {
-        timeline.replace(updated)
-        historyChanges?.set(updated.id, updated)
-      }
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.pickFailed')
-    } finally {
-      askBusy.value = null
-    }
+  /** 把这一条换进时间线（在的话）。 */
+  function replaceShown(block: Block) {
+    if (!timeline.find(block.id)) return
+    timeline.replace(block)
+    historyChanges?.set(block.id, block)
   }
+
+  // ---- 带选项的问题: buttons under the message, and the one a person asks
+  // from the composer —— 见 useOptionQuestions。 ----
+  const { askBusy, pickOption, askQuestion } = useOptionQuestions({
+    topicId: () => topic()?.id,
+    author: AUTHOR,
+    push: (block) => {
+      pushBlock(block)
+      scrollToBottom()
+    },
+    show: replaceShown,
+    fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.pickFailed')),
+  })
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
   const { postChecklist, changeChecklist } = useOwnChecklist({
     topicId: () => topic()?.id,
-    show: (block) => {
-      if (!timeline.find(block.id)) return
-      timeline.replace(block)
-      historyChanges?.set(block.id, block)
-    },
+    show: replaceShown,
     fail: (e) => (errorMsg.value = e instanceof Error ? e.message : t('work.room.checklist.saveFailed')),
   })
 
@@ -987,6 +984,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pickOption,
     postChecklist,
     changeChecklist,
+    askQuestion,
     onReact,
     undoTitle,
     downloadAttachment,

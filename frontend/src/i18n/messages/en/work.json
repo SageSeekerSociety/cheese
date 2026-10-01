@@ -456,6 +456,16 @@
       "sendPhotos": "Send photos",
       "send": "Send"
     },
+    "ask": {
+      "title": "Ask with options",
+      "question": "Question",
+      "option": "Option {n}",
+      "addOption": "Add option",
+      "removeOption": "Remove option",
+      "repeated": "Same as an option above",
+      "send": "Send",
+      "failed": "Couldn't send"
+    },
     "dispatched": {
       "created": "New task",
       "title": "“{title}”",

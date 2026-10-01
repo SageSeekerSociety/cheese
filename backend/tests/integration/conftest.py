@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.common.auth import create_access_token
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -333,6 +334,19 @@ def room_agent_seat(client, topic_id) -> str:
     seats = [m["member_handle"] for m in rows if m["agent"]]
     assert len(seats) == 1, seats
     return seats[0]
+
+
+def room_agent_headers(client, topic_id) -> dict[str, str]:
+    """The credential a turn of this room's one agent presents: scoped to the
+    room and signed with that agent's seat. What the agent writes with it is
+    the agent's; a person's session in its place makes the write a person's."""
+    project_id = client.get(f"/topics/{topic_id}").json()["data"]["project_id"]
+    token = mint_scoped_token(
+        project_id=project_id,
+        topic_id=str(topic_id),
+        agent_handle=room_agent_seat(client, topic_id),
+    )
+    return {"X-Cheese-Token": token}
 
 
 def session_auth_headers(handle: str) -> dict[str, str]:
