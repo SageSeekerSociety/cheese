@@ -33,6 +33,7 @@ async def finish_deferred_message(
     topic,
     default_seat,
     recipient_handle,
+    take_recovery,
 ):
     import app.domain.agent.chat as chat_module
 
@@ -78,12 +79,14 @@ async def finish_deferred_message(
             ordinary.created_at = datetime.now(UTC) - timedelta(hours=3)
             await session.commit()
         runtime = ClaudeCodeRuntime(channel)
+        take_recovery(chat, runtime)
         chat = ChatService(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(machine.workspace),
             compute=ComputePool([runtime], channel.name),
         )
+        take_recovery(chat, runtime)
         app.dependency_overrides[get_chat_service] = lambda: chat
         allow.set()
         assert await chat.recover_sessions() == 1

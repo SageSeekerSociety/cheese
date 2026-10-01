@@ -526,6 +526,10 @@ def test_http_answer_continues_original_native_executor(
         assert answer.status_code == 200, answer.text
         assert answer.json()["data"]["meta"]["answer_log"][-1]["by"] == "alice"
 
+        def take_recovery(recovered_chat, recovered_runtime):
+            nonlocal chat, runtime
+            chat, runtime = recovered_chat, recovered_runtime
+
         async def verify():
             nonlocal chat, runtime
             if mode == "history-pruned":
@@ -613,6 +617,7 @@ def test_http_answer_continues_original_native_executor(
                         topic=topic,
                         default_seat=default_seat,
                         recipient_handle=handle.agent_handle,
+                        take_recovery=take_recovery,
                     )
                     return
             if mode == "project-seat":

@@ -122,7 +122,8 @@ async def resume_messages(runner, chat, *, topic_id=None):
             for block in await session.scalars(
                 select(Block).where(Block.turn_id.in_(ids), Block.id.not_in(ids))
             )
-            if (block.meta or {}).get("event_type") not in {EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK}
+            if (block.meta or {}).get("event_type")
+            not in {EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK}
         }
         seats = {}
         for block in mentioned:
