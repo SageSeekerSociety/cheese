@@ -73,6 +73,10 @@ if NOTICE_MESSAGES.keys() & ERROR_MESSAGES.keys():
 #: message.
 MESSAGES: Final[dict[str, str]] = {**NOTICE_MESSAGES, **ERROR_MESSAGES}
 
+#: Ordinary comments no longer schedule agent turns. Keep these keys only to
+#: replay stored room/notification descriptors; new notices must not say them.
+HISTORICAL_NOTICE_KEYS: Final = frozenset({"docCommented", "docCommentedHandedTo"})
+
 
 class NoticeText(str):
     """A platform sentence: the Chinese text, plus the key that renders it."""
@@ -128,7 +132,9 @@ def exception_text(exc: BaseException) -> str:
 
 
 def say(key: str, **params: object) -> NoticeText:
-    """The sentence ``key`` with ``params`` filled in."""
+    """A current sentence with ``params`` filled in; replay uses from_descriptor."""
+    if key in HISTORICAL_NOTICE_KEYS:
+        raise ValueError(f"historical notice cannot be generated: {key}")
     return NoticeText(key, params)
 
 

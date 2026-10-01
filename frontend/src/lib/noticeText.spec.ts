@@ -46,6 +46,23 @@ function readyLine(): Block {
   } as unknown as Block
 }
 
+// Descriptors stored before ordinary comments stopped scheduling agent turns.
+// Replay these payloads, rather than asking the backend to generate them again.
+const historicalComments = [
+  {
+    key: 'docCommented',
+    params: { actor: 'ana😀' },
+    chinese: 'ana😀 评论了文档',
+    english: 'ana😀 commented on the doc',
+  },
+  {
+    key: 'docCommentedHandedTo',
+    params: { actor: 'ana😀', seat: '<@cheese-test>' },
+    chinese: 'ana😀 评论了文档，已交给 <@cheese-test>',
+    english: 'ana😀 commented on the doc; handed to <@cheese-test>',
+  },
+]
+
 // The room builds its rows in a computed, so a language switch rebuilds them;
 // mounting through one here keeps that part of the path under test.
 function mountLine(block: Block) {
@@ -71,6 +88,29 @@ beforeEach(() => setLocale('zh-CN'))
 afterEach(() => setLocale('zh-CN'))
 
 describe('a platform line in the room', () => {
+  it.each(historicalComments)('replays historical $key in both reader languages', async (old) => {
+    const block = JSON.parse(
+      JSON.stringify({
+        ...readyLine(),
+        content: old.chinese,
+        meta: {
+          i18n: { content: { key: old.key, params: old.params } },
+        },
+      })
+    ) as Block
+    const view = mountLine(block)
+    // Room mentions render their handle without the descriptor's angle brackets.
+    const visible = (text: string) => text.replace('<@cheese-test>', '@cheese-test')
+    expect(view.container.textContent).toContain(visible(old.chinese))
+    setLocale('en')
+    await nextTick()
+    expect(view.container.textContent).toContain(visible(old.english))
+    expect(view.container.textContent).not.toContain(visible(old.chinese))
+    setLocale('zh-CN')
+    await nextTick()
+    expect(view.container.textContent).toContain(visible(old.chinese))
+  })
+
   it('re-renders in English when the reader switches language', async () => {
     const view = mountLine(readyLine())
     expect(view.getByText('PR #41 可以合并了，等 alice 采纳')).toBeTruthy()
@@ -125,6 +165,45 @@ describe('a platform line in the room', () => {
 })
 
 describe('the same line in Activity', () => {
+  it.each(historicalComments)('replays historical $key with its stored parameters', async (old) => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: {} },
+        { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: {} },
+      ],
+    })
+    await router.push('/')
+    const notice = JSON.parse(
+      JSON.stringify({
+        id: 19,
+        type: 'ROOM_NOTICE',
+        read: false,
+        createdAt: Date.now(),
+        entities: {},
+        contextMetadata: {
+          projectId: 'p',
+          topicId: 't',
+          topicTitle: '历史评论',
+          content: old.chinese,
+          message: { key: old.key, params: old.params },
+          eventType: '',
+          severity: 'info',
+        },
+      })
+    ) as Notification
+    const view = render(NotificationItem, {
+      props: { notification: notice, onMarkAsRead: () => {}, onDelete: () => {} },
+      global: { plugins: [vuetify, router, i18n] },
+    })
+    await waitFor(() => expect(view.getByText(old.chinese)).toBeTruthy())
+    setLocale('en')
+    await waitFor(() => expect(view.getByText(old.english)).toBeTruthy())
+    expect(view.queryByText(old.chinese)).toBeNull()
+    setLocale('zh-CN')
+    await waitFor(() => expect(view.getByText(old.chinese)).toBeTruthy())
+  })
+
   it('follows the reader’s language too', async () => {
     const router = createRouter({
       history: createMemoryHistory(),

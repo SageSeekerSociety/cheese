@@ -21,11 +21,10 @@ card has no turn and no token. A sub-thread's result is recorded on the card its
 label names; acceptance closes delivered work, while `cheese_close_task` abandons
 a task.
 
-Why this is not `POST /topics/{id}/comments`: that route summons only when the
-commenter holds no agent seat in that room, and it is not in
-`app.main._CHEESE_WRITE_PATHS`, so an agent calling it never passes the per-turn
-token gate — the symptom of a missing entry is silent admission, not 401. Both
-halves were invisible from the calling side: the write succeeded.
+Why this is not `POST /topics/{id}/comments`: ordinary document comments only
+persist feedback on the document. They never wake an agent or authorize a text
+change. A worker instruction belongs on the task timeline through this relay;
+the room separately reaches its worker with its own agent tooling.
 """
 
 import uuid
