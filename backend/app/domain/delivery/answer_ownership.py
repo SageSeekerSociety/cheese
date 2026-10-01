@@ -43,6 +43,13 @@ async def reconcile_answer(session, delivery_id, attempt_id):
         return True
     ids = {str(block.id) for block in candidates}
     project = candidates[0].project_id
+    origin = delivery.payload.get("ask_origin")
+    receiver = []
+    if origin is not None:
+        receiver = [
+            NativeInput.harness == origin["harness"],
+            NativeInput.native_session_id == origin["native_session_id"],
+        ]
     inputs = list(
         await session.scalars(
             select(NativeInput)
@@ -50,6 +57,7 @@ async def reconcile_answer(session, delivery_id, attempt_id):
                 NativeInput.project_id == project,
                 NativeInput.topic_id == delivery.topic_id,
                 NativeInput.recipient_handle == delivery.recipient_handle,
+                *receiver,
             )
             .order_by(NativeInput.id)
             .with_for_update()

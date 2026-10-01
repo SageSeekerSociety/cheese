@@ -6,7 +6,7 @@ cannot stand in for model-work completion.
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.domain.delivery.models import Delivery, NativeInput
 
@@ -33,8 +33,18 @@ async def ask_receipt(session, *, event_id, project_id, topic_id, recipient):
     inputs = list(
         await session.scalars(
             select(NativeInput).where(
-                NativeInput.delivery_id == row.id,
-                NativeInput.event_id == event_id,
+                or_(
+                    and_(
+                        NativeInput.delivery_id == row.id,
+                        NativeInput.event_id == event_id,
+                    ),
+                    NativeInput.id.in_(
+                        [
+                            uuid.UUID(value)
+                            for value in row.payload.get("consumed_answer_inputs", [])
+                        ]
+                    ),
+                ),
                 NativeInput.project_id == project_id,
                 NativeInput.topic_id == topic_id,
                 NativeInput.recipient_handle == recipient,

@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.errors import ValidationError
 from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.ask_inputs import guard_ask_inputs
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 
@@ -30,6 +31,7 @@ async def register_input(
     session, identity: InputIdentity, effects: InputEffects
 ) -> None:
     """Caller commits this before sending; retry cannot replace receiver identity."""
+    effects = await guard_ask_inputs(session, identity, effects)
     event_id = None
     delivery = None
     if effects.delivery_id is not None:
