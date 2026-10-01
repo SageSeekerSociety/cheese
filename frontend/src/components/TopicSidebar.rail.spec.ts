@@ -138,6 +138,8 @@ beforeAll(() => {
   if (!('devicePixelRatio' in globalThis)) {
     ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
   }
+  // 右键弹出的菜单定位在一个点上，Vuetify 那时要读它；同样是环境缺件。
+  if (!document.elementFromPoint) document.elementFromPoint = () => null
 })
 
 describe('C1 置顶导航组', () => {
@@ -356,6 +358,23 @@ describe('C5 行操作', () => {
     const actions = container.querySelector('.topic-row .row-actions')
     if (!actions) throw new Error('没有找到行操作层')
     expect(actions.querySelectorAll('.v-btn').length).toBe(1)
+  })
+
+  // 右键一行，弹出的就是 ⋯ 那一份操作；右键不是点开这个房间。
+  it('右键一行弹出这一行的操作，不打开这个房间', async () => {
+    const onSelectTopic = vi.fn()
+    const { container } = mount({ onSelectTopic })
+    const row = container.querySelector('[data-row-actions="a"]') as HTMLElement
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 })
+    row.dispatchEvent(event)
+    await vi.waitFor(() => {
+      const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
+        n.textContent?.trim()
+      )
+      expect(items).toEqual(expect.arrayContaining(['复制链接', '重命名']))
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(onSelectTopic).not.toHaveBeenCalled()
   })
 
   it('排序菜单已经不在侧栏里', () => {
