@@ -1,8 +1,9 @@
 """What keeps one session from taking the session host down with it (#1544).
 
-Every room's session shares the session host's kernel. These hold the bounds
-a session runs inside there: a memory cap of its own, and temporary files on
-disk that leave with the room.
+Every room's session shares the session host's kernel. These hold the three
+bounds a session runs inside there: a memory cap of its own, temporary files
+on disk that leave with the room, and no new session started on a host that
+has no memory left for one.
 """
 
 import os
@@ -10,9 +11,15 @@ import subprocess
 import sys
 import time
 import uuid
+from types import SimpleNamespace
 
-from app.domain.agent import machine_launcher
+import pytest
+
+from app.core.config import settings
+from app.domain.agent import admission, machine_launcher
 from app.domain.agent import resource_cleanup as cleanup
+
+HOST = "session-host"
 
 
 def _room(tmp_path, *, cap: str | None = None, path: str | None = None):
@@ -133,3 +140,54 @@ def test_a_sessions_temporary_files_are_on_the_machines_disk_and_leave_with_the_
     )
     assert removed.returncode == 0, removed.stderr
     assert not os.path.exists(tmpdir)
+
+
+class _Hub:
+    def __init__(self, meminfo: str | None, screens=()):
+        self.meminfo = meminfo
+        self.screens = list(screens)
+        self.reads = 0
+
+    def screens_for_topic(self, topic_id):
+        return [s for s in self.screens if s.topic_id == topic_id]
+
+    async def exec(self, device_id, argv, **_):
+        self.reads += 1
+        if self.meminfo is None:
+            raise TimeoutError
+        return {"exit": 0, "stdout": self.meminfo}
+
+
+def _meminfo(available_mb: int) -> str:
+    return (
+        "MemTotal:       65000000 kB\n"
+        "MemFree:          100000 kB\n"
+        f"MemAvailable:   {available_mb * 1024} kB\n"
+    )
+
+
+@pytest.fixture
+def capped_host(monkeypatch):
+    monkeypatch.setattr(settings, "agent_session_device_id", HOST)
+    monkeypatch.setattr(settings, "agent_session_memory_max_mb", 3072)
+
+
+@pytest.mark.anyio
+async def test_a_host_without_memory_for_one_more_session_holds_a_new_one(
+    capped_host,
+):
+    room = uuid.uuid4()
+    assert not await admission.HostMemory(_Hub(_meminfo(2000))).has_room(room)
+    assert await admission.HostMemory(_Hub(_meminfo(8000))).has_room(room)
+
+
+@pytest.mark.anyio
+async def test_a_room_whose_session_is_running_is_never_held(capped_host):
+    room = uuid.uuid4()
+    running = SimpleNamespace(topic_id=room, device_id=HOST)
+    assert await admission.HostMemory(_Hub(_meminfo(10), [running])).has_room(room)
+
+
+@pytest.mark.anyio
+async def test_a_host_that_cannot_be_read_holds_nobody(capped_host):
+    assert await admission.HostMemory(_Hub(None)).has_room(uuid.uuid4())

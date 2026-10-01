@@ -337,6 +337,7 @@
   "turnLimitTitle": "本轮超过时间上限，已停止",
   "turnQueued": "项目同时运行的轮次已满，本轮正在排队",
   "turnQueuedBehind": "项目同时运行的轮次已满，本轮正在排队，前面还有 {ahead} 个",
+  "turnQueuedHostBusy": "会话机器的内存暂时不够，本轮正在排队",
   "turnQueuedDetail": "前面的轮次结束就自动开跑，不用重发。",
   "turnResent": "平台重发了上一轮的消息",
   "turnTimeoutDetail": "会话活动已停止；屏幕订阅仍会接收后续输出。",

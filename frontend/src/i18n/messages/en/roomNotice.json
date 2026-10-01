@@ -337,6 +337,7 @@
   "turnLimitTitle": "This turn hit its time limit and was stopped",
   "turnQueued": "The project is running as many turns as it can at once; this turn is queued",
   "turnQueuedBehind": "The project is running as many turns as it can at once; this turn is queued, {ahead} ahead of it",
+  "turnQueuedHostBusy": "The machine that runs the sessions is short of memory; this turn is queued",
   "turnQueuedDetail": "It starts on its own once the turns ahead finish. No need to resend.",
   "turnResent": "The platform resent the previous turn's message",
   "turnTimeoutDetail": "The session has gone quiet; the screen subscription still receives any further output.",

@@ -233,6 +233,7 @@ def get_work_runner() -> AgentWorkRunner:
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
     # the device hub's live screen state (in-memory, cheap); a topic on the local
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
+    from app.domain.agent.admission import HostMemory
     from app.domain.agent.device_provider import topic_credential_expiry
 
     runner = AgentWorkRunner(
@@ -240,6 +241,7 @@ def get_work_runner() -> AgentWorkRunner:
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
+        host_has_room=HostMemory().has_room,
     )
     runner.subscribe_messages()
     return runner
