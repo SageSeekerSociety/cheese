@@ -130,7 +130,7 @@ def test_the_ledger_says_exactly_who_still_depends_on_this_harness():
 # 部署当场答错，而没有一条功能测试会因此变红。
 #
 # 名字只许出现在一个文件里：``harness/__init__.py``。那里是注册表，也是
-# ``deployment_harness()`` 在部署没配的时候取值的地方。适配器自己那个目录也不
+# ``deployment_harnesses()`` 在部署没配的时候取值的地方。适配器自己那个目录也不
 # 例外——``claude_code/runtime.py`` 是 ``harness = CLAUDE_CODE``，import 得到的
 # 东西就不该再拼一遍。
 #
@@ -205,8 +205,8 @@ def test_the_harness_name_is_written_down_once_in_the_backend() -> None:
     paid_off = sorted(set(_SPELLED_OUT) - set(spelled))
     assert not added, (
         f"这些地方把骨架的名字原样写了出来：{ {m: spelled[m] for m in added} }。"
-        f"跑的是哪个骨架由部署设置加项目设置答（``deployment_harness()`` / "
-        f"``harness_for()``），名字本身只写在 {_REGISTRY} 里。真的躲不掉就加进 "
+        f"跑的是哪个骨架由部署设置加项目设置答（``harness_for()`` / "
+        f"``harness_on()``），名字本身只写在 {_REGISTRY} 里。真的躲不掉就加进 "
         f"_SPELLED_OUT，顺便在 review 里说清为什么。"
     )
     assert not paid_off, (

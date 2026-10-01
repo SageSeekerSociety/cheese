@@ -41,7 +41,7 @@ from app.core.db import get_db
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import DeviceHub
-from app.domain.agent.harness import deployment_harness
+from app.domain.agent.harness import harness_for
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.services import ProjectService
@@ -443,7 +443,7 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
                 id=session_id,
                 topic_id=topic.id,
                 agent_handle="cheese",
-                harness=deployment_harness(),
+                harness=harness_for(None),
                 runtime_location={
                     "device_id": _MACHINE,
                     "channel": "device",
@@ -715,7 +715,7 @@ async def test_old_room_token_only_addresses_unique_unupgraded_lease(
             AgentSession(
                 topic_id=topic,
                 agent_handle="other",
-                harness=deployment_harness(),
+                harness=harness_for(None),
                 runtime_location=dict(row.runtime_location),
                 work_lease=dict(row.work_lease),
             )
