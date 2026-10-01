@@ -68,6 +68,9 @@ const {
   isImageArtifact,
   downloadError,
   docBytes,
+  docIdentity,
+  docSnapshot,
+  slideContext,
   docLoading,
   docError,
   docRendererMissing,
@@ -117,6 +120,9 @@ function refresh() {
     :is-image-artifact="isImageArtifact"
     :download-error="downloadError"
     :doc-bytes="docBytes"
+    :doc-identity="docIdentity"
+    :doc-snapshot="docSnapshot"
+    :slide-context="slideContext"
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"

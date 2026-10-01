@@ -1,242 +1,191 @@
-"""后台命令：起来、活着、能打字进去、被停掉，以及房间关掉时被收走。
+"""A pi room's background jobs: they run on the room's machine, outlive the turn,
+and what they print reaches the session host where the job tools read it.
 
-Driven against the real supervisor as a real process, because everything worth
-testing here is about processes: that the job is in its own session, that a pty
-is what the command sees, and that killing it kills what it started.
+Driven through the real runner against a real executor standing for the room's
+machine (`tests/support/room_machine.py`). What is asserted is what a person
+relying on a background job can observe: it keeps going after the call that
+started it returned, it has a terminal to be typed into, stopping it stops what
+it started, and it goes when the room does.
 """
 
-import hashlib
+import asyncio
 import json
 import os
-import signal
-import socket
-import subprocess
-import sys
 import time
-import uuid
 from pathlib import Path
 
 import pytest
 
 from app.domain.agent.harness import Opening
-from app.domain.agent.harness.pi import background
+from app.domain.agent.harness.pi.jobs import Jobs
+from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner
-from tests.unit.test_pi_runner import EXTENSION, shim
+from tests.support.room_machine import room_machine
+from tests.unit.test_pi_runner import call, shim
 
-SUPERVISOR = Path(background.__file__)
-
-
-def start(directory: Path, command: str, *, cwd: str = "/tmp", label: str = "") -> Path:
-    subprocess.run(
-        [
-            sys.executable,
-            str(SUPERVISOR),
-            "--dir",
-            str(directory),
-            "--cwd",
-            cwd,
-            "--command",
-            command,
-            "--label",
-            label,
-        ],
-        check=True,
-        timeout=30,
-    )
-    return directory
+pytestmark = pytest.mark.anyio
 
 
-def until(check, *, seconds: float = 15.0):
-    """Wait for something a separate process does on its own schedule."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        try:
-            found = check()
-        except OSError:
-            found = None
-        if found:
-            return found
-        time.sleep(0.05)
-    raise AssertionError("never happened")
+async def until(check, timeout: float = 20.0):
+    deadline = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < deadline, "timed out"
+        await asyncio.sleep(0.1)
 
 
-def output(directory: Path) -> str:
+def output(runner: Runner, job: str) -> str:
+    path = runner.state / "bg" / job / "output"
+    return path.read_text(errors="replace") if path.exists() else ""
+
+
+def ended(runner: Runner, job: str) -> dict | None:
+    path = runner.state / "bg" / job / "exit"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def alive(pid: int) -> bool:
     try:
-        return (directory / "output").read_bytes().decode("utf-8", "replace")
-    except FileNotFoundError:
-        return ""
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
-def tell(directory: Path, request: dict) -> dict:
-    # Where to reach a job is something the job records, the same way the
-    # extension finds it — not somewhere a reader is expected to already know.
-    address = json.loads((directory / "meta.json").read_text())["sock"]
-    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    connection.settimeout(10)
-    connection.connect(address)
-    try:
-        connection.sendall(json.dumps(request).encode() + b"\n")
-        return json.loads(connection.recv(65536))
-    finally:
-        connection.close()
-
-
-def test_starting_a_job_returns_at_once_and_the_job_keeps_going(tmp_path):
-    """The whole reason this exists: a turn must not block on a long command."""
-    began = time.monotonic()
-    job = start(tmp_path / "j", "sleep 0.4; echo 一; sleep 0.4; echo 二")
-    assert time.monotonic() - began < 5, "starting a job waited for it to finish"
-
-    until(lambda: "一" in output(job))
-    assert not (job / "exit").exists(), "still running"
-    until(lambda: (job / "exit").exists())
-    assert json.loads((job / "exit").read_text())["status"] == 0
-    assert output(job).replace("\r\n", "\n").split() == ["一", "二"]
-
-
-def test_the_command_is_given_a_terminal_and_can_be_typed_into(tmp_path):
-    """A pipe would buy neither half of this.
-
-    Programs ask `isatty` and buffer on the answer, so over a pipe a prompt can
-    sit unflushed indefinitely; and a REPL only offers one to a terminal. The
-    pty is what makes writing to a job mean something other than starting it
-    again.
-    """
-    job = start(tmp_path / "repl", f"{sys.executable} -u -i")
-    until(lambda: ">>>" in output(job))
-    assert tell(job, {"write": "print(6 * 7)\n"})["ok"]
-    until(lambda: "42" in output(job))
-    assert not (job / "exit").exists(), "a REPL stays open between writes"
-    tell(job, {"signal": int(signal.SIGTERM)})
-    until(lambda: (job / "exit").exists())
-
-
-def test_a_command_that_cannot_run_is_recorded_rather_than_lost(tmp_path):
-    job = start(tmp_path / "bad", "definitely-not-a-command")
-    until(lambda: (job / "exit").exists())
-    assert json.loads((job / "exit").read_text())["status"] != 0
-    assert "not" in output(job).lower(), "the shell's own complaint is kept"
-
-
-def test_a_command_whose_directory_is_gone_fails_as_the_command(tmp_path):
-    """A directory removed after the room named it is the command's failure,
-    reported where its output goes — not the supervisor's, which is fine."""
-    gone = tmp_path / "removed"
-    job = start(tmp_path / "nowhere", "echo 一", cwd=str(gone))
-    until(lambda: (job / "exit").exists())
-    assert json.loads((job / "exit").read_text())["status"] != 0
-    assert str(gone) in output(job), "the reason, where the command's output goes"
-    assert not (job / "error").exists(), "the supervisor itself did not fail"
-
-
-def room_shaped(tmp_path: Path, name: str) -> Path:
-    """A job directory the shape a room actually hands over.
-
-    Nothing here gets to choose it: the runner's state path carries a project
-    id, a topic id and a session digest, and on dev 2026-09-17 that came to 176
-    bytes before the job's own name. Every other test uses ``tmp_path``, which
-    is about fifty — and fifty is under every limit there is, so a job that
-    could not be reached on any real machine passed all of them.
-    """
-    return (
-        tmp_path
-        / str(uuid.uuid4())
-        / str(uuid.uuid4())
-        / "pi"
-        / hashlib.sha256(name.encode()).hexdigest()
-        / "bg"
-        / name
-    )
-
-
-def test_a_job_can_be_reached_under_the_path_a_room_gives_it(tmp_path):
-    """Output, typing and signals, on a path no shorter than a room's own.
-
-    A Unix socket address is 108 bytes including its terminator — a kernel
-    constant, not a filesystem one, so the job's other files are written at any
-    length and only the one that makes a job reachable is refused.
-    """
-    job = room_shaped(tmp_path, "job-1-reachable")
-    assert len(str(job)) > 108, "this test is about a path longer than that"
-    start(job, f"{sys.executable} -u -i")
-    until(lambda: ">>>" in output(job))
-    assert tell(job, {"write": "print(6 * 7)\n"})["ok"]
-    until(lambda: "42" in output(job))
-    tell(job, {"signal": int(signal.SIGTERM)})
-    until(lambda: (job / "exit").exists())
-
-
-def test_a_supervisor_that_cannot_get_going_leaves_the_reason(tmp_path):
-    """Its own failure is the one thing it cannot report through the job.
-
-    Past the daemonizing fork this process has no stdout, no stderr and nobody
-    waiting on it, and a reader that sees only ``meta.json`` reports the job as
-    running — forever, having printed nothing, whatever went wrong.
-    """
-    job = tmp_path / "blocked"
-    # Nothing can be appended to a directory, so the job's transcript cannot be
-    # opened — a stand-in for the class of thing that goes wrong before a
-    # command's output ever reaches disk.
-    (job / "output").mkdir(parents=True)
-
-    start(job, "echo 一")
-
-    until(lambda: (job / "exit").exists())
-    assert json.loads((job / "exit").read_text())["status"] != 0
-    assert "output" in (job / "error").read_text(), "what failed, in its own words"
-
-
-def test_stopping_a_job_stops_what_it_started(tmp_path):
-    """Signalling the shell alone leaves the real process running, holding
-    whatever port or file it had — and nothing left to name it by."""
-    marker = tmp_path / "still-here"
-    job = start(
-        tmp_path / "tree",
-        f"{sys.executable} -u -c "
-        f'"import time,pathlib\nwhile True:\n'
-        f" pathlib.Path('{marker}').touch(); time.sleep(0.1)\" & wait",
-    )
-    until(lambda: marker.exists())
-    inner = json.loads((job / "meta.json").read_text())["child"]
-    tell(job, {"signal": int(signal.SIGTERM)})
-    until(lambda: (job / "exit").exists())
-
-    marker.unlink()
-    time.sleep(0.6)
-    assert not marker.exists(), "the grandchild outlived the job it belonged to"
-    with pytest.raises(ProcessLookupError):
-        os.killpg(os.getpgid(inner), 0)
-
-
-def test_a_job_is_not_in_the_process_group_that_starting_it_belonged_to(tmp_path):
-    """Its own session, which is what lets it outlive pi — and what stops a
-    signal aimed at the session from reaching it by accident."""
-    job = start(tmp_path / "own", "sleep 5")
-    meta = json.loads(until(lambda: (job / "meta.json").read_text()))
-    assert os.getpgid(meta["pid"]) != os.getpgid(os.getpid())
-    tell(job, {"signal": int(signal.SIGKILL)})
-
-
-@pytest.mark.anyio
-async def test_closing_the_room_takes_its_background_jobs_with_it(tmp_path):
-    """Not killed at the end of a turn — that is the point of them. But this
-    runner IS the screen's program, so when it goes the room is being torn
-    down, and a dev server nobody can reach any more would hold its port until
-    somebody found it by hand.
-    """
-    runner = Runner(tmp_path / "state")
+async def started(tmp_path: Path, target: dict, **options) -> Runner:
+    runner = Runner(tmp_path / "state", **options)
     await runner.start(
         Opening("system prompt", None, agent_handle="teammate"),
         binary=shim(tmp_path),
         cwd=str(tmp_path),
         env={"PATH": os.environ["PATH"]},
-        args=["--no-context-files"],
-        extension=EXTENSION,
+        args=[],
+        target=target,
     )
-    job = start(runner.state / "bg" / "job-1", "sleep 30")
-    held = json.loads(until(lambda: (job / "meta.json").read_text()))["child"]
-    await runner.close()
+    return runner
 
-    until(lambda: (job / "exit").exists())
-    with pytest.raises(ProcessLookupError):
-        os.killpg(os.getpgid(held), 0)
+
+async def test_starting_a_job_returns_at_once_and_the_job_keeps_going(tmp_path):
+    with room_machine(tmp_path / "machine") as target:
+        runner = await started(tmp_path, target)
+        try:
+            began = time.monotonic()
+            job = (
+                await call(
+                    runner.state,
+                    "job_start",
+                    {"command": "echo first; sleep 2; echo later > made.txt"},
+                )
+            )["id"]
+            assert time.monotonic() - began < 2
+            assert ended(runner, job) is None
+            # A session with a job running is busy: a changed launch waits for
+            # it rather than ending the job with the runner (`host.configure`).
+            assert (await call(runner.state, "ping"))["tasks"] == 1
+            await until(lambda: ended(runner, job) is not None)
+            assert ended(runner, job)["status"] == 0
+            assert (await call(runner.state, "ping"))["tasks"] == 0
+            assert "first" in output(runner, job)
+            # It ran in the checkout on the machine.
+            assert (Path(target["workspace"]) / "made.txt").read_text() == "later\n"
+            assert not (tmp_path / "made.txt").exists()
+        finally:
+            await runner.close()
+
+
+async def test_the_command_is_given_a_terminal_and_can_be_typed_into(tmp_path):
+    with room_machine(tmp_path / "machine") as target:
+        runner = await started(tmp_path, target)
+        try:
+            job = (
+                await call(
+                    runner.state,
+                    "job_start",
+                    {
+                        "command": "[ -t 0 ] && echo ON-A-TERMINAL; "
+                        "read line; echo got:$line"
+                    },
+                )
+            )["id"]
+            await until(lambda: "ON-A-TERMINAL" in output(runner, job))
+            await call(runner.state, "job_write", {"id": job, "text": "hello\n"})
+            await until(lambda: "got:hello" in output(runner, job))
+            await until(lambda: ended(runner, job) is not None)
+            with pytest.raises(RuntimeError, match="已结束"):
+                await call(runner.state, "job_write", {"id": job, "text": "more\n"})
+        finally:
+            await runner.close()
+
+
+async def test_stopping_a_job_stops_what_it_started(tmp_path):
+    with room_machine(tmp_path / "machine") as target:
+        runner = await started(tmp_path, target)
+        pids = Path(target["workspace"]) / "pid"
+        try:
+            job = (
+                await call(
+                    runner.state,
+                    "job_start",
+                    {"command": f"sleep 300 & echo $! > {pids}; wait"},
+                )
+            )["id"]
+            await until(lambda: pids.exists() and pids.read_text().strip())
+            child = int(pids.read_text())
+            await call(runner.state, "job_signal", {"id": job, "signal": 15})
+            await until(lambda: ended(runner, job) is not None)
+            await until(lambda: not alive(child))
+        finally:
+            await runner.close()
+
+
+async def test_closing_the_room_takes_its_background_jobs_with_it(tmp_path):
+    with room_machine(tmp_path / "machine") as target:
+        runner = await started(tmp_path, target)
+        pids = Path(target["workspace"]) / "pid"
+        await call(
+            runner.state,
+            "job_start",
+            {"command": f"sleep 300 & echo $! > {pids}; wait"},
+        )
+        await until(lambda: pids.exists() and pids.read_text().strip())
+        child = int(pids.read_text())
+        await runner.close()
+        await until(lambda: not alive(child))
+
+
+async def test_a_session_with_a_job_running_on_the_machine_is_not_let_go(tmp_path):
+    """An idle session is let go (`driven/runner.py`), but one whose job still
+    runs on the machine is not idle: letting it go would leave the job with
+    nobody reading it, and the executor stops what nobody reads."""
+    with room_machine(tmp_path / "machine") as target:
+        runner = await started(tmp_path, target, idle_exit_s=0.5)
+        try:
+            job = (await call(runner.state, "job_start", {"command": "sleep 3"}))["id"]
+            assert runner.process is not None
+            await asyncio.sleep(2)
+            assert runner.process.returncode is None, "let go with a job running"
+            await until(lambda: ended(runner, job) is not None)
+            await asyncio.wait_for(runner.process.wait(), 20)
+        finally:
+            await runner.close()
+
+
+async def test_a_runner_that_comes_back_picks_a_job_up_where_it_was(tmp_path):
+    """A job outlives the runner that started it: the next one copies on from
+    the last byte the first one wrote down, and records how it ended."""
+    with room_machine(tmp_path / "machine") as target:
+        directory = tmp_path / "bg"
+        first = Jobs(Machine(target), directory)
+        job = (
+            await first.start(
+                "echo one; sleep 2; echo two", label="", cwd=target["workspace"]
+            )
+        )["id"]
+        await until(lambda: "one" in (directory / job / "output").read_text())
+        await first.close(end=False)
+
+        second = Jobs(Machine(target), directory)
+        second.resume()
+        await until(lambda: (directory / job / "exit").exists())
+        said = (directory / job / "output").read_text()
+        assert said.count("one") == 1 and "two" in said
+        await second.close(end=False)

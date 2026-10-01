@@ -80,11 +80,6 @@ class ComputeProvider(Protocol):
     @property
     def deferred_work(self) -> bool: ...
 
-    # Is the session process on the machine its tools run on? False means it
-    # runs on the session host and its tools reach the machine from there.
-    @property
-    def hands_here(self) -> bool: ...
-
     # Does this backend assemble its machine's model environment itself? The
     # platform then sends the model CHOICE and nothing else, and the turn's
     # supply route is the deployment's rather than the profile's. Asked instead
@@ -347,6 +342,16 @@ class ComputePool:
             runtime.holds(topic_id, agent_handle) for runtime in self._runtimes()
         )
 
+    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Read this seat's journal now: its runner wrote records nobody has
+        read. False when no backend in this process reads that seat."""
+        woken = False
+        for runtime in self._runtimes():
+            wake = getattr(runtime, "wake", None)
+            if wake is not None and wake(topic_id, agent_handle):
+                woken = True
+        return woken
+
     async def recover_sessions(
         self, device_id: str | None = None
     ) -> list["SessionRef"]:
@@ -447,7 +452,6 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     executor falls back to. The default now comes from `compute_default_name`,
     the same answer the catalogue marks 默认.
     """
-    from app.domain.agent import place
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness.claude_code import (
@@ -468,13 +472,10 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
         "unread_grace_s": settings.agent_unread_grace_s,
     }
 
-    # 进这张表的每一条通道，下面都要被 `CentralChannel` 包一次、可能再被
-    # `PiChannel` 包一次，而这两个包装读的是设备传输自己的 `_hub` 与
-    # `_session_factory`。所以 `DeviceChannel` 在这里不是一条判断，是那两个包装本来
-    # 就要的东西写出来：原来标成 `Channel` 的那个签名兑现不了——真递一条别的
-    # `Channel` 进来，`CentralChannel(c)` 当场 AttributeError。
-    #
-    # 「这条通道上挂不挂得住 pi」是另一回事，在下面问能力位：那是一个会变的事实。
+    # 进这张表的每一条通道，下面都要被 `CentralChannel` 包一次，而这个包装读的是
+    # 设备传输自己的 `_hub` 与 `_session_factory`。所以 `DeviceChannel` 在这里不是
+    # 一条判断，是那个包装本来就要的东西写出来：原来标成 `Channel` 的那个签名兑现
+    # 不了——真递一条别的 `Channel` 进来，`CentralChannel(c)` 当场 AttributeError。
     channels: list[DeviceChannel] = [DeviceChannel()]
     if cloud_channel is not None:
         channels.append(cloud_channel)
@@ -489,8 +490,7 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
 
     # 一个骨架挂不挂得上一条通道，看它能不能把工具送到那条通道的手上。被
     # `CentralChannel` 包起来的，会话在中心机、手在执行机，所以只挂声明了
-    # `Capability.REMOTE_EXECUTION` 的骨架；pi 走的是另一条：它自己就跑在手所在的
-    # 那台机器上（下面问 `HANDS_HERE`）。房间的一轮按这张池子挑骨架
+    # `Capability.REMOTE_EXECUTION` 的骨架。房间的一轮按这张池子挑骨架
     # （`harness_on`），所以「这个场景要远端执行」的判据就落在这里。
     def forwards(name: str) -> bool:
         return name in HARNESSES and (
@@ -514,21 +514,9 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
             CodexRuntime(CodexChannel(CentralChannel(c), executor_launch), **policy)
             for c in channels
         )
-    # pi is the one backend NOT wrapped in CentralChannel: it runs on the
-    # machine that holds the workspace, so there is no second machine to assign
-    # and no executor to route its tools through. See pi/channel.py.
-    #
-    # 所以这里问的是地点的能力位 `HANDS_HERE`，不是通道的类。按类问过一次：
-    # `isinstance(c, DeviceChannel)` 读起来像一条排除规则，而这个池里装得进来的两
-    # 条通道都继承 `DeviceChannel`，它恒为真——**今天它排除的是空集**，换成能力位
-    # 也不会少挂一个 backend。换的是判据的形状：pi 挂不挂得住，取决于手在不在跑会
-    # 话的那台机器上（一个会变的事实），不取决于通道的类（一个不会变的事实）。多
-    # 一条手在别处的通道进这个池的那天，它声明 `hands_here = False` 就够，这一行不
-    # 用跟着改——`tests/unit/test_compute_pool.py` 的 `Elsewhere` 钉的就是这一句。
-    if PI in HARNESSES:
+    if forwards(PI):
         backends.extend(
-            PiRuntime(PiChannel(c), **policy)
+            PiRuntime(PiChannel(CentralChannel(c), executor_launch), **policy)
             for c in channels
-            if place.HANDS_HERE in c.capabilities()
         )
     return ComputePool(backends, default_name)

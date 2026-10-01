@@ -15,11 +15,13 @@ from app.domain.answers import models as answers  # noqa: F401
 from app.domain.assistant import models as assistant  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401
+from app.domain.block import comment_models as doc_comments  # noqa: F401
 from app.domain.block import models as block  # noqa: F401
 from app.domain.comments import models as comments  # noqa: F401
 from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
+from app.domain.doc_ai import models as doc_ai  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401

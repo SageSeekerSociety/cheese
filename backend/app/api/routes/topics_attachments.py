@@ -59,6 +59,7 @@ from app.domain.project.room_files import (
     clean_artifact_path,
 )
 from app.domain.room_task.services import TaskService
+from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -258,8 +259,7 @@ async def attachment_as_pdf(
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": (
-                "no-store" if task or source == "committed" else "private, max-age=3600"
-            ),
+            "Cache-Control": "no-store",
+            "X-Cheese-Source-Version": content_version(data),
         },
     )

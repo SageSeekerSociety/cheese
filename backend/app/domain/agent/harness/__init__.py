@@ -202,9 +202,9 @@ def harness_on(
 ) -> str | None:
     """这个项目在一台机器上跑的骨架：按 ``_in_order`` 的次序，第一个这台机器挂着的。
 
-    一个骨架挂不挂得上一台机器，取决于它能不能把工具送到那台机器的手上：手就在
-    跑会话的机器上，或者它声明了 ``Capability.REMOTE_EXECUTION``、能把工具调用交
-    出去（``compute.py`` 的 ``build_compute_pool``）。所以「这个场景要远端执行」不
+    一个骨架挂不挂得上一台机器，取决于它能不能把工具送到那台机器的手上：它声明了
+    ``Capability.REMOTE_EXECUTION``、能把工具调用交出去（``compute.py`` 的
+    ``build_compute_pool``）。所以「这个场景要远端执行」不
     在这里再问一遍，问的是那张池子。
 
     ``None`` = 一个都没有，这一轮在房间里说明，不开始。
@@ -826,7 +826,8 @@ HARNESSES: dict[str, Harness] = {
             SubagentRequirement.SPAWNS_WITH_A_MODEL: (
                 "pi 核心没有子 agent，起它的是平台给 pi 的 extension："
                 "`agent/harness/pi/platform.ts` 的 `registerSubagentTools` 给会话一个 "
-                "Task(model=...)，runner 在同一台机器、同一个检出里起第二个 pi。模型"
+                "Task(model=...)，runner 在中心机上起第二个 pi，"
+                "手在同一台执行机、同一个检出里。模型"
                 "由 `agent/harness/pi/subagents.py` 的 `admitted_model` 问平台准入"
                 "（/llm/admission，和 Claude Code 分身同一道目录、档位与预算校验），"
                 "没指定时答的就是项目的分身默认；`Subagent._configure` 用答出来的模型"
@@ -854,6 +855,19 @@ HARNESSES: dict[str, Harness] = {
                 "一条会话里的其他分身照跑。会话被 interrupt 或关掉时，"
                 "`agent/harness/pi/runner.py` 先用 `stop_all` 停掉它起过的每一条"
                 "——那是结论 43 的「子 agent 与父进程同生同死」，不是这一条。"
+            ),
+        },
+        capabilities={
+            Capability.REMOTE_EXECUTION: (
+                "pi 的 read、write、edit、bash、ls、find 都接受注入的文件与进程操作，"
+                "平台给 pi 的 extension 在 `agent/harness/pi/platform.ts` 的 "
+                "`registerMachineTools` 里把这些操作换成问 runner；grep 的搜索本身不"
+                "走注入的操作，同一处把它整个换成执行器上的一次搜索。runner 经 "
+                "`agent/harness/pi/machine.py` 的 `Machine` 把每一个文件操作变成执行"
+                "器答的一次调用（`control` 的 `files`，"
+                "`agent/harness/claude_code/remote_execution/machine_files.py`），"
+                "命令变成执行器 shell 控制上的一条命令，走的是 `RemoteClient`，"
+                "用到才领机器，本机不执行。"
             ),
         },
     ),

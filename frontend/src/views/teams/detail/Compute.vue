@@ -51,19 +51,22 @@ const cloudDeviceIds = computed(
 )
 const selfHostedDevices = computed(() => devices.value.filter((device) => !cloudDeviceIds.value.has(device.device_id)))
 const onlineCount = computed(() => selfHostedDevices.value.filter((device) => device.online).length)
-const cloudMoving = computed(() =>
-  cloudMachines.value.some(
-    (machine) =>
-      ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
-        machine.status
-      ) ||
-      ['provisioning', 'unknown'].includes(machine.ai_status) ||
-      (machine.status === 'running' &&
-        machine.ai_status === 'ready' &&
-        !machine.device_id &&
-        machine.enroll_attempts < machine.enroll_max_attempts)
+function moving(machine: CloudMachine): boolean {
+  return (
+    ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
+      machine.status
+    ) ||
+    ['provisioning', 'unknown'].includes(machine.ai_status) ||
+    (machine.status === 'running' &&
+      machine.ai_status === 'ready' &&
+      !machine.device_id &&
+      machine.enroll_attempts < machine.enroll_max_attempts)
   )
-)
+}
+const cloudMoving = computed(() => cloudMachines.value.some(moving))
+// Only the projects with a machine still changing are asked again: a team with
+// thirty projects asked every one of them each time, from every open tab.
+const movingProjects = computed(() => new Set(cloudMachines.value.filter(moving).map((m) => m.project_id)))
 
 const statusLabel = computed<Record<ProjectMachine['status'], string>>(() => ({
   provisioning: t('teams.compute.status.provisioning'),
@@ -130,7 +133,27 @@ async function load() {
 
 async function refreshCloud() {
   try {
-    await loadCloud()
+    const asked = movingProjects.value
+    const fresh = new Map(
+      await Promise.all(
+        projects.value
+          .filter((project) => asked.has(project.id))
+          .map(
+            async (project) =>
+              [
+                project.id,
+                (await listProjectMachines(project.id)).data.map((machine) => ({
+                  ...machine,
+                  projectName: project.name,
+                })),
+              ] as const
+          )
+      )
+    )
+    cloudMachines.value = projects.value.flatMap(
+      (project) => fresh.get(project.id) ?? cloudMachines.value.filter((m) => m.project_id === project.id)
+    )
+    quotas.value = await getTeamResourceQuotas(teamId.value)
   } catch (cause) {
     error.value = errorMessage(cause, t('teams.compute.refreshFailed'))
   } finally {
@@ -141,7 +164,13 @@ async function refreshCloud() {
 function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
-  if (cloudMoving.value) pollTimer = setTimeout(refreshCloud, 5000)
+  // A page nobody is looking at does not ask; it looks again when it is shown.
+  if (cloudMoving.value && document.visibilityState !== 'hidden') pollTimer = setTimeout(refreshCloud, 5000)
+}
+
+function onVisibility() {
+  if (document.visibilityState === 'visible' && cloudMoving.value) void refreshCloud()
+  else schedulePoll()
 }
 
 async function addMachine(device: MyDevice) {
@@ -205,10 +234,14 @@ async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibility)
+  void load()
+})
 watch(teamId, load)
 watch(cloudMoving, schedulePoll)
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibility)
   if (pollTimer) clearTimeout(pollTimer)
 })
 </script>

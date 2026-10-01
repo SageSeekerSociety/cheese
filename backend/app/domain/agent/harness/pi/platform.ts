@@ -7,12 +7,28 @@
 // part of that pi has no notion of — and nothing else. pi's loop, its tools,
 // its context handling are its own.
 //
+// pi runs on the session host and the project is on the room's machine, so
+// pi's own tools — read, write, edit, bash, ls, find, grep — are pi's, with the file and
+// process operations under them handed to the runner, which runs them there
+// (`machine.py`, #1106). pi's loop is unchanged; where its hands are is not.
+//
 // Written by the runner into the session's state directory and named with
 // `--extension`, the same way the room's skills and system prompt are: they
-// are assembled per room, and the machine has no copy to point at.
+// are assembled per room, and the session host has no copy to point at.
 
-import { createBashTool, createLocalBashOperations } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
+import {
+  createBashTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+  DEFAULT_MAX_BYTES,
+  formatSize,
+  truncateHead,
+  truncateLine,
+} from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -26,8 +42,7 @@ type ToolSpec = {
 type Manifest = {
   socket: string;
   state: string;
-  python: string;
-  background: string;
+  workspace: string;
   jobs: string;
   tools: ToolSpec[];
   unavailable: string;
@@ -42,8 +57,7 @@ function manifest(): Manifest {
   const empty: Manifest = {
     socket: "",
     state: "",
-    python: "",
-    background: "",
+    workspace: "",
     jobs: "",
     tools: [],
     unavailable: "the runner wrote no manifest",
@@ -93,9 +107,9 @@ function text(body: string) {
 // --- the platform's own tools ------------------------------------------------
 //
 // pi has no MCP client, so these arrive as extension tools. The catalog is
-// read from the platform file installed on this machine by the runner: the
-// platform's own tool table (the same one the other harnesses serve) plus the
-// CLI commands that have to run here as a process.
+// the runner's, read from the platform's own file: the platform's tool table
+// (the same one the other harnesses serve) plus the CLI commands that run on
+// the room's machine as a process.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
   for (const tool of spec.tools) {
@@ -103,11 +117,12 @@ function registerPlatformTools(pi: any, spec: Manifest) {
       name: tool.name,
       description: tool.description,
       parameters: tool.inputSchema,
-      async execute(_id: string, params: any, _signal: any, _update: any, ctx: any) {
+      async execute(id: string, params: any) {
         const result = await ask(spec.socket, "cli", {
+          id,
           tool: tool.name,
           arguments: params ?? {},
-          cwd: ctx?.cwd,
+          cwd: spec.workspace,
         });
         const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
         if (result.status !== 0) {
@@ -124,14 +139,11 @@ function registerPlatformTools(pi: any, spec: Manifest) {
 
 // --- the project's MCP servers ----------------------------------------------
 //
-// The runner is pi's MCP client (mcp.py): it started the checkout's stdio
-// servers, asked the platform for the remote ones, and listed their tools under
-// the name the other harnesses give them, `mcp__<server>__<tool>`. A call goes
-// back to the runner, which sends it to the server that owns the tool.
-//
-// The runner also runs the project's PreToolUse and PostToolUse hooks around
-// each call (hooks.py), as the executor does on the other harnesses; the call
-// id and working directory it hands them come from here.
+// The runner is pi's MCP client (mcp.py): it listed every server's tools —
+// the machine's stdio servers and the platform's remote ones — under the name
+// the other harnesses give them, `mcp__<server>__<tool>`. A call goes back to
+// the runner, which sends it to the server that owns the tool, with the
+// project's PreToolUse and PostToolUse hooks run around it on the machine.
 //
 // A failed call is thrown, not returned: pi marks a tool result as an error
 // only when `execute` throws, whatever the returned object says.
@@ -142,12 +154,11 @@ function registerMcpTools(pi: any, spec: Manifest) {
       name: tool.name,
       description: tool.description,
       parameters: tool.inputSchema,
-      async execute(id: string, params: any, _signal: any, _update: any, ctx: any) {
+      async execute(id: string, params: any) {
         const result = await ask(spec.socket, "mcp", {
           id,
           tool: tool.name,
           arguments: params ?? {},
-          cwd: ctx?.cwd,
         });
         if (result.isError) {
           const said = result.content
@@ -168,11 +179,12 @@ function registerMcpTools(pi: any, spec: Manifest) {
 // tool call, and on Codex the executor runs them around every call it makes. pi
 // fires none, so every call of pi's own (read, bash, edit, write, the
 // background shell) asks the runner before it runs and after it returns, and
-// the runner runs the hooks under the name each one is written for (hooks.py).
+// the room's machine runs the hooks under the name each one is written for
+// (hooks.py).
 //
-// Two kinds of call are not asked about here. An MCP tool's hooks run in the
-// runner around the call itself (mcp.py). A platform tool runs none, as on the
-// executor, which runs no project hook around the platform's own tools.
+// Two kinds of call are not asked about here. An MCP tool's hooks run around
+// the call itself (mcp.py). A platform tool runs none, as on the executor,
+// which runs no project hook around the platform's own tools.
 //
 // A PreToolUse block stops the call and pi hands the model its reason as the
 // tool's error; an `updatedInput` is written into the call's input, which pi
@@ -184,14 +196,14 @@ function registerMcpTools(pi: any, spec: Manifest) {
 function applyProjectHooks(pi: any, spec: Manifest) {
   const skipped = new Set([...spec.tools, ...(spec.mcp ?? [])].map((tool) => tool.name));
 
-  pi.on("tool_call", async (event: any, ctx: any) => {
+  pi.on("tool_call", async (event: any) => {
     if (skipped.has(event.toolName)) return;
     const answer = await ask(spec.socket, "hooks", {
       event: "PreToolUse",
       tool: event.toolName,
       id: event.toolCallId,
       input: event.input,
-      cwd: ctx?.cwd,
+      cwd: spec.workspace,
     });
     if (answer.denied !== undefined) return { block: true, reason: answer.denied };
     for (const key of Object.keys(event.input)) {
@@ -200,14 +212,14 @@ function applyProjectHooks(pi: any, spec: Manifest) {
     Object.assign(event.input, answer.input);
   });
 
-  pi.on("tool_result", async (event: any, ctx: any) => {
+  pi.on("tool_result", async (event: any) => {
     if (skipped.has(event.toolName) || event.isError) return;
     const answer = await ask(spec.socket, "hooks", {
       event: "PostToolUse",
       tool: event.toolName,
       id: event.toolCallId,
       input: event.input,
-      cwd: ctx?.cwd,
+      cwd: spec.workspace,
       result: { content: event.content },
     });
     if (answer.denied === undefined) return;
@@ -220,136 +232,245 @@ function applyProjectHooks(pi: any, spec: Manifest) {
   });
 }
 
-// --- what the repository says about itself -----------------------------------
+// --- where the session is, and what the repository says ----------------------
 //
-// pi discovers AGENTS.md and CLAUDE.md by walking from the working directory up
-// to `/`, which on a machine somebody lent us goes through their home. So the
-// discovery is off (`--no-context-files`) and this reads the one directory a
-// room is entitled to: the checkout it was given.
+// pi tells the model the directory it runs in, which on the session host holds
+// nothing of the project. The project is at `workspace` on the room's machine,
+// and that is the directory every tool here works in, so that is the one the
+// model is told.
 //
-// It has to be read, not skipped. A repository that Cheese hosts must never
-// have to change in order to be hosted, and its CLAUDE.md is how it says what
-// it needs — the other harness reads one, and a pi room that did not would be
-// the same repository being told different things by two teammates.
+// What the repository says about itself (its AGENTS.md, CLAUDE.md and rules) is
+// read on the machine by the runner (repository.py) and appended to every
+// turn: appended, never prepended, because everything before it is the same on
+// every turn of the session and is what a provider cache matches on.
 
-const CONTEXT_FILES = ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
-
-// Big enough for any of these written to be read by a person, small enough that
-// a generated file checked in under one of these names cannot displace the room.
-const CONTEXT_LIMIT = 64 * 1024;
-
-// `@relative/path.md` inside one of these files is how a repository splits its
-// rules across files; expanded the way the claude-code harness's include()
-// does, so both harnesses read the same repository the same way. Relative
-// markdown only — anything else stays written as it was, unguessed at.
-const IMPORT_LIMIT = 5;
-
-function expandImports(text: string, base: string, depth: number): string {
-  return text.replace(/(?<![\w`])@([^\s`]+)/g, (whole, ref: string) => {
-    if (depth >= IMPORT_LIMIT || path.isAbsolute(ref) || !ref.endsWith(".md")) {
-      return whole;
+function placeTheSession(pi: any, spec: Manifest) {
+  pi.on("before_agent_start", async (event: any, ctx: any) => {
+    let prompt: string = event.systemPrompt;
+    const here = ctx?.cwd ?? process.cwd();
+    if (spec.workspace && here !== spec.workspace) {
+      prompt = prompt
+        .split(`Current working directory: ${here}`)
+        .join(`Current working directory: ${spec.workspace}`);
     }
-    const target = path.resolve(base, ref);
-    let body: string;
-    try {
-      body = fs.readFileSync(target, "utf8");
-    } catch {
-      return whole;
-    }
-    return expandImports(body, path.dirname(target), depth + 1);
+    const { context } = spec.socket ? await ask(spec.socket, "context", {}) : { context: "" };
+    if (context) prompt = `${prompt}\n\n${context}`;
+    if (prompt === event.systemPrompt) return;
+    return { systemPrompt: prompt };
   });
 }
 
-// Conventions live at the repo root and in two places below it: .claude/rules,
-// and nested CLAUDE.md files that scope themselves to a subdirectory. Walked
-// with sorted names so an unchanged tree produces the identical string, and
-// stopping at .git on the way. settings.json is deliberately not in this set —
-// it is configuration, some of it executable, and reading it into a prompt
-// would hand whoever can open a PR the room's hook runner.
-function conventionFiles(root: string): string[] {
-  const found: string[] = [];
-  const walk = (dir: string) => {
-    let names: string[];
-    try {
-      names = fs.readdirSync(dir).sort();
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      if (name === ".git") continue;
-      const full = path.join(dir, name);
-      let stat: fs.Stats;
-      try {
-        stat = fs.lstatSync(full);
-      } catch {
-        continue;
+// --- pi's own tools, with their hands on the room's machine --------------------
+//
+// pi's read, write, edit, ls and find are pi's — their schemas, their limits,
+// their output — built on the file operations below, each of which is one
+// request to the runner and one call the machine's executor answers itself
+// (`machine_files.py`). A path the model gives is resolved against the
+// workspace, as pi resolves it against its own directory.
+
+function files(spec: Manifest) {
+  const asked = (operation: string, filePath: string, more: object = {}) =>
+    ask(spec.socket, "files", { operation, path: filePath, ...more });
+  const readFile = async (filePath: string) =>
+    Buffer.from((await asked("read", filePath)).data, "base64");
+  const writeFile = async (filePath: string, content: string) => {
+    await asked("write", filePath, { data: Buffer.from(content, "utf8").toString("base64") });
+  };
+  return {
+    read: {
+      readFile,
+      access: async (filePath: string) => {
+        await asked("access", filePath);
+      },
+      detectImageMimeType: async (filePath: string) =>
+        (await asked("image", filePath)).type ?? null,
+    },
+    write: {
+      writeFile,
+      mkdir: async (dir: string) => {
+        await asked("mkdir", dir);
+      },
+    },
+    edit: {
+      readFile,
+      writeFile,
+      access: async (filePath: string) => {
+        await asked("access", filePath, { write: true });
+      },
+    },
+    ls: listing(asked),
+    find: {
+      exists: async (filePath: string) => (await asked("stat", filePath)).exists,
+      glob: async (pattern: string, cwd: string, options: { limit: number }) =>
+        (await asked("glob", cwd, { pattern, limit: options.limit })).paths,
+    },
+  };
+}
+
+// pi's ls stats every entry it lists. The listing already says which entries
+// are directories, so those stats are answered from it rather than each being
+// a command on the machine. What it says holds for one ls: each starts by
+// asking whether its directory exists, and that forgets the last one's.
+function listing(asked: (operation: string, filePath: string) => Promise<any>) {
+  const known = new Map<string, { exists: boolean; directory?: boolean }>();
+  const stat = async (filePath: string) => {
+    const seen = known.get(filePath) ?? (await asked("stat", filePath));
+    known.set(filePath, seen);
+    return seen;
+  };
+  return {
+    exists: async (filePath: string) => {
+      known.clear();
+      return (await stat(filePath)).exists;
+    },
+    stat: async (filePath: string) => {
+      const seen = await stat(filePath);
+      if (!seen.exists) throw new Error(`ENOENT: no such file or directory, stat '${filePath}'`);
+      return { isDirectory: () => Boolean(seen.directory) };
+    },
+    readdir: async (dir: string) => {
+      const { entries } = await asked("list", dir);
+      for (const [name, directory] of entries) {
+        known.set(path.join(dir, name), { exists: true, directory });
       }
-      if (stat.isDirectory()) {
-        walk(full);
-      } else if (stat.isFile()) {
-        const relative = path.relative(root, full).split(path.sep);
-        const isRule =
-          relative[0] === ".claude" && relative[1] === "rules" && relative.length >= 3;
-        const isNestedConvention =
-          dir !== root && (name === "CLAUDE.md" || name === "CLAUDE.local.md");
-        if (isRule || isNestedConvention || (dir === root && CONTEXT_FILES.includes(name))) {
-          found.push(full);
+      return entries.map(([name]: [string, boolean]) => name);
+    },
+  };
+}
+
+// pi's grep takes no operations for the search itself: it runs ripgrep where
+// pi runs. So the search is run on the machine, and what it found is written
+// out the way pi's grep writes it — the same lines, limits and notices.
+const GREP_MAX_LINE_LENGTH = 500; // pi's own, which `truncateLine` cuts to
+
+function grepOnTheMachine(spec: Manifest) {
+  const tool = createGrepTool(spec.workspace);
+  return {
+    ...tool,
+    async execute(_id: string, params: any, signal: any) {
+      if (signal?.aborted) throw new Error("Operation aborted");
+      const limit = Math.max(1, params.limit ?? 100);
+      const found = await ask(spec.socket, "files", {
+        operation: "grep",
+        path: path.resolve(spec.workspace, params.path || "."),
+        pattern: params.pattern,
+        glob: params.glob,
+        ignoreCase: params.ignoreCase,
+        literal: params.literal,
+        context: params.context,
+        limit,
+      });
+      if (signal?.aborted) throw new Error("Operation aborted");
+      if (found.matches.length === 0) {
+        return { content: [{ type: "text", text: "No matches found" }], details: undefined };
+      }
+      let linesTruncated = false;
+      const lines: string[] = [];
+      for (const match of found.matches) {
+        if (match.lines.length === 0) {
+          lines.push(`${match.path}:${match.line}: (unable to read file)`);
+          continue;
+        }
+        for (const [number, text] of match.lines) {
+          const cut = truncateLine(text);
+          if (cut.wasTruncated) linesTruncated = true;
+          lines.push(
+            number === match.line
+              ? `${match.path}:${number}: ${cut.text}`
+              : `${match.path}-${number}- ${cut.text}`,
+          );
         }
       }
-    }
+      const truncation = truncateHead(lines.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+      let output = truncation.content;
+      const details: any = {};
+      const notices: string[] = [];
+      if (found.limited) {
+        notices.push(`${limit} matches limit reached. Use limit=${limit * 2} for more, or refine pattern`);
+        details.matchLimitReached = limit;
+      }
+      if (truncation.truncated) {
+        notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+        details.truncation = truncation;
+      }
+      if (linesTruncated) {
+        notices.push(`Some lines truncated to ${GREP_MAX_LINE_LENGTH} chars. Use read tool to see full lines`);
+        details.linesTruncated = true;
+      }
+      if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+      return {
+        content: [{ type: "text", text: output }],
+        details: Object.keys(details).length > 0 ? details : undefined,
+      };
+    },
   };
-  walk(root);
-  return found;
 }
 
-function repositoryContext(cwd: string): string {
-  const root = path.resolve(cwd);
-  const parts: string[] = [];
-  const seenBodies = new Set<string>();
-  const seenPaths = new Set<string>();
-  // Root-level names lead in their documented order, then the walk's find.
-  const ordered = [
-    ...CONTEXT_FILES.map((name) => path.join(root, name)),
-    ...conventionFiles(root),
-  ];
-  for (const file of ordered) {
-    const resolved = path.resolve(file);
-    if (seenPaths.has(resolved)) continue;
-    seenPaths.add(resolved);
-    let body: string;
-    try {
-      body = fs.readFileSync(resolved, "utf8");
-    } catch {
-      continue;
-    }
-    if (!body.trim()) continue;
-    // The two names are often one file: a repository that keeps CLAUDE.md and
-    // symlinks AGENTS.md at it should not have it read into the turn twice.
-    const expanded = expandImports(body, path.dirname(resolved), 0);
-    if (seenBodies.has(expanded)) continue;
-    seenBodies.add(expanded);
-    const name = path.relative(root, resolved);
-    const kept =
-      expanded.length > CONTEXT_LIMIT
-        ? expanded.slice(0, CONTEXT_LIMIT) +
-          `\n\n[${name} truncated at ${CONTEXT_LIMIT} bytes]`
-        : expanded;
-    parts.push(`## ${name}\n\n${kept}`);
+// The shell under pi's bash: a command started on the machine and read from an
+// offset until it ends. Stopping it — the turn aborted, its timeout reached —
+// signals it there; it is read to its end either way, so what it printed on the
+// way out is not lost.
+function shell(spec: Manifest) {
+  return {
+    async exec(command: string, cwd: string, options: any): Promise<{ exitCode: number | null }> {
+      if (options.signal?.aborted) throw new Error("aborted");
+      const { id } = await ask(spec.socket, "shell", { operation: "start", command, cwd });
+      let stopped: "aborted" | "timeout" | null = null;
+      const stop = (why: "aborted" | "timeout") => {
+        if (stopped) return;
+        stopped = why;
+        ask(spec.socket, "shell", { operation: "signal", id, signal: 9 }).catch(() => {});
+      };
+      const onAbort = () => stop("aborted");
+      options.signal?.addEventListener?.("abort", onAbort, { once: true });
+      const timer = options.timeout
+        ? setTimeout(() => stop("timeout"), options.timeout * 1000)
+        : null;
+      try {
+        let offset = 0;
+        for (;;) {
+          const read = await ask(spec.socket, "shell", { operation: "read", id, offset, wait: 1 });
+          const data = Buffer.from(read.data, "base64");
+          if (data.length) options.onData(data);
+          offset = read.offset;
+          if (read.lost) throw new Error("执行机上的这条命令丢了：执行服务在它结束前重启过");
+          if (read.exit === undefined) continue;
+          if (stopped === "aborted") throw new Error("aborted");
+          if (stopped === "timeout") throw new Error(`timeout:${options.timeout}`);
+          return { exitCode: read.exit };
+        }
+      } finally {
+        if (timer) clearTimeout(timer);
+        options.signal?.removeEventListener?.("abort", onAbort);
+      }
+    },
+  };
+}
+
+// pi hands every tool its own directory with the call and a tool prefers it to
+// the one it was built with, so the call is handed the workspace instead.
+function inWorkspace(spec: Manifest, tool: any) {
+  return {
+    ...tool,
+    execute: (id: string, params: any, signal: any, onUpdate: any, ctx: any) =>
+      tool.execute(id, params, signal, onUpdate, { ...ctx, cwd: spec.workspace }),
+  };
+}
+
+function registerMachineTools(pi: any, spec: Manifest) {
+  const operations = files(spec);
+  for (const tool of [
+    createReadTool(spec.workspace, { operations: operations.read }),
+    createWriteTool(spec.workspace, { operations: operations.write }),
+    createEditTool(spec.workspace, { operations: operations.edit }),
+    createLsTool(spec.workspace, { operations: operations.ls }),
+    createFindTool(spec.workspace, { operations: operations.find }),
+    grepOnTheMachine(spec),
+  ]) {
+    pi.registerTool(inWorkspace(spec, tool));
   }
-  if (!parts.length) return "";
-  return `# 这个仓库自己的说明（${cwd}）\n\n${parts.join("\n\n")}`;
-}
-
-function carryRepositoryContext(pi: any) {
-  pi.on("before_agent_start", async (event: any, ctx: any) => {
-    const context = repositoryContext(ctx.cwd);
-    if (!context) return;
-    // Appended, never prepended: everything before it is the same on every turn
-    // of the session and is what a provider cache matches on. Read fresh each
-    // turn, so an edit to the file is in effect on the next one — and a turn
-    // where nothing changed produces the identical string.
-    return { systemPrompt: `${event.systemPrompt}\n\n${context}` };
-  });
+  if (spec.jobs) registerYieldingBash(pi, spec);
+  else pi.registerTool(inWorkspace(spec, createBashTool(spec.workspace, { operations: shell(spec) })));
 }
 
 // --- commands that outlive the turn ------------------------------------------
@@ -361,18 +482,19 @@ function carryRepositoryContext(pi: any) {
 // talk to, and a turn that gives up on them is a room that cannot run its own
 // project.
 //
-// What holds the command is a separate process with its own session (see
-// background.py). This side only ever names paths: whoever holds the pty master
-// decides whether the job survives pi, and it must.
+// The command runs on the room's machine with a terminal of its own (relay.py),
+// and the runner copies what it prints into a directory per job on this host
+// (jobs.py). This side starts, types into and stops a job through the runner,
+// and reads only those files: a job outlives pi, and a reader that started
+// after it did has nothing else to go on.
 
-const SETTLE_MS = 700; // long enough for a command that fails at once to say so
 const READ_LIMIT = 24 * 1024;
+// How long a typed line waits for its answer before the job's output is read.
+const ANSWER_MS = 700;
 // Switching to the alternate screen is a program announcing it is drawing a
 // display rather than printing a transcript. Looked for in the raw bytes,
 // before the stripping below removes the evidence.
 const ALTERNATE_SCREEN = /\x1b\[\?1049h/;
-
-type Job = { id: string; dir: string };
 
 function jobDir(spec: Manifest, id: string): string {
   // Names come from us, never from the model, so a job id cannot address a path.
@@ -401,17 +523,17 @@ function meta(dir: string): any {
   }
 }
 
-// What the guardian wrote on its way out when it never got to hold a terminal.
+// What the runner wrote when it could not start a job or stopped following it.
 // Empty for every job that ran, which is why it can be reported wherever it is
-// not empty: a job that printed nothing and a job whose guardian died having
-// printed nothing are the same silence until this file is read.
+// not empty: a job that printed nothing and a job that never started are the
+// same silence until this file is read.
 function failure(dir: string): string {
   return readFile(path.join(dir, "error")).trim();
 }
 
-// `exit` is written by the guardian, so it is missing both while a job runs and
-// after a guardian is killed outright — and a reader with only that file to go
-// on calls the second one `running`, forever. The pid settles it.
+// `exit` is written by the runner that copies the job, so it is missing both
+// while a job runs and after that runner is gone — and a reader with only that
+// file to go on calls the second one `running`, forever. The pid settles it.
 function alive(pid: unknown): boolean {
   if (typeof pid !== "number") return false;
   try {
@@ -489,51 +611,7 @@ function drain(
   }
 }
 
-// Why this job cannot be reached, in the order a reader wants to hear it: it
-// finished, or its guardian died and said why, or the connection itself failed
-// and the errno is all anyone has. Reported as one answer rather than the flat
-// "is not running any more" — that sentence was also true of a job whose
-// control socket had never been bound, and it sent the reader looking at the
-// command instead of at us.
-function unreachable(dir: string, id: string, cause: unknown): Error {
-  const over = finished(dir);
-  if (over) return new Error(`${id} 已结束，退出码 ${over.status}`);
-  const why = failure(dir);
-  if (why) return new Error(`${id} 的看守进程没能起来：\n${why}`);
-  return new Error(`${id} 的控制口连不上：${(cause as any)?.message ?? cause}`);
-}
-
-function tell(spec: Manifest, id: string, request: unknown): Promise<any> {
-  const dir = jobDir(spec, id);
-  // The address comes from the job's own record rather than from a second copy
-  // of the naming rule on this side: it is short for a reason (background.py
-  // says which), and of two copies of a rule one eventually becomes the wrong
-  // one.
-  const address = meta(dir).sock;
-  return new Promise((resolve, reject) => {
-    if (typeof address !== "string" || !address) {
-      return reject(unreachable(dir, id, "任务没有记下控制口的位置"));
-    }
-    const connection = net.connect(address);
-    let received = "";
-    connection.setEncoding("utf8");
-    connection.on("error", (cause: unknown) => reject(unreachable(dir, id, cause)));
-    connection.on("data", (chunk: string) => {
-      received += chunk;
-    });
-    connection.on("close", () => {
-      const answer = received ? JSON.parse(received) : { ok: false };
-      if (!answer.ok) return reject(new Error(answer.error || "the job refused"));
-      resolve(answer);
-    });
-    connection.write(JSON.stringify(request) + "\n");
-  });
-}
-
 function registerBackgroundTools(pi: any, spec: Manifest) {
-  const started = new Map<string, Job>();
-  let counter = 0;
-
   pi.registerTool({
     name: "bash_start",
     description:
@@ -552,53 +630,20 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       },
       required: ["command"],
     },
-    async execute(_id: string, params: any, _signal: any, _update: any, ctx: any) {
-      const id = `job-${++counter}-${Date.now().toString(36)}`;
+    async execute(_id: string, params: any) {
+      let id: string;
+      try {
+        ({ id } = await ask(spec.socket, "job_start", {
+          command: params.command,
+          label: params.label ?? "",
+          cwd: spec.workspace,
+        }));
+      } catch (cause: any) {
+        return { ...text(`没能起来：${cause?.message ?? cause}`), isError: true };
+      }
+      // The runner waited long enough for a command that fails at once to say
+      // so; a command that is merely slow to print its banner is running.
       const dir = jobDir(spec, id);
-      const child = spawn(
-        spec.python,
-        [
-          spec.background,
-          "--dir", dir,
-          "--cwd", ctx?.cwd ?? spec.state,
-          "--label", params.label ?? "",
-          "--command", params.command,
-        ],
-        { detached: true, stdio: "ignore" },
-      );
-      // A spawn that never reached a program (no python3, no such file) reports
-      // itself here and nowhere else — there is no process to have left a trace.
-      let unstarted = "";
-      child.on("error", (cause: any) => {
-        unstarted = String(cause?.message ?? cause);
-      });
-      child.unref();
-      await new Promise((done) => setTimeout(done, SETTLE_MS));
-      started.set(id, { id, dir });
-      // The settle wait is already being spent, so spend it on the one question
-      // this answer used to get wrong: a guardian that died in its first
-      // milliseconds still returned 「已启动…(还没有输出)」, and every later
-      // tool agreed — a job that is running, silent and unreachable reads
-      // exactly like a server that has not printed its banner yet.
-      //
-      // Said only when it is known, never inferred from an empty directory: the
-      // outer process exits as soon as it has forked, so its status is the one
-      // fact available at this point that separates a guardian that died from
-      // one that is merely slow — python3 starting cold on a loaded machine can
-      // outlast this wait, and a job wrongly reported dead is started again,
-      // which is two dev servers fighting over one port.
-      const why = failure(dir);
-      if (why) {
-        return { ...text(`${id} 没能起来：\n${why}`), isError: true };
-      }
-      if (unstarted || (child.exitCode !== null && child.exitCode !== 0)) {
-        return {
-          ...text(
-            `${id} 没能起来：看守进程没有留下任何记录（${unstarted || dir}）`,
-          ),
-          isError: true,
-        };
-      }
       const over = finished(dir);
       const first = drain(dir).body;
       return text(
@@ -632,7 +677,7 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       const over = finished(dir);
       const why = failure(dir);
       if (why) {
-        return { ...text(`${params.id} 的看守进程出错了：\n${why}`), isError: true };
+        return { ...text(`${params.id} 出错了：\n${why}`), isError: true };
       }
       const screen = drawing
         ? "\n\n[这个程序切到了全屏界面，之后它输出的是画面控制指令，读不出内容。" +
@@ -668,10 +713,13 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
           isError: true,
         };
       }
+      const dir = jobDir(spec, params.id);
+      const over = finished(dir);
+      if (over) throw new Error(`${params.id} 已结束，退出码 ${over.status}`);
       const body = params.newline === false ? params.text : `${params.text}\n`;
-      await tell(spec, params.id, { write: body });
-      await new Promise((done) => setTimeout(done, SETTLE_MS));
-      const { body: answer } = drain(jobDir(spec, params.id));
+      await ask(spec.socket, "job_write", { id: params.id, text: body });
+      await new Promise((done) => setTimeout(done, ANSWER_MS));
+      const { body: answer } = drain(dir);
       return text(answer || "(没有新输出)");
     },
   });
@@ -693,7 +741,9 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
         moved.abort();
         return text(`${params.id} 已收到停止信号`);
       }
-      await tell(spec, params.id, { signal: params.force ? 9 : 15 });
+      const over = finished(jobDir(spec, params.id));
+      if (over) return text(`${params.id} 已经结束，退出码 ${over.status}`);
+      await ask(spec.socket, "job_signal", { id: params.id, signal: params.force ? 9 : 15 });
       return text(`${params.id} 已收到停止信号`);
     },
   });
@@ -713,8 +763,6 @@ function registerBackgroundTools(pi: any, spec: Manifest) {
       return text(names.map((id) => describe(path.join(spec.jobs, id), id)).join("\n"));
     },
   });
-
-  return started;
 }
 
 // An exit is news, and it arrives while the turn that started the job is long
@@ -842,11 +890,11 @@ const YIELD_POLL_MS = 200;
 const adopted = new Map<string, AbortController>();
 
 function registerYieldingBash(pi: any, spec: Manifest) {
-  const local = createLocalBashOperations();
+  const machine = shell(spec);
   let counter = 0;
   pi.registerTool({
-    ...createBashTool(process.cwd()),
-    async execute(id: string, params: any, signal: any, onUpdate: any, ctx: any) {
+    ...createBashTool(spec.workspace, { operations: machine }),
+    async execute(id: string, params: any, signal: any, onUpdate: any) {
       const own = new AbortController();
       const forward = () => own.abort();
       signal?.addEventListener?.("abort", forward, { once: true });
@@ -856,7 +904,7 @@ function registerYieldingBash(pi: any, spec: Manifest) {
       let onEnd: ((status: number | null) => void) | null = null;
       const operations = {
         exec: (command: string, cwd: string, options: any) =>
-          local
+          machine
             .exec(command, cwd, {
               ...options,
               signal: own.signal,
@@ -866,13 +914,22 @@ function registerYieldingBash(pi: any, spec: Manifest) {
                 else printed.push(data);
               },
             })
-            .then((outcome: any) => {
-              ended = { status: outcome.exitCode };
-              onEnd?.(outcome.exitCode);
-              return outcome;
-            }),
+            .then(
+              (outcome: any) => {
+                ended = { status: outcome.exitCode };
+                onEnd?.(outcome.exitCode);
+                return outcome;
+              },
+              (error: any) => {
+                // Stopped (bash_kill, the turn aborted) or out of reach: it
+                // has ended all the same, and a job reads as ended by its file.
+                ended = { status: null };
+                onEnd?.(null);
+                throw error;
+              },
+            ),
       };
-      const running = createBashTool(ctx?.cwd ?? process.cwd(), { operations }).execute(
+      const running = createBashTool(spec.workspace, { operations }).execute(
         id,
         params,
         own.signal,
@@ -928,7 +985,8 @@ function registerYieldingBash(pi: any, spec: Manifest) {
 // --- subagents ---------------------------------------------------------------
 //
 // pi has no subagents; these three tools are the platform's (subagents.py).
-// `Task` starts one: a second pi on this machine, in this checkout, whose model
+// `Task` starts one: a second pi beside this one, with its hands on the same
+// machine and in the same checkout (the runner's), whose model
 // the platform admits as it does every native subagent's, and whose every entry
 // the runner writes into the session's log under the thread label its prompt
 // carries. `SendMessage` says more to one still running, `TaskStop` stops one
@@ -1078,7 +1136,7 @@ function registerSubagentTools(pi: any, spec: Manifest) {
 
 export default function (pi: any) {
   const spec = manifest();
-  carryRepositoryContext(pi);
+  placeTheSession(pi, spec);
   holdToAnswering(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
   else if (spec.unavailable) {
@@ -1088,12 +1146,15 @@ export default function (pi: any) {
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
   registerMcpTools(pi, spec);
+  // Always, runner or no runner: pi's own tools left in place would work on the
+  // session host, which holds nothing of the project and everything of every
+  // other room's. Without a runner to reach they fail, which is the truth.
+  registerMachineTools(pi, spec);
   if (spec.socket) applyProjectHooks(pi, spec);
   if (spec.socket && spec.subagents) registerSubagentTools(pi, spec);
-  if (spec.background && spec.python) {
+  if (spec.jobs) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);
-    registerYieldingBash(pi, spec);
   }
   // No reminder to publish lives here. A room that has heard nothing for a while
   // is reminded by the platform (ChatService.remind_silent_turns), which steers

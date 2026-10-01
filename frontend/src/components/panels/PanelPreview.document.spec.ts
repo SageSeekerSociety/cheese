@@ -17,7 +17,7 @@ const requestPreviewSession = vi.fn()
 const downloadFile = vi.fn()
 const attachmentRawUrl = vi.fn()
 const previewFileBytes = vi.fn()
-const previewDocumentPdf = vi.fn()
+const previewDocumentPdfSnapshot = vi.fn()
 const documentRevisions = vi.fn()
 const decideDocumentRevisions = vi.fn()
 
@@ -35,7 +35,7 @@ vi.mock('../../api', () => ({
   downloadFile: (...args: unknown[]) => downloadFile(...args),
   attachmentRawUrl: (...args: unknown[]) => attachmentRawUrl(...args),
   previewFileBytes: (...args: unknown[]) => previewFileBytes(...args),
-  previewDocumentPdf: (...args: unknown[]) => previewDocumentPdf(...args),
+  previewDocumentPdfSnapshot: (...args: unknown[]) => previewDocumentPdfSnapshot(...args),
   documentRevisions: (...args: unknown[]) => documentRevisions(...args),
   decideDocumentRevisions: (...args: unknown[]) => decideDocumentRevisions(...args),
   PreviewRendererUnavailable,
@@ -128,7 +128,7 @@ beforeEach(() => {
   readPreviewFile.mockResolvedValue(fileContent('output/评审简报.docx'))
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
   downloadFile.mockResolvedValue(undefined)
-  previewDocumentPdf.mockResolvedValue(new ArrayBuffer(4096))
+  previewDocumentPdfSnapshot.mockResolvedValue({ bytes: new ArrayBuffer(4096), sourceVersion: null })
   previewFileBytes.mockResolvedValue(new ArrayBuffer(2048))
   documentRevisions.mockResolvedValue({ path: 'output/评审简报.docx', revisions: [] })
 })
@@ -141,7 +141,7 @@ it('shows a Word report rather than offering it as a download', async () => {
   // The file the room produced is on screen, converted, not described.
   expect(pages.getAttribute('data-bytes')).toBe('4096')
   // 末尾那个 null 是来源：房间自己的文件，不是某个任务分支上的那一份。
-  expect(previewDocumentPdf).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx', null, 'live')
+  expect(previewDocumentPdfSnapshot).toHaveBeenCalledWith('topic-a', 'output/评审简报.docx', null, 'live')
   expect(screen.getByText('评审简报.docx')).toBeTruthy()
 })
 
@@ -155,11 +155,11 @@ it('reads a spreadsheet from its own bytes, not from a converted copy', async ()
   // for conversion.
   const sheet = await screen.findByTestId('sheet')
   expect(sheet.getAttribute('data-bytes')).toBe('2048')
-  expect(previewDocumentPdf).not.toHaveBeenCalled()
+  expect(previewDocumentPdfSnapshot).not.toHaveBeenCalled()
 })
 
 it('says the deployment has no renderer, and still hands the file over', async () => {
-  previewDocumentPdf.mockRejectedValue(new PreviewRendererUnavailable('这个部署没有启用文档预览'))
+  previewDocumentPdfSnapshot.mockRejectedValue(new PreviewRendererUnavailable('这个部署没有启用文档预览'))
 
   mount()
 
@@ -171,7 +171,7 @@ it('says the deployment has no renderer, and still hands the file over', async (
 })
 
 it('separates a file it cannot convert from a deployment that cannot convert', async () => {
-  previewDocumentPdf.mockRejectedValue(new Error('转换超时'))
+  previewDocumentPdfSnapshot.mockRejectedValue(new Error('转换超时'))
 
   mount()
 
@@ -285,7 +285,7 @@ it('sends a .pdf whose bytes read as text to the document viewer, not a blank fr
 it('关掉编辑器之后这一页按新版本重取，期间把这份文件交给房间开成页签', async () => {
   const { emitted } = mount()
   expect(await screen.findByTestId('pages')).toBeTruthy()
-  expect(previewDocumentPdf).toHaveBeenCalledTimes(1)
+  expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
 
   await fireEvent.click(screen.getByTestId('edit-file'))
   await fireEvent.click(await screen.findByTestId('editor-opened'))
@@ -293,16 +293,16 @@ it('关掉编辑器之后这一页按新版本重取，期间把这份文件交�
   expect((emitted()['open-file'] as unknown[][])[0][0]).toBe('output/评审简报.docx')
 
   await fireEvent.click(screen.getByTestId('editor-close'))
-  await waitFor(() => expect(previewDocumentPdf).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
 })
 
 it('恢复了一版之后这一页按新版本重取', async () => {
   mount()
   expect(await screen.findByTestId('pages')).toBeTruthy()
-  expect(previewDocumentPdf).toHaveBeenCalledTimes(1)
+  expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
 
   await fireEvent.click(screen.getByTestId('file-history'))
   await fireEvent.click(await screen.findByTestId('restore'))
 
-  await waitFor(() => expect(previewDocumentPdf).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
 })

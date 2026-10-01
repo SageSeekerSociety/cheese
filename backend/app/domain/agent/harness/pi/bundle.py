@@ -1,33 +1,45 @@
-"""The pi runner archive the session machine runs."""
+"""The pi runner archive the session host runs."""
+
+from pathlib import Path
 
 from app.domain.agent.harness.driven import bundle
+
+#: The platform's CLI (`catalog.py`): its tool table and its argparse tree, one
+#: stdlib-only file that lives outside `app/`, shipped as it is rather than as a
+#: second copy of either.
+PLATFORM_TOOLS = Path(__file__).resolve().parents[5] / "sandbox" / "cheese"
 
 
 def build() -> bytes:
     return bundle.build(
         "app.domain.agent.harness.pi.entry",
         (
-            # The platform CLI's own argparse tree, whole: it is one
-            # standard-library-only file, and a second copy of the mapping between
-            # a command and a tool schema is the thing worth carrying it to avoid.
+            # The CLI's argparse tree, turned into tool schemas and back.
             "domain/agent/cli_worker.py",
-            # `RemoteClient`, which carries a remote MCP server's calls to the
-            # platform the way Codex's tools do (`mcp.py`).
+            # `RemoteClient`: every file, command, hook and MCP call of the
+            # session goes to the room's machine, or the platform, through it.
             "domain/agent/executor_transport.py",
-            # The project's tool hooks, by the executor's own rules (`hooks.py`).
-            "domain/agent/project_hooks.py",
             "domain/agent/harness/pi/rpc.py",
             "domain/agent/harness/pi/journal.py",
             "domain/agent/harness/pi/catalog.py",
             "domain/agent/harness/pi/hooks.py",
+            "domain/agent/harness/pi/machine.py",
+            "domain/agent/harness/pi/jobs.py",
             "domain/agent/harness/pi/mcp.py",
+            # Run on the room's machine, read from the archive as source.
+            "domain/agent/harness/pi/repository.py",
             "domain/agent/harness/pi/project_skills.py",
+            "domain/agent/harness/pi/relay.py",
             "domain/agent/harness/pi/subagents.py",
             # How a subagent's prompt names the card its work lands on, read
             # the way the other harnesses' adapters read it (`subagents.py`).
             "domain/room_task/thread_label.py",
             "domain/agent/harness/pi/runner.py",
             "domain/agent/harness/pi/entry.py",
+            "domain/agent/harness/pi/host.py",
         ),
-        extra={"app/domain/room_task/__init__.py": ""},
+        extra={
+            "app/domain/room_task/__init__.py": "",
+            "app/domain/agent/harness/pi/cheese.py": PLATFORM_TOOLS.read_text(),
+        },
     )

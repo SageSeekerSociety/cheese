@@ -16,6 +16,7 @@ from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import (
     Placement,
     ScreenSetupError,
+    discovery_missed,
     mint_session_token,
     startup_refused,
 )
@@ -44,10 +45,6 @@ class CodexChannel:
         self.name = channel.name
         self.provisions_machine = channel.provisions_machine
         self.deferred_work = channel.deferred_work
-
-    @property
-    def hands_here(self) -> bool:
-        return self.channel.hands_here
 
     def available(self):
         return self.channel.available()
@@ -186,12 +183,7 @@ class CodexChannel:
                     center, place.runtime["state"], "ping", {}, timeout=15
                 )
             except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
-                logger.warning(
-                    "Codex discovery failed topic=%s device=%s: %s",
-                    room_id,
-                    center,
-                    exc,
-                )
+                discovery_missed(logger, "Codex", room_id, center, exc)
                 continue
             if status["alive"]:
                 ref = SessionRef(project_id, room_id, handle, harness=harness)

@@ -60,9 +60,11 @@ from app.domain.block.notice_text import say
 
 # Every read of a room's journal is a call to its device, and an idle room
 # answers it with nothing. Read at the floor while there is anything to read;
-# let the wait grow towards the ceiling once the journal has gone quiet.
+# let the wait grow towards the ceiling once the journal has gone quiet. The
+# ceiling is a safety net, not how a quiet room hears its session: a runner
+# rings for records nobody has read (``driven.runner``), which wakes the read.
 READ_FLOOR_S = 0.1
-READ_CEILING_S = 1.0
+READ_CEILING_S = 30.0
 # How long a runner may go unanswered while a turn is open before the turn is
 # called dead. Longer than the connection owner takes to come back after a
 # release, and than a device takes to reconnect after a network blip: those
@@ -127,9 +129,6 @@ class SessionChannel[H: Handle](Protocol):
     provisions_machine: bool
     deferred_work: bool
     builds_model_env: bool
-
-    @property
-    def hands_here(self) -> bool: ...
 
     def available(self) -> bool: ...
 
@@ -246,10 +245,6 @@ class DrivenRuntime[H: Handle]:
     @property
     def builds_model_env(self) -> bool:
         return self.channel.builds_model_env
-
-    @property
-    def hands_here(self) -> bool:
-        return self.channel.hands_here
 
     def available(self) -> bool:
         return self.channel.available()
@@ -473,6 +468,14 @@ class DrivenRuntime[H: Handle]:
         if event := self.woken.get(seat):
             event.set()
 
+    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Read this seat now, if this runtime reads it at all."""
+        seat = (topic_id, agent_handle)
+        if seat not in self.subscriptions:
+            return False
+        self._wake(seat)
+        return True
+
     async def _wait(self, seat: Seat, delay: float) -> None:
         event = self.woken.setdefault(seat, asyncio.Event())
         try:
@@ -581,8 +584,8 @@ class DrivenRuntime[H: Handle]:
                 # is due immediately. A room nobody is talking to costs a call
                 # every 100ms for an empty page, and the cost is per room:
                 # eleven of them idling held a core between them. Sending wakes
-                # the wait, so nothing a person does is served at the
-                # backed-off rate.
+                # the wait, and so does the runner's ring, so neither a person
+                # nor the session is served at the backed-off rate.
                 if delivered or seat in self.work:
                     delay = READ_FLOOR_S
                 else:

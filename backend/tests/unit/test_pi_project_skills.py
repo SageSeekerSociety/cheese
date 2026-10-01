@@ -20,6 +20,7 @@ import pytest
 
 from app.domain.agent.harness import Opening
 from app.domain.agent.harness.pi.runner import Runner
+from tests.support.room_machine import room_machine
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURE = Path(__file__).parent / "fixtures/pi-entries.json"
@@ -87,17 +88,22 @@ async def started(tmp_path: Path, cwd: Path) -> dict[str, str]:
     binary.chmod(0o700)
     recorded = tmp_path / "argv.json"
     runner = Runner(tmp_path / "state")
-    try:
-        await runner.start(
-            Opening("system prompt", None, agent_handle="teammate"),
-            binary=str(binary),
-            cwd=str(cwd),
-            env={"PATH": "/usr/bin:/bin", "PI_FAKE_ARGV": str(recorded)},
-            args=["--no-skills"],
-            skills=PLATFORM,
-        )
-    finally:
-        await runner.close()
+    here = tmp_path / "session-host"
+    here.mkdir()
+    # The checkout is on the room's machine; pi loads what the runner copied.
+    with room_machine(tmp_path / "machine", checkout=cwd) as target:
+        try:
+            await runner.start(
+                Opening("system prompt", None, agent_handle="teammate"),
+                binary=str(binary),
+                cwd=str(here),
+                env={"PATH": "/usr/bin:/bin", "PI_FAKE_ARGV": str(recorded)},
+                args=["--no-skills"],
+                target=target,
+                skills=PLATFORM,
+            )
+        finally:
+            await runner.close()
     return offered(json.loads(recorded.read_text()))
 
 

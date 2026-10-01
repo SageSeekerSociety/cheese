@@ -27,6 +27,14 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 
 
+async def latest_preview_for_room(
+    db: AsyncSession, room_id: uuid.UUID
+) -> BlockOut | None:
+    """Return the room's latest artifact through the block read boundary."""
+    block = await BlockRepository(db).latest_artifact(room_id)
+    return BlockOut.model_validate(block) if block is not None else None
+
+
 async def weeklies_for_project(
     db: AsyncSession, project_id: uuid.UUID
 ) -> list[BlockOut]:

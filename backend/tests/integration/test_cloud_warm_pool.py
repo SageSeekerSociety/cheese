@@ -818,3 +818,69 @@ def test_a_pile_of_failed_cleanups_stops_replacement(warm_case, monkeypatch):
             assert "preparing" not in states
 
     client.portal.call(lambda: run())
+
+
+def _deleting(machine_id, since):
+    return WarmMachine(
+        state="deleting",
+        machine_id=machine_id,
+        create_request={"hostname": f"warm-deleting-{machine_id}"},
+        updated_at=since,
+    )
+
+
+def _provider_keeps_what_it_deletes(cloud, monkeypatch, *machine_ids):
+    """A provider that accepts every deletion and never carries one out."""
+    for machine_id in machine_ids:
+        cloud.machines[machine_id] = {"id": machine_id, "status": "error"}
+
+    async def accept(machine_id):
+        cloud.deleted.append(machine_id)
+
+    monkeypatch.setattr(cloud, "delete_machine", accept)
+
+
+def test_a_machine_the_provider_never_deletes_stops_holding_the_pool(
+    warm_case, monkeypatch
+):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+    _provider_keeps_what_it_deletes(cloud, monkeypatch, 901)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add(_deleting(901, datetime.now(UTC) - timedelta(hours=8)))
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert "deleting" not in states
+            # Still a record of something that may be billed, for a person.
+            assert states.count("cleanup_failed") == 1
+            assert states.count("preparing") == 1
+
+    client.portal.call(lambda: run())
+
+
+def test_a_deletion_still_under_way_keeps_its_place(warm_case, monkeypatch):
+    client, topics, actor, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+    _provider_keeps_what_it_deletes(cloud, monkeypatch, 902)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            session.add(_deleting(902, datetime.now(UTC) - timedelta(minutes=1)))
+            await session.commit()
+            await WarmPoolService(session, cloud).sweep()
+            states = (await session.scalars(select(WarmMachine.state))).all()
+            assert states.count("deleting") == 1
+            assert "preparing" not in states
+
+    client.portal.call(lambda: run())

@@ -26,7 +26,6 @@ from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
 )
-from app.domain.agent.harness.pi import device_launch as pi_launch
 from app.domain.block.notice_text import say
 from app.domain.machine import claude_dist
 
@@ -39,7 +38,6 @@ SSH_TIMEOUT_S = 180.0
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
     "tools": say("cloudStepTools"),
-    "runtime": say("cloudStepRuntime"),
     "connector": say("cloudStepConnector"),
     "connect": say("cloudStepConnect"),
     "verify": say("cloudStepVerify"),
@@ -137,7 +135,6 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
     origin_clean = origin.rstrip("/")
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
-    pi_script = pi_launch.install(home="$HOME", base=origin_clean)
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -235,16 +232,6 @@ if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
   echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
   exit 1
 fi
-# pi, the second harness a room can ask for, placed by the same rule and from
-# the same platform route. Fatal for the reason the claude check above is: a
-# machine that enrols green advertises capacity for every harness we run, and
-# the first room to ask for pi is a bad place to discover it never had any.
-#
-# It is also the one check that can fail on a machine claude is fine on — the
-# vendor publishes no musl build — and that is exactly the case worth hearing
-# about here rather than reading out of one room's launcher output.
-echo CHEESE_STARTUP:runtime
-{pi_script}
 umask 077
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 echo CHEESE_STARTUP:connector

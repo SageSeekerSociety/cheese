@@ -25,6 +25,7 @@ from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.channel import (
     Placement,
+    discovery_missed,
     mint_session_token,
     startup_refused,
 )
@@ -60,10 +61,6 @@ class ClaudeCodeChannel:
         self.name = channel.name
         self.provisions_machine = channel.provisions_machine
         self.deferred_work = channel.deferred_work
-
-    @property
-    def hands_here(self) -> bool:
-        return self.channel.hands_here
 
     def available(self) -> bool:
         return self.channel.available()
@@ -244,12 +241,7 @@ class ClaudeCodeChannel:
                     center, runtime["state"], "ping", {}, timeout=15
                 )
             except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
-                logger.warning(
-                    "Claude Code discovery failed topic=%s device=%s: %s",
-                    room_id,
-                    center,
-                    exc,
-                )
+                discovery_missed(logger, "Claude Code", room_id, center, exc)
                 continue
             if not status.get("alive"):
                 continue

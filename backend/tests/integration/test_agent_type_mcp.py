@@ -11,18 +11,13 @@ already uses stays the project's.
 import json
 import sys
 import uuid
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import Placement
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
-from app.domain.agent.harness.pi.channel import PiChannel
 from app.domain.agent_instance import services as agent_instances
 from app.domain.agent_type.library import load_type_library
 from app.domain.remote_mcp import service
@@ -179,7 +174,7 @@ def room(client, upstream):
 
 
 def _central_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
-    """The execution target a Claude Code or Codex session of this teammate
+    """The execution target a session of this teammate, on any harness,
     starts with. A session is keyed by the teammate's handle; its credential
     names the seat it acts as."""
     central: Any = central_sessions.channel(client, monkeypatch)
@@ -202,28 +197,6 @@ def _central_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
     return client.portal.call(open_session)
 
 
-def _pi_configuration(client, pid, tid, handle, seat) -> dict:
-    """What `PiChannel` hands the machine for this teammate's session."""
-    hub: Any = SimpleNamespace(
-        is_online=lambda _machine: True,
-        call_executor=AsyncMock(return_value={"alive": True, "session_id": "s"}),
-    )
-    device = DeviceChannel(hub=hub, session_factory=client.test_factory)
-    device.precheck = AsyncMock(  # type: ignore[method-assign]
-        return_value=Placement("machine", 1, seat, rented=True)
-    )
-    device.ensure_ready = AsyncMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(resource_id=tid)
-    )
-    channel = PiChannel(device)
-    channel._remember = AsyncMock()  # type: ignore[method-assign]
-    ref = SessionRef(pid, tid, handle, harness="pi")
-    client.portal.call(lambda: channel.ensure(ref, Opening(system_prompt="Room")))
-    opened = device.ensure_ready.await_args
-    assert opened is not None
-    return opened.kwargs["launch"].configuration(str(pid))
-
-
 def test_a_types_stdio_server_is_handed_only_to_its_teammates_sessions(
     client, room, types, monkeypatch
 ):
@@ -235,8 +208,3 @@ def test_a_types_stdio_server_is_handed_only_to_its_teammates_sessions(
     assert own["agent_mcp"] == {"lint": LINT}
     other = _central_target(client, monkeypatch, pid, tid, "plain-1", plain)
     assert "agent_mcp" not in other
-
-    assert _pi_configuration(client, pid, tid, "tracer-1", tracer)["agent_mcp"] == {
-        "lint": LINT
-    }
-    assert _pi_configuration(client, pid, tid, "plain-1", plain)["agent_mcp"] is None

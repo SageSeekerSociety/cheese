@@ -26,6 +26,7 @@ from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.service import AgentCompacting, AgentResult
+from tests.support.room_machine import NO_MACHINE
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -68,6 +69,7 @@ async def replay(tmp_path: Path, recording: dict, turns: int) -> list[dict]:
         cwd=str(tmp_path),
         env={"PATH": "/usr/bin:/bin"},
         args=[],
+        target=NO_MACHINE,
     )
     try:
         for number in range(1, turns + 1):
