@@ -37,4 +37,12 @@ async def ask_origin(chat, project_id, topic_id, author):
             return None
         asked = turn.author if names_a_person(turn.author) else None
         task_id = str(turn.task_id) if turn.task_id else None
-    return {**origin, "asked_by": author, "asked": asked, "task_id": task_id}
+    # Delivery addresses the authenticated roster seat; native lookup used the
+    # project's session handle above.
+    return {
+        **origin,
+        "recipient_handle": author,
+        "asked_by": author,
+        "asked": asked,
+        "task_id": task_id,
+    }
