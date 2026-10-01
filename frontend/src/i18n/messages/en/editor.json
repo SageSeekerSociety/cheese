@@ -1,5 +1,6 @@
 {
   "image": {
     "tooltip": "Insert image"
-  }
+  },
+  "renderError": "Couldn't render: {text}"
 }

@@ -61,6 +61,14 @@ class TaskService:
     async def get_task(self, task_id: int) -> Task | None:
         return await self._repo.get_by_id(task_id)
 
+    @classmethod
+    def of(cls, session: AsyncSession) -> "TaskService":
+        return cls(TaskRepository(session=session))
+
+    async def list_joined(self, user_id: int, *, limit: int = 30) -> Sequence[Task]:
+        """The tasks ``user_id`` takes part in, across every space."""
+        return await self._repo.list_joined(user_id, limit=limit)
+
     async def enumerate_tasks(
         self,
         *,

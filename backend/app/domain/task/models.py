@@ -17,7 +17,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
-from app.domain.task.types import TaskAIAdviceStatus
 
 task_seq = Sequence("task_seq")
 task_membership_seq = Sequence("task_membership_seq")
@@ -25,7 +24,6 @@ task_tags_relation_seq = Sequence("task_tags_relation_seq")
 task_submission_seq = Sequence("task_submission_seq")
 task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
-task_ai_advice_context_seq = Sequence("task_ai_advice_context_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
 task_access_domain_seq = Sequence("task_access_domain_seq")
 task_attachment_seq = Sequence("task_attachment_seq")
@@ -295,60 +293,6 @@ class TaskSubmissionReview(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-
-class TaskAIAdvice(Base):
-    __tablename__ = "task_ai_advice"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    task_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("task.id"), nullable=False
-    )
-    model_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(32), nullable=False, default=TaskAIAdviceStatus.PENDING.value
-    )
-    topic_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    knowledge_fields: Mapped[str | None] = mapped_column(Text, nullable=True)
-    learning_paths: Mapped[str | None] = mapped_column(Text, nullable=True)
-    methodology: Mapped[str | None] = mapped_column(Text, nullable=True)
-    team_tips: Mapped[str | None] = mapped_column(Text, nullable=True)
-    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-
-
-class TaskAIAdviceContext(Base):
-    __tablename__ = "task_ai_advice_context"
-
-    id: Mapped[int] = mapped_column(
-        BigInteger, task_ai_advice_context_seq, primary_key=True
-    )
-    task_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("task.id"), nullable=False
-    )
-    section: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    section_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

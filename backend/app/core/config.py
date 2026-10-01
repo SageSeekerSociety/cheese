@@ -328,6 +328,15 @@ class Settings(BaseSettings):
     docs_assistant_agentic: bool = True
     # Answers in flight across one backend process.
     docs_assistant_concurrency: int = 8
+
+    # --- A person's 芝士 outside any project (app/domain/assistant, #2285) ---
+    # The gateway model it answers with; charged to the asker's personal
+    # credits at this model's rates, so the model must be priced on the gateway.
+    assistant_model: str = "deepseek-flash"
+    assistant_max_tokens: int = 1500
+    # When one question's prompt passes this many tokens, the older part of the
+    # conversation is summarised and dropped from what the model is sent.
+    assistant_history_cap_tokens: int = 16_000
     docs_question_retention_days: int = 90
     # How long an admin's pass to /docs/dev/ lasts before it is re-issued.
     docs_dev_session_seconds: int = 3600
@@ -934,23 +943,10 @@ class Settings(BaseSettings):
     chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (task AI advice, rank checks, email/notifications, real-name
+    # (PDF task drafts, rank checks, email/notifications, real-name
     # encryption) read these off settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_base_url: str = Field(
-        default="https://api.openai.com/v1", alias="OPENAI_BASE_URL"
-    )
-    openai_default_model: str = Field(
-        default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL"
-    )
-    openai_reasoning_model: str = Field(
-        default="o1-mini", alias="OPENAI_REASONING_MODEL"
-    )
-    openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
-    openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
-    openai_timeout_seconds: float = Field(default=180.0, alias="OPENAI_TIMEOUT_SECONDS")
     # The gateway model that turns an uploaded PDF into task drafts; each page
     # is one call, charged to the publisher's personal credits.
     task_draft_model: str = "deepseek-flash"
@@ -960,7 +956,6 @@ class Settings(BaseSettings):
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
-    ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
