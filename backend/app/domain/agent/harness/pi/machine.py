@@ -20,6 +20,7 @@ Standard library only: this runs in the runner archive on the session host.
 import base64
 import importlib.resources
 import json
+import re
 import shlex
 import uuid
 from pathlib import Path
@@ -74,6 +75,16 @@ print(json.dumps(found))
 """
 
 
+#: Which calls a `permissions.deny` rule of a kind can refuse, as Claude Code
+#: documents them (`project_hooks.denying_rule`): a `Read` rule covers reading
+#: a path and editing it, an `Edit` rule editing it. Any other rule names the
+#: one tool it is about.
+DENIED_BY = {
+    "Read": ("Read", "Edit", "Write", "NotebookEdit"),
+    "Edit": ("Edit", "Write", "NotebookEdit"),
+}
+
+
 class WorkReady(RuntimeError):
     """The machine was taken just now, and the repository has instructions the
     session has not read: the operation is not run, and these are its answer."""
@@ -122,6 +133,7 @@ class Machine:
         self.instructions = ""
         # The project's settings as `has_hooks` last read them.
         self.settings: list | None = None
+        self.settings_generation: object = None
 
     # --- where things are ------------------------------------------------------
 
@@ -361,25 +373,41 @@ class Machine:
 
     # --- the project's hooks ----------------------------------------------------
 
-    def has_hooks(self, event: str) -> bool:
+    def has_hooks(self, event: str, tool: str) -> bool:
         """Whether the project has anything for the machine to run or check
-        around a call at `event`: a hook for it, or (before a call) a
-        `permissions.deny`. Asked of the project's settings once and kept until
-        `forget_settings`, so a project without hooks costs its calls nothing."""
-        if self.settings is None:
+        around a call to `tool` (as the hooks name it) at `event`: a hook whose
+        matcher takes it, or (before a call) a `permissions.deny` rule for that
+        kind of tool. So a call no hook is written for costs nothing.
+
+        The settings are read once for the machine the session holds, as a
+        Claude Code session takes the project's hooks when it starts and again
+        when it attaches to a machine (`executor_transport
+        .register_project_hooks`), and not on every prompt."""
+        generation = self.client.config.get("generation")
+        if self.settings is None or generation != self.settings_generation:
             self.settings = self._on_machine_text(SETTINGS)
+            self.settings_generation = generation
         for source in self.settings:
             if not isinstance(source, dict):
                 return True  # unreadable: the executor says why
-            if (source.get("hooks") or {}).get(event):
-                return True
-            if event == "PreToolUse" and (source.get("permissions") or {}).get("deny"):
-                return True
+            for group in (source.get("hooks") or {}).get(event) or []:
+                matcher = group.get("matcher", "*") if isinstance(group, dict) else ""
+                try:
+                    if matcher in ("", "*") or re.fullmatch(matcher, tool):
+                        return True
+                except re.error:
+                    return True
+            if event != "PreToolUse":
+                continue
+            for rule in (source.get("permissions") or {}).get("deny") or []:
+                if isinstance(rule, str) and tool in DENIED_BY.get(
+                    rule.split("(", 1)[0], (rule.split("(", 1)[0],)
+                ):
+                    return True
+                if isinstance(rule, str) and rule.startswith("mcp__"):
+                    if tool.startswith(rule.split("(", 1)[0].rstrip("*")):
+                        return True
         return False
-
-    def forget_settings(self) -> None:
-        """The project's settings may have changed: ask again before a call."""
-        self.settings = None
 
     def hooks(
         self,
