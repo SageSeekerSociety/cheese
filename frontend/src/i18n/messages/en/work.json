@@ -202,7 +202,6 @@
       "aiProposal": "AI request and proposal",
       "replacement": "Proposed source replacement",
       "baseVersion": "Based on document version {version}",
-      "range": "Source UTF-8 bytes {start}–{end}",
       "humanAccept": "Accept and save as me",
       "accepted": "Accepted by {actor}, saved as version {version}",
       "cancel": "Cancel request",

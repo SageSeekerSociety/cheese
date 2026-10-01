@@ -202,7 +202,6 @@
       "aiProposal": "AI 请求与提案",
       "replacement": "建议替换原文",
       "baseVersion": "基于文档第 {version} 版",
-      "range": "原文 UTF-8 字节范围 {start}–{end}",
       "humanAccept": "由我采纳并保存",
       "accepted": "{actor} 已采纳，保存为第 {version} 版",
       "cancel": "取消请求",

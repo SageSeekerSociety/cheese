@@ -83,9 +83,6 @@ function keydown(event: KeyboardEvent) {
           <pre dir="auto">{{ card.proposal.replacement }}</pre>
         </details>
         <p>{{ t('work.room.docAi.baseVersion', { version: card.proposal.base_version }) }}</p>
-        <p>
-          {{ t('work.room.docAi.range', { start: card.proposal.selection.start, end: card.proposal.selection.end }) }}
-        </p>
         <button
           v-if="card.proposal.state === 'pending'"
           type="button"
