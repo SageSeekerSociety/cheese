@@ -5,7 +5,6 @@
   },
   "action": {
     "refresh": "Refresh",
-    "refreshing": "Collecting…"
   },
   "prov": {
     "collected": "Collected commit",

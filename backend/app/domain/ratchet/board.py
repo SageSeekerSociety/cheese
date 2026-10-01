@@ -31,13 +31,8 @@ from typing import Any
 _DIRECTIONS = {"down", "up"}
 _NOT_COLLECTED = "not_collected"
 
-#: The one check whose number is a diff, not a tree. `.claude/scripts/check-file-sizes.py`
-#: reads only the files that changed against the merge base, so a collection that runs on
-#: a push to main — where nothing changed — records `actual = 0` because nothing was
-#: *judged*, not because nothing is over the cap. Read on its own that 0 says the tree is
-#: clean, which is exactly backwards: the same snapshot's own board counts 16 files over
-#: their cap. The tree-wide numbers are stored beside the checks in that board and are
-#: carried to the area holding this check, so the two answers travel together.
+# The gate judges changed files; board.size measures the whole tree.
+# A zero diff count does not mean the repository has no oversized files.
 _SIZE_CHECK_ID = "file-sizes"
 
 
@@ -247,11 +242,7 @@ def build_board(
                 if isinstance(record.get("stale"), list):
                     latest_stale[check_id] = record["stale"]
 
-    # The tree-wide numbers ride on the size check itself, the one number whose answer is
-    # a diff: 「这次改过的文件里有没有超的」 is only readable next to 「树上超了多少」, and
-    # the page that shows one without the other says the tree is clean when it is not.
-    # A collection whose board was not measured carries `None` — the page draws that as
-    # 未知, never as 0.
+    # Use only the latest tree measurement; missing data must remain unknown.
     tree = _tree_size(getattr(rows[0], "payload", None) if rows else None)
 
     for check_id, points in series.items():

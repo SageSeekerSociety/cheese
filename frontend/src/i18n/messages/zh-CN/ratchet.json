@@ -5,7 +5,6 @@
   },
   "action": {
     "refresh": "刷新",
-    "refreshing": "拉取中…"
   },
   "prov": {
     "collected": "采集提交",
