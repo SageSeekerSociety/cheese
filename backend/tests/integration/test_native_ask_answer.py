@@ -50,6 +50,9 @@ from tests.unit.test_claude_runner import Machine
         "history",
         "history-pruned",
         "ordinary-start",
+        "history-multi",
+        "history-multi-session",
+        "history-multi-missing",
     ],
 )
 def test_http_answer_continues_original_native_executor(
@@ -178,6 +181,157 @@ def test_http_answer_continues_original_native_executor(
             client.portal.call(initial_work),
             native_runner.process,
         )
+        if mode.startswith("history-multi"):
+            from app.domain.agent.harness.claude_code.journal import Journal
+            from app.domain.agent.harness.driven import runtime as driven_runtime
+            from app.domain.delivery.input_identity import InputEffects
+
+            high = uuid.UUID("ffffffff-ffff-4fff-bfff-ffffffffffff")
+            low = uuid.UUID("00000000-0000-4000-8000-000000000001")
+            directive = headless_contract.do(
+                "Bash",
+                command=(
+                    f"for i in $(seq 1 1200); do test -f '{gate}' && break; "
+                    "sleep 0.05; done; printf ASK_MULTI_HISTORY"
+                ),
+                description="hold two-input execution",
+            )
+            machine.server.state["actions"] = [
+                *([None] * len(machine.server.state["requests"])),
+                lambda _body: json.loads(directive[3:]),
+                None,
+            ]
+
+            async def prepare_multi():
+                ref = handle.session
+                registrar = chat._input_registrar(InputEffects())
+                await runtime.send(
+                    ref,
+                    directive,
+                    work_id=high,
+                    register_input=registrar,
+                )
+                async with asyncio.timeout(30):
+                    while not native_runner.working:
+                        await asyncio.sleep(0.01)
+                real_uuid4 = uuid.uuid4
+                try:
+                    # Change only the newly constructed steer's UUID. Runner
+                    # admission, pipes, echoes and result remain unmodified.
+                    monkeypatch.setattr(driven_runtime.uuid, "uuid4", lambda: low)
+                    assert await runtime.deliver(
+                        topic,
+                        "同轮追加输入",
+                        expected_work_id=high,
+                        agent_handle=ref.agent_handle,
+                        register_input=registrar,
+                    )
+                finally:
+                    monkeypatch.setattr(driven_runtime.uuid, "uuid4", real_uuid4)
+                gate.touch()
+                async with asyncio.timeout(90):
+                    while native_runner.working:
+                        await asyncio.sleep(0.05)
+                await settle_turn(chat, topic)
+                await runtime.stop_listening()
+                async with client.test_request_factory() as session:
+                    rows = list(
+                        await session.scalars(
+                            select(NativeInput).where(
+                                NativeInput.topic_id == topic,
+                                NativeInput.execution_work_id == high,
+                            )
+                        )
+                    )
+                    assert {row.input_id for row in rows} == {high, low}
+                    assert all(row.completed_at for row in rows)
+                    for row in rows:
+                        row.completed_at = None
+                    await session.commit()
+
+            client.portal.call(prepare_multi)
+            journal = Journal(handle.mirror)
+            try:
+                records = []
+                after = 0
+                while page := journal.read(after):
+                    records.extend(page)
+                    after = page[-1]["sequence"]
+                work_records = [
+                    entry
+                    for entry in records
+                    if (entry["record"].get("cheese") or {}).get("work_id") == str(high)
+                ]
+                echoes = [
+                    entry["record"]["uuid"]
+                    for entry in work_records
+                    if (entry["record"].get("cheese") or {}).get("receipt")
+                ]
+                assert echoes == [str(high), str(low)]
+                result = next(
+                    entry
+                    for entry in work_records
+                    if entry["record"].get("type") == "result"
+                )
+                assert result["record"]["cheese"]["completion_input_ids"] == [
+                    str(low),
+                    str(high),
+                ]
+                landed = journal.recall("landed")
+                assert int(landed) >= result["sequence"]
+                if mode != "history-multi":
+                    # Corrupt just the retained result, not native execution.
+                    mutated = result["record"]
+                    if mode == "history-multi-session":
+                        mutated["cheese"]["completion_session_id"] = "foreign-session"
+                    else:
+                        mutated["cheese"]["completion_input_ids"] = [str(low)]
+                    with journal.connection:
+                        journal.connection.execute(
+                            "UPDATE records SET record=? WHERE sequence=?",
+                            (json.dumps(mutated), result["sequence"]),
+                        )
+            finally:
+                journal.close()
+            runtime = ClaudeCodeRuntime(channel)
+            chat = ChatService(
+                session_factory=client.test_request_factory,
+                base_system_prompt="你是芝士。",
+                workspace_root=str(machine.workspace),
+                compute=ComputePool([runtime], channel.name),
+            )
+            app.dependency_overrides[get_chat_service] = lambda: chat
+            assert client.portal.call(chat.recover_sessions) == 1
+            client.portal.call(chat.replays_settled)
+
+            async def assert_multi_repaired():
+                async with client.test_request_factory() as session:
+                    rows = list(
+                        await session.scalars(
+                            select(NativeInput).where(
+                                NativeInput.topic_id == topic,
+                                NativeInput.execution_work_id == high,
+                            )
+                        )
+                    )
+                    assert len(rows) == 2
+                    assert all(
+                        bool(row.completed_at) == (mode == "history-multi")
+                        for row in rows
+                    )
+                if mode != "history-multi":
+                    with pytest.raises(ValueError):
+                        await runtime.replay(handle.session, known_texts=set())
+
+            client.portal.call(assert_multi_repaired)
+            journal = Journal(handle.mirror)
+            try:
+                assert journal.recall("landed") == landed
+            finally:
+                journal.close()
+            assert native_runner.process is process
+            assert operations.count("send") == 2 and operations.count("steer") == 1
+            return
         initial_sends = operations.count("send")
         if mode in ("history", "history-pruned"):
             from app.domain.agent.harness.claude_code.journal import Journal

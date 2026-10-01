@@ -9,6 +9,7 @@ tool boundary: that echo, not the write, is the receipt.
 
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from app.domain.agent.harness import (
@@ -94,10 +95,6 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                     continue
                 if self.receipts is None or self.completions is None:
                     raise RuntimeError("Historical settlement consumers are not bound")
-                for echo in echoes:
-                    receipt = self.receipt(echo)
-                    assert receipt is not None
-                    await self.receipts(receipt)
                 completion = WorkCompletion(
                     self.session.project_id,
                     self.session.topic_id,
@@ -108,10 +105,18 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
                     tuple(uuid.UUID(echo["uuid"]) for echo in echoes),
                 )
                 current = self.completion(record)
-                if current is not None and current != completion:
+                if current is not None and (
+                    replace(current, input_ids=()) != replace(completion, input_ids=())
+                    or set(current.input_ids) != set(completion.input_ids)
+                    or len(current.input_ids) != len(set(current.input_ids))
+                ):
                     raise ValueError(
                         "Historical completion disagrees with retained inputs"
                     )
+                for echo in echoes:
+                    receipt = self.receipt(echo)
+                    assert receipt is not None
+                    await self.receipts(receipt)
                 await self.completions(completion)
 
     async def receive(self) -> None:
