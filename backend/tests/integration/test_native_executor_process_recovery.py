@@ -245,6 +245,9 @@ def test_new_full_service_process_reuses_original_native_executor(
             assert result["native"] == handle.session_id
             assert result["native_pid"] == status["pid"]
             assert result["turns"] == (1 if busy else (3 if http else 2))
+            if http:
+                print(stderr.decode(), flush=True)
+                print(json.dumps(result), flush=True)
             final = await asyncio.to_thread(screen.call, "ping")
             assert final["alive"] and final["session_id"] == handle.session_id
             assert final["pid"] == status["pid"] and not final["working"]

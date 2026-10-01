@@ -6,6 +6,9 @@ The ASGI transport runs routes/middleware, not the complete application lifespan
 """
 
 import asyncio
+import json
+import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -36,6 +39,38 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_chat_service] = lambda: chat
     runner.subscribe_messages()
+    next_scan = time.monotonic() + 30
+    observations = []
+
+    async def retry_due():
+        nonlocal next_scan
+        if time.monotonic() < next_scan:
+            return
+        from app.domain.delivery.timer import deliver_due
+
+        result = await deliver_due(factory, chat=chat, runner=runner)
+        next_scan = time.monotonic() + 30
+        observations.append({"pump": result})
+
+    async def observe(deliveries, rows):
+        status = await channel.call(channel.handle, "ping", {})
+        state = {
+            "deliveries": [
+                {
+                    "id": str(d.id),
+                    "state": d.state,
+                    "attempt": str(d.attempt_id),
+                    "attempts": d.attempts,
+                    "retry_at": str(d.retry_at),
+                }
+                for d in deliveries
+            ],
+            "unfinished": [str(r.input_id) for r in rows if not r.completed_at],
+            "working": status["working"],
+            "work_id": status.get("work_id"),
+        }
+        if not observations or observations[-1] != state:
+            observations.append(state)
 
     async def settled(expected):
         async with asyncio.timeout(90):
@@ -58,8 +93,10 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
         # Establish its durable receipt before measuring retry/correction effects.
         async with asyncio.timeout(90):
             while True:
-                for subscription in channel.runtime.subscriptions.values():
-                    await subscription.drain()
+                await retry_due()
+                if not accepted_only:
+                    for subscription in channel.runtime.subscriptions.values():
+                        await subscription.drain()
                 async with factory() as session:
                     deliveries = list(
                         await session.scalars(
@@ -71,10 +108,16 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
                             select(NativeInput).where(NativeInput.topic_id == topic)
                         )
                     )
+                    await observe(deliveries, rows)
                     if (
                         len(deliveries) == expected
                         and all(
-                            d.state in ("sending", "received")
+                            any(
+                                r.delivery_id == d.id
+                                and r.attempt_id == d.attempt_id
+                                and r.accepted_at
+                                for r in rows
+                            )
                             if accepted_only
                             else d.state == "received"
                             for d in deliveries
@@ -116,7 +159,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
             if descriptor["mode"] == "http-idle":
                 await settled(2)
             assert (channel.calls.count("send"), channel.calls.count("steer")) == (
-                (0, 1) if descriptor["mode"] == "http-busy" else (1, 0)
+                (1, 0) if descriptor["mode"] == "http-idle" else (0, 1)
             )
             before = (channel.calls.count("send"), channel.calls.count("steer"))
             retry = await http.post(
@@ -190,5 +233,10 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
             "recipient": descriptor["agent"],
         }
     finally:
+        print(
+            "HTTP_RECOVERY_TRACE " + json.dumps(observations),
+            file=sys.stderr,
+            flush=True,
+        )
         await runner.drain(10)
         app.dependency_overrides.clear()
