@@ -47,6 +47,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import SETTLE_WINDOW, startup_progress
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.machine.supply import SupplyRange, check_choice, pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus
@@ -102,36 +103,38 @@ class MachineService:
     def available(self) -> bool:
         return self._client.configured
 
-    async def require_team_create_authority(
-        self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
+    async def require_manage_authority(
+        self, project_id: uuid.UUID, actor: Actor, *, action: str
     ) -> None:
-        """Apply the paid machine-create rule to a team-scoped Cloud choice."""
-        if not actor.authenticated or actor.user_id is None:
-            raise AuthenticationRequiredError("Login required to create cloud machines")
-        teams = team_service(self._session)
-        if not await teams.is_team_member(team_id, actor.user_id):
-            if conceal_nonmember:
-                raise NotFoundError("Project not found")
-            raise ForbiddenError(
-                "Only team owners and admins can create cloud machines"
-            )
-        if not await teams.is_team_at_least_admin(team_id, actor.user_id):
-            raise ForbiddenError(
-                "Only team owners and admins can create cloud machines"
-            )
+        """The one rule for changing a project's billed machines.
 
-    async def require_create_authority(
-        self, project_id: uuid.UUID, actor: Actor
-    ) -> None:
-        """The one authorization rule for every path that can create a billed VM."""
-        if not actor.authenticated:
-            raise AuthenticationRequiredError("Login required to create cloud machines")
+        `action` is what the person was trying to do, in their words, so a
+        refusal names that operation rather than one they never attempted.
+        """
+        if not actor.authenticated or actor.user_id is None:
+            raise AuthenticationRequiredError(f"请先登录再{action}云端机器")
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        await self.require_team_create_authority(
-            project.team_id, actor, conceal_nonmember=True
-        )
+        teams = team_service(self._session)
+        if not await teams.is_team_member(project.team_id, actor.user_id):
+            raise NotFoundError("Project not found")
+        if not await teams.is_team_at_least_admin(project.team_id, actor.user_id):
+            raise ForbiddenError(f"只有团队所有者或管理员可以{action}云端机器")
+
+    async def admit_choice(
+        self, project_id: uuid.UUID, actor: Actor, choice: ComputeChoice
+    ) -> None:
+        """Let a saved choice stand only if it can be honoured and paid for.
+
+        A self-hosted choice spends nobody's cloud quota and has no supply range.
+        A cloud one must fit what the provider offers now (when that can be
+        read) and be chosen by someone the project lets spend its quota.
+        """
+        if choice.profile != "cloud":
+            return
+        await check_choice(choice)
+        await self.require_use_authority(project_id, actor)
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Being on the project authorizes room execution within the team's quota.
@@ -160,22 +163,6 @@ class MachineService:
             m.handle == actor.handle for m in await roster(self._session, project_id)
         ):
             raise ForbiddenError(say("cloudQuotaMembersOnly"))
-
-    async def _pick_offering(self) -> dict:
-        offerings = await self._client.list_offerings()
-        if not offerings:
-            raise ValidationError(
-                "MicroCloud has granted this deployment no offering — an operator "
-                "must grant one before machines can be created"
-            )
-        wanted = settings.microcloud_offering_id
-        if wanted:
-            for offering in offerings:
-                if int(offering["id"]) == wanted:
-                    return offering
-            raise ValidationError(f"configured offering {wanted} is not granted")
-        active = [o for o in offerings if o.get("status") == "active"]
-        return (active or offerings)[0]
 
     async def _ensure_account(self, project_id: uuid.UUID) -> tuple[int, int]:
         """The project's MicroCloud customer + funded compute account."""
@@ -217,28 +204,31 @@ class MachineService:
         # only counting the team's machines and creating one need to be atomic,
         # and every provider call made under the lock keeps every other
         # admission of the team waiting with a pool connection each.
-        offering = await self._pick_offering()
+        offering = await pick_offering(self._client)
+        # A spec is only meaningful against the offering we actually landed on,
+        # and one it cannot honour is refused, never quietly shrunk to fit.
+        SupplyRange.of(offering).require(
+            {"cores": cores, "memory_mb": memory_mb, "disk_gb": disk_gb}
+        )
 
-        def clamp(value: int | None, default: int, lo: str, hi: str) -> int:
-            # The allowed range is per-offering, so a spec is only meaningful
-            # against the offering we actually landed on.
-            if value is not None and not int(offering[lo]) <= value <= int(
-                offering[hi]
-            ):
-                raise ValidationError(say("cloudSpecOutOfRange"))
-            return max(int(offering[lo]), min(int(offering[hi]), int(value or default)))
+        def fill(value: int | None, default: int, lo: str, hi: str) -> int:
+            # Only the standard choice arrives without numbers; its defaults
+            # are the deployment's, fitted to whatever this offering allows.
+            if value is not None:
+                return value
+            return max(int(offering[lo]), min(int(offering[hi]), default))
 
         spec = {
-            "cores": clamp(
+            "cores": fill(
                 cores, settings.microcloud_default_cores, "coresMin", "coresMax"
             ),
-            "memoryMb": clamp(
+            "memoryMb": fill(
                 memory_mb,
                 settings.microcloud_default_memory_mb,
                 "memoryMbMin",
                 "memoryMbMax",
             ),
-            "diskGb": clamp(
+            "diskGb": fill(
                 disk_gb, settings.microcloud_default_disk_gb, "diskGbMin", "diskGbMax"
             ),
         }

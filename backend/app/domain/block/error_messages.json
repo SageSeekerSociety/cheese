@@ -119,7 +119,6 @@
   "deviceNotInProjectOrTeam": "设备不属于当前项目或团队",
   "teamHasNoDevices": "团队暂无自有设备",
   "cloudQuotaMembersOnly": "只有项目成员可以使用项目的云额度",
-  "cloudSpecOutOfRange": "所选云配置超出当前供应范围，请选择其他配置",
   "teamCloudMachineLimit": "团队云端机器已使用 {used} / {limit} 台，请先释放不再使用的机器",
   "machineBusyCannotSuspend": "机器上仍有 agent 任务运行，请等待任务结束后休眠",
   "switchPushFailed": "推送失败，没有更换：{error}",

@@ -1431,9 +1431,21 @@
     "cores": "CPU 核",
     "memory": "内存 GB",
     "disk": "磁盘 GB",
-    "cloudHint": "首次运行时分配，计入云端额度；超出供应范围时会提示调整",
+    "coresUnit": "核",
+    "memoryLabel": "内存",
+    "diskLabel": "磁盘",
+    "noValue": "当前没有可选值",
+    "outOfRange": "超出可选范围",
+    "noRangeFor": "{label}暂无可选值",
+    "supplyLoading": "正在查询云端当前可选范围…",
+    "supplyRange": "可选范围：{range}",
+    "supplyUnknown": "暂时查不到云端可选范围（{reason}）。可以先保存，开机时由云端校验。",
+    "cloudHint": "首次运行时分配，计入云端额度。云端不报告剩余容量，范围内的配置开机时仍可能创建失败。",
     "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
     "submit": "使用此配置"
+  },
+  "cloudSupply": {
+    "requestFailed": "请求失败"
   },
   "projectTransfer": {
     "lookupFailed": "没有找到这个账号",

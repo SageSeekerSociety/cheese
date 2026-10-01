@@ -1431,9 +1431,21 @@
     "cores": "CPU cores",
     "memory": "Memory (GB)",
     "disk": "Disk (GB)",
-    "cloudHint": "Allocated on the first run and counted against the cloud quota. You'll be asked to adjust it if it exceeds what's available",
+    "coresUnit": "cores",
+    "memoryLabel": "Memory",
+    "diskLabel": "Disk",
+    "noValue": "No selectable values right now",
+    "outOfRange": "Outside the available range",
+    "noRangeFor": "{label}: no selectable values",
+    "supplyLoading": "Checking what the cloud can offer right now…",
+    "supplyRange": "Available range: {range}",
+    "supplyUnknown": "The cloud's available range can't be read right now ({reason}). You can save anyway and it is checked again when the machine starts",
+    "cloudHint": "Allocated on the first run and counted against the cloud quota. The cloud does not report remaining capacity, so a configuration inside the range can still fail to start",
     "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
     "submit": "Use this configuration"
+  },
+  "cloudSupply": {
+    "requestFailed": "Request failed"
   },
   "projectTransfer": {
     "lookupFailed": "No account found",
