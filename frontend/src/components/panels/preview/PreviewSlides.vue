@@ -41,7 +41,11 @@ const pageFailure = ref('')
 const size = ref({ width: 800, height: 600 })
 const busy = computed(() => props.pending || loading.value)
 const problem = computed(() => props.error || failure.value)
-const ready = computed(() => !busy.value && !problem.value && !props.rendererMissing && count.value > 0)
+// Refresh state describes the next conversion; already displayed bytes remain readable.
+const ready = computed(() => !loading.value && !failure.value && count.value > 0)
+const canAskPage = computed(
+  () => ready.value && !!props.context && !busy.value && !problem.value && !props.rendererMissing
+)
 const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
@@ -103,7 +107,7 @@ function quote() {
   if (text) emit('quote', { text, page: current.value })
 }
 async function askPage() {
-  if (!props.context || !ready.value || pageBusy.value) return
+  if (!props.context || !canAskPage.value || pageBusy.value) return
   const mine = ++textGeneration
   const page = current.value
   const context = { ...props.context }
@@ -111,7 +115,7 @@ async function askPage() {
   pageFailure.value = ''
   try {
     const text = await pageText(page)
-    if (mine !== textGeneration || text === null) return
+    if (mine !== textGeneration || !canAskPage.value || text === null) return
     if (!text) {
       pageFailure.value = t('slides.noPageText')
       return
@@ -137,8 +141,17 @@ watch(
   { flush: 'post' }
 )
 watch(
+  () => props.data,
+  () => {
+    current.value = 1
+    jump.value = '1'
+  },
+  { flush: 'sync' }
+)
+watch(
   [
     () => props.data,
+    canAskPage,
     () => props.context?.topicId,
     () => props.context?.path,
     () => props.context?.source,
@@ -146,8 +159,6 @@ watch(
     () => props.context?.version,
   ],
   () => {
-    current.value = 1
-    jump.value = '1'
     textGeneration += 1
     pageBusy.value = false
     pageFailure.value = ''
@@ -222,7 +233,7 @@ onBeforeUnmount(() => {
       <button
         v-if="context && !presenting"
         type="button"
-        :disabled="!ready || pageBusy"
+        :disabled="!canAskPage || pageBusy"
         :title="t('slides.wholePageHint')"
         @click="askPage"
       >
@@ -232,8 +243,8 @@ onBeforeUnmount(() => {
         {{ t('slides.download') }}
       </button>
     </header>
-    <div v-if="busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
-    <div v-else-if="rendererMissing || problem" class="slides__state" role="alert">
+    <div v-if="!ready && busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
+    <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state" role="alert">
       <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
       <p v-if="problem" class="t-meta">{{ problem }}</p>
     </div>
@@ -252,6 +263,10 @@ onBeforeUnmount(() => {
         <div ref="sheet" class="slides__sheet" :data-page="current" />
       </div>
     </div>
+    <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
+    <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
+      {{ problem || t('slides.rendererMissing') }}
+    </p>
     <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
   </section>
 </template>
@@ -354,6 +369,9 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 8px 16px;
   color: var(--danger-ink);
+}
+.slides__notice[role='status'] {
+  color: var(--muted);
 }
 .slides__sheet :deep(canvas) {
   display: block;

@@ -255,4 +255,57 @@ describe('slide reader contract (PDF.js substituted)', () => {
     await fireEvent.click(ui.getByRole('button', { name: '下载原文件' }))
     expect(ui.emitted().download).toHaveLength(3)
   })
+
+  it('keeps the displayed page and scroll when a refresh is pending, fails, and recovers', async () => {
+    const ui = await loaded(3)
+    await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
+    const sheet = ui.container.querySelector('[data-page="2"]')!
+    const stage = sheet.parentElement!
+    stage.scrollTop = 120
+    stage.scrollLeft = 24
+
+    await ui.rerender({ pending: true, context: undefined })
+    expect(pageInput(ui).value).toBe('2')
+    expect(pageInput(ui).disabled).toBe(false)
+    expect(ui.container.contains(sheet)).toBe(true)
+    expect(stage.scrollTop).toBe(120)
+    expect(stage.scrollLeft).toBe(24)
+    expect(ui.queryByRole('button', { name: '对整页提问' })).toBeNull()
+
+    await ui.rerender({ pending: false, error: 'Refresh failed', context: identity })
+    expect(ui.getByRole('alert').textContent).toContain('Refresh failed')
+    expect(ui.container.contains(sheet)).toBe(true)
+    expect(pageInput(ui).value).toBe('2')
+    expect(ui.getByRole('button', { name: '对整页提问' })).toHaveProperty('disabled', true)
+    await fireEvent.click(ui.getByRole('button', { name: '下载原文件' }))
+    expect(ui.emitted().download).toHaveLength(1)
+
+    await ui.rerender({ error: '', context: identity })
+    expect(ui.container.contains(sheet)).toBe(true)
+    expect(pageInput(ui).value).toBe('2')
+    expect(stage.scrollTop).toBe(120)
+    expect(stage.scrollLeft).toBe(24)
+    expect(ui.getByRole('button', { name: '对整页提问' })).toHaveProperty('disabled', false)
+    expect(pdf.requests).toHaveLength(1)
+  })
+
+  it('retires pending whole-page text when refreshing makes its action unavailable', async () => {
+    const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context: identity } })
+    await waitFor(() => expect(pdf.requests).toHaveLength(1))
+    let finish!: (content: { items: { str: string; hasEOL: boolean }[] }) => void
+    const pending = new Promise<{ items: { str: string; hasEOL: boolean }[] }>((resolve) => {
+      finish = resolve
+    })
+    const doc = documentFixture(3)
+    const getPage = doc.getPage
+    doc.getPage = async (number: number) => ({ ...(await getPage(number)), getTextContent: () => pending })
+    pdf.requests[0]!.resolve(doc)
+    await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
+    await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
+    await ui.rerender({ pending: true })
+    finish({ items: [{ str: 'text captured before refreshing', hasEOL: true }] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await nextTick()
+    expect(ui.emitted().pageContext).toBeUndefined()
+  })
 })

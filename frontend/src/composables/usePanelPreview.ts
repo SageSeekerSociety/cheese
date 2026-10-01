@@ -11,11 +11,12 @@
 // 那一页的字节是哪一版。用哪种查看器画、空态写哪句话、全屏按钮在不在，是画的那一半
 // 的事（判据都在递下去的 props 里）。
 import type { FileContent, PreviewInfo } from '../cx_types'
+import type { DocumentIdentity } from '../lib/documentBytes'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, getPreview, readPreviewFile, requestPreviewSession } from '../api'
-import { useDocumentBytes } from '../lib/documentBytes'
+import { sameDocumentIdentity, useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
 import { roomFileDestination } from '../lib/previewSession'
 
@@ -376,17 +377,46 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   // 那一页的字节由 `useDocumentBytes` 取：浏览器画不出来的先转 PDF，其余读原始字节。
   // 「改动」那一格取的是同一份东西，所以这件事只写在一处。
   const docNonce = ref(0)
+  const docIdentity = computed<DocumentIdentity | null>(() => {
+    const file = previewFile.value
+    if (!props.topicId || !file) return null
+    return {
+      topicId: props.topicId,
+      path: file.path,
+      taskId: null,
+      source: file.source ?? 'live',
+      version: file.version,
+    }
+  })
   const {
     bytes: docBytes,
+    snapshot: docSnapshot,
     loading: docLoading,
     error: docError,
     rendererMissing: docRendererMissing,
   } = useDocumentBytes({
-    topicId: () => props.topicId,
-    path: () => previewFile.value?.path ?? null,
-    version: () => previewFile.value?.version ?? null,
+    topicId: () => docIdentity.value?.topicId ?? null,
+    path: () => docIdentity.value?.path ?? null,
+    version: () => docIdentity.value?.version ?? null,
+    task: () => docIdentity.value?.taskId ?? null,
+    source: () => docIdentity.value?.source ?? 'live',
     nonce: () => docNonce.value,
     enabled: () => !!documentType.value && documentType.value.view !== 'markdown',
+  })
+  const slideContext = computed(() => {
+    const current = docIdentity.value
+    const displayed = docSnapshot.value
+    if (
+      !current?.version ||
+      !displayed ||
+      docLoading.value ||
+      docError.value ||
+      docRendererMissing.value ||
+      !sameDocumentIdentity(current, displayed.identity) ||
+      displayed.sourceVersion !== current.version
+    )
+      return undefined
+    return { ...current, version: current.version }
   })
 
   /**
@@ -422,6 +452,9 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     isImageArtifact,
     downloadError,
     docBytes,
+    docIdentity,
+    docSnapshot,
+    slideContext,
     docLoading,
     docError,
     docRendererMissing,

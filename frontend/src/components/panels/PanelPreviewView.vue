@@ -12,6 +12,7 @@
 // 需要问后端。
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { FileContent } from '../../cx_types'
+import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
@@ -19,6 +20,7 @@ import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
+import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 import AttachmentImage from '../AttachmentImage.vue'
@@ -68,6 +70,8 @@ const props = withDefaults(
     isImageArtifact: boolean
     downloadError: string
     docBytes: ArrayBuffer | null
+    docIdentity?: DocumentIdentity | null
+    docSnapshot?: DocumentSnapshot | null
     /** Identity verified against the actual conversion response, not current metadata alone. */
     slideContext?: SlideSource
     docLoading: boolean
@@ -80,6 +84,8 @@ const props = withDefaults(
     displayedFrame: null,
     navigation: 'idle',
     navigationError: '',
+    docIdentity: null,
+    docSnapshot: null,
     slideContext: undefined,
   }
 )
@@ -197,22 +203,48 @@ function clearLocator() {
   pageContext.value = null
   locatorNote.value = ''
 }
-function onPageContext(payload: SlidePageContext) {
+function canUsePageContext(context: SlideSource): boolean {
   const expected = props.slideContext
-  if (!expected || props.docLoading || props.docError || props.docRendererMissing) return
+  const current = props.docIdentity
+  const displayed = props.docSnapshot
   if (
-    ['topicId', 'path', 'source', 'taskId', 'version'].some(
-      (key) => payload.context[key as keyof SlideSource] !== expected[key as keyof SlideSource]
-    )
+    !expected ||
+    !current ||
+    !displayed ||
+    props.docBytes !== displayed.bytes ||
+    props.docLoading ||
+    props.docError ||
+    props.docRendererMissing ||
+    props.topicId !== current.topicId ||
+    props.previewFile?.path !== current.path ||
+    props.previewFile?.version !== current.version ||
+    (props.previewFile?.source ?? 'live') !== current.source
   )
-    return
+    return false
+  const identity = { ...context, taskId: context.taskId ?? null }
+  return (
+    sameDocumentIdentity(identity, current) &&
+    sameDocumentIdentity(current, displayed.identity) &&
+    sameDocumentIdentity({ ...expected, taskId: expected.taskId ?? null }, current) &&
+    displayed.sourceVersion === current.version
+  )
+}
+
+function onPageContext(payload: SlidePageContext) {
+  if (payload.scope !== 'page' || !canUsePageContext(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
   openLocator(page, t('slides.wholePage'), page)
-  pageContext.value = payload
+  pageContext.value = { ...payload, context: { ...payload.context } }
 }
 watch(
   [
     () => props.docBytes,
+    () => props.docSnapshot,
+    () => props.docIdentity?.topicId,
+    () => props.docIdentity?.path,
+    () => props.docIdentity?.source,
+    () => props.docIdentity?.taskId,
+    () => props.docIdentity?.version,
     () => props.slideContext?.version,
     () => props.slideContext?.path,
     () => props.slideContext?.source,
@@ -243,17 +275,7 @@ function sendLocator() {
   if (!target || !note) return
   if (pageContext.value) {
     const payload = pageContext.value
-    const expected = props.slideContext
-    if (
-      !expected ||
-      props.docLoading ||
-      props.docError ||
-      props.docRendererMissing ||
-      ['topicId', 'path', 'source', 'taskId', 'version'].some(
-        (key) => payload.context[key as keyof SlideSource] !== expected[key as keyof SlideSource]
-      )
-    )
-      return
+    if (!canUsePageContext(payload.context)) return
     emit(
       'locate',
       t('slides.pageMessage', {
@@ -539,12 +561,12 @@ function sendLocator() {
         <PreviewSlides
           v-if="['pptx', 'ppt', 'odp'].includes(documentSuffix)"
           :data="docBytes"
-          :title="documentName"
+          :pending="docLoading"
+          :error="docError"
+          :renderer-missing="docRendererMissing"
           :context="slideContext"
-          :can-download="true"
           @quote="onQuote"
           @page-context="onPageContext"
-          @download="emit('download')"
         />
         <PreviewPages v-else-if="documentType.view === 'pages'" :data="docBytes" @quote="onQuote" />
         <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />

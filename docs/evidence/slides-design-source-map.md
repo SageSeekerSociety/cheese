@@ -2,7 +2,7 @@
 
 ## Checkpoint scope
 
-The Slides reader is a props/emits-only PDF reader, not a native PPTX editor or recovered Claude Deck. It accepts already-authorized PDF bytes; Office conversion remains with existing callers. No additional iframe, POST, API, store or router boundary is introduced. OnlyOffice, room draft history, accepted delivery history and original source downloads remain owned by existing shells.
+The Slides reader accepts authorized PDF bytes through props and emits page/quote gestures. Office conversion remains with the existing attachment endpoint. That endpoint now returns `X-Cheese-Source-Version` for the same input bytes it converted, with `Cache-Control: no-store`. The frontend keeps those bytes and that fingerprint in one displayed snapshot. OnlyOffice, room draft history, accepted delivery history and original source downloads remain owned by existing shells. No additional iframe or session lifecycle is introduced; this is not a native PPTX editor or recovered Claude Deck.
 
 Implementation base: live main `b5f70bd3121fca39b11799c2f2b2612dcc347363`. The reference capsule base `689b2382fca257d6b8ba6416e06a4e2cac222d43` is not claimed to be current main. PR #1413 and #1207 were reference candidates, not merged code and were not copied over main.
 
@@ -29,15 +29,16 @@ SHA256 and ZIP CRC verified before extraction. Original bundles are reference da
 
 The B/C/E/M/P/D/I/S12/S16/F/K report and indexed evidence were read. B03 describes type creation; C3 describes attachment selection. Neither supplies a recovered Deck/Canvas editor. Codex Sites/Owl cloud backend is absent; no claim of complete upstream recovery is made.
 
-## Finite integration handoff (owner coordination required)
+## Integrated callers and displayed identity
 
-1. `PanelPreviewView`: import reader; choose it only for PPTX/PPT/ODP (and PDF if explicitly approved). Pass the existing PDF byte result and pending/error/rendererMissing states, not a second converter. Preserve editor/history/RoomOutputs and the existing quote path/200-character normalization.
-2. `FileBytesPreview`: same suffix-based branch over its existing byte prop. No fetching in the reader. Keep PDF/Word behavior unless explicitly routed.
-3. `ArtifactVersionPreview`: route selected delivered snapshot bytes; retain bare layout, selected accepted version, rendering error/original-download fallback. Do not substitute room live bytes for snapshot bytes.
-4. Whole-page action: pass `context {topicId,path,source,taskId,version}`. Consume separate `pageContext {text,page,scope:'page',context}` through the real room locate chain. Label it as whole PDF-page context. Do not use quote's 200-character truncation, invent node coordinates, or drop file identity.
+1. `PanelPreviewView` routes presentation suffixes to the reader, preserving editor/history/RoomOutputs and the existing quote path. The host owns the title and original download once; the inner toolbar owns thumbnails, page navigation, fit, presentation and whole-page context.
+2. `FileBytesPreview` routes presentation bytes through its existing reader boundary; `ArtifactVersionPreview` retains the selected accepted snapshot. PDF/Word and sheet behavior stay with their existing viewers.
+3. `lib/documentBytes.ts` atomically captures bytes, source fingerprint and topic/path/task/source/version. Refresh pending or failure retains the displayed snapshot; path/topic/task/source replacement retires it. A late previous response cannot acquire newer metadata.
+4. `usePanelPreview` exposes whole-page context only when the displayed snapshot matches the current source and the actual conversion fingerprint. `PanelPreviewView` checks that identity again on both opening and sending the locator. Whole PDF-page text keeps its page and source identity without the quote's 200-character truncation.
+5. `PreviewSlides` keeps an already parsed page, sheet and scroll position while upstream conversion is pending or fails. Navigation remains available on those displayed bytes; whole-page asking is unavailable and pending text extraction is retired. Losing or restoring action context does not reset page 1. Replacing actual bytes does reset the reader.
 
-Existing host/session/transport files are PreviewS-owned; Docs selection/comment files and work.json are DocsS-owned. This checkpoint changes only new reader/composable/spec/local namespace files plus namespace registration and this evidence file. Product mounting is unfinished until the coordinated callers land.
+Host/session/transport work remains PreviewS-owned; Docs selection/comment files remain separately owned. This continuation was integrated from S's exact source handoff on `80c9f46ee313e58c5e40b5066f135d0d5b10af84`, followed by the owning test/provider fixes and cached-reader regressions. The attachment response and small `lib/previewPdf.ts` module carry the byte identity contract without growing the oversized API file. Mutable room dependencies are not represented as a complete immutable file snapshot.
 
 ## Validation boundaries
 
-`PreviewSlides.spec.ts` owns reader navigation, focus, presentation, bounded thumbnail paints, late parse/render and original-download contracts. It uses the real reader and rail with substituted PDF.js and ResizeObserver. It cannot prove PDF conversion, pixel geometry, production authentication or deployed OnlyOffice behavior. Browser geometry, actual PDF.js fixture rendering and a Chinese review PDF must be added before delivery. Normal RequiredCI/merge queue/deployment remain required; pushing a checkpoint is not delivery.
+`PreviewSlides.spec.ts` owns navigation, focus, presentation, bounded paints, late parse/render/text, original download and cached-reader refresh contracts. The two new refresh regressions failed before the correction and passed after it. PDF.js and ResizeObserver are substituted there; the local browser fixture uses actual PDF.js and synthetic PDF bytes. The owning panel/document/media/revision tests and byte identity tests exercise real containers with their external data seams substituted. Production conversion, authentication, WAN behavior and deployed OnlyOffice remain separate checks. Normal exact-head CI, merge queue and deployment are still required; pushing a checkpoint is not delivery.

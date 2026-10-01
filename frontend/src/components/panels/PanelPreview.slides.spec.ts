@@ -17,6 +17,7 @@ vi.mock('./preview/PreviewSlides.vue', () => ({
 vi.mock('./preview/PreviewPages.vue', () => ({ default: { template: '<div data-testid="pages" />' } }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('./preview/RoomOutputs.vue', () => ({ default: { template: '<div />' } }))
+const docBytes = new ArrayBuffer(8)
 const props = {
   topicId: 'room',
   projectId: 'project',
@@ -24,7 +25,15 @@ const props = {
   frameName: 'frame',
   loading: false,
   refreshing: false,
-  previewFile: { path: 'deck.pptx', content: null, version: 'v7', bytes: 8, binary: true, too_large: false },
+  previewFile: {
+    path: 'deck.pptx',
+    content: null,
+    version: 'v7',
+    bytes: 8,
+    binary: true,
+    too_large: false,
+    source: context.source,
+  },
   previewMime: '',
   previewNamed: true,
   previewUrl: null,
@@ -38,7 +47,9 @@ const props = {
   documentName: 'deck.pptx',
   isImageArtifact: false,
   downloadError: '',
-  docBytes: new ArrayBuffer(8),
+  docBytes,
+  docIdentity: context,
+  docSnapshot: { bytes: docBytes, identity: context, sourceVersion: context.version },
   docLoading: false,
   docError: '',
   docRendererMissing: false,
@@ -102,4 +113,23 @@ it('retires the locator when bytes or source identity change and routes PDF to t
   await ui.rerender({ ...nextProps, documentSuffix: 'pdf' })
   expect(ui.getByTestId('pages')).toBeTruthy()
   expect(ui.queryByTestId('slides')).toBeNull()
+})
+
+it('does not open whole-page context when displayed source bytes disagree with metadata', async () => {
+  const ui = mount()
+  await ui.rerender({ ...props, docSnapshot: { ...props.docSnapshot, sourceVersion: 'v8' } })
+  await fireEvent.click(ui.getByText('page'))
+  expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+  expect(ui.emitted().locate).toBeUndefined()
+  await fireEvent.click(ui.getByText('quote'))
+  expect(ui.getByPlaceholderText('说明要改什么')).toBeTruthy()
+})
+
+it('rechecks current metadata at send time without relying on locator retirement', async () => {
+  const ui = mount()
+  await fireEvent.click(ui.getByText('page'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'explain this page')
+  await ui.rerender({ ...props, previewFile: { ...props.previewFile, version: 'v8' } })
+  await fireEvent.click(ui.getByText('发送'))
+  expect(ui.emitted().locate).toBeUndefined()
 })
