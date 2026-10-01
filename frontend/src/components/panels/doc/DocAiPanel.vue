@@ -32,7 +32,7 @@ function keydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="doc-ai-panel" :aria-label="t('work.room.docAi.title')">
+  <section class="doc-ai-panel" :aria-label="t('work.room.docAi.title')" :aria-busy="busy">
     <header>
       <h2>{{ t('work.room.docAi.title') }}</h2>
       <button type="button" @click="emit('recover')">{{ t('work.room.docAi.refresh') }}</button>
@@ -43,7 +43,7 @@ function keydown(event: KeyboardEvent) {
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="selectionStatus">{{ selectionStatus }}</p>
     <p v-if="blocked">{{ t('work.room.docAi.unverified') }}</p>
-    <div v-if="unknown" role="status">
+    <div v-if="unknown && !busy" role="status">
       <p>{{ t('work.room.docAi.unknown') }}</p>
       <button type="button" :disabled="busy" @click="emit('recover')">{{ t('work.room.docAi.recover') }}</button>
     </div>
