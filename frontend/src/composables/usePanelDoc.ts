@@ -61,6 +61,7 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
   const requests = createDocRequestGate()
   let pendingReload = false
   let commentSequence = 0
+  const topicDrafts = new Map<string, string[]>()
 
   function owns(request: ReturnType<typeof requests.begin>) {
     return !disposed && props.topic?.id === request.topicId && requests.owns(request)
@@ -584,10 +585,14 @@ export function usePanelDoc(props: PanelDocProps, hooks: PanelDocHooks) {
 
   watch(
     () => props.topic?.id ?? null,
-    (id) => {
-      // A surviving panel can change topics without unmounting. Invalidate old
-      // requests and keep any local draft recoverable rather than mixing bases.
-      if (dirty.value) pendingEdits.value = pushStash(pendingEdits.value, currentFullMarkdown())
+    (id, previousId) => {
+      // A surviving panel can change topics without unmounting. Each topic's
+      // draft stack remains recoverable only in that topic, never in its neighbor.
+      if (previousId) {
+        const stack = dirty.value ? pushStash(pendingEdits.value, currentFullMarkdown()) : pendingEdits.value
+        topicDrafts.set(previousId, stack)
+      }
+      pendingEdits.value = id ? topicDrafts.get(id) ?? [] : []
       requests.select(id)
       pendingReload = false
       if (autosaveTimer) clearTimeout(autosaveTimer)

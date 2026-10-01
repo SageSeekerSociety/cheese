@@ -390,6 +390,55 @@ describe('canonical snapshot timing', () => {
     }
   )
 
+  it('a late PUT from a previous topic cannot set the new topic save base', async () => {
+    const view = await mountDoc()
+    const put = deferred<Block>()
+    mocks.putDoc.mockReturnValueOnce(put.promise)
+    await typeAndSave(view, '旧话题提交稿')
+    const nextTopic = { ...topic, id: 't2', title: '新话题' }
+    mocks.getDoc.mockResolvedValue(doc('新话题正文\n', 1))
+    await view.rerender({ topic: nextTopic, activityTick: 0 })
+    await waitFor(() => expect(body(view)).toContain('新话题正文'))
+    put.resolve(doc('旧话题回执\n', 8))
+    await settle()
+    expect(body(view)).not.toContain('旧话题回执')
+    mocks.editor!.commands.insertContent('新话题输入')
+    await fireEvent.keyDown(view.container.querySelector('.doc-prose')!, { key: 's', metaKey: true })
+    await waitFor(() => expect(mocks.putDoc).toHaveBeenCalledTimes(2))
+    expect(mocks.putDoc.mock.calls[1][0]).toBe('t2')
+    expect(mocks.putDoc.mock.calls[1][3]).toBe(1)
+    expect(mocks.putDoc.mock.calls[1][1]).toContain('新话题正文')
+  })
+
+  it('local drafts stay with their topic when a mounted panel changes topics', async () => {
+    const view = await mountDoc()
+    mocks.editor!.commands.insertContent('只属旧话题的草稿')
+    const nextTopic = { ...topic, id: 't2', title: '新话题' }
+    mocks.getDoc.mockResolvedValue(doc('新话题正文\n', 1))
+    await view.rerender({ topic: nextTopic, activityTick: 0 })
+    await waitFor(() => expect(body(view)).toContain('新话题正文'))
+    expect(view.container.querySelector('.doc-notice--stash')).toBeNull()
+    mocks.getDoc.mockResolvedValue(doc('第一段\n', 1))
+    await view.rerender({ topic, activityTick: 0 })
+    await waitFor(() => expect(body(view)).toContain('第一段'))
+    const restore = await screen.findByText('恢复我的改动', { selector: 'button' })
+    await fireEvent.click(restore)
+    await waitFor(() => expect(body(view)).toContain('只属旧话题的草稿'))
+    expect(body(view)).not.toContain('新话题正文')
+  })
+
+  it('a later GET carrying a lower version cannot downgrade an accepted snapshot', async () => {
+    const view = await mountDoc()
+    mocks.getDoc.mockResolvedValueOnce(doc('第三版\n', 3))
+    await tick(view, 1)
+    await waitFor(() => expect(body(view)).toBe('第三版'))
+    mocks.getDoc.mockResolvedValueOnce(doc('旧缓存\n', 2))
+    await tick(view, 2)
+    expect(body(view)).toBe('第三版')
+    await typeAndSave(view, '新输入')
+    expect(mocks.putDoc.mock.calls[0][3]).toBe(3)
+  })
+
   it('an unmounted panel ignores the pending PUT and does not refresh', async () => {
     const view = await mountDoc()
     const put = deferred<Block>()
