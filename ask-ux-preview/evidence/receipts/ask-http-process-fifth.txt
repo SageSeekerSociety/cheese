@@ -1,0 +1,566 @@
+[0;93m2026-10-01 13:43:31.633580150 [W:onnxruntime:Default, cpuid_info.cc:105 LogEarlyWarning] Unknown CPU vendor. cpuinfo_vendor value: 16[m
+[1;31m2026-10-01 13:43:31.704428260 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209984, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.705863851 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209985, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.711885349 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209989, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.712001000 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209990, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.713849097 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209991, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.714878102 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209986, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.717904116 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209987, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.726863816 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209988, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.861653926 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209992, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.861772657 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209993, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.869112874 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209994, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.872858548 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209997, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.875851112 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209999, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.881259781 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209995, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.884906794 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209996, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:31.887887307 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 209998, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.081886917 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210000, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.090842967 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210001, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.108877319 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210002, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.120847273 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210003, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.129573550 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210004, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.136838875 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210005, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.143883818 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210006, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 13:43:32.152858498 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210007, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.0, pluggy-1.6.0 -- /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend
+configfile: pyproject.toml
+plugins: rerunfailures-16.4, timeout-2.4.0, xdist-3.8.0, anyio-4.13.0
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 4 items / 2 deselected / 2 selected
+
+tests/integration/test_native_executor_process_recovery.py::test_new_full_service_process_reuses_original_native_executor[http-busy] 2026-10-01 13:43:34 [info     ] actor_handle_fallback          [cheesex.auth] handle=alice req=8861ccd727d9
+2026-10-01 13:43:34 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 13:43:34 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 13:43:34 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 13:43:34 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 13:43:35 [info     ] req                            [http] bytes=657 client=testclient host=testserver method=POST ms=775.8 path=/projects req=8861ccd727d9 status=200 ua=testclient
+2026-10-01 13:43:35 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 13:43:36 [warning  ] event loop stalled             [cheesex.loop] note='one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.' stalled_ms=1034 worst_ms=1034
+2026-10-01 13:43:36 [info     ] req                            [http] bytes=518 client=testclient host=testserver method=GET ms=1135.9 path=/topics/51f14541-82ba-4941-be3f-398e92e36d68/members req=da0e70c7d93c status=200 ua=testclient
+2026-10-01 13:43:36 [info     ] HTTP Request: GET http://testserver/topics/51f14541-82ba-4941-be3f-398e92e36d68/members "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 13:43:36 [info     ] req                            [http] bytes=332 client=testclient host=testserver method=POST ms=26.0 path=/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/agents req=339576df281a status=200 ua=testclient
+2026-10-01 13:43:36 [info     ] HTTP Request: POST http://testserver/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/agents "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 13:43:36 [info     ] req                            [http] bytes=227 client=testclient host=testserver method=POST ms=19.1 path=/topics/51f14541-82ba-4941-be3f-398e92e36d68/members req=f35c5c8f7820 status=200 ua=testclient
+2026-10-01 13:43:36 [info     ] HTTP Request: POST http://testserver/topics/51f14541-82ba-4941-be3f-398e92e36d68/members "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 13:43:36 [info     ] req                            [http] bytes=262 client=testclient host=testserver method=POST ms=39.5 path=/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/invitations req=14e464a8cfe7 status=200 ua=testclient
+2026-10-01 13:43:36 [info     ] HTTP Request: POST http://testserver/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/invitations "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 13:43:36 [info     ] req                            [http] bytes=288 client=testclient host=testserver method=POST ms=26.2 path=/invitations/a7ef44ae-e462-4f84-aefa-6fdd4ec13fa8/respond req=32a0f422bdf7 status=200 ua=testclient
+2026-10-01 13:43:36 [info     ] HTTP Request: POST http://testserver/invitations/a7ef44ae-e462-4f84-aefa-6fdd4ec13fa8/respond "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 13:43:36 [info     ] chat_message_received          [cheesex.chat_ws] received_unix_ms=1790862216429.6584 topic=51f14541-82ba-4941-be3f-398e92e36d68
+2026-10-01 13:43:36 [info     ] chat_receive_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea persist_ms=51.496 publish_ms=0.032 [cheesex.runtime]
+2026-10-01 13:43:36 [info     ] chat_message_submitted         [cheesex.chat_ws] duration_ms=52.35099233686924 topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea
+2026-10-01 13:43:36 [info     ] chat_admission_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=message_lock elapsed_ms=0.002 unix_ms=1790862216482.297 [cheesex.runtime]
+2026-10-01 13:43:36 [info     ] chat_admission_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=live_delivery_declined elapsed_ms=0.240 unix_ms=1790862216482.535 [cheesex.runtime]
+2026-10-01 13:43:36 [info     ] chat_message_frame_sent        [cheesex.chat_ws] block_id=c6ced6e4-3065-4a24-8965-81f4844ba4ea frame_type=user_block sent_unix_ms=1790862216483.3538 topic=51f14541-82ba-4941-be3f-398e92e36d68
+2026-10-01 13:43:36 [info     ] chat_admission_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=admitted verdict=ok elapsed_ms=7.920 unix_ms=1790862216490.646 [cheesex.runtime]
+2026-10-01 13:43:36 [info     ] turn start: author=alice summon=True resume=False [cheesex.runtime] topic=51f14541 turn=c6ced6e4
+2026-10-01 13:43:36 [info     ] chat_assembly_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea elapsed_ms=91.348 phases_ms={'history': 12.078845873475075, 'identity': 25.640133768320084, 'memory': 30.53940460085869, 'metadata': 81.42146468162537, 'provider': 82.13299512863159, 'committed': 91.20563603937626} [app.domain.agent.chat] topic=51f14541 turn=c6ced6e4
+2026-10-01 13:43:36 [info     ] chat_preparation_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=assembled elapsed_ms=91.934 unix_ms=1790862216600.834 [app.domain.agent.chat] topic=51f14541 turn=c6ced6e4
+2026-10-01 13:43:36 [info     ] chat_preparation_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=prompt_built elapsed_ms=113.049 unix_ms=1790862216621.938 [app.domain.agent.chat] topic=51f14541 turn=c6ced6e4
+2026-10-01 13:43:36 [info     ] chat_preparation_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=model_ready elapsed_ms=116.924 unix_ms=1790862216625.813 [app.domain.agent.chat] topic=51f14541 turn=c6ced6e4
+2026-10-01 13:43:36 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.4s [cheesex.runtime] topic=51f14541 turn=c6ced6e4
+2026-10-01 13:43:37 [info     ] req                            [http] bytes=648 client=testclient host=testserver method=POST ms=175.9 path=/topics/51f14541-82ba-4941-be3f-398e92e36d68/ask req=da8e2c0e0176 status=200 ua=testclient
+2026-10-01 13:43:37 [info     ] HTTP Request: POST http://testserver/topics/51f14541-82ba-4941-be3f-398e92e36d68/ask "HTTP/1.1 200 OK" [httpx2]
+FAILED
+
+=================================== FAILURES ===================================
+___ test_new_full_service_process_reuses_original_native_executor[http-busy] ___
+
+client = <starlette.testclient.TestClient object at 0x719b543f0d70>
+tmp_path = PosixPath('/tmp/pytest-of-cheese/pytest-77/test_new_full_service_process_0')
+mode = 'http-busy'
+
+    @pytest.mark.parametrize("mode", ["busy", "idle", "http-busy", "http-idle"])
+    def test_new_full_service_process_reuses_original_native_executor(
+        client, tmp_path, mode
+    ):
+        scripts = str(Path(__file__).resolve().parents[3] / "scripts/remote_execution")
+        sys.path.insert(0, scripts)
+        import headless_contract
+    
+        machine = Machine(headless_contract, tmp_path)
+        project = post_project(
+            client, {"name": "Native process recovery", "owner_handle": "alice"}
+        ).json()["data"]
+        project_id, topic = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
+        busy = mode.endswith("busy")
+        http = mode.startswith("http-")
+        default_seat = room_agent_seat(client, str(topic))
+        recipient = default_seat
+        if http:
+            made = client.post(f"/projects/{project_id}/agents", json={"handle": "opus"})
+            assert made.status_code == 200, made.text
+            recipient = made.json()["data"]["seat_handle"]
+            joined = client.post(
+                f"/topics/{topic}/members",
+                json={"handle": recipient, "role": "member", "actor": "alice"},
+                headers=session_auth_headers("alice"),
+            )
+            assert joined.status_code == 200, joined.text
+            assert recipient != default_seat
+            add_external_member(client, str(project_id), "bob", by="alice")
+        screen = None
+        handle = None
+        old = None
+        gate = tmp_path / "continue-native"
+        if http and busy:
+            import time
+    
+            def hold_completion(body):
+                # Claude backgrounds a Bash wait when a steer arrives. Hold the
+                # deterministic model response, not its stdin/receipt processing.
+                deadline = time.monotonic() + 60
+                while not gate.exists():
+                    assert time.monotonic() < deadline, "HTTP correction gate timed out"
+                    time.sleep(0.05)
+                return None
+    
+            machine.server.state["actions"] = [
+                headless_contract.directive,
+                hold_completion,
+            ]
+    
+        class Channel:
+            name = "native-socket-fixture"
+            provisions_machine = False
+            deferred_work = False
+            builds_model_env = False
+    
+            def available(self):
+                return True
+    
+            async def prepare_topic(self, **kwargs):
+                return True, ""
+    
+            async def ensure(self, session, opening):
+                nonlocal screen, handle
+                if screen is None:
+                    screen = Screen(
+                        machine,
+                        env={"CHEESE_AUTHOR": opening.agent_handle or session.agent_handle},
+                    )
+                    status = await asyncio.to_thread(screen.call, "ping")
+                    handle = Handle(
+                        session,
+                        "isolated-device",
+                        str(machine.state),
+                        status["session_id"],
+                        opening.agent_handle or session.agent_handle,
+                        tmp_path / "mirror.sqlite",
+                        status["input_protocol"],
+                    )
+                return handle
+    
+            async def call(self, held, method, params):
+                assert held is handle
+                return await asyncio.to_thread(screen.call, method, params)
+    
+            async def images(self, held, images):
+                assert not images
+                return []
+    
+        before = Channel()
+        before.runtime = ClaudeCodeRuntime(before)
+        old = ChatService(
+            session_factory=client.test_request_factory,
+            base_system_prompt="你是芝士。",
+            workspace_root=str(machine.workspace),
+            compute=ComputePool([before.runtime], before.name),
+        )
+        app.dependency_overrides[get_chat_service] = lambda: old
+        try:
+            directive = (
+                headless_contract.do(
+                    "Bash",
+                    command=(
+                        f"for i in $(seq 1 1200); do test -f '{gate}' && break; "
+                        "sleep 0.05; done; printf PROCESS_RECOVERY"
+                    ),
+                    description="wait for backend process recovery",
+                )
+                if busy
+                else "初始回答"
+            )
+            with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
+                ws.send_json({"type": "message", "content": f"<@{recipient}> " + directive})
+                observed = _until(
+                    ws,
+                    lambda frame: (
+                        frame["type"] == "error"
+                        or (
+                            (
+                                frame["type"] == "event_block"
+                                and "PROCESS_RECOVERY" in str(frame["block"])
+                            )
+                            if busy
+                            else frame["type"] == "done"
+                        )
+                    ),
+                )
+                assert observed["type"] != "error", observed
+    
+            question = None
+            if http:
+                from app.core.sandbox_auth import mint_scoped_token
+    
+                asked = client.post(
+                    f"/topics/{topic}/ask",
+                    json={
+                        "question": "恢复后接着执行哪个方案？",
+                        "options": [{"text": "继续"}, {"text": "更正"}],
+                    },
+                    headers={
+                        "X-Cheese-Token": mint_scoped_token(
+                            project_id=str(project_id),
+                            topic_id=str(topic),
+                            agent_handle=handle.agent_handle,
+                        )
+                    },
+                )
+                assert asked.status_code == 200, asked.text
+                question = asked.json()["data"]
+                assert question["author"] == recipient
+    
+            async def replace_backend():
+                if not busy:
+                    await settle_turn(old, topic)
+                await before.runtime.stop_listening()
+                status = await asyncio.to_thread(screen.call, "ping")
+                records = await asyncio.to_thread(screen.records)
+                first_work = next(
+                    row["record"]["cheese"]["work_id"]
+                    for row in records
+                    if row["record"]["cheese"].get("turn_start")
+                )
+                assert status["working"] == busy
+                ids = (
+                    await _blocks(client.test_request_factory, project_id, topic)
+                    if busy
+                    else ()
+                )
+                async with client.test_request_factory() as session:
+                    database = session.bind.url.render_as_string(hide_password=False)
+                descriptor = {
+                    "mode": mode,
+                    "database": database,
+                    "project": str(project_id),
+                    "topic": str(topic),
+                    "agent": handle.agent_handle,
+                    "session_agent": handle.session.agent_handle,
+                    "state": handle.state,
+                    "native": handle.session_id,
+                    "protocol": handle.input_protocol,
+                    "mirror": str(handle.mirror),
+                    "workspace": str(machine.workspace),
+                    "work": first_work,
+                    "native_pid": status["pid"],
+                    "gate": str(gate),
+                    "blocks": [str(x) for x in ids],
+                    "question": question["id"] if question else None,
+                    "default_seat": default_seat,
+                    "alice_headers": session_auth_headers("alice") if http else None,
+                    "bob_headers": session_auth_headers("bob") if http else None,
+                }
+                descriptor_path = tmp_path / "backend-recovery.json"
+                descriptor_path.write_text(json.dumps(descriptor))
+                child = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "tests/native_executor_recovery_worker.py",
+                    str(descriptor_path),
+                    env={
+                        **os.environ,
+                        "PYTHONPATH": ".",
+                        "DATABASE_URL": database,
+                        "CHEESEX_TEST_NULLPOOL": "1",
+                    },
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                async with asyncio.timeout(120):
+                    stdout, stderr = await child.communicate()
+                assert child.returncode == 0, stderr.decode() + stdout.decode()
+                result = json.loads(stdout)
+                assert result["pid"] == child.pid and child.pid != os.getpid()
+                assert result["native"] == handle.session_id
+                assert result["native_pid"] == status["pid"]
+                assert result["turns"] == (1 if busy else (3 if http else 2))
+                if http:
+                    print(stderr.decode(), flush=True)
+                    print(json.dumps(result), flush=True)
+                final = await asyncio.to_thread(screen.call, "ping")
+                assert final["alive"] and final["session_id"] == handle.session_id
+                assert final["pid"] == status["pid"] and not final["working"]
+                assert screen.process.poll() is None
+    
+>           client.portal.call(replace_backend)
+
+tests/integration/test_native_executor_process_recovery.py:256: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def replace_backend():
+        if not busy:
+            await settle_turn(old, topic)
+        await before.runtime.stop_listening()
+        status = await asyncio.to_thread(screen.call, "ping")
+        records = await asyncio.to_thread(screen.records)
+        first_work = next(
+            row["record"]["cheese"]["work_id"]
+            for row in records
+            if row["record"]["cheese"].get("turn_start")
+        )
+        assert status["working"] == busy
+        ids = (
+            await _blocks(client.test_request_factory, project_id, topic)
+            if busy
+            else ()
+        )
+        async with client.test_request_factory() as session:
+            database = session.bind.url.render_as_string(hide_password=False)
+        descriptor = {
+            "mode": mode,
+            "database": database,
+            "project": str(project_id),
+            "topic": str(topic),
+            "agent": handle.agent_handle,
+            "session_agent": handle.session.agent_handle,
+            "state": handle.state,
+            "native": handle.session_id,
+            "protocol": handle.input_protocol,
+            "mirror": str(handle.mirror),
+            "workspace": str(machine.workspace),
+            "work": first_work,
+            "native_pid": status["pid"],
+            "gate": str(gate),
+            "blocks": [str(x) for x in ids],
+            "question": question["id"] if question else None,
+            "default_seat": default_seat,
+            "alice_headers": session_auth_headers("alice") if http else None,
+            "bob_headers": session_auth_headers("bob") if http else None,
+        }
+        descriptor_path = tmp_path / "backend-recovery.json"
+        descriptor_path.write_text(json.dumps(descriptor))
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "tests/native_executor_recovery_worker.py",
+            str(descriptor_path),
+            env={
+                **os.environ,
+                "PYTHONPATH": ".",
+                "DATABASE_URL": database,
+                "CHEESEX_TEST_NULLPOOL": "1",
+            },
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        async with asyncio.timeout(120):
+            stdout, stderr = await child.communicate()
+>       assert child.returncode == 0, stderr.decode() + stdout.decode()
+E       AssertionError: [0;93m2026-10-01 13:43:42.479120930 [W:onnxruntime:Default, cpuid_info.cc:105 LogEarlyWarning] Unknown CPU vendor. cpuinfo_vendor value: 16[m
+E         [1;31m2026-10-01 13:43:42.549002206 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210199, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.554896772 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210201, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.556872001 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210202, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.558864010 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210203, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.561270885 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210204, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.562853347 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210205, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.549251780 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210200, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.573889438 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210206, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.711863263 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210210, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.712161418 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210211, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.718899166 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210212, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.721022077 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210213, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.722917944 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210214, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.724753521 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210215, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.726922182 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210216, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.728871251 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210217, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896393016 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210222, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896435976 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210224, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896461927 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210225, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896478017 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210223, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896709290 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210229, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896710490 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210226, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.896992274 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210228, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         [1;31m2026-10-01 13:43:42.897029375 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210227, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+E         /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+E           decoded = self.decode_complete(
+E         2026-10-01 13:43:45 [info     ] req                            [http] bytes=804 client=127.0.0.1 host=testserver method=POST ms=1663.5 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=1788b7eb4481 status=200 ua=python-httpx/0.28.1
+E         2026-10-01 13:43:46 [info     ] req                            [http] bytes=804 client=127.0.0.1 host=testserver method=POST ms=16.3 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=4839b38bdc3d status=200 ua=python-httpx/0.28.1
+E         2026-10-01 13:43:46 [info     ] req                            [http] bytes=151 client=127.0.0.1 host=testserver method=POST ms=17.9 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=8f0cfcff88c2 status=422 ua=python-httpx/0.28.1
+E         2026-10-01 13:43:46 [info     ] req                            [http] bytes=950 client=127.0.0.1 host=testserver method=POST ms=33.2 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=9adbb47b2f63 status=200 ua=python-httpx/0.28.1
+E         2026-10-01 13:43:46 [info     ] idempotent skip: action=message scope=51f14541-82ba-4941-be3f-398e92e36d68 [app.domain.idempotency.store]
+E         2026-10-01 13:43:47 [info     ] idempotent skip: action=message scope=51f14541-82ba-4941-be3f-398e92e36d68 [app.domain.idempotency.store]
+E         2026-10-01 13:43:47 [info     ] idempotent skip: action=message scope=51f14541-82ba-4941-be3f-398e92e36d68 [app.domain.idempotency.store]
+E         HTTP_RECOVERY_TRACE [{"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "claimed", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "uncertain", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "claimed", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "uncertain", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003", "d920ddb1-be19-4731-b490-3b63a7a3d44d"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "uncertain", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": ["d920ddb1-be19-4731-b490-3b63a7a3d44d"], "working": false, "work_id": null}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "received", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": [], "working": false, "work_id": null}]
+E         Traceback (most recent call last):
+E           File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/tests/native_executor_recovery_worker.py", line 227, in <module>
+E             asyncio.run(run(json.loads(Path(sys.argv[1]).read_text())))
+E             ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ~~~~~~~~~~^^^^^^
+E           File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+E           File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+E             return future.result()
+E                    ~~~~~~~~~~~~~^^
+E           File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/tests/native_executor_recovery_worker.py", line 197, in run
+E             assert {row.execution_work_id for row in rows} == {work}
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         AssertionError
+E         
+E       assert 1 == 0
+E        +  where 1 = <Process 210086>.returncode
+
+tests/integration/test_native_executor_process_recovery.py:242: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:267 {'handle': 'alice', 'event': 'actor_handle_fallback', 'req': '8861ccd727d9', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 13:43:34'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 775.8, 'req': '8861ccd727d9', 'bytes': 657, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:35'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+WARNING  cheesex.loop:loop_lag.py:75 {'stalled_ms': 1034, 'worst_ms': 1034, 'note': 'one piece of work held the loop this long; every other request waited. py-spy dump --nonblocking --pid 1 names it.', 'event': 'event loop stalled', 'level': 'warning', 'logger': 'cheesex.loop', 'timestamp': '2026-10-01 13:43:36'}
+INFO     http:main.py:636 {'method': 'GET', 'path': '/topics/51f14541-82ba-4941-be3f-398e92e36d68/members', 'status': 200, 'ms': 1135.9, 'req': 'da0e70c7d93c', 'bytes': 518, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:36'}
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/topics/51f14541-82ba-4941-be3f-398e92e36d68/members "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/agents', 'status': 200, 'ms': 26.0, 'req': '339576df281a', 'bytes': 332, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:36'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/agents "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/51f14541-82ba-4941-be3f-398e92e36d68/members', 'status': 200, 'ms': 19.1, 'req': 'f35c5c8f7820', 'bytes': 227, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:36'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/51f14541-82ba-4941-be3f-398e92e36d68/members "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/invitations', 'status': 200, 'ms': 39.5, 'req': '14e464a8cfe7', 'bytes': 262, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:36'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects/deb10a75-d4c4-4b9b-8852-08ee5c3edf3d/invitations "HTTP/1.1 200 OK"
+INFO     http:main.py:636 {'method': 'POST', 'path': '/invitations/a7ef44ae-e462-4f84-aefa-6fdd4ec13fa8/respond', 'status': 200, 'ms': 26.2, 'req': '32a0f422bdf7', 'bytes': 288, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:36'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/invitations/a7ef44ae-e462-4f84-aefa-6fdd4ec13fa8/respond "HTTP/1.1 200 OK"
+INFO     cheesex.chat_ws:chat.py:229 {'topic': '51f14541-82ba-4941-be3f-398e92e36d68', 'received_unix_ms': 1790862216429.6584, 'event': 'chat_message_received', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 13:43:36'}
+INFO     cheesex.runtime:runtime.py:277 chat_receive_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea persist_ms=51.496 publish_ms=0.032
+INFO     cheesex.chat_ws:chat.py:245 {'topic': '51f14541-82ba-4941-be3f-398e92e36d68', 'turn': 'c6ced6e4-3065-4a24-8965-81f4844ba4ea', 'duration_ms': 52.35099233686924, 'event': 'chat_message_submitted', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 13:43:36'}
+INFO     cheesex.runtime:runtime.py:944 chat_admission_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=message_lock elapsed_ms=0.002 unix_ms=1790862216482.297
+INFO     cheesex.runtime:runtime.py:974 chat_admission_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=live_delivery_declined elapsed_ms=0.240 unix_ms=1790862216482.535
+INFO     cheesex.chat_ws:chat.py:83 {'topic': '51f14541-82ba-4941-be3f-398e92e36d68', 'frame_type': 'user_block', 'block_id': 'c6ced6e4-3065-4a24-8965-81f4844ba4ea', 'sent_unix_ms': 1790862216483.3538, 'event': 'chat_message_frame_sent', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 13:43:36'}
+INFO     cheesex.runtime:runtime.py:2091 chat_admission_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=admitted verdict=ok elapsed_ms=7.920 unix_ms=1790862216490.646
+INFO     cheesex.runtime:runtime.py:2326 turn start: author=alice summon=True resume=False
+INFO     app.domain.agent.chat:chat.py:4289 chat_assembly_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea elapsed_ms=91.348 phases_ms={'history': 12.078845873475075, 'identity': 25.640133768320084, 'memory': 30.53940460085869, 'metadata': 81.42146468162537, 'provider': 82.13299512863159, 'committed': 91.20563603937626}
+INFO     app.domain.agent.chat:chat.py:4356 chat_preparation_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=assembled elapsed_ms=91.934 unix_ms=1790862216600.834
+INFO     app.domain.agent.chat:chat.py:4451 chat_preparation_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=prompt_built elapsed_ms=113.049 unix_ms=1790862216621.938
+INFO     app.domain.agent.chat:chat.py:4471 chat_preparation_timing topic=51f14541-82ba-4941-be3f-398e92e36d68 turn=c6ced6e4-3065-4a24-8965-81f4844ba4ea phase=model_ready elapsed_ms=116.924 unix_ms=1790862216625.813
+INFO     cheesex.runtime:runtime.py:2562 turn done: status=done tools=0 first_output=Nones duration=0.4s
+INFO     http:main.py:636 {'method': 'POST', 'path': '/topics/51f14541-82ba-4941-be3f-398e92e36d68/ask', 'status': 200, 'ms': 175.9, 'req': 'da8e2c0e0176', 'bytes': 648, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 13:43:37'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/51f14541-82ba-4941-be3f-398e92e36d68/ask "HTTP/1.1 200 OK"
+=============================== warnings summary ===============================
+tests/integration/test_native_executor_process_recovery.py::test_new_full_service_process_reuses_original_native_executor[http-busy]
+tests/integration/test_native_executor_process_recovery.py::test_new_full_service_process_reuses_original_native_executor[http-busy]
+tests/integration/test_native_executor_process_recovery.py::test_new_full_service_process_reuses_original_native_executor[http-busy]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/integration/test_native_executor_process_recovery.py::test_new_full_service_process_reuses_original_native_executor[http-busy]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_native_executor_process_recovery.py::test_new_full_service_process_reuses_original_native_executor[http-busy] - AssertionError: [0;93m2026-10-01 13:43:42.479120930 [W:onnxruntime:Default, cpuid_info.cc:105 LogEarlyWarning] Unknown CPU vendor. cpuinfo_vendor value: 16[m
+  [1;31m2026-10-01 13:43:42.549002206 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210199, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.554896772 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210201, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.556872001 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210202, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.558864010 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210203, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.561270885 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210204, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.562853347 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210205, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.549251780 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210200, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.573889438 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210206, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.711863263 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210210, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.712161418 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210211, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.718899166 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210212, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.721022077 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210213, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.722917944 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210214, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.724753521 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210215, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.726922182 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210216, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.728871251 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210217, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896393016 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210222, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896435976 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210224, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896461927 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210225, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896478017 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210223, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896709290 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210229, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896710490 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210226, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.896992274 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210228, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  [1;31m2026-10-01 13:43:42.897029375 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 210227, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+  2026-10-01 13:43:45 [info     ] req                            [http] bytes=804 client=127.0.0.1 host=testserver method=POST ms=1663.5 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=1788b7eb4481 status=200 ua=python-httpx/0.28.1
+  2026-10-01 13:43:46 [info     ] req                            [http] bytes=804 client=127.0.0.1 host=testserver method=POST ms=16.3 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=4839b38bdc3d status=200 ua=python-httpx/0.28.1
+  2026-10-01 13:43:46 [info     ] req                            [http] bytes=151 client=127.0.0.1 host=testserver method=POST ms=17.9 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=8f0cfcff88c2 status=422 ua=python-httpx/0.28.1
+  2026-10-01 13:43:46 [info     ] req                            [http] bytes=950 client=127.0.0.1 host=testserver method=POST ms=33.2 path=/topics/blocks/47240fda-1d75-4337-853e-676d362f9549/answer req=9adbb47b2f63 status=200 ua=python-httpx/0.28.1
+  2026-10-01 13:43:46 [info     ] idempotent skip: action=message scope=51f14541-82ba-4941-be3f-398e92e36d68 [app.domain.idempotency.store]
+  2026-10-01 13:43:47 [info     ] idempotent skip: action=message scope=51f14541-82ba-4941-be3f-398e92e36d68 [app.domain.idempotency.store]
+  2026-10-01 13:43:47 [info     ] idempotent skip: action=message scope=51f14541-82ba-4941-be3f-398e92e36d68 [app.domain.idempotency.store]
+  HTTP_RECOVERY_TRACE [{"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "claimed", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "uncertain", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "claimed", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "uncertain", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": ["c6ced6e4-3065-4a24-8965-81f4844ba4ea", "0275552d-4fdd-4f4b-86a6-19379452a003", "d920ddb1-be19-4731-b490-3b63a7a3d44d"], "working": true, "work_id": "c6ced6e4-3065-4a24-8965-81f4844ba4ea"}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "uncertain", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": ["d920ddb1-be19-4731-b490-3b63a7a3d44d"], "working": false, "work_id": null}, {"deliveries": [{"id": "a5a56f8f-e9d4-4550-a1aa-67e1894c8125", "state": "received", "attempt": "30f36399-4f9b-422d-87b4-d07b610b62a9", "attempts": 1, "retry_at": "None"}, {"id": "2597a899-2ab1-433b-9068-a94e8ff8f8c3", "state": "received", "attempt": "e3245a97-6686-4d99-8d53-68cd9b76c04c", "attempts": 1, "retry_at": "None"}], "unfinished": [], "working": false, "work_id": null}]
+  Traceback (most recent call last):
+    File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/tests/native_executor_recovery_worker.py", line 227, in <module>
+      asyncio.run(run(json.loads(Path(sys.argv[1]).read_text())))
+      ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+      return runner.run(main)
+             ~~~~~~~~~~^^^^^^
+    File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+      return self._loop.run_until_complete(task)
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+    File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+      return future.result()
+             ~~~~~~~~~~~~~^^
+    File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/tests/native_executor_recovery_worker.py", line 197, in run
+      assert {row.execution_work_id for row in rows} == {work}
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  AssertionError
+  
+assert 1 == 0
+ +  where 1 = <Process 210086>.returncode
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+================= 1 failed, 2 deselected, 4 warnings in 16.03s =================
