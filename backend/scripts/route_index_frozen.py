@@ -1,4 +1,4 @@
-"""The frozen first-match pairs (v3): exact four-field tuples, each citing the
+"""The frozen first-match pairs (v3): structured exact identities, each citing the
 concrete registration records it names — leaf index and handler on both
 sides — plus the real-pair run that proved the behaviour. Nothing here is a
 blanket: a pair not listed field-for-field is not exempt, and a listed pair
@@ -13,6 +13,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class FrozenPair:
+    earlier_index: int
+    later_index: int
+    protocol: str
+    method: str
     earlier_path: str
     earlier_endpoint: str
     later_path: str
@@ -21,14 +25,18 @@ class FrozenPair:
     why: str
 
 
-#: The pairs the guard must NOT re-report. Four fields, exact, validated.
+#: No new exemption: the same documented pair, now machine-validated.
 FROZEN: tuple[FrozenPair, ...] = (
     FrozenPair(
+        earlier_index=628,
+        later_index=652,
+        protocol="http",
+        method="GET",
         earlier_path="/users/{userId}",
         earlier_endpoint="app.api.routes.users.get_user",
         later_path="/users/invite-codes",
         later_endpoint="app.api.routes.users.list_invite_codes",
-        witness="real pair: GET /users/invite-codes resolves to get_user",
+        witness="/users/invite-codes",
         why=(
             "Documented known debt (users.py:3367): invite-codes registered "
             "after {userId} and lands on its int parse. Frozen citing "

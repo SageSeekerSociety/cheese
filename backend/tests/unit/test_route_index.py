@@ -1,6 +1,6 @@
 """The route-index collector and first-match guard (v6 reading-boundary
 pilot): the counter-example set — real shadows are provable, parameterized
-later routes are witnesses, frozen pairs are exact four-field tuples, and
+later routes are witnesses, frozen pairs cite exact registrations, and
 protocols never cross. The real-app assertions pin the fixed profile's
 effective expansion, including the seven WebSocket routes.
 """
@@ -9,7 +9,13 @@ import json
 
 from fastapi import APIRouter, FastAPI
 
-from scripts.route_index import RouteRecord, collect, first_match_findings
+from scripts.route_index import (
+    RouteRecord,
+    _full,
+    checked_findings,
+    collect,
+    first_match_findings,
+)
 
 
 def _app_with(*routes) -> FastAPI:
@@ -43,18 +49,28 @@ def test_a_parameterized_later_route_is_a_witness_not_a_verdict():
         (["GET"], "/users/{anything}", "get_any"),
         (["GET"], "/users/{user_id}", "get_user"),
     )
-    findings = first_match_findings(collect(app))
-    assert [(f.kind, f.witness) for f in findings] == [("witness", "/users/x")]
+    (finding,) = first_match_findings(collect(app))
+    assert (finding.kind, finding.method) == ("witness", "GET")
+    assert _full(finding.earlier, finding.witness, "http", "GET")
+    assert _full(finding.later, finding.witness, "http", "GET")
 
 
-def test_a_literal_earlier_route_does_not_shadow_a_parameterized_one():
-    """/users/invite-codes accepts only itself; /users/{user_id} also takes
-    /users/alice — nothing is shadowed."""
+def test_a_literal_earlier_route_yields_only_a_partial_overlap_witness():
+    """The literal wins its URL; the parameterized route still takes Alice."""
     app = _app_with(
         (["GET"], "/users/invite-codes", "list_invite_codes"),
         (["GET"], "/users/{user_id}", "get_user"),
     )
-    assert first_match_findings(collect(app)) == []
+    (finding,) = first_match_findings(collect(app))
+    assert (finding.kind, finding.witness, finding.method) == (
+        "witness",
+        "/users/invite-codes",
+        "GET",
+    )
+    assert _full(finding.earlier, finding.witness, "http", "GET")
+    assert _full(finding.later, finding.witness, "http", "GET")
+    assert not _full(finding.earlier, "/users/alice", "http", "GET")
+    assert _full(finding.later, "/users/alice", "http", "GET")
 
 
 def test_different_methods_and_protocols_never_shadow():
@@ -86,11 +102,21 @@ def test_the_real_app_expands_exactly_the_effective_routes():
 
 def test_the_real_apps_one_known_shadow_is_the_documented_one():
     from app.main import app
+    from scripts.route_index_frozen import FROZEN
 
-    findings = first_match_findings(collect(app))
-    assert [(f.earlier.path, f.later.path, f.kind) for f in findings] == [
-        ("/users/{userId}", "/users/invite-codes", "unreachable")
-    ], "only the users.py:3367-documented shadow exists today"
+    records = collect(app)
+    findings = first_match_findings(records)
+    assert [
+        (f.earlier.path, f.later.path, f.kind)
+        for f in findings
+        if f.kind == "unreachable"
+    ] == [("/users/{userId}", "/users/invite-codes", "unreachable")], (
+        "only the users.py:3367-documented provable shadow exists today"
+    )
+    remaining = checked_findings(records, FROZEN)
+    assert all(f.kind == "witness" for f in remaining), (
+        "exact frozen debt is valid and no new provable shadow is exempt"
+    )
 
 
 def test_a_frozen_tuple_suppresses_exactly_itself():

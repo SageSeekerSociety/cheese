@@ -1,25 +1,10 @@
 #!/usr/bin/env python3
-"""The route index and the first-match guard (v6 reading-boundary pilot).
+"""Effective route index and first-FULL guard (v6 reading-boundary pilot).
 
-One collector over the LIVE app's effective routes — FastAPI 0.137's
-``_IncludedRouter.effective_route_contexts()`` expands every include to the
-routes that actually answer, preserving registration order, path, endpoint
-and the protocol each route speaks (the seven WebSocket routes sit at top
-level as ``APIWebSocketRoute``; nothing is inferred from names). On top of
-that:
-
-- ``--emit`` prints the index, one row per route, in registration order.
-- ``--check`` runs the first-match guard: an earlier route that shadows a
-  later one is a defect only when it is PROVABLE — the later route is
-  all-literal and the earlier one matches everything it could. A later
-  route with parameters is never declared unreachable; it is reported with
-  one concrete witness path instead. Methods intersect on HTTP only;
-  WebSocket pairs match by protocol. Exit 1 when a provable shadow exists.
-
-No settings profile is read and no Mount is expanded here: this app builds
-its routers statically (``app.main``), so the effective expansion above IS
-the fixed profile's truth; a future Mount fails loudly below rather than
-silently dropping routes.
+Literal later routes have a unique URL: an earlier FULL match proves that
+URL unreachable for the reported method. Parameterized routes only yield
+verified concrete witnesses; sampling is not a proof of disjointness or
+whole-branch coverage. Mounts remain unsupported and fail loudly.
 """
 
 from __future__ import annotations
@@ -28,26 +13,40 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from itertools import islice, product, zip_longest
 from pathlib import Path
 
-# Same convention as check_boundaries: the backend root goes on sys.path so
-# the script and the tools it wraps judge the same tree from the same place.
+from starlette.routing import Match, Mount, Route, WebSocketRoute, compile_path
+
 sys.path.insert(0, str(Path.cwd()))
 
-_PARAM = re.compile(r"^\{[^}/]+(?::[^}/]+)?\}$")
+_PARAM = re.compile(r"{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?}")
+_SAMPLES = ("x", "1", "1.5", "00000000-0000-0000-0000-000000000001", "", "a/b")
 
 
 @dataclass(frozen=True)
 class RouteRecord:
-    """One effective route, in the app's registration order."""
+    """One effective leaf; its global index is never reset per protocol."""
 
     index: int
-    protocol: str  # "http" | "ws"
+    protocol: str
     path: str
     methods: frozenset[str]
     endpoint: str
     name: str
+    path_regex: re.Pattern | None = field(default=None, compare=False, repr=False)
+    param_convertors: dict = field(default_factory=dict, compare=False, repr=False)
+    matcher: Callable | None = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self):
+        # Hand-built records use the same compiler as Starlette. Collected
+        # records always carry the effective regex and matcher, not a recompile.
+        if self.path_regex is None:
+            regex, _, convertors = compile_path(self.path)
+            object.__setattr__(self, "path_regex", regex)
+            object.__setattr__(self, "param_convertors", convertors)
 
     @property
     def segments(self) -> tuple[str, ...]:
@@ -55,127 +54,208 @@ class RouteRecord:
 
     @property
     def all_literal(self) -> bool:
-        return not any(_PARAM.match(seg) for seg in self.segments)
+        return not self.param_convertors
 
 
 def collect(app) -> list[RouteRecord]:
-    """Every route that can answer, in registration order (v3 collector)."""
+    """Use FastAPI's effective leaves, including prefixed Starlette/WS routes."""
     records: list[RouteRecord] = []
+
+    def append(original, effective):
+        if isinstance(original, Mount):
+            raise RuntimeError(f"Mount at {effective.path} is not expanded")
+        if not isinstance(original, (Route, WebSocketRoute)):
+            raise RuntimeError(f"Unsupported route: {type(original).__name__}")
+        if effective.path_regex is None:
+            raise RuntimeError(f"Missing effective regex for {effective.path}")
+        endpoint = effective.endpoint
+        records.append(
+            RouteRecord(
+                index=len(records),
+                protocol="ws" if isinstance(original, WebSocketRoute) else "http",
+                path=effective.path,
+                methods=frozenset(getattr(effective, "methods", None) or ()),
+                endpoint=f"{endpoint.__module__}.{endpoint.__name__}",
+                name=effective.name,
+                path_regex=effective.path_regex,
+                param_convertors=effective.param_convertors,
+                matcher=effective.matches,
+            )
+        )
+
     for route in app.routes:
-        kind = type(route).__name__
-        if kind == "_IncludedRouter":
+        if type(route).__name__ == "_IncludedRouter":
             for ctx in route.effective_route_contexts():
-                # The seven WS routes surface as contexts whose endpoint is
-                # None; the answering callable lives on the original route
-                # (v3: protocol comes from the route's own type, never names).
-                original = ctx.original_route
-                protocol = "ws" if "WebSocket" in type(original).__name__ else "http"
-                endpoint = ctx.endpoint or original.endpoint
-                methods = ctx.methods or getattr(original, "methods", None) or ()
-                path = ctx.path or original.path
-                records.append(
-                    RouteRecord(
-                        index=len(records),
-                        protocol=protocol,
-                        path=path,
-                        methods=frozenset(methods),
-                        endpoint=f"{endpoint.__module__}.{endpoint.__name__}",
-                        name=ctx.name or original.name,
-                    )
-                )
-        elif kind in ("Route", "APIRoute", "APIWebSocketRoute", "WebSocketRoute"):
-            protocol = "ws" if "WebSocket" in kind else "http"
-            endpoint = route.endpoint
-            records.append(
-                RouteRecord(
-                    index=len(records),
-                    protocol=protocol,
-                    path=route.path,
-                    methods=frozenset(getattr(route, "methods", None) or ()),
-                    endpoint=f"{endpoint.__module__}.{endpoint.__name__}",
-                    name=route.name,
-                )
-            )
-        elif kind == "Mount":
-            # Fail loud, never silent-drop (v3): this app has none today, and
-            # adding one without extending the collector must break the guard.
-            raise RuntimeError(
-                f"Mount at {getattr(route, 'path', '?')} is not expanded by the "
-                "route-index collector"
-            )
+                append(ctx.original_route, ctx.starlette_route or ctx)
+        else:
+            append(route, route)
     return records
 
 
-def _segments_cover(earlier: tuple[str, ...], later: tuple[str, ...]) -> bool:
-    """Every path `later` matches, `earlier` also matches (segment subset)."""
-    if len(earlier) != len(later):
+def _full(record: RouteRecord, path: str, protocol: str, method: str) -> bool:
+    if record.protocol != protocol:
         return False
-    for first, second in zip(earlier, later, strict=True):
-        if _PARAM.match(first):
-            continue
-        if first != second:
-            return False
+    if protocol == "http" and method not in record.methods:
+        return False
+    match = record.path_regex.fullmatch(path)
+    if match is None:
+        return False
+    if record.matcher is not None:
+        scope = {
+            "type": "websocket" if protocol == "ws" else "http",
+            "method": method,
+            "path": path,
+            "root_path": "",
+        }
+        return record.matcher(scope)[0] == Match.FULL
+    # Synthetic records still validate the convertor, not only the regex.
+    for name, value in match.groupdict().items():
+        record.param_convertors[name].convert(value)
     return True
+
+
+def _first_full(records, path, protocol, method):
+    return next((r for r in records if _full(r, path, protocol, method)), None)
+
+
+def _sample_paths(route: RouteRecord, peer: RouteRecord) -> Iterator[str]:
+    """Bounded witness search, never used to declare absence of overlap.
+
+    Peer literals seed cross-segment overlaps; peer suffixes seed :path.
+    Every candidate must subsequently pass both effective matchers. Unknown
+    custom convertors can yield no sample; that is not a disjoint verdict.
+    """
+    params = list(_PARAM.finditer(route.path))
+    if not params:
+        yield route.path
+        return
+    peer_parts = peer.path.split("/")
+    peer_literals = [part for part in peer_parts if not _PARAM.search(part)]
+    peer_sample = peer.path
+    for param in _PARAM.finditer(peer.path):
+        convertor = peer.param_convertors[param[1]]
+        sample = next((s for s in _SAMPLES if re.fullmatch(convertor.regex, s)), None)
+        if sample is None:
+            break
+        peer_sample = peer_sample.replace(param[0], sample)
+    suffixes = ["/".join(peer_sample.split("/")[i:]) for i in range(1, len(peer_parts))]
+    choices = []
+    for param in params:
+        convertor = route.param_convertors[param[1]]
+        position = route.path[: param.start()].count("/")
+        aligned = peer_parts[position : position + 1]
+        seeds = dict.fromkeys([*aligned, *peer_literals, *_SAMPLES, *suffixes])
+        values = [
+            s
+            for s in seeds
+            if not _PARAM.search(s) and re.fullmatch(convertor.regex, s)
+        ]
+        choices.append(values)
+    for values in islice(product(*choices), 256):
+        replacements = dict(zip((p[1] for p in params), values, strict=True))
+        yield _PARAM.sub(
+            lambda m, replacements=replacements: replacements[m[1]], route.path
+        )
 
 
 @dataclass(frozen=True)
 class Shadow:
-    """One earlier/later pair the guard judged."""
-
     earlier: RouteRecord
     later: RouteRecord
-    kind: str  # "unreachable" (provable) | "witness"
-    witness: str = field(default="")
+    kind: str
+    witness: str = ""
+    method: str = ""
 
 
 def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
-    """Earlier routes that swallow later ones (v3 first-match guard).
-
-    A verdict of "unreachable" is provable only for an all-literal later
-    route; a parameterized later route yields one concrete witness path and
-    is otherwise left to the frozen pair list, which must cite the concrete
-    registration records (leaf index + handler).
-    """
+    """Report actual first FULL winners per URL and protocol/method."""
     findings: list[Shadow] = []
+    seen = set()
     for later_pos, later in enumerate(records):
-        for earlier in records[:later_pos]:
-            if earlier.protocol != later.protocol:
-                continue
-            if later.protocol == "http" and not (earlier.methods & later.methods):
-                continue
-            if not _segments_cover(earlier.segments, later.segments):
-                continue
-            if later.all_literal:
-                findings.append(Shadow(earlier, later, "unreachable"))
-            else:
-                witness = "/".join(
-                    second if _PARAM.match(second) else "x" for second in later.segments
+        earlier_records = records[:later_pos]
+        for method in sorted(later.methods) if later.protocol == "http" else ["WS"]:
+            for peer in earlier_records:
+                if peer.protocol != later.protocol:
+                    continue
+                if later.protocol == "http" and method not in peer.methods:
+                    continue
+                paths = (
+                    [later.path] if later.all_literal else _sample_paths(later, peer)
                 )
-                # A literal earlier segment wins over a param in the same
-                # position for the witness path, so the witness is one the
-                # earlier route provably takes.
-                witness = "/".join(
-                    (
-                        second
-                        if not _PARAM.match(second)
-                        else (first if not _PARAM.match(first) else "x")
-                    )
-                    for first, second in zip(
-                        earlier.segments, later.segments, strict=True
-                    )
-                )
-                findings.append(Shadow(earlier, later, "witness", f"/{witness}"))
+                for path in paths:
+                    if not _full(later, path, later.protocol, method):
+                        continue
+                    if not _full(peer, path, later.protocol, method):
+                        continue
+                    winner = _first_full(earlier_records, path, later.protocol, method)
+                    key = (winner.index, later.index, method)
+                    if key not in seen:
+                        seen.add(key)
+                        findings.append(
+                            Shadow(
+                                winner,
+                                later,
+                                "unreachable" if later.all_literal else "witness",
+                                path,
+                                method,
+                            )
+                        )
+                    # One verified sample per candidate pair is enough. Other
+                    # peers can expose a different first winner on another URL.
+                    break
     return findings
 
 
-def _sync(index_file: str, records: list[RouteRecord]) -> int:
-    """The checked-in index vs the live app (v3 route index + auth column).
+def checked_findings(records, frozen):
+    """Validate exact frozen registrations before subtracting any findings.
 
-    The route SET must match exactly — a route added, removed, or re-shaped
-    without touching the index fails here. The handwritten ``auth`` column
-    is a ratchet: every route added SINCE the index must carry a note, and
-    the list of routes still lacking one may only shrink (same idiom as the
-    boundary baselines — a debt that never grows).
+    Used by --check and intended for the real-index assertion as well.
+    A stale entry fails even when no currently reported shadow remains.
+    """
+    findings = first_match_findings(records)
+    exempt = set()
+    for pair in frozen:
+
+        def stale(pair=pair):
+            raise ValueError(f"stale frozen pair: {pair}")
+
+        earlier = [r for r in records if r.index == pair.earlier_index]
+        later = [r for r in records if r.index == pair.later_index]
+        if len(earlier) != 1 or len(later) != 1:
+            stale()
+        earlier, later = earlier[0], later[0]
+        if (
+            (earlier.path, earlier.endpoint)
+            != (pair.earlier_path, pair.earlier_endpoint)
+            or (later.path, later.endpoint) != (pair.later_path, pair.later_endpoint)
+            or earlier.protocol != pair.protocol
+            or later.protocol != pair.protocol
+            or earlier.index >= later.index
+            or records.index(earlier) >= records.index(later)
+            or not pair.why.strip()
+            or (pair.protocol == "ws" and pair.method != "WS")
+        ):
+            stale()
+        if not _full(later, pair.witness, pair.protocol, pair.method):
+            stale()
+        winner = _first_full(records, pair.witness, pair.protocol, pair.method)
+        if winner is not earlier:
+            stale()
+        key = (earlier.index, later.index, pair.protocol, pair.method)
+        if key in exempt:
+            stale()
+        exempt.add(key)
+    return [
+        f
+        for f in findings
+        if (f.earlier.index, f.later.index, f.later.protocol, f.method) not in exempt
+    ]
+
+
+def _sync(index_file: str, records: list[RouteRecord]) -> int:
+    """Compare generated columns row by row; keep multiplicity and leaf index.
+
+    Handwritten auth/owner validation is a separate, still-open pilot slice.
     """
     path = Path(index_file)
     if not path.exists():
@@ -186,34 +266,23 @@ def _sync(index_file: str, records: list[RouteRecord]) -> int:
     ]
     live = [
         {
-            "index": record.index,
-            "protocol": record.protocol,
-            "path": record.path,
-            "methods": sorted(record.methods),
-            "endpoint": record.endpoint,
+            "index": r.index,
+            "protocol": r.protocol,
+            "path": r.path,
+            "methods": sorted(r.methods),
+            "endpoint": r.endpoint,
         }
-        for record in records
+        for r in records
     ]
-    live_keys = {
-        (row["protocol"], row["path"], tuple(row["methods"]), row["endpoint"])
-        for row in live
-    }
-    indexed_keys = {
-        (row["protocol"], row["path"], tuple(row["methods"]), row["endpoint"])
-        for row in indexed
-    }
-    added = live_keys - indexed_keys
-    removed = indexed_keys - live_keys
-    for key in sorted(added):
-        print(f"[added] {key} — not in the index (auth note required)")
-    for key in sorted(removed):
-        print(f"[removed] {key} — still in the index")
-    empty = [row["path"] for row in indexed if not row.get("auth")]
-    if added or removed:
-        print(f"route index out of sync: +{len(added)} −{len(removed)}")
+    columns = ("index", "protocol", "path", "methods", "endpoint")
+    generated = [{key: row.get(key) for key in columns} for row in indexed]
+    if generated != live:
+        for position, (old, new) in enumerate(zip_longest(generated, live)):
+            if old != new:
+                print(f"[row {position}] indexed={old!r} live={new!r}")
+        print(f"route index out of sync: {len(indexed)} indexed / {len(live)} live")
         return 1
-    # The missing-note debt, shrunk only: recorded as a count the same way
-    # the boundary baselines record theirs.
+    empty = [row["path"] for row in indexed if not row.get("auth")]
     print(f"route index in sync ({len(indexed)} routes); {len(empty)} auth notes owed")
     return 0
 
@@ -226,11 +295,7 @@ def main() -> int:
     parser.add_argument(
         "--check", action="store_true", help="run the first-match guard"
     )
-    parser.add_argument(
-        "--sync",
-        metavar="FILE",
-        help="verify the checked-in index matches the live app (v3 sync)",
-    )
+    parser.add_argument("--sync", metavar="FILE", help="verify generated index columns")
     args = parser.parse_args()
 
     from app.main import app
@@ -255,31 +320,20 @@ def main() -> int:
     if args.check:
         from scripts.route_index_frozen import FROZEN
 
-        frozen = {
-            (f.earlier_path, f.earlier_endpoint, f.later_path, f.later_endpoint)
-            for f in FROZEN
-        }
-        findings = [
-            finding
-            for finding in first_match_findings(records)
-            if (
-                finding.earlier.path,
-                finding.earlier.endpoint,
-                finding.later.path,
-                finding.later.endpoint,
-            )
-            not in frozen
-        ]
-        bad = [finding for finding in findings if finding.kind == "unreachable"]
+        try:
+            findings = checked_findings(records, FROZEN)
+        except ValueError as exc:
+            print(exc)
+            return 1
         for finding in findings:
             print(
-                f"[{finding.kind}] #{finding.earlier.index} "
-                f"{sorted(finding.earlier.methods) or ['WS']} "
-                f"{finding.earlier.path} ({finding.earlier.endpoint}) shadows "
+                f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
+                f"#{finding.earlier.index} {finding.earlier.path} "
+                f"({finding.earlier.endpoint}) shadows "
                 f"#{finding.later.index} {finding.later.path} "
-                f"({finding.later.endpoint})"
-                + (f" — witness {finding.witness}" if finding.witness else "")
+                f"({finding.later.endpoint}) — witness {finding.witness}"
             )
+        bad = [f for f in findings if f.kind == "unreachable"]
         if bad:
             print(f"first-match guard: {len(bad)} provable shadow(s)")
             return 1
