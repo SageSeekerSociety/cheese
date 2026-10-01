@@ -52,10 +52,7 @@ def configure(payload: dict) -> dict:
         if running:
             previous = json.loads((state / "runner.json").read_text())
             requested = payload["config"]
-            if any(
-                previous[key] != requested[key]
-                for key in ("execution_target", "mcp_servers")
-            ) or any(
+            if previous["execution_target"] != requested["execution_target"] or any(
                 previous["opening"].get(key) != requested["opening"].get(key)
                 for key in ("owner", "agent_handle")
             ):

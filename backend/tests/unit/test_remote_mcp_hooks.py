@@ -160,7 +160,7 @@ def test_codex_calls_a_remote_server_inside_the_projects_hooks(
     target = {**target, "remote_mcp": {"path": "/topics/t/mcp", "servers": ["tracker"]}}
     try:
         tools = RemoteTools(target)
-        names = [tool["name"] for tool in asyncio.run(tools.discover(["tracker"]))]
+        names = [tool["name"] for tool in asyncio.run(tools.discover())]
         assert "mcp__tracker__whoami" in names
 
         def call(call_id, note):
