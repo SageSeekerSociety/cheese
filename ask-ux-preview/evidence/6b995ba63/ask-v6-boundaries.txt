@@ -1,0 +1,35 @@
+
+---------
+Contracts
+---------
+
+Analyzed 760 files, 3527 dependencies.
+--------------------------------------
+
+C1 layers: api -> domain -> core, no imports upward KEPT (27 ignored imports)
+C2 routes do not import a domain's models directly KEPT (53 ignored imports, 2 warnings)
+C3 sibling domains under app.domain are acyclic KEPT (172 ignored imports, 2 warnings)
+
+Contracts: 3 kept, 0 broken.
+
+--------
+Warnings
+--------
+
+C2 routes do not import a domain's models directly
+--------------------------------------------------
+
+- No matches for ignored import app.api.routes.spaces -> 
+app.domain.teaching.models.
+- No matches for ignored import app.api.routes.spaces -> app.domain.task.models.
+
+C3 sibling domains under app.domain are acyclic
+-----------------------------------------------
+
+- No matches for ignored import app.domain.remote_mcp.declared -> 
+app.domain.repository.forge_files.
+- No matches for ignored import app.domain.machine.warm -> 
+app.domain.machine.services.
+PASS: module boundaries held (.importlinter)
+
+boundaries_exit=0

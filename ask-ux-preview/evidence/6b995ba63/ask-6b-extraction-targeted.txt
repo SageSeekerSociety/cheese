@@ -1,0 +1,152 @@
+[0;93m2026-10-01 20:18:49.508458686 [W:onnxruntime:Default, cpuid_info.cc:105 LogEarlyWarning] Unknown CPU vendor. cpuinfo_vendor value: 16[m
+[1;31m2026-10-01 20:18:49.566764396 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272599, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.566797087 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272598, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.567040630 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272601, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.567090781 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272602, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.567293504 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272603, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.567421086 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272600, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.567541617 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272605, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.570912577 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272604, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.634100048 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272607, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.634188709 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272608, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.634300401 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272606, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.637868263 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272611, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.637945264 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272612, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.638129217 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272613, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.640859247 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272610, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.643863641 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272609, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.653960268 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272614, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.654052459 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272615, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.654141010 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272616, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.654300473 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272617, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.658335722 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272618, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.659856644 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272619, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.661870933 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272620, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 20:18:49.663886453 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 272621, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+Source 6b995ba63; own-slot fresh migrations; no shared template cleanup
+...F                                                                     [100%]
+=================================== FAILURES ===================================
+____ test_echo_commit_abort_replays_same_identity_in_new_chat_process[True] ____
+tests/integration/test_native_echo_commit_cursor.py:320: in test_echo_commit_abort_replays_same_identity_in_new_chat_process
+    client.portal.call(run)
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+.venv/lib/python3.13/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/integration/test_native_echo_commit_cursor.py:302: in run
+    assert child.returncode == 0, stderr.decode()
+E   AssertionError: Traceback (most recent call last):
+E       File "<string>", line 38, in <module>
+E         asyncio.run(run())
+E         ~~~~~~~~~~~^^^^^^^
+E       File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+E         return runner.run(main)
+E                ~~~~~~~~~~^^^^^^
+E       File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+E         return self._loop.run_until_complete(task)
+E                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+E       File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+E         return future.result()
+E                ~~~~~~~~~~~~~^^
+E       File "<string>", line 28, in run
+E         await reading.drain()
+E       File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/domain/agent/harness/driven/subscription.py", line 255, in drain
+E         completion = await self.settle_completion(entry.record)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/domain/agent/harness/claude_code/subscription.py", line 184, in settle_completion
+E         return await super().settle_completion(record)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/app/domain/agent/harness/driven/subscription.py", line 220, in settle_completion
+E         raise RuntimeError("Completion consumer is not bound")
+E     RuntimeError: Completion consumer is not bound
+E     
+E   assert 1 == 0
+E    +  where 1 = <Process 272851>.returncode
+----------------------------- Captured stderr call -----------------------------
+2026-10-01 20:19:09 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 20:19:09 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 20:19:09 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] document refresh delivery started (every 5s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] document AI requests started (every 5s) [cheesex.background]
+2026-10-01 20:19:09 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=bd7a5c889987
+2026-10-01 20:19:09 [info     ] req                            [http] bytes=656 client=testclient host=testserver method=POST ms=145.3 path=/projects req=bd7a5c889987 status=200 ua=testclient
+2026-10-01 20:19:09 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 20:19:09 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=49daa182574d
+2026-10-01 20:19:09 [info     ] req                            [http] bytes=728 client=testclient host=testserver method=POST ms=40.7 path=/topics req=49daa182574d status=200 ua=testclient
+2026-10-01 20:19:09 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     cheesex.background:background.py:183 document refresh delivery started (every 5s)
+INFO     cheesex.background:background.py:183 document AI requests started (every 5s)
+INFO     cheesex.auth:auth.py:281 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': 'bd7a5c889987', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 20:19:09'}
+INFO     http:main.py:651 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 145.3, 'req': 'bd7a5c889987', 'bytes': 656, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 20:19:09'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:281 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '49daa182574d', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 20:19:09'}
+INFO     http:main.py:651 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 40.7, 'req': '49daa182574d', 'bytes': 728, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 20:19:09'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+tests/integration/test_native_echo_commit_cursor.py::test_echo_commit_abort_replays_same_identity_in_new_chat_process[True]
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+tests/integration/test_ask_groups.py::test_last_member_error_leaves_every_answer_unchanged
+tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+tests/integration/test_ask_groups.py::test_human_cannot_create_group_or_append_members
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_native_echo_commit_cursor.py::test_echo_commit_abort_replays_same_identity_in_new_chat_process[True]
+1 failed, 3 passed, 10 warnings in 19.78s
+pytest_exit=1
