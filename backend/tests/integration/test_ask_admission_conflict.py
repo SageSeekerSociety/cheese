@@ -7,6 +7,7 @@ I/O is a counter reached only after registration, not a native runner in this ca
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from app.core.errors import ValidationError
 from app.domain.agent.answer_delivery import offer_answer
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputEffects, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
@@ -55,7 +57,9 @@ def test_prompt_hold_rolls_back_answer_fence_before_external_io(client, monkeypa
             session_factory=factory,
             base_system_prompt="fixture",
             workspace_root="/unused",
-            compute=ComputePool([], "unused"),
+            compute=ComputePool(
+                [ClaudeCodeRuntime(SimpleNamespace(name="unused"))], "unused"
+            ),
         )
         registrar = chat._input_registrar(
             InputEffects(
