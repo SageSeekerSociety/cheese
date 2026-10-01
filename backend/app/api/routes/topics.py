@@ -39,7 +39,7 @@ from app.domain.block.models import (
 )
 from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository, ReplyWait, StuckCard
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, OptionAnswerIn
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1186,7 +1186,7 @@ async def summon_agent(
 @router.post("/blocks/{block_id}/answer")
 async def answer_options(
     block_id: uuid.UUID,
-    body: dict,
+    body: OptionAnswerIn,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
@@ -1195,13 +1195,13 @@ async def answer_options(
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
     the choice as the answerer's message, addressed to the teammate that asked."""
-    option = (body.get("option") or "").strip()
+    option = body.option.strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
         raise NotFoundError(say("optionQuestionNotFound"))
     actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
+        fallback_handle=body.author,
         topic_id=blk.topic_id,
         project_id=blk.project_id,
     )

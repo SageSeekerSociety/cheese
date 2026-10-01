@@ -75,20 +75,25 @@ async def toggle_reaction(
     the same author reacts with the same emoji again. Broadcasts the block's
     fresh aggregate to the topic channel so every open client updates live.
 
-    A reaction is a write somebody does in somebody else's room, and it used to
-    take none of the credentials such a write takes — a block id was the whole
-    ticket, so an anonymous caller could react as any handle at all.
-    ``require_verified_caller`` is the gate the other write surfaces use for
-    exactly this: a session token, an agent's scoped token, or the global
-    sandbox token (the trusted dev credential, which stays gate-only). Which
-    handle the reaction lands under is still the body's — that is the 冒名
-    question, a different product call, and the sandbox fixture runs one client
-    as alice/bob/carol on purpose (``tests/integration/test_reactions.py``)."""
-    await resolver.require_verified_caller()
+    A reaction is a write somebody does in a room, so it takes what any write
+    there takes: a verified caller — a session token, an agent's room
+    credential, or the global sandbox token (the trusted dev credential, which
+    stays gate-only) — who can reach the block's room. The credential is judged
+    against that room: an agent's is bound to its project, and judged against
+    nothing it was refused outright. Which handle the reaction lands under is
+    still the body's — that is the 冒名 question, a different product call, and
+    the sandbox fixture runs one client as alice/bob/carol on purpose
+    (``tests/integration/test_reactions.py``)."""
     repo = BlockRepository(db)
     block = await repo.get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
+    actor = await resolver.require_verified_caller(
+        project_id=block.project_id, topic_id=block.topic_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=block.project_id, topic_id=block.topic_id, enforce=True
+    )
     added = await repo.toggle_reaction(block_id, body.emoji, body.author)
     reactions = await repo.reactions_for_block(block_id)
     # Commit before broadcasting so a client that refetches on the frame
