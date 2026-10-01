@@ -133,7 +133,7 @@ class Session:
         )
 
     def events(self) -> list:
-        assembler = Assembler("session-1")
+        assembler = Assembler("session-1", harness="pi")
         return [
             event for record in self.records() for event in assembler.accept(record)
         ]

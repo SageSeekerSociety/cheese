@@ -29,6 +29,7 @@ from typing import Protocol
 
 import httpx
 
+from app.domain.agent import attachments
 from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -218,6 +219,19 @@ class DrivenRuntime[H: Handle]:
         self.told_waiting: dict[Seat, uuid.UUID] = {}
         self.unread: UnreadProbe | None = None
         self.live: dict[Seat, H] = {}
+        # (seat, conversation) pairs this process saw die (`_died` / a
+        # verdict): the only thing that makes "no live handle" a fact
+        # rather than an unanswered question (FB-56 legacy③). A turn on
+        # the same seat in a DIFFERENT conversation is not covered by it.
+        self.dead: set[tuple[Seat, str]] = set()
+        # Conversations this round's recovery found alive, and found
+        # TERMINATED by an authority's own per-conversation answer (FB-56
+        # legacy③): the channel that placed them reports each pointer's
+        # outcome, and only a terminal answer bound to the stored resume
+        # token lands here. "Not heard from" never does — that is unknown.
+        self.found_conversations: set[tuple[Seat, str]] = set()
+        self.terminal_conversations: set[tuple[Seat, str]] = set()
+        self._owns_sessions_provider = None
         # Seats whose handle this process ensured and whose runner has answered
         # alive on every read since: what a send hands the channel as ``live``.
         # A read that fails or says the agent process is gone takes the seat
@@ -479,20 +493,56 @@ class DrivenRuntime[H: Handle]:
         if self.activity and work not in self.queues:
             await self.activity(project, seat[0], work, active, agent_handle=seat[1])
 
+    def bind_owns_sessions(self, provider) -> None:
+        """Who answers ``owns_sessions`` at attach time (FB-56)."""
+        self._owns_sessions_provider = provider
+
     async def _attach(self, handle: H) -> None:
         seat = self._seat_of_handle(handle)
-        if self.live.get(seat) == handle and seat in self.subscriptions:
-            return
+        async with attachments.lock(seat):
+            # Ownership is checked FIRST, and the idempotent fast path is
+            # checked INSIDE the lock with it (FB-56): an early return ahead
+            # of both would wave a same-handle recover through while the
+            # platform is not owning sessions — the old maps still answer
+            # "attached", and the caller goes on bookkeeping a recovery the
+            # ownership gate never allowed.
+            if self._owns_sessions_provider is not None and (
+                not self._owns_sessions_provider().owns_sessions
+            ):
+                raise DeviceOffline(
+                    f"platform is not owning sessions right now (topic={seat[0]})"
+                )
+            if self.live.get(seat) == handle and seat in self.subscriptions:
+                return
         await self._detach(seat)
         handle.mirror.parent.mkdir(parents=True, exist_ok=True)
 
         async def call(method: str, params: dict) -> dict:
             return await self.channel.call(handle, method, params)
 
-        self.live[seat] = handle
+        # The subscription instance IS this seat's attachment (FB-56): mint
+        # its id under the seat's lock, so an ownership mutation is either
+        # whole-before or whole-after this swap, never interleaved with it.
         subscription = self.subscribe(handle, call)
         subscription.waits = LONG_POLL in handle.capabilities
-        self.subscriptions[seat] = subscription
+        subscription.attachment_id = uuid.uuid4().hex
+        async with attachments.lock(seat):
+            # The flag is checked HERE, under the lock — not once at some
+            # route's entry (FB-56): while a stop is being taken, an attach
+            # can land between the flag flip and the swap, and only the lock
+            # makes the order real. A refused attach registers nothing. The
+            # provider is bound at wiring time (`api/deps.py`), never
+            # imported here — the import is a cycle.
+            if self._owns_sessions_provider is not None and (
+                not self._owns_sessions_provider().owns_sessions
+            ):
+                raise DeviceOffline(
+                    f"platform is not owning sessions right now (topic={seat[0]})"
+                )
+            self.live[seat] = handle
+            self.dead = {pair for pair in self.dead if pair[0] != seat}
+            self.subscriptions[seat] = subscription
+            attachments.note(seat, subscription.attachment_id)
 
     def _listen(self, seat: Seat) -> None:
         if seat not in self.tasks or self.tasks[seat].done():
@@ -738,6 +788,11 @@ class DrivenRuntime[H: Handle]:
         await self._activity(handle.session.project_id, seat, work, False)
         self.closed.add(work)
         self.live.pop(seat, None)
+        if not out_of_reach:
+            # A verdict/exit the runner itself reported is death. Merely
+            # being out of reach is not — a machine still being prepared
+            # looks exactly the same, and that one stays "unknown".
+            self.dead.add((seat, self.conversation(handle)))
         self.answering.discard(seat)
 
     async def ensure(self, session, opening, *, work_id=None) -> H:
@@ -869,6 +924,21 @@ class DrivenRuntime[H: Handle]:
             working = [seat for seat in working if self.work[seat] == expected_work_id]
         return working[0] if len(working) == 1 else None
 
+    def seat_state(self, seat: Seat) -> str:
+        """ "live" if this process holds the seat, "dead" if it watched the
+        seat die, else "unknown" — the sweep's third answer (FB-56 legacy③)."""
+        if seat in self.live:
+            return "live"
+        if any(pair[0] == seat for pair in self.dead):
+            return "dead"
+        return "unknown"
+
+    def dead_conversations(self, seat: Seat) -> set[str]:
+        """The conversations on this seat this process saw die (FB-56)."""
+        return {
+            conversation for pair_seat, conversation in self.dead if pair_seat == seat
+        }
+
     def holds(self, topic_id, agent_handle=None) -> bool:
         if agent_handle is not None:
             return (topic_id, agent_handle) in self.live
@@ -894,6 +964,9 @@ class DrivenRuntime[H: Handle]:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         subscription = self.subscriptions.pop(seat, None)
+        if subscription is not None:
+            async with attachments.lock(seat):
+                attachments.note(seat, None)
         self.live.pop(seat, None)
         self.answering.discard(seat)
         self.work.pop(seat, None)
@@ -910,24 +983,57 @@ class DrivenRuntime[H: Handle]:
         A read already under way finishes first. The landing cursor only moves
         once a record is persisted, so whatever this process had not landed is
         still unread for the process that listens next.
+
+        The swap is per seat and by INSTANCE (FB-56): each seat's registry
+        note and map removal happen under its own attachment lock, and only
+        for the exact subscription this stop started with — an attach that
+        won the seat in the meantime keeps its subscription, its registry
+        entry and every map, because the swap it made was complete. The old
+        instances are cancelled, awaited and released outside the lock.
         """
-        subscriptions = dict(self.subscriptions)
-        self.subscriptions.clear()
-        for seat, subscription in subscriptions.items():
+        # Stop targets are pinned at the START, as (subscription, poll)
+        # pairs from the same map moment: the cleanup below waits on,
+        # cancels and releases exactly these, whatever the maps say by then
+        # — a re-attach cannot take the old poll's source away, and the new
+        # source's poll is not in the snapshot to begin with (FB-56).
+        targets = [
+            (seat, subscription, self.tasks.get(seat))
+            for seat, subscription in self.subscriptions.items()
+        ]
+        for seat, subscription, _poll in targets:
+            async with attachments.lock(seat):
+                # Identity, not position: clear this seat's CURRENT state
+                # only while it is still the instance this stop took. A
+                # newer attach is a complete swap and owns everything from
+                # here on — and the registry note is part of that state:
+                # clearing it before the identity check would wipe the NEW
+                # attachment's entry, and its events would then be refused
+                # as source-less.
+                if self.subscriptions.get(seat) is subscription:
+                    attachments.note(seat, None)
+                    self.subscriptions.pop(seat, None)
+                    self.tasks.pop(seat, None)
+                    self.answering.discard(seat)
+                    for held in (
+                        self.live,
+                        self.work,
+                        self.woken,
+                        self.clocks,
+                        self.unreachable,
+                        self.told_waiting,
+                    ):
+                        held.pop(seat, None)
             self._wake(seat)
             subscription.unpark()
-        polls = [task for task in self.tasks.values() if not task.done()]
-        if polls:
-            _, stuck = await asyncio.wait(polls, timeout=5)
+        pending = [
+            poll for _, _, poll in targets if poll is not None and not poll.done()
+        ]
+        if pending:
+            _, stuck = await asyncio.wait(pending, timeout=5)
             for task in stuck:
                 task.cancel()
             await asyncio.gather(*stuck, return_exceptions=True)
-        await asyncio.gather(*(each.release() for each in subscriptions.values()))
-        for held in (self.tasks, self.live, self.work, self.woken, self.clocks):
-            held.clear()
-        self.unreachable.clear()
-        self.told_waiting.clear()
-        self.answering.clear()
+        await asyncio.gather(*(each.release() for _, each, _ in targets))
 
     async def close(self, session: SessionRef) -> None:
         seat = self._seat_of(session)
@@ -939,7 +1045,24 @@ class DrivenRuntime[H: Handle]:
         await self._detach(seat)
 
     async def recover(self, device_id=None) -> list[SessionRef]:
+        # These answer for THIS round only — a conversation the last round
+        # reached says nothing about this one. (The cumulative witness is
+        # `dead`: a death once seen stays seen.)
+        self.found_conversations.clear()
+        self.terminal_conversations.clear()
         handles = await self.channel.discover(device_id)
+        # The channel's own per-conversation observations (FB-56 legacy③):
+        # a terminal answer bound to the stored resume token is death;
+        # anything the channel cannot place stays unknown by absence here.
+        # The probe is structural: a channel that cannot report outcomes —
+        # including one that answers every attribute — has none, and none
+        # means unknown, never dead.
+        outcomes = getattr(self.channel, "last_outcomes", None)
+        if not isinstance(outcomes, dict):
+            outcomes = {}
+        for (room_id, agent, resume_token), outcome in outcomes.items():
+            if outcome == "dead":
+                self.terminal_conversations.add(((room_id, agent), resume_token))
         recovered = []
         for handle in handles:
             try:
@@ -954,7 +1077,13 @@ class DrivenRuntime[H: Handle]:
                     exc,
                 )
                 continue
-            await self._attach(handle)
+            self.found_conversations.add(
+                (self._seat_of_handle(handle), self.conversation(handle))
+            )
+            try:
+                await self._attach(handle)
+            except DeviceOffline:
+                continue
             if self.working(status) and status.get("work_id"):
                 seat = self._seat_of_handle(handle)
                 self.work[seat] = uuid.UUID(status["work_id"])

@@ -35,6 +35,7 @@ event of its own rather than a line on the step (``AgentToolResult``).
 
 import re
 from datetime import UTC, datetime
+from typing import cast
 
 from app.domain.agent.harness.pi.journal import (
     COMPACTING,
@@ -58,6 +59,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
+    AgentUserEntry,
 )
 
 # pi stops for a tool call and keeps going; every other reason ends the turn,
@@ -108,9 +110,19 @@ class Assembler:
     final entry would bill a fraction and look plausible.
     """
 
-    def __init__(self, session_id: str | None = None):
+    def __init__(
+        self,
+        session_id: str | None = None,
+        *,
+        harness: str,
+        attachment: str | None = None,
+    ):
         self.session_id = session_id
+        self.harness = harness
+        self.attachment = attachment
         self.spent = AgentUsage()
+        self.generation = ""
+        self._positions: dict[str, int] = {}
 
     def _accumulate(self, message: dict) -> None:
         usage = message.get("usage") or {}
@@ -124,6 +136,10 @@ class Assembler:
             cost_usd=self.spent.cost_usd
             + float((usage.get("cost") or {}).get("total", 0.0)),
         )
+
+    def _pos_of(self, entry_id: str) -> int:
+        """The entry's mirror position, or 0 when it is not ours to know."""
+        return self._positions.get(entry_id, 0)
 
     def absorb(self, entry: dict) -> None:
         """Count an entry towards the turn without reporting it again.
@@ -168,9 +184,34 @@ class Assembler:
         role = message.get("role")
         if role == "user":
             # The room already holds what the person said; a turn starts here,
-            # so this is where the running total goes back to zero.
+            # so this is where the running total goes back to zero. The entry
+            # itself goes out as the binding point an input is matched to
+            # (FB-56) — text, the mirror's own id and position, and the
+            # mirror's generation, so the platform never trusts page order.
             self.spent = AgentUsage()
-            return []
+            content = message.get("content") or []
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+            entry_id = str(entry.get("id") or "")
+            user_entry = cast(
+                list[AgentEvent],
+                [
+                    AgentUserEntry(
+                        text,
+                        entry_id=entry_id,
+                        pos=self._pos_of(entry_id),
+                        generation=self.generation,
+                        session_id=self.session_id,
+                        harness=self.harness,
+                        attachment=self.attachment,
+                        eid=f"pi:user:{entry_id}",
+                    )
+                ],
+            )
+            return user_entry
         if role == "toolResult":
             # What the tool handed back goes onto its step, not onto a line of
             # its own. A FAILURE also marks that step, because the effect of a
@@ -220,6 +261,7 @@ class Assembler:
                 events.append(
                     AgentMessage(
                         part["text"],
+                        session_id=self.session_id,
                         eid=eid,
                         eids=(eid,),
                         at=_stamp(entry),
@@ -230,6 +272,7 @@ class Assembler:
                     AgentToolUse(
                         part.get("name", ""),
                         part.get("arguments") or {},
+                        session_id=self.session_id,
                         eid=eid,
                         call_id=part.get("id"),
                     )
@@ -240,7 +283,7 @@ class Assembler:
                     text=said[-1] if said else "",
                     session_id=self.session_id,
                     usage=self.spent,
-                    harness="pi",
+                    harness=self.harness,
                 )
             )
         return events
@@ -308,6 +351,7 @@ class Assembler:
                     AgentToolUse(
                         part.get("name", ""),
                         part.get("arguments") or {},
+                        session_id=self.session_id,
                         eid=eid,
                         call_id=part.get("id"),
                         thread_label=on,
@@ -321,7 +365,10 @@ class Assembler:
         said = str(entry.get("errorMessage") or "")
         if entry.get("aborted"):
             return AgentResult(
-                text="", session_id=self.session_id, usage=self.spent, harness="pi"
+                text="",
+                session_id=self.session_id,
+                usage=self.spent,
+                harness=self.harness,
             )
         status = STATUS.match(said)
         return AgentResult(
@@ -331,5 +378,5 @@ class Assembler:
             is_error=True,
             errors=[said] if said else None,
             api_error_status=int(status[1]) if status else None,
-            harness="pi",
+            harness=self.harness,
         )

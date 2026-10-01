@@ -16,13 +16,18 @@ the way a person running the platform would state it:
 """
 
 import asyncio
+import dataclasses
 import time
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
 
 from app.core.ownership import OWNER_LOCK, Ownership
+from app.domain.agent import attachments
+from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.claude_code.runtime import ClaudeCodeRuntime
 from app.domain.agent.runtime import (
     AgentWorkRunner,
@@ -263,3 +268,156 @@ async def test_session_output_lands_once_through_the_backend_that_took_over():
     finally:
         await room.close()
         await incoming.stop_listening()
+
+
+class _GatedLock:
+    """A seat lock whose FIRST acquisition waits for the test's say-so.
+
+    The stop snapshots first and then waits here; the attach that follows
+    passes straight through, so its whole swap lands before the stop's first
+    lock session — exactly the interleave that broke the registry (FB-56)."""
+
+    def __init__(self, real, hold: asyncio.Event) -> None:
+        self._real = real
+        self._hold = hold
+        self.acquisitions = 0
+
+    async def __aenter__(self):
+        self.acquisitions += 1
+        if self.acquisitions == 1:
+            await self._hold.wait()
+        await self._real.acquire()
+
+    async def __aexit__(self, *exc):
+        self._real.release()
+
+
+@pytest.mark.anyio
+async def test_a_stop_whose_seat_was_won_keeps_the_new_source_and_finishes_its_own():
+    """真实 stop 门闩（FB-56 attachment）：旧 stop 快照后，新 attach 先完成整个
+    swap——不同 handle、同一 seat——旧 stop 再进锁。新 registry、新 maps、新
+    poll 必须全在；旧实例的旧 poll 被等完才 release（release 不抢 drain 的先），
+    旧 subscription 被正确收尾。另一个无干扰座位走正常身份相同路径。"""
+    room = Room(Scripted(_works_on_it))
+    runtime = room.runtime
+    try:
+        await room.send("fix the login page")
+        await _until(lambda: room.receipts == ["fix the login page"])
+        seat_a = (room.topic, "cheese")
+        old_a = runtime.subscriptions[seat_a]
+        handle_a = runtime.live[seat_a]
+
+        # 第二个座位（无干扰对照）：同一 runtime 上的另一个房间。
+        session_b = SessionRef(
+            uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE
+        )
+        seat_b = (session_b.topic_id, "cheese")
+        await runtime.send(
+            session_b,
+            "write the docs",
+            Opening(system_prompt=""),
+            work_id=uuid.uuid4(),
+            on_mark=lambda _: None,
+        )
+        await _until(lambda: seat_b in runtime.subscriptions)
+        old_b = runtime.subscriptions[seat_b]
+
+        order: list[str] = []
+
+        orig_release_a = old_a.release
+
+        async def release_a() -> None:
+            order.append("releaseA")
+            await orig_release_a()
+
+        old_a.release = release_a  # type: ignore[method-assign]
+
+        # 座位 B 的旧 reader 还在 drain：stop 必须等它做完才 release。
+        async def drain_b() -> None:
+            await asyncio.sleep(0.05)
+            order.append("pollB-done")
+
+        runtime.tasks[seat_b] = asyncio.create_task(drain_b())
+        orig_release_b = old_b.release
+
+        async def release_b() -> None:
+            order.append("releaseB")
+            await orig_release_b()
+
+        old_b.release = release_b  # type: ignore[method-assign]
+
+        hold = asyncio.Event()
+        real_lock_fn = attachments.lock
+        gated = _GatedLock(real_lock_fn(seat_a), hold)
+        attachments.lock = lambda seat: gated if seat == seat_a else real_lock_fn(seat)
+        new_poll = None
+        try:
+            stop = asyncio.create_task(runtime.stop_listening())
+            await asyncio.sleep(0)  # stop 快照（含旧 A/旧 B），在 seat A 锁前等待
+            assert gated.acquisitions == 1
+
+            # 新 attach 完成整个 swap：不同 handle、同一 seat。
+            new_handle = dataclasses.replace(handle_a, state="resumed")
+            await runtime._attach(new_handle)
+            new_a = runtime.subscriptions[seat_a]
+            assert new_a is not old_a
+            # 恢复后 _listen 起的新 poll。
+            new_poll = asyncio.create_task(asyncio.sleep(30))
+            runtime.tasks[seat_a] = new_poll
+
+            hold.set()
+            await stop
+
+            assert attachments.current(seat_a) == new_a.attachment_id, (
+                "旧 stop 清新 registry"
+            )
+            assert runtime.subscriptions[seat_a] is new_a, "新 maps 被旧 stop 清了"
+            assert runtime.live[seat_a] == new_handle
+            assert not new_poll.done(), "旧 stop 等/取消了新 poll"
+
+            # 身份相同的座位 B：旧 poll 被等完才 release。
+            assert order.index("pollB-done") < order.index("releaseB"), (
+                "release 抢在 drain 前"
+            )
+            assert seat_b not in runtime.subscriptions
+            assert attachments.current(seat_b) is None
+            assert "releaseA" in order, "旧实例没被收尾"
+        finally:
+            attachments.lock = real_lock_fn
+            if new_poll is not None:
+                new_poll.cancel()
+            attachments.note(seat_a, None)
+            attachments.note(seat_b, None)
+    finally:
+        await room.close()
+
+
+@pytest.mark.anyio
+async def test_a_same_handle_attach_is_refused_when_ownership_is_closed():
+    """ownership 关闭窗口里，同 handle 的幂等快路不能放行（FB-56）：快路在锁内、
+    先校 owns_sessions 再决定。窗口中 recover 沿同 handle 回来必须吃
+    DeviceOffline、maps 原样；窗口过后同 handle 幂等返回、什么都不动。"""
+    room = Room(Scripted(_works_on_it))
+    runtime = room.runtime
+    try:
+        await room.send("fix the login page")
+        await _until(lambda: room.receipts == ["fix the login page"])
+        seat = (room.topic, "cheese")
+        old = runtime.subscriptions[seat]
+        handle = runtime.live[seat]
+
+        runtime.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=False))
+        try:
+            with pytest.raises(DeviceOffline):
+                await runtime._attach(handle)
+            assert runtime.subscriptions[seat] is old, "拒绝动了已注册的东西"
+            assert attachments.current(seat) == old.attachment_id
+        finally:
+            runtime.bind_owns_sessions(None)
+
+        # 窗口过后：同 handle 幂等返回，不 detach、不换注册。
+        await runtime._attach(handle)
+        assert runtime.subscriptions[seat] is old
+        assert attachments.current(seat) == old.attachment_id
+    finally:
+        await room.close()

@@ -6,13 +6,12 @@ block that moves is the one concept "the account's password": the two halves of
 recovery (`POST /users/recover/password/request` and `/verify`) and the change
 itself (`PATCH /users/{userId}/password`), each with the request body it reads.
 
-What stays behind, and why. `_require_new_password` is used by these routes but
-not only by them — it also refuses the password a registration or a two-factor
-disable asks for — so it stays in `users.py` and this module imports it, exactly
-as `app_sign_in.py` already imports `issue_session` from there.
-`get_user_auth_service` is a FastAPI dependency defined in users.py and imported
-the same way. The two password *rules* those helpers apply
-(`_NEW_PASSWORD_PATTERN`, `_reject_overlong_password`) stay with them.
+What is shared, and where it lives. `require_new_password` is used by these
+routes but not only by them — it also refuses the password a registration
+or a two-factor disable asks for — so it lives in
+`app/domain/user/passwords.py` with the bcrypt length limit it applies, the
+one home every password rule has. `get_user_auth_service` is a FastAPI
+dependency in `app/api/deps.py`.
 `_spend_sudo_ticket` is imported from `users_common.py` rather than from
 `users.py`: the fourth slice of this split moved the passkey, two-factor and
 identity routes out, and a helper that many groups redeem a ticket through now
@@ -43,10 +42,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users import (
-    _require_new_password,
-    get_user_auth_service,
-)
+from app.api.deps import get_user_auth_service
 from app.api.routes.users_common import _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -54,6 +50,7 @@ from app.common.auth import SudoPurpose, get_current_session_id
 from app.core.config import settings
 from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.db.session import get_db
+from app.domain.user.passwords import require_new_password
 from app.domain.user.services import UserAuthService
 from app.domain.user.sessions import RevokeReason, SessionService
 from app.domain.user.trusted_devices import TrustedDeviceService
@@ -202,7 +199,7 @@ async def recover_password_verify(
 
     token = payload.token
     new_password = payload.password
-    _require_new_password(new_password)
+    require_new_password(new_password)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -249,7 +246,7 @@ async def change_password(
         raise ForbiddenError("Only the user themselves can change their password.")
 
     password = payload.password
-    _require_new_password(password)
+    require_new_password(password)
 
     await _spend_sudo_ticket(
         payload.sudo_ticket,

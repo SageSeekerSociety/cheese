@@ -7,12 +7,14 @@
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
+from app.domain.agent.models import AgentTurn
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
@@ -99,6 +101,20 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
             pass
         await settle_turn(svc, topic_id)
         assert len(screen.prompts) == 1
+        # The direct-converse interval carries its context (FB-56): opened
+        # without a runner, but its agent_handle/route/reply_to are on the
+        # row — a delivered row death evidence can match, not a NULL orphan.
+        async with factory() as session:
+            turns = list(
+                await session.scalars(
+                    select(AgentTurn).where(AgentTurn.topic_id == topic_id)
+                )
+            )
+        assert len(turns) == 1
+        assert turns[0].agent_handle == "cheese"
+        assert turns[0].route is not None
+        assert turns[0].reply_to is not None
+        assert turns[0].delivered_at is not None
         # 一条发布路径 (结论 19): the private chat is told what a room is told, and
         # its terminal reply lands in activity exactly as a room's does.
         assert "final responses are not published to chat" in screen.prompts[0]

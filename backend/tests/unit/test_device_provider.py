@@ -282,6 +282,7 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
             topic_id,
             "agent",
             "claude-code",
+            None,
             SessionPlace(
                 machine="center",
                 channel="device",
@@ -1906,6 +1907,7 @@ async def test_recovery_adopts_each_seat_s_screen_as_its_own(monkeypatch):
             topic_id,
             seat,
             "claude-code",
+            None,
             SimpleNamespace(
                 machine="center",
                 channel="device",

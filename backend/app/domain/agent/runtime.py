@@ -26,7 +26,7 @@ from sqlalchemy import select
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
-from app.domain.agent import dispatch_log
+from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.activity import RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
@@ -141,19 +141,11 @@ async def _open_turn(session_factory, **fields) -> None:
 
 
 async def _stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
-    """Record that the transport accepted this turn's prompt.
-
-    Swallows its own failure, unlike opening the interval. This runs mid-turn on
-    a turn that is working: losing the stamp costs at most one duplicate re-send
-    if the process then dies, while raising here would kill the live turn to
-    protect it from a hypothetical one — a trade nobody would make deliberately.
-    """
-    try:
-        async with session_factory() as session:
-            await AgentTurnRepository(session).mark_delivered(turn_id, _utcnow())
-            await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
-        logger.exception("could not stamp delivery for turn %s", turn_id)
+    """Record that the transport accepted this turn's prompt (the ledger's own
+    helper; mid-turn bookkeeping that must never kill a working turn)."""
+    await turn_inputs.stamp_delivery_fact(
+        session_factory, turn_id=turn_id, at=_utcnow()
+    )
 
 
 async def _close_turns(session_factory, turn_ids) -> None:
@@ -1010,6 +1002,7 @@ class AgentWorkRunner:
         *,
         author: str,
         agent_handle: str,
+        session_id: str | None = None,
     ) -> None:
         """Register an interval for work the SESSION started on its own.
 
@@ -1025,7 +1018,7 @@ class AgentWorkRunner:
         right there. What retired with 结论 13 is the author value nobody ever
         wrote (the literal 「会话」), not the record.
 
-        Opened DELIVERED, and that is not laziness: `close_for_topic` only closes
+        Opened DELIVERED, and that is not laziness: the Stop's close_one closes
         delivered intervals because 投喂 → Stop is what an interval means for a fed
         turn, so an undelivered row here would be one nothing could ever close.
         What delivery guards against — a Stop from the previous conversation
@@ -1068,6 +1061,7 @@ class AgentWorkRunner:
             # sweep from ever picking one of these as a re-send candidate.
             resendable=False,
             started_at=now,
+            session_id=session_id,
             # Stamped in the same write, not after it: a row that exists for even
             # a moment without it is a row a Stop landing in that moment cannot
             # close, and nothing would ever come back to close it.
@@ -1431,11 +1425,14 @@ class AgentWorkRunner:
             if record.age_s(now) >= min_age_s
         }
         wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
+        # A row the process cannot judge is not a dead row (FB-56 legacy③):
+        # it stays open and is listed, never closed (`death_evidence.unknown_row`).
         orphans = {
             tid: record
             for tid, record in old_enough.items()
             if (str(tid) not in self._live or tid in wedged)
             and not self._adopted(chat_service, record, wedged)
+            and not death_evidence.unknown_row(chat_service, record)
         }
         if not orphans:
             return 0
@@ -2839,16 +2836,16 @@ class AgentWorkRunner:
                         verdict.message,
                         meta=verdict.event_meta,
                     )
-        # The interval ends here. Closing, not deleting: this turn's id is on
-        # every block it produced, and an interval erased at its end is one
-        # nobody can ask about afterwards.
-        #
-        # Failing to close is survivable and must not be reported as the turn
-        # failing — the turn is over and its work landed. What is left open gets
-        # picked up by the next sweep, which sees a delivered prompt and
-        # attaches rather than re-sending it.
-        try:
-            await _close_turns(chat_service.session_factory, [turn_id])
-        except Exception:  # noqa: BLE001 — the turn already finished
-            logger.exception("could not close the interval for turn %s", turn_id)
+        # A session that adopted this exact turn owns its interval's ending.
+        # Returning after input injection is not the native work ending.
+        session_owns_ending = (
+            rec["status"] == "done"
+            and lifecycle["session_owned"]
+            and chat_service.session_took_over(topic_id, turn_id)
+        )
+        if not session_owns_ending:
+            try:
+                await _close_turns(chat_service.session_factory, [turn_id])
+            except Exception:  # noqa: BLE001 — the turn already finished
+                logger.exception("could not close the interval for turn %s", turn_id)
         clear_context("turn", "topic")
