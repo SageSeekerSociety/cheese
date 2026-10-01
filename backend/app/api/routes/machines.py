@@ -19,6 +19,7 @@ from app.core.errors import (
 )
 from app.domain.identity.actor import Actor
 from app.domain.machine.limits import get_machine_limit
+from app.domain.machine.live import announce_changes
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineOut
@@ -131,7 +132,7 @@ async def delete_machine(
     resolver: ActorResolverDep,
 ) -> dict:
     """Destroy the machine. Asynchronous — it reports `deleting` until MicroCloud
-    has torn it down, at which point the next read drops it."""
+    has torn it down, at which point the machine sweep drops it."""
     await _require_project_access(project_id, db, resolver, action="删除")
 
     service = _service(db)
@@ -147,8 +148,10 @@ async def delete_machine(
     if machine.status == MachineStatus.deleted:
         await service.forget(machine)
         await db.commit()
+        await announce_changes(db)
         return ok(None)
     await db.commit()
+    await announce_changes(db)
     return ok(MachineOut.model_validate(machine).model_dump(mode="json"))
 
 
@@ -176,4 +179,5 @@ async def change_machine_power(
     except MicroCloudError as exc:
         raise ValidationError(f"MicroCloud rejected the request: {exc}") from exc
     await db.commit()
+    await announce_changes(db)
     return ok(MachineOut.model_validate(machine).model_dump(mode="json"))

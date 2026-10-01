@@ -7,6 +7,7 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceTopicRow
+from app.domain.machine.live import note_change
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -69,6 +70,7 @@ class ProjectMachineRepository:
         self._session.add(machine)
         await self._session.flush()
         await self._session.refresh(machine)
+        note_change(self._session, machine.project_id)
         return machine
 
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
@@ -271,6 +273,7 @@ class ProjectMachineRepository:
         seen_at: datetime | None = None,
         machine_id: int | None = None,
     ) -> ProjectMachine:
+        shown = (machine.status, machine.ai_status, machine.ip)
         if machine_id is not None:
             machine.machine_id = machine_id
         machine.status = status
@@ -285,6 +288,9 @@ class ProjectMachineRepository:
         if ip:
             machine.ip = ip
         await self._session.flush()
+        # A re-check that learned nothing new is not a change a page must reread.
+        if (machine.status, machine.ai_status, machine.ip) != shown:
+            note_change(self._session, machine.project_id)
         return machine
 
     async def touch_seen(
@@ -300,6 +306,7 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+        note_change(self._session, machine.project_id)
 
     async def list_reservations_older_than(
         self, cutoff: datetime
@@ -330,6 +337,7 @@ class ProjectMachineRepository:
     ) -> ProjectMachine:
         machine.released_at = when
         await self._session.flush()
+        note_change(self._session, machine.project_id)
         return machine
 
     async def mark_enrolled(
@@ -346,6 +354,7 @@ class ProjectMachineRepository:
         # standing way into the machine that nobody asked for.
         machine.bootstrap_key = None
         await self._session.flush()
+        note_change(self._session, machine.project_id)
         return machine
 
     async def mark_enroll_failed(
@@ -354,6 +363,7 @@ class ProjectMachineRepository:
         machine.enroll_error = error[:1000]
         machine.enroll_attempts = (machine.enroll_attempts or 0) + 1
         await self._session.flush()
+        note_change(self._session, machine.project_id)
         return machine
 
     async def list_awaiting_enrollment(self, limit: int) -> list[ProjectMachine]:

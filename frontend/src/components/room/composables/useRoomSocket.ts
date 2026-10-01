@@ -22,6 +22,8 @@ import { t } from '../../../i18n'
 export function useRoomSocket(options: {
   /** 此刻在哪个话题上；切走了就不该再为上一个重连。 */
   topicId: () => string | undefined
+  /** 连哪条 socket。不给就是这个话题的房间 socket；团队页给的是团队那条。 */
+  url?: (topicId: string) => string
   /** 收到一帧（`pong` 已经在这里吃掉了）。 */
   onFrame: (frame: WsServerFrame) => void
   /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。 */
@@ -150,7 +152,7 @@ export function useRoomSocket(options: {
 
   function openSocket(topicId: string) {
     closeSocket()
-    const ws = new WebSocket(chatWsUrl(topicId))
+    const ws = new WebSocket((options.url ?? chatWsUrl)(topicId))
     socket = ws
 
     ws.onopen = () => {

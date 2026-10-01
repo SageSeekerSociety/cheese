@@ -38,6 +38,7 @@ class MachineEnrollmentSweeper:
         # Imported here: the machine domain pulls in the device service, and
         # importing it at module scope would drag that into app startup.
         from app.domain.agent.device_hub import device_hub
+        from app.domain.machine.live import announce_changes
         from app.domain.machine.progress import settle_startups
         from app.domain.machine.services import MachineService
 
@@ -47,9 +48,8 @@ class MachineEnrollmentSweeper:
                 # No MicroCloud credentials — nothing can have been provisioned,
                 # so there is nothing to enroll. Not an error.
                 return {"enrolled": 0, "failed": 0}
-            # Refresh first: both steps below read state that only a read path
-            # ever updated, so without this the sweep decides on whatever was
-            # true the last time a human opened the project.
+            # Refresh first: the steps below decide on state that only this
+            # refresh keeps current.
             await service.settle_reservations()
             await service.release_left_machines()
             await service.refresh_due()
@@ -61,6 +61,7 @@ class MachineEnrollmentSweeper:
             failed = await service.failed_topic_leases()
             startups = await service.unsettled_startups()
             await session.commit()
+            await announce_changes(session)
         await settle_startups(startups, self._is_online or device_hub.is_online)
         if self._on_ready is not None and ready:
             await self._on_ready(ready)
