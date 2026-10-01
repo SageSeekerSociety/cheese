@@ -1,0 +1,153 @@
+[0;93m2026-10-01 21:17:30.117951831 [W:onnxruntime:Default, cpuid_info.cc:105 LogEarlyWarning] Unknown CPU vendor. cpuinfo_vendor value: 16[m
+[1;31m2026-10-01 21:17:30.174000867 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280354, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.174141189 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280355, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.174201160 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280356, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.174472104 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280358, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.174520775 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280357, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.174712348 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280359, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.174742898 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280361, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.184396029 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280360, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.279233160 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280362, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.279379842 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280364, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.279545294 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280366, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.282936134 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280363, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.283005035 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280367, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.283036145 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280365, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.285880776 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280368, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.286838691 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280369, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.299675927 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280372, index: 2, mask: {5, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.299741598 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280371, index: 1, mask: {4, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.301938750 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280373, index: 3, mask: {0, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.302824793 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280370, index: 0, mask: {3, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.304234894 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280375, index: 5, mask: {2, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.304436257 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280376, index: 6, mask: {6, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.308484006 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280377, index: 7, mask: {7, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+[1;31m2026-10-01 21:17:30.311912236 [E:onnxruntime:Default, env.cc:228 ThreadMain] pthread_setaffinity_np failed for thread: 280374, index: 4, mask: {1, }, error code: 22 error msg: Invalid argument. Specify the number of threads explicitly so the affinity is not set.[m
+....F
+=================================== FAILURES ===================================
+______________________ test_ask_rejects_bad_option_counts ______________________
+tests/integration/test_ask_options.py:146: in test_ask_rejects_bad_option_counts
+    assert ask(2) == 200
+E   assert 403 == 200
+E    +  where 403 = <function test_ask_rejects_bad_option_counts.<locals>.ask at 0x79352f2da0c0>(2)
+----------------------------- Captured stderr call -----------------------------
+2026-10-01 21:17:54 [info     ] actor_handle_fallback          [cheesex.auth] handle=owner req=192842a21f9e
+2026-10-01 21:17:54 [info     ] forge event subscriptions started (every 300s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] forge credential cache cleanup started (every 3600s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] forge orphan account sweep started (every 3600s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] pr poll started (every 300s)   [cheesex.background]
+2026-10-01 21:17:54 [info     ] task pr poll started (every 300s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] draft pr sweep started (every 300s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] orphan sweep started (every 300s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] chat progress reminder started (every 15s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] gate sweep started (every 300s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] machine enrollment sweep started (every 10s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] cloud warm pool started (every 10s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] backend error flush started (every 60s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] notification push drain started (every 15s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] delivery resend started (every 60s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] docs question retention started (every 86400s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] timed deliveries started (every 30s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] routines started (every 30s)   [cheesex.background]
+2026-10-01 21:17:54 [info     ] memory dream started (every 600s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] ratchet ingest started (every 900s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] document refresh delivery started (every 5s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] document AI requests started (every 5s) [cheesex.background]
+2026-10-01 21:17:54 [info     ] req                            [http] bytes=635 client=testclient host=testserver method=POST ms=196.9 path=/projects req=192842a21f9e status=200 ua=testclient
+2026-10-01 21:17:54 [info     ] HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 21:17:54 [info     ] actor_handle_fallback          [cheesex.auth] handle=user-1 req=938cd173c541
+2026-10-01 21:17:54 [info     ] req                            [http] bytes=709 client=testclient host=testserver method=POST ms=41.0 path=/topics req=938cd173c541 status=200 ua=testclient
+2026-10-01 21:17:54 [info     ] HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 21:17:54 [info     ] req                            [http] bytes=520 client=testclient host=testserver method=GET ms=24.2 path=/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/members req=b667a7262987 status=200 ua=testclient
+2026-10-01 21:17:54 [info     ] HTTP Request: GET http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/members "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 21:17:54 [info     ] req                            [http] bytes=736 client=testclient host=testserver method=GET ms=40.9 path=/topics/15dd476b-006a-4920-aea6-c9b79d8550f5 req=ade4017b8282 status=200 ua=testclient
+2026-10-01 21:17:54 [info     ] HTTP Request: GET http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5 "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 21:17:55 [info     ] chat_receive_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 persist_ms=92.047 publish_ms=0.014 [cheesex.runtime] req=422d5c58ddda
+2026-10-01 21:17:55 [info     ] chat_admission_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=message_lock elapsed_ms=0.001 unix_ms=1790889475088.169 [cheesex.runtime] req=422d5c58ddda
+2026-10-01 21:17:55 [info     ] chat_admission_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=live_delivery_declined elapsed_ms=0.264 unix_ms=1790889475088.431 [cheesex.runtime] req=422d5c58ddda
+2026-10-01 21:17:55 [info     ] chat_message_frame_sent        [cheesex.chat_ws] block_id=dd2240c9-6a43-439b-86d2-56f24586fbf7 frame_type=user_block sent_unix_ms=1790889475089.248 topic=15dd476b-006a-4920-aea6-c9b79d8550f5
+2026-10-01 21:17:55 [info     ] req                            [http] bytes=770 client=testclient host=testserver method=POST ms=113.0 path=/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/messages req=422d5c58ddda status=200 ua=testclient
+2026-10-01 21:17:55 [info     ] HTTP Request: POST http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/messages "HTTP/1.1 200 OK" [httpx2]
+2026-10-01 21:17:55 [info     ] chat_admission_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=admitted verdict=ok elapsed_ms=12.395 unix_ms=1790889475101.020 [cheesex.runtime] req=422d5c58ddda
+2026-10-01 21:17:55 [info     ] turn start: author=user-1 summon=True resume=False [cheesex.runtime] req=422d5c58ddda topic=15dd476b turn=dd2240c9
+2026-10-01 21:17:55 [info     ] chat_assembly_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 elapsed_ms=58.409 phases_ms={'history': 10.339979082345963, 'identity': 21.901819854974747, 'memory': 25.64610354602337, 'metadata': 51.690710708498955, 'provider': 51.988426595926285, 'committed': 58.29216726124287} [app.domain.agent.chat] req=422d5c58ddda topic=15dd476b turn=dd2240c9
+2026-10-01 21:17:55 [info     ] chat_preparation_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=assembled elapsed_ms=58.941 unix_ms=1790889475175.674 [app.domain.agent.chat] req=422d5c58ddda topic=15dd476b turn=dd2240c9
+2026-10-01 21:17:55 [info     ] chat_preparation_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=prompt_built elapsed_ms=70.981 unix_ms=1790889475187.715 [app.domain.agent.chat] req=422d5c58ddda topic=15dd476b turn=dd2240c9
+2026-10-01 21:17:55 [info     ] chat_preparation_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=model_ready elapsed_ms=77.449 unix_ms=1790889475194.184 [app.domain.agent.chat] req=422d5c58ddda topic=15dd476b turn=dd2240c9
+2026-10-01 21:17:55 [info     ] req                            [http] bytes=167 client=testclient host=testserver method=POST ms=23.6 path=/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask req=99305ed989b4 status=422 ua=testclient
+2026-10-01 21:17:55 [info     ] HTTP Request: POST http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask "HTTP/1.1 422 Unprocessable Content" [httpx2]
+2026-10-01 21:17:55 [info     ] turn done: status=done tools=0 first_output=Nones duration=0.2s [cheesex.runtime] req=422d5c58ddda topic=15dd476b turn=dd2240c9
+2026-10-01 21:17:55 [info     ] req                            [http] bytes=208 client=testclient host=testserver method=POST ms=31.8 path=/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask req=8c34cd0e3d90 status=403 ua=testclient
+2026-10-01 21:17:55 [info     ] HTTP Request: POST http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask "HTTP/1.1 403 Forbidden" [httpx2]
+------------------------------ Captured log call -------------------------------
+INFO     cheesex.auth:auth.py:281 {'handle': 'owner', 'event': 'actor_handle_fallback', 'req': '192842a21f9e', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 21:17:54'}
+INFO     cheesex.background:background.py:183 forge event subscriptions started (every 300s)
+INFO     cheesex.background:background.py:183 forge credential cache cleanup started (every 3600s)
+INFO     cheesex.background:background.py:183 forge orphan account sweep started (every 3600s)
+INFO     cheesex.background:background.py:183 pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 task pr poll started (every 300s)
+INFO     cheesex.background:background.py:183 draft pr sweep started (every 300s)
+INFO     cheesex.background:background.py:183 orphan sweep started (every 300s)
+INFO     cheesex.background:background.py:183 chat progress reminder started (every 15s)
+INFO     cheesex.background:background.py:183 gate sweep started (every 300s)
+INFO     cheesex.background:background.py:183 machine enrollment sweep started (every 10s)
+INFO     cheesex.background:background.py:183 cloud warm pool started (every 10s)
+INFO     cheesex.background:background.py:183 backend error flush started (every 60s)
+INFO     cheesex.background:background.py:183 notification push drain started (every 15s)
+INFO     cheesex.background:background.py:183 delivery resend started (every 60s)
+INFO     cheesex.background:background.py:183 docs question retention started (every 86400s)
+INFO     cheesex.background:background.py:183 timed deliveries started (every 30s)
+INFO     cheesex.background:background.py:183 routines started (every 30s)
+INFO     cheesex.background:background.py:183 memory dream started (every 600s)
+INFO     cheesex.background:background.py:183 ratchet ingest started (every 900s)
+INFO     cheesex.background:background.py:183 document refresh delivery started (every 5s)
+INFO     cheesex.background:background.py:183 document AI requests started (every 5s)
+INFO     http:main.py:651 {'method': 'POST', 'path': '/projects', 'status': 200, 'ms': 196.9, 'req': '192842a21f9e', 'bytes': 635, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:54'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/projects "HTTP/1.1 200 OK"
+INFO     cheesex.auth:auth.py:281 {'handle': 'user-1', 'event': 'actor_handle_fallback', 'req': '938cd173c541', 'level': 'info', 'logger': 'cheesex.auth', 'timestamp': '2026-10-01 21:17:54'}
+INFO     http:main.py:651 {'method': 'POST', 'path': '/topics', 'status': 200, 'ms': 41.0, 'req': '938cd173c541', 'bytes': 709, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:54'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics "HTTP/1.1 200 OK"
+INFO     http:main.py:651 {'method': 'GET', 'path': '/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/members', 'status': 200, 'ms': 24.2, 'req': 'b667a7262987', 'bytes': 520, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:54'}
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/members "HTTP/1.1 200 OK"
+INFO     http:main.py:651 {'method': 'GET', 'path': '/topics/15dd476b-006a-4920-aea6-c9b79d8550f5', 'status': 200, 'ms': 40.9, 'req': 'ade4017b8282', 'bytes': 736, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:54'}
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5 "HTTP/1.1 200 OK"
+INFO     cheesex.runtime:runtime.py:284 chat_receive_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 persist_ms=92.047 publish_ms=0.014
+INFO     cheesex.runtime:runtime.py:953 chat_admission_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=message_lock elapsed_ms=0.001 unix_ms=1790889475088.169
+INFO     cheesex.runtime:runtime.py:983 chat_admission_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=live_delivery_declined elapsed_ms=0.264 unix_ms=1790889475088.431
+INFO     cheesex.chat_ws:chat.py:69 {'topic': '15dd476b-006a-4920-aea6-c9b79d8550f5', 'frame_type': 'user_block', 'block_id': 'dd2240c9-6a43-439b-86d2-56f24586fbf7', 'sent_unix_ms': 1790889475089.248, 'event': 'chat_message_frame_sent', 'level': 'info', 'logger': 'cheesex.chat_ws', 'timestamp': '2026-10-01 21:17:55'}
+INFO     http:main.py:651 {'method': 'POST', 'path': '/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/messages', 'status': 200, 'ms': 113.0, 'req': '422d5c58ddda', 'bytes': 770, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:55'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/messages "HTTP/1.1 200 OK"
+INFO     cheesex.runtime:runtime.py:2079 chat_admission_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=admitted verdict=ok elapsed_ms=12.395 unix_ms=1790889475101.020
+INFO     cheesex.runtime:runtime.py:2314 turn start: author=user-1 summon=True resume=False
+INFO     app.domain.agent.chat:chat.py:4239 chat_assembly_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 elapsed_ms=58.409 phases_ms={'history': 10.339979082345963, 'identity': 21.901819854974747, 'memory': 25.64610354602337, 'metadata': 51.690710708498955, 'provider': 51.988426595926285, 'committed': 58.29216726124287}
+INFO     app.domain.agent.chat:chat.py:4308 chat_preparation_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=assembled elapsed_ms=58.941 unix_ms=1790889475175.674
+INFO     app.domain.agent.chat:chat.py:4403 chat_preparation_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=prompt_built elapsed_ms=70.981 unix_ms=1790889475187.715
+INFO     app.domain.agent.chat:chat.py:4423 chat_preparation_timing topic=15dd476b-006a-4920-aea6-c9b79d8550f5 turn=dd2240c9-6a43-439b-86d2-56f24586fbf7 phase=model_ready elapsed_ms=77.449 unix_ms=1790889475194.184
+INFO     http:main.py:651 {'method': 'POST', 'path': '/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask', 'status': 422, 'ms': 23.6, 'req': '99305ed989b4', 'bytes': 167, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:55'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask "HTTP/1.1 422 Unprocessable Content"
+INFO     cheesex.runtime:runtime.py:2550 turn done: status=done tools=0 first_output=Nones duration=0.2s
+INFO     http:main.py:651 {'method': 'POST', 'path': '/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask', 'status': 403, 'ms': 31.8, 'req': '8c34cd0e3d90', 'bytes': 208, 'client': 'testclient', 'host': 'testserver', 'ua': 'testclient', 'event': 'req', 'level': 'info', 'logger': 'http', 'timestamp': '2026-10-01 21:17:55'}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/topics/15dd476b-006a-4920-aea6-c9b79d8550f5/ask "HTTP/1.1 403 Forbidden"
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+tests/integration/test_ask_options.py: 10 warnings
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/integration/test_ask_options.py::test_ask_creates_option_message
+tests/integration/test_ask_options.py::test_ask_creates_option_message
+tests/integration/test_ask_options.py::test_ask_records_the_explanation_it_was_given
+tests/integration/test_ask_options.py::test_ask_refuses_a_bare_string_option_list
+tests/integration/test_ask_options.py::test_the_question_it_asked_is_not_an_input_it_has_to_read
+tests/integration/test_ask_options.py::test_ask_rejects_bad_option_counts
+  /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/ef2cdd8c-ed63-4770-a12e-e46023f889aa/.cheese/tasks/fea74412-18b0-4e6f-b787-ac8ae994bc29/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 10 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_ask_options.py::test_ask_rejects_bad_option_counts
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 4 passed, 17 warnings in 21.65s
