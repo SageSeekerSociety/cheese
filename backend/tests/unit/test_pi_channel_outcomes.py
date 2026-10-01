@@ -66,7 +66,8 @@ def _channel(hub: _Hub, db_factory) -> PiChannel:
         _session_factory=db_factory,
         _hub=hub,
     )
-    return PiChannel(inner)
+    # The executor is the launch path; discover never touches it.
+    return PiChannel(inner, SimpleNamespace())
 
 
 @pytest.mark.anyio
