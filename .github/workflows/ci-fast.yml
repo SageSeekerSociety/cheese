@@ -1,0 +1,39 @@
+name: "ci:fast black-box tests"
+
+# ci-fast's black-box tests drive real pre-commit against fixture repos
+# (system-language stub hooks). They are their own Required CI suite so their
+# ~65–121s run in parallel with the product suites instead of on the scope
+# job's serial path, and as a reusable workflow so the docs site can name what
+# runs the suite (docs/site/build.mjs reads the `uses:` job off required-ci.yml).
+on:
+  workflow_call:
+permissions:
+  contents: read
+
+# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
+# by sha gives each queued commit its own group, so one entry cannot cancel
+# another's run and leave the commit that lands on main with no result.
+concurrency:
+  group: ci-fast-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cifast:
+    # A merge-queue run takes this job on the cheese-ci pool, so it does not
+    # wait behind pull-request runs for one of the hosted runners.
+    runs-on: ${{ github.event_name == 'merge_group' && fromJSON('["self-hosted","cheese-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The tests drive real pre-commit (system-language stub hooks), so this
+      # job needs the tool itself — provided the repo's way, through uv. Same
+      # pin as repo-guards.yml and test.yml.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
+      - name: ci-fast black-box tests
+        env:
+          CI_FAST_PRECOMMIT: uvx pre-commit
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_fast.py'
