@@ -66,7 +66,10 @@ it('mounts the slides branch and keeps quote normalization capped at 200 charact
   await fireEvent.click(ui.getByText('quote'))
   await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'fix it')
   await fireEvent.click(ui.getByText('发送'))
-  const message = ui.emitted().locate![0]![0] as string
+  const payload: unknown = ui.emitted().locate?.[0]
+  if (!Array.isArray(payload) || typeof payload[0] !== 'string')
+    throw new Error('Expected locate to emit a string message')
+  const message = payload[0]
   expect(message).toContain('q'.repeat(200))
   expect(message).not.toContain('q'.repeat(201))
   await fireEvent.click(ui.getByText('original'))
@@ -77,7 +80,10 @@ it('sends whole-page PDF context with complete text and the verified file identi
   await fireEvent.click(ui.getByText('page'))
   await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'explain this page')
   await fireEvent.click(ui.getByText('发送'))
-  const message = ui.emitted().locate![0]![0] as string
+  const payload: unknown = ui.emitted().locate?.[0]
+  if (!Array.isArray(payload) || typeof payload[0] !== 'string')
+    throw new Error('Expected locate to emit a string message')
+  const message = payload[0]
   expect(message).toContain(text)
   expect(message).toContain('整页 PDF 文字上下文')
   expect(message).toContain('topic=room source=committed task=task version=v7')
@@ -85,10 +91,15 @@ it('sends whole-page PDF context with complete text and the verified file identi
 it('retires the locator when bytes or source identity change and routes PDF to the existing reader', async () => {
   const ui = mount()
   await fireEvent.click(ui.getByText('page'))
-  await ui.rerender({ slideContext: { ...context, version: 'v8' }, docBytes: new ArrayBuffer(16) })
+  const nextProps = {
+    ...props,
+    slideContext: { ...context, version: 'v8' },
+    docBytes: new ArrayBuffer(16),
+  }
+  await ui.rerender(nextProps)
   expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
   expect(ui.emitted().locate).toBeUndefined()
-  await ui.rerender({ documentSuffix: 'pdf' })
+  await ui.rerender({ ...nextProps, documentSuffix: 'pdf' })
   expect(ui.getByTestId('pages')).toBeTruthy()
   expect(ui.queryByTestId('slides')).toBeNull()
 })

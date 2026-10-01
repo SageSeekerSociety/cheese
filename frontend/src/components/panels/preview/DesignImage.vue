@@ -17,11 +17,12 @@ const zoom = ref(1)
 const fitted = ref(true)
 const selecting = ref(false)
 const selectedRegion = ref<RasterRegion | null>(null)
-const scale = computed(() =>
-  fitted.value && natural.value.width
-    ? Math.min(1, Math.max(0.1, (available.value - 32) / natural.value.width))
-    : zoom.value
-)
+const scale = computed(() => {
+  if (!fitted.value) return zoom.value
+  const width = natural.value.width
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
+  return Math.min(1, Math.max(0, (available.value - 32) / width))
+})
 const dimensions = computed(() =>
   natural.value.width
     ? {
