@@ -239,7 +239,6 @@ def test_real_member_authorization_and_agent_participation_even_permissive_dev(
         == 403
     )
     client.headers.pop("Authorization")
-    project = root["topic_id"]
     client.headers.update(owner_headers)
     project = client.get(f"/topics/{room}").json()["data"]["project_id"]
     agent = room_agent_seat(client, room)
@@ -297,3 +296,134 @@ def test_legacy_comment_lazily_recovers_without_inventing_version_or_span(client
             assert row is not None and row.state == "resolved" and row.revision == 2
 
     asyncio.run(persisted())
+
+
+@pytest.mark.parametrize("pair", [("reply", "resolve"), ("resolve", "resolve")])
+def test_competing_reply_and_resolution_never_claim_both_succeeded(client, pair):
+    room, root, _ = setup(client)
+    prefix = f"/topics/{room}/comments/{root['id']}"
+    barrier = threading.Barrier(2)
+
+    def submit(action):
+        body = mutation(1, **({"content": "racing reply"} if action == "reply" else {}))
+        barrier.wait(timeout=10)
+        return client.post(
+            prefix + ("/replies" if action == "reply" else "/resolve"), json=body
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, pair))
+    assert sorted(r.status_code for r in responses) == [200, 409], [
+        r.text for r in responses
+    ]
+    current = read(client, room, root)
+    winner = pair[next(i for i, r in enumerate(responses) if r.status_code == 200)]
+    assert current["revision"] == 2
+    assert current["state"] == ("open" if winner == "reply" else "resolved")
+    assert len(current["replies"]) == (1 if winner == "reply" else 0)
+
+
+def test_same_operation_cannot_move_to_another_root_and_replay_requires_membership(
+    client, monkeypatch
+):
+    from sqlalchemy import delete
+
+    from app.domain.topic.models import Topic, TopicMembership, TopicRole
+
+    room, root, _ = setup(client)
+    prefix = f"/topics/{room}/comments/{root['id']}"
+    owner_headers = dict(client.headers)
+    participant_token = seed_user(client, "thread-member")
+
+    async def join():
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, uuid.UUID(room))
+            assert topic is not None
+            topic.is_private = True
+            session.add(
+                TopicMembership(
+                    topic_id=uuid.UUID(room),
+                    member_handle="thread-member",
+                    role=TopicRole.member,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(join())
+    other = client.post(
+        f"/topics/{room}/comments", json={"content": "another root"}
+    ).json()["data"]
+    client.headers.update({"Authorization": f"Bearer {participant_token}"})
+    body = mutation(1, content="member reply")
+    response = client.post(prefix + "/replies", json=body)
+    assert response.status_code == 200, response.text
+    assert (
+        client.post(
+            f"/topics/{room}/comments/{other['id']}/replies", json=body
+        ).status_code
+        == 409
+    )
+
+    async def leave():
+        async with client.test_factory() as session:
+            await session.execute(
+                delete(TopicMembership).where(
+                    TopicMembership.topic_id == uuid.UUID(room),
+                    TopicMembership.member_handle == "thread-member",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(leave())
+    monkeypatch.setattr(settings, "authz_enforce_topic_access", False)
+    assert client.post(prefix + "/replies", json=body).status_code == 403
+    client.headers.update(owner_headers)
+    assert read(client, room, root)["revision"] == 2
+    assert read(client, room, other)["revision"] == 1
+
+
+def test_task_scoped_comment_cannot_be_read_or_mutated_as_room_thread(client):
+    from app.domain.room_task.models import Task
+
+    room, root, _ = setup(client)
+    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
+
+    async def seed():
+        async with client.test_factory() as session:
+            task = Task(
+                project_id=uuid.UUID(project),
+                room_id=uuid.UUID(room),
+                title="Other work",
+            )
+            session.add(task)
+            await session.flush()
+            comment = Block(
+                project_id=uuid.UUID(project),
+                topic_id=uuid.UUID(room),
+                task_id=task.id,
+                kind=BlockKind.comment,
+                author="thread-owner",
+                author_type=AuthorType.participant,
+                content="task comment",
+                reply_to=uuid.UUID(root["reply_to"]),
+            )
+            session.add(comment)
+            await session.flush()
+            ids = str(task.id), str(comment.id)
+            await session.commit()
+            return ids
+
+    task_id, comment_id = asyncio.run(seed())
+    prefix = f"/topics/{room}/comments/{comment_id}"
+    assert client.get(prefix + "/thread").status_code == 404
+    assert (
+        client.get(f"/topics/{task_id}/comments/{root['id']}/thread").status_code == 404
+    )
+    for action in ["replies", "resolve", "reopen"]:
+        response = client.post(
+            prefix + "/" + action,
+            json=mutation(1, **({"content": "x"} if action == "replies" else {})),
+        )
+        assert response.status_code == 404, response.text
+    assert client.get(f"/topics/{room}/comments").json()["data"]["data"] == [root]
+    assert read(client, room, root)["revision"] == 1
