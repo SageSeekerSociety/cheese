@@ -43,6 +43,7 @@ import http.client
 import json
 import logging
 import os
+import queue
 import secrets
 import socket
 import ssl
@@ -174,7 +175,7 @@ def send_frame(sock: socket.socket, payload: bytes, opcode: int = _OP_BIN) -> No
 
 
 def recv_message(
-    sock: socket.socket, write_lock: threading.Lock | None = None
+    sock: socket.socket, write_lock: threading.Lock | None = None, *, control=None
 ) -> tuple[int, bytes]:
     """The next data message as ``(opcode, payload)``, reassembled. A close from
     the peer comes back as ``(_OP_CLOSE, <its payload>)``: the payload carries
@@ -210,7 +211,9 @@ def recv_message(
         if opcode == _OP_CLOSE:
             return opcode, data
         if opcode == _OP_PING:
-            if write_lock is None:
+            if control is not None:
+                control(data, _OP_PONG)
+            elif write_lock is None:
                 send_frame(sock, data, _OP_PONG)
             else:
                 with write_lock:
@@ -235,6 +238,7 @@ def open_ws(
     insecure: bool = False,
     timeout: float = _HANDSHAKE_TIMEOUT_S,
     idle_timeout: float | None = None,
+    publish=None,
 ) -> tuple[socket.socket, dict[str, str]]:
     """A connected, upgraded WebSocket, plus the response headers (lower-cased).
 
@@ -253,7 +257,18 @@ def open_ws(
     if parsed.query:
         path = f"{path}?{parsed.query}"
 
-    raw = socket.create_connection((host, port), timeout=timeout)
+    if publish is not None:
+        # Owned streams only dial the declared IPv4 loopback port.
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw.settimeout(timeout)
+        publish(raw)
+        try:
+            raw.connect((host, port))
+        except BaseException:
+            _shutdown(raw)
+            raise
+    else:
+        raw = socket.create_connection((host, port), timeout=timeout)
     if secure:
         if insecure:
             context = ssl._create_unverified_context()  # noqa: S323 — opt-in only
@@ -371,18 +386,98 @@ _PING_INTERVAL_S = 30.0
 _IDLE_TIMEOUT_S = 90.0
 
 
+_MAX_HTTP_STREAMS = 16
+_MAX_WS_STREAMS = 16
+_MAX_OUTBOX_BYTES = 1024 * 1024
+_WRITE_TIMEOUT_S = 5.0
+_DRAIN_TIMEOUT_S = 5.0
+CAPS_HEADER = "x-cheese-preview-caps"
+CAPABILITIES = frozenset(
+    {"http-stream-v1", "http-cancel-v1", "raw-http-v1", "ws-close-v1"}
+)
+
+
+def _shutdown(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    try:
+        sock.close()
+    except OSError:
+        pass
+
+
+def close_payload(code: int, reason: str = "") -> bytes:
+    raw = reason.encode("utf-8")[:123]
+    raw = raw.decode("utf-8", errors="ignore").encode("utf-8")
+    return struct.pack("!H", code) + raw
+
+
+def parse_close(payload: bytes) -> tuple[int, str]:
+    if not payload:
+        return 1011, "upstream closed without status"
+    if len(payload) == 1 or len(payload) > 125:
+        return 1002, "invalid close length"
+    code = struct.unpack("!H", payload[:2])[0]
+    if (
+        code
+        not in {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014}
+        and not 3000 <= code <= 4999
+    ):
+        return 1002, "invalid close code"
+    try:
+        reason = payload[2:].decode("utf-8")
+    except UnicodeError:
+        return 1007, "invalid close UTF-8"
+    return code, reason
+
+
+class _StreamState:
+    def __init__(self, kind: int) -> None:
+        self.kind = kind
+        self.cancelled = threading.Event()
+        self.done = threading.Event()
+        self.socket: socket.socket | None = None
+        self.worker: threading.Thread | None = None
+        self.writer: threading.Thread | None = None
+        self.outbox: queue.Queue = queue.Queue(32)
+        self.queued_bytes = 0
+        self.closing = False
+        self.write_lock = threading.Lock()
+
+
+class _OwnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, port: int, publish):
+        super().__init__("127.0.0.1", port, timeout=_REQUEST_TIMEOUT_S)
+        self._publish = publish
+
+    def connect(self) -> None:
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw.settimeout(_REQUEST_TIMEOUT_S)
+        self._publish(raw)
+        try:
+            raw.connect(("127.0.0.1", self.port))
+            self.sock = raw
+        except BaseException:
+            _shutdown(raw)
+            raise
+
+
 class Session:
     """One WebSocket to the backend, and the streams multiplexed over it."""
 
-    def __init__(self, sock: socket.socket, ports: PortSource) -> None:
+    def __init__(
+        self, sock: socket.socket, ports: PortSource, *, capabilities=frozenset()
+    ) -> None:
         self._sock = sock
         self._ports = ports
+        self.capabilities = CAPABILITIES.intersection(capabilities)
         self._write_lock = threading.Lock()
-        # Each proxied WebSocket to the app is written by two threads — the one
-        # relaying the browser's messages, and the one reading the app's, which
-        # writes when it answers a ping. Its own lock keeps those two apart.
-        self._ws_streams: dict[int, tuple[socket.socket, threading.Lock]] = {}
+        self._streams: dict[int, _StreamState] = {}
         self._lock = threading.Lock()
+        self._stopped = threading.Event()
+        self.drained = True
         # Why the backend let go of this helper, when it said it no longer wants
         # it (``CLOSE_SUPERSEDED``); None for every other end of a session.
         self.superseded: str | None = None
@@ -396,11 +491,24 @@ class Session:
         here only turned into unhandled exceptions on threads nobody watches —
         one per stream still in flight when a connection dropped.
         """
-        try:
-            with self._write_lock:
-                send_frame(self._sock, encode(op, stream, payload))
-        except OSError:
+        self._send_tunnel(encode(op, stream, payload), _OP_BIN)
+
+    def _send_tunnel(self, payload: bytes, opcode: int) -> None:
+        if self._stopped.is_set():
             return
+        if not self._write_lock.acquire(timeout=_WRITE_TIMEOUT_S):
+            self._stop()
+            return
+        timer = threading.Timer(_WRITE_TIMEOUT_S, self._stop)
+        timer.daemon = True
+        try:
+            timer.start()
+            send_frame(self._sock, payload, opcode)
+        except OSError:
+            self._stop()
+        finally:
+            timer.cancel()
+            self._write_lock.release()
 
     def serve(self) -> None:
         """Read frames until the backend goes away.
@@ -412,10 +520,11 @@ class Session:
         again is recorded in ``superseded``.
         """
         stop = threading.Event()
-        threading.Thread(target=self._keepalive, args=(stop,), daemon=True).start()
+        heartbeat = threading.Thread(target=self._keepalive, args=(stop,), daemon=True)
+        heartbeat.start()
         try:
             while True:
-                kind, data = recv_message(self._sock, self._write_lock)
+                kind, data = recv_message(self._sock, control=self._send_tunnel)
                 if kind == _OP_CLOSE:
                     if data[:2] == struct.pack("!H", CLOSE_SUPERSEDED):
                         self.superseded = data[2:].decode(errors="replace")
@@ -431,33 +540,107 @@ class Session:
         finally:
             stop.set()
             self._close_all()
+            heartbeat.join(timeout=_DRAIN_TIMEOUT_S)
+            self.drained = self.drained and not heartbeat.is_alive()
 
     def _keepalive(self, stop: threading.Event) -> None:
         """Ping until the session ends — see _PING_INTERVAL_S."""
         while not stop.wait(_PING_INTERVAL_S):
-            try:
-                with self._write_lock:
-                    send_frame(self._sock, b"", _OP_PING)
-            except OSError:
+            self._send_tunnel(b"", _OP_PING)
+            if self._stopped.is_set():
                 return
 
+    def _publish(self, state: _StreamState, sock: socket.socket) -> None:
+        with self._lock:
+            if not state.cancelled.is_set() and not self._stopped.is_set():
+                state.socket = sock
+                return
+        _shutdown(sock)
+        raise PreviewError("stream cancelled")
+
+    def _cancel(self, stream: int) -> None:
+        with self._lock:
+            state = self._streams.get(stream)
+            if state is None or state.cancelled.is_set():
+                return
+            state.cancelled.set()
+            sock = state.socket
+        if sock is not None:
+            _shutdown(sock)
+
+    def _stop(self) -> None:
+        self._stopped.set()
+        _shutdown(self._sock)
+        with self._lock:
+            streams = list(self._streams)
+        for sid in streams:
+            self._cancel(sid)
+
+    def _run_stream(self, stream: int, payload: bytes, state: _StreamState) -> None:
+        try:
+            if state.kind == OP_REQ:
+                self._serve_request(stream, payload, state)
+            else:
+                self._serve_ws(stream, payload, state)
+        finally:
+            self._cancel(stream)
+            if state.writer is not None:
+                state.writer.join(timeout=_DRAIN_TIMEOUT_S)
+            if state.writer is not None and state.writer.is_alive():
+                self.drained = False
+                self._stop()
+            else:
+                with self._lock:
+                    if self._streams.get(stream) is state:
+                        del self._streams[stream]
+                state.done.set()
+
     def _dispatch(self, op: int, stream: int, payload: bytes) -> None:
-        if op == OP_REQ:
-            threading.Thread(
-                target=self._serve_request, args=(stream, payload), daemon=True
-            ).start()
-        elif op == OP_WS_OPEN:
-            threading.Thread(
-                target=self._serve_ws, args=(stream, payload), daemon=True
-            ).start()
+        if op in (OP_REQ, OP_WS_OPEN):
+            with self._lock:
+                limit = _MAX_HTTP_STREAMS if op == OP_REQ else _MAX_WS_STREAMS
+                busy = (
+                    self._stopped.is_set()
+                    or stream in self._streams
+                    or sum(state.kind == op for state in self._streams.values())
+                    >= limit
+                )
+                if not busy:
+                    state = _StreamState(op)
+                    self._streams[stream] = state
+            if busy:
+                self.send(OP_ERR, stream, b"preview streams busy")
+                return
+            state.worker = threading.Thread(
+                target=self._run_stream, args=(stream, payload, state), daemon=True
+            )
+            state.worker.start()
         elif op == OP_WS_MSG:
             self._forward_ws(stream, payload)
         elif op == OP_CLOSE:
-            self._drop_ws(stream)
+            if payload and "ws-close-v1" in self.capabilities:
+                with self._lock:
+                    state = self._streams.get(stream)
+                    if (
+                        state is not None
+                        and state.kind == OP_WS_OPEN
+                        and not state.cancelled.is_set()
+                    ):
+                        if state.closing:
+                            return
+                        closing = b"\x02" + close_payload(*parse_close(payload))
+                        try:
+                            state.outbox.put_nowait(closing)
+                            state.closing = True
+                            state.queued_bytes += len(closing)
+                            return
+                        except queue.Full:
+                            pass
+            self._cancel(stream)
 
     # -- HTTP ------------------------------------------------------------------
 
-    def _serve_request(self, stream: int, payload: bytes) -> None:
+    def _serve_request(self, stream: int, payload: bytes, state: _StreamState) -> None:
         try:
             meta, body = decode_meta(payload)
         except ValueError as exc:
@@ -468,7 +651,7 @@ class Session:
         except PreviewError as exc:
             self.send(OP_ERR, stream, str(exc).encode())
             return
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=_REQUEST_TIMEOUT_S)
+        conn = _OwnedHTTPConnection(port, lambda sock: self._publish(state, sock))
         try:
             headers = {k: v for k, v in meta.get("headers") or []}
             conn.request(
@@ -481,29 +664,30 @@ class Session:
                 encode_meta(
                     {
                         "status": response.status,
-                        # ``http.client`` has already undone chunking and any
-                        # content-encoding negotiation we asked for, so the
-                        # framing headers describe a body that no longer exists.
-                        # The backend re-derives them from what it actually sends.
+                        # http.client undoes chunk framing, not gzip encoding.
                         "headers": [
                             [k, v]
                             for k, v in response.getheaders()
-                            if k.lower() not in ("transfer-encoding", "content-length")
+                            if k.lower() != "transfer-encoding"
                         ],
                     }
                 ),
             )
             sent = 0
-            while True:
-                chunk = response.read(_CHUNK)
+            while not state.cancelled.is_set():
+                chunk = response.read1(_CHUNK)
                 if not chunk:
                     break
                 sent += len(chunk)
-                if sent > _MAX_BODY:
+                if "http-stream-v1" not in self.capabilities and sent > _MAX_BODY:
                     self.send(OP_ERR, stream, b"the response is too large to preview")
                     return
-                self.send(OP_DATA, stream, chunk)
-            self.send(OP_END, stream)
+                if not state.cancelled.is_set():
+                    self.send(OP_DATA, stream, chunk)
+            if not state.cancelled.is_set():
+                if response.length not in (None, 0):
+                    raise http.client.IncompleteRead(b"", response.length)
+                self.send(OP_END, stream)
         except Exception as exc:  # noqa: BLE001 — see below
             # Everything, deliberately. The app is whatever the agent started, so
             # what comes back is not a shape this end can enumerate: a refused
@@ -511,13 +695,14 @@ class Session:
             # such case has the same right answer — say so ON THE STREAM — and the
             # alternative is a thread dying quietly while the browser waits out a
             # timeout with nothing anywhere naming the cause.
-            self.send(OP_ERR, stream, f"{exc.__class__.__name__}: {exc}".encode())
+            if not state.cancelled.is_set():
+                self.send(OP_ERR, stream, f"{exc.__class__.__name__}: {exc}".encode())
         finally:
             conn.close()
 
     # -- WebSocket (a dev server's HMR socket, mostly) --------------------------
 
-    def _serve_ws(self, stream: int, payload: bytes) -> None:
+    def _serve_ws(self, stream: int, payload: bytes, state: _StreamState) -> None:
         try:
             meta, _ = decode_meta(payload)
             port = self._ports.get()
@@ -527,63 +712,122 @@ class Session:
         headers = {k: v for k, v in meta.get("headers") or []}
         try:
             upstream, answered = open_ws(
-                f"ws://127.0.0.1:{port}{meta.get('path', '/')}", headers=headers
+                f"ws://127.0.0.1:{port}{meta.get('path', '/')}",
+                headers=headers,
+                publish=lambda sock: self._publish(state, sock),
             )
         except (OSError, PreviewError) as exc:
             self.send(OP_ERR, stream, f"{exc}".encode())
             return
-        upstream_lock = threading.Lock()
-        with self._lock:
-            self._ws_streams[stream] = (upstream, upstream_lock)
+        state.writer = threading.Thread(
+            target=self._ws_writer, args=(stream, state), daemon=True
+        )
+        state.writer.start()
         self.send(
             OP_WS_OK,
             stream,
             encode_meta({"subprotocol": answered.get("sec-websocket-protocol", "")}),
         )
+        outcome = close_payload(1011, "upstream disconnected without close")
         try:
-            while True:
-                opcode, data = recv_message(upstream, upstream_lock)
+            while not state.cancelled.is_set():
+                opcode, data = recv_message(
+                    upstream,
+                    control=lambda data, _op: self._enqueue_ws(stream, b"\x03" + data),
+                )
                 if opcode == _OP_CLOSE:
+                    code, reason = parse_close(data)
+                    outcome = close_payload(code, reason)
                     break
                 kind = WS_TEXT if opcode == _OP_TEXT else WS_BINARY
                 self.send(OP_WS_MSG, stream, bytes([kind]) + data)
         except (OSError, PreviewError):
             pass
         finally:
-            self._drop_ws(stream)
-            self.send(OP_CLOSE, stream)
+            if not state.cancelled.is_set():
+                self.send(
+                    OP_CLOSE,
+                    stream,
+                    outcome if "ws-close-v1" in self.capabilities else b"",
+                )
+            self._cancel(stream)
+
+    def _ws_writer(self, stream: int, state: _StreamState) -> None:
+        while not state.cancelled.is_set():
+            try:
+                payload = state.outbox.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            with self._lock:
+                state.queued_bytes -= len(payload)
+            try:
+                with state.write_lock:
+                    opcode = (
+                        _OP_CLOSE
+                        if payload[0] == 2
+                        else (
+                            _OP_PONG
+                            if payload[0] == 3
+                            else (_OP_TEXT if payload[0] == WS_TEXT else _OP_BIN)
+                        )
+                    )
+                    timer = threading.Timer(
+                        _WRITE_TIMEOUT_S, lambda: self._cancel(stream)
+                    )
+                    timer.daemon = True
+                    try:
+                        timer.start()
+                        send_frame(state.socket, payload[1:], opcode)
+                    finally:
+                        timer.cancel()
+                if opcode == _OP_CLOSE:
+                    self._cancel(stream)
+                    return
+            except OSError:
+                self._cancel(stream)
 
     def _forward_ws(self, stream: int, payload: bytes) -> None:
-        with self._lock:
-            entry = self._ws_streams.get(stream)
-        if entry is None or not payload:
+        if not payload or payload[0] not in (WS_TEXT, WS_BINARY):
+            self._cancel(stream)
             return
-        upstream, upstream_lock = entry
-        opcode = _OP_TEXT if payload[0] == WS_TEXT else _OP_BIN
-        try:
-            with upstream_lock:
-                send_frame(upstream, payload[1:], opcode)
-        except OSError:
-            self._drop_ws(stream)
+        self._enqueue_ws(stream, payload)
 
-    def _drop_ws(self, stream: int) -> None:
+    def _enqueue_ws(self, stream: int, payload: bytes) -> None:
+        overflow = False
         with self._lock:
-            entry = self._ws_streams.pop(stream, None)
-        if entry is not None:
-            try:
-                entry[0].close()
-            except OSError:
-                pass
+            state = self._streams.get(stream)
+            if (
+                state is None
+                or state.kind != OP_WS_OPEN
+                or state.cancelled.is_set()
+                or state.closing
+            ):
+                return
+            if (
+                len(payload) + state.queued_bytes > _MAX_OUTBOX_BYTES
+                or state.outbox.full()
+            ):
+                overflow = True
+            else:
+                state.queued_bytes += len(payload)
+                state.outbox.put_nowait(payload)
+        if overflow:
+            self._cancel(stream)
 
     def _close_all(self) -> None:
         with self._lock:
-            streams = list(self._ws_streams)
-        for stream in streams:
-            self._drop_ws(stream)
-        try:
-            self._sock.close()
-        except OSError:
-            pass
+            states = list(self._streams.values())
+        self._stop()
+        deadline = time.monotonic() + _DRAIN_TIMEOUT_S
+        for state in states:
+            if (
+                state.worker is not None
+                and state.worker is not threading.current_thread()
+            ):
+                state.worker.join(timeout=max(0, deadline - time.monotonic()))
+        if any(not state.done.is_set() for state in states):
+            self.drained = False
+            logger.error("preview workers did not stop before drain deadline")
 
 
 # --- the process --------------------------------------------------------------
@@ -614,11 +858,12 @@ def run(
     delay = _RECONNECT_START_S
     while True:
         try:
-            sock, _ = open_ws(
+            sock, answered = open_ws(
                 f"{url}{'&' if '?' in url else '?'}token={tokens.get()}",
                 ca_path=ca_path,
                 insecure=insecure,
                 idle_timeout=_IDLE_TIMEOUT_S,
+                headers={CAPS_HEADER: ",".join(sorted(CAPABILITIES))},
             )
         except (OSError, PreviewError) as exc:
             retryable = isinstance(exc, OSError) or (
@@ -635,8 +880,13 @@ def run(
             continue
         logger.info("preview tunnel up")
         delay = _RECONNECT_START_S
-        session = Session(sock, ports)
+        session = Session(
+            sock, ports, capabilities=answered.get(CAPS_HEADER, "").split(",")
+        )
         session.serve()
+        if not session.drained:
+            logger.error("preview helper cannot redial with unfinished workers")
+            return 1
         if session.superseded is not None:
             logger.info(
                 "preview tunnel handed over, not redialling: %s", session.superseded

@@ -10,7 +10,7 @@ from http.cookies import CookieError, SimpleCookie
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from app.api import proxy
 from app.core.sandbox_auth import scoped_token_claims
@@ -147,7 +147,13 @@ async def preview_tunnel(
             reason="a cheese token naming a topic and a teammate is required",
         )
         return
-    await websocket.accept()
+    offered = websocket.headers.get(wire.CAPS_HEADER, "").split(",")
+    capabilities = wire.CAPABILITIES.intersection(part.strip() for part in offered)
+    await websocket.accept(
+        headers=[(wire.CAPS_HEADER.encode(), ",".join(sorted(capabilities)).encode())]
+        if capabilities
+        else None
+    )
     transport = _WebSocketPreviewTransport(websocket)
     # A seat moves — a relaunched screen, a Cloud box replaced — and the helper
     # it left behind is still dialling. Hang up on the one being displaced: it
@@ -155,7 +161,11 @@ async def preview_tunnel(
     # on again, and the close code tells it not to dial back in.
     displaced = preview_hub.machine(topic_id, seat)
     machine = preview_hub.attach(
-        topic_id, seat, transport, issued=issued if isinstance(issued, int) else 0
+        topic_id,
+        seat,
+        transport,
+        issued=issued if isinstance(issued, int) else 0,
+        capabilities=capabilities,
     )
     if machine is None:
         await transport.hang_up()
@@ -235,47 +245,43 @@ async def relay_http(topic_id: uuid.UUID, seat: str, request: Request) -> Respon
     upstream = None
     transferred = False
     try:
-        done, _ = await asyncio.wait(
-            {waiting, gone}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if gone in done:
-            waiting.cancel()
-            results = await asyncio.gather(waiting, return_exceptions=True)
-            if (
-                results
-                and not isinstance(results[0], BaseException)
-                and results[0] is not None
-            ):
-                await results[0].aclose()
-            return Response(status_code=404, content=b"preview unavailable")
-        upstream = await waiting
-        transferred = True
-    finally:
-        gone.cancel()
-        if not waiting.done():
-            waiting.cancel()
-        results = await asyncio.gather(waiting, gone, return_exceptions=True)
-        if not transferred:
-            candidate = upstream or (
-                results[0] if not isinstance(results[0], BaseException) else None
+        try:
+            done, _ = await asyncio.wait(
+                {waiting, gone}, return_when=asyncio.FIRST_COMPLETED
             )
-            if candidate is not None:
-                await candidate.aclose()
-    if upstream is None:
-        return Response(status_code=404, content=b"preview unavailable")
-    kept = _response_headers(upstream.headers)
-    media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
-    response = _PreviewStreamingResponse(upstream)
-    # Keep application sessions without allowing an app to replace preview auth.
-    for name, value in kept:
-        if name.lower() == "set-cookie":
-            for cookie in _app_cookies(value):
-                response.headers.append("set-cookie", cookie)
-        elif name.lower() != "content-type":
-            response.headers.append(name, value)
-    if media_type:
-        response.headers["content-type"] = media_type
-    return response
+            if gone in done:
+                return Response(status_code=404, content=b"preview unavailable")
+            upstream = await waiting
+        finally:
+            gone.cancel()
+            if not waiting.done():
+                waiting.cancel()
+            await asyncio.gather(waiting, gone, return_exceptions=True)
+        if upstream is None:
+            return Response(status_code=404, content=b"preview unavailable")
+        kept = _response_headers(upstream.headers)
+        media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
+        response = _PreviewStreamingResponse(upstream)
+        # Keep app sessions without allowing an app to replace preview auth.
+        for name, value in kept:
+            if name.lower() == "set-cookie":
+                for cookie in _app_cookies(value):
+                    response.headers.append("set-cookie", cookie)
+            elif name.lower() != "content-type":
+                response.headers.append(name, value)
+        if media_type:
+            response.headers["content-type"] = media_type
+        # No await between ownership transfer and returning the response owner.
+        transferred = True
+        return response
+    finally:
+        if not transferred:
+            if upstream is None and waiting.done() and not waiting.cancelled():
+                error = waiting.exception()
+                if error is None:
+                    upstream = waiting.result()
+            if upstream is not None:
+                await upstream.aclose()
 
 
 async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID, seat: str) -> None:
@@ -309,11 +315,12 @@ async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID, seat: str) -> None
     except (TimeoutError, ValueError, OSError, RuntimeError, WebSocketDisconnect):
         pass
     finally:
-        stream.close()
-        try:
-            await websocket.close()
-        except (RuntimeError, WebSocketDisconnect):
-            pass
+        await stream.aclose()
+        if websocket.application_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.close(code=1011, reason="preview connection ended")
+            except (OSError, RuntimeError, WebSocketDisconnect):
+                pass
 
 
 async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
@@ -324,6 +331,16 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
             while True:
                 message = await browser.receive()
                 if message["type"] == "websocket.disconnect":
+                    payload = b""
+                    if stream.close_metadata:
+                        payload = wire.close_payload(
+                            *wire.parse_close(
+                                wire.close_payload(
+                                    message.get("code", 1001), message.get("reason", "")
+                                )
+                            )
+                        )
+                    await stream.aclose(payload=payload)
                     return
                 data = message.get("bytes")
                 if data is not None:
@@ -346,7 +363,15 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
                 op, payload = await stream.receive(timeout=None)
             except (TimeoutError, RuntimeError):
                 return
+            if op == wire.OP_CLOSE:
+                if stream.close_metadata:
+                    code, reason = wire.parse_close(payload)
+                else:
+                    code, reason = 1011, "preview upstream disconnected"
+                await browser.close(code=code, reason=reason)
+                return
             if op != wire.OP_WS_MSG or not payload:
+                await browser.close(code=1011, reason="preview upstream failed")
                 return
             if payload[0] == wire.WS_TEXT:
                 await browser.send_text(payload[1:].decode(errors="replace"))
@@ -363,4 +388,4 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
         for task in (up, down):
             task.cancel()
         await asyncio.gather(up, down, return_exceptions=True)
-        await stream.send(wire.OP_CLOSE)
+        await stream.aclose()

@@ -34,6 +34,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import anyio
+
 from app.domain.agent import preview_tunnel as wire
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,10 @@ class PreviewStream:
         self._closed = False
         self._terminal = False
 
+    @property
+    def close_metadata(self) -> bool:
+        return not self._terminal and "ws-close-v1" in self._machine.capabilities
+
     async def send(self, op: int, payload: bytes = b"") -> None:
         await self._machine.send(op, self.id, payload)
 
@@ -127,16 +133,19 @@ class PreviewStream:
         self._closed = True
         self._machine.forget(self.id)
 
-    async def aclose(self, *, cancel: bool = True) -> None:
+    async def aclose(self, *, cancel: bool = True, payload: bytes = b"") -> None:
         if self._closed:
             return
         terminal = self._terminal
         self.close()
         if cancel and not terminal:
-            try:
-                await self.send(wire.OP_CLOSE)
-            except (OSError, RuntimeError, TimeoutError):
-                pass
+            # A StreamingResponse disconnect cancels its AnyIO body scope.
+            # Preserve the bounded wire cancellation after local release.
+            with anyio.CancelScope(shield=True):
+                try:
+                    await self.send(wire.OP_CLOSE, payload)
+                except (OSError, RuntimeError, TimeoutError):
+                    pass
 
 
 @dataclass
@@ -177,6 +186,7 @@ class PreviewMachine:
     transport: PreviewTransport
     # When the credential it dialled with was issued; see the module docstring.
     issued: int = 0
+    capabilities: frozenset[str] = frozenset()
     streams: dict[int, PreviewStream] = field(default_factory=dict)
     next_stream: int = 0
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -266,6 +276,7 @@ class PreviewHub:
         transport: PreviewTransport,
         *,
         issued: int = 0,
+        capabilities: frozenset[str] = frozenset(),
     ) -> PreviewMachine | None:
         """Give this seat's tunnel to ``transport``; None when it may not have it.
 
@@ -280,7 +291,11 @@ class PreviewHub:
                 return None
             self._abandon(displaced)
         machine = PreviewMachine(
-            topic_id=topic_id, seat=seat, transport=transport, issued=issued
+            topic_id=topic_id,
+            seat=seat,
+            transport=transport,
+            issued=issued,
+            capabilities=wire.CAPABILITIES.intersection(capabilities),
         )
         self._machines[key] = machine
         # POPPED, not merely set: a waiter already holds its own reference, and
