@@ -156,6 +156,36 @@ def test_rates_read_both_places_litellm_keeps_them() -> None:
         ]
     }
     rates = pricing._rates_from_info(payload)
-    assert rates["in-params"] == (0.001, 0.002)
-    assert rates["in-info"] == (0.003, 0.004)
+    assert rates["in-params"][:2] == (0.001, 0.002)
+    assert rates["in-info"][:2] == (0.003, 0.004)
     assert "half" not in rates
+
+
+def test_a_cached_token_with_no_price_of_its_own_costs_a_full_input_token() -> None:
+    """网关没给缓存价的模型，缓存命中的 token 按输入价算：没写价不等于免费。
+    给了缓存价（哪怕是 0）就按给的算。"""
+    payload = {
+        "data": [
+            {
+                "model_name": "no-cache-price",
+                "litellm_params": {
+                    "input_cost_per_token": 0.001,
+                    "output_cost_per_token": 0.002,
+                },
+            },
+            {
+                "model_name": "cache-price",
+                "litellm_params": {
+                    "input_cost_per_token": 0.001,
+                    "output_cost_per_token": 0.002,
+                    "cache_read_input_token_cost": 0.00001,
+                    "cache_creation_input_token_cost": 0,
+                },
+            },
+        ]
+    }
+    rates = pricing._rates_from_info(payload)
+    assert rates["no-cache-price"].cache_read == 0.001
+    assert rates["no-cache-price"].cache_write == 0.001
+    assert rates["cache-price"].cache_read == 0.00001
+    assert rates["cache-price"].cache_write == 0

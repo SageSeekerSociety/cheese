@@ -1,3 +1,5 @@
+import type { MenuAction } from '../menuAction'
+
 export type NavItem = {
   key: string
   type: 'item'
@@ -26,6 +28,8 @@ export type NavItem = {
   // 规则：目标那条记录得在当前路由的 matched 里）—— 一格底下住着好几条并列的
   // 顶层路由时那条规则不够用，底栏于是整排都不亮。
   match?: (path: string) => boolean
+  // 右键这一格弹出的操作。项目格子才有。
+  menu?: MenuAction[]
 }
 
 export type NavDivider = {

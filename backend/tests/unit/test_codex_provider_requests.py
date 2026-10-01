@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import re
-import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +17,7 @@ from app.domain.agent.harness.codex.events import Assembler
 from app.domain.agent.harness.codex.runner import Runner
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
+from tests.pinned_claude import codex_binary
 from tests.support.harness_prompts import event_prompts, system_prompt
 
 MODELS = ["gpt-5.3-codex", "gpt-6-astra"]
@@ -218,7 +218,7 @@ async def _drive(tmp_path, model) -> list[dict]:
         runner = Runner(state, on_request)
         return await runner.start(
             Opening(system_prompt=prompt, resume_token=resume),
-            binary=shutil.which("codex"),
+            binary=codex_binary(),
             cwd=str(workspace),
             env={
                 "PATH": os.environ["PATH"],

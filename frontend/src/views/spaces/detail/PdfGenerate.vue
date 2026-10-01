@@ -4,6 +4,7 @@
 import type { PdfPublishAttachmentsData, PdfTaskDraftData } from '@/network/api/tasks/types'
 
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
@@ -19,6 +20,7 @@ const props = defineProps<{
 }>()
 
 const route = useRoute()
+const { t, locale } = useI18n()
 const spaceStore = useSpaceStore()
 const spaceId = computed(() => Number(route.params.spaceId))
 
@@ -109,21 +111,21 @@ function draftPage(index: number): number {
  *  一个 `{}`，所以这里要能落回一句人话。模板元素本身有 `title`/`name` 两种写法
  *  （老页读的是 `title`，`_extract_template_defaults` 还认 `task` 那一层）。 */
 function templateLabel(used: unknown): string {
-  const t = used as { title?: unknown; name?: unknown; task?: { title?: unknown; name?: unknown } } | null
-  const title = t?.title ?? t?.name ?? t?.task?.title ?? t?.task?.name
-  return typeof title === 'string' && title.trim() ? title.trim() : '空白模板（这块板没有配题模板）'
+  const tpl = used as { title?: unknown; name?: unknown; task?: { title?: unknown; name?: unknown } } | null
+  const title = tpl?.title ?? tpl?.name ?? tpl?.task?.title ?? tpl?.task?.name
+  return typeof title === 'string' && title.trim() ? title.trim() : t('spaces.detail.pdfGenerate.blankTemplate')
 }
 
 /** 分类名。草稿带回的是 `categoryId`，名字要自己从这块板的分类里换。 */
 function categoryLabel(id?: number): string {
-  if (id === undefined) return '未指定分类（落这块板的默认分类）'
-  return spaceStore.categories.find((c) => c.id === id)?.name ?? `分类 #${id}`
+  if (id === undefined) return t('spaces.detail.pdfGenerate.noCategory')
+  return spaceStore.categories.find((c) => c.id === id)?.name ?? t('spaces.detail.pdfGenerate.categoryFallback', { id })
 }
 
 /** 失败时给人看的话，尽量用后端自己的措辞（业务错误都在 `response.data.message`）。 */
 function failureText(error: unknown): string {
   const e = error as { response?: { data?: { message?: string } }; message?: string }
-  return e?.response?.data?.message || e?.message || '未知错误'
+  return e?.response?.data?.message || e?.message || t('spaces.detail.pdfGenerate.unknownError')
 }
 
 function isPdf(file: File): boolean {
@@ -148,19 +150,19 @@ async function parsePdf() {
   receipt.value = null
 
   if (!id) {
-    pdfError.value = '空间还没装好，稍等一下再试。'
+    pdfError.value = t('spaces.detail.pdfGenerate.error.spaceNotReady')
     return
   }
   if (!file) {
-    pdfError.value = '先选一份 PDF。'
+    pdfError.value = t('spaces.detail.pdfGenerate.error.noFile')
     return
   }
   if (!isPdf(file)) {
-    pdfError.value = '只收 PDF：这个文件既不是 application/pdf，也不叫 .pdf。'
+    pdfError.value = t('spaces.detail.pdfGenerate.error.notPdf')
     return
   }
   if (file.size > MAX_PDF_BYTES) {
-    pdfError.value = `单个 PDF 不能超过 15MB，这一份 ${Math.round(file.size / 1024 / 1024)}MB。`
+    pdfError.value = t('spaces.detail.pdfGenerate.error.tooLarge', { size: Math.round(file.size / 1024 / 1024) })
     return
   }
 
@@ -179,7 +181,7 @@ async function parsePdf() {
     })
 
     if (!data.drafts?.length) {
-      pdfError.value = `这次没解析出草稿：后端读了 PDF，但一条题也没识别出来（已消耗 ${data.tokenUsed ?? 0} tokens）。`
+      pdfError.value = t('spaces.detail.pdfGenerate.error.noDrafts', { tokens: data.tokenUsed ?? 0 })
       return
     }
 
@@ -202,7 +204,7 @@ async function parsePdf() {
     // 并且说明是哪一样带不了。
     pdfAttachments.value = data.attachments ?? null
   } catch (error) {
-    pdfError.value = `解析失败：${failureText(error)}`
+    pdfError.value = t('spaces.detail.pdfGenerate.error.parseFailed', { reason: failureText(error) })
   } finally {
     parsing.value = false
   }
@@ -210,6 +212,10 @@ async function parsePdf() {
 
 /** 出处标记。题目模型里没有「来源」这一列，也不给它加 —— 标记写进**简介**：
  *  简介会跟着这道题一路走，审核队列那一行显示的就是它。 */
+// 这个标记是写进题目数据里的固定格式（`views/spaces/model.ts` 的 `ORIGIN_PREFIX` 按它剥离），
+// 不随界面语言变，所以不进词条目录。
+const ORIGIN_EXAMPLE = '【PDF · 第 N 页】'
+
 function originTag(page: number): string {
   return `【PDF · 第 ${page} 页】`
 }
@@ -271,7 +277,7 @@ async function confirmPdf() {
     drafts.value = []
     parsedMeta.value = null
   } catch (error) {
-    pdfError.value = `发布失败：${failureText(error)}`
+    pdfError.value = t('spaces.detail.pdfGenerate.error.publishFailed', { reason: failureText(error) })
   } finally {
     confirming.value = false
   }
@@ -282,16 +288,23 @@ async function confirmPdf() {
   <div class="pub__pdf">
     <!-- 回执：确认之后就地给，不跳走 —— 队列是「先审自己的、再按提交时间」排的，
          刚发的落在靠后，跳过去反而看不见自己刚做了什么。 -->
-    <PanelCard v-if="receipt" title="已发布" data-testid="pdf-receipt">
+    <PanelCard v-if="receipt" :title="t('spaces.detail.pdfGenerate.receipt.title')" data-testid="pdf-receipt">
       <div class="pdf__done">
         <v-icon icon="mdi-check-circle-outline" size="22" color="success" />
         <div>
-          刚发的 <b>{{ receipt.count }}</b> 道题已经进了<b>待审核</b>队列 —— 解析不会绕开审核，上板还是要人看一眼。
-          <div class="pdf__done-hint">
-            每道题的简介里都带了出处标记
-            <code>【PDF · 第 N 页】</code>
-            ，审核的人在队列那一行就能看出它来自哪一页。
-          </div>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.receipt.body" tag="span">
+            <template #count
+              ><b>{{ receipt.count }}</b></template
+            >
+            <template #queue
+              ><b>{{ t('spaces.detail.publishTask.pendingQueue') }}</b></template
+            >
+          </i18n-t>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.receipt.hint" tag="div" class="pdf__done-hint">
+            <template #marker
+              ><code>{{ ORIGIN_EXAMPLE }}</code></template
+            >
+          </i18n-t>
         </div>
       </div>
       <ul class="pdf__made">
@@ -302,21 +315,26 @@ async function confirmPdf() {
         </li>
       </ul>
       <div class="pdf__actions">
-        <v-btn variant="text" @click="resetPdf">再解析一份 PDF</v-btn>
+        <v-btn variant="text" @click="resetPdf">{{ t('spaces.detail.pdfGenerate.receipt.again') }}</v-btn>
         <v-spacer />
-        <v-btn variant="tonal" :to="publishDoneRoute(spaceId)">查看我发布的题目</v-btn>
+        <v-btn variant="tonal" :to="publishDoneRoute(spaceId)">{{
+          t('spaces.detail.pdfGenerate.receipt.viewMine')
+        }}</v-btn>
         <v-btn color="primary" variant="flat" :to="{ name: 'SpacesDetailAuditTasks', params: { spaceId } }">
-          去审核队列
+          {{ t('spaces.detail.pdfGenerate.receipt.toQueue') }}
         </v-btn>
       </div>
     </PanelCard>
 
     <template v-else>
-      <PanelCard title="上传 PDF" subtitle="只收 PDF，单个文件最大 15MB，一次最多解析 20 道题">
+      <PanelCard
+        :title="t('spaces.detail.pdfGenerate.upload.title')"
+        :subtitle="t('spaces.detail.pdfGenerate.upload.subtitle', { max: MAX_DRAFTS })"
+      >
         <v-file-input
           v-model="fileInput"
           accept=".pdf,application/pdf"
-          label="上传题目 PDF"
+          :label="t('spaces.detail.publishTask.quick.uploadLabel')"
           variant="outlined"
           density="comfortable"
           clearable
@@ -330,22 +348,39 @@ async function confirmPdf() {
           </template>
         </v-file-input>
 
-        <p class="pdf__hint">
-          解析是只读的：读一遍 PDF、按题目模板生成草稿，<b>不会直接发出去</b>。这一步要跑大模型，几秒到几十秒。
-        </p>
+        <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.upload.hint" tag="p" class="pdf__hint">
+          <template #notPublished
+            ><b>{{ t('spaces.detail.pdfGenerate.upload.notPublished') }}</b></template
+          >
+        </i18n-t>
 
         <!-- 结果区：真接口真的会报回来的三件事，外加一句「草稿还不是题目」。 -->
         <div v-if="parsedMeta" class="pdf__meta" data-testid="pdf-meta">
-          <span data-testid="pdf-template"
-            >模板：<b>{{ parsedMeta.template }}</b></span
+          <i18n-t
+            scope="global"
+            keypath="spaces.detail.pdfGenerate.meta.template"
+            tag="span"
+            data-testid="pdf-template"
           >
-          <span data-testid="pdf-images"
-            >抽出插图 <b>{{ parsedMeta.images }}</b> 张</span
-          >
-          <span data-testid="pdf-tokens"
-            >消耗 <b>{{ parsedMeta.tokens.toLocaleString() }}</b> tokens</span
-          >
-          <span class="pdf__meta-warn">草稿<b>还没有成为题目</b>，确认之后才会进审核队列</span>
+            <template #name
+              ><b>{{ parsedMeta.template }}</b></template
+            >
+          </i18n-t>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.meta.images" tag="span" data-testid="pdf-images">
+            <template #n
+              ><b>{{ parsedMeta.images }}</b></template
+            >
+          </i18n-t>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.meta.tokens" tag="span" data-testid="pdf-tokens">
+            <template #n
+              ><b>{{ parsedMeta.tokens.toLocaleString(locale) }}</b></template
+            >
+          </i18n-t>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.meta.warn" tag="span" class="pdf__meta-warn">
+            <template #notYet
+              ><b>{{ t('spaces.detail.pdfGenerate.meta.notYet') }}</b></template
+            >
+          </i18n-t>
         </div>
 
         <div class="pdf__actions">
@@ -356,12 +391,12 @@ async function confirmPdf() {
             :disabled="!selectedPdf || confirming"
             @click="parsePdf"
           >
-            解析成题目草稿
+            {{ t('spaces.detail.pdfGenerate.parse') }}
           </v-btn>
-          <span class="pdf__actions-note">
-            模板这一版跟老页同一口径（地址栏里的 <code>?templateId=</code>，没有就是空白模板）；一次最多
-            {{ MAX_DRAFTS }} 道。
-          </span>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.parseNote" tag="span" class="pdf__actions-note">
+            <template #param><code>?templateId=</code></template>
+            <template #max>{{ MAX_DRAFTS }}</template>
+          </i18n-t>
         </div>
       </PanelCard>
 
@@ -378,8 +413,10 @@ async function confirmPdf() {
 
       <PanelCard
         v-if="drafts.length"
-        title="解析出的草稿"
-        :subtitle="`勾选要发的 ${pickedDrafts.length} / ${drafts.length} 道，标题和题干都能就地改`"
+        :title="t('spaces.detail.pdfGenerate.drafts.title')"
+        :subtitle="
+          t('spaces.detail.pdfGenerate.drafts.subtitle', { picked: pickedDrafts.length, total: drafts.length })
+        "
       >
         <ul class="pdf__list" data-testid="pdf-drafts">
           <li v-for="d in drafts" :key="d.key" class="pdf__row" :class="{ 'pdf__row--off': !d.picked }">
@@ -388,13 +425,13 @@ async function confirmPdf() {
               density="compact"
               hide-details
               class="pdf__pick"
-              :aria-label="`勾选「${d.name}」`"
+              :aria-label="t('spaces.detail.pdfGenerate.drafts.pick', { name: d.name })"
             />
             <div class="pdf__body">
               <v-text-field
                 v-model="d.name"
                 autocomplete="off"
-                label="标题"
+                :label="t('spaces.detail.pdfGenerate.drafts.name')"
                 density="compact"
                 variant="outlined"
                 hide-details
@@ -403,7 +440,7 @@ async function confirmPdf() {
               <v-textarea
                 v-model="d.description"
                 autocomplete="off"
-                label="题干"
+                :label="t('spaces.detail.pdfGenerate.drafts.description')"
                 density="compact"
                 variant="outlined"
                 hide-details
@@ -412,14 +449,14 @@ async function confirmPdf() {
               />
               <!-- 简介不给人改（它在确认时被加上出处标记），但发出去的就是它，
                    所以摆出来让人看得见。 -->
-              <p class="pdf__intro">简介（原样发出去）：{{ d.intro }}</p>
+              <p class="pdf__intro">{{ t('spaces.detail.pdfGenerate.drafts.intro', { intro: d.intro }) }}</p>
               <div class="pdf__tags">
                 <v-chip size="x-small" label variant="text">{{ categoryLabel(d.categoryId) }}</v-chip>
                 <v-chip size="x-small" label variant="text" data-testid="draft-origin">
-                  PDF · 第 {{ d.page }} 页
+                  {{ t('spaces.detail.pdfGenerate.drafts.page', { page: d.page }) }}
                 </v-chip>
                 <v-chip v-if="d.images" size="x-small" label variant="tonal" color="warning">
-                  含 {{ d.images }} 张插图
+                  {{ t('spaces.detail.pdfGenerate.drafts.images', { n: d.images }) }}
                 </v-chip>
               </div>
             </div>
@@ -427,24 +464,32 @@ async function confirmPdf() {
         </ul>
 
         <p class="pdf__note-line">
-          插图数是从草稿正文里的图片链接数出来的 —— 后端把抽出的插图传上存储，再把正文里的图片标记换成链接，
-          所以那几张图跟着题干一起发出去。
+          {{ t('spaces.detail.pdfGenerate.drafts.imagesNote') }}
         </p>
 
         <!-- 附带给领取者：原型那两颗勾。**勾只画接口真落成了文件行的那些**，
              哪一样没有就不画哪一颗、并说明为什么（见 `pdfAttachments` 的注释）。 -->
         <div class="pdf__attach" data-testid="pdf-attachments">
           <div class="pdf__attach-head">
-            <b>附带给领取者</b>
-            <span class="pdf__attach-note" data-testid="pdf-attach-count">
-              这 {{ attachmentIdsForPdf.length }} 个文件会附在<b>每一道</b>生成出来的题上
-            </span>
+            <b>{{ t('spaces.detail.pdfGenerate.attach.title') }}</b>
+            <i18n-t
+              scope="global"
+              keypath="spaces.detail.pdfGenerate.attach.count"
+              tag="span"
+              class="pdf__attach-note"
+              data-testid="pdf-attach-count"
+            >
+              <template #n>{{ attachmentIdsForPdf.length }}</template>
+              <template #every
+                ><b>{{ t('spaces.detail.pdfGenerate.attach.every') }}</b></template
+              >
+            </i18n-t>
           </div>
           <div class="pdf__attach-row">
             <v-checkbox
               v-if="pdfAttachments?.pdf"
               v-model="attachPdf"
-              label="原 PDF"
+              :label="t('spaces.detail.pdfGenerate.attach.pdf')"
               density="compact"
               hide-details
               :disabled="confirming"
@@ -453,7 +498,7 @@ async function confirmPdf() {
             <v-checkbox
               v-if="pdfImages.length"
               v-model="attachImages"
-              :label="`抽出的插图（${pdfImages.length} 张）`"
+              :label="t('spaces.detail.pdfGenerate.attach.images', { n: pdfImages.length })"
               density="compact"
               hide-details
               :disabled="confirming"
@@ -461,25 +506,34 @@ async function confirmPdf() {
             />
           </div>
           <p v-if="pdfAttachments?.pdf" class="pdf__attach-file" data-testid="pdf-attach-pdf-file">
-            原 PDF：{{ pdfAttachments.pdf.name }}
+            {{ t('spaces.detail.pdfGenerate.attach.pdfFile', { name: pdfAttachments.pdf.name }) }}
           </p>
           <p v-if="pdfImages.length" class="pdf__attach-file" data-testid="pdf-attach-image-files">
-            插图：{{ pdfImages.map((i) => i.name).join('、') }}
+            {{
+              t('spaces.detail.pdfGenerate.attach.imageFiles', {
+                names: pdfImages.map((i) => i.name).join(t('spaces.detail.pdfGenerate.attach.separator')),
+              })
+            }}
           </p>
           <p v-if="!pdfAttachments?.pdf" class="pdf__attach-why" data-testid="pdf-attach-pdf-why">
-            这一项<b>没画</b>「原 PDF」那颗勾：这次预览没有把 PDF 落成可附的文件（响应里没有这一项），勾了也带不走。
+            {{ t('spaces.detail.pdfGenerate.attach.noPdf') }}
           </p>
           <p v-if="!pdfImages.length" class="pdf__attach-why" data-testid="pdf-attach-images-why">
-            这一项<b>没画</b>「抽出的插图」那颗勾：这次没有抽到能当附件的插图（没抽到图，或抽到的图没进到任何一条草稿正文里）。
+            {{ t('spaces.detail.pdfGenerate.attach.noImages') }}
           </p>
         </div>
 
         <div class="pdf__actions">
-          <span class="pdf__actions-note">
-            确认后这 {{ pickedDrafts.length }} 道都会进<b>待审核</b>队列 —— 解析归解析，上板还是要人审。
-          </span>
+          <i18n-t scope="global" keypath="spaces.detail.pdfGenerate.confirmNote" tag="span" class="pdf__actions-note">
+            <template #n>{{ pickedDrafts.length }}</template>
+            <template #queue
+              ><b>{{ t('spaces.detail.publishTask.pendingQueue') }}</b></template
+            >
+          </i18n-t>
           <v-spacer />
-          <v-btn variant="text" :disabled="confirming" @click="resetPdf">取消</v-btn>
+          <v-btn variant="text" :disabled="confirming" @click="resetPdf">{{
+            t('spaces.detail.pdfGenerate.cancel')
+          }}</v-btn>
           <v-btn
             color="primary"
             variant="flat"
@@ -487,7 +541,7 @@ async function confirmPdf() {
             :disabled="!pickedDrafts.length"
             @click="confirmPdf"
           >
-            确认发布 {{ pickedDrafts.length }} 道
+            {{ t('spaces.detail.pdfGenerate.confirm', { n: pickedDrafts.length }) }}
           </v-btn>
         </div>
       </PanelCard>

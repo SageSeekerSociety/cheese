@@ -4,13 +4,13 @@
       <v-card-title class="pa-4 pb-3">
         <div class="d-flex align-center">
           <v-icon color="primary" class="mr-3" size="28">mdi-account-group</v-icon>
-          <span class="text-h5 font-weight-medium">选择参与团队</span>
+          <span class="text-h5 font-weight-medium">{{ t('tasks.teamSelect.title') }}</span>
         </div>
       </v-card-title>
       <v-divider></v-divider>
       <v-card-text class="pa-0">
         <div class="px-4 pt-4 pb-2">
-          <div class="text-body-1">请选择一个团队代表参与此题目</div>
+          <div class="text-body-1">{{ t('tasks.teamSelect.choose') }}</div>
         </div>
 
         <div v-if="loading" class="d-flex justify-center my-8">
@@ -22,13 +22,9 @@
             <!-- 状态色底上的反白图标：warning 深色下是 #F0A94A（更亮），白色压不住 -->
             <v-icon icon="mdi-alert-circle-outline" color="surface" size="36"></v-icon>
           </v-avatar>
-          <div class="text-h6 font-weight-medium mb-2">暂无可用团队</div>
+          <div class="text-h6 font-weight-medium mb-2">{{ t('tasks.teamSelect.emptyTitle') }}</div>
           <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">
-            {{
-              taskData?.requireRealName
-                ? '请确保您的团队所有成员都已完成实名认证，或创建一个新的团队'
-                : '您可能需要创建一个团队或加入一个团队才能参与此题目'
-            }}
+            {{ taskData?.requireRealName ? t('tasks.teamSelect.emptyRealName') : t('tasks.teamSelect.emptyNoTeam') }}
           </div>
         </div>
 
@@ -47,8 +43,8 @@
                   <v-icon icon="mdi-shield-account" color="surface" size="20"></v-icon>
                 </v-avatar>
                 <div>
-                  <div class="text-subtitle-2 font-weight-medium mb-1">实名认证要求</div>
-                  <p class="text-body-2 mb-0">此题目要求实名参与，只有所有成员都已完成实名认证的团队才能参与</p>
+                  <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.teamSelect.realNameTitle') }}</div>
+                  <p class="text-body-2 mb-0">{{ t('tasks.teamSelect.realNameText') }}</p>
                 </div>
               </div>
             </v-card-text>
@@ -117,7 +113,7 @@
                     "
                     class="team-members-container"
                   >
-                    <div class="text-caption text-medium-emphasis mb-1">成员认证状态</div>
+                    <div class="text-caption text-medium-emphasis mb-1">{{ t('tasks.teamSelect.memberStatus') }}</div>
                     <div class="d-flex flex-wrap gap-1">
                       <v-chip
                         v-for="member in teamEligibility.team.memberRealNameStatus"
@@ -149,7 +145,7 @@
       <v-divider></v-divider>
       <v-card-actions class="pa-4">
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="$emit('close')">取消</v-btn>
+        <v-btn variant="text" @click="$emit('close')">{{ t('global.cancel') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -186,13 +182,13 @@ const eligibleTeams = computed(() => {
 
 const getTeamVerificationStatus = (team: TeamSummary): { status: string; color: string } => {
   if (!props.taskData?.requireRealName) {
-    return { status: '可参与', color: 'success' }
+    return { status: t('tasks.teamStatus.eligible'), color: 'success' }
   }
 
   if (team.allMembersVerified) {
-    return { status: '全部已认证', color: 'success' }
+    return { status: t('tasks.teamStatus.allVerified'), color: 'success' }
   } else {
-    return { status: '未全部认证', color: 'error' }
+    return { status: t('tasks.teamStatus.notAllVerified'), color: 'error' }
   }
 }
 
@@ -233,7 +229,7 @@ const getTeamDisabledColor = (teamEligibility: TeamTaskEligibility): string => {
 
 const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
   if (!teamEligibility.eligibility.reasons || teamEligibility.eligibility.reasons.length === 0) {
-    return '不满足参与条件'
+    return t('tasks.teamSelect.notEligible')
   }
 
   return t(eligibilityReasonKey(teamEligibility.eligibility.reasons[0].code))

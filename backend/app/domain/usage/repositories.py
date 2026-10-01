@@ -42,7 +42,7 @@ class UsageRepository:
     async def add(
         self,
         *,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         topic_id: uuid.UUID | None,
         model: str,
         input_tokens: int,
@@ -52,6 +52,7 @@ class UsageRepository:
         metered: bool = True,
         route: str = "",
         turn_id: uuid.UUID | None = None,
+        user_id: int | None = None,
     ) -> ResourceUsage:
         """Record spend against its originating message or platform work id.
 
@@ -64,12 +65,16 @@ class UsageRepository:
         still worth writing — it says work happened, on which project, with
         which model, which is the difference between "we do not know how much"
         and "we do not know anything".
+
+        Spend outside any project has no ``project_id`` and names, in
+        ``user_id``, the person whose credits paid for it.
         """
         # The ROOM's books. Every 分身 in a room spends through that room's one
         # session, so there is no second meter to read: a per-card figure would
         # be an invented split of one bill.
         row = ResourceUsage(
             project_id=project_id,
+            user_id=user_id,
             topic_id=topic_id,
             turn_id=turn_id,
             model=model,

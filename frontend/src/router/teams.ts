@@ -10,7 +10,7 @@ export default {
     sidebar: () => import('@/views/home/HomeSidebar.vue'),
   },
   meta: {
-    title: '团队',
+    titleKey: 'navigation.teams',
   },
   children: [
     {
@@ -20,7 +20,7 @@ export default {
       name: 'TeamsDetail',
       component: () => import('@/views/teams/Detail.vue'),
       // 手机上团队的几页从底栏「首页」那一格的目录进来，← 回到那里。
-      meta: { title: '团队', titleKey: 'navigation.teams', isFullPage: true, backTo: 'HomeHub' },
+      meta: { titleKey: 'navigation.teams', isFullPage: true, backTo: 'HomeHub' },
       children: [
         {
           // 项目 is the team's default tab (项目归团队, v4). Channels/discussions

@@ -448,11 +448,12 @@ start_redis() {
 }
 
 # --- pinned harness builds -------------------------------------------------
-# tests/pinned_claude.py takes CHEESE_TEST_CLAUDE, else whatever `claude` is on
-# PATH — and on a developer machine that is often a wrapper or another version,
-# which fails the remote-execution and runner tests for reasons unrelated to the
-# code. Install exactly what CI installs: the versions come from the checked-in
-# declarations, so this cannot drift from the code under test.
+# tests/pinned_claude.py takes the builds only from CHEESE_TEST_CLAUDE,
+# CHEESE_TEST_CODEX and CHEESE_TEST_PI, never from PATH: on a developer machine
+# the `claude` there is often a wrapper or another version, which fails the
+# remote-execution and runner tests for reasons unrelated to the code. Install
+# exactly what CI installs: the versions come from the checked-in declarations,
+# so this cannot drift from the code under test.
 resolve_harness() {
     local pins claude_v codex_v
     pins="$(cd "$REPO_ROOT/backend" && uv run --quiet python -c '
@@ -462,6 +463,7 @@ pins = {name: d.pinned_version for name, d in written().items()}
 print(pins[CLAUDE_CODE], pins[CODEX])
 ')" || die "could not read the pinned harness versions from backend/"
     read -r claude_v codex_v <<<"$pins"
+    resolve_pi
     local dir="$TOOL_CACHE/harness/claude-code-$claude_v-codex-$codex_v"
     HARNESS_BIN="$dir/node_modules/.bin"
     local have
@@ -479,10 +481,38 @@ print(pins[CLAUDE_CODE], pins[CODEX])
     [ "${have%% *}" = "$claude_v" ] || die "installed claude reports '$have', expected $claude_v"
 }
 
+# pi is the vendor's compiled release, not an npm package: fetched and checked
+# by the same code the platform serves it with, exactly as test.yml does.
+resolve_pi() {
+    local os arch
+    case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) die "no pi build for $(uname -s)" ;; esac
+    case "$(uname -m)" in x86_64) arch=x64 ;; arm64 | aarch64) arch=arm64 ;; *) die "no pi build for $(uname -m)" ;; esac
+    local archive
+    archive="$(cd "$REPO_ROOT/backend" && uv run --quiet python - "$TOOL_CACHE/pi-dist" "$os-$arch" <<'PY'
+import asyncio, sys
+from pathlib import Path
+from app.domain.agent.harness import PI
+from app.domain.agent.capability.matrix import written
+from app.domain.machine import pi_dist
+version = written()[PI].pinned_version
+print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+PY
+)" || die "could not fetch the pinned pi build"
+    local dir="${archive%.tar.gz}"
+    PI_BIN="$dir/pi/pi"
+    if [ ! -x "$PI_BIN" ]; then
+        mkdir -p "$dir"
+        tar -xzf "$archive" -C "$dir" || die "could not unpack $archive"
+    fi
+    "$PI_BIN" --version >/dev/null 2>&1 || die "the pinned pi build at $PI_BIN does not run"
+}
+
 print_env() {
     echo "export TEST_PG_BASE=postgresql+asyncpg://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT"
     echo "export REDIS_URL=redis://127.0.0.1:$REDIS_PORT/0"
     printf 'export CHEESE_TEST_CLAUDE=%q\n' "$HARNESS_BIN/claude"
+    printf 'export CHEESE_TEST_CODEX=%q\n' "$HARNESS_BIN/codex"
+    printf 'export CHEESE_TEST_PI=%q\n' "$PI_BIN"
     # Same as CI's GITHUB_PATH: code that looks `claude`/`codex` up on PATH, not
     # through CHEESE_TEST_CLAUDE, must find the pinned builds too.
     # shellcheck disable=SC2016 # $PATH is for the eval-ing shell to expand

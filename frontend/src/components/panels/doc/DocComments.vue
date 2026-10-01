@@ -1,24 +1,22 @@
 <script setup lang="ts">
-// 文档底部的常驻评论区（飞书 docs 风）：所有评论都在这儿，锚在某一段的带一颗引用
-// chip，点它回到那一段；页级评论平铺。
-//
-// 它从 PanelDoc 里搬出来，是因为规则 5 之后它自足了：写评论的输入框长在这里，发和
-// 收都在这里，外面只需要知道「有人点了某一段」和「刚发了一条」。评论的**拉取**仍
-// 归宿主 —— 同一次请求还要喂编辑器里的下划线装饰，拆开会变成两次请求两份真相。
+// Paragraph quote chips locate their document node; whole-document comments have no anchor.
+// The host fetches comments once for this list and the editor's underline decorations.
+import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { Block } from '../../../cx_types'
 
 import { nextTick, ref } from 'vue'
 
-import { addComment } from '../../../api'
+import { useDocCommentDraft } from '../../../composables/useDocCommentDraft'
 import { isAgentHandle } from '../../../lib/authorship'
 import { relTime } from '../../../lib/relTime'
-import { myHandle } from '../../../me'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string | null
+  author?: string
+  sendComment?: SendDocComment
   comments: Block[]
   /** The doc's paragraphs, so an anchored comment can name the one it points at. */
   anchorNodes: Block[]
@@ -31,7 +29,21 @@ const emit = defineEmits<{
   (e: 'posted'): void
 }>()
 
-const AUTHOR = myHandle()
+const {
+  draft,
+  text,
+  sending,
+  errorMsg,
+  open: openDraft,
+  cancel,
+  submit,
+} = useDocCommentDraft(
+  () => props.topicId,
+  () => props.author ?? '',
+  (...args) =>
+    props.sendComment ? props.sendComment(...args) : Promise.reject(new Error(t('work.room.comments.postFailed'))),
+  () => emit('posted')
+)
 
 // 页级评论折叠态 (Feishu-style, collapsed head keeps the doc quiet).
 const folded = ref(false)
@@ -51,50 +63,22 @@ function commentAnchor(c: Block): Block | null {
 // ---- 写评论 ----
 // 批注归批注，聊天归聊天: this input used to be the workspace's shared chat box,
 // silently retargeted by selecting text. It lives where the comments are now.
-const draft = ref<{ anchorId: string | null; quote: string } | null>(null)
-const text = ref('')
-const sending = ref(false)
-const errorMsg = ref<string | null>(null)
 const input = ref<{ focus?: () => void } | null>(null)
 
 function open(target: { anchorId: string | null; quote: string }) {
   folded.value = false
-  draft.value = target
-  text.value = ''
-  errorMsg.value = null
+  openDraft(target)
   void nextTick(() => input.value?.focus?.())
 }
 
-function cancel() {
-  draft.value = null
-  text.value = ''
-}
-
-async function submit() {
-  const tid = props.topicId
-  const target = draft.value
-  const body = text.value.trim()
-  if (!tid || !target || !body || sending.value) return
-  sending.value = true
-  errorMsg.value = null
-  try {
-    await addComment(tid, body, AUTHOR, target.anchorId ?? undefined, target.quote)
-    cancel()
-    emit('posted')
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : t('work.room.comments.postFailed')
-  } finally {
-    sending.value = false
-  }
-}
-
 function onKey(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Escape') {
     e.preventDefault()
     cancel()
     return
   }
-  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   void submit()
 }

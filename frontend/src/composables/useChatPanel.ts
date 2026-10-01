@@ -187,7 +187,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
 
   // @mention chips are rendered via v-html; delegate clicks so the parent can
-  // resolve the name (person → member page, topic/doc → open it).
+  // resolve the name (person → member page, topic/doc → open it). A message's
+  // avatar and name (.im-person) go the same way as a chip for its author.
   function onMessagesClick(e: MouseEvent) {
     const target = e.target as HTMLElement | null
     // Click-away closes the emoji picker (clicks inside it are handled there).
@@ -195,7 +196,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       reactionPickerFor.value = null
     }
     if (touchOnly.value && target) rowActions.toggleTime(target)
-    const el = target?.closest('.mention') as HTMLElement | null
+    const el = target?.closest('.mention, .im-person') as HTMLElement | null
     if (!el) return
     if (el.dataset.handle) emit('mention-click', el.dataset.handle)
     else if (el.dataset.topic) {
@@ -851,6 +852,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     // timeline
     rows,
     refMaps,
+    awaitingReply,
     timeline,
     hasMore,
     hasNewer,

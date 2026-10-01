@@ -541,6 +541,12 @@
     "suggestion": "Suggestion",
     "other": "Other"
   },
+  "priority": {
+    "low": "Low",
+    "normal": "Normal",
+    "high": "High",
+    "urgent": "Urgent"
+  },
   "source": {
     "user": "From a user",
     "agent": "Found by an agent"
@@ -726,5 +732,19 @@
       "restored": "Restored your unfinished draft",
       "discard": "Discard draft"
     }
+  },
+  "errors": {
+    "listLoadFailed": "Couldn’t load feedback",
+    "loadMoreFailed": "Couldn’t load more",
+    "mineLoadFailed": "Couldn’t load My feedback",
+    "openFailed": "Couldn’t open this feedback",
+    "actionFailed": "Something went wrong",
+    "commentSendFailed": "Couldn’t send the comment",
+    "commentsLoadFailed": "Couldn’t load comments",
+    "repliesLoadFailed": "Couldn’t load replies",
+    "deleteFailed": "Couldn’t delete",
+    "submitFailed": "Couldn’t submit",
+    "queueLoadFailed": "Couldn’t load the queue",
+    "dashboardLoadFailed": "Couldn’t load the dashboard"
   }
 }

@@ -9,7 +9,16 @@
 // 剧本只写要讲的东西（哪几个文件、改哪几行、文档正文），信封里那些和这一步无关的
 // 字段（版本号、字节数、时间戳）由这里补。
 import type { RoomOutput } from '@/api'
-import type { Block, FileContent, PreviewInfo, RoomTask, TodoItem, TopicProgress, WorkspaceFile } from '@/cx_types'
+import type {
+  Block,
+  BoardPhrase,
+  FileContent,
+  PreviewInfo,
+  RoomTask,
+  TodoItem,
+  TopicProgress,
+  WorkspaceFile,
+} from '@/cx_types'
 import type { ChangesScene, Frame, OverviewScene, PreviewScene, SceneTask } from './demoScene'
 
 import { answer } from './demoBackend'
@@ -22,11 +31,11 @@ export const DEMO_PROJECT = 'demo'
 const HOUR = 3600_000
 const MINUTE = 60_000
 
-const COLUMN_STATUS: Record<NonNullable<SceneTask['column']>, string> = {
-  building: '施工中',
-  delivering: '交付中',
-  needs_you: '待处理',
-  done: '已完成',
+const COLUMN_PHRASE: Record<NonNullable<SceneTask['column']>, BoardPhrase> = {
+  building: 'running',
+  delivering: 'awaiting_checks',
+  needs_you: 'awaiting_review',
+  done: 'accepted',
 }
 
 /** 相对此刻的 ISO 时刻：剧本里的活写「多久以前」，画出来才是「刚刚 / 3 小时前」。 */
@@ -55,7 +64,7 @@ export function roomTask(task: SceneTask, index: number): RoomTask & { blocks: B
     base_branch: 'main',
     created_at: since(HOUR * (2 + index)),
     updated_at: since(MINUTE * (5 + index)),
-    presentation: { column, display_status: task.status ?? COLUMN_STATUS[column] },
+    presentation: { column, phrase: task.phrase ?? COLUMN_PHRASE[column] },
     card: null,
     blocks: [],
   }

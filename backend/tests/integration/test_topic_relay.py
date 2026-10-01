@@ -7,10 +7,8 @@ having. What this channel is for is the RECORD: what the room told its worker
 lands where the work is, which is the only place the person watching that thread
 can read it.
 
-Why not `POST /topics/{id}/comments`: it summons **only when the commenter is
-human**, so an agent wrote a row and nothing happened, and that route is not in
-`app.main._CHEESE_WRITE_PATHS` either, so an agent's call never reached the
-per-turn token gate (a missing entry admits silently; it does not 401).
+Document comments belong to the document view and never wake an agent. Worker
+instructions belong on the task timeline, so they use the tell route instead.
 
 So every test here asserts one of three things: the message lands, NOTHING is
 woken by it, and the room→its-own-thread edge is the only path open.

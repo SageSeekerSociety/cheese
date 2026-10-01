@@ -90,12 +90,11 @@ export default defineConfig({
     // degrade gracefully and auto-recover when the network returns. NO offline
     // writes / message queue — reads only.
     VitePWA({
-      // 新版本由**用户点**才接管（'prompt'，2026-09-17 从 'autoUpdate' 改过来的）。
-      // 'autoUpdate' 配套的 skipWaiting/clientsClaim 会让新 worker 一装好就顶掉旧的，
-      // 插件随即 window.location.reload()：开着的页面在用户眼皮底下刷新，正在打的
-      // 一段话没了（一天几十次部署，这不是罕见事件）。现在新 worker 停在 waiting，
-      // 由 components/common/UpdateBanner.vue 问一句。Public HTML has its own online
-      // strategy below. Registration lives in pwa.ts.
+      // 'prompt' 而不是 'autoUpdate'：'autoUpdate' 配套的 skipWaiting/clientsClaim
+      // 会让新 worker 一装好就顶掉旧的，插件随即 window.location.reload()，开着的
+      // 页面在人眼皮底下刷新（一天几十次部署，这不是罕见事件）。'prompt' 让新 worker
+      // 停在 waiting，pwa.ts 在下一次应用内跳转时换上它，不弹任何提示。Public HTML
+      // has its own online strategy below. Registration lives in pwa.ts.
       registerType: 'prompt',
       injectRegister: false,
       // The SW controls the whole origin; keep it at root scope.
@@ -213,11 +212,12 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
-        // 的等待——提示条还没来得及出现，页面已经被新代码接管了。删掉之后新 worker
-        // 停在 waiting，直到用户点「立即更新」（pwa.ts 的 applyUpdate → messageSkipWaiting）。
+        // 的等待——开着的页面会在人眼皮底下被新代码接管。删掉之后新 worker 停在
+        // waiting，直到下一次应用内跳转（pwa.ts 的路由守卫 → messageSkipWaiting）。
         //
-        // 在线导航本来就不依赖新 worker 是否接管：下面那条 NetworkOnly 规则每次
-        // 都去网上取当前 HTML，precache 只是它拿不到时的兜底。
+        // 下面那条 NetworkOnly 规则去网上取当前 HTML，但网络一失败就退回**这个
+        // worker 自己**预缓存的 index.html。所以旧 worker 还接着时，一次整页加载
+        // 可能落回旧版；pwa.ts 在整页加载之前先让新 worker 接管。
         // Inline the workbox runtime into sw.js — one root file to keep
         // no-cached in nginx, instead of a separate workbox-*.js.
         inlineWorkboxRuntime: true,

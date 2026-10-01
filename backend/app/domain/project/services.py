@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.notice_text import say
 from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task.models import Task, TaskMembership
@@ -39,7 +40,7 @@ class ProjectArchivedError(ConflictError):
     state instead of a passing error."""
 
     def __init__(self) -> None:
-        super().__init__("项目已归档，取消归档后才能修改")
+        super().__init__(say("projectArchived"))
 
 
 async def refuse_writes_if_archived(

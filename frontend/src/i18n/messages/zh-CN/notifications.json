@@ -12,7 +12,8 @@
     "teamAdmin": "团队管理员",
     "reason": "原因",
     "member": "成员",
-    "unknownProject": "未知项目"
+    "unknownProject": "未知项目",
+    "unreachable": "无法访问该页面，您可能没有权限或页面不存在"
   },
   "default": {
     "title": "未知类型通知: {type}",
@@ -44,7 +45,10 @@
   },
   "DEADLINE_REMIND": {
     "title": "截止日期提醒",
-    "body": "项目 \"{projectName}\" 将在 {daysLeft} 天后截止"
+    "body": "项目 \"{projectName}\" 将在 {daysLeft} 天后截止",
+    "closed": "已截止",
+    "dueToday": "今天截止",
+    "daysLeft": "剩余 {n} 天"
   },
   "TEAM_JOIN_REQUEST": {
     "title": "{requester} 请求加入团队",
@@ -53,6 +57,12 @@
     "action": {
       "approve": "批准",
       "reject": "拒绝"
+    },
+    "toast": {
+      "approved": "已批准申请",
+      "approveFailed": "批准申请失败，请稍后再试",
+      "rejected": "已拒绝申请",
+      "rejectFailed": "拒绝申请失败，请稍后再试"
     }
   },
   "TEAM_INVITATION": {
@@ -62,6 +72,12 @@
     "action": {
       "accept": "接受",
       "decline": "拒绝"
+    },
+    "toast": {
+      "accepted": "已接受邀请",
+      "acceptFailed": "接受邀请失败，请稍后再试",
+      "declined": "已拒绝邀请",
+      "declineFailed": "拒绝邀请失败，请稍后再试"
     }
   },
   "TEAM_REQUEST_APPROVED": {

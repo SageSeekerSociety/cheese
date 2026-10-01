@@ -29,7 +29,7 @@ const topics = defineModel<number[] | undefined>('topics', { required: true })
 </script>
 
 <template>
-  <TaskFormSection icon="mdi-tag-multiple" title="分类标签">
+  <TaskFormSection icon="mdi-tag-multiple" :title="t('tasks.form.classification')">
     <v-row>
       <v-col cols="12" md="6">
         <v-select

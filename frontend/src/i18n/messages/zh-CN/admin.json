@@ -1,0 +1,59 @@
+{
+  "statusCell": {
+    "step": "{label} · 已走到第 {step}/{total} 步"
+  },
+  "assignee": {
+    "label": "指派给",
+    "searching": "搜索中…",
+    "noMatch": "没找到这个人",
+    "placeholder": "输入 handle 或昵称"
+  },
+  "shortcuts": {
+    "title": "键盘快捷键",
+    "then": "然后",
+    "scope": {
+      "global": "全局",
+      "list": "列表",
+      "listAndDetail": "列表与详情",
+      "detail": "详情"
+    },
+    "focusSearch": "焦点跳到搜索框",
+    "notInInputs": "输入框里不触发",
+    "refresh": "刷新当前列表 / 看板",
+    "goQueue": "去队列",
+    "goDashboard": "去看板",
+    "goFeedbackCenter": "去反馈中心（用户侧）",
+    "within1s": "1s 内有效",
+    "openSheet": "打开这张表",
+    "down": "下移一行",
+    "stopsAtLast": "到末行停住",
+    "up": "上移一行",
+    "stopsAtFirst": "到首行停住",
+    "sameAsJk": "同 j / k",
+    "openRow": "打开当前行的详情",
+    "setStatus": "状态 → {status}",
+    "noUndo": "不可回退",
+    "keep": "保持不变，推进到下一行",
+    "undo": "撤销最近一次分诊",
+    "shownFor5s": "停留 5s",
+    "assign": "打开指派",
+    "markRead": "标记当前这条为已读",
+    "back": "逐层后退",
+    "oneLevel": "一次退一层",
+    "comment": "提交评论"
+  },
+  "integrations": {
+    "domainFeishu": "飞书（feishu.cn）"
+  },
+  "layout": {
+    "brand": "芝士 · 管理",
+    "sections": "管理后台分区",
+    "leave": "返回工作区",
+    "collapseNav": "折叠导航",
+    "collapse": "收起",
+    "checking": "正在确认权限…",
+    "deniedTitle": "这一页是管理员后台",
+    "deniedBody": "你的账号不在管理员名单里，无法访问管理后台。",
+    "toFeedbackCenter": "回到反馈中心"
+  }
+}

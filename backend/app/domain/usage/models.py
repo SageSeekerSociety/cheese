@@ -5,8 +5,9 @@ visible at each level (话题→项目→机构).
 """
 
 import uuid
+from datetime import date
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Index, String
+from sqlalchemy import BigInteger, Date, Float, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -14,13 +15,28 @@ from app.domain.common import Timestamps, UuidPk
 
 
 class ComputeGrant(UuidPk, Timestamps, Base):
-    """Team credits, optionally restricted to a funded project.
+    """Team credits, optionally restricted to a funded project, or one person's
+    credits for a calendar month.
 
     A task's resource pack keeps its project restriction. General grants have
-    no project_id and can be consumed by every project in the owning team.
+    no project_id and can be consumed by every project in the owning team. A
+    personal grant has ``user_id`` and ``month`` and neither team nor project:
+    it pays for the AI a person asks for outside any project, and lapses when
+    the month ends.
     """
 
     __tablename__ = "compute_grants"
+    # One personal grant per person per month, so issuing it is an insert that
+    # a concurrent first request can lose without writing a second one.
+    __table_args__ = (
+        Index(
+            "uq_compute_grants_user_month",
+            "user_id",
+            "month",
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
+    )
 
     team_id: Mapped[int | None] = mapped_column(
         ForeignKey("team.id", ondelete="CASCADE"), nullable=True, index=True
@@ -34,6 +50,11 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     # survive the 赛题 being deleted. It pointed at cheesex `tasks.id` (uuid)
     # until that hierarchy was retired.
     source_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
+    )
+    # The first day of the month the grant is for, in the platform's timezone.
+    month: Mapped[date | None] = mapped_column(Date, nullable=True)
     credits_total: Mapped[float] = mapped_column(Float)
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -44,10 +65,20 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     #: （`project_id` / `topic_id` / `task_id` / `turn_id`）一条都服务不了它——
     #: 这是全仓增长最快的一张表，没有它就是每次看板全表顺序扫。迁移见
     #: `a9c4e7f12b60`。
-    __table_args__ = (Index("ix_resource_usage_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_resource_usage_created_at", "created_at"),
+        # A person's spend in a month: the personal usage page reads it.
+        Index("ix_resource_usage_user_created_at", "user_id", "created_at"),
+    )
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    # NULL when the spend happened outside any project (see ``user_id``).
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Whose personal credits paid, for spend outside a project. NULL inside a
+    # project, whose spend is the team's and is not split by person (#394).
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=True
     )
     # The room the spend happened in; NULL when it cannot be attributed at all.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(

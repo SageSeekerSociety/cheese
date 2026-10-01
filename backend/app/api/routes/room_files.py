@@ -23,6 +23,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.domain.block.notice_text import say
 from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
@@ -64,7 +65,7 @@ def author_kind(actor: Actor) -> str:
 def _room_path(raw: str) -> str:
     path = clean_artifact_path(raw)
     if library.library_name(path) is not None:
-        raise ValidationError("项目资料里的原件不能修改，可以基于它新建一份")
+        raise ValidationError(say("libraryOriginalReadOnly"))
     return path
 
 
@@ -163,7 +164,7 @@ async def copy_into_room(
     source = clean_artifact_path(str(body.get("source") or ""))
     target = _room_path(str(body.get("path") or ""))
     if artifact_kind_for(target) not in ARTIFACT_MIME:
-        raise ValidationError("不支持的文件类型")
+        raise ValidationError(say("unsupportedFileType"))
     name = library.library_name(source)
     if name is not None:
         data = await asyncio.to_thread(
@@ -176,7 +177,7 @@ async def copy_into_room(
     if await asyncio.to_thread(
         library.room_file_exists, place.project_id, place.room_id, target
     ):
-        raise ConflictError("房间里已经有同名的文件", data={"path": target})
+        raise ConflictError(say("roomFileNameTaken"), data={"path": target})
     made = await room_files.save_room_file(
         db,
         project_id=place.project_id,
@@ -231,11 +232,15 @@ async def new_from_template(
         raise ValidationError("没有这个模板")
     target = _room_path(str(body.get("path") or ""))
     if not target.lower().endswith(f".{template.suffix}"):
-        raise ValidationError(f"「{template.name}」模板要存成 .{template.suffix}")
+        raise ValidationError(
+            say(
+                "templateSuffixRequired", template=template.name, suffix=template.suffix
+            )
+        )
     if await asyncio.to_thread(
         library.room_file_exists, place.project_id, place.room_id, target
     ):
-        raise ConflictError("房间里已经有同名的文件", data={"path": target})
+        raise ConflictError(say("roomFileNameTaken"), data={"path": target})
     made = await room_files.save_room_file(
         db,
         project_id=place.project_id,
@@ -270,26 +275,24 @@ async def new_from_template(
 async def open_in_editor(
     topic_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """The signed config the browser opens the office editor with."""
+    """The signed config the browser opens the office editor with.
+
+    When it cannot open, ``reason`` is a code (``not_configured``,
+    ``unsupported``, ``library_original``) that the screen words in its
+    reader's language (``work.room.fileEditor.unavailable.<code>``)."""
     place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
     if not editor.enabled():
-        return ok({"enabled": False, "reason": "这个部署没有启用在线编辑"})
+        return ok({"enabled": False, "reason": "not_configured"})
     if editor.document_type(clean) is None:
-        return ok({"enabled": False, "reason": "这种文件不能在线编辑"})
+        return ok({"enabled": False, "reason": "unsupported"})
     if library.library_name(clean) is not None:
-        return ok(
-            {
-                "enabled": False,
-                "reason": "项目资料里的原件只读，先在房间里复制一份再编辑",
-                "copyable": True,
-            }
-        )
+        return ok({"enabled": False, "reason": "library_original", "copyable": True})
     version = await asyncio.to_thread(
         room_files.current_version, place.project_id, place.room_id, clean
     )
     if version is None:
-        raise NotFoundError("房间里没有这份文件")
+        raise NotFoundError(say("roomFileNotFound"))
     config = editor.editor_config(
         project_id=place.project_id,
         room_id=place.room_id,

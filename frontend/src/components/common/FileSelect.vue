@@ -13,7 +13,7 @@
       <slot>
         <v-btn variant="outlined" :disabled="disabled">
           <v-icon>mdi-upload</v-icon>
-          上传文件
+          {{ t('shell.fileSelect.upload') }}
         </v-btn>
       </slot>
     </div>
@@ -22,6 +22,8 @@
 
 <script setup lang="ts">
 import { ref, toRefs } from 'vue'
+
+import { t } from '@/i18n'
 
 const input = ref<HTMLInputElement | null>(null)
 
@@ -52,7 +54,7 @@ const onFileChange = (e: Event) => {
   if (!target.files) return
   const newFiles = Array.from(target.files)
   if (newFiles.length > max.value) {
-    emit('error', new Error(`最多只能上传 ${max.value} 个文件`))
+    emit('error', new Error(t('shell.fileSelect.tooMany', { max: max.value })))
     return
   }
   files.value = newFiles

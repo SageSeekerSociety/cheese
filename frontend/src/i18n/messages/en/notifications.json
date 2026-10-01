@@ -11,7 +11,8 @@
     "teamAdmin": "Team admin",
     "reason": "Reason",
     "member": "Member",
-    "unknownProject": "Unknown project"
+    "unknownProject": "Unknown project",
+    "unreachable": "Can’t open this page. It may not exist, or you may not have access"
   },
   "default": {
     "title": "Unknown notification type: {type}",
@@ -43,7 +44,10 @@
   },
   "DEADLINE_REMIND": {
     "title": "Deadline reminder",
-    "body": "Project \"{projectName}\" is due in {daysLeft} days"
+    "body": "Project \"{projectName}\" is due in {daysLeft} days",
+    "closed": "Closed",
+    "dueToday": "Due today",
+    "daysLeft": "Due today | 1 day left | {n} days left"
   },
   "TEAM_JOIN_REQUEST": {
     "title": "{requester} asked to join your team",
@@ -52,6 +56,12 @@
     "action": {
       "approve": "Approve",
       "reject": "Reject"
+    },
+    "toast": {
+      "approved": "Request approved",
+      "approveFailed": "Couldn’t approve the request. Try again later",
+      "rejected": "Request rejected",
+      "rejectFailed": "Couldn’t reject the request. Try again later"
     }
   },
   "TEAM_INVITATION": {
@@ -61,6 +71,12 @@
     "action": {
       "accept": "Accept",
       "decline": "Decline"
+    },
+    "toast": {
+      "accepted": "Invitation accepted",
+      "acceptFailed": "Couldn’t accept the invitation. Try again later",
+      "declined": "Invitation declined",
+      "declineFailed": "Couldn’t decline the invitation. Try again later"
     }
   },
   "TEAM_REQUEST_APPROVED": {

@@ -10,13 +10,13 @@
 // 顺序和名字与那边一字不差：同一个词在两个地方指同一件事，人才不用在脑子里翻译。
 //
 // 每行一条活：色点 +「第 N 件：做什么」+ 小字写状态短语和负责人。屏幕上每一个状态
-// 词都是后端算好的 `presentation.display_status`，这一段一个都不推。
+// 词都是后端算好的 `presentation.phrase`，这一段一个都不推。
 import type { Block, BoardColumn, RoomTask, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
 import { listRoomTasks } from '../../api'
-import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '../../lib/board'
+import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks, phraseLabel } from '../../lib/board'
 import { relTime } from '../../lib/relTime'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
@@ -177,7 +177,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
                         {{ t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: row.title }) }}</span
                       >
                       <span class="task-row__line2 t-meta">
-                        <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                        <span class="task-row__state">{{ phraseLabel(row.presentation.phrase) }}</span>
                         <span class="task-row__sep">·</span>
                         <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
                         <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
@@ -212,7 +212,7 @@ const needsYouCount = computed(() => (byColumn.value.get('needs_you') ?? []).len
                         {{ t('work.room.taskProgress.row', { n: numberOf.get(row.id) ?? '', title: row.title }) }}</span
                       >
                       <span class="task-row__line2 t-meta">
-                        <span class="task-row__state">{{ row.presentation.display_status }}</span>
+                        <span class="task-row__state">{{ phraseLabel(row.presentation.phrase) }}</span>
                         <span class="task-row__sep">·</span>
                         <span v-if="row.owner_handle">{{ row.owner_handle }}</span>
                         <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>

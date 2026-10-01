@@ -23,6 +23,8 @@ import errno
 import re
 from dataclasses import dataclass, replace
 
+from app.domain.block.notice_text import NoticeText, notice_keys, say
+
 STORAGE_EXHAUSTED_CODE = "storage_exhausted"
 RUNTIME_IMAGE_MISSING_CODE = "runtime_image_missing"
 WORKSPACE_VCS_PERMS_CODE = "workspace_vcs_perms"
@@ -44,7 +46,7 @@ TURN_TIMEOUT_CODE = "turn_timeout"
 PROMPT_UNDELIVERED_MESSAGE = (
     "消息未能送达会话，会话没有任何响应。改动都还在，重试会重新打开会话。"
 )
-TURN_TIMEOUT_MESSAGE = "轮次超时"
+TURN_TIMEOUT_MESSAGE = say("turnTimeoutShort")
 
 # The platform's OWN wording for "the machine this topic is pinned to is not
 # answering". It sits next to the classification it belongs to, and the device
@@ -93,6 +95,7 @@ class PlatformFailure:
 
     @property
     def meta(self) -> dict:
+        detail_label = say("labelDetails") if self.detail else None
         return {
             "event_type": "platform_error",
             "code": self.code,
@@ -100,17 +103,18 @@ class PlatformFailure:
             "title": self.title,
             "retryable": self.retryable,
             "detail": self.detail or None,
-            "detail_label": "详细说明" if self.detail else None,
+            "detail_label": detail_label,
+            **notice_keys(
+                title=self.title, detail=self.detail, detail_label=detail_label
+            ),
         }
 
 
 STORAGE_EXHAUSTED = PlatformFailure(
     code=STORAGE_EXHAUSTED_CODE,
-    title="工作电脑存储空间不足",
-    content="工作电脑存储空间不足，本轮已暂停，平台正在清理。",
-    detail=(
-        "项目文件和已完成的改动都还在。清理完成后可以重试；如果反复出现，联系管理员。"
-    ),
+    title=say("storageExhaustedTitle"),
+    content=say("storageExhausted"),
+    detail=say("storageExhaustedDetail"),
     retryable=True,
     # The disk belongs to the machine. Another container on the same box hits the
     # same full filesystem, so only a different machine can help.
@@ -119,12 +123,9 @@ STORAGE_EXHAUSTED = PlatformFailure(
 
 RUNTIME_IMAGE_MISSING = PlatformFailure(
     code=RUNTIME_IMAGE_MISSING_CODE,
-    title="工作电脑的镜像暂时不可用",
-    content="本轮未开始，平台正在重新准备工作电脑。",
-    detail=(
-        "本轮还没有开始执行，项目文件没有受到影响。"
-        "稍后可以重试；如果反复出现，联系管理员。"
-    ),
+    title=say("runtimeImageMissingTitle"),
+    content=say("runtimeImageMissing"),
+    detail=say("runtimeImageMissingDetail"),
     retryable=True,
     # A missing image is a registry/network problem that follows the topic to any
     # machine — and usually hits every machine at once. Moving the topic would burn
@@ -134,15 +135,12 @@ RUNTIME_IMAGE_MISSING = PlatformFailure(
 
 HOST_UNREACHABLE = PlatformFailure(
     code=HOST_UNREACHABLE_CODE,
-    title="无法连接设备",
-    content="本轮未开始，无法连接话题绑定的设备。",
+    title=say("hostUnreachableTitle"),
+    content=say("hostUnreachable"),
     # 话题一旦绑定就不会再换设备——`device_provider.resolve_device` 只在第一轮
     # 挑一次，之后任何一轮都回到同一台。所以这句只说该设备重新连上，不承诺平台
     # 会替它找一台：那是没有的机制，等它等不来。
-    detail=(
-        "项目文件和已提交的改动都还在。重新连接这台设备后可以重试。"
-        "话题不会换到其他设备，以免工作目录和会话错乱。"
-    ),
+    detail=say("hostUnreachableDetail"),
     retryable=True,
     host_scoped=True,
 )
@@ -150,13 +148,9 @@ HOST_UNREACHABLE = PlatformFailure(
 
 SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
     code=SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE,
-    title="模型订阅凭据已过期",
-    content="本轮未开始，模型订阅凭据已过期，需要重新认证。",
-    detail=(
-        "需要有设备权限的人在设备上重新认证（claude setup-token，或恢复 "
-        ".credentials.json）。这不是容器、磁盘或网络的问题，任务也没有开始，"
-        "所以没有已完成的改动。重试没有作用；凭据更新后，下一条消息会正常处理。"
-    ),
+    title=say("subscriptionCredentialExpiredTitle"),
+    content=say("subscriptionCredentialExpired"),
+    detail=say("subscriptionCredentialExpiredDetail"),
     # Not retried automatically: another turn against the same dead credential just
     # burns 300s again (the platform "对自己的失败没有记忆" complaint in #388). It
     # self-heals on the next human summon once the host re-auths.
@@ -170,29 +164,18 @@ SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
 
 WORKSPACE_VCS_PERMS = PlatformFailure(
     code=WORKSPACE_VCS_PERMS_CODE,
-    title="工作区版本库权限异常",
-    content="本轮未开始，工作区版本库的权限不正确。",
-    detail=(
-        "版本库目录属于另一个系统用户，平台无法访问。"
-        "项目文件、已提交的改动和版本历史都没有受到影响。"
-        "需要管理员在机器上修改一次属主（deploy/fix-workspace-ownership.sh），"
-        "平台无法自行处理。把这条提示转给管理员，修复后可以重试。"
-    ),
+    title=say("workspaceVcsPermsTitle"),
+    content=say("workspaceVcsPerms"),
+    detail=say("workspaceVcsPermsDetail"),
     retryable=True,
 )
 
 
 PROMPT_UNDELIVERED = PlatformFailure(
     code=PROMPT_UNDELIVERED_CODE,
-    title="消息未送达",
-    content="本轮未开始，消息没有送进会话，会话也没有任何响应。",
-    detail=(
-        "这不是 AI 服务的问题，请求没有到达模型。"
-        "消息发往工作电脑上的 claude 会话，但会话没有接收："
-        "常见原因是会话停在一个等待回答的界面上，或者它所在的终端已经关闭。"
-        "工作区里的文件和已完成的改动都没有受到影响。"
-        "重试会重新打开会话；如果连续几次都这样，把这条提示转给管理员。"
-    ),
+    title=say("promptUndeliveredTitle"),
+    content=say("promptUndelivered"),
+    detail=say("promptUndeliveredDetail"),
     retryable=True,
     # NOT host-scoped: a wedged or dead claude session is a property of THIS
     # topic's screen, not of the box. Every other topic on the same machine is
@@ -204,14 +187,9 @@ PROMPT_UNDELIVERED = PlatformFailure(
 
 TURN_TIMEOUT = PlatformFailure(
     code=TURN_TIMEOUT_CODE,
-    title="本轮超过时间上限，已停止",
-    content="本轮超过时间上限，已停止。",
-    detail=(
-        "这不是 AI 服务返回的错误，而是本轮没有在时限内结束。"
-        "常见原因是某个命令一直没有返回，或者会话停在一个等待回答的界面上。"
-        "已完成的改动都在工作区里。"
-        "重试会从中断处继续；如果同一件事反复超时，可以把它拆小。"
-    ),
+    title=say("turnLimitTitle"),
+    content=say("turnLimit"),
+    detail=say("turnLimitDetail"),
     retryable=True,
     # Same reasoning as PROMPT_UNDELIVERED, and more sharply so: a turn that ran
     # long is usually a property of the WORK, not of the machine it ran on.
@@ -229,85 +207,93 @@ TURN_TIMEOUT = PlatformFailure(
 #
 # Every one of these is an event about this start, none about the machine's
 # health: ``host_scoped`` stays False, as it was while they had no code at all.
-_START = "Claude Code 启动失败："
+#
+# The room line is one sentence, 「<harness> 启动失败：<reason>」, with the reason
+# a sentence of its own, so a harness other than Claude Code and a reason that
+# names a program are both parameters of the same line.
+_HARNESS = "Claude Code"
 
 
-def _start_failure(code: str, content: str, *, retryable: bool) -> PlatformFailure:
+def _start_line(reason: NoticeText, harness: str = _HARNESS) -> NoticeText:
+    return say("sessionStartFailed", harness=harness, reason=reason)
+
+
+def _start_failure(code: str, reason: str, *, retryable: bool) -> PlatformFailure:
     return PlatformFailure(
         code=code,
-        title="会话没有启动",
-        content=_START + content,
+        title=say("sessionStartFailedTitle"),
+        content=_start_line(say(reason)),
         retryable=retryable,
     )
 
 
 SESSION_START_UNKNOWN = _start_failure(
-    "session_start_unknown", "原因没能识别，启动记录在现场", retryable=True
+    "session_start_unknown", "sessionStartUnknown", retryable=True
 )
 SESSION_START_TIMEOUT = _start_failure(
-    "session_start_timeout", "在等待时限内没有起来，启动记录在现场", retryable=True
+    "session_start_timeout", "sessionStartTimeout", retryable=True
 )
 SESSION_START_RUNNER_BUSY = _start_failure(
-    "session_start_runner_busy", "这个房间上一个会话进程还没有退出", retryable=True
+    "session_start_runner_busy", "sessionStartRunnerBusy", retryable=True
 )
 SESSION_START_WORK_MACHINE_PREPARING = _start_failure(
     "session_start_work_machine_preparing",
-    "这个房间的工作电脑还在准备",
+    "sessionStartWorkMachinePreparing",
     retryable=True,
 )
 SESSION_START_WORK_MACHINE_OFFLINE = _start_failure(
     "session_start_work_machine_offline",
-    "这个房间的工作电脑没有连接",
+    "sessionStartWorkMachineOffline",
     retryable=True,
 )
 SESSION_START_WORK_MACHINE_UNBOUND = _start_failure(
     "session_start_work_machine_unbound",
-    "这个房间选的工作电脑已经解绑，需要重新选择",
+    "sessionStartWorkMachineUnbound",
     retryable=False,
 )
 SESSION_START_WORK_MACHINE_REFUSED = _start_failure(
     "session_start_work_machine_refused",
-    "没能取得这个房间的工作电脑",
+    "sessionStartWorkMachineRefused",
     retryable=True,
 )
 SESSION_START_EXECUTOR_IMAGE_MISSING = _start_failure(
     "session_start_executor_image_missing",
-    "机器上缺少执行容器的镜像",
+    "sessionStartExecutorImageMissing",
     retryable=False,
 )
 SESSION_START_EXECUTOR_FAILED = _start_failure(
-    "session_start_executor_failed", "执行容器没能创建", retryable=False
+    "session_start_executor_failed", "sessionStartExecutorFailed", retryable=False
 )
 SESSION_START_EXECUTOR_NAME_TAKEN = _start_failure(
     "session_start_executor_name_taken",
-    "上一个执行容器还没有清理掉",
+    "sessionStartExecutorNameTaken",
     retryable=True,
 )
 SESSION_START_DOCKER_UNAVAILABLE = _start_failure(
     "session_start_docker_unavailable",
-    "机器上的 Docker 没有运行或无法访问",
+    "sessionStartDockerUnavailable",
     retryable=False,
 )
 SESSION_START_MODEL_LOGIN = _start_failure(
     "session_start_model_login",
-    "模型服务的登录已失效，需要管理员重新登录",
+    "sessionStartModelLogin",
     retryable=False,
 )
 SESSION_START_PLATFORM_CREDENTIAL = _start_failure(
     "session_start_platform_credential",
-    "平台没有接受这个会话的凭证",
+    "sessionStartPlatformCredential",
     retryable=True,
 )
 SESSION_START_PLATFORM_ERROR = _start_failure(
-    "session_start_platform_error", "启动时平台返回了错误", retryable=True
+    "session_start_platform_error", "sessionStartPlatformError", retryable=True
 )
 SESSION_START_PROGRAM_BROKEN = _start_failure(
     "session_start_program_broken",
-    "机器上有一个程序无法运行，可能已损坏或平台不符",
+    "sessionStartProgramBroken",
     retryable=False,
 )
 SESSION_START_PROGRAM_MISSING = _start_failure(
-    "session_start_program_missing", "机器上缺少一个需要的程序", retryable=False
+    "session_start_program_missing", "sessionStartProgramMissing", retryable=False
 )
 
 _SESSION_START_FAILURES = (
@@ -332,7 +318,6 @@ _SESSION_START_FAILURES = (
 #: the room line is the sentence the failure was raised with, not the class's
 #: fixed copy. Both come from ``classify_session_start``.
 SESSION_START_CODES = frozenset(f.code for f in _SESSION_START_FAILURES)
-
 # A program as a shell or Python names it when it cannot run it: a path.
 _PROGRAM = r"([^\s'\":]{1,200})"
 _PROGRAM_NAME = re.compile(r"[A-Za-z0-9._+-]{1,40}")
@@ -369,13 +354,20 @@ def _program_name(path: str | None) -> str | None:
     return parts[-1] if _PROGRAM_NAME.fullmatch(parts[-1]) else None
 
 
-def _named(
-    failure: PlatformFailure, path: str | None, sentence: str
-) -> PlatformFailure:
+def _named(failure: PlatformFailure, path: str | None, reason: str) -> PlatformFailure:
     name = _program_name(path)
     if not name:
         return failure
-    return replace(failure, content=_START + sentence.format(name=name))
+    return replace(failure, content=_start_line(say(reason, name=name)))
+
+
+def _reason_of(failure: PlatformFailure) -> NoticeText:
+    """The reason half of a session-start failure's line."""
+    content = failure.content
+    assert isinstance(content, NoticeText)
+    reason = content.params["reason"]
+    assert isinstance(reason, NoticeText)
+    return reason
 
 
 def classify_session_start(
@@ -387,12 +379,9 @@ def classify_session_start(
     The causes are the same programs failing the same ways whichever harness
     was starting: the executor client, docker, the platform's lease."""
     failure = _classify_session_start(log, timed_out=timed_out)
-    if harness == "Claude Code":
+    if harness == _HARNESS:
         return failure
-    return replace(
-        failure,
-        content=f"{harness} 启动失败：" + failure.content.removeprefix(_START),
-    )
+    return replace(failure, content=_start_line(_reason_of(failure), harness))
 
 
 def _classify_session_start(log: str, *, timed_out: bool) -> PlatformFailure:
@@ -452,7 +441,7 @@ def _classify_session_start(log: str, *, timed_out: bool) -> PlatformFailure:
     for pattern in missing:
         if match := pattern.search(text):
             return _named(
-                SESSION_START_PROGRAM_MISSING, match.group(1), "机器上缺少 {name}"
+                SESSION_START_PROGRAM_MISSING, match.group(1), "sessionStartNoProgram"
             )
     # After the missing ones: bash says `cannot execute` for both.
     for pattern in _PROGRAM_BROKEN:
@@ -460,7 +449,7 @@ def _classify_session_start(log: str, *, timed_out: bool) -> PlatformFailure:
             return _named(
                 SESSION_START_PROGRAM_BROKEN,
                 match.group(1),
-                "机器上的 {name} 无法运行，可能已损坏或平台不符",
+                "sessionStartProgramCannotRun",
             )
     return SESSION_START_TIMEOUT if timed_out else SESSION_START_UNKNOWN
 

@@ -46,7 +46,7 @@ const app = ref<PlatformFeishuApp | null>(null)
 const form = reactive({ app_id: '', app_secret: '', domain: 'feishu' })
 
 const domains = computed(() => [
-  { value: 'feishu', title: '飞书（feishu.cn）' },
+  { value: 'feishu', title: t('admin.integrations.domainFeishu') },
   { value: 'lark', title: 'Lark（larksuite.com）' },
 ])
 

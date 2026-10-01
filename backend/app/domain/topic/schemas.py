@@ -11,7 +11,10 @@ from app.domain.topic.models import TopicKind, TopicStatus
 
 class TopicCreate(BaseModel):
     project_id: uuid.UUID
-    title: str = Field(min_length=1, max_length=300)
+    # Left out (or blank) for a room nobody has named yet: the backend stores it
+    # as a placeholder, flagged by `title_source`, and each screen renders its
+    # own word for "untitled".
+    title: str | None = Field(default=None, max_length=300)
     parent_id: uuid.UUID | None = None
     created_by: str | None = None
 

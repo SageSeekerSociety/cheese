@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestPreviewSession } from '../api'
+import { t } from '../i18n'
 import { postPreviewSession } from '../lib/previewSession'
 
 const route = useRoute()
@@ -24,7 +25,7 @@ async function openPreview() {
   } catch (e) {
     if (current !== generation) return
     if (e instanceof ApiError && e.status === 401) needsLogin.value = true
-    else error.value = e instanceof Error ? e.message : '预览打开失败'
+    else error.value = e instanceof Error ? e.message : t('project.open.preview.failed')
   } finally {
     if (current === generation) loading.value = false
   }
@@ -47,15 +48,17 @@ onBeforeUnmount(() => {
 <template>
   <v-container class="py-8">
     <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
-    <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">打开预览</h1>
+    <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">{{ t('project.open.preview.title') }}</h1>
     <template v-if="needsLogin">
-      <p class="t-body mb-4">这个预览仅项目成员可访问，请先登录</p>
-      <v-btn color="primary" :to="loginLink">登录</v-btn>
+      <p class="t-body mb-4">{{ t('project.open.preview.membersOnly') }}</p>
+      <v-btn color="primary" :to="loginLink">{{ t('project.open.signIn') }}</v-btn>
     </template>
     <template v-else-if="error">
       <v-alert type="error" class="mb-4">{{ error }}</v-alert>
-      <v-btn color="primary" variant="tonal" :loading="loading" @click="openPreview">重试</v-btn>
+      <v-btn color="primary" variant="tonal" :loading="loading" @click="openPreview">{{
+        t('project.open.retry')
+      }}</v-btn>
     </template>
-    <v-progress-circular v-else indeterminate aria-label="正在打开预览" />
+    <v-progress-circular v-else indeterminate :aria-label="t('project.open.preview.opening')" />
   </v-container>
 </template>

@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.notice_text import say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -83,13 +84,13 @@ async def save_to_library(
     await announce(
         session,
         place_id=room_id,
-        content=f"{name} 已存进资料库",
+        content=say("librarySaved", name=name),
         meta=notice(
             EVENT_LIBRARY_SAVED,
             severity=SEVERITY_INFO,
             who=WHO_HUMAN,
-            detail=f"{by} 把这个房间里的 {leaf} 留进了资料库，每个房间都引用得到",
-            detail_label="保存到资料库",
+            detail=say("librarySavedDetail", actor=by, file=leaf),
+            detail_label=say("labelSaveToLibrary"),
         ),
     )
     return name
@@ -157,7 +158,7 @@ async def save_room_file(
         and not own_earlier_save
     ):
         raise ConflictError(
-            "这份文件在你读取之后被人改过，先取最新的一版再改",
+            say("fileChangedSinceRead"),
             data={"path": path, "version": now_version, "base_version": base_version},
         )
     if latest is None and before is not None:
@@ -290,7 +291,7 @@ async def revision_or_404(
 ) -> RoomFileRevision:
     row = await session.get(RoomFileRevision, revision_id)
     if row is None or row.room_id != room_id:
-        raise NotFoundError("没有这一版")
+        raise NotFoundError(say("versionNotFound"))
     return row
 
 
@@ -413,8 +414,8 @@ def clean_artifact_path(raw: str) -> str:
     The file itself is read later via the guarded workspace reader."""
     path = (raw or "").strip()
     if not path:
-        raise ValidationError("path 不能为空")
+        raise ValidationError(say("pathEmpty"))
     parts = path.split("/")
     if path.startswith("/") or ".." in parts or ".git" in parts:
-        raise ValidationError("path 必须是工作区相对路径")
+        raise ValidationError(say("pathMustBeRelative"))
     return path

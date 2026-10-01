@@ -195,7 +195,7 @@ onBeforeUnmount(() => {
       <div class="rfe__canvas">
         <div v-if="loading" class="rfe__state"><v-progress-circular indeterminate color="primary" /></div>
         <div v-else-if="session && !session.enabled" class="rfe__state">
-          <div>{{ session.reason }}</div>
+          <div>{{ session.reason ? t(`work.room.fileEditor.unavailable.${session.reason}`) : '' }}</div>
           <div v-if="session.copyable" class="mt-3 rfe__copy">
             <v-text-field
               v-model="copyName"

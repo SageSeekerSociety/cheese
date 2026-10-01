@@ -95,6 +95,7 @@ const {
   // binding shadowing a prop is an error here (vue/no-dupe-keys).
   agentName,
   agentSeat,
+  awaitingReply,
   prShortId,
   prState,
   composerHint,
@@ -248,6 +249,7 @@ defineExpose({ send, connected })
         :loading-older="loadingOlder"
         :retry-index="retryIndex"
         :retry-busy="retryBusy"
+        :working="awaitingReply"
         :show-starters="showStarters"
         :starter-prompts="starterPrompts"
         :agent-seat="agentSeat ?? undefined"

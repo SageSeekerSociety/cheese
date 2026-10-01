@@ -26,7 +26,7 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 
 const props = defineProps<{ projectId: string }>()
@@ -48,10 +48,10 @@ const { mdAndUp } = useDisplay()
 function rowActions(r: Routine): MenuAction[] {
   if (r.state === 'draft')
     return [
-      { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
+      { key: 'edit', label: t('routines.action.edit'), icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
       {
         key: 'drop',
-        label: '不要了',
+        label: t('routines.action.drop'),
         icon: 'mdi-delete-outline',
         danger: true,
         onSelect: () => (confirmingDelete.value = r),
@@ -61,35 +61,35 @@ function rowActions(r: Routine): MenuAction[] {
     r.state === 'active'
       ? {
           key: 'pause',
-          label: '暂停',
+          label: t('routines.action.pause'),
           icon: 'mdi-pause',
           loading: busy.value === `${r.id}:pause`,
           onSelect: () => void act(r, 'pause'),
         }
       : {
           key: 'resume',
-          label: '恢复',
+          label: t('routines.action.resume'),
           icon: 'mdi-play',
           loading: busy.value === `${r.id}:resume`,
           onSelect: () => void act(r, 'resume'),
         },
     {
       key: 'run',
-      label: '立即执行一次',
+      label: t('routines.action.runNow'),
       icon: 'mdi-play-circle-outline',
       loading: busy.value === `${r.id}:run-now`,
       onSelect: () => void act(r, 'run-now'),
     },
-    { key: 'edit', label: '修改', icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
+    { key: 'edit', label: t('routines.action.edit'), icon: 'mdi-pencil-outline', onSelect: () => startEdit(r) },
     {
       key: 'runs',
-      label: open.value === r.id ? '收起记录' : '执行记录',
+      label: open.value === r.id ? t('routines.action.hideRuns') : t('routines.action.showRuns'),
       icon: 'mdi-history',
       onSelect: () => void toggle(r.id),
     },
     {
       key: 'delete',
-      label: '删除',
+      label: t('routines.action.delete'),
       icon: 'mdi-delete-outline',
       danger: true,
       onSelect: () => (confirmingDelete.value = r),
@@ -97,29 +97,24 @@ function rowActions(r: Routine): MenuAction[] {
   ]
 }
 
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
-const TRIGGERS = [
-  { value: 'schedule', title: '按时间' },
-  { value: 'library_file_added', title: '资料库新增文件时' },
-  { value: 'task_closed', title: '任务完成时' },
-  { value: 'card_accepted', title: '成果被采纳时' },
-]
-const FREQS = [
-  { value: 'daily', title: '每天' },
-  { value: 'weekly', title: '每周' },
-  { value: 'monthly', title: '每月' },
-  { value: 'hourly', title: '每小时' },
-]
-const STATE_LABEL: Record<Routine['state'], string> = { draft: '待确认', active: '执行中', paused: '已暂停' }
-const RUN_LABEL: Record<RoutineRun['status'], string> = {
-  queued: '排队中',
-  running: '执行中',
-  succeeded: '已完成',
-  failed: '失败',
-  skipped: '未执行',
-}
+// Index 0 is Monday, as the backend's `weekdays` counts. 2024-01-01 was a Monday.
+const WEEKDAYS = computed(() => {
+  const format = new Intl.DateTimeFormat(i18n.global.locale.value, { weekday: 'short', timeZone: 'UTC' })
+  return Array.from({ length: 7 }, (_, i) => format.format(new Date(Date.UTC(2024, 0, 1 + i))))
+})
+const TRIGGERS = computed(() =>
+  (['schedule', 'library_file_added', 'task_closed', 'card_accepted'] as const).map((value) => ({
+    value,
+    title: t(`routines.trigger.${value}`),
+  }))
+)
+const FREQS = computed(() =>
+  (['daily', 'weekly', 'monthly', 'hourly'] as const).map((value) => ({ value, title: t(`routines.freq.${value}`) }))
+)
+const stateLabel = (state: Routine['state']) => t(`routines.state.${state}`)
+const runLabel = (status: RoutineRun['status']) => t(`routines.run.${status}`)
 
-const roomTitle = (id: string) => rooms.value.find((r) => r.id === id)?.title ?? '（已不在的房间）'
+const roomTitle = (id: string) => rooms.value.find((r) => r.id === id)?.title ?? t('routines.goneRoom')
 const drafts = computed(() => routines.value.filter((r) => r.state === 'draft'))
 const others = computed(() => routines.value.filter((r) => r.state !== 'draft'))
 
@@ -127,7 +122,7 @@ const others = computed(() => routines.value.filter((r) => r.state !== 'draft'))
 function fmt(iso: string | null, timeZone?: string): string {
   if (!iso) return '—'
   try {
-    return new Date(iso).toLocaleString('zh-CN', { timeZone, hour12: false })
+    return new Date(iso).toLocaleString(i18n.global.locale.value, { timeZone, hour12: false })
   } catch {
     return new Date(iso).toLocaleString()
   }
@@ -150,7 +145,7 @@ async function load() {
     }
   } catch (e) {
     if (props.projectId !== projectId) return
-    loadError.value = e instanceof Error ? e.message : '未能读取定时与触发规则'
+    loadError.value = e instanceof Error ? e.message : t('routines.loadFailed')
   } finally {
     if (props.projectId === projectId) loading.value = false
   }
@@ -166,7 +161,7 @@ async function toggle(id: string, force = false) {
     const detail = await getRoutine(id)
     runs.value = { ...runs.value, [id]: detail.runs }
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '未能读取执行记录'
+    actionError.value = e instanceof Error ? e.message : t('routines.runsFailed')
   }
 }
 
@@ -181,7 +176,7 @@ async function act(r: Routine, action: 'confirm' | 'pause' | 'resume' | 'run-now
       routines.value = routines.value.map((x) => (x.id === r.id ? (out as Routine) : x))
     }
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '操作没有成功'
+    actionError.value = e instanceof Error ? e.message : t('routines.actionFailed')
   } finally {
     busy.value = ''
   }
@@ -195,7 +190,7 @@ async function remove(r: Routine) {
     await deleteRoutine(r.id)
     routines.value = routines.value.filter((x) => x.id !== r.id)
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : '未能删除'
+    actionError.value = e instanceof Error ? e.message : t('routines.deleteFailed')
   } finally {
     busy.value = ''
   }
@@ -206,7 +201,8 @@ const editing = ref<Routine | 'new' | null>(null)
 // 关上的那一下 editing 已经是 null，标题还要照着刚才那一条画完收起的动画。
 const editingTitle = ref('')
 watch(editing, (value) => {
-  if (value) editingTitle.value = value === 'new' ? '新建规则' : `修改「${value.title}」`
+  if (value)
+    editingTitle.value = value === 'new' ? t('routines.newTitle') : t('routines.editTitle', { title: value.title })
 })
 const saving = ref(false)
 const formError = ref('')
@@ -289,7 +285,7 @@ async function save() {
   }
   try {
     if (editing.value === 'new') {
-      if (!form.room) throw new Error('先选一个房间：工作在那个房间里执行，结果也放在那里')
+      if (!form.room) throw new Error(t('routines.pickRoom'))
       const created = await createRoutine(form.room, body)
       routines.value = [...routines.value, created]
     } else if (editing.value) {
@@ -298,7 +294,7 @@ async function save() {
     }
     editing.value = null
   } catch (e) {
-    formError.value = e instanceof Error ? e.message : '没有保存成功'
+    formError.value = e instanceof Error ? e.message : t('routines.saveFailed')
   } finally {
     saving.value = false
   }
@@ -318,7 +314,7 @@ watch(
 useCommands(() => [
   {
     id: 'routines.refresh',
-    title: '刷新',
+    title: t('routines.action.refresh'),
     palette: false,
     icon: 'mdi-refresh',
     loading: loading.value,
@@ -327,7 +323,7 @@ useCommands(() => [
   },
   {
     id: 'routines.new',
-    title: '新建',
+    title: t('routines.action.new'),
     icon: 'mdi-plus',
     disabled: !rooms.value.length,
     header: { primary: true, accent: true },
@@ -340,20 +336,24 @@ useCommands(() => [
   <AppPage :title="t('navigation.project.routines')">
     <div>
       <p class="t-body c-muted mb-6">
-        到点或项目里发生某件事时，房间里的 AI 队友自己开工，做完把结果放进房间并通知你。
-        在房间里说「每周一早上整理一次进展」，芝士也会起草一条，等你在这里确认
+        {{ t('routines.intro') }}
       </p>
 
       <p v-if="loadError" role="alert" class="t-body c-danger mb-4">{{ loadError }}</p>
       <p v-if="actionError" role="alert" class="t-body c-danger mb-4">{{ actionError }}</p>
 
-      <div v-if="loading && !routines.length" class="py-8 text-center" role="status" aria-label="读取规则">
+      <div
+        v-if="loading && !routines.length"
+        class="py-8 text-center"
+        role="status"
+        :aria-label="t('routines.loading')"
+      >
         <v-progress-circular indeterminate size="28" color="primary" />
       </div>
 
       <template v-else>
         <section v-if="drafts.length" class="mb-6">
-          <h2 class="t-section mb-2">等你确认</h2>
+          <h2 class="t-section mb-2">{{ t('routines.waiting') }}</h2>
           <ul class="routine-list">
             <li v-for="r in drafts" :key="r.id" class="routine-row routine-row--draft" :data-routine="r.id">
               <div class="routine-row__head">
@@ -361,7 +361,7 @@ useCommands(() => [
                   <div class="t-body routine-row__title">{{ r.title }}</div>
                   <div class="t-meta c-faint">{{ r.trigger_text }} · {{ roomTitle(r.topic_id) }}</div>
                 </div>
-                <v-chip size="small" color="warning" variant="tonal">{{ STATE_LABEL[r.state] }}</v-chip>
+                <v-chip size="small" color="warning" variant="tonal">{{ stateLabel(r.state) }}</v-chip>
                 <AdaptiveMenu v-if="!mdAndUp" :actions="rowActions(r)" :title="r.title">
                   <template #activator="{ props: menuProps }">
                     <v-btn
@@ -371,20 +371,25 @@ useCommands(() => [
                       variant="text"
                       color="on-surface-variant"
                       class="tap-target"
-                      aria-label="更多操作"
+                      :aria-label="t('routines.action.more')"
                     />
                   </template>
                 </AdaptiveMenu>
               </div>
               <dl class="routine-row__spec t-meta">
-                <dt>工作内容</dt>
+                <dt>{{ t('routines.spec.work') }}</dt>
                 <dd>{{ r.instructions }}</dd>
-                <dt>资料范围</dt>
-                <dd>{{ r.context_scope || '未限定' }}</dd>
-                <dt>结果放在</dt>
-                <dd>房间 {{ r.output_dir || '根目录' }}</dd>
-                <dt>执行者</dt>
-                <dd><UserRef :handle="r.agent_handle" />（由 <UserRef :handle="r.proposed_by" /> 起草）</dd>
+                <dt>{{ t('routines.spec.scope') }}</dt>
+                <dd>{{ r.context_scope || t('routines.spec.unlimited') }}</dd>
+                <dt>{{ t('routines.spec.output') }}</dt>
+                <dd>{{ t('routines.spec.outputDir', { dir: r.output_dir || t('routines.spec.rootDir') }) }}</dd>
+                <dt>{{ t('routines.spec.agent') }}</dt>
+                <dd>
+                  <i18n-t keypath="routines.spec.draftedBy" scope="global">
+                    <template #agent><UserRef :handle="r.agent_handle" /></template>
+                    <template #author><UserRef :handle="r.proposed_by" /></template>
+                  </i18n-t>
+                </dd>
               </dl>
               <div class="routine-row__actions">
                 <v-btn
@@ -394,12 +399,12 @@ useCommands(() => [
                   :loading="busy === `${r.id}:confirm`"
                   @click="act(r, 'confirm')"
                 >
-                  确认启用
+                  {{ t('routines.action.confirm') }}
                 </v-btn>
                 <template v-if="mdAndUp">
-                  <v-btn size="small" variant="text" @click="startEdit(r)">修改</v-btn>
+                  <v-btn size="small" variant="text" @click="startEdit(r)">{{ t('routines.action.edit') }}</v-btn>
                   <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">
-                    不要了
+                    {{ t('routines.action.drop') }}
                   </v-btn>
                 </template>
               </div>
@@ -415,12 +420,12 @@ useCommands(() => [
                 <div class="t-meta c-faint">
                   {{ r.trigger_text }} · {{ roomTitle(r.topic_id) }}
                   <template v-if="r.state === 'active' && r.trigger === 'schedule'">
-                    · 下次 {{ fmt(r.next_run_at, r.timezone) }}
+                    · {{ t('routines.next', { time: fmt(r.next_run_at, r.timezone) }) }}
                   </template>
                 </div>
               </div>
               <v-chip size="small" :color="r.state === 'active' ? 'success' : undefined" variant="tonal">
-                {{ STATE_LABEL[r.state] }}
+                {{ stateLabel(r.state) }}
               </v-chip>
               <AdaptiveMenu v-if="!mdAndUp" :actions="rowActions(r)" :title="r.title">
                 <template #activator="{ props: menuProps }">
@@ -431,7 +436,7 @@ useCommands(() => [
                     variant="text"
                     color="on-surface-variant"
                     class="tap-target"
-                    aria-label="更多操作"
+                    :aria-label="t('routines.action.more')"
                   />
                 </template>
               </AdaptiveMenu>
@@ -444,22 +449,24 @@ useCommands(() => [
                 :loading="busy === `${r.id}:pause`"
                 @click="act(r, 'pause')"
               >
-                暂停
+                {{ t('routines.action.pause') }}
               </v-btn>
               <v-btn v-else size="small" variant="text" :loading="busy === `${r.id}:resume`" @click="act(r, 'resume')">
-                恢复
+                {{ t('routines.action.resume') }}
               </v-btn>
               <v-btn size="small" variant="text" :loading="busy === `${r.id}:run-now`" @click="act(r, 'run-now')">
-                立即执行一次
+                {{ t('routines.action.runNow') }}
               </v-btn>
-              <v-btn size="small" variant="text" @click="startEdit(r)">修改</v-btn>
+              <v-btn size="small" variant="text" @click="startEdit(r)">{{ t('routines.action.edit') }}</v-btn>
               <v-btn size="small" variant="text" @click="toggle(r.id)">
-                {{ open === r.id ? '收起记录' : '执行记录' }}
+                {{ open === r.id ? t('routines.action.hideRuns') : t('routines.action.showRuns') }}
               </v-btn>
-              <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">删除</v-btn>
+              <v-btn size="small" variant="text" color="on-surface-variant" @click="confirmingDelete = r">{{
+                t('routines.action.delete')
+              }}</v-btn>
             </div>
             <div v-if="open === r.id" class="routine-runs">
-              <p v-if="!runs[r.id]?.length" class="t-meta c-faint">还没有执行过</p>
+              <p v-if="!runs[r.id]?.length" class="t-meta c-faint">{{ t('routines.neverRun') }}</p>
               <ol v-else class="routine-runs__list">
                 <li v-for="run in runs[r.id]" :key="run.id" class="routine-run">
                   <div class="routine-run__head t-meta">
@@ -468,22 +475,24 @@ useCommands(() => [
                       variant="tonal"
                       :color="run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'error' : undefined"
                     >
-                      {{ RUN_LABEL[run.status] }}
+                      {{ runLabel(run.status) }}
                     </v-chip>
                     <span>{{ fmt(run.scheduled_for || run.created_at, r.timezone) }}</span>
-                    <span v-if="run.finished_at" class="c-faint">结束于 {{ fmt(run.finished_at, r.timezone) }}</span>
+                    <span v-if="run.finished_at" class="c-faint">{{
+                      t('routines.finishedAt', { time: fmt(run.finished_at, r.timezone) })
+                    }}</span>
                   </div>
                   <div class="t-meta c-muted">{{ run.trigger_detail }}</div>
                   <div v-if="run.status === 'failed' || run.status === 'skipped'" class="t-body c-danger">
-                    {{ run.error || '没有给出原因' }}
+                    {{ run.error || t('routines.noReason') }}
                   </div>
                   <div v-else-if="run.summary" class="t-body">{{ run.summary }}</div>
                   <div v-if="run.outputs.length" class="t-meta">
-                    结果：
+                    {{ t('routines.outputs') }}
                     <router-link
                       :to="{ name: 'workspace-topic', params: { projectId: r.project_id, topicId: r.topic_id } }"
                     >
-                      {{ run.outputs.join('、') }}
+                      {{ run.outputs.join(t('routines.listSeparator')) }}
                     </router-link>
                   </div>
                 </li>
@@ -493,8 +502,8 @@ useCommands(() => [
         </ul>
 
         <div v-if="!routines.length && !loadError" class="py-8 text-center">
-          <p class="t-body c-muted">还没有定时或触发规则</p>
-          <p class="t-meta c-faint mt-1">点「新建」，或在房间里让芝士帮你起草一条</p>
+          <p class="t-body c-muted">{{ t('routines.empty') }}</p>
+          <p class="t-meta c-faint mt-1">{{ t('routines.emptyHint') }}</p>
         </div>
       </template>
     </div>
@@ -503,7 +512,7 @@ useCommands(() => [
     <AdaptiveDialog
       :model-value="!!editing"
       :title="editingTitle"
-      primary-label="保存"
+      :primary-label="t('global.save')"
       :primary-loading="saving"
       :max-width="560"
       @update:model-value="editing = null"
@@ -517,42 +526,47 @@ useCommands(() => [
           :items="rooms"
           item-title="title"
           item-value="id"
-          label="在哪个房间执行"
-          hint="执行者是这个房间里的 AI 队友，结果也放在这个房间"
+          :label="t('routines.form.room')"
+          :hint="t('routines.form.roomHint')"
           persistent-hint
           class="mb-3"
         />
-        <v-text-field v-model="form.title" autocomplete="off" label="名称" placeholder="例如：每周项目进展" />
+        <v-text-field
+          v-model="form.title"
+          autocomplete="off"
+          :label="t('routines.form.name')"
+          :placeholder="t('routines.form.namePlaceholder')"
+        />
         <v-textarea
           v-model="form.instructions"
           autocomplete="off"
-          label="要做的工作"
+          :label="t('routines.form.instructions')"
           rows="3"
           auto-grow
-          placeholder="例如：汇总本周各房间完成的任务、进行中的事和阻碍，写成一页周报"
+          :placeholder="t('routines.form.instructionsPlaceholder')"
         />
         <v-text-field
           v-model="form.context_scope"
           autocomplete="off"
-          label="使用哪些资料"
-          placeholder="例如：本项目所有房间的任务和决策；只用资料库里的文件"
+          :label="t('routines.form.context')"
+          :placeholder="t('routines.form.contextPlaceholder')"
         />
         <v-text-field
           v-model="form.output_dir"
           autocomplete="off"
-          label="结果放在房间的哪个目录"
-          placeholder="例如：周报"
+          :label="t('routines.form.outputDir')"
+          :placeholder="t('routines.form.outputDirPlaceholder')"
         />
-        <v-select v-model="form.trigger" autocomplete="off" :items="TRIGGERS" label="什么时候开工" />
+        <v-select v-model="form.trigger" autocomplete="off" :items="TRIGGERS" :label="t('routines.form.trigger')" />
         <template v-if="form.trigger === 'schedule'">
           <div class="routine-form__row">
-            <v-select v-model="form.freq" autocomplete="off" :items="FREQS" label="频率" />
+            <v-select v-model="form.freq" autocomplete="off" :items="FREQS" :label="t('routines.form.freq')" />
             <v-text-field
               v-if="form.freq !== 'hourly'"
               v-model="form.time"
               autocomplete="off"
               type="time"
-              label="时间"
+              :label="t('routines.form.time')"
             />
             <v-text-field
               v-else
@@ -561,7 +575,7 @@ useCommands(() => [
               type="number"
               min="0"
               max="59"
-              label="第几分钟"
+              :label="t('routines.form.minute')"
             />
             <v-text-field
               v-if="form.freq === 'monthly'"
@@ -570,27 +584,26 @@ useCommands(() => [
               type="number"
               min="1"
               max="31"
-              label="几号"
+              :label="t('routines.form.day')"
             />
           </div>
           <v-chip-group v-if="form.freq === 'weekly'" v-model="form.weekdays" multiple column class="mb-2">
             <v-chip v-for="(d, i) in WEEKDAYS" :key="d" :value="i" filter size="small">{{ d }}</v-chip>
           </v-chip-group>
-          <v-text-field v-model="form.timezone" autocomplete="off" label="时区" />
+          <v-text-field v-model="form.timezone" autocomplete="off" :label="t('routines.form.timezone')" />
         </template>
         <v-select
           v-else-if="form.trigger !== 'library_file_added'"
           v-model="form.scope"
           autocomplete="off"
           :items="[
-            { value: 'room', title: '只看这个房间' },
-            { value: 'project', title: '整个项目' },
+            { value: 'room', title: t('routines.form.scopeRoom') },
+            { value: 'project', title: t('routines.form.scopeProject') },
           ]"
-          label="范围"
+          :label="t('routines.form.scope')"
         />
         <p class="t-meta c-faint">
-          AI 队友的工作电脑在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，
-          两小时内没开始会记为失败并通知你
+          {{ t('routines.form.machineNote') }}
         </p>
         <p v-if="formError" role="alert" class="t-body c-danger mt-2">{{ formError }}</p>
       </template>
@@ -598,12 +611,18 @@ useCommands(() => [
 
     <v-dialog :model-value="!!confirmingDelete" max-width="420" @update:model-value="confirmingDelete = null">
       <v-card v-if="confirmingDelete">
-        <v-card-title class="t-dialog-title">删除「{{ confirmingDelete.title }}」</v-card-title>
-        <v-card-text class="t-body">删除后不再执行，执行记录也一起删除；已经放进房间的结果文件保留</v-card-text>
+        <v-card-title class="t-dialog-title">{{
+          t('routines.deleteTitle', { title: confirmingDelete.title })
+        }}</v-card-title>
+        <v-card-text class="t-body">{{ t('routines.deleteBody') }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" color="on-surface-variant" @click="confirmingDelete = null">取消</v-btn>
-          <v-btn variant="text" color="error" @click="remove(confirmingDelete)">删除</v-btn>
+          <v-btn variant="text" color="on-surface-variant" @click="confirmingDelete = null">{{
+            t('global.cancel')
+          }}</v-btn>
+          <v-btn variant="text" color="error" @click="remove(confirmingDelete)">{{
+            t('routines.action.delete')
+          }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

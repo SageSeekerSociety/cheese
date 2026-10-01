@@ -15,6 +15,7 @@ import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
+import { noticeText } from '../../lib/noticeText'
 import { confirmTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
@@ -34,6 +35,8 @@ const props = defineProps<{
   run: Block[]
   /** 署名：平台替哪位队友写的这一条。算不出来就是 null，框里不画名字。 */
   agent: NoticeAgent | null
+  /** 接在同一位队友上一条事件行下面：不再重复头像和名字。 */
+  cont?: boolean
   time: string
   /** 这个房间当前那位 AI 队友的名字，`fold` 档在「…处理中」里用。 */
   agentName: string
@@ -113,16 +116,16 @@ const splitTask = computed(() => {
   return typeof id === 'string' && id ? id : null
 })
 
-// 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么。
+// 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
-  doc: { btn: '查看文档' },
-  decision: { btn: '查看决策记录' },
+  doc: { btn: 'work.room.notice.action.doc' },
+  decision: { btn: 'work.room.notice.action.decision' },
   topics: { btn: '' },
-  split: { btn: '查看任务' },
+  split: { btn: 'work.room.notice.action.split' },
   // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
-  title: { btn: '撤销' },
-  milestone: { btn: '查看日历' },
-  accept: { btn: '审阅' },
+  title: { btn: 'work.room.notice.action.undo' },
+  milestone: { btn: 'work.room.notice.action.milestone' },
+  accept: { btn: 'work.room.notice.action.accept' },
   notify: { btn: '' },
 }
 </script>
@@ -131,12 +134,13 @@ const ACTION_META: Record<string, { btn: string }> = {
   <!-- 房间里发生的事：居中一行淡字。Content may carry a <@handle> actor token
        (归档/加入…): render it through the SAME token→chip path as messages. -->
   <div v-if="happening" class="room-happening im-event">
-    <span v-html="renderPlain(block.content)" /><span class="room-happening__time"> · {{ time }}</span>
+    <span v-html="renderPlain(noticeText(block))" /><span class="room-happening__time"> · {{ time }}</span>
   </div>
   <AgentNoticeFrame
     v-else
     :name="name"
     :handle="agent?.handle ?? null"
+    :cont="cont"
     :time="time"
     :class="{ 'notice-bump': bumped }"
     @animationend="bumped = false"
@@ -173,22 +177,22 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-line">
         <span class="sys-text">
           <template v-if="notice.changes">
-            改动了 {{ notice.changes.filesTotal }} 个文件
+            {{ t('work.room.notice.filesChanged', { n: notice.changes.filesTotal }) }}
             <span class="sys-num">+{{ notice.changes.added }} −{{ notice.changes.removed }}</span>
           </template>
           <template v-for="(act, ai) in notice.actions" :key="ai">
             <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
             <span v-html="renderPlain(act.text)" />
           </template>
+          <button
+            v-if="notice.changes"
+            type="button"
+            class="sys-btn sys-btn--inline"
+            @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
+          >
+            {{ t('work.room.notice.viewChanges') }}
+          </button>
         </span>
-        <button
-          v-if="notice.changes"
-          type="button"
-          class="sys-btn"
-          @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
-        >
-          查看改动
-        </button>
       </div>
       <!-- 竖排，每个文件带自己的增删：路径一列，+n 和 −n 紧挨着各自对齐。 -->
       <ul v-if="shownFiles.length" class="sys-files" :aria-label="t('work.room.notice.changedFiles')">
@@ -215,34 +219,42 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-line">
         <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
          through the shared token→chip path so the actor is clickable. -->
-        <span class="sys-text" v-html="renderPlain(notice.text)" />
-        <button
-          v-if="ACTION_META[notice.resource]?.btn"
-          type="button"
-          class="sys-btn"
-          @click="
-            notice.resource === 'title'
-              ? emit('undo-title', block.id)
-              : splitTask
-                ? emit('open-card', splitTask)
-                : emit('open-resource', notice.resource, block.turn_id ?? undefined)
-          "
-        >
-          {{ ACTION_META[notice.resource].btn }}
-        </button>
+        <span class="sys-text">
+          <span v-html="renderPlain(notice.text)" />
+          <button
+            v-if="ACTION_META[notice.resource]?.btn"
+            type="button"
+            class="sys-btn sys-btn--inline"
+            @click="
+              notice.resource === 'title'
+                ? emit('undo-title', block.id)
+                : splitTask
+                  ? emit('open-card', splitTask)
+                  : emit('open-resource', notice.resource, block.turn_id ?? undefined)
+            "
+          >
+            {{ t(ACTION_META[notice.resource].btn) }}
+          </button>
+        </span>
       </div>
       <details v-if="notice.detail" class="sys-more">
         <summary class="sys-line">
-          <span class="sys-text">{{ notice.detailLabel || '展开详情' }}</span>
+          <span class="sys-text">{{ notice.detailLabel || t('work.room.notice.showDetail') }}</span>
           <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
         </summary>
-        <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
+        <div v-if="notice.resource === 'doc'" class="doc-edit-diff" :aria-label="t('work.room.notice.docDiff')">
           <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
             <div
               v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
               class="doc-edit-line"
               :class="`doc-edit-line--${line.kind}`"
-              :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
+              :aria-label="
+                line.kind === 'add'
+                  ? t('work.room.notice.added')
+                  : line.kind === 'del'
+                    ? t('work.room.notice.removed')
+                    : undefined
+              "
             >
               <span class="doc-edit-mark" aria-hidden="true">{{
                 line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
@@ -291,7 +303,7 @@ const ACTION_META: Record<string, { btn: string }> = {
         <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
         <span v-if="notice.count > 1" class="sys-num">×<RollingNumber :value="notice.count" /></span>
         <span v-if="notice.whoLabel" class="sys-who">{{
-          notice.who === 'cheese' ? `${name || agentName}正在处理` : notice.whoLabel
+          notice.who === 'cheese' ? t('work.room.notice.working', { name: name || agentName }) : notice.whoLabel
         }}</span>
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
         <NavLink v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
@@ -304,7 +316,8 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-fold">
         <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
           <div class="sys-meta">
-            {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+            {{ occ.label || t('work.room.notice.detail')
+            }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
           </div>
           <pre v-if="occ.detail" class="sys-detail">{{ occ.detail }}</pre>
         </div>
@@ -312,13 +325,13 @@ const ACTION_META: Record<string, { btn: string }> = {
     </details>
     <div v-else-if="notice.mode === 'mail-draft'" class="sys-row">
       <div class="sys-line">
-        <span class="sys-text" v-html="renderPlain(block.content)" />
+        <span class="sys-text" v-html="renderPlain(noticeText(block))" />
       </div>
       <MailDraftCard :mail="notice.mail" :outcome="notice.outcome" />
     </div>
     <div v-else-if="notice.mode === 'plain'" class="sys-row im-event">
       <div class="sys-line">
-        <span class="sys-text" v-html="renderPlain(block.content)" />
+        <span class="sys-text" v-html="renderPlain(noticeText(block))" />
       </div>
     </div>
   </AgentNoticeFrame>
@@ -368,6 +381,17 @@ details.sys-row > summary::-webkit-details-marker,
 .sys-text + .sys-btn,
 .sys-chev + .sys-btn {
   margin-left: auto;
+}
+/* 「撤销」「查看文档」这类只属于这一句话的动作，接在这句话的末尾，跟着字一起折行。
+   推到行尾的话，短句后面隔着大半行空白，长句一折行它就自己掉到下一行的最右边，
+   两种情况都看不出它是哪句话的。 */
+.sys-btn.sys-btn--inline {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: 8px;
+  vertical-align: middle;
+  font-size: 12px;
 }
 .sys-num {
   flex: none;
@@ -535,11 +559,12 @@ details[open]::details-content {
 .sys-sep {
   color: var(--faint);
 }
-/* 轻重只改底色和状态字的颜色。底色块往左多出 8px，字仍在正文那条竖线上。 */
+/* 轻重只改底色和状态字的颜色。底色块往左多出一截（外框给的 --notice-wash-inset，
+   默认 8px），字仍在正文那条竖线上。 */
 .sys-row--warn,
 .sys-row--danger {
-  margin-left: -8px;
-  padding: 4px 8px;
+  margin-left: calc(-1 * var(--notice-wash-inset, 8px));
+  padding: 4px 8px 4px var(--notice-wash-inset, 8px);
   border-radius: var(--radius-md);
 }
 .sys-row--warn {

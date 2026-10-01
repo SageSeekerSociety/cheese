@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
+import { t } from '@/i18n'
 import { statusMeta } from '@/lib/feedbackMeta'
 
 /**
@@ -37,47 +40,61 @@ interface ShortcutGroup {
  * 已上线」，表上若写成「进行中 / 已解决」，用户在界面上找不到这几个字。键位是常量，
  * 状态名是会漂的，漂的那一份只能有一个源头。
  */
-const GROUPS: ShortcutGroup[] = [
+const groups = computed<ShortcutGroup[]>(() => [
   {
-    scope: '全局',
+    scope: t('admin.shortcuts.scope.global'),
     rows: [
-      { keys: ['/'], action: '焦点跳到搜索框', note: '输入框里不触发' },
-      { keys: ['R'], action: '刷新当前列表 / 看板' },
-      { keys: ['G', 'Q'], sequence: true, action: '去队列', note: '1s 内有效' },
-      { keys: ['G', 'D'], sequence: true, action: '去看板', note: '1s 内有效' },
-      { keys: ['G', 'F'], sequence: true, action: '去反馈中心（用户侧）', note: '1s 内有效' },
-      { keys: ['?'], action: '打开这张表' },
+      { keys: ['/'], action: t('admin.shortcuts.focusSearch'), note: t('admin.shortcuts.notInInputs') },
+      { keys: ['R'], action: t('admin.shortcuts.refresh') },
+      { keys: ['G', 'Q'], sequence: true, action: t('admin.shortcuts.goQueue'), note: t('admin.shortcuts.within1s') },
+      {
+        keys: ['G', 'D'],
+        sequence: true,
+        action: t('admin.shortcuts.goDashboard'),
+        note: t('admin.shortcuts.within1s'),
+      },
+      {
+        keys: ['G', 'F'],
+        sequence: true,
+        action: t('admin.shortcuts.goFeedbackCenter'),
+        note: t('admin.shortcuts.within1s'),
+      },
+      { keys: ['?'], action: t('admin.shortcuts.openSheet') },
     ],
   },
   {
-    scope: '列表',
+    scope: t('admin.shortcuts.scope.list'),
     rows: [
-      { keys: ['j'], action: '下移一行', note: '到末行停住' },
-      { keys: ['k'], action: '上移一行', note: '到首行停住' },
-      { keys: ['↓', '↑'], action: '同 j / k' },
-      { keys: ['Enter'], action: '打开当前行的详情' },
+      { keys: ['j'], action: t('admin.shortcuts.down'), note: t('admin.shortcuts.stopsAtLast') },
+      { keys: ['k'], action: t('admin.shortcuts.up'), note: t('admin.shortcuts.stopsAtFirst') },
+      { keys: ['↓', '↑'], action: t('admin.shortcuts.sameAsJk') },
+      { keys: ['Enter'], action: t('admin.shortcuts.openRow') },
     ],
   },
   {
-    scope: '列表与详情',
+    scope: t('admin.shortcuts.scope.listAndDetail'),
     rows: [
-      { keys: ['1'], action: `状态 → ${statusMeta('in_progress').label}` },
-      { keys: ['2'], action: `状态 → ${statusMeta('resolved').label}` },
-      { keys: ['3'], action: `状态 → ${statusMeta('deployed').label}`, note: '不可回退' },
-      { keys: ['H'], action: '保持不变，推进到下一行' },
-      { keys: ['U'], action: '撤销最近一次分诊', note: '停留 5s' },
-      { keys: ['A'], action: '打开指派' },
-      { keys: ['M'], action: '标记当前这条为已读' },
+      { keys: ['1'], action: t('admin.shortcuts.setStatus', { status: statusMeta('in_progress').label }) },
+      { keys: ['2'], action: t('admin.shortcuts.setStatus', { status: statusMeta('resolved').label }) },
+      {
+        keys: ['3'],
+        action: t('admin.shortcuts.setStatus', { status: statusMeta('deployed').label }),
+        note: t('admin.shortcuts.noUndo'),
+      },
+      { keys: ['H'], action: t('admin.shortcuts.keep') },
+      { keys: ['U'], action: t('admin.shortcuts.undo'), note: t('admin.shortcuts.shownFor5s') },
+      { keys: ['A'], action: t('admin.shortcuts.assign') },
+      { keys: ['M'], action: t('admin.shortcuts.markRead') },
     ],
   },
   {
-    scope: '详情',
+    scope: t('admin.shortcuts.scope.detail'),
     rows: [
-      { keys: ['Esc'], action: '逐层后退', note: '一次退一层' },
-      { keys: ['⌘↵', 'Ctrl+↵'], action: '提交评论' },
+      { keys: ['Esc'], action: t('admin.shortcuts.back'), note: t('admin.shortcuts.oneLevel') },
+      { keys: ['⌘↵', 'Ctrl+↵'], action: t('admin.shortcuts.comment') },
     ],
   },
-]
+])
 </script>
 
 <template>
@@ -91,15 +108,17 @@ const GROUPS: ShortcutGroup[] = [
     @update:model-value="emit('update:modelValue', $event)"
   >
     <v-card class="ssheet" rounded="lg" flat>
-      <h2 class="ssheet__title">键盘快捷键</h2>
+      <h2 class="ssheet__title">{{ t('admin.shortcuts.title') }}</h2>
       <div class="ssheet__body">
-        <section v-for="group in GROUPS" :key="group.scope" class="ssheet__group">
+        <section v-for="group in groups" :key="group.scope" class="ssheet__group">
           <h3 class="ssheet__scope t-eyebrow-read">{{ group.scope }}</h3>
           <div class="ssheet__rows">
             <template v-for="row in group.rows" :key="row.keys.join('+')">
               <span class="ssheet__keys">
                 <template v-for="(key, index) in row.keys" :key="key">
-                  <span v-if="index > 0" class="ssheet__joiner">{{ row.sequence ? '然后' : '/' }}</span>
+                  <span v-if="index > 0" class="ssheet__joiner">{{
+                    row.sequence ? t('admin.shortcuts.then') : '/'
+                  }}</span>
                   <kbd class="ssheet__kbd">{{ key }}</kbd>
                 </template>
               </span>

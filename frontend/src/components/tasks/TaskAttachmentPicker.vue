@@ -6,15 +6,15 @@
           <v-icon color="primary" size="24">mdi-paperclip</v-icon>
         </v-avatar>
       </template>
-      <v-card-title class="text-h6 ps-0">附件（可选）</v-card-title>
-      <v-card-subtitle class="ps-0">领取这道题的人和审核它的人可以下载</v-card-subtitle>
+      <v-card-title class="text-h6 ps-0">{{ t('tasks.attachmentPicker.title') }}</v-card-title>
+      <v-card-subtitle class="ps-0">{{ t('tasks.attachmentPicker.subtitle') }}</v-card-subtitle>
     </v-card-item>
 
     <v-card-text class="pt-2">
       <v-file-input
         :model-value="picked"
         multiple
-        label="选择要随题一起发出的材料"
+        :label="t('tasks.attachmentPicker.label')"
         variant="outlined"
         density="comfortable"
         clearable
@@ -31,7 +31,7 @@
       <!-- 上限是**接口报的**那个数（`GET /attachments/limits`），不是这一页写死的：
            传超了会被后端按同一个数拒掉，所以这句话与真正发生的事不会走散。 -->
       <p v-if="maxFileBytes" class="text-caption text-medium-emphasis mt-2" data-testid="attachment-limit">
-        单个文件不超过 {{ formatFileSize(maxFileBytes) }}
+        {{ t('tasks.attachmentPicker.limit', { size: formatFileSize(maxFileBytes) }) }}
       </p>
 
       <v-progress-linear v-if="uploading" indeterminate color="primary" class="mt-3" />
@@ -49,7 +49,7 @@
               variant="text"
               size="small"
               :disabled="uploading"
-              :aria-label="`移除 ${file.name}`"
+              :aria-label="t('tasks.attachmentPicker.remove', { name: file.name })"
               @click="drop(file.id)"
             />
           </template>
@@ -61,11 +61,14 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import { formatFileSize } from '@/utils/materials'
 
 import { AttachmentsApi } from '@/network/api/attachments'
+
+const { t } = useI18n()
 
 /**
  * 发题时带的材料。
@@ -138,7 +141,12 @@ const onPicked = async (value: File[] | File | null) => {
           uploaded.value.map((item) => item.id)
         )
       } catch (error) {
-        toast.error(`「${file.name}」上传失败：${error instanceof Error ? error.message : '未知错误'}`)
+        toast.error(
+          t('tasks.attachmentPicker.uploadFailed', {
+            name: file.name,
+            error: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
+          })
+        )
       }
     }
   } finally {

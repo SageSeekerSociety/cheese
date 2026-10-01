@@ -50,6 +50,7 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.redis import get_redis_client
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.notice_text import say
 from app.domain.identity.handles import names_a_person
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
@@ -582,7 +583,7 @@ async def _write(
         block = await announce(
             session,
             place_id=room.id,
-            content=f"标题自动更新为「{verdict.title}」（原为「{previous}」）",
+            content=say("titleAutoRenamed", title=verdict.title, previous=previous),
             meta={
                 "action": "title",
                 "who": "platform",
@@ -777,7 +778,7 @@ async def undo(
     if block is None or block.topic_id != room.id or meta.get("action") != "title":
         raise ValidationError("这条记录不是这个话题的自动改名")
     if room.title_source != TitleSource.auto or room.title != meta.get("to"):
-        raise ValidationError("标题之后又改过了，这一次改名已经不能撤销")
+        raise ValidationError(say("titleUndoStale"))
     previous = meta.get("from")
     if not isinstance(previous, str) or not previous:
         raise ValidationError("这条记录没有原标题")

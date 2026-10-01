@@ -207,16 +207,13 @@
      weight. Apple devices get PingFang, Huawei and Xiaomi phones get HarmonyOS
      Sans and MiSans through `system-ui`, desktops that installed either get it
      by name, and Windows falls back to Microsoft YaHei. */
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC',
-    'HarmonyOS Sans SC', 'MiSans', 'Hiragino Sans GB', 'Microsoft YaHei',
-    sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --font-display: 'Bricolage Grotesque', var(--font-sans);
   /* Windows 上前四个都没有，落到裸 `monospace` —— 中文 Windows 把它映射成宋体，
      行内代码就成了衬线字。所以在它前面垫上系统自带的 Cascadia Mono / Consolas。 */
-  --font-mono:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, 'Cascadia Mono',
-    Consolas, 'Liberation Mono', monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, 'Cascadia Mono', Consolas, 'Liberation Mono',
+    monospace;
 
   /* ---- Line-height ladder ----
      One line box per font size, so the vertical rhythm is a property of the SIZE
@@ -1362,5 +1359,16 @@ button:not(.v-btn) {
   *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* 1x 屏（非 Retina，比如 1080p 的外接显示器）上把字体平滑还给系统。Vuetify 在 html
+   上写了 `-webkit-font-smoothing: antialiased`，它关掉 macOS 给笔画的加粗补偿：
+   Retina 上看不出差别，1x 屏上字就细、灰、发虚，13px 的次要灰字尤其明显。
+   高分屏不动。 */
+@media (max-resolution: 1dppx) {
+  html {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
   }
 }

@@ -11,16 +11,20 @@
 // （官网示例、演示房间）拿名字当种子。
 import { computed } from 'vue'
 
+import { t } from '../i18n'
 import { agentTone } from '../utils/avatar'
 
 const props = withDefaults(defineProps<{ size?: number | string; name?: string; handle?: string | null }>(), {
   size: 28,
-  name: '芝士',
+  name: undefined,
   handle: null,
 })
 
+// 没给名字时是默认的那一位：读屏读它的默认名，底色也按这个名字取。
+const shownName = computed(() => props.name || t('work.agentAvatar.defaultName'))
+
 const px = computed(() => Number(props.size))
-const tone = computed(() => agentTone(props.handle || props.name))
+const tone = computed(() => agentTone(props.handle || shownName.value))
 </script>
 
 <template>
@@ -30,7 +34,7 @@ const tone = computed(() => agentTone(props.handle || props.name))
     :height="px"
     viewBox="0 0 100 100"
     role="img"
-    :aria-label="name"
+    :aria-label="shownName"
     :data-tone="tone"
   >
     <path class="cheese-avatar__tile" d="M50 0C88 0 100 12 100 50S88 100 50 100S0 88 0 50S12 0 50 0Z" />

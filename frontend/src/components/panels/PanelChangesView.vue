@@ -21,6 +21,7 @@ import type { MenuAction } from '../common/menuAction'
 import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { phraseLabel } from '../../lib/board'
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
 import CodeEditor from '../CodeEditor.vue'
 import MobileActionSheet from '../common/MobileActionSheet.vue'
@@ -212,7 +213,7 @@ function revisionReadOnly(): boolean {
               :key="task.id"
               :active="props.selectedTask === task.id"
               :title="task.title"
-              :subtitle="task.presentation.display_status"
+              :subtitle="phraseLabel(task.presentation.phrase)"
               @click="emit('open-task', task.id)"
             />
             <v-divider />
@@ -374,7 +375,7 @@ function revisionReadOnly(): boolean {
             @click="emit('open-task', task.id, props.requestedPath ?? undefined)"
           >
             <span class="t-title">{{ task.title }}</span>
-            <span class="source-status">{{ task.presentation.display_status }}</span>
+            <span class="source-status">{{ phraseLabel(task.presentation.phrase) }}</span>
             <span v-if="props.overviewDiffs[task.id]" class="task-file-count">{{
               t('work.room.changes.fileCount', { count: props.overviewDiffs[task.id].length })
             }}</span>

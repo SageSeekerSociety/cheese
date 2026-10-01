@@ -52,6 +52,8 @@ const props = defineProps<{
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
   active?: boolean
   askBusy: boolean
+  /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
+  live?: boolean
   /**
    * 这一条还没落库——已经在屏幕上，正在（或没能）送出去。淡一档，形状不变：
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
@@ -159,7 +161,16 @@ async function onAgentTextClick(e: MouseEvent) {
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
-      <template v-if="runStart">
+      <!-- 头像和名字点下去和正文里的 @chip 一样：去这个人的成员页。点击由房间委派
+           （useChatPanel 的 onMessagesClick 认 data-handle），去处只有一处定义。 -->
+      <button
+        v-if="runStart"
+        type="button"
+        class="im-person"
+        :data-handle="block.author"
+        :aria-label="authorName"
+        :title="authorName"
+      >
         <CheeseAvatar v-if="isAgent" :size="28" :name="authorName" :handle="block.author" />
         <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
            底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
@@ -174,7 +185,7 @@ async function onAgentTextClick(e: MouseEvent) {
         <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(block.author) }">
           {{ avatarInitial(authorName) }}
         </div>
-      </template>
+      </button>
       <!-- 续话没有名字那一行，时间在悬停时出现在头像列里，和正文第一行对齐。 -->
       <span v-else-if="!outgoing" class="im-gutter-time">{{ time }}</span>
     </div>
@@ -184,7 +195,7 @@ async function onAgentTextClick(e: MouseEvent) {
 
     <div class="im-main">
       <div v-if="runStart" class="im-meta">
-        <span class="im-name">{{ authorName }}</span>
+        <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
         <ExternalTag v-if="external && !isAgent" />
         <span class="im-time">{{ time }}</span>
       </div>
@@ -241,6 +252,7 @@ async function onAgentTextClick(e: MouseEvent) {
         :checklist="checklist"
         :updated-at="block.meta?.edited_at ?? block.created_at"
         :edited="edited"
+        :live="!!live"
       />
       <template v-else-if="isAgent">
         <div class="im-text md-content" @click="onAgentTextClick" v-html="agentHtml" />

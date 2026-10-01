@@ -27,13 +27,15 @@ const { data, loading, error } = useCachedResource(
 
 const upcoming = computed<MilestoneFull[]>(() => data.value?.upcoming ?? [])
 const allMilestones = computed<MilestoneFull[]>(() => data.value?.milestones ?? [])
-const errorMessage = computed<string | null>(() => (error.value ? error.value.message || '加载日历失败' : null))
+const errorMessage = computed<string | null>(() =>
+  error.value ? error.value.message || t('project.calendar.loadFailed') : null
+)
 
 // Done milestones (status === 'done'), kept separate to render faded.
 const done = computed<MilestoneFull[]>(() => allMilestones.value.filter((m) => m.status === 'done'))
 
 function fmtDate(d: string | null): string {
-  if (!d) return '待定'
+  if (!d) return t('project.calendar.tbd')
   return d.length >= 10 ? d.slice(0, 10) : d
 }
 
@@ -48,10 +50,10 @@ function daysLeft(d: string | null): number | null {
 
 function countdownLabel(d: string | null): string {
   const n = daysLeft(d)
-  if (n === null) return '日期待定'
-  if (n < 0) return `已过期 ${-n} 天`
-  if (n === 0) return '今天截止'
-  return `还剩 ${n} 天`
+  if (n === null) return t('project.calendar.noDate')
+  if (n < 0) return t('project.calendar.overdue', -n)
+  if (n === 0) return t('project.calendar.dueToday')
+  return t('project.calendar.daysLeft', n)
 }
 
 // Countdown urgency → a neutral/semantic dot class (status as dot, not a chip).
@@ -78,11 +80,11 @@ function countdownDotClass(d: string | null): string {
       <v-card class="mb-6">
         <v-card-title class="d-flex align-center ga-2 t-title pt-4">
           <v-icon size="19" class="c-faint">mdi-calendar-clock</v-icon>
-          即将到来
+          {{ t('project.calendar.upcoming') }}
           <span v-if="upcoming.length" class="chip-neutral">{{ upcoming.length }}</span>
         </v-card-title>
         <v-card-text>
-          <div v-if="upcoming.length === 0" class="c-faint t-body py-2">暂无即将到来的里程碑</div>
+          <div v-if="upcoming.length === 0" class="c-faint t-body py-2">{{ t('project.calendar.noUpcoming') }}</div>
           <v-list v-else density="comfortable" class="py-0">
             <v-list-item v-for="m in upcoming" :key="m.id" class="px-0">
               <template #prepend>
@@ -91,7 +93,9 @@ function countdownDotClass(d: string | null): string {
               <v-list-item-title style="font-weight: 500; color: var(--ink)">
                 {{ m.title }}
               </v-list-item-title>
-              <v-list-item-subtitle class="c-muted"> 截止 {{ fmtDate(m.due_date) }} </v-list-item-subtitle>
+              <v-list-item-subtitle class="c-muted">{{
+                t('project.calendar.due', { date: fmtDate(m.due_date) })
+              }}</v-list-item-subtitle>
               <template #append>
                 <span
                   class="d-inline-flex align-center ga-1"
@@ -110,7 +114,7 @@ function countdownDotClass(d: string | null): string {
       <v-card v-if="done.length">
         <v-card-title class="d-flex align-center ga-2 t-title pt-4">
           <v-icon size="19" class="c-faint">mdi-check-circle-outline</v-icon>
-          已完成
+          {{ t('project.calendar.done') }}
         </v-card-title>
         <v-card-text>
           <v-list density="compact" class="py-0 done-list">

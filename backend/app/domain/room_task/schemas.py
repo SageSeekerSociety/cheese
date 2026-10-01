@@ -19,7 +19,8 @@ class PresentationOut(BaseModel):
     """
 
     column: str
-    display_status: str
+    #: 短语的码（`presentation.Phrase`），字由读者的屏幕按语言画。
+    phrase: str
 
 
 class TaskOut(BaseModel):

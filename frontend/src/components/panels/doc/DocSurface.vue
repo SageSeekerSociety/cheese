@@ -379,7 +379,7 @@ function serializeVisual(): string | null {
   return editor.value ? serializeDoc(editor.value) : null
 }
 
-defineExpose({ installMarkdown, serializeVisual, highlightTurn, highlightNode })
+defineExpose({ editor, installMarkdown, serializeVisual, highlightTurn, highlightNode })
 
 // 空文档里的灰字住在 CSS 的 ::before 里；按当前语言取值，带上引号交给 content。
 const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPlaceholder')))
@@ -486,9 +486,10 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   min-height: 240px;
   max-width: 720px;
   margin: 0 auto;
-  /* 连续正文那一档（.t-reading 15/24）。 */
-  font-size: 15px;
-  line-height: var(--lh-15-reading);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+  caret-color: var(--ink);
   color: var(--text);
 }
 .doc-editor :deep(.doc-prose:focus) {
@@ -540,34 +541,31 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
 .doc-editor :deep(.comment-anchor:hover) {
   background: var(--fill);
 }
-/* ---- Document typography: Feishu-quiet rhythm. Heading sizes step down
-   evenly; vertical space leans UP (more before than after) so headings bind
-   to their section. ---- */
+/* Source-backed document hierarchy, shared by editing and read-only modes. */
+.doc-editor :deep(h1),
+.doc-editor :deep(h2),
+.doc-editor :deep(h3),
+.doc-editor :deep(h4),
+.doc-editor :deep(h5),
+.doc-editor :deep(h6) {
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 12px 0 8px;
+  color: var(--ink);
+}
 .doc-editor :deep(h1) {
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  line-height: var(--lh-18);
-  margin: 1.1em 0 0.4em;
+  font-size: 22px;
 }
 .doc-editor :deep(h2) {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15-reading);
-  margin: 1.15em 0 0.35em;
+  font-size: 18px;
 }
-.doc-editor :deep(h3) {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  margin: 1em 0 0.3em;
-}
+.doc-editor :deep(h3),
 .doc-editor :deep(h4) {
+  font-size: 16px;
+}
+.doc-editor :deep(h5),
+.doc-editor :deep(h6) {
   font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  margin: 0.9em 0 0.25em;
-  color: var(--ink);
 }
 /* The doc starts flush: no phantom gap above a leading heading. */
 .doc-editor :deep(.doc-prose > :first-child) {
@@ -578,8 +576,8 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
 }
 .doc-editor :deep(ul),
 .doc-editor :deep(ol) {
-  margin: 0.4em 0 0.75em;
-  padding-left: 1.5em;
+  margin: 0 0 12px;
+  padding-left: 32px;
 }
 .doc-editor :deep(li) {
   margin: 0.25em 0;
