@@ -859,12 +859,13 @@ HARNESSES: dict[str, Harness] = {
         },
         capabilities={
             Capability.REMOTE_EXECUTION: (
-                "pi 的 read、write、edit、bash 都接受注入的文件与进程操作，平台给 pi"
-                " 的 extension 在 `agent/harness/pi/platform.ts` 的 "
-                "`registerMachineTools` 里把这些操作换成问 runner；runner 经 "
-                "`agent/harness/pi/machine.py` 的 `Machine` 把每一次变成执行机上的一"
-                "条命令（executor 的 shell 控制），走的是 `RemoteClient`，用到才领机"
-                "器，本机不执行。"
+                "pi 的 read、write、edit、bash、ls、find 都接受注入的文件与进程操作，"
+                "平台给 pi 的 extension 在 `agent/harness/pi/platform.ts` 的 "
+                "`registerMachineTools` 里把这些操作换成问 runner；grep 的搜索本身不"
+                "走注入的操作，同一处把它整个换成在执行机上搜（`agent/harness/pi/"
+                "search.py`）。runner 经 `agent/harness/pi/machine.py` 的 `Machine` "
+                "把每一次变成执行机上的一条命令（executor 的 shell 控制），走的是 "
+                "`RemoteClient`，用到才领机器，本机不执行。"
             ),
         },
     ),

@@ -438,6 +438,8 @@ class Runner(runner.Runner[Journal]):
         if operation == "mkdir":
             await asyncio.to_thread(machine.mkdir, path)
             return {}
+        if operation in ("stat", "list", "glob", "grep"):
+            return await asyncio.to_thread(machine.search, params)
         raise ValueError(f"Unknown file operation: {operation}")
 
     async def shell(self, params: dict) -> dict:

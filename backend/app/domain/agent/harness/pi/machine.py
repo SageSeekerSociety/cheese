@@ -20,6 +20,7 @@ Standard library only: this runs in the runner archive on the session host.
 import base64
 import importlib.resources
 import json
+import posixpath
 import re
 import shlex
 import uuid
@@ -342,6 +343,25 @@ class Machine:
     def mkdir(self, path: str) -> None:
         self._check(f"mkdir -p -- {_quote(path)}")
 
+    def search(self, request: dict) -> dict:
+        """One of the looks through the checkout pi's ls, find and grep are
+        built on (`search.py`), run on the machine."""
+        output = self._check(
+            f"exec python3 - {_quote(json.dumps(request))}",
+            stdin=script_text("search").encode(),
+        )
+        answer = json.loads(output)
+        if "error" in answer:
+            raise OSError(answer["error"])
+        if "paths" in answer:
+            # Found relative to where the session asked, so a path is spelled
+            # as the session spells it: not the machine's own checkout when
+            # the session sees a placeholder, nor its copy of the skills.
+            answer["paths"] = [
+                posixpath.join(request["path"], found) for found in answer["paths"]
+            ]
+        return answer
+
     # --- what the project says -------------------------------------------------
 
     def _on_machine(self, script: str) -> dict:
@@ -387,7 +407,7 @@ class Machine:
         if self.settings is None or generation != self.settings_generation:
             self.settings = self._on_machine_text(SETTINGS)
             self.settings_generation = generation
-        for source in self.settings:
+        for source in self.settings or []:
             if not isinstance(source, dict):
                 return True  # unreadable: the executor says why
             for group in (source.get("hooks") or {}).get(event) or []:
@@ -400,13 +420,18 @@ class Machine:
             if event != "PreToolUse":
                 continue
             for rule in (source.get("permissions") or {}).get("deny") or []:
-                if isinstance(rule, str) and tool in DENIED_BY.get(
-                    rule.split("(", 1)[0], (rule.split("(", 1)[0],)
+                if not isinstance(rule, str):
+                    continue
+                name = rule.split("(", 1)[0].strip()
+                if tool in DENIED_BY.get(name, (name,)):
+                    return True
+                if name.startswith("mcp__") and tool.startswith(name.rstrip("*")):
+                    return True
+                # A rule may name its tools with `*`, as the executor reads it.
+                if "*" in name and re.fullmatch(
+                    ".*".join(re.escape(part) for part in name.split("*")), tool
                 ):
                     return True
-                if isinstance(rule, str) and rule.startswith("mcp__"):
-                    if tool.startswith(rule.split("(", 1)[0].rstrip("*")):
-                        return True
         return False
 
     def hooks(

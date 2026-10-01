@@ -394,6 +394,36 @@ def _asked(tmp_path: Path, work: Path, calls: list[tuple[str, dict]]):
     return asyncio.run(session())
 
 
+def test_a_search_reaches_the_hooks_as_claude_codes_grep_and_glob(tmp_path):
+    """pi's grep and find look through the project on the machine as Claude
+    Code's Grep and Glob do, so a hook written for those sees them."""
+    work = _checkout(tmp_path)
+    _asked(
+        tmp_path / "a",
+        work,
+        [
+            ("grep", {"pattern": "TODO", "ignoreCase": True, "limit": 5}),
+            ("find", {"pattern": "*.py", "path": "src"}),
+            ("ls", {"path": "src"}),
+        ],
+    )
+    before = [e for e in _events(work) if e["hook_event_name"] == "PreToolUse"]
+    assert [(e["tool_name"], e["tool_input"]) for e in before] == [
+        (
+            "Grep",
+            {
+                "pattern": "TODO",
+                "-i": True,
+                "head_limit": 5,
+                "output_mode": "content",
+                "-n": True,
+            },
+        ),
+        ("Glob", {"pattern": "*.py", "path": "src"}),
+        ("ls", {"path": "src"}),
+    ]
+
+
 def test_a_call_no_hook_is_written_for_costs_the_machine_nothing(tmp_path):
     """Hooks run on the machine, so asking about one is a round trip there. A
     project with no hooks pays it for no call; one whose hook is for Bash pays

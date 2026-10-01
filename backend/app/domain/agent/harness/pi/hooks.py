@@ -33,6 +33,12 @@ AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
     "bash_start": ("Bash", {"label": "description"}, {"run_in_background": True}),
     "read": ("Read", {"path": "file_path"}, {}),
     "write": ("Write", {"path": "file_path"}, {}),
+    "grep": (
+        "Grep",
+        {"ignoreCase": "-i", "context": "-C", "limit": "head_limit"},
+        {"output_mode": "content", "-n": True},
+    ),
+    "find": ("Glob", {}, {}),
     # The extension's subagent tool (`platform.ts`) takes Claude Code's `Agent`
     # arguments under the name that build used to give it.
     "Task": ("Agent", {}, {}),
@@ -42,7 +48,7 @@ AS_CLAUDE_CODE: dict[str, tuple[str, dict[str, str], dict]] = {
 #: pi's calls that run on the room's machine (`platform.ts`): the ones that
 #: take it, hooks and all. A subagent or a job already started does not.
 REACH_THE_MACHINE = frozenset(
-    {"read", "write", "edit", "bash", "bash_start", "bash_write"}
+    {"read", "write", "edit", "ls", "find", "grep", "bash", "bash_start", "bash_write"}
 )
 
 

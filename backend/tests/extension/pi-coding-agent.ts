@@ -6,6 +6,7 @@
 // the part the extension relies on, and nothing of pi's own formatting.
 
 import { spawn } from "node:child_process";
+import * as path from "node:path";
 
 type Options = {
   onData: (data: Buffer) => void;
@@ -97,6 +98,74 @@ export function createEditTool(cwd: string, settings: { operations: any }) {
       return { content: [{ type: "text", text: "edited" }] };
     },
   };
+}
+
+export function createLsTool(cwd: string, settings: { operations: any }) {
+  return {
+    name: "ls",
+    label: "ls",
+    description: "List a directory",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+    async execute(_id: string, params: any, _signal?: any, _update?: any, ctx?: any) {
+      const dir = resolved(cwd, params.path || ".", ctx);
+      if (!(await settings.operations.exists(dir))) throw new Error(`Path not found: ${dir}`);
+      const names: string[] = await settings.operations.readdir(dir);
+      const shown = [];
+      for (const name of names.sort()) {
+        const stat = await settings.operations.stat(path.join(dir, name));
+        shown.push(stat.isDirectory() ? `${name}/` : name);
+      }
+      return { content: [{ type: "text", text: shown.join("\n") }] };
+    },
+  };
+}
+
+export function createFindTool(cwd: string, settings: { operations: any }) {
+  return {
+    name: "find",
+    label: "find",
+    description: "Find files",
+    parameters: { type: "object", properties: { pattern: { type: "string" } } },
+    async execute(_id: string, params: any, _signal?: any, _update?: any, ctx?: any) {
+      const dir = resolved(cwd, params.path || ".", ctx);
+      if (!(await settings.operations.exists(dir))) throw new Error(`Path not found: ${dir}`);
+      const paths: string[] = await settings.operations.glob(params.pattern, dir, { limit: 1000 });
+      return {
+        content: [{ type: "text", text: paths.map((p) => p.slice(dir.length + 1)).join("\n") }],
+      };
+    },
+  };
+}
+
+// pi's grep searches with ripgrep where pi runs, whatever operations it is
+// given; the extension replaces its execute, so only its face is needed here.
+export function createGrepTool(_cwd: string) {
+  return {
+    name: "grep",
+    label: "grep",
+    description: "Search file contents",
+    parameters: { type: "object", properties: { pattern: { type: "string" } } },
+    async execute(): Promise<never> {
+      throw new Error("pi's own grep searched the session host");
+    },
+  };
+}
+
+export const DEFAULT_MAX_BYTES = 50 * 1024;
+
+export function formatSize(bytes: number) {
+  return `${bytes / 1024}KB`;
+}
+
+export function truncateHead(content: string, _options?: object) {
+  const truncated = Buffer.byteLength(content) > DEFAULT_MAX_BYTES;
+  return { content: truncated ? content.slice(0, DEFAULT_MAX_BYTES) : content, truncated };
+}
+
+export function truncateLine(line: string, maxChars = 500) {
+  return line.length > maxChars
+    ? { text: `${line.slice(0, maxChars)}... [truncated]`, wasTruncated: true }
+    : { text: line, wasTruncated: false };
 }
 
 export function createBashTool(cwd: string, settings: { operations?: any } = {}) {

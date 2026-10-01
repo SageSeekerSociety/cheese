@@ -8,7 +8,7 @@
 // its context handling are its own.
 //
 // pi runs on the session host and the project is on the room's machine, so
-// pi's own tools — read, write, edit, bash — are pi's, with the file and
+// pi's own tools — read, write, edit, bash, ls, find, grep — are pi's, with the file and
 // process operations under them handed to the runner, which runs them there
 // (`machine.py`, #1106). pi's loop is unchanged; where its hands are is not.
 //
@@ -19,8 +19,15 @@
 import {
   createBashTool,
   createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
   createReadTool,
   createWriteTool,
+  DEFAULT_MAX_BYTES,
+  formatSize,
+  truncateHead,
+  truncateLine,
 } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -255,10 +262,11 @@ function placeTheSession(pi: any, spec: Manifest) {
 
 // --- pi's own tools, with their hands on the room's machine --------------------
 //
-// pi's read, write and edit are pi's — their schemas, their limits, their
-// output — built on the file operations below, each of which is one request to
-// the runner and one command on the machine. A path the model gives is resolved
-// against the workspace, as pi resolves it against its own directory.
+// pi's read, write, edit, ls and find are pi's — their schemas, their limits,
+// their output — built on the file operations below, each of which is one
+// request to the runner and one command on the machine (`search.py` for a look
+// through the checkout). A path the model gives is resolved against the
+// workspace, as pi resolves it against its own directory.
 
 function files(spec: Manifest) {
   const asked = (operation: string, filePath: string, more: object = {}) =>
@@ -289,6 +297,111 @@ function files(spec: Manifest) {
       access: async (filePath: string) => {
         await asked("access", filePath, { write: true });
       },
+    },
+    ls: listing(asked),
+    find: {
+      exists: async (filePath: string) => (await asked("stat", filePath)).exists,
+      glob: async (pattern: string, cwd: string, options: { limit: number }) =>
+        (await asked("glob", cwd, { pattern, limit: options.limit })).paths,
+    },
+  };
+}
+
+// pi's ls stats every entry it lists. The listing already says which entries
+// are directories, so those stats are answered from it rather than each being
+// a command on the machine. What it says holds for one ls: each starts by
+// asking whether its directory exists, and that forgets the last one's.
+function listing(asked: (operation: string, filePath: string) => Promise<any>) {
+  const known = new Map<string, { exists: boolean; directory?: boolean }>();
+  const stat = async (filePath: string) => {
+    const seen = known.get(filePath) ?? (await asked("stat", filePath));
+    known.set(filePath, seen);
+    return seen;
+  };
+  return {
+    exists: async (filePath: string) => {
+      known.clear();
+      return (await stat(filePath)).exists;
+    },
+    stat: async (filePath: string) => {
+      const seen = await stat(filePath);
+      if (!seen.exists) throw new Error(`ENOENT: no such file or directory, stat '${filePath}'`);
+      return { isDirectory: () => Boolean(seen.directory) };
+    },
+    readdir: async (dir: string) => {
+      const { entries } = await asked("list", dir);
+      for (const [name, directory] of entries) {
+        known.set(path.join(dir, name), { exists: true, directory });
+      }
+      return entries.map(([name]: [string, boolean]) => name);
+    },
+  };
+}
+
+// pi's grep takes no operations for the search itself: it runs ripgrep where
+// pi runs. So the search is run on the machine, and what it found is written
+// out the way pi's grep writes it — the same lines, limits and notices.
+const GREP_MAX_LINE_LENGTH = 500; // pi's own, which `truncateLine` cuts to
+
+function grepOnTheMachine(spec: Manifest) {
+  const tool = createGrepTool(spec.workspace);
+  return {
+    ...tool,
+    async execute(_id: string, params: any, signal: any) {
+      if (signal?.aborted) throw new Error("Operation aborted");
+      const limit = Math.max(1, params.limit ?? 100);
+      const found = await ask(spec.socket, "files", {
+        operation: "grep",
+        path: path.resolve(spec.workspace, params.path || "."),
+        pattern: params.pattern,
+        glob: params.glob,
+        ignoreCase: params.ignoreCase,
+        literal: params.literal,
+        context: params.context,
+        limit,
+      });
+      if (signal?.aborted) throw new Error("Operation aborted");
+      if (found.matches.length === 0) {
+        return { content: [{ type: "text", text: "No matches found" }], details: undefined };
+      }
+      let linesTruncated = false;
+      const lines: string[] = [];
+      for (const match of found.matches) {
+        if (match.lines.length === 0) {
+          lines.push(`${match.path}:${match.line}: (unable to read file)`);
+          continue;
+        }
+        for (const [number, text] of match.lines) {
+          const cut = truncateLine(text);
+          if (cut.wasTruncated) linesTruncated = true;
+          lines.push(
+            number === match.line
+              ? `${match.path}:${number}: ${cut.text}`
+              : `${match.path}-${number}- ${cut.text}`,
+          );
+        }
+      }
+      const truncation = truncateHead(lines.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+      let output = truncation.content;
+      const details: any = {};
+      const notices: string[] = [];
+      if (found.limited) {
+        notices.push(`${limit} matches limit reached. Use limit=${limit * 2} for more, or refine pattern`);
+        details.matchLimitReached = limit;
+      }
+      if (truncation.truncated) {
+        notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+        details.truncation = truncation;
+      }
+      if (linesTruncated) {
+        notices.push(`Some lines truncated to ${GREP_MAX_LINE_LENGTH} chars. Use read tool to see full lines`);
+        details.linesTruncated = true;
+      }
+      if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+      return {
+        content: [{ type: "text", text: output }],
+        details: Object.keys(details).length > 0 ? details : undefined,
+      };
     },
   };
 }
@@ -350,6 +463,9 @@ function registerMachineTools(pi: any, spec: Manifest) {
     createReadTool(spec.workspace, { operations: operations.read }),
     createWriteTool(spec.workspace, { operations: operations.write }),
     createEditTool(spec.workspace, { operations: operations.edit }),
+    createLsTool(spec.workspace, { operations: operations.ls }),
+    createFindTool(spec.workspace, { operations: operations.find }),
+    grepOnTheMachine(spec),
   ]) {
     pi.registerTool(inWorkspace(spec, tool));
   }

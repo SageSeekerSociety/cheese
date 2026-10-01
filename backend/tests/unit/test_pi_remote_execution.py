@@ -241,3 +241,40 @@ async def test_the_first_reach_of_the_machine_reads_the_repository_first(
             assert (Path(machine["workspace"]) / "runs.txt").read_text() == "once\n"
     finally:
         platform.close()
+
+
+async def test_looking_through_the_project_looks_on_the_machine(
+    tmp_path, machine, monkeypatch
+):
+    """ls, find and grep see the checkout on the machine, under the path the
+    session knows it by, and answer as pi's own tools answer."""
+    checkout = Path(machine["workspace"])
+    (checkout / "src").mkdir()
+    (checkout / "src" / "app.py").write_text("import os\nNEEDLE = 1\n")
+    (checkout / "README.md").write_text("no match here\n")
+    platform = Platform({**machine, "kind": "local", "generation": 1})
+    monkeypatch.setenv("CHEESE_API", platform.url)
+    monkeypatch.setenv("CHEESE_TOKEN", "session-token")
+    placeholder = {
+        "kind": "deferred",
+        "workspace": DEFERRED_WORKSPACE,
+        "lease_path": "/topics/room/sessions/one/work-lease",
+        "mcp_servers": [],
+    }
+    route = script(
+        ("ls", {}),
+        ("find", {"pattern": "*.py"}),
+        ("grep", {"pattern": "NEEDLE"}),
+    )
+    try:
+        async with pi(tmp_path, placeholder, route, api=platform.url) as (
+            runner,
+            model,
+            _,
+        ):
+            await turn(runner, model, "看看项目里有什么", 4)
+            assert "README.md\\nsrc/" in told(model.requests[1])
+            assert "src/app.py" in told(model.requests[2])
+            assert "src/app.py:2: NEEDLE = 1" in told(model.requests[3])
+    finally:
+        platform.close()

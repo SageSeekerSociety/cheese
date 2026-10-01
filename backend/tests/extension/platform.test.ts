@@ -305,6 +305,42 @@ describe("pi 自己的工具，手在执行机上", () => {
     socket.close();
   });
 
+  it("看目录、找文件、搜内容也都经由 runner，在执行机上的项目里", async () => {
+    const socket = await runner((request) => {
+      const { operation, path: where } = request.params;
+      if (operation === "stat") {
+        return { result: { exists: true, directory: !where.endsWith(".md") } };
+      }
+      if (operation === "list") return { result: { entries: [["src", true], ["README.md", false]] } };
+      if (operation === "glob") return { result: { paths: [`${where}/src/app.py`] } };
+      if (operation === "grep") {
+        return {
+          result: {
+            matches: [{ path: "src/app.py", line: 2, lines: [[2, "NEEDLE = 1"]] }],
+            limited: false,
+          },
+        };
+      }
+      return { error: `unexpected ${operation}` };
+    });
+    const { pi } = await load({ socket: socket.address, workspace: "/machine/room" });
+    const at = { cwd: "/session-host" };
+
+    const listed = await pi.call("ls", {}, at);
+    const found = await pi.call("find", { pattern: "*.py" }, at);
+    const grepped = await pi.call("grep", { pattern: "NEEDLE" }, at);
+
+    assert.equal(listed.content[0].text, "README.md\nsrc/");
+    assert.equal(found.content[0].text, "src/app.py");
+    assert.equal(grepped.content[0].text, "src/app.py:2: NEEDLE = 1");
+    assert.ok(socket.asked.every((request) => request.method === "files"));
+    assert.ok(
+      socket.asked.every((request) => request.params.path.startsWith("/machine/room")),
+      "every look was at the project on the machine",
+    );
+    socket.close();
+  });
+
   it("没有 runner 可问时，工具失败，而不是落到这台机器上", async () => {
     const { pi } = await load({ socket: "/nonexistent/runner.sock" });
     await assert.rejects(pi.call("write", { path: "x", content: "y" }));
