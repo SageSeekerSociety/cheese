@@ -16,7 +16,15 @@ The ordinary-message case delays isolated stdin after actual Ask W1 admission. A
 
 `ask-history-public-first.txt` preserves the earlier 3 failures, 6.55s, exit 1 at `5c3d5093`: singular `agent_instance.service` import failed before native setup. `2f9272ab` fixes the module name. This is not a product negative control.
 
-Root's independent narrow review closed the two initial P2 defects on 2026-10-01. A further multi-input historical ordering defect remains: result inputs are UUID-sorted but retained echoes are arrival-ordered; strict dataclass tuple comparison wrongly rejects equal sets. Its correction/regression is pending. Complete original-executor A recovery, fresh-interpreter Ask HTTP recovery, native CLI/group cutover and full UI/PDF remain release gates. PR #2213 stays draft; migration is not separately releasable.
+Root's independent narrow review closed the two initial P2 defects on 2026-10-01. Complete original-executor A recovery, fresh-interpreter Ask HTTP recovery, native CLI/group cutover and full UI/PDF remain release gates. PR #2213 stays draft; migration is not separately releasable.
+
+### Multi-input historical identity ordering
+
+Production correction `17603c76` compares exact unordered input sets while preserving every other WorkCompletion field and rejecting duplicate result inputs. Receipt callbacks follow identity validation. Fixed test source `bae169458ec48d6f821f6ee50ebf18b00c24e9a1`; compare `5976f80a...bae16945`. `ask-history-multi-third.txt`/JSON: 3 passed, 8 deselected, 15 test-JWT warnings, 10.54s, exit 0. Only the three new multi-input cases ran; the previous three accepted historical/public-admission cases were not repeated.
+
+Each case generates an actual pinned-Claude execution with two native inputs: initial high UUID, then busy-steer low UUID. Real mirror echoes arrive high→low; the clean native result records low→high. After PostgreSQL settlement and mirror landing, only the two completion timestamps are reset to NULL to model upgraded legacy rows. Replacement ChatService/runtime in the same interpreter runs recover_sessions/reconcile_history and real PostgreSQL completion callbacks. Valid history repairs both rows without moving landing, sending, steering or replacing the native process. A retained result with a foreign completion session remains quarantined; a result omitting one input is refused. Both corrupt cases keep the two rows unfinished and durable admission blocked. These results do not prove a fresh backend process or shared-runner upgrade.
+
+Original failures are retained, not counted as negative controls: `ask-history-multi-first` at `17603c76` failed before two-input execution because the fixture omitted Opening; `ask-history-multi-second` at `af54d36a` exited 1 with `.FE` and a later initial-WebSocket timeout, without a final pytest summary. `ask-history-multi-session-diagnostic` at evidence-only `e1c758b9` isolated the erroneous expected ValueError: foreign-session history was correctly quarantined instead. pytest's failed raises assertion crossed the AnyIO portal as a BaseException, closing the portal and producing teardown errors. `bae16945` checks persistent completion/admission state with assertions outside the portal; production identity validation was not relaxed.
 
 ## Primitive baseline
 
