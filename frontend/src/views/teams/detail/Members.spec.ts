@@ -8,9 +8,11 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+const replace = vi.fn()
 vi.mock('vue-router', async () => ({
   ...(await vi.importActual<typeof import('vue-router')>('vue-router')),
   useRoute: () => ({ params: { handle: 'crew' }, query: {} }),
+  useRouter: () => ({ replace }),
 }))
 vi.mock('@/network/api/teams', () => ({
   TeamsApi: {
@@ -72,12 +74,6 @@ describe('who manages the team link', () => {
     await waitFor(() => screen.getByText('成员列表'))
     expect(screen.queryByText('小队链接管理')).toBeNull()
   })
-
-  it('nobody on a personal team', async () => {
-    mount({ role: 'OWNER', personal: true })
-    await waitFor(() => screen.getByText('成员列表'))
-    expect(screen.queryByText('小队链接管理')).toBeNull()
-  })
 })
 
 describe('bringing people in', () => {
@@ -87,12 +83,15 @@ describe('bringing people in', () => {
     expect(screen.getByText('加入申请')).toBeTruthy()
     expect(screen.getByText('已发送邀请')).toBeTruthy()
   })
+})
 
-  it('the owner of a personal team is offered none of it', async () => {
-    mount({ role: 'OWNER', personal: true })
-    await waitFor(() => screen.getByText('成员列表'))
+describe('under your own name', () => {
+  it('there is no one to list or bring in: the page sends you to the projects', async () => {
+    replace.mockClear()
+    mount({ role: 'OWNER', personal: true, handle: 'linxia' })
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({ name: 'TeamsDetailDefault', params: { handle: 'linxia' } })
+    )
     expect(screen.queryByRole('button', { name: /邀请成员/ })).toBeNull()
-    expect(screen.queryByText('加入申请')).toBeNull()
-    expect(screen.queryByText('已发送邀请')).toBeNull()
   })
 })

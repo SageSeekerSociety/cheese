@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 小队的项目 (项目归团队, v4): every project this team owns — the default tab of
-// the team page, personal team included (个人项目 = 个人团队的项目). 新建项目
+// the team page, a person's own projects included (they sit in a team of one). 新建项目
 // opens the app-wide dialog with this team preselected: a project cannot be
 // renamed once made, so it has to get its name here, and it has to land in
 // THIS team or the rest of the team never sees it.
@@ -59,7 +59,7 @@ watch(teamId, load)
     <div class="mb-4 d-flex align-start">
       <div>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          {{ t('teams.projects.subtitle') }}
+          {{ t(teamData?.personal ? 'teams.projects.ownSubtitle' : 'teams.projects.subtitle') }}
         </p>
       </div>
       <v-spacer />

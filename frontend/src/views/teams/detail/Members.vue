@@ -310,7 +310,7 @@
 import type { Team, TeamMember, TeamMembershipApplication } from '@/types'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -341,9 +341,19 @@ const isSelfOwner = computed(() => {
 
 // 看服务端给的 role，不看 admins.examples：那份名单最多只有 3 个人，第 4 个管理员会被当成普通成员。
 const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
-// 邀请、加入链接、加入申请：把人带进团队的几样。个人团队只有它的主人，后端一概拒，
-// 这里也就一样都不给。移出成员不在其内：那是往外走，不是往里进。
+// 邀请、加入链接、加入申请：把人带进团队的几样。移出成员不在其内：那是往外走，不是往里进。
 const canBringPeopleIn = computed(() => isSelfAdmin.value && !teamData.value?.personal)
+
+// 自己名下只有自己，没有成员这一页（侧栏里也不列）：直接输地址进来的，带回它的项目。
+const router = useRouter()
+watch(
+  () => teamData.value?.personal,
+  (own) => {
+    if (own && teamData.value)
+      void router.replace({ name: 'TeamsDetailDefault', params: { handle: teamData.value.handle } })
+  },
+  { immediate: true }
+)
 
 const updateActiveTabFromRoute = () => {
   if (route.query.tab && ['members', 'requests', 'invitations'].includes(route.query.tab as string)) {
