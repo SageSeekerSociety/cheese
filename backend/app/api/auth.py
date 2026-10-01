@@ -679,7 +679,7 @@ class ActorResolver:
         """Require a verified member of this team.
 
         A team's project list is not a directory: it carries every project's
-        ``id``, and the id is the key to that project's roster, decisions and
+        ``id``, and the id is the key to that project's roster, documents and
         usage. So listing somebody else's team leaks whatever those routes
         expose, which is why this guard sits alongside ``authorize_project``
         rather than being folded into a milder "is anyone logged in" check.

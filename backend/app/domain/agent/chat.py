@@ -323,8 +323,8 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
-    # 注入用的项目总览：① 从总览文档里取，②~⑤ 从结构化数据现拼（#1889 第 1 条），
-    # 不是文档原文。每个房间都有 ①；②~⑤ 只在总览房间拼，别处按需自己查。
+    # 注入用的项目总览：① 从总览文档里取，②~④ 从结构化数据现拼（#1889 第 1 条），
+    # 不是文档原文。每个房间都有 ①；②~④ 只在总览房间拼，别处按需自己查。
     #
     # 总览房间自己那一轮没有 `doc_text` —— 这一份就是它的实况文档，同一份东西说
     # 两遍只会让模型以为是两份。
@@ -385,7 +385,6 @@ MEMORY_TURNS_KEPT = 512
 # those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
 # to them is the same fact told twice, worse.
 _ACTION_LABEL = {
-    "decision": "actionDecision",
     "topics": "actionTopics",
     "milestone": "actionMilestone",
     "notify": "actionNotify",
@@ -3940,7 +3939,7 @@ class ChatService:
             )
             if project is not None and project.root_topic_id is not None:
                 # 项目总览（#1889 第 1 条）：注入的不是文档原文，而是「① 从文档
-                # 来 + ②~⑤ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
+                # 来 + ②~④ 从结构化数据现拼」的那一份。手抄进正文的旧内容因此读
                 # 不到——写在那儿的副本没人读，也就没人再写。
                 #
                 # 在总览房间它同时就是本房间的实况文档：同一份东西说两遍，模型会
@@ -4816,7 +4815,7 @@ class ChatService:
                 else None
             )
             overview_doc = overview_root.content if overview_root else ""
-            # 只要第 ① 块（#1889 第 1 条）：②~⑤ 由结构化数据现拼，手抄进正文的
+            # 只要第 ① 块（#1889 第 1 条）：②~④ 由结构化数据现拼，手抄进正文的
             # 那些副本是旧账，照抄一份进去等于把两个版本并排交给写总结的人。
             brief = project_brief(overview_doc)
             agents = AgentInstanceService(session)

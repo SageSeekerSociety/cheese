@@ -289,7 +289,6 @@
         "due": "Due {date}",
         "noDue": "No date"
       },
-      "decisionFrom": "From “{topic}”",
       "failed": "This part could not be loaded"
     },
     "accept": {
@@ -375,7 +374,6 @@
       },
       "action": {
         "doc": "View doc",
-        "decision": "View decisions",
         "split": "View task",
         "undo": "Undo",
         "milestone": "View calendar",

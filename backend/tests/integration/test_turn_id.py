@@ -33,16 +33,16 @@ def test_turn_blocks_share_one_turn_id(client):
 
 
 def test_cheese_created_block_inherits_turn_from_header(client):
-    # A cheese REST write (a decision) tags its block with the X-Cheese-Turn id
+    # A cheese REST write (a weekly report) tags its block with the X-Cheese-Turn id
     # via the ambient contextvar — no per-handler plumbing (R4 cheese-side).
     tid = _topic(client)
     turn = str(uuid.uuid4())
     r = client.post(
-        f"/topics/{tid}/decision",
-        json={"decision": "Recall@10"},
+        f"/topics/{tid}/weekly",
+        json={"body": "Recall@10"},
         headers={"X-Cheese-Token": SANDBOX_TOKEN, "X-Cheese-Turn": turn},
     )
     assert r.status_code == 200
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-    decision = next(b for b in blocks if b["kind"] == "decision")
-    assert decision["turn_id"] == turn
+    weekly = next(b for b in blocks if b["kind"] == "weekly")
+    assert weekly["turn_id"] == turn

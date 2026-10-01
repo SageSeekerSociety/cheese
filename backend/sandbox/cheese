@@ -400,13 +400,6 @@ PLATFORM_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
-            "cheese_decision",
-            "记一条「定了什么、为什么」的决策，别把进度当决策记。"
-            "平台会在对话里出一张卡，不用再说「已记录」。",
-            {"text": _text("决策内容")},
-            ["text"],
-        ),
-        _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
             "to 不填是发给这个房间名册上的人（不含芝士），不是项目里所有人。"
@@ -691,12 +684,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
         where = urllib.parse.quote(topic)
         return {"method": "GET", "path": f"/projects/{project}/library?topic={where}"}
-    if tool == "cheese_decision":
-        return {
-            "method": "POST",
-            "path": f"/topics/{topic}/decision",
-            "body": {"decision": args["text"]},
-        }
     if tool == "cheese_title":
         path = (
             f"/topics/{topic}/tasks/{args['task']}/title"
@@ -1276,7 +1263,6 @@ _SAY = {
         if a.get("task")
         else f"话题标题已设为：{a['text']}"
     ),
-    "cheese_decision": lambda a, d, e: "已记入决策记录。",
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,

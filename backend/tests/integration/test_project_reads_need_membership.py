@@ -40,7 +40,7 @@ from tests.integration.test_team_member_enters_team_project import (
 READS = {
     "项目本身": "/projects/{pid}",
     "成员名册": "/projects/{pid}/members",
-    "决策记录": "/projects/{pid}/decisions",
+    "周报集": "/projects/{pid}/weeklies",
     "资源用量": "/projects/{pid}/usage",
     "任务列表": "/projects/{pid}/tasks",
     "贡献聚合（AI 摘要）": "/projects/{pid}/contributions",

@@ -124,7 +124,6 @@ const splitTask = computed(() => {
 // 哪些资源的行尾带一颗「去看看」按钮，以及那颗按钮上写什么（目录里的键）。
 const ACTION_META: Record<string, { btn: string }> = {
   doc: { btn: 'work.room.notice.action.doc' },
-  decision: { btn: 'work.room.notice.action.decision' },
   topics: { btn: '' },
   split: { btn: 'work.room.notice.action.split' },
   // 平台自动改了标题：行尾是撤销，不是「去看看」，见下面的模板分支。
