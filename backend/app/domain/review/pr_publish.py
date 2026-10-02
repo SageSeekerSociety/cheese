@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.domain.block.notice_text import say
 from app.domain.project.forge import (
+    ForgeRateLimitedError,
     background_may_use_forge,
     branch_head,
     proposal_client,
@@ -219,15 +220,28 @@ async def sweep_draft_prs(
         return counts
     async with session_factory() as session:
         wanted = [
-            t.id
+            (t.id, t.project_id)
             for t in await TaskService(session).open_without_pr()
             if project_id is None or t.project_id == project_id
         ]
-    for task_id in wanted:
+    # A project whose forge refused for quota in this pass: every later task of
+    # it would meet the same refusal, so they wait for the next pass.
+    out_of_quota: set[uuid.UUID] = set()
+    for task_id, task_project in wanted:
+        if task_project in out_of_quota:
+            counts["skipped"] += 1
+            continue
         try:
             async with session_factory() as session:
                 opened = await _draft_pr_for_one_task(session, task_id)
                 await session.commit()
+        except ForgeRateLimitedError as exc:
+            counts["failed"] += 1
+            out_of_quota.add(task_project)
+            logger.warning(
+                "draft PRs of project %s wait for the next pass: %s", task_project, exc
+            )
+            continue
         except Exception:  # noqa: BLE001 — one bad task must not end the sweep
             counts["failed"] += 1
             logger.warning("draft PR not opened for task %s", task_id, exc_info=True)

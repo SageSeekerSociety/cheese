@@ -438,6 +438,7 @@ class _FakeTokens:
 
     minted_write = 0
     minted_read = 0
+    installation_id = 1
     #: What GitHub's `/rate_limit` says is left of the installation's hour.
     quota_left = 5000
 

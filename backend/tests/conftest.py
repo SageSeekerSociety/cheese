@@ -929,6 +929,22 @@ def _no_background_doc_nudge(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _forge_memory_per_test(monkeypatch) -> None:
+    """What GitHub said about an installation's quota, and the answers kept for
+    conditional reads, are process-wide memory (`core/forge_quota.py`,
+    `core/forge_etags.py`). A refusal or an answer one test provoked must not
+    reach whichever test runs next."""
+    from collections import OrderedDict
+
+    from app.core import forge_etags, forge_quota
+
+    monkeypatch.setattr(forge_etags, "_kept", OrderedDict())
+    monkeypatch.setattr(forge_quota, "_owners", {})
+    monkeypatch.setattr(forge_quota, "_readings", {})
+    monkeypatch.setattr(forge_quota, "_refused_until", {})
+
+
+@pytest.fixture(autouse=True)
 def _redis_client_per_loop() -> Iterator[None]:
     """No test may inherit the redis client another test built.
 

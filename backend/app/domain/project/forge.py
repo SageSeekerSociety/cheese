@@ -3,9 +3,7 @@
 import hashlib
 import hmac
 import logging
-import math
 import re
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -16,6 +14,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import forge_quota
 from app.core.config import settings
 from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
@@ -71,9 +70,7 @@ async def background_may_use_forge(
 ) -> bool:
     """Whether background work for this project may call its forge now.
 
-    Only a GitHub App installation has a shared quota to protect. When GitHub
-    cannot say how much is left, the work goes ahead and meets whatever GitHub
-    answers it with, as it did before this check existed.
+    Only a GitHub App installation has a shared quota to protect.
     """
     binding = await binding_for_project(project_id, session)
     if binding is None or binding.kind != "github_app":
@@ -81,10 +78,33 @@ async def background_may_use_forge(
     tokens = await github_app_tokens_for_project(project_id, session)
     if tokens is None:
         return True
+    return await installation_serves_background(tokens)
+
+
+async def installation_serves_background(tokens: GitHubAppTokens) -> bool:
+    """Whether background work may spend this installation's quota now.
+
+    No while GitHub's last word on the installation was a quota refusal and the
+    time it named has not come, and no while its last report put the quota
+    under the share kept for people and the hour has not reset: in both cases
+    GitHub has already answered, so asking again would only spend a request on
+    hearing it twice. Otherwise `GET /rate_limit` (which does not count against
+    the quota) says how much is left. When GitHub cannot say, the work goes
+    ahead and meets whatever GitHub answers it with — and that answer, if it
+    is a refusal, closes the installation for the next caller.
+    """
+    installation = tokens.installation_id
+    if forge_quota.refused_until(installation) is not None:
+        return False
+    seen = forge_quota.reading(installation)
+    if seen is not None and seen.remaining < seen.limit * KEPT_FOR_PEOPLE:
+        return False
     try:
         quota = await tokens.core_quota()
     except (GitHubAppError, httpx.HTTPError):
         return True
+    if forge_quota.refused_until(installation) is not None:
+        return False
     if quota is None:
         return True
     remaining, limit = quota
@@ -223,7 +243,7 @@ async def repository_data(
         raise GatewayUnavailableError("暂时无法连接代码仓库，请稍后重试") from exc
     if response.status_code == 404:
         return None
-    if _rate_limited(response):
+    if forge_quota.rate_limited(response):
         raise ForgeRateLimitedError(_rate_limit_message(response))
     if response.is_error:
         raise GatewayUnavailableError(
@@ -243,25 +263,9 @@ class ForgeRateLimitedError(GatewayUnavailableError):
     retryable = True
 
 
-def _rate_limited(response: httpx.Response) -> bool:
-    # GitHub answers an exhausted quota with 403 (or 429) and says so in the
-    # headers; a 403 without them is a real permission refusal.
-    return response.status_code in (403, 429) and (
-        response.headers.get("x-ratelimit-remaining") == "0"
-        or "retry-after" in response.headers
-    )
-
-
 def _rate_limit_message(response: httpx.Response) -> str:
-    wait_s: float | None = None
-    if retry_after := response.headers.get("retry-after"):
-        wait_s = float(retry_after) if retry_after.isdigit() else None
-    elif reset := response.headers.get("x-ratelimit-reset"):
-        wait_s = float(reset) - time.time() if reset.isdigit() else None
-    if wait_s is None:
-        return "代码仓库的 API 额度暂时用完了，稍后自动恢复，届时重试即可"
-    minutes = max(1, math.ceil(wait_s / 60))
-    return f"代码仓库的 API 额度暂时用完了，约 {minutes} 分钟后恢复，届时重试即可"
+    wait = forge_quota.wait_text(forge_quota.wait_seconds(response))
+    return f"代码仓库的 API 额度暂时用完了，{wait}，届时重试即可"
 
 
 async def branch_head(
