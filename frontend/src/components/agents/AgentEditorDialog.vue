@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import type { AgentFieldChoice } from '../../api'
 import type { AgentConfiguration, AgentType, ProjectAgent } from '../../cx_types'
+import type { AgentFieldChoice } from '../../lib/modelChoices'
 
 import { computed, ref, toRaw, watch } from 'vue'
 
 import { createProjectAgent, getProjectDefaultModel, updateProjectAgent } from '../../api'
 import { t } from '../../i18n'
+import { modelChoiceProps } from '../../lib/modelChoices'
 import { displayNameError, handleError } from '../../lib/projectAgents'
 import AdaptiveDialog from '../common/AdaptiveDialog.vue'
 
@@ -80,7 +81,7 @@ function close() {
 async function save() {
   submitted.value = true
   if (nameProblem.value || handleProblem.value) return
-  if (specifyModel.value && !choices.value.some((choice) => choice.id === draft.value.model)) {
+  if (specifyModel.value && !choices.value.some((choice) => choice.id === draft.value.model && choice.allowed)) {
     error.value = t('work.models.chooseAvailable')
     return
   }
@@ -163,6 +164,7 @@ async function save() {
       :items="choices"
       item-title="label"
       item-value="id"
+      :item-props="modelChoiceProps"
       :label="t('work.models.agent')"
       :loading="modelsLoading"
       :disabled="modelsLoading || saving"

@@ -314,8 +314,17 @@ class AgentInstanceService:
         project = await self._session.get(Project, project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        if config.model not in {item["id"] for item in model_choices(project.settings)}:
+        choice = next(
+            (c for c in model_choices(project.settings) if c["id"] == config.model),
+            None,
+        )
+        if choice is None:
             raise ValidationError(say("modelUnavailable"))
+        from app.domain.usage.services import UsageService
+
+        access = await UsageService(self._session).model_access(project.team_id)
+        if not access.allows(choice["tier"]):
+            raise ValidationError(say("modelNotInPlan", label=choice["label"]))
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
         """What this agent is called. Its ``handle`` is deliberately untouched:

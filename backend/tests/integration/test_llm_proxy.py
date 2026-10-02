@@ -297,7 +297,6 @@ async def test_admission_tells_the_room_once_for_a_refused_turn_in_flight(client
     (#715) — asking five times must still post the room's exhaustion notice
     exactly once, on the turn admission actually refused."""
     from app.domain.block.repositories import BlockRepository
-    from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
     from tests.turn_log import open_turn
 
     pid = _make_project(client)
@@ -317,9 +316,54 @@ async def test_admission_tells_the_room_once_for_a_refused_turn_in_flight(client
 
     async with client.test_factory() as session:
         blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
-    notices = [b for b in blocks if b.content == CREDITS_EXHAUSTED_EVENT]
+    notices = [b for b in blocks if "额度已用完" in b.content]
     assert len(notices) == 1
     assert notices[0].turn_id == turn_id
+
+
+@pytest.mark.anyio
+async def test_a_refused_subagent_tells_the_room_when_the_credits_come_back(client):
+    """A 分身 refused mid-turn gets the same sentence a refused turn does: what
+    ran out and the day it resets, not a bare "spent"."""
+    from datetime import UTC, datetime
+
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.usage.ledger import Ledger, month_end, month_of, payer_for_project
+    from tests.turn_log import open_turn
+
+    pid = _make_project(client)
+    topic_id = client.post("/topics", json={"project_id": pid, "title": "T"}).json()[
+        "data"
+    ]["id"]
+    client.portal.call(
+        lambda: open_turn(client.test_request_factory, uuid.UUID(topic_id))
+    )
+    async with client.test_factory() as session:
+        await set_free_plan_credits(session, 1)
+        payer = await payer_for_project(session, uuid.UUID(pid))
+        await Ledger(session).record(
+            payer,
+            credits=1,
+            model="m",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            route="gateway",
+        )
+        await session.commit()
+    token = mint_scoped_token(project_id=pid, topic_id=topic_id)
+    r = client.post(
+        "/llm/admission",
+        headers={"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"},
+    )
+    assert r.json()["data"]["allow"] is False
+
+    async with client.test_factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
+    resets = month_end(month_of(datetime.now(UTC)))
+    notices = [b.content for b in blocks if "额度已用完" in b.content]
+    assert len(notices) == 1
+    assert f"{resets.month}月{resets.day}日重置" in notices[0]
 
 
 @pytest.mark.anyio

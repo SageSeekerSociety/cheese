@@ -77,3 +77,22 @@ it('shows the deployment default while staging a reset and saves null', async ()
   await fireEvent.click(view.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(api.setProjectDefaultModel).toHaveBeenCalledWith('p', null, null))
 })
+
+it('names the plan a model needs and does not let it be chosen', async () => {
+  api.getProjectDefaultModel.mockResolvedValue({
+    ...state,
+    deployment_default: 'deepseek-flash',
+    choices: [
+      { id: 'sonnet', label: 'Claude Sonnet 5', allowed: false, requires_plan: 'Reserve' },
+      { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', allowed: true, requires_plan: null },
+    ],
+  })
+  const view = mount()
+  const save = await view.findByRole('button', { name: '保存' })
+  await fireEvent.mouseDown((await view.findAllByRole('combobox'))[0]!)
+  const option = await view.findByRole('option', { name: /Claude Sonnet 5/ })
+  expect(option.textContent).toContain('Reserve')
+  await fireEvent.click(option)
+  expect(save.hasAttribute('disabled')).toBe(true)
+  expect(api.setProjectDefaultModel).not.toHaveBeenCalled()
+})

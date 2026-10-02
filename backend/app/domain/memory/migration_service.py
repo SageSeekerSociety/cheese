@@ -75,6 +75,7 @@ from app.domain.memory.store import live_entries
 from app.domain.project.services import ProjectService
 from app.domain.service_keys import KeySpec, service_key
 from app.domain.topic.services import TopicService
+from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,8 @@ logger = logging.getLogger(__name__)
 #: 是搬迁写的——不是某个人、也不是某个 agent 的判断。写成某个人的 handle，那条
 #: 记忆就有了一个它没说过话的作者。
 MIGRATION_AUTHOR = "memory-migration"
+#: ``resource_usage.kind`` of the calls a migration makes.
+USAGE_KIND = "memory_migration"
 
 #: 报告进房间时最多带多少字。房间那句话是给人扫一眼的，整份报告（可能几十 KB）
 #: 留在 `memory_migration_plans.report` 里，接口和脚本都读得到。
@@ -341,6 +344,14 @@ class MemoryMigrationService:
                 )
             except GatewayCallError as exc:
                 raise BadRequestError(f"问模型这一步失败了：{exc}") from exc
+            # 搬迁是平台自己做的事，花销记在平台头上，不扣任何团队（#2233）。
+            await Ledger(self._session).record_platform(
+                kind=USAGE_KIND,
+                model=chat.model,
+                input_tokens=answer.usage.prompt_tokens,
+                output_tokens=answer.usage.completion_tokens,
+                cost_usd=answer.cost_usd,
+            )
             try:
                 decisions += decode_answer(answer.content)
             except MigrationError as exc:

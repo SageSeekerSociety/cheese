@@ -188,8 +188,10 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # "subscription" (metering proxy), "native" (profile-pinned credentials).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
-    # The team that paid, and the credits charged for this row (#2397). NULL
-    # and 0 on rows written before they were recorded.
+    # The team that paid, and the credits charged for this row (#2397). A row
+    # with no team, no project and no person is a call the platform made on its
+    # own and paid for (``Ledger.record_platform``); ``kind`` names the job.
+    # Rows written before the team was recorded carry a project or a person.
     team_id: Mapped[int | None] = mapped_column(
         ForeignKey("team.id", ondelete="CASCADE"), nullable=True
     )

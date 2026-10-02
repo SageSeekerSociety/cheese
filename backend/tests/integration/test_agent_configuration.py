@@ -4,7 +4,12 @@ from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
 from app.domain.project.services import ProjectService
-from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    put_on_plan,
+    registered,
+    session_auth_headers,
+)
 
 
 def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
@@ -54,7 +59,16 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
 def test_a_saved_agent_can_override_model_but_not_harness(client):
     """A teammate can select a model while execution settings remain project-owned."""
     retired = {"harness", "effort"}
-    pid = post_project(client, json={"name": "Models"}).json()["data"]["id"]
+    project = post_project(client, json={"name": "Models"}).json()["data"]
+    pid = project["id"]
+
+    # Opus is a subscription model, which Free leaves out.
+    async def reserve() -> None:
+        async with client.test_request_factory() as session:
+            await put_on_plan(session, project["team_id"], "reserve")
+            await session.commit()
+
+    client.portal.call(reserve)
     default = client.get(f"/projects/{pid}/agents").json()["data"]["data"][0]
     assert not retired & set(default["configuration"])
     assert default["configuration"]["model"] is None
