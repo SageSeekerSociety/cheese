@@ -95,6 +95,14 @@
         <p v-if="sourceTask" class="t-body c-muted mb-3">
           {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
         </p>
+        <!-- 从一道题建项目时，先把「会继承什么」摆出来 (#944)：资源包、合成后的
+             指导（连来自哪一层）、以及会被带上的资料。建之前看得见，才有得选。 -->
+        <TaskInheritance
+          v-if="sourceTask"
+          class="mb-3"
+          :inheritance="sourceInheritance"
+          :loading="sourceInheritanceLoading"
+        />
         <ResourceLimitsNotice
           v-if="newProjectDialog"
           :own="newProjectTeams.find((team) => team.id === newProjectTeamId)?.personal"
@@ -293,6 +301,8 @@ import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
+import TaskInheritance from '@/views/tasks/components/TaskInheritance.vue'
+import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
 
 // Activate the theme runtime app-wide. First paint is already correct without
 // this (the boot script in index.html stamps <html data-theme>, and Vuetify
@@ -600,6 +610,11 @@ const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
 const { open: newProjectDialog, presetTeam, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
+// 从一道题建项目时那份「会继承什么」(#944)。取数按 `sourceTask` 走：对话框换个
+// 来源就重新问一次，没来源时不发请求。
+const { inheritance: sourceInheritance, loading: sourceInheritanceLoading } = useTaskInheritance(
+  () => sourceTask.value?.id
+)
 const newProjectName = ref('')
 const newProjectStep = ref(1)
 const newProjectAgentName = ref('')

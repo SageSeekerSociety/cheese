@@ -154,6 +154,10 @@
             </template>
           </v-checkbox>
         </div>
+
+        <!-- 确认领取之前，把「会继承什么」摆出来 (#944)：资源包、合成后的指导
+             （连来自哪一层）、以及会被带上的资料。这就是决定之前该看的那一页。 -->
+        <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
       </v-card-text>
       <v-card-actions class="pa-4 pt-0">
         <v-spacer></v-spacer>
@@ -230,7 +234,10 @@ import type { Task, Team, TeamTaskEligibility } from '@/types'
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useTaskInheritance } from '../composables/useTaskInheritance'
 import { useEvents } from '../events'
+
+import TaskInheritance from './TaskInheritance.vue'
 
 const { t } = useI18n()
 
@@ -252,6 +259,10 @@ const props = defineProps<{
 
 // 使用事件总线
 const events = useEvents()
+
+// 领取确认框里那份「会继承什么」(#944)。`taskData` 先是 null（详情还没回来），
+// 到位后 watch 自己会去取。
+const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => props.taskData?.id)
 
 // 各种对话框的状态
 const verifyInfoDialogOpen = ref(false)
