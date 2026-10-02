@@ -32,7 +32,7 @@ export function useAdminSections() {
   const { t } = useI18n()
 
   // 顺序：每天要看的队列在最前；看数的三块（看板、功能数据、棘轮）挨着；模型和看板看的
-  // 是同一条链；飞书应用是只填一次的设置，排在最后。
+  // 是同一条链，方案与额度紧跟着模型；飞书应用是只填一次的设置，排在最后。
   const sections: AdminSection[] = [
     {
       to: '/admin/queue',
@@ -67,6 +67,13 @@ export function useAdminSections() {
       name: 'AdminModels',
       icon: 'mdi-cube-outline',
       label: () => t('navigation.admin.models'),
+      badge: false,
+    },
+    {
+      to: '/admin/credits',
+      name: 'AdminCredits',
+      icon: 'mdi-wallet-outline',
+      label: () => t('navigation.admin.credits'),
       badge: false,
     },
     {

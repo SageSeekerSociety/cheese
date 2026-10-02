@@ -35,7 +35,8 @@
     "members": "成员",
     "integrations": "飞书应用",
     "featureStats": "功能数据",
-    "ratchet": "棘轮"
+    "ratchet": "棘轮",
+    "credits": "方案与额度"
   },
   "userMenu": {
     "profile": "个人主页",
