@@ -1,4 +1,4 @@
-"""block 领域的**项目级**读入口：项目整片意义上的周报集。
+"""block 领域的读入口：房间产出、项目批次事实与反应摘要。
 
 ## 为什么这里要有一层，而不是让路由自己去摸 repository
 
@@ -8,8 +8,8 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 处理函数手上就有 session（见 `tests/unit/test_domain_import_guard.py` 的开头）。
 
 所以这里不是搬运，是**出口**：项目级的读法有名字，交出去的是 `BlockOut`
-（对外的形状），不是 ORM 行。路由只认 `weeklies_for_project` 和
-`tasks_awaiting_an_answer`，不再认识 `BlockRepository`，也就不会再有人从路由
+（对外的形状）或反应摘要，不是 ORM 行。调用方只认这里的具名查询，
+不再认识 `BlockRepository`，也就不会再有人从调用方
 那边多摸一个方法出来。
 
 这一层只做折叠，不做判断：顺序（最新在前）在 repository 里已经定了，这里原样
@@ -68,3 +68,14 @@ async def tasks_awaiting_an_answer(
     does not explicitly begin, commit or roll back.
     """
     return await BlockRepository(db).tasks_awaiting_an_answer(list(task_ids))
+
+
+async def reaction_summaries_for_blocks(
+    db: AsyncSession, block_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[dict]]:
+    """Read ordered reaction counts and authors without exposing block storage.
+
+    The caller owns authorization and the transaction. Native receipts use the
+    same session so their effects and these summaries commit together.
+    """
+    return await BlockRepository(db).reactions_for_blocks(block_ids)

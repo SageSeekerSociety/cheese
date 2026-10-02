@@ -4,7 +4,7 @@ import time
 import uuid
 
 from app.core.errors import ValidationError
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.agent import fence_send
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -51,7 +51,7 @@ async def confirm_receipt(chat, receipt) -> None:
             raise ValidationError("Native receipt identity is unknown or conflicts")
         seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
         reactions = (
-            await BlockRepository(session).reactions_for_blocks(seen_ids)
+            await reaction_summaries_for_blocks(session, seen_ids)
             if row.settled_at is not None
             else {}
         )
