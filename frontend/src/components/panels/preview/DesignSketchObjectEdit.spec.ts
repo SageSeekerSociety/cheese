@@ -53,6 +53,35 @@ async function ready(ui: ReturnType<typeof render>) {
   }).toEqual({ complete: true, rect: 500, paneWidth: 532 })
 }
 
+/**
+ * 输入框没来时的现场。
+ *
+ * 手势到输入框之间有好几处会静默退出（量测拿不到、命中不到、工具已经切回 select），
+ * 只报「找不到占位符」看不出是哪一处。这条一句话要排在报错信息最前面：CI 上的注解
+ * 只保留四 KB，排在 Testing Library 那坨 DOM 后面就被截掉了。
+ */
+function probe(ui: ReturnType<typeof render>) {
+  const pressed = (label: string) =>
+    ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
+  const pane = ui.container.querySelector('.design-image__pane') as HTMLElement | null
+  const image = pane?.querySelector('img') as HTMLImageElement | null
+  return [
+    `文字工具=${pressed('文字')} 选择工具=${pressed('选择图片区域')}`,
+    `画布层=${ui.container.querySelectorAll('[role="application"]').length} 屏上文字=${ui.container.querySelectorAll('.sketch-overlay text').length}`,
+    `img=${image?.isConnected ? `complete=${image.complete} rect=${image.getBoundingClientRect().width}` : '不在屏上'} paneWidth=${pane?.clientWidth}`,
+  ].join(' | ')
+}
+
+/** 等文字输入框出现；没等到就把现场一起报出来。 */
+async function textField(ui: ReturnType<typeof render>) {
+  try {
+    return (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    throw new Error(`${probe(ui)}\n${why}`)
+  }
+}
+
 /** scale = (532-32)/1000 = 0.5；图片显示在 (10,20)-(510,270)。 */
 async function painted(ui: ReturnType<typeof render>) {
   await waitFor(() => expect(ui.container.querySelector('.design-image__pane img')).toBeTruthy())
@@ -199,18 +228,20 @@ it('select 工具下双击文字进编辑，提交为空就删掉这条文字', 
   const ui = mount()
   await painted(ui)
   // 文字工具点一下 -> 输入 '标签' -> 回车。
+  await ready(ui)
   await fireEvent.click(ui.getByRole('button', { name: '文字' }))
   const canvas = ui.getByRole('application', { name: '图片标注画布' })
   canvas.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(canvas, { button: 0, pointerId: 41, clientX: 110, clientY: 120 })
-  const field = await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))
+  const field = await textField(ui)
   await fireEvent.update(field, '标签')
   await fireEvent.keyDown(field, { key: 'Enter' })
   await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
 
   // 双击它进编辑：原文字不画，输入框带着原文出现。
+  await ready(ui)
   await fireEvent.dblClick(sheet(ui), { clientX: 110, clientY: 120 })
-  const editor = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
+  const editor = await textField(ui)
   expect(editor.value).toBe('标签')
   expect(ui.container.querySelector('.sketch-overlay text')).toBeNull()
 
@@ -226,20 +257,22 @@ it('select 工具下双击文字进编辑，提交为空就删掉这条文字', 
 it('text 工具下单击已有文字也进编辑', async () => {
   const ui = mount()
   await painted(ui)
+  await ready(ui)
   await fireEvent.click(ui.getByRole('button', { name: '文字' }))
   const canvas = ui.getByRole('application', { name: '图片标注画布' })
   canvas.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(canvas, { button: 0, pointerId: 51, clientX: 110, clientY: 120 })
-  const field = await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))
+  const field = await textField(ui)
   await fireEvent.update(field, '标签')
   await fireEvent.keyDown(field, { key: 'Enter' })
   await waitFor(() => expect(ui.container.querySelector('.sketch-overlay text')).toBeTruthy())
 
   // 再点文字工具，点已有文字 -> 进编辑（带出原文）。
+  await ready(ui)
   await fireEvent.click(ui.getByRole('button', { name: '文字' }))
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 52, clientX: 110, clientY: 120 })
-  const editor = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
+  const editor = await textField(ui)
   expect(editor.value).toBe('标签')
 })
 
