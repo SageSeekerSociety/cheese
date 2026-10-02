@@ -479,6 +479,33 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   }
 });
 
+// 设置是盖在整个窗口上的一层（SettingsOverlay），它里面的下拉菜单和对话框却由 Vuetify
+// 挂在 body 下另一层里。两层 z-index 一样时，DOM 里靠后的画在上面；而 Vuetify 那一层
+// 在页面加载时就被提示气泡建好了，排在设置层前面，于是菜单打开了却画在设置层底下，
+// 看上去是一个空下拉。单元测试没有布局，只有在真浏览器里点一下才看得见。
+test('设置层里打开的下拉菜单画在设置层上面', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await apiLogin(page);
+  await openFirstProject(page);
+  const projectPath = new URL(page.url()).pathname.match(
+    /^\/projects\/[^/]+/,
+  )?.[0];
+  expect(projectPath).toBeTruthy();
+
+  await page.goto(`${projectPath}/settings/agents`);
+  const field = page
+    .locator('.v-select')
+    .filter({ hasText: '项目主模型' })
+    .first();
+  await field.click();
+  // A click checks that the option is the topmost thing under the pointer; under the
+  // settings layer it is not, and the click is refused rather than landing on it.
+  await page
+    .getByRole('option', { name: 'DeepSeek V4.1 Flash' })
+    .click({ timeout: 5_000 });
+  await expect(field).toContainText('DeepSeek V4.1 Flash');
+});
+
 // 读的那一栏（`AppPage` 的 `read` 档）在宽屏上封顶居中，页头那一行跟着它：标题和正文
 // 从同一条竖线开始；满宽那一档的标题也和正文缩进一样多。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
 // 1920 宽时差三百多。量的是渲染出来的字，因为这种错 vitest 和类型检查都看不见。
