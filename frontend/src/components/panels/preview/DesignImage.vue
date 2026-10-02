@@ -523,7 +523,7 @@ onBeforeUnmount(() => {
       @send="sendAnnotated"
     />
     <output v-if="sendError" class="design-image__error" role="alert">{{ sendError }}</output>
-    <output v-if="selectedRegion" class="t-meta" aria-live="polite">{{
+    <output v-if="selectedRegion" class="t-meta design-image__region" aria-live="polite">{{
       t('design.selectedRegion', selectedRegion)
     }}</output>
     <div
@@ -586,7 +586,10 @@ onBeforeUnmount(() => {
 }
 .design-image__tools {
   display: flex;
-  flex-wrap: wrap;
+  /* 和标注工具栏同一条：窄面板里换行会占掉三四行，图就没地方了——排成一行，
+     超出的横滚。缩放那几颗按钮本来就是固定宽度，横滚比换行好找。 */
+  flex-wrap: nowrap;
+  overflow-x: auto;
   align-items: center;
   gap: 8px;
   padding: 8px;
@@ -597,6 +600,13 @@ onBeforeUnmount(() => {
   color: var(--danger-ink);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+/* 「原图像素：x=…」这行在 240px 宽的面板里会折成两行、白吃掉 30 多像素，
+   把图挤到面板外面去。它是状态行，一行放不下就省略，不要换行。 */
+.design-image__region {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .design-image__tools button {
   padding: 4px 8px;
