@@ -28,7 +28,7 @@
     "admin": "Admin console"
   },
   "admin": {
-    "queue": "Queue",
+    "queue": "Feedback",
     "dashboard": "Dashboard",
     "models": "Models",
     "spaces": "Space applications",

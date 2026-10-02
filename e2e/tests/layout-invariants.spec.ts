@@ -314,7 +314,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await apiLogin(page);
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto('/admin/queue');
-    await expect(page.getByRole('heading', { name: '队列', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '反馈', exact: true })).toBeVisible();
     await expect(page.locator('.qlist')).toBeVisible();
 
     // 1440 封顶居中。量的参照物是页面正文那一格（`.app-page__body`），不是按侧栏宽度

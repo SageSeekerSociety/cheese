@@ -83,7 +83,7 @@ describe('打开管理端反馈页（旧地址）', () => {
 
     const { findByText, findByRole } = mountPage()
 
-    expect(await findByRole('heading', { name: '队列' })).toBeTruthy()
+    expect(await findByRole('heading', { name: '反馈' })).toBeTruthy()
     expect(await findByText('导出报表偶发 502')).toBeTruthy()
     expect(listAdminFeedback).toHaveBeenCalled()
   })
