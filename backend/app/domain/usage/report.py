@@ -1,12 +1,12 @@
 """What a team's or a person's credits went to this month, as members see it
 (#2397, #2233).
 
-Everything here is a ratio: how much of this month's plan pack is used, or how
-full each of a windowed plan's time windows is, and what share of the month's
-spend each day, project or product line took. No credit amounts and no tokens
-leave this module, and nothing is split by person: spend inside a team's
-projects belongs to the team (#394). A person's own page reads only their
-personal team's spend.
+Amounts are in credits, which people see as 点 (a hundredth of a dollar): this
+month's plan pack, every other pack, and what each day, project or product
+line spent. A windowed plan's windows are ratios with when each resets. No
+tokens leave this module, and nothing is split by person: spend inside a
+team's projects belongs to the team (#394). A person's own page reads only
+their personal team's spend.
 """
 
 import uuid
@@ -60,10 +60,6 @@ def _used(use: WindowUse) -> float:
     )
 
 
-def _shares(parts: dict, total: float) -> dict:
-    return {key: (value / total if total > 0 else 0.0) for key, value in parts.items()}
-
-
 class UsageReport:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -83,6 +79,8 @@ class UsageReport:
         if terms.unlimited:
             return {
                 "unlimited": True,
+                "credits_total": None,
+                "credits_used": None,
                 "used_ratio": None,
                 "remaining_ratio": None,
                 "resets_at": None,
@@ -100,6 +98,8 @@ class UsageReport:
         if total <= 0:
             return {
                 "unlimited": False,
+                "credits_total": None,
+                "credits_used": None,
                 "used_ratio": None,
                 "remaining_ratio": None,
                 "resets_at": None,
@@ -107,6 +107,8 @@ class UsageReport:
         used_ratio = _ratio(used, total)
         return {
             "unlimited": False,
+            "credits_total": total,
+            "credits_used": used,
             "used_ratio": used_ratio,
             "remaining_ratio": 1.0 - used_ratio,
             "resets_at": month_end(month).isoformat(),
@@ -135,6 +137,8 @@ class UsageReport:
                 "source": p.source,
                 "project_id": str(p.project_id) if p.project_id else None,
                 "task_id": p.source_task_id,
+                "credits_total": p.credits_total,
+                "credits_remaining": max(0.0, p.credits_total - p.credits_used),
                 "remaining_ratio": 1.0 - _ratio(p.credits_used, p.credits_total),
                 "expires_at": p.expires_at.isoformat() if p.expires_at else None,
             }
@@ -145,14 +149,13 @@ class UsageReport:
     async def _month(
         self, team_id: int, month: date, *, lines: bool
     ) -> tuple[list[dict], dict[uuid.UUID, float], dict[str, float]]:
-        """The month's spend: per day, per project and per product line, each
-        as a share of the month's total."""
+        """The month's spend in credits: per day, per project and per product
+        line."""
         start = datetime(month.year, month.month, 1, tzinfo=_TZ)
         end = month_end(month)
         rows = await UsageRepository(self._session).team_spend_by_day(
             team_id, since=start, until=end, tz=str(_TZ)
         )
-        total = sum(credits for _, _, _, credits in rows)
         by_day: dict[date, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         by_project: dict[uuid.UUID, float] = defaultdict(float)
         by_line: dict[str, float] = {line: 0.0 for line in LINES}
@@ -170,20 +173,18 @@ class UsageReport:
             spent = by_day.get(day, {})
             entry: dict = {"date": day.isoformat()}
             if day > today:
-                entry["share"] = None
+                entry["credits"] = None
             else:
-                entry["share"] = _ratio(sum(spent.values()), total)
+                entry["credits"] = sum(spent.values())
                 if lines:
-                    entry["lines"] = {
-                        line: _ratio(spent.get(line, 0.0), total) for line in LINES
-                    }
+                    entry["lines"] = {line: spent.get(line, 0.0) for line in LINES}
             days.append(entry)
             day += timedelta(days=1)
-        return days, _shares(dict(by_project), total), _shares(by_line, total)
+        return days, dict(by_project), by_line
 
     async def team(self, team_id: int, plan_key: str, *, lines: bool = False) -> dict:
-        """A team's month: its plan, this period, windows, other packs, each
-        day's and each project's share of the month's spend. ``lines`` splits
+        """A team's month: its plan and what it offers, this period, windows,
+        other packs, and what each day and each project spent. ``lines`` splits
         it by product line too, for a person's own page (their personal team)."""
         month = month_of(datetime.now(UTC))
         terms = (await terms_of(self._session, [plan_key]))[plan_key]
@@ -193,14 +194,26 @@ class UsageReport:
         uses = await ledger.window_uses([Payer(team_id=team_id, terms=terms)])
         days, projects, by_line = await self._month(team_id, month, lines=lines)
         out = {
-            "plan": {"key": plan_key, "name": plan.name if plan else plan_key},
+            "plan": {
+                "key": plan_key,
+                "name": plan.name if plan else plan_key,
+                "unlimited": terms.unlimited,
+                "credits_per_period": terms.issues or None,
+                "windows": [
+                    {"hours": w.hours, "calendar": w.calendar, "credits": w.credits}
+                    for w in terms.windows
+                ],
+                "model_tiers": None
+                if terms.model_tiers is None
+                else sorted(terms.model_tiers),
+            },
             "period": self._period(terms, packs, month),
             "windows": self._windows(uses.get(team_id, ())),
             "packs": self._packs(packs),
             "days": days,
             "projects": [
-                {"id": str(pid), "share": share}
-                for pid, share in sorted(projects.items(), key=lambda kv: -kv[1])
+                {"id": str(pid), "credits": credits}
+                for pid, credits in sorted(projects.items(), key=lambda kv: -kv[1])
             ],
         }
         if lines:
@@ -209,7 +222,7 @@ class UsageReport:
 
     async def teams_left(self, teams: list) -> list[dict]:
         """For each of ``teams``: its plan's name and what is left of this
-        month's plan pack."""
+        month's plan pack, or of its fullest window."""
         if not teams:
             return []
         month = month_of(datetime.now(UTC))
@@ -233,7 +246,12 @@ class UsageReport:
             if period is None:
                 # A windowed plan: what its fullest window has left.
                 left = 1.0 - max((_used(u) for u in uses.get(team.id, ())), default=0.0)
-                period = {"unlimited": False, "remaining_ratio": left}
+                period = {
+                    "unlimited": False,
+                    "remaining_ratio": left,
+                    "credits_total": None,
+                    "credits_used": None,
+                }
             plan = plans.get(team.plan_key)
             out.append(
                 {
@@ -246,6 +264,11 @@ class UsageReport:
                     },
                     "unlimited": period["unlimited"],
                     "remaining_ratio": period["remaining_ratio"],
+                    "credits_remaining": (
+                        None
+                        if period["credits_total"] is None
+                        else max(0.0, period["credits_total"] - period["credits_used"])
+                    ),
                 }
             )
         return out

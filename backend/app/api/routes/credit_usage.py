@@ -1,8 +1,9 @@
 """How much of its credits a team has used this month, for its members, and a
 person's own (#2397, #2233).
 
-Two reads, both ratios only (``usage.report``): no credit amounts, no tokens,
-and nothing split by person inside a team's projects (#394).
+Two reads (``usage.report``), in credits that people see as 点: no tokens, and
+nothing split by person inside a team's projects (#394). Each names the models
+its plan allows, so a member can see what the plan includes.
 
 - ``GET /users/me/credits/usage``: the caller's personal team, split by product
   line, and the shared teams they are in with what is left of each.
@@ -21,6 +22,7 @@ from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import NotFoundError
 from app.db.session import get_db
+from app.domain.agent_instance.configuration import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.services import team_service
@@ -29,8 +31,19 @@ from app.domain.usage.report import UsageReport
 router = APIRouter(tags=["credits"])
 
 
+def _plan_models(plan: dict) -> list[str]:
+    """The names of the models the plan's tiers allow."""
+    tiers = plan.pop("model_tiers")
+    return [
+        choice["label"]
+        for choice in model_choices(None)
+        if tiers is None or choice.get("tier") in tiers
+    ]
+
+
 async def _named(db: AsyncSession, report: dict) -> dict:
-    """Name the projects and tasks the report refers to by id."""
+    """Name the projects, tasks and models the report refers to by id."""
+    report["plan"]["models"] = _plan_models(report["plan"])
     projects, tasks = ProjectService(db), TaskService.of(db)
     names: dict[str, str | None] = {}
 
