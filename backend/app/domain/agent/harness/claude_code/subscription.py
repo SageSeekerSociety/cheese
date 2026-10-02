@@ -85,6 +85,9 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
         Pruned/incomplete intervals remain quarantined by durable admission. A
         failed database commit is not skipped: the next recovery retries it.
         """
+        # Take the lock now, not behind a read a live poll is holding: that read
+        # may be held up to READ_WAIT_S, and a recovery must not sit through it.
+        self.unpark()
         async with self.lock:
             for record in await self.on_disk(landed_results, self.path):
                 stamp = record.get("cheese") or {}
