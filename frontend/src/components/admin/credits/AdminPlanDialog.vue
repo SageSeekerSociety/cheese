@@ -114,7 +114,7 @@ const rankValue = computed(() => numberOrNull(rank.value))
 const windowValues = computed<(PlanWindow | null)[]>(() =>
   windows.value.map((w) => {
     const cap = numberOrNull(w.credits)
-    if (!nonNegative(cap)) return null
+    if (!nonNegative(cap) || cap === 0) return null
     if (w.span !== 'hours') return { calendar: w.span, credits: cap }
     const hours = numberOrNull(w.hours)
     return hours !== null && !Number.isNaN(hours) && hours > 0 ? { hours, credits: cap } : null

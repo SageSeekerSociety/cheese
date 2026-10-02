@@ -169,8 +169,10 @@ def test_a_plan_bills_by_its_month_or_by_its_windows_never_both(client, admin):
     assert free["windows"] == windows
 
     duplicate = [{"calendar": "week", "credits": 1}, {"calendar": "week", "credits": 2}]
-    r = client.put("/admin/plans/free", json={"windows": duplicate}, headers=admin)
-    assert r.status_code == 400
+    empty = [{"hours": 5, "credits": 0}]
+    for bad in (duplicate, empty):
+        r = client.put("/admin/plans/free", json={"windows": bad}, headers=admin)
+        assert r.status_code in (400, 422), bad
 
 
 def test_a_plan_no_team_is_on_can_be_deleted_and_free_never(client, admin):

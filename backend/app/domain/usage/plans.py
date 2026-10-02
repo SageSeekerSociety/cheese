@@ -95,8 +95,8 @@ def _check_plan_fields(data: dict) -> None:
             raise BadRequestError("时间窗口只能按周或按月重置")
         if hours is not None and (not isinstance(hours, int | float) or hours <= 0):
             raise BadRequestError("时间窗口的长度必须是正数小时")
-        if not isinstance(cap, int | float) or cap < 0:
-            raise BadRequestError("时间窗口的额度必须是不小于 0 的数")
+        if not isinstance(cap, int | float) or not math.isfinite(cap) or cap <= 0:
+            raise BadRequestError("时间窗口的额度必须是正数")
         key = calendar or f"{hours:g}h"
         if key in keys:
             raise BadRequestError("同样长度的时间窗口只能有一个")

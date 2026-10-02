@@ -25,7 +25,7 @@ class PlanWindow(BaseModel):
 
     hours: float | None = Field(default=None, gt=0)
     calendar: Literal["week", "month"] | None = None
-    credits: float = Field(ge=0)
+    credits: float = Field(gt=0)
 
 
 Audience = Literal["personal", "team", "both"]
