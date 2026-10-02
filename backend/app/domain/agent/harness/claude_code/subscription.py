@@ -76,7 +76,7 @@ class Subscription(subscription.Subscription[ClaudeCodeBacklog]):
     def reader(self) -> ClaudeCodeBacklog:
         if self.known is None:
             self.known = Known.read(self.path)
-        return ClaudeCodeBacklog(self.path, self.session_id, self.known.facts)
+        return ClaudeCodeBacklog(self.path, self.session_id, self.known)
 
     def starts_turn(self, record: dict, reader: ClaudeCodeBacklog) -> bool:
         return bool((record.get("cheese") or {}).get("turn_start"))
