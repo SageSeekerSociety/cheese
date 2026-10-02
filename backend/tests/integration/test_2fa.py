@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.test_passkey import _SoftAuthenticator
 
 
 class TestTwoFactorIntegration:
@@ -149,6 +150,34 @@ class TestTwoFactorIntegration:
             f"/users/{self.user.user_id}/2fa/status", headers=self.headers
         )
         assert status.json()["data"]["enabled"] is False
+
+    def test_status_reports_a_registered_passkey(self):
+        """has_passkey is answered from the keys the account really has: one
+        registered through the HTTP ceremony shows up here. 2FA stays off, so a
+        reading that confused the two flags would answer False."""
+        key = _SoftAuthenticator()
+        options = self.client.post(
+            f"/users/{self.user.user_id}/passkeys/options",
+            headers=self.headers,
+            json={"sudoTicket": self._password_ticket("passkey:add")},
+        )
+        assert options.status_code == 200, options.text
+        challenge = options.json()["data"]["options"]["challenge"]
+        registered = self.client.post(
+            f"/users/{self.user.user_id}/passkeys",
+            headers=self.headers,
+            json={"response": key.register(challenge)},
+        )
+        assert registered.status_code == 200, registered.text
+
+        status = self.client.get(
+            f"/users/{self.user.user_id}/2fa/status", headers=self.headers
+        )
+        assert status.status_code == 200
+        assert status.json()["data"] == {
+            "enabled": False,
+            "has_passkey": True,
+        }
 
     def test_enable_rejects_bad_confirmation_code(self):
         init = self._offer_secret()

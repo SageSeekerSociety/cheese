@@ -19,13 +19,9 @@ is named anywhere else in the tree.
 What stays behind, and why. `_spend_sudo_ticket` is not this group's: it is
 what every sudo-gated route in the tree redeems a ticket through, so it lives
 in `users_common.py` with the reservation scope it claims in, and this module
-imports it together with the shared SudoTicketRequest. `PasskeyRepository`
-still comes from users.py: `GET /users/{userId}/2fa/status` builds one to count the
-account's passkeys, and `get_passkey_service` next to it builds one for the
-passkey routes — so it is taken from `users.py`, where the guard in
-`tests/unit/test_domain_import_guard.py` freezes that pair, rather than from
-`app.domain.passkey.repositories`, which would have added a second exemption
-for the same read.
+imports it together with the shared SudoTicketRequest. `GET /users/{userId}/2fa/status`
+reads whether the account has a passkey through `PasskeyService`, using the same
+request session as the second-factor status query.
 `_issue_2fa_pending_token`, `_spend_2fa_attempt` and the `_PENDING_2FA_SCOPE`
 reservation are the *sign-in* half of the second factor, and every entrance
 that uses them (`POST /users/auth/verify-2fa`, the emailed-code sign-in, the
@@ -54,7 +50,6 @@ from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users import PasskeyRepository
 from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -66,6 +61,7 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.db.session import get_db
+from app.domain.passkey.services import PasskeyService
 from app.domain.user.services import UserAuthService
 from app.domain.user.trusted_devices import TrustedDeviceService
 
@@ -277,14 +273,14 @@ async def get_user_2fa_status(
 
     totp_service = TOTPService(session)
     enabled = await totp_service.is_2fa_enabled(user_id)
-    passkeys = await PasskeyRepository(session).list_by_user(user_id)
+    has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
 
     return {
         "code": 200,
         "message": "Get 2FA status successfully",
         "data": {
             "enabled": enabled,
-            "has_passkey": len(passkeys) > 0,
+            "has_passkey": has_passkey,
         },
     }
 
