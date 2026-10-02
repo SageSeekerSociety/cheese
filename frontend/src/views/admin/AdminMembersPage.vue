@@ -748,8 +748,7 @@ onMounted(load)
   text-align: right;
 }
 
-/* 窄屏：内容内边距收到 16px —— 页头下那句说明也是这么收的（`AdminPage` 的 700px
-   断点），两处一起收左沿才对得齐。 */
+/* 窄屏：上下内边距收一档，左右仍是 16，和页头标题同一条左沿。 */
 @media (max-width: 700px) {
   .am__body {
     padding: 12px 16px 16px;

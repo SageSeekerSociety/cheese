@@ -49,7 +49,7 @@ const { mdAndUp } = useDisplay()
 <style scoped>
 .admin-intro {
   flex: 0 0 auto;
-  padding: 16px 24px 0;
+  padding: 16px 16px 0;
 }
 
 .admin-intro__tools {
@@ -73,12 +73,5 @@ const { mdAndUp } = useDisplay()
 
 .admin-intro__sub + .admin-intro__extra {
   margin-top: 12px;
-}
-
-@media (max-width: 700px) {
-  .admin-intro {
-    padding-right: 16px;
-    padding-left: 16px;
-  }
 }
 </style>

@@ -1074,13 +1074,13 @@ button:not(.v-btn) {
 }
 
 /* 后台每一页的正文内缩。页头、列宽（`--page-w-admin`）和谁来滚都由 `AdminPage` →
-   `AppPage` 的 `admin` 档给；这里只剩正文离列边的 16/24，和表格、列表自己的内缩是同一
-   套数。 */
+   `AppPage` 的 `admin` 档给；这里只剩正文离列边的距离。左右 16 和页头标题同一条左沿，
+   队列的列表、表格和工具行用的也是这个数。 */
 .admin-page__body {
   display: flex;
   flex: 1 0 auto;
   flex-direction: column;
-  padding: 16px 24px 24px;
+  padding: 16px 16px 24px;
 }
 
 /* 正文里的白卡片。设计系统规定卡片**不带投影**、只用一道 `--line` 勾轮廓 ——
@@ -1109,26 +1109,18 @@ button:not(.v-btn) {
    而不是让人的眼从左边扫到右边再折回来看下一格的标签。 */
 .admin-form-card {
   box-sizing: border-box;
-  width: calc(100% - 48px);
+  width: calc(100% - 32px);
   max-width: 720px;
   padding: 20px 24px;
-  margin: 16px 24px 24px;
+  margin: 16px 16px 24px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
 }
 
 @media (max-width: 700px) {
-  .admin-page__body {
-    padding-right: 16px;
-    padding-left: 16px;
-  }
-
   .admin-form-card {
-    width: calc(100% - 32px);
     padding: 16px;
-    margin-right: 16px;
-    margin-left: 16px;
   }
 }
 

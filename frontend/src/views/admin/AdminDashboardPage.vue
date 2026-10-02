@@ -112,34 +112,43 @@ function onSelectDay(date: string | null) {
       />
     </template>
 
-    <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
-           正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
-           错误状态清掉装没事。块换成了共用的 `AdminEmptyState`（和队列、模型页的
-           出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
-    <AdminEmptyState
-      v-if="failed"
-      tone="error"
-      :title="t('feedback.dashboard.error.title')"
-      :desc="error ?? undefined"
-      :action="t('feedback.dashboard.retry')"
-      @action="retry"
-    />
+    <div class="ad__body admin-page__body">
+      <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
+             正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
+             错误状态清掉装没事。块换成了共用的 `AdminEmptyState`（和队列、模型页的
+             出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
+      <AdminEmptyState
+        v-if="failed"
+        tone="error"
+        :title="t('feedback.dashboard.error.title')"
+        :desc="error ?? undefined"
+        :action="t('feedback.dashboard.retry')"
+        @action="retry"
+      />
 
-    <!-- 一屏一类。取数在上面那一半，画法在各屏自己那里。 -->
-    <AdminDashboardPipeline v-else-if="kind === 'pipeline'" :data="pipeline" :loading="loading" />
-    <AdminDashboardProduct v-else-if="kind === 'product'" :data="product" :days="days" :loading="loading" />
-    <AdminDashboardIntegrations v-else-if="kind === 'integrations'" :data="integrations" :loading="loading" />
-    <AdminDashboardFeedback
-      v-else-if="kind === 'feedback'"
-      :data="feedback"
-      :pending="pending"
-      :list-loading="listLoading"
-      :days="days"
-      :loading="loading"
-      @select-day="onSelectDay"
-    />
-    <AdminDashboardUsage v-else-if="kind === 'usage'" :data="usage" :days="days" :loading="loading" />
-    <AdminDashboardPerformance v-else-if="kind === 'performance'" :data="performance" :loading="loading" />
-    <AdminDashboardPlatform v-else :data="platform" :days="days" :loading="loading" />
+      <!-- 一屏一类。取数在上面那一半，画法在各屏自己那里。 -->
+      <AdminDashboardPipeline v-else-if="kind === 'pipeline'" :data="pipeline" :loading="loading" />
+      <AdminDashboardProduct v-else-if="kind === 'product'" :data="product" :days="days" :loading="loading" />
+      <AdminDashboardIntegrations v-else-if="kind === 'integrations'" :data="integrations" :loading="loading" />
+      <AdminDashboardFeedback
+        v-else-if="kind === 'feedback'"
+        :data="feedback"
+        :pending="pending"
+        :list-loading="listLoading"
+        :days="days"
+        :loading="loading"
+        @select-day="onSelectDay"
+      />
+      <AdminDashboardUsage v-else-if="kind === 'usage'" :data="usage" :days="days" :loading="loading" />
+      <AdminDashboardPerformance v-else-if="kind === 'performance'" :data="performance" :loading="loading" />
+      <AdminDashboardPlatform v-else :data="platform" :days="days" :loading="loading" />
+    </div>
   </AdminPage>
 </template>
+
+<style scoped>
+/* 各屏第一块（指标条）自带 16px 上外边距，正文不再加一层。 */
+.ad__body {
+  padding-top: 0;
+}
+</style>
