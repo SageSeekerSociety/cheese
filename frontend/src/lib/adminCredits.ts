@@ -145,14 +145,16 @@ export function meterTone(ratio: number): MeterTone {
   return 'ink'
 }
 
-/** 本月方案额度那一格画什么：不限、还没发，或已用多少。 */
+/** 本月方案额度那一格画什么：不限、按时间窗口限额（不发月额度）、还没发，或已用多少。 */
 export type PeriodUse =
   | { kind: 'unlimited' }
+  | { kind: 'windows' }
   | { kind: 'notIssued' }
   | { kind: 'used'; used: number; total: number; ratio: number }
 
-export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited'> | null): PeriodUse {
+export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited' | 'windows'> | null): PeriodUse {
   if (plan?.unlimited) return { kind: 'unlimited' }
+  if (plan?.windows.length) return { kind: 'windows' }
   if (period.credits_total === null) return { kind: 'notIssued' }
   const total = period.credits_total
   const ratio = total > 0 ? Math.min(1, period.credits_used / total) : 1
@@ -160,15 +162,19 @@ export function periodUse(period: CreditPeriod, plan: Pick<Plan, 'unlimited'> | 
 }
 
 /** 可用余额：手上还能花的额度之和。本月方案额度还没发时，把方案这个月要发的那一份
- *  算进去（第一次调用时就会发）。方案不限时为 `null`。 */
+ *  算进去（第一次调用时就会发）。按时间窗口限额的方案不动用方案额度，只算方案之外的
+ *  额度。方案不限时为 `null`。 */
 export function availableCredits(
   packs: CreditPack[],
   period: CreditPeriod,
-  plan: Pick<Plan, 'unlimited' | 'credits_per_period'> | null
+  plan: Pick<Plan, 'unlimited' | 'credits_per_period' | 'windows'> | null
 ): number | null {
   if (plan?.unlimited) return null
-  const held = packs.reduce((sum, pack) => sum + Math.max(0, pack.credits_total - pack.credits_used), 0)
-  return period.credits_total === null ? held + (plan?.credits_per_period ?? 0) : held
+  const windowed = !!plan?.windows.length
+  const held = packs
+    .filter((pack) => !(windowed && pack.source === 'plan_period'))
+    .reduce((sum, pack) => sum + Math.max(0, pack.credits_total - pack.credits_used), 0)
+  return period.credits_total === null && !windowed ? held + (plan?.credits_per_period ?? 0) : held
 }
 
 export type TeamKind = 'personal' | 'team'

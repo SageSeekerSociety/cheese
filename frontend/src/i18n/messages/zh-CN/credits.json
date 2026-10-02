@@ -96,7 +96,8 @@
     "filterPlan": "方案",
     "filterKind": "类型",
     "all": "全部",
-    "members": "{n} 名成员"
+    "members": "{n} 名成员",
+    "windowed": "按时间窗口限额"
   },
   "panel": {
     "close": "关闭",

@@ -308,4 +308,27 @@ describe('plans and credits', () => {
       .closest('tr') as HTMLElement
     expect(within(row).getByText('125')).toBeTruthy()
   })
+
+  it("a team on a time-window plan can spend only what it holds besides the plan's monthly credits", async () => {
+    const windowed = { ...FREE, credits_per_period: null, windows: [{ hours: 5, credits: 20 }] }
+    listPlans.mockResolvedValue({ plans: [windowed, RESERVE] })
+    const bought = { ...PERIOD_PACK, id: 'b1', source: 'purchase', credits_total: 40, credits_used: 0 }
+    listCreditTeams.mockResolvedValue({
+      items: [
+        { ...ROW, period: { ...ROW.period, credits_total: null, credits_used: 0 }, packs: [PERIOD_PACK, bought] },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    const page = mountPage()
+    await page.findByRole('button', { name: /@linzy/ })
+
+    const teams = page.getByRole('table', { name: 'credits.teams.label' })
+    const row = within(teams)
+      .getByRole('button', { name: /@linzy/ })
+      .closest('tr') as HTMLElement
+    expect(within(row).getByText('40')).toBeTruthy()
+    expect(within(row).queryByText('credits.teams.notIssued')).toBeNull()
+  })
 })

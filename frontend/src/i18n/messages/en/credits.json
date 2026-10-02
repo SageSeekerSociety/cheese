@@ -96,7 +96,8 @@
     "filterPlan": "Plan",
     "filterKind": "Type",
     "all": "All",
-    "members": "{n} members"
+    "members": "{n} members",
+    "windowed": "Time-window limits"
   },
   "panel": {
     "close": "Close",
