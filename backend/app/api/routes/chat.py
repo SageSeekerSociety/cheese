@@ -10,14 +10,21 @@ to the same topic all see the same stream.
 Protocol:
   connect → /api/topics/{id}/chat?token=<session token>   (required)
   client → {"type":"ping"}  →  server → {"type":"pong"}
+  client → {"type":"typing"} / {"type":"typing","active":false}
   server → user_block / reaction / tool / todo / state / event_block /
-           assistant_block / error / done
+           assistant_block / live / activity / activity_snapshot / error / done
+(Typing is the one thing a client says on this socket, and it is not written:
+it is member activity — who is busy in this room right now, a person composing
+or an agent with a turn running (`agent/activity.py`) — and it lives only in the
+broker. The member is the socket's credential, never a field of the frame.)
 (The ping is the browser's liveness probe. A socket can sit OPEN for minutes
 after its path stopped carrying frames — the browser only learns when TCP
 gives up — so the client asks every few seconds and replaces the socket when
 no answer comes; the reply is the whole point, it carries nothing.)
-(No token streaming: explicit chat publications arrive as assistant_block
-messages; terminal output arrives as activity event_block records.)
+(A chat publication arrives whole, as an assistant_block message; while an
+agent is still writing one, `live` frames carry what it has written so far,
+unstored, and the block replaces them (`live_frames.py`). Terminal output
+arrives as activity event_block records.)
 
 The `?token=` is not optional and a socket the connect check refuses is closed
 (1008) after one `error` frame carrying `code: auth_required` (no token),
@@ -141,9 +148,15 @@ async def chat(
                     "type": "turn_active",
                     "turn_ids": active_turn_ids,
                     "since": broker.active_turns_since(channel),
-                    "agents": broker.active_turn_agents(channel),
+                    "agents": broker.activity.turn_agents(channel),
                 }
             )
+        # Who is busy here now, when anyone is (like turn_active: a client
+        # starts every connection from nobody). Activity frames already queued
+        # are applied after it; every change emits one, in order, so the client
+        # ends on the current state whichever side of the snapshot a change fell.
+        if busy := broker.activity.snapshot(channel):
+            await send({"type": "activity_snapshot", "members": busy})
 
         relay_task = asyncio.create_task(relay(queue))
         try:
@@ -158,6 +171,13 @@ async def chat(
                 payload = await websocket.receive_json()
                 if payload.get("type") == "ping":
                     await send({"type": "pong"})
+                    continue
+                if payload.get("type") == "typing":
+                    await broker.typing(
+                        channel,
+                        conn_actor.handle,
+                        active=payload.get("active") is not False,
+                    )
                     continue
                 # A message is POSTed to /topics/{id}/messages; this socket
                 # writes nothing, so it says so rather than dropping the frame.

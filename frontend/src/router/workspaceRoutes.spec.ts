@@ -36,7 +36,6 @@ describe('the project frame', () => {
     [`/topics/${TOPIC}`, 'workspace-topic'],
     ['/dm/agent:cheese', 'workspace-dm'],
     ['/docs/weeklies', 'project-docs'],
-    ['/calendar', 'calendar'],
     ['/library', 'project-library'],
     ['/settings', 'project-settings'],
     ['/members/lisi', 'member'],
@@ -85,7 +84,7 @@ describe('the project frame', () => {
   )
 
   it('renders a sidebar and a content view at the frame level', () => {
-    const frame = router().resolve(`/projects/${PROJECT}/calendar`).matched[0]
+    const frame = router().resolve(`/projects/${PROJECT}/library`).matched[0]
     expect(Object.keys(frame.components ?? {}).sort()).toEqual(['default', 'sidebar'])
   })
 
@@ -138,7 +137,6 @@ describe('页面栈的末端', () => {
       `/projects/${PROJECT}/topics/t1`,
       `/projects/${PROJECT}/docs/charter`,
       `/projects/${PROJECT}/running`,
-      `/projects/${PROJECT}/calendar`,
       `/projects/${PROJECT}/settings`,
       `/projects/${PROJECT}/members`,
     ]

@@ -40,12 +40,12 @@ const topics: Topic[] = [
   } as Topic,
 ]
 
-/** 一个把「日历」收起来的壳：它仍然找得到，只是不占每天都要扫一遍的那条竖线。 */
+/** 一个把「定时与触发」收起来的壳：它仍然找得到，只是不占每天都要扫一遍的那条竖线。 */
 const COURSE_SHELL = {
   name: 'course',
   home: 'workspace-running',
-  nav: { rail: [], tabs: [], project: ['project-library', 'project-members', 'calendar'] },
-  hidden: ['calendar'],
+  nav: { rail: [], tabs: [], project: ['project-library', 'project-members', 'project-routines'] },
+  hidden: ['project-routines'],
   terms: {},
 }
 
@@ -60,7 +60,7 @@ const router = createRouter({
     { path: '/projects/:projectId/settings', name: 'project-settings', component: Blank },
     { path: '/projects/:projectId/library', name: 'project-library', component: Blank },
     { path: '/projects/:projectId/members', name: 'project-members', component: Blank },
-    { path: '/projects/:projectId/calendar', name: 'calendar', component: Blank },
+    { path: '/projects/:projectId/routines', name: 'project-routines', component: Blank },
     { path: '/projects/:projectId/running', name: 'workspace-running', component: Blank },
     { path: '/:pathMatch(.*)*', name: 'catch-all', component: Blank },
   ],
@@ -169,7 +169,7 @@ describe('侧栏画哪几页由壳说了算', () => {
     expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '项目文档'])
 
     const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(t('navigation.project.calendar')))).toBe(true)
+    expect(rows.some((r) => r.includes(t('navigation.project.routines')))).toBe(true)
   })
 
   it('首页不进菜单：项目名那一行就是它的入口，同一个地方不要两个入口', async () => {
@@ -189,22 +189,22 @@ describe('侧栏画哪几页由壳说了算', () => {
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('project-future'))).toBe(false)
-    expect(rows.some((r) => r.includes(t('navigation.project.calendar')))).toBe(true)
+    expect(rows.some((r) => r.includes(t('navigation.project.routines')))).toBe(true)
   })
 })
 
 describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
   it('在菜单里点开一次，这一页当场就回到侧栏上', async () => {
     const { container, baseElement } = mount()
-    await clickMenuItem(container, baseElement, t('navigation.project.calendar'))
+    await clickMenuItem(container, baseElement, t('navigation.project.routines'))
 
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '日历', '项目文档'])
-    expect(localStorage.getItem('cheesex.shellRevealed.v1:me')).toContain('calendar')
+    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库', '成员', '定时与触发', '项目文档'])
+    expect(localStorage.getItem('cheesex.shellRevealed.v1:me')).toContain('project-routines')
   })
 
   it('记住的是这个人：换一个 handle 进来，壳的默认照旧', async () => {
     const first = mount()
-    await clickMenuItem(first.container, first.baseElement, t('navigation.project.calendar'))
+    await clickMenuItem(first.container, first.baseElement, t('navigation.project.routines'))
     first.unmount()
 
     localStorage.setItem('user', JSON.stringify({ id: 2, username: 'someone-else', nickname: '别人' }))
@@ -214,10 +214,10 @@ describe('个人级压过壳：打开过一次的页就回到侧栏上', () => {
 
   it('重新挂载之后仍然是展开的', async () => {
     const first = mount()
-    await clickMenuItem(first.container, first.baseElement, t('navigation.project.calendar'))
+    await clickMenuItem(first.container, first.baseElement, t('navigation.project.routines'))
     first.unmount()
 
     const { container } = mount()
-    expect(titlesIn(container, '.pinned-row')).toContain('日历')
+    expect(titlesIn(container, '.pinned-row')).toContain('定时与触发')
   })
 })

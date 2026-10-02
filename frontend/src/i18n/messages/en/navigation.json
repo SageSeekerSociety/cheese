@@ -4,7 +4,6 @@
   "newProject": "New {project}",
   "project": {
     "board": "Board",
-    "calendar": "Calendar",
     "library": "Library",
     "members": "Members",
     "docs": "Project docs",

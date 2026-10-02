@@ -27,7 +27,6 @@ vi.mock('../../api', async () => {
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
-    answerOptions: vi.fn(),
     toggleReaction: vi.fn(),
   }
 })

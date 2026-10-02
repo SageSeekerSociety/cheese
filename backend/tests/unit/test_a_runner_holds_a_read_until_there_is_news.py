@@ -156,3 +156,21 @@ async def test_an_idle_session_is_let_go_with_a_read_held_on_it(tmp_path):
     finally:
         if not closed:
             await session.close()
+
+
+@pytest.mark.anyio
+async def test_a_runner_that_starts_closing_says_its_agent_is_gone(tmp_path):
+    """A runner on its way out answers the read it holds before it stops its
+    agent process. That answer must not say the agent is there: the backend
+    would hand the seat to the next send, which the closed socket refuses."""
+    session = Session(tmp_path / "state", idle_exit_s=0)
+    session.process = await asyncio.create_subprocess_exec("sleep", "60")
+    await session.start()
+    mark = session.live_mark()
+    held = asyncio.create_task(
+        call(session.state, "events", {"after": 0, "wait": 30, "live": mark})
+    )
+    await asyncio.sleep(0.3)
+    await asyncio.wait_for(session.close(), 5)
+    answer = await asyncio.wait_for(held, 1)
+    assert answer["alive"] is False

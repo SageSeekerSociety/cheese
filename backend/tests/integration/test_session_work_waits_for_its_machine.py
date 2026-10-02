@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
@@ -23,7 +22,11 @@ from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, ProjectMachine
+from app.domain.machine.models import (
+    MAX_ENROLL_ATTEMPTS,
+    MAX_PROVIDER_ERRORS,
+    ProjectMachine,
+)
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.machine.services import MachineService
 from app.domain.project.models import Project
@@ -146,9 +149,7 @@ def _lease(case, seat, timeout=660):
 def _session_machine(case, session_id):
     async def read():
         async with case.client.test_request_factory() as db:
-            return await db.scalar(
-                select(ProjectMachine).where(ProjectMachine.session_id == session_id)
-            )
+            return await ProjectMachineRepository(db).get_active_for_session(session_id)
 
     return case.client.portal.call(read)
 
@@ -227,9 +228,8 @@ def test_a_session_that_will_not_wait_is_still_answered(cloud_rooms):
     assert ready.json()["data"]["target"]["device_id"] == "new-rooms-machine"
 
 
-@pytest.mark.parametrize("failure", ["provider-error", "enrolment-exhausted"])
-def test_a_machine_that_cannot_be_prepared_is_reported_at_once(
-    cloud_rooms, monkeypatch, failure
+def test_a_machine_that_cannot_be_enrolled_is_reported_at_once(
+    cloud_rooms, monkeypatch
 ):
     case = cloud_rooms
     monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
@@ -239,13 +239,10 @@ def test_a_machine_that_cannot_be_prepared_is_reported_at_once(
     async def fail():
         async with case.client.test_request_factory() as db:
             row = await db.get(ProjectMachine, machine.id)
-            if failure == "provider-error":
-                case.cloud.machines[row.machine_id]["status"] = "error"
-            else:
-                case.cloud.machines[row.machine_id].update(
-                    status="running", aiStatus="ready"
-                )
-                row.enroll_attempts = MAX_ENROLL_ATTEMPTS
+            case.cloud.machines[row.machine_id].update(
+                status="running", aiStatus="ready"
+            )
+            row.enroll_attempts = MAX_ENROLL_ATTEMPTS
             await db.commit()
 
     case.client.portal.call(fail)
@@ -255,8 +252,57 @@ def test_a_machine_that_cannot_be_prepared_is_reported_at_once(
     assert time.monotonic() - started < 5, "A failure is not waited out"
     data = answer.json()["data"]
     assert "preparing" not in data
-    expected = "创建失败" if failure == "provider-error" else "接入失败"
-    assert data["unavailable"].startswith(f"云端工作电脑{expected}")
+    assert data["unavailable"].startswith("云端工作电脑接入失败")
+    case.hub.exec.assert_not_awaited()
+
+
+def _provider_fails(case, session_id):
+    """MicroCloud gives up building the session's current machine."""
+    machine = _session_machine(case, session_id)
+    case.cloud.machines[machine.machine_id]["status"] = "error"
+    return machine.machine_id
+
+
+def test_a_machine_the_provider_failed_to_build_is_replaced(cloud_rooms, monkeypatch):
+    """dev, 2026-10-01: a Proxmox create outlived MicroCloud's wait, and every
+    later command of the room was answered 「创建失败」 for good."""
+    case = cloud_rooms
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
+    assert _lease(case, case.new, timeout=5).json()["data"]["preparing"] is True
+    failed = _provider_fails(case, case.new[1])
+
+    again = _lease(case, case.new, timeout=5)
+    assert again.status_code == 200, again.text
+    assert again.json()["data"]["preparing"] is True, again.text
+    assert case.cloud.deleted == [failed]
+    assert _session_machine(case, case.new[1]).machine_id != failed
+
+    _machine_is_up(case, case.new[1], "second-machine")
+    ready = _lease(case, case.new, timeout=5)
+    assert ready.json()["data"]["target"]["device_id"] == "second-machine"
+    assert len(case.cloud.created) == 2
+
+
+def test_a_room_whose_machines_keep_failing_is_told_retries_were_made(
+    cloud_rooms, monkeypatch
+):
+    case = cloud_rooms
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 1.0)
+    for _ in range(MAX_PROVIDER_ERRORS):
+        answer = _lease(case, case.new, timeout=5).json()["data"]
+        assert answer["preparing"] is True, answer
+        _provider_fails(case, case.new[1])
+
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 30.0)
+    started = time.monotonic()
+    data = _lease(case, case.new).json()["data"]
+    assert time.monotonic() - started < 5, "A failure is not waited out"
+    assert "preparing" not in data
+    assert data["unavailable"].startswith("云端工作电脑创建失败")
+    assert f"连续 {MAX_PROVIDER_ERRORS} 次" in data["unavailable"]
+    assert "重试" in data["unavailable"]
+    assert len(case.cloud.created) == MAX_PROVIDER_ERRORS
+    assert len(case.cloud.deleted) == MAX_PROVIDER_ERRORS
     case.hub.exec.assert_not_awaited()
 
 

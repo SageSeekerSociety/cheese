@@ -7,7 +7,7 @@ machine, takes one only when its work needs one, and every harness's room is
 placed, leased and recovered by the one central channel (`CentralChannel`).
 
 The launch is Codex's shape: a Python script over the connector's stdin
-(`launch.script`) that leaves the room's runner running on the host
+(`launch.on_host`) that leaves the room's runner running on the host
 (`host.configure`), which is then reached through ``hub.call_executor`` — the
 connector derives a socket path from the state directory the backend recorded
 and relays one JSON line each way (``cli/internal/host/executor.go``).
@@ -17,6 +17,7 @@ import base64
 import hashlib
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from app.domain.agent.harness.channel import (
     startup_refused,
 )
 from app.domain.agent.harness.launch import ExecutorLaunch
-from app.domain.agent.harness.pi.launch import arguments, extension, script
+from app.domain.agent.harness.pi.launch import arguments, extension, on_host
 from app.domain.agent.harness.pi.runtime import PI, Handle
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent_session.services import AgentSessionService
@@ -82,7 +83,9 @@ class PiChannel:
             / "entries.sqlite"
         )
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, Placement)
         agent = precheck.agent_handle
@@ -129,35 +132,51 @@ class PiChannel:
                     timeout=120,
                 )
             model = opening.model or settings.agent_model
+            launch = on_host(
+                state=state,
+                config={
+                    "opening": {
+                        "system_prompt": opening.system_prompt,
+                        "resume_token": opening.resume_token,
+                        "model": model,
+                        "agent_handle": agent,
+                    },
+                    "args": arguments(model),
+                    "execution_target": target,
+                    # Carried as content, not as paths: these are the
+                    # platform's files, and the session host has no copy of
+                    # them. The runner writes them and points pi at them.
+                    "skills": session_skill_files(session.project_id),
+                    "extension": extension(),
+                    # The marker platform instructions carry in this room,
+                    # so the one the extension raises is not a second
+                    # convention the agent has to learn.
+                    "notice": PLATFORM_NOTICE,
+                },
+                api_base=api,
+                model=model,
+                env=env,
+            )
+            if (
+                live is not None
+                and (live.device_id, live.state, live.contract)
+                == (prepared.device_id, state, launch.contract)
+                and opening.resume_token in (None, "", live.session_id)
+            ):
+                # The runner that answered the last read was started with this
+                # launch, so the host would only say so again.
+                return live
             status = await self._run(
                 prepared.device_id,
-                script(
-                    state=state,
-                    config={
-                        "opening": {
-                            "system_prompt": opening.system_prompt,
-                            "resume_token": opening.resume_token,
-                            "model": model,
-                            "agent_handle": agent,
-                        },
-                        "args": arguments(model),
-                        "execution_target": target,
-                        # Carried as content, not as paths: these are the
-                        # platform's files, and the session host has no copy of
-                        # them. The runner writes them and points pi at them.
-                        "skills": session_skill_files(session.project_id),
-                        "extension": extension(),
-                        # The marker platform instructions carry in this room,
-                        # so the one the extension raises is not a second
-                        # convention the agent has to learn.
-                        "notice": PLATFORM_NOTICE,
-                    },
-                    api_base=api,
-                    model=model,
-                    env=env,
-                ),
+                launch.program(ship=False),
                 timeout=LAUNCH_TIMEOUT_S,
             )
+            if status.get("runner") == "missing":
+                status = await self._run(
+                    prepared.device_id,
+                    launch.program(ship=True),
+                    timeout=LAUNCH_TIMEOUT_S,
+                )
             return Handle(
                 session,
                 prepared.device_id,
@@ -166,6 +185,7 @@ class PiChannel:
                 agent,
                 self._mirror(session, str(prepared.env["CHEESE_RESOURCE_ID"]) + agent),
                 frozenset(status.get("capabilities") or ()),
+                contract=status.get("contract", ""),
             )
 
     async def _run(self, device_id: str, program: str, *, timeout: int) -> dict:
@@ -189,15 +209,25 @@ class PiChannel:
     async def discover(self, device_id: str | None) -> list[Handle]:
         factory = self.channel._session_factory or async_session_factory
         handles: list[Handle] = []
+        # Per-conversation observations from THIS round, keyed by the stored
+        # pointer identity (FB-56 legacy③): "alive" only on an alive=true
+        # answer carrying the conversation's id; "dead" only when an
+        # alive=false answer's session_id matches the stored resume token
+        # exactly — the terminal answer must bind to the stored provenance.
+        # Everything else (offline machine, timeout, call error, a missing
+        # or mismatched id) is "unknown" and closes nothing.
+        self.last_outcomes: dict[tuple[uuid.UUID, str, str], str] = {}
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        for project_id, room_id, handle, harness, place in sessions:
+        for project_id, room_id, handle, harness, resume_token, place in sessions:
             if harness != PI or place.channel != self.name:
                 continue
             center = place.machine
             if device_id is not None and center != device_id:
                 continue
+            key = (room_id, handle, resume_token or "")
             if not self.channel._hub.is_online(center):
+                self.last_outcomes[key] = "unknown"
                 continue
             try:
                 status = await self.channel._hub.call_executor(
@@ -205,9 +235,24 @@ class PiChannel:
                 )
             except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
                 discovery_missed(logger, PI, room_id, center, exc)
+                self.last_outcomes[key] = "unknown"
                 continue
-            if not status.get("alive"):
+            alive = status.get("alive")
+            if alive is not True:
+                # Only an explicit alive=False is a terminal answer, and only
+                # when its session_id binds to the stored resume token. The
+                # hub hands the RPC result through without field validation:
+                # a missing or non-boolean ``alive`` is no observation at
+                # all, and no observation is unknown, never dead (FB-56).
+                self.last_outcomes[key] = (
+                    "dead"
+                    if alive is False
+                    and resume_token
+                    and status.get("session_id") == resume_token
+                    else "unknown"
+                )
                 continue
+            self.last_outcomes[key] = "alive"
             ref = SessionRef(project_id, room_id, handle, harness=harness)
             agent = place.runtime["agent_handle"]
             handles.append(

@@ -1,7 +1,7 @@
 /**
  * 这个房间里哪几轮在跑：谁在干、从什么时候开始、要不要显示「在处理」。
  *
- * 芝士不逐字流式输出，每条完整的消息作为一帧落下来。「在等回复」从召唤开始，到每一个
+ * 每条消息写完才作为一帧落下来（写的过程见 useTypingPreview）。「在等回复」从召唤开始，到每一个
  * 在跑的轮次都明确结束为止。轮次的生命周期帧（turn_active / turn_started /
  * turn_finished）在房间壳的 handleFrame 里认出来，交给这里记账；这里不认识 socket，
  * 也不往上报事件——报什么、什么时候报，是房间壳的事。
@@ -31,8 +31,7 @@ export function useRoomTurns(options: {
   const turnStarts = ref<Record<string, number>>({})
 
   // 每个在跑的轮次在哪个座位上（块署名的那个 handle，从 turn_started /
-  // turn_active 帧学来）。一间房几个队友并行在干时，「谁在干活」靠它报名字；
-  // 帧不带 agent 的（老后端）这项空着，上面报 working-agents 就是空名单。
+  // turn_active 帧学来）。一间房几个队友并行在干时，每张在动的头像认的是它。
   const turnAgents = ref<Record<string, string>>({})
 
   function began(id: string, at = Date.now(), agent?: string) {
@@ -82,17 +81,6 @@ export function useRoomTurns(options: {
     const owner = turnId ? turnOwners.value[turnId] : undefined
     return (owner && options.agentNameOf(owner)) || options.agentName.value
   }
-
-  /** 正在干活的队友们的名字。同名去重：同一个队友并行两轮只报一次。 */
-  const workingAgentNames = computed(() => {
-    const names: string[] = []
-    for (const id of activeTurnIds.value) {
-      if (!turnAgents.value[id]) continue
-      const name = turnAgentName(id)
-      if (!names.includes(name)) names.push(name)
-    }
-    return names
-  })
 
   /** 连上时 broker 报的「此刻在跑的这几轮」。 */
   function active(ids: string[], since?: Record<string, unknown>, agents?: Record<string, string>) {
@@ -181,7 +169,6 @@ export function useRoomTurns(options: {
     awaitingReply,
     turnStarts,
     faces,
-    workingAgentNames,
     turnAgentName,
     turnAgentHandle,
     active,

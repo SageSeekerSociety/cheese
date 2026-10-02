@@ -31,7 +31,7 @@ VERBATIM = (
 
 
 def landed(session_id="session-1"):
-    assembler = Assembler(session_id)
+    assembler = Assembler(session_id, harness="pi")
     events = []
     for entry in RECORDING["entries"]:
         events.extend(assembler.accept(entry))
@@ -130,7 +130,7 @@ def test_a_failed_tool_says_which_step_failed_and_why():
     entry["message"]["isError"] = True
     entry["message"]["content"] = [{"type": "text", "text": "pandoc: not found"}]
 
-    events = Assembler("session-1").accept(entry)
+    events = Assembler("session-1", harness="pi").accept(entry)
 
     assert [type(e) for e in events] == [AgentStepFailed, AgentStepOutput]
     assert events[0].call_id == entry["message"]["toolCallId"]
@@ -145,7 +145,7 @@ def test_a_long_failure_keeps_its_ending():
         {"type": "text", "text": "x " * 2000 + "FAILED test_y"}
     ]
 
-    failed = Assembler("session-1").accept(entry)[0]
+    failed = Assembler("session-1", harness="pi").accept(entry)[0]
 
     assert failed.text.endswith("FAILED test_y")
     assert len(failed.text) == STEP_ERROR_MAX

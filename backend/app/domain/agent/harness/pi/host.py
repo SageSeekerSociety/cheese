@@ -6,7 +6,9 @@ room's seat running and answers with its status. A runner already running for
 the seat is kept while it was started with the same launch (`contract`), and
 while it is working even when it was not: closing a session ends whatever it is
 doing, so a changed launch waits for the first turn that finds it idle, and
-that turn starts it again on the session's own id.
+that turn starts it again on the session's own id. The answer names the launch
+the runner left running was started with (``contract``), so the backend knows
+when a kept runner is still behind.
 
 A person's 芝士 is started the same way, one runner per conversation, with two
 things a room's launch does not ask for: how many of that person's sessions may
@@ -116,7 +118,7 @@ def configure(payload: dict) -> dict:
                 or running.get("working")
                 or running.get("tasks")
             ):
-                return running
+                return {**running, "contract": previous.get("contract", "")}
             _stop(state, int(running["pid"]))
         with contextlib.ExitStack() as held:
             if limit := payload.get("group_limit"):
@@ -260,7 +262,7 @@ def _start(state: Path, payload: dict, config: dict) -> dict:
     while process.poll() is None:
         running = ping(state)
         if running:
-            return running
+            return {**running, "contract": config["contract"]}
         if time.monotonic() >= deadline:
             raise TimeoutError(f"pi has not answered yet; see {state / 'runner.log'}")
         time.sleep(0.1)

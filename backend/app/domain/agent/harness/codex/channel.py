@@ -62,7 +62,9 @@ class CodexChannel:
             / "events.sqlite"
         )
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, Placement)
         agent = precheck.agent_handle
@@ -166,7 +168,7 @@ class CodexChannel:
         handles = []
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
-        for project_id, room_id, handle, harness, place in sessions:
+        for project_id, room_id, handle, harness, _token, place in sessions:
             if harness != "codex" or place.channel != self.name:
                 continue
             center = place.machine

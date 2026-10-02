@@ -39,7 +39,6 @@ import type {
   MarketNodes,
   MarketPools,
   MemberSummary,
-  MilestoneFull,
   OAuthConnectionInfo,
   OverviewAuto,
   PrChecks,
@@ -1831,7 +1830,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -1893,14 +1892,6 @@ export function addComment(
 // the room it was written in via `topic_id`.
 export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block>> {
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
-}
-
-// 选项问题 (cheese_ask): one-click answer.
-export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
-  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
-    method: 'POST',
-    body: JSON.stringify({ option, author }),
-  })
 }
 
 // 叫芝士现在就读它还没读到的消息（一轮失败之后的「重试」）。不发新消息 —— 那些
@@ -2336,18 +2327,6 @@ export function sayOnRoomTask(roomId: string, taskId: string, content: string, a
     method: 'POST',
     body: JSON.stringify({ content, author }),
   })
-}
-
-// ---- 日历 / 里程碑 (§7.2) ----
-
-// Upcoming milestones (already sorted by due date).
-export function getCalendar(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/calendar`)
-}
-
-// All milestones (any status), for showing done ones faded.
-export function listMilestones(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
 }
 
 // ---- 反馈 (feedback) ----

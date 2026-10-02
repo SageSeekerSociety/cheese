@@ -58,7 +58,7 @@ const HOME = 'workspace-running' // default 壳的第一屏
 // 一个**编出来**的壳：真壳的名字不该出现在组件或它的用例里。
 const OTHER = {
   name: 'my-shell',
-  home: 'calendar',
+  home: 'project-library',
   nav: { rail: [], tabs: [], project: [] },
   hidden: [],
   terms: {},

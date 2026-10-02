@@ -93,8 +93,8 @@ class Host:
         }
         self.state = Path(STATE.replace("$HOME", str(self.home)))
 
-    def launch(self, *, model="glm-5.2", prompt="System", resume=None):
-        program = launch.script(
+    def launch(self, *, model="glm-5.2", prompt="System", resume=None, ship=True):
+        program = launch.on_host(
             state=STATE,
             config={
                 "opening": {
@@ -112,7 +112,7 @@ class Host:
             api_base=API,
             model=model,
             env={"CHEESE_TOKEN": TOKEN, "CHEESE_API": API},
-        )
+        ).program(ship=ship)
         return subprocess.run(
             [sys.executable, "-"],
             input=program,
@@ -205,6 +205,17 @@ def test_the_same_launch_keeps_its_session_and_a_changed_one_resumes_it(host):
             break
         assert time.monotonic() < deadline, "the replaced runner is still there"
         time.sleep(0.1)
+
+
+def test_a_launch_without_the_runner_starts_only_where_the_host_holds_it(host):
+    machine = host()
+    missing = started(machine.launch(ship=False))
+    assert missing == {"runner": "missing"}
+    assert ping(machine.state) is None
+    first = started(machine.launch())
+    again = started(machine.launch(ship=False))
+    assert again["alive"] is True
+    assert again["pid"] == first["pid"]
 
 
 def test_a_runner_that_dies_on_the_way_up_says_why(host):

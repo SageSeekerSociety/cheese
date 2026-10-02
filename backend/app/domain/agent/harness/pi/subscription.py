@@ -72,7 +72,12 @@ class Subscription(subscription.Subscription[PiBacklog]):
         await receive(self.path, self.read, self.on_disk)
 
     def reader(self) -> PiBacklog:
-        return PiBacklog(self.path, self.session_id)
+        return PiBacklog(
+            self.path,
+            self.session_id,
+            harness=self.session.harness,
+            attachment=getattr(self, "attachment_id", None),
+        )
 
     def starts_turn(self, record: dict, reader: PiBacklog) -> bool:
         # A subagent's prompt, or its closing message, is its own run and not

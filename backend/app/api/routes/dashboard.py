@@ -43,12 +43,11 @@ async def _require_board_reader(
     """Who may read a 机构看板 (spec §7.3).
 
     Every row on the board is one project's content: its id, its name, its
-    ``owner_handle``, its topic counts and its milestones
-    (``DashboardService._project_card``) — the same content
-    ``/projects/{id}/usage`` and ``/contributions`` next door have always
-    guarded. So the door is theirs: a verified caller, standing in at least one
-    of the projects the board lists. The space id is a small enumerable integer,
-    and it used to be the whole credential.
+    ``owner_handle`` and its topic counts (``DashboardService._project_card``) —
+    the same content ``/projects/{id}/usage`` and ``/contributions`` next door
+    have always guarded. So the door is theirs: a verified caller, standing in at
+    least one of the projects the board lists. The space id is a small enumerable
+    integer, and it used to be the whole credential.
 
     Not a project route, though, so there is no single project whose membership
     to answer for: a caller who is in none of them is refused outright rather

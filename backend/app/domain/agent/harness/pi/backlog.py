@@ -27,11 +27,19 @@ from app.domain.agent.service import AgentEvent
 class PiBacklog(JournalBacklog[Journal]):
     journal = Journal
 
-    def __init__(self, path: Path | None, session_id: str | None = None):
-        self.assembler = Assembler(session_id)
+    def __init__(
+        self,
+        path: Path | None,
+        session_id: str | None = None,
+        *,
+        harness: str,
+        attachment: str | None = None,
+    ):
+        self.assembler = Assembler(session_id, harness=harness, attachment=attachment)
         super().__init__(path)
 
     def prepare(self, journal: Journal) -> None:
+        self.assembler.generation = journal.generation()
         # Resume the running total of a turn a previous pass landed part of.
         for entry in journal.between(journal.turn_started_at(self.after), self.after):
             self.assembler.absorb(entry)
@@ -47,6 +55,8 @@ class PiBacklog(JournalBacklog[Journal]):
     def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
         if not isinstance(entry.record, dict):
             return []
+        entry_id = str(entry.record.get("id") or "")
+        self.assembler._positions[entry_id] = int(entry.key)
         return self.assembler.accept(entry.record)
 
     def unfinished(self) -> set[str]:

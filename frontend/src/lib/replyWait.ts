@@ -1,11 +1,15 @@
-// 侧栏红灯：有人 @ 了 AI、或 PR 反馈 / 检查报错落地，等了这么久还没有 AI 出来
-// 接，就算「卡住了」。
+// 侧栏上一位成员的红标：房间在等它——它那一轮报错了，或者有人 @ 了它、PR 反馈 /
+// 检查报错落地，等了这么久它还没出来接，就算「卡住了」。等的永远是一位成员，不是房间。
 //
-// 后端只给「从什么时候开始等」和「多半为什么还没回」（`Topic.awaiting_reply_since`
-// / `reply_wait_reason`），多久算太久在这里判：列表是某一刻读出来的，而这盏灯要
-// 跟着当下的钟亮起来，不能等下一次刷新。
+// 后端只给「在等谁、从什么时候开始、多半为什么还没回」（`Topic.waits`），多久算太久
+// 在这里判：列表是某一刻读出来的，而这个标要跟着当下的钟亮起来，不能等下一次刷新。
+
+import type { MemberWait } from '@/lib/memberActivity'
 
 import { t } from '@/i18n'
+
+/** 它那一轮报错了：不用等，立刻算卡住。 */
+export const FAILED = 'failed'
 
 /** 等多久算太久。 */
 export const REPLY_STALL_MS = 5 * 60_000
@@ -72,4 +76,15 @@ export function stallReasonText(info: StallInfo, agent: string, now: number): st
     default:
       return t('work.sidebar.stall.mention', { agent, long })
   }
+}
+
+/** 这一条等待此刻算不算「卡住了」。 */
+export function waitStalled(wait: MemberWait, now: number): boolean {
+  return wait.reason === FAILED || replyStalled(wait.since, now, wait.reason)
+}
+
+/** 悬停在那位成员的红标上说的那一句。`name` 是被等的那位。 */
+export function waitText(wait: MemberWait, name: string, now: number): string {
+  if (wait.reason === FAILED) return t('work.sidebar.turnFailed', { agent: name })
+  return stallReasonText(wait, name, now)
 }

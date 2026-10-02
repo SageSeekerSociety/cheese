@@ -33,9 +33,16 @@ from dataclasses import dataclass
 from app.core.config import settings
 from app.domain.agent.admission import HostMemory
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+from app.domain.agent.harness import PI
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.pi.events import Assembler, thread_of
-from app.domain.agent.harness.pi.launch import arguments, extension, provider, script
+from app.domain.agent.harness.pi.launch import (
+    arguments,
+    extension,
+    on_host,
+    provider,
+)
+from app.domain.agent.nonce import new_nonce
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 
 logger = logging.getLogger(__name__)
@@ -245,7 +252,7 @@ class PersonalSessions:
         if not await memory.can_start(MEMORY_MB):
             raise HostFull("The session host has no memory for another session")
         api = api_base()
-        program = script(
+        host_launch = on_host(
             state=session.state,
             config=configuration(launch),
             api_base=api,
@@ -259,6 +266,18 @@ class PersonalSessions:
             },
         )
         started = time.monotonic()
+        # The runner archive goes only to a state directory that lacks it: a
+        # conversation's first start, or the first after a deploy.
+        result = await self._run(session, host_launch.program(ship=False))
+        if _answer(result).get("runner") == "missing":
+            result = await self._run(session, host_launch.program(ship=True))
+        logger.info(
+            "personal session started conversation=%s in %.2fs",
+            launch.conversation_id,
+            time.monotonic() - started,
+        )
+
+    async def _run(self, session: Session, program: str) -> dict:
         try:
             result = await self.hub.exec(
                 session.device_id,
@@ -274,11 +293,7 @@ class PersonalSessions:
             raise PersonalSessionError(
                 (result.get("stderr") or "pi did not start").strip()[-600:]
             )
-        logger.info(
-            "personal session started conversation=%s in %.2fs",
-            launch.conversation_id,
-            time.monotonic() - started,
-        )
+        return result
 
     async def call(
         self, session: Session, method: str, params: dict, *, timeout: float = 660
@@ -315,9 +330,13 @@ class PersonalSessions:
         ``earlier`` is what was said in this conversation before its session
         existed; a session nobody has asked anything is given it once, ahead
         of the question."""
+        marker = new_nonce()
         for attempt in range(2):
             session = await self.ensure(launch)
             prompt = f"{earlier}\n\n{text}" if earlier and not session.asked else text
+            # The input's marker is how the runner knows which question the
+            # entries after it answer (`runner.refresh`), as for a room's.
+            prompt = f"{prompt}\n{marker}"
             try:
                 await self.call(
                     session,
@@ -418,6 +437,12 @@ class PersonalSessions:
             logger.warning("aborting a personal session failed", exc_info=True)
 
 
+def _answer(result: dict) -> dict:
+    """The launch's last line of output, as JSON; {} when it said nothing."""
+    lines = (result.get("stdout") or "").strip().splitlines()
+    return json.loads(lines[-1]) if lines else {}
+
+
 class _Reading:
     """One answer, as it is written and as the journal records it.
 
@@ -430,7 +455,7 @@ class _Reading:
 
     def __init__(self, work: str):
         self.work = work
-        self.assembler = Assembler()
+        self.assembler = Assembler(harness=PI)
         self.parts: list[str] = []
         self.shown = ""
         self.announced: set[str] = set()

@@ -11,7 +11,7 @@ import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
 // 项目工作台的框架层 (P0). Everything inside a project is a CHILD of this
 // route, which is the whole point: the project sidebar (rendered through the
 // app-wide `sidebar` named view, same mechanism as 首页/空间/设置) never
-// unmounts, so 总览/日历/设置/成员/文档 stop being pages you get thrown out to
+// unmounts, so 总览/设置/成员/文档 stop being pages you get thrown out to
 // and become ordinary destinations inside the workspace. Before this existed
 // each of those pages had to hand-roll its own 返回 button and its own content
 // width, because there was no frame to come back to.

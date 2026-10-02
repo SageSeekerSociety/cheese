@@ -9,6 +9,9 @@ import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
+  ApiError,
+  authToken,
+  BASE,
   changeProjectMachinePower,
   deleteProjectMachine,
   getTeamResourceQuotas,
@@ -20,6 +23,7 @@ import {
   unregisterDeviceFromTeam,
 } from '@/api'
 import UserRef from '@/components/common/UserRefLink.vue'
+import { useRoomSocket } from '@/components/room/composables/useRoomSocket'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -42,8 +46,6 @@ const error = ref<string | null>(null)
 const busy = ref<string | null>(null)
 const cloudConfigured = ref(true)
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null
-
 const myDeviceIds = computed(() => new Set(myDevices.value.map((device) => device.device_id)))
 const addable = computed(() => myDevices.value.filter((device) => !device.team_ids.includes(teamId.value)))
 const cloudDeviceIds = computed(
@@ -51,23 +53,6 @@ const cloudDeviceIds = computed(
 )
 const selfHostedDevices = computed(() => devices.value.filter((device) => !cloudDeviceIds.value.has(device.device_id)))
 const onlineCount = computed(() => selfHostedDevices.value.filter((device) => device.online).length)
-function moving(machine: CloudMachine): boolean {
-  return (
-    ['provisioning', 'starting', 'suspending', 'resuming', 'stopping', 'deleting', 'unknown'].includes(
-      machine.status
-    ) ||
-    ['provisioning', 'unknown'].includes(machine.ai_status) ||
-    (machine.status === 'running' &&
-      machine.ai_status === 'ready' &&
-      !machine.device_id &&
-      machine.enroll_attempts < machine.enroll_max_attempts)
-  )
-}
-const cloudMoving = computed(() => cloudMachines.value.some(moving))
-// Only the projects with a machine still changing are asked again: a team with
-// thirty projects asked every one of them each time, from every open tab.
-const movingProjects = computed(() => new Set(cloudMachines.value.filter(moving).map((m) => m.project_id)))
-
 const statusLabel = computed<Record<ProjectMachine['status'], string>>(() => ({
   provisioning: t('teams.compute.status.provisioning'),
   starting: t('teams.compute.status.starting'),
@@ -127,17 +112,27 @@ async function load() {
     error.value = errorMessage(cause, t('teams.compute.loadFailed'))
   } finally {
     loading.value = false
-    schedulePoll()
   }
 }
 
-async function refreshCloud() {
+// Read some projects' machines again: the ones a `machines` signal names, or all
+// of them after a reconnect and on the resync. A refused credential stops the
+// resync rather than repeating the refusal.
+async function refreshCloud(only?: Set<string>) {
+  if (!only) {
+    try {
+      await loadCloud()
+    } catch (cause) {
+      if (cause instanceof ApiError && [401, 403].includes(cause.status)) stopResync()
+      error.value = errorMessage(cause, t('teams.compute.refreshFailed'))
+    }
+    return
+  }
   try {
-    const asked = movingProjects.value
     const fresh = new Map(
       await Promise.all(
         projects.value
-          .filter((project) => asked.has(project.id))
+          .filter((project) => only.has(project.id))
           .map(
             async (project) =>
               [
@@ -155,22 +150,65 @@ async function refreshCloud() {
     )
     quotas.value = await getTeamResourceQuotas(teamId.value)
   } catch (cause) {
+    if (cause instanceof ApiError && [401, 403].includes(cause.status)) stopResync()
     error.value = errorMessage(cause, t('teams.compute.refreshFailed'))
-  } finally {
-    schedulePoll()
   }
 }
 
-function schedulePoll() {
-  if (pollTimer) clearTimeout(pollTimer)
-  pollTimer = null
-  // A page nobody is looking at does not ask; it looks again when it is shown.
-  if (cloudMoving.value && document.visibilityState !== 'hidden') pollTimer = setTimeout(refreshCloud, 5000)
+// The team's live feed (backend `routes/team_live.py`) says which projects'
+// machines changed; nothing here polls. The token rides as ?token=, as on the room
+// socket, because a browser cannot set a header on a WebSocket.
+function teamLiveUrl(team: string): string {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const token = authToken()
+  const q = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${proto}://${window.location.host}${BASE}/teams/${encodeURIComponent(team)}/live${q}`
 }
 
-function onVisibility() {
-  if (document.visibilityState === 'visible' && cloudMoving.value) void refreshCloud()
-  else schedulePoll()
+const live = useRoomSocket({
+  topicId: () => (teamId.value ? String(teamId.value) : undefined),
+  url: teamLiveUrl,
+  onFrame(frame) {
+    if (frame.type === 'error' && live.isConnectRefusal(frame.code)) {
+      live.connectRefused.value = true
+      stopResync()
+      error.value = frame.message
+    } else if (frame.type === 'state' && frame.resource === 'machines') {
+      void refreshCloud(new Set(frame.project_ids ?? []))
+    }
+  },
+  onOpen: () => {},
+  // Signals sent while the socket was down are gone; read everything again.
+  reconnect(team) {
+    void refreshCloud()
+    live.open(team)
+  },
+  errorMsg: ref<string | null>(null),
+})
+
+// Insurance, as a controller's resync is: a change no signal reached still shows
+// within this long. Only while the page is shown.
+const RESYNC_MS = 5 * 60_000
+let resyncTimer: ReturnType<typeof setInterval> | null = null
+
+function startResync() {
+  stopResync()
+  resyncTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') void refreshCloud()
+  }, RESYNC_MS)
+}
+
+function stopResync() {
+  if (resyncTimer) clearInterval(resyncTimer)
+  resyncTimer = null
+}
+
+function openTeam() {
+  void load()
+  live.connectRefused.value = false
+  if (teamId.value) live.open(String(teamId.value))
+  else live.close()
+  startResync()
 }
 
 async function addMachine(device: MyDevice) {
@@ -211,7 +249,6 @@ async function destroyCloud(machine: CloudMachine) {
     error.value = errorMessage(cause, t('teams.compute.destroyFailed'))
   } finally {
     busy.value = null
-    schedulePoll()
   }
 }
 
@@ -230,20 +267,12 @@ async function changePower(machine: CloudMachine, operation: 'suspend' | 'resume
     )
   } finally {
     busy.value = null
-    schedulePoll()
   }
 }
 
-onMounted(() => {
-  document.addEventListener('visibilitychange', onVisibility)
-  void load()
-})
-watch(teamId, load)
-watch(cloudMoving, schedulePoll)
-onBeforeUnmount(() => {
-  document.removeEventListener('visibilitychange', onVisibility)
-  if (pollTimer) clearTimeout(pollTimer)
-})
+onMounted(openTeam)
+watch(teamId, openTeam)
+onBeforeUnmount(stopResync)
 </script>
 
 <template>

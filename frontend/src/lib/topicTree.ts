@@ -11,8 +11,8 @@
 //      被导航偷偷改写。
 //   2. 被收起来的后代的未读，冒到**离它最近的那个「看得见且收起来」的祖先**行
 //      上（`unreadTotal`）。每个隐藏行只算一次，不会被两层祖先重复计。
-//   3. 同样地，被收起来的后代的**状态**（芝士在跑 / 有事等人处理）也要冒上来
-//      （`hiddenRunning` / `hiddenAwaits`）。未读是数字要相加，状态是"有没有"
+//   3. 同样地，被收起来的后代里**成员的动静**（有队友在干活 / 有事等人处理）也要冒上来
+//      （`hiddenWorking` / `hiddenAwaits`）。未读是数字要相加，状态是"有没有"
 //      所以取或——父行的折叠开关凭它上色，"这里面有动静"才不会被折叠吞掉。
 
 import { t } from '@/i18n'
@@ -77,14 +77,12 @@ export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends Fla
   hiddenUnread: number
   /** 本行角标该显示的数字：自己的未读 + `hiddenUnread`。 */
   unreadTotal: number
-  /** 隐藏后代里有没有正在跑的（芝士在里面工作）。 */
-  hiddenRunning: boolean
+  /** 隐藏后代里有没有成员正在干活的（一位 AI 队友有一轮在跑）。 */
+  hiddenWorking: boolean
   /** 隐藏后代里有没有在等人处理的。 */
   hiddenAwaits: boolean
-  /** 隐藏后代里有没有 @ 了 AI 却等太久没回的。 */
+  /** 隐藏后代里有没有在等某位成员、而且等太久了的。 */
   hiddenStalled: boolean
-  /** 隐藏后代里有没有已采纳、在等合并的。 */
-  hiddenMerging: boolean
 }
 
 /**
@@ -210,14 +208,12 @@ export interface VisibleRowsOptions {
   reveal?: ReadonlySet<string>
   /** 话题级未读；缺省当 0。 */
   unreadOf?: (id: string) => number
-  /** 这个话题里芝士是不是正在跑；缺省当否。 */
-  runningOf?: (id: string) => boolean
+  /** 这个话题里有没有成员正在干活；缺省当否。 */
+  workingOf?: (id: string) => boolean
   /** 这个话题是不是在等人处理；缺省当否。 */
   awaitsOf?: (id: string) => boolean
-  /** 这个话题里是不是有人 @ 了 AI 却等太久没回；缺省当否。 */
+  /** 这个话题是不是在等某位成员、而且等太久了；缺省当否。 */
   stalledOf?: (id: string) => boolean
-  /** 这个话题是不是已采纳、在等合并；缺省当否。 */
-  mergingOf?: (id: string) => boolean
 }
 
 /**
@@ -234,10 +230,9 @@ export function visibleRows<T extends TopicNodeLike>(
   const collapsedIds = options.collapsed ?? new Set<string>()
   const reveal = options.reveal ?? new Set<string>()
   const unreadOf = options.unreadOf ?? (() => 0)
-  const runningOf = options.runningOf ?? (() => false)
+  const workingOf = options.workingOf ?? (() => false)
   const awaitsOf = options.awaitsOf ?? (() => false)
   const stalledOf = options.stalledOf ?? (() => false)
-  const mergingOf = options.mergingOf ?? (() => false)
 
   const roots = buildNodes(rows)
   const rendered: Node<T>[] = []
@@ -261,7 +256,7 @@ export function visibleRows<T extends TopicNodeLike>(
   // 这样嵌套折叠时同一条未读不会在两层父行上各显示一次。
   const owned = new Map<
     Node<T>,
-    { count: number; unread: number; running: boolean; awaits: boolean; stalled: boolean; merging: boolean }
+    { count: number; unread: number; working: boolean; awaits: boolean; stalled: boolean }
   >()
   for (const node of hidden) {
     let owner: Node<T> | null = node.parent
@@ -270,17 +265,15 @@ export function visibleRows<T extends TopicNodeLike>(
     const acc = owned.get(owner) ?? {
       count: 0,
       unread: 0,
-      running: false,
+      working: false,
       awaits: false,
       stalled: false,
-      merging: false,
     }
     acc.count += 1
     acc.unread += unreadOf(node.row.topic.id)
-    acc.running = acc.running || runningOf(node.row.topic.id)
+    acc.working = acc.working || workingOf(node.row.topic.id)
     acc.awaits = acc.awaits || awaitsOf(node.row.topic.id)
     acc.stalled = acc.stalled || stalledOf(node.row.topic.id)
-    acc.merging = acc.merging || mergingOf(node.row.topic.id)
     owned.set(owner, acc)
   }
 
@@ -297,10 +290,9 @@ export function visibleRows<T extends TopicNodeLike>(
       hiddenCount: acc?.count ?? 0,
       hiddenUnread,
       unreadTotal: unreadOf(id) + hiddenUnread,
-      hiddenRunning: acc?.running ?? false,
+      hiddenWorking: acc?.working ?? false,
       hiddenAwaits: acc?.awaits ?? false,
       hiddenStalled: acc?.stalled ?? false,
-      hiddenMerging: acc?.merging ?? false,
     }
   })
 }

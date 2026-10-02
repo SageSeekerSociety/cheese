@@ -3,6 +3,7 @@
 import uuid
 from functools import lru_cache
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -10,7 +11,7 @@ from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
-from app.domain.agent.compute import build_compute_pool
+from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness.pi.personal import PersonalSessions
@@ -26,6 +27,14 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
 from app.domain.machine.services import MachineService
 from app.domain.machine.wakeup import WAKE_NOTICE, WAKE_PROMPT, CloudWakeup
+from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.oauth.services import OAuthService
+from app.domain.user.repositories import (
+    UserProfileRepository,
+    UserRepository,
+    UserStatisticsRepository,
+)
+from app.domain.user.services import UserAuthService
 
 __all__ = [
     "get_db",
@@ -124,7 +133,10 @@ def get_personal_sessions() -> PersonalSessions:
 
 
 @lru_cache
-def get_chat_service() -> ChatService:
+def get_compute_pool() -> ComputePool:
+    """The harness runtimes this process reads sessions with: the chat service's,
+    and the one a runner's ring wakes. Every runtime's attach checks the work
+    runner's ``owns_sessions`` flag inside its seat lock first (FB-56)."""
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
@@ -132,12 +144,25 @@ def get_chat_service() -> ChatService:
         ensure_topic_cloud=_ensure_topic_cloud,
         read_topic_cloud=_read_topic_cloud,
     )
+    pool = build_compute_pool(cloud_channel=cloud)
+    runner = get_work_runner()
+    for runtime in pool._runtimes():
+        # Structural, like the pool's own probes: a runtime without the
+        # binder has no attach gate to arm (FB-56).
+        bind = getattr(runtime, "bind_owns_sessions", None)
+        if bind is not None:
+            bind(lambda: runner)
+    return pool
+
+
+@lru_cache
+def get_chat_service() -> ChatService:
     return ChatService(
         session_factory=async_session_factory,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(cloud_channel=cloud),
+        compute=get_compute_pool(),
         gateway=get_llm_gateway(),
     )
 
@@ -254,3 +279,22 @@ def get_work_runner() -> AgentWorkRunner:
     )
     runner.subscribe_messages()
     return runner
+
+
+async def get_user_auth_service(
+    db=Depends(get_db),
+) -> UserAuthService:
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    stats_repo = UserStatisticsRepository(session=db)
+    return UserAuthService(
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        stats_repo=stats_repo,
+    )
+
+
+async def get_oauth_service(
+    db=Depends(get_db),
+) -> OAuthService:
+    return OAuthService(repo=OAuthConnectionRepository(session=db))

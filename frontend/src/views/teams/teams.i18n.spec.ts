@@ -13,6 +13,10 @@ vi.mock('vue-router', async () => ({
   useRoute: () => ({ params: { handle: 'crew' }, query: {} }),
 }))
 vi.mock('@/api', () => ({
+  ApiError: class extends Error {},
+  authToken: () => '',
+  BASE: '/api',
+  chatWsUrl: vi.fn(),
   changeProjectMachinePower: vi.fn(),
   deleteProjectMachine: vi.fn(),
   getTeamResourceQuotas: vi.fn(async () => ({
@@ -110,6 +114,16 @@ beforeAll(() => {
   previous = i18n.global.locale.value as 'zh-CN' | 'en'
   setLocale('en')
   vi.stubGlobal('devicePixelRatio', 1)
+  // The compute page opens its team's live feed; nothing here answers it.
+  vi.stubGlobal(
+    'WebSocket',
+    class {
+      static OPEN = 1
+      readyState = 0
+      send() {}
+      close() {}
+    }
+  )
   vi.stubGlobal(
     'ResizeObserver',
     class {

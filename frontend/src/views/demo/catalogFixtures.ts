@@ -33,6 +33,7 @@ import type {
 import type { Outgoing } from '@/lib/composerDrafts'
 import type { FileDiff } from '@/lib/diff'
 import type { DocSaveStatus } from '@/lib/docEditState'
+import type { RailMemberMark } from '@/lib/memberActivity'
 import type { VisibleRow } from '@/lib/topicTree'
 import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
 import type { ChangesScene, ChatLine, Frame } from './demoScene'
@@ -514,17 +515,20 @@ function railRow(
     hiddenCount: 0,
     hiddenUnread: 0,
     unreadTotal: 0,
-    hiddenRunning: false,
+    hiddenWorking: false,
     hiddenAwaits: false,
     hiddenStalled: false,
-    hiddenMerging: false,
     ...visible,
   }
 }
 
 export const RAIL_ROWS = {
-  /** 芝士正在这个话题里跑：绿呼吸点。 */
-  running: railRow({ id: 't-1', title: '写第 4 章的教案', running: true }),
+  /** 一位队友正在这个话题里干活：右边它的小头像带一颗绿点。 */
+  working: railRow({
+    id: 't-1',
+    title: '写第 4 章的教案',
+    activity: [{ member: 'cheese-a1', kind: 'working', since: 1790845200 }],
+  }),
   /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
   awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, i_participate: true }),
   /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
@@ -534,13 +538,25 @@ export const RAIL_ROWS = {
   ),
   /** 子话题：缩进一级，左边一条竖向引导线。 */
   sub: railRow({ id: 't-4', title: '第 3 题：为什么天空是蓝的', parent_id: 't-3' }, { depth: 1, unreadTotal: 2 }),
-  /** 红灯：最近一轮报错了。这一条不靠数据变——钟走到哪儿它都亮着。 */
-  stalled: railRow({ id: 't-5', title: '把成绩单导出成 CSV', turn_failed_at: '2026-09-29T08:41:00Z' }),
-  /** 在等合并：常亮的空心绿圈（和呼吸点靠「动不动」「实心还是空心」分开）。 */
-  merging: railRow({ id: 't-6', title: '重排第一章的目录', merging: true }),
+  /** 房间在等的一位队友：它最近一轮报错了。不靠数据变——钟走到哪儿它都卡着。 */
+  stalled: railRow({
+    id: 't-5',
+    title: '把成绩单导出成 CSV',
+    waits: [{ member: 'cheese-a1', reason: 'failed', since: '2026-09-29T08:41:00Z' }],
+  }),
   /** 归档行：标题压暗一档，行尾是「取消归档」（`TopicRailArchivedGroup` 那一组）。 */
   archived: { id: 't-7', title: '第 1 题：写一段自我介绍', kind: 'topic' } as Topic,
 }
+
+/** 侧栏一行右边那几位成员（`useTopicRail.memberMarks` 在真环境里给的就是这个形状）。 */
+export const RAIL_MARKS = {
+  working: [
+    { handle: 'cheese-a1', name: AGENT_NAME, agent: true, state: 'working', title: `${AGENT_NAME}正在这里工作` },
+  ],
+  stalled: [
+    { handle: 'cheese-a1', name: AGENT_NAME, agent: true, state: 'stalled', title: `${AGENT_NAME}最近一轮报错了` },
+  ],
+} satisfies Record<string, RailMemberMark[]>
 
 /** 一行的 ⋯ 里那几项（`commands/topicActions.ts` 在真环境里给的就是这个形状）。 */
 export const RAIL_ACTIONS: MenuCommand[] = [
@@ -564,7 +580,7 @@ export const RAIL_ROOT_TOPIC: Topic = {
 export const RAIL_PAGES = [
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
   { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
-  { key: 'calendar', label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
+  { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
 ]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */
@@ -803,6 +819,8 @@ const DOC_BASE = {
 }
 
 /** 文档那一格的整串 props（正文本身由容器在取到之后装进去，不由 props 进）。 */
+export function docPanelProps(): typeof DOC_BASE
+export function docPanelProps<T extends Record<string, unknown>>(over: T): Omit<typeof DOC_BASE, keyof T> & T
 export function docPanelProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return { ...DOC_BASE, ...over }
 }
@@ -850,6 +868,7 @@ const CHAT_BASE = {
   agentName: AGENT_NAME,
   refs: ROOM_REFS,
   outbox: [] as Outgoing[],
+  typing: [],
   editingId: null,
   editSaving: false,
   askBusy: null,

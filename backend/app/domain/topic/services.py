@@ -42,7 +42,6 @@ from app.domain.identity.handles import (
     names_a_person,
 )
 from app.domain.membership.roster import roster_rows
-from app.domain.milestone.services import MilestoneService
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
@@ -64,8 +63,6 @@ from app.domain.topic.overview import (
     ACTIVE_TOPICS_LIMIT,
     CLOSED_TOPICS_KEY,
     CLOSED_TOPICS_LIMIT,
-    MILESTONES_KEY,
-    MILESTONES_LIMIT,
     first_sentence,
     overview_auto_blocks,
     topic_status,
@@ -281,8 +278,7 @@ class TopicService:
             # 父房间必须是**本项目的**房间：`_require_room` 只问 kind，不问归属，
             # 所以拿别人项目里的根房间当 parent，就能把自己的房间挂进那片树——对方的
             # `/children` 从此列出一个他管不着的房间，而树的形状是他以为只有自己人
-            # 的地方。跨项目的父子关系没有第二种解释，按「这个父不存在」回答
-            # （和 `milestones.py` 对同类越界的措辞一致）。
+            # 的地方。跨项目的父子关系没有第二种解释，按「这个父不存在」回答。
             if parent.project_id != project_id:
                 raise NotFoundError("Parent topic not found")
         topic = await self._repo.add(
@@ -565,6 +561,7 @@ class TopicService:
         signal: dict = {
             "stalled": False,
             "reason": None,
+            "member": None,
             "threshold_s": round(threshold_s),
             "silent_for_s": silent_for_s,
             "last_block": _stall_block_summary(last),
@@ -577,6 +574,8 @@ class TopicService:
         if not _is_mid_turn_block(last):
             return signal
         signal["stalled"] = True
+        # Whose turn died: the member who wrote that last half-finished action.
+        signal["member"] = last.author
         # Which of the two ways it died, because they send whoever reads this to
         # different places: a process that is not running the turn at all versus
         # one holding a task that stopped producing.
@@ -1172,7 +1171,7 @@ class TopicService:
         return await self.doc_of_room(place.room_id)
 
     async def overview_auto(self, topic_id: uuid.UUID) -> list[dict]:
-        """总览房间（项目根话题）的 ②~④，结构化（#1889）。
+        """总览房间（项目根话题）的 ②③，结构化（#1889）。
 
         总览只属于根话题：别的房间读得到的是它们自己的实况文档，没有人从那里看
         项目全局。非根话题给的是一句 404 —— 它名下确实没有这么一件东西，这和
@@ -1192,7 +1191,7 @@ class TopicService:
         all_topics: list[Topic] | None = None,
         roster: list[dict] | None = None,
     ) -> dict[str, list[dict]]:
-        """②~④ 的每一行：活跃话题、里程碑、已结束话题的结论。
+        """②③ 的每一行：活跃话题、已结束话题的结论。
 
         全部来自结构化数据，所以**没有一句是手抄的**——谁改了源头，下一次就是
         新的。负责人取该话题最新那张任务卡的 owner：一个房间可以有好几张卡，最新
@@ -1249,9 +1248,6 @@ class TopicService:
             doc = docs.get(topic.id)
             return topic_status(doc.content) if doc is not None else None
 
-        milestones, _ = await MilestoneService(self._session).list_for_project(
-            project_id
-        )
         return {
             ACTIVE_TOPICS_KEY: [
                 {
@@ -1266,15 +1262,6 @@ class TopicService:
                     "conclusion": conclusion(t, prefer_card=False),
                 }
                 for t in live
-            ],
-            MILESTONES_KEY: [
-                {
-                    "id": str(m.id),
-                    "title": m.title,
-                    "due": m.due_date.date().isoformat() if m.due_date else None,
-                    "status": m.status.value,
-                }
-                for m in milestones[:MILESTONES_LIMIT]
             ],
             CLOSED_TOPICS_KEY: [
                 {

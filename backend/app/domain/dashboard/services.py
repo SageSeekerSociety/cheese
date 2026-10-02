@@ -1,7 +1,7 @@
 """Aggregation services — the attention-management layer (spec §7.2/§7.3).
 
 These read across domains to produce the "one level up" summaries:
-- project overview (事维度): milestones, topics×status, 等你处理的事, risks (eval G2)
+- project overview (事维度): topics×status, 等你处理的事, risks (eval G2)
 - Space board (机构): every linked team in one table (eval F3)
 
 Read-only; the data is owned by the per-domain tables and stays the source of
@@ -20,7 +20,6 @@ from app.core.errors import NotFoundError
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
@@ -51,7 +50,6 @@ class DashboardService:
         self._s = session
         self._projects = ProjectRepository(session)
         self._topics = TopicRepository(session)
-        self._milestones = MilestoneRepository(session)
         self._notifs = NotificationRepository(session)
         self._spaces = SpaceRepository(session)
 
@@ -63,7 +61,6 @@ class DashboardService:
         by_status = {s.value: 0 for s in TopicStatus}
         for t in topics:
             by_status[t.status.value] += 1
-        upcoming = await self._milestones.list_calendar(project_id)
         # 活跃度 (spec §7.2): last activity + the human/AI contribution mix.
         last_activity = await self._s.scalar(
             select(func.max(Block.created_at)).where(Block.project_id == project_id)
@@ -91,25 +88,6 @@ class DashboardService:
             "topics_by_status": by_status,
             "last_activity_at": (last_activity.isoformat() if last_activity else None),
             "contributions": mix,
-            "upcoming_milestones": [
-                {
-                    "title": m.title,
-                    "due_date": m.due_date.isoformat() if m.due_date else None,
-                }
-                for m in upcoming
-            ],
-            "next_milestone": (
-                {
-                    "title": upcoming[0].title,
-                    "due_date": (
-                        upcoming[0].due_date.isoformat()
-                        if upcoming[0].due_date
-                        else None
-                    ),
-                }
-                if upcoming
-                else None
-            ),
         }
 
     async def member_summary(

@@ -404,7 +404,7 @@ def test_answering_touches_no_machine_and_no_room(client, gateway):
     assert _ask(client, conversation, "从哪里入手？", me).status_code == 200
 
     ran = [argv for argv in gateway.host.execs if argv != ["cat", "/proc/meminfo"]]
-    assert ran == [["python3", "-"]]
+    assert ran and all(argv == ["python3", "-"] for argv in ran)
 
 
 def test_a_new_conversation_starts_without_the_old_ones_turns(client, gateway):

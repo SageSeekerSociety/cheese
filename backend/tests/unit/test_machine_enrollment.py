@@ -373,6 +373,8 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
     failed_leases: list = []
 
     class Session:
+        info: dict = {}
+
         async def __aenter__(self):
             return self
 
@@ -394,7 +396,7 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
         async def release_left_machines(self):
             return 0
 
-        async def refresh_unsettled(self):
+        async def refresh_due(self):
             return None
 
         async def enroll_pending(self):
@@ -652,6 +654,8 @@ async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch
     )
 
     class Session:
+        info: dict = {}
+
         async def __aenter__(self):
             return self
 
@@ -673,7 +677,7 @@ async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch
         async def release_left_machines(self):
             return 0
 
-        async def refresh_unsettled(self):
+        async def refresh_due(self):
             return None
 
         async def enroll_pending(self):

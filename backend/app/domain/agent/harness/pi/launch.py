@@ -4,13 +4,15 @@ pi runs on the central session host, beside the room's other sessions, and its
 hands are on the room's machine (`machine.py`, #1106): the session does not have
 to wait for a machine to talk, and the machine is taken only when the work
 needs it. What reaches the host is a Python script over the connector's stdin,
-as Codex's does (`script`): the runner archive, its configuration, and the
-shell that leaves the pinned pi installed; `host.configure` does the rest.
+as Codex's does (`HostLaunch.program`): the runner archive when the host does
+not hold it yet, its configuration, and the shell that leaves the pinned pi
+installed; `host.configure` does the rest.
 """
 
 import base64
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.domain.agent.harness.pi.bundle import build
@@ -178,7 +180,58 @@ def arguments(model: str) -> list[str]:
     ]
 
 
-def script(
+@dataclass(frozen=True)
+class HostLaunch:
+    """One launch of a room's pi on the session host, before it is sent.
+
+    ``contract`` is everything about it that a running pi could not be made to
+    adopt — the build, the argv, the execution target, the extension, the
+    skills — and not the room's system prompt. A runner started with a
+    different one is replaced once it is idle (`host.configure`).
+    """
+
+    contract: str
+    payload: dict
+    archive: bytes
+
+    def program(self, *, ship: bool) -> str:
+        """The Python the session host runs (`python3 -`) to start the room's pi.
+
+        The host keeps the runner archive under its digest. Without ``ship``
+        the program carries only that digest, and a host that does not hold
+        the file answers ``{"runner": "missing"}`` and starts nothing, for the
+        launch to be sent again with the archive.
+        """
+        payload = {**self.payload, "digest": hashlib.sha256(self.archive).hexdigest()}
+        if ship:
+            payload["archive"] = base64.b64encode(self.archive).decode()
+        return f"""import base64,hashlib,json,os,sys,tempfile
+from pathlib import Path
+payload=json.loads({json.dumps(payload)!r})
+state=Path(payload["state"].replace("$HOME",str(Path.home()))).expanduser().resolve()
+state.mkdir(parents=True,exist_ok=True,mode=0o700)
+digest=payload.pop("digest")
+shipped=payload.pop("archive",None)
+# A new deployment never overwrites the modules a live runner is already using.
+artifact=state/f"runner-{{digest}}.pyz"
+if not artifact.exists():
+    if shipped is None:
+        print(json.dumps({{"runner":"missing"}}))
+        sys.exit(0)
+    archive=base64.b64decode(shipped,validate=True)
+    if hashlib.sha256(archive).hexdigest()!=digest:
+        sys.exit("the runner archive does not match its digest")
+    with tempfile.NamedTemporaryFile(dir=state,delete=False) as output:
+        output.write(archive)
+    os.replace(output.name,artifact)
+payload["artifact"]=str(artifact)
+sys.path.insert(0,str(artifact))
+from app.domain.agent.harness.pi.host import configure
+print(json.dumps(configure(payload)))
+"""
+
+
+def on_host(
     *,
     state: str,
     config: dict,
@@ -187,19 +240,14 @@ def script(
     env: dict[str, str],
     models: str | None = None,
     host: dict | None = None,
-) -> str:
-    """The Python the session host runs (`python3 -`) to start the room's pi.
+) -> HostLaunch:
+    """The room's pi as the session host is to start it. ``config`` is what
+    the runner reads (`entry.py`) without its ``contract``.
 
     ``models`` is the provider file when this session's model needs one of its
     own (``provider``'s by default). ``host`` is what ``host.configure`` does
     beyond starting the runner, for a person's 芝士: how many of the person's
-    sessions may run at once, and the memory each may use.
-
-    ``config`` is what the runner reads (`entry.py`) without its ``contract``:
-    everything about this launch that a running pi could not be made to adopt —
-    the build, the argv, the execution target, the extension, the skills — and
-    not the room's system prompt. A runner started with a different one is
-    replaced once it is idle (`host.configure`).
+    sessions may run at once, the memory each may use, and pi's settings.
     """
     archive = build()
     models = models or provider(api_base, model)
@@ -213,29 +261,15 @@ def script(
             sort_keys=True,
         ).encode()
     ).hexdigest()
-    payload = {
-        "state": state,
-        "config": {**config, "contract": contract},
-        "models": models,
-        "install": install(home="$HOME", base=api_base.rstrip("/")),
-        "env": env,
-        "archive": base64.b64encode(archive).decode(),
-        **(host or {}),
-    }
-    return f"""import base64,hashlib,json,os,sys,tempfile
-from pathlib import Path
-payload=json.loads({json.dumps(payload)!r})
-state=Path(payload["state"].replace("$HOME",str(Path.home()))).expanduser().resolve()
-state.mkdir(parents=True,exist_ok=True,mode=0o700)
-archive=base64.b64decode(payload.pop("archive"),validate=True)
-# A new deployment never overwrites the modules a live runner is already using.
-artifact=state/f"runner-{{hashlib.sha256(archive).hexdigest()}}.pyz"
-if not artifact.exists():
-    with tempfile.NamedTemporaryFile(dir=state,delete=False) as output:
-        output.write(archive)
-    os.replace(output.name,artifact)
-payload["artifact"]=str(artifact)
-sys.path.insert(0,str(artifact))
-from app.domain.agent.harness.pi.host import configure
-print(json.dumps(configure(payload)))
-"""
+    return HostLaunch(
+        contract=contract,
+        payload={
+            "state": state,
+            "config": {**config, "contract": contract},
+            "models": models,
+            "install": install(home="$HOME", base=api_base.rstrip("/")),
+            "env": env,
+            **(host or {}),
+        },
+        archive=archive,
+    )

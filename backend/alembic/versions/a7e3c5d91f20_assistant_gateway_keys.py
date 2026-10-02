@@ -1,7 +1,7 @@
 """A person's own gateway key for their 芝士
 
 Revision ID: a7e3c5d91f20
-Revises: 2733a598f271
+Revises: c9f4a2e7d153
 Create Date: 2026-10-02
 
 One new table, nothing existing is touched: per person, the virtual gateway key
@@ -17,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "a7e3c5d91f20"
-down_revision: str | Sequence[str] | None = "2733a598f271"
+down_revision: str | Sequence[str] | None = "c9f4a2e7d153"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

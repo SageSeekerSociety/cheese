@@ -14,22 +14,25 @@ import type { PreviewFrame, PreviewNavigation } from '../../composables/usePrevi
 import type { FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
+import type { RasterSelection } from './preview/designRegion'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
 import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
-import AttachmentImage from '../AttachmentImage.vue'
 
+import DesignImage from './preview/DesignImage.vue'
+import PreviewLocator from './preview/PreviewLocator.vue'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
+import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -189,19 +192,26 @@ const revisionsRef = ref<InstanceType<typeof RevisionList> | null>(null)
 const locator = ref<{ label: string; quote: string; address: string } | null>(null)
 const pageContext = ref<SlidePageContext | null>(null)
 const locatorNote = ref('')
-const locatorInput = ref<HTMLInputElement | null>(null)
+const imageRegion = usePreviewImageRegion(props, clearLocator)
 
 function openLocator(label: string, quote: string, address: string) {
+  imageRegion.clear()
   pageContext.value = null
   locator.value = { label, quote, address }
   locatorNote.value = ''
-  void nextTick(() => locatorInput.value?.focus())
 }
 
 function clearLocator() {
+  imageRegion.clear()
   locator.value = null
   pageContext.value = null
   locatorNote.value = ''
+}
+function onImageRegion(selection: RasterSelection) {
+  const captured = imageRegion.capture(selection)
+  if (!captured) return
+  openLocator(t('design.region'), t('design.selectedRegion', selection.region), '')
+  imageRegion.target.value = captured
 }
 function canUsePageContext(context: SlideSource): boolean {
   const expected = props.slideContext
@@ -273,6 +283,13 @@ function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
+  if (imageRegion.target.value) {
+    const message = imageRegion.message(note)
+    if (!message) return
+    emit('locate', message)
+    clearLocator()
+    return
+  }
   if (pageContext.value) {
     const payload = pageContext.value
     if (!canUsePageContext(payload.context)) return
@@ -613,41 +630,27 @@ function sendLocator() {
           @decided="emit('document-changed')"
         />
       </div>
-
-      <!-- 指出位置：读者选中一句话或点中一个格子，这条就是交给芝士的坐标。 -->
-      <Transition name="locator">
-        <div v-if="locator" class="locator">
-          <div class="locator__where">
-            <span class="locator__label t-meta">{{ locator.label }}</span>
-            <span class="locator__quote">{{ locator.quote }}</span>
-          </div>
-          <input
-            ref="locatorInput"
-            v-model="locatorNote"
-            class="locator__input"
-            autocomplete="off"
-            :placeholder="t('work.room.preview.locatorPlaceholder')"
-            @keydown.enter.prevent="sendLocator"
-            @keydown.esc.prevent="clearLocator"
-          />
-          <v-btn size="small" color="primary" variant="flat" :disabled="!locatorNote.trim()" @click="sendLocator">
-            {{ t('work.room.preview.send') }}
-          </v-btn>
-          <v-btn
-            icon="mdi-close"
-            size="small"
-            variant="text"
-            color="medium-emphasis"
-            :title="t('work.room.preview.cancel')"
-            @click="clearLocator"
-          />
-        </div>
-      </Transition>
     </div>
-    <!-- 指定的一张图：图片不在 iframe 那条路上（那一条是给网页和跑着的应用的），
-         这里按路径取字节，和聊天里的图是同一个组件。 -->
+    <!-- The shown blob and region share the same original-byte snapshot. -->
     <div v-else-if="path && previewFile && isImageArtifact" class="file-image">
-      <AttachmentImage :topic-id="topicId" :path="path" />
+      <DesignImage
+        v-if="imageRegion.imageSrc.value"
+        :src="imageRegion.imageSrc.value"
+        :alt="documentName"
+        :identity="imageRegion.imageIdentity.value"
+        :selection-enabled="imageRegion.selectionEnabled.value"
+        @region="onImageRegion"
+      >
+        <template #actions
+          ><a class="image-open" :href="imageRegion.imageSrc.value" target="_blank" rel="noopener">{{
+            t('work.room.preview.openInNewWindow')
+          }}</a></template
+        >
+      </DesignImage>
+      <div v-else class="doc__state" role="status">
+        <span v-if="docError">{{ docError }}</span>
+        <v-progress-circular v-else indeterminate color="primary" size="24" />
+      </div>
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -670,6 +673,7 @@ function sendLocator() {
       <div>{{ t('work.room.preview.empty') }}</div>
     </div>
 
+    <PreviewLocator v-model:note="locatorNote" :target="locator" @send="sendLocator" @cancel="clearLocator" />
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
          论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
     <RoomOutputs v-if="!path" :topic-id="topicId" @open="emit('open-file', $event)" />
@@ -689,6 +693,8 @@ function sendLocator() {
 
 <style scoped>
 .panel-preview {
+  position: relative;
+  container-type: inline-size;
   /* 上面那一格的地板：一面预览低到看不出东西就不叫预览了。列高不够时它缩到这
      么高就停住，其余交给整块面板滚——见下面 .preview-wrap 和 .doc 的说明。 */
   --preview-min: 240px;
@@ -703,9 +709,23 @@ function sendLocator() {
 .file-image {
   display: flex;
   flex: 1 1 auto;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 16px;
+  flex-direction: column;
+  min-width: 0;
+  min-height: var(--preview-min);
+}
+.image-open {
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.image-open:hover {
+  background: var(--fill-2);
+}
+.image-open:focus-visible {
+  outline: 2px solid var(--accent);
 }
 .preview-head {
   display: flex;
@@ -896,71 +916,5 @@ function sendLocator() {
   min-height: 0;
   overflow: auto;
   padding: 12px 16px 24px;
-}
-
-/* 指出位置那一条。它浮在文档之上，所以有投影——第 3.4 节：投影只给浮起来的东西。 */
-.locator {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 8px 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-2);
-}
-
-.locator__where {
-  flex: none;
-  max-width: 40%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.locator__label {
-  color: var(--muted);
-}
-.locator__quote {
-  font-size: 13px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.locator__input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
-  font-size: 14px;
-  color: var(--text);
-  background: var(--fill);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  transition:
-    border-color 0.12s ease,
-    background-color 0.12s ease;
-}
-.locator__input:focus {
-  outline: none;
-  background: var(--surface);
-  border-color: var(--line-2);
-}
-
-.locator-enter-active,
-.locator-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
-}
-.locator-enter-from,
-.locator-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
 }
 </style>

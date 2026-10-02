@@ -366,6 +366,12 @@ class StubChannel:
         # unread_grace_s, hard_ceiling_s), so a test about a session that stops
         # does not have to wait the production half hour for it.
         self.runtime = ClaudeCodeRuntime(self, **policy)
+        # (topic_id, agent_handle, session_id) triples the TEST has determined
+        # gone (FB-56 legacy③): the same optional per-conversation observation
+        # the real channels report from their I/O boundary. Nothing lands here
+        # by filtering a session list — a fixture states a deletion by name,
+        # and a channel without the probe means "unknown", never "dead".
+        self.gone: set[tuple[uuid.UUID, str, str]] = set()
         self.root = Path(tempfile.mkdtemp(prefix="stub-sessions-"))
         # One runner per SEAT: a room with several agents seated runs their
         # sessions side by side, each with its own journal and mirror — the
@@ -404,7 +410,9 @@ class StubChannel:
     async def prepare_topic(self, **_: object) -> tuple[bool, str]:
         return True, ""
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: Handle | None = None
+    ) -> Handle:
         self.last_system_prompt = opening.system_prompt
         self.last_resume_session_id = opening.resume_token
         agent = opening.agent_handle or session.agent_handle or "cheese"
@@ -470,8 +478,22 @@ class StubChannel:
             raise DeviceCallError(f"no session for {handle.session.topic_id}")
         return await runner.dispatch(method, params)
 
+    def report_gone(
+        self, topic_id: uuid.UUID, agent_handle: str, session_id: str
+    ) -> None:
+        """Declare one conversation terminated — the fixture's own exact
+        death evidence, consumed like a real channel's bound terminal answer."""
+        self.gone.add((topic_id, agent_handle, session_id))
+
+    def report_back(
+        self, topic_id: uuid.UUID, agent_handle: str, session_id: str
+    ) -> None:
+        """Retract a declaration: the conversation is here again."""
+        self.gone.discard((topic_id, agent_handle, session_id))
+
     async def discover(self, device_id: str | None) -> list[Handle]:
         """Every session still running here — what a restarted backend finds."""
+        self.last_outcomes = {key: "dead" for key in self.gone}
         return [
             Handle(
                 SessionRef(

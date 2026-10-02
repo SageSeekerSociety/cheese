@@ -255,9 +255,8 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     # The tool's answer went back to the model.
     assert "my_tasks 的结果" in json.dumps(fake.requests[1], ensure_ascii=False)
     # Nothing but the launch ran on the host: no machine, no container.
-    assert [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]] == [
-        ["python3", "-"]
-    ]
+    ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
+    assert ran and all(argv == ["python3", "-"] for argv in ran)
 
 
 @pytest.mark.anyio
@@ -272,15 +271,15 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
 
     await _ask(sessions, launch, "The password is PINEAPPLE.")
     await _until(lambda: not hub.alive(state))
+    launched = len(hub.execs)
 
     events = await _ask(sessions, launch, "What was the password?")
 
     assert events[-1] == Answered("PINEAPPLE。")
     asked = json.dumps(fake.requests[-1]["messages"], ensure_ascii=False)
     assert "The password is PINEAPPLE." in asked
-    assert [argv for argv in hub.execs if argv == ["python3", "-"]] == [
-        ["python3", "-"]
-    ] * 2
+    # It was started again, on the conversation it had.
+    assert ["python3", "-"] in hub.execs[launched:]
 
 
 @pytest.mark.anyio

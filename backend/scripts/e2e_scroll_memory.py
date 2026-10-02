@@ -69,7 +69,6 @@ async def cleanup(pid: str) -> None:
 
     stmts = [
         "DELETE FROM blocks WHERE project_id=:p",
-        "DELETE FROM milestones WHERE project_id=:p",
         "DELETE FROM accept_cards WHERE topic_id IN "
         "(SELECT id FROM topics WHERE project_id=:p)",
         "DELETE FROM notifications WHERE project_id=:p",

@@ -59,8 +59,9 @@ def test_each_message_boundary_lands_as_own_block(client):
     # interleaved with the tool activity that separates them.
     # 芝士's 👀 rides the harness's prompt receipt, reported on its own task, so
     # it has no fixed position here and is filtered out (asserted in
-    # test_reactions.py).
-    types = [f["type"] for f in frames if f["type"] != "reaction"]
+    # test_reactions.py). The agent's `activity` (working / done) follows the
+    # turn's own lifecycle frames and is asserted in test_member_activity.py.
+    types = [f["type"] for f in frames if f["type"] not in ("reaction", "activity")]
     assert "delta" not in types
     assert types == [
         "user_block",

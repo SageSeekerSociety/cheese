@@ -157,7 +157,6 @@ _SPELLED_OUT: dict[str, tuple[str, ...]] = {
     "app/domain/agent/harness/codex/host.py": ("codex",),
     "app/domain/agent/harness/codex/runner.py": ("codex",),
     "app/domain/agent/harness/codex/runtime.py": ("codex",),
-    "app/domain/agent/harness/pi/events.py": ("pi",),
     "app/domain/agent/harness/pi/runner.py": ("pi",),
     "app/domain/agent/harness/pi/runtime.py": ("pi",),
 }

@@ -27,10 +27,12 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentRetrying,
+    AgentUserEntry,
 )
 from tests.support.room_machine import NO_MACHINE
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
+NONCE = "⟪w:00000000000000000000f002⟫"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -71,7 +73,11 @@ async def replay(tmp_path: Path, recording: str) -> list[dict]:
         await call(
             runner.state,
             "send",
-            {"input_id": str(uuid.uuid4()), "text": "开始", "work_id": "work-1"},
+            {
+                "input_id": str(uuid.uuid4()),
+                "text": f"开始 {NONCE}",
+                "work_id": "work-1",
+            },
         )
         # Until pi has settled and the runner has written down what it heard.
         for _ in range(200):
@@ -88,7 +94,7 @@ async def replay(tmp_path: Path, recording: str) -> list[dict]:
 
 def read(log: list[dict]) -> tuple[list, list[int]]:
     """The events the room gets, and the positions in the log that end a turn."""
-    assembler = Assembler("session-1")
+    assembler = Assembler("session-1", harness="pi")
     events = [event for record in log for event in assembler.accept(record)]
     ends = [
         index
@@ -104,14 +110,16 @@ async def test_a_turn_whose_request_is_retried_ends_once_with_the_answer(tmp_pat
     events, ends = read(log)
 
     assert [type(e) for e in events] == [
+        AgentUserEntry,
         AgentRetrying,
         AgentRetrying,
         AgentRetrying,
         AgentMessage,
         AgentResult,
     ]
-    assert [(e.attempt, e.max_attempts) for e in events[:3]] == [(1, 3), (2, 3), (3, 3)]
-    assert "503" in events[0].error
+    attempts = [(e.attempt, e.max_attempts) for e in events[1:4]]
+    assert attempts == [(1, 3), (2, 3), (3, 3)]
+    assert "503" in events[1].error
     assert events[-1].is_error is False
     assert events[-1].text == "done after retry"
     # One ending, and it is the answer — none of the three failed calls.
@@ -141,7 +149,9 @@ async def test_retries_that_run_out_end_the_turn_as_a_failure(tmp_path):
     log = await replay(tmp_path, "retry-exhausted")
     events, ends = read(log)
 
-    assert [type(e) for e in events] == [AgentRetrying] * 3 + [AgentResult]
+    assert [type(e) for e in events] == (
+        [AgentUserEntry] + [AgentRetrying] * 3 + [AgentResult]
+    )
     result = events[-1]
     assert result.is_error is True
     assert result.api_error_status == 503
@@ -155,9 +165,9 @@ async def test_a_request_pi_does_not_retry_ends_the_turn_at_once(tmp_path):
     log = await replay(tmp_path, "retry-refused")
     events, ends = read(log)
 
-    assert [type(e) for e in events] == [AgentResult]
-    assert events[0].is_error is True
-    assert events[0].api_error_status == 400
+    assert [type(e) for e in events] == [AgentUserEntry, AgentResult]
+    assert events[-1].is_error is True
+    assert events[-1].api_error_status == 400
     assert ends == [len(log) - 1]
 
 
