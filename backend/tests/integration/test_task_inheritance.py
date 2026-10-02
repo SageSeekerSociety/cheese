@@ -153,7 +153,9 @@ def _resolve_from_db(client: TestClient, task_id: int):
 def _get(client: TestClient, *, task_id: int, token: str) -> dict:
     resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
     assert resp.status_code == 200, resp.text
-    return resp.json()["data"]
+    # 裸响应体：``/tasks`` 这一族（详情、附件清单、参与）都不套
+    # ``{"code","message","data"}``。
+    return resp.json()
 
 
 def _clear_space_teaching(client: TestClient, space_id: int) -> None:

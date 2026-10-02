@@ -96,4 +96,7 @@ async def get_task_inheritance(
         item for item in listed if item.get("visibility") == _MEMBERS_VISIBILITY
     ]
 
-    return {"code": 200, "message": "OK", "data": _to_api(found, materials)}
+    # 裸响应体，不套 ``{"code", "message", "data"}`` —— ``/tasks`` 这一族
+    # （详情、附件清单、参与）都是裸的，``TasksApi`` 也是这样读的。同一个
+    # router 前缀下两种信封会让 `result.data.…` 有时对有时错。
+    return _to_api(found, materials)
