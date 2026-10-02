@@ -419,6 +419,7 @@ async def test_a_platform_turn_taken_into_the_running_turn_still_ends():
                 prompt="tidy the notes",
                 system_prompt="",
                 resume_session_id=None,
+                register_input=room.register_input("tidy the notes"),
                 agent_handle="cheese",
                 session_agent="cheese",
             ):
