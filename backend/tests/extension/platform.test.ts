@@ -20,6 +20,7 @@ import { after, describe, it } from "node:test";
 // hand-written stand-ins for the same interface drift, and the one that
 // drifted goes on passing.
 import {
+  beforeAgentStart,
   CATALOG,
   cleanup,
   load,
@@ -244,40 +245,79 @@ describe("会话在哪、仓库自己说了什么", () => {
   it("模型被告知的工作目录是执行机上的项目，不是 pi 自己跑在哪", async () => {
     const socket = await runner(() => ({ result: { context: "" } }));
     const { pi } = await load({ socket: socket.address, workspace: "/machine/room" });
-    const before = "平台系统提示：你在一个房间里。\nCurrent working directory: /session-host/x";
+    const event = beforeAgentStart("/session-host/x");
 
-    const answer = await pi.emit("before_agent_start", { systemPrompt: before }, {
-      cwd: "/session-host/x",
-    });
+    const answer = await pi.emit("before_agent_start", event);
 
-    assert.match(answer.systemPrompt, /Current working directory: \/machine\/room/);
-    assert.doesNotMatch(answer.systemPrompt, /session-host/);
+    assert.equal(event.systemPromptOptions.cwd, "/machine/room");
+    // pi renders the prompt from these options; a handler that returned a
+    // `systemPrompt` would be replacing pi's own text again, which is how the
+    // wording went out from under us once.
+    assert.equal(answer, undefined, "the prompt is pi's to render, not ours to replace");
     socket.close();
   });
 
-  it("仓库的说明追加在系统提示末尾，前面那一段一个字不动", async () => {
-    // Where it goes is the point, not that it goes. Everything before it is
-    // identical on every turn of the session and is what a provider cache
-    // matches on; put in front, it invalidates the whole prompt each turn.
+  it("仓库的说明是它自己的 section，平台的提示词一个字不动", async () => {
+    // A section of its own is what pi 1.0 can record as a delta: everything
+    // before it is identical on every turn of the session and is what a
+    // provider cache matches on. Rewriting the rendered prompt instead would
+    // invalidate the whole of it each turn, and match on wording pi owns.
     const socket = await runner(() => ({ result: { context: "# 本仓约定\n\n用 pnpm。" } }));
     const { pi, home } = await load({ socket: socket.address });
-    const before = "平台系统提示：你在一个房间里。";
+    const event = beforeAgentStart(home);
 
-    const answer = await pi.emit("before_agent_start", { systemPrompt: before }, { cwd: home });
+    const answer = await pi.emit("before_agent_start", event);
 
-    assert.ok(answer.systemPrompt.startsWith(before), "the platform's prompt moved");
-    assert.ok(answer.systemPrompt.indexOf("用 pnpm。") > before.length);
+    assert.equal(event.systemPromptOptions.sections.repository, "# 本仓约定\n\n用 pnpm。");
+    assert.equal(answer, undefined, "the platform's own prompt is not replaced");
     socket.close();
   });
 
   it("仓库什么都没说、目录也对，就什么都不改", async () => {
     const socket = await runner(() => ({ result: { context: "" } }));
     const { pi, home } = await load({ socket: socket.address });
-    assert.equal(
-      await pi.emit("before_agent_start", { systemPrompt: "x" }, { cwd: home }),
-      undefined,
-    );
+    const event = beforeAgentStart(home);
+
+    await pi.emit("before_agent_start", event);
+
+    assert.equal(event.systemPromptOptions.cwd, home);
+    assert.deepEqual(event.systemPromptOptions.sections, {});
     socket.close();
+  });
+
+  it("没有结构化提示词的 pi：当场说在 stderr 上，不静默地什么都不做", async () => {
+    // What 0.85.1's wording change did to the old rewrite, made visible: a
+    // build that does not carry the options cannot be told where the session
+    // is, and every tool here works on the room's machine.
+    const socket = await runner(() => ({ result: { context: "" } }));
+    const { pi } = await load({ socket: socket.address, workspace: "/machine/room" });
+    const written: string[] = [];
+    const stderr = process.stderr.write;
+    process.stderr.write = ((chunk: any) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await pi.emit("before_agent_start", { type: "before_agent_start", prompt: "" });
+    } finally {
+      process.stderr.write = stderr;
+    }
+    assert.match(written.join(""), /no systemPromptOptions/);
+    socket.close();
+  });
+});
+
+describe("没有手的那条路：人自己的芝士，没有机器", () => {
+  it("会话机上的目录不会被说给模型", async () => {
+    const { pi } = await load({ hands: false, workspace: "/machine/room" });
+    const event = beforeAgentStart("/session-host/x");
+
+    await pi.emit("before_agent_start", event);
+
+    // Emptied, not named: what this session has to say about a directory is
+    // that it has none. The rendered prompt is checked against the real binary
+    // in tests/unit/test_personal_sessions.py.
+    assert.equal(event.systemPromptOptions.cwd, "");
   });
 });
 
