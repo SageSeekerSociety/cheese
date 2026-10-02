@@ -131,6 +131,7 @@ class TaskPdfDraftService:
             if spent.total_tokens:
                 await ledger.charge_priced(
                     payer,
+                    user_id=user_id,
                     model=self.model,
                     rates=rates,
                     input_tokens=spent.prompt_tokens,

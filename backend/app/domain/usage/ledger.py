@@ -1,24 +1,20 @@
 """Credits: who pays for a model call, whether it may run, and what it costs
 (#2397).
 
-Every credit pack (``ComputeGrant``) belongs to a team. A person's own credits
-are packs on their personal team, so a call outside any project and a call in
-one of the person's own projects both draw on the same packs, whoever in the
-room asked for it. A team's project draws on that team.
+Credits belong only to teams, never to a person inside one. A person's own
+credits are packs on their personal team. Where a call happens decides which
+team pays: a team's project, that team; a call outside any project or in the
+person's own project, their personal team — including when someone else in
+that project's room summons 芝士.
 
-A call names its payer: the team that pays, and, where it is known, the person
-it is made for, whose member packs may also pay. A charge drains the packs that
-apply in this order:
+A charge drains the packs that apply in this order:
 
 1. what a task earmarked for this project;
-2. the paying team's plan share for this person;
-3. the paying team's plan pack for the period;
-4. credits bought for this person, then the team's own bought and granted ones.
+2. the paying team's plan pack for the period;
+3. credits bought or granted by an administrator, what lapses first first.
 
-A member pack applies on its own team, and on the member's personal team: what
-a team gives a member, the member may spend on their own work too. The last
-call may overdraw; it was admitted with credits left, and what it spent is
-spent either way.
+The last call may overdraw; it was admitted with credits left, and what it
+spent is spent either way.
 
 Whether a payer holding no pack at all may run is ``settings.credits_unlimited``,
 a deployment's explicit choice rather than what a missing row happens to mean.
@@ -98,12 +94,10 @@ class Rates:
 
 @dataclass(frozen=True)
 class Payer:
-    """Who pays for a call: the team, and the person it is made for when that
-    is known. ``personal`` says the team is that person's personal team, where
-    the packs every team gave them may be spent too."""
+    """The team that pays for a call, the project it happens in if any, and
+    whether that team is someone's personal team."""
 
     team_id: int
-    person_id: int | None = None
     project_id: uuid.UUID | None = None
     personal: bool = False
 
@@ -113,14 +107,13 @@ async def payer_for_person(session: AsyncSession, user_id: int) -> Payer:
     from app.domain.team.services import team_service
 
     team = await team_service(session).ensure_personal_team(user_id)
-    return Payer(team_id=team.id, person_id=user_id, personal=True)
+    return Payer(team_id=team.id, personal=True)
 
 
 async def payers_for_projects(
     session: AsyncSession, projects: list
 ) -> dict[uuid.UUID, Payer]:
-    """Each project's payer: its team, and for a project on a personal team,
-    that team's owner — whoever in the room made the call."""
+    """Each project's payer: its team, whoever in the room made the call."""
     from app.domain.team.services import team_service
 
     teams = await team_service(session).get_teams_by_ids(
@@ -129,12 +122,10 @@ async def payers_for_projects(
     out: dict[uuid.UUID, Payer] = {}
     for project in projects:
         team = teams.get(project.team_id)
-        owner = team.personal_owner_user_id if team is not None else None
         out[project.id] = Payer(
             team_id=project.team_id,
-            person_id=owner,
             project_id=project.id,
-            personal=owner is not None,
+            personal=team is not None and team.personal_owner_user_id is not None,
         )
     return out
 
@@ -162,10 +153,6 @@ def _applies(pack: ComputeGrant, payer: Payer) -> bool:
         return False
     if pack.project_id is not None:
         return pack.project_id == payer.project_id
-    if pack.member_user_id is not None:
-        return pack.member_user_id == payer.person_id and (
-            pack.team_id == payer.team_id or payer.personal
-        )
     return pack.team_id == payer.team_id
 
 
@@ -176,13 +163,9 @@ def _live(pack: ComputeGrant, now: datetime) -> bool:
 def _rank(pack: ComputeGrant) -> int:
     if pack.project_id is not None:
         return 0
-    if pack.source == GrantSource.TEAM_MEMBER_PLAN:
-        return 1
     if pack.source == GrantSource.PLAN_PERIOD:
-        return 2
-    if pack.member_user_id is not None:
-        return 3
-    return 4
+        return 1
+    return 2
 
 
 _FAR = datetime.max.replace(tzinfo=UTC)
@@ -239,9 +222,6 @@ class Balance:
         }
 
 
-_PLANS = (GrantSource.PLAN_PERIOD, GrantSource.TEAM_MEMBER_PLAN)
-
-
 def _spendable(candidates: Iterable[ComputeGrant], payer: Payer) -> list:
     """Of ``candidates``, what ``payer`` may spend now, in the order a charge
     drains them."""
@@ -254,7 +234,9 @@ def _spendable(candidates: Iterable[ComputeGrant], payer: Payer) -> list:
 def _balance(candidates: list[ComputeGrant], payer: Payer) -> Balance:
     packs = _spendable(candidates, payer)
     expiring = [
-        p.expires_at for p in packs if p.source in _PLANS and p.expires_at is not None
+        p.expires_at
+        for p in packs
+        if p.source == GrantSource.PLAN_PERIOD and p.expires_at is not None
     ]
     return Balance(
         unlimited=not packs and settings.credits_unlimited,
@@ -280,18 +262,14 @@ class Ledger:
         payers = list(payers)
         projects = {p.project_id for p in payers if p.project_id is not None}
         teams = {p.team_id for p in payers}
-        people = {p.person_id for p in payers if p.person_id is not None}
         conditions = [
             and_(
                 ComputeGrant.team_id.in_(teams),
                 ComputeGrant.project_id.is_(None),
-                ComputeGrant.member_user_id.is_(None),
             )
         ]
         if projects:
             conditions.append(ComputeGrant.project_id.in_(projects))
-        if people:
-            conditions.append(ComputeGrant.member_user_id.in_(people))
         stmt = select(ComputeGrant).where(or_(*conditions))
         if lock:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
@@ -322,7 +300,7 @@ class Ledger:
         return list(rows.scalars())
 
     async def team_packs(self, team_id: int) -> list[ComputeGrant]:
-        """Every live pack held by ``team_id``, its earmarks and member packs too."""
+        """Every live pack held by ``team_id``, its project earmarks too."""
         now = datetime.now(UTC)
         rows = await self._session.execute(
             select(ComputeGrant)
@@ -374,6 +352,7 @@ class Ledger:
         self,
         payer: Payer,
         *,
+        user_id: int,
         model: str,
         rates: Rates,
         input_tokens: int,
@@ -389,6 +368,7 @@ class Ledger:
         )
         return await self.charge_spent(
             payer,
+            user_id=user_id,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -400,17 +380,18 @@ class Ledger:
         self,
         payer: Payer,
         *,
+        user_id: int,
         model: str,
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
         kind: str,
     ) -> float:
-        """Record what the gateway says a call outside any project spent, and
-        charge it. Returns the credits deducted."""
+        """Record what the gateway says a call ``user_id`` made outside any
+        project spent, and charge it. Returns the credits deducted."""
         row = await UsageRepository(self._session).add(
             project_id=None,
-            user_id=payer.person_id,
+            user_id=user_id,
             topic_id=None,
             model=model,
             input_tokens=input_tokens,
@@ -475,7 +456,6 @@ class Ledger:
         credits_total: float,
         *,
         source: GrantSource = GrantSource.ADMIN_GRANT,
-        member_user_id: int | None = None,
         expires_at: datetime | None = None,
     ) -> ComputeGrant:
         if not math.isfinite(credits_total) or credits_total <= 0:
@@ -483,7 +463,6 @@ class Ledger:
         return await self._add(
             ComputeGrant(
                 team_id=team_id,
-                member_user_id=member_user_id,
                 source=source.value,
                 expires_at=expires_at,
                 credits_total=credits_total,

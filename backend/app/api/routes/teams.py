@@ -634,7 +634,7 @@ async def get_team_resource_quotas(
         raise NotFoundError("Resource team not found")
     machines = await MachineService(db).quota_machines(team_id)
     grants = await UsageService(db).team_packs(team_id)
-    shared = [g for g in grants if g.project_id is None and g.member_user_id is None]
+    shared = [g for g in grants if g.project_id is None]
     total = sum(g.credits_total for g in shared)
     used = sum(g.credits_used for g in shared)
     projects = await ProjectService(db).list_for_team(team_id)

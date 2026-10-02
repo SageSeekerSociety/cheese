@@ -35,20 +35,15 @@ class GrantSource(StrEnum):
     TASK_EARMARK = "task_earmark"
     PURCHASE = "purchase"
     ADMIN_GRANT = "admin_grant"
-    # A team plan's per-member share, one per member per period.
-    TEAM_MEMBER_PLAN = "team_member_plan"
-    # Credits a team bought for one of its members.
-    TEAM_BOUGHT_FOR_MEMBER = "team_bought_for_member"
 
 
 class ComputeGrant(UuidPk, Timestamps, Base):
     """A credit pack: a balance that spending draws down.
 
-    Every pack belongs to a team. A person's own credits are packs on their
-    personal team. ``project_id`` narrows a pack to one project of the team (a
-    task's earmark); ``member_user_id`` gives it to one member, who may spend
-    it in the team's projects and on their own personal team. ``expires_at``
-    is when it lapses; NULL never does.
+    Every pack belongs to a team, never to a person inside one; a person's own
+    credits are packs on their personal team. ``project_id`` narrows a pack to
+    one project of the team (a task's earmark). ``expires_at`` is when it
+    lapses; NULL never does.
     """
 
     __tablename__ = "compute_grants"
@@ -63,12 +58,7 @@ class ComputeGrant(UuidPk, Timestamps, Base):
             postgresql_where=text("source = 'plan_period'"),
         ),
         CheckConstraint(
-            "project_id IS NULL OR member_user_id IS NULL",
-            name="ck_compute_grants_one_narrowing",
-        ),
-        CheckConstraint(
-            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant',"
-            " 'team_member_plan', 'team_bought_for_member')",
+            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant')",
             name="ck_compute_grants_source",
         ),
     )
@@ -78,9 +68,6 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
-    )
-    member_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), nullable=True, index=True
     )
     source: Mapped[str] = mapped_column(String(32))
     # The 赛题 whose 项目集 funded this grant (#370). An int, and deliberately

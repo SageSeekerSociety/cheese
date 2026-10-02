@@ -44,7 +44,7 @@ class UsageService:
         return {key: balance.summary() for key, balance in balances.items()}
 
     async def team_packs(self, team_id: int) -> list:
-        """Every live pack a team holds, its project earmarks and member packs too."""
+        """Every live pack a team holds, its project earmarks too."""
         return await ledger.Ledger(self._session).team_packs(team_id)
 
     async def platform_totals(self, *, since: datetime, until: datetime) -> dict:

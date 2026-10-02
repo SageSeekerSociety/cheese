@@ -76,6 +76,7 @@ async def charge_new_spend(
         for model in spent:
             await ledger.charge_spent(
                 payer,
+                user_id=user_id,
                 model=model.model or settings.assistant_model,
                 input_tokens=model.prompt_tokens,
                 output_tokens=model.completion_tokens,

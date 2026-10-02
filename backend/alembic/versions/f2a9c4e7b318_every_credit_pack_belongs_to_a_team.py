@@ -4,8 +4,8 @@ Revision ID: f2a9c4e7b318
 Revises: b3f8d2e6a174
 Create Date: 2026-10-02
 
-A pack now says where it came from (``source``), whom inside the team it is for
-(``member_user_id``), and when it lapses (``expires_at``). The per-person
+A pack now says where it came from (``source``) and when it lapses
+(``expires_at``). The per-person
 monthly grants become plan packs on each person's personal team, which is
 created here for anyone who had a grant but no personal team yet, exactly as
 ``TeamRepository.create_personal_team`` would. Grants on one project become task
@@ -23,23 +23,11 @@ down_revision: str | Sequence[str] | None = "b3f8d2e6a174"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_SOURCES = (
-    "'plan_period', 'task_earmark', 'purchase', 'admin_grant',"
-    " 'team_member_plan', 'team_bought_for_member'"
-)
+_SOURCES = "'plan_period', 'task_earmark', 'purchase', 'admin_grant'"
 
 
 def upgrade() -> None:
     op.add_column("compute_grants", sa.Column("source", sa.String(32), nullable=True))
-    op.add_column(
-        "compute_grants",
-        sa.Column(
-            "member_user_id",
-            sa.Integer(),
-            sa.ForeignKey("user.id", ondelete="CASCADE"),
-            nullable=True,
-        ),
-    )
     op.add_column("compute_grants", sa.Column("period_start", sa.Date(), nullable=True))
     op.add_column(
         "compute_grants",
@@ -116,14 +104,6 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_compute_grants_source", "compute_grants", f"source IN ({_SOURCES})"
     )
-    op.create_check_constraint(
-        "ck_compute_grants_one_narrowing",
-        "compute_grants",
-        "project_id IS NULL OR member_user_id IS NULL",
-    )
-    op.create_index(
-        "ix_compute_grants_member_user_id", "compute_grants", ["member_user_id"]
-    )
     op.create_index(
         "uq_compute_grants_plan_period",
         "compute_grants",
@@ -135,10 +115,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_compute_grants_plan_period", table_name="compute_grants")
-    op.drop_index("ix_compute_grants_member_user_id", table_name="compute_grants")
-    op.drop_constraint(
-        "ck_compute_grants_one_narrowing", "compute_grants", type_="check"
-    )
     op.drop_constraint("ck_compute_grants_source", "compute_grants", type_="check")
     op.add_column(
         "compute_grants",
@@ -161,7 +137,6 @@ def downgrade() -> None:
           AND t.personal_owner_user_id IS NOT NULL
         """
     )
-    op.execute("DELETE FROM compute_grants WHERE member_user_id IS NOT NULL")
     op.create_index(
         "uq_compute_grants_user_month",
         "compute_grants",
@@ -171,5 +146,4 @@ def downgrade() -> None:
     )
     op.drop_column("compute_grants", "expires_at")
     op.drop_column("compute_grants", "period_start")
-    op.drop_column("compute_grants", "member_user_id")
     op.drop_column("compute_grants", "source")

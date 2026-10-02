@@ -104,42 +104,6 @@ async def test_earmark_then_team_plan_then_bought_credits(db_factory):
 
 
 @pytest.mark.anyio
-async def test_a_persons_own_credits_order_member_share_plan_then_bought(db_factory):
-    """Outside any project: the plan share a team gives this member, then the
-    person's own monthly plan, then what a team bought for them, then what
-    they bought themselves."""
-    async with db_factory() as session:
-        me = await registered(session, "member")
-        mine = await _personal_team(session, me)
-        school = await _shared_team(session, "school")
-        ledger = Ledger(session)
-        payer = await payer_for_person(session, me)
-        monthly = (await ledger.balance(payer)).packs[0]
-        self_bought = await ledger.grant(mine, 10, source=GrantSource.PURCHASE)
-        bought_for_me = await ledger.grant(
-            school,
-            10,
-            source=GrantSource.TEAM_BOUGHT_FOR_MEMBER,
-            member_user_id=me,
-        )
-        share = await ledger.grant(
-            school,
-            10,
-            source=GrantSource.TEAM_MEMBER_PLAN,
-            member_user_id=me,
-            expires_at=datetime.now(UTC) + timedelta(days=10),
-        )
-        plan = monthly.credits_total
-
-        await ledger.charge(payer, 10 + plan + 15)
-
-        assert await _used(session, share) == 10
-        assert await _used(session, monthly) == plan
-        assert await _used(session, bought_for_me) == 10
-        assert await _used(session, self_bought) == 5
-
-
-@pytest.mark.anyio
 async def test_a_personal_projects_calls_are_not_charged_to_the_monthly_pack(
     db_factory,
 ):
@@ -166,32 +130,48 @@ async def test_a_personal_projects_calls_are_not_charged_to_the_monthly_pack(
 
 
 @pytest.mark.anyio
-async def test_a_member_pack_is_spent_only_by_its_member_and_on_their_own_work(
+async def test_of_bought_and_granted_credits_what_lapses_first_is_spent_first(
     db_factory,
 ):
     async with db_factory() as session:
-        me = await registered(session, "member")
-        other = await registered(session, "other")
-        school = await _shared_team(session, "school")
-        elsewhere = await _shared_team(session, "elsewhere")
-        my_project = await _project(session, await _personal_team(session, me))
-        their_project = await _project(session, elsewhere)
+        team = await _shared_team(session, "lab")
+        pid = await _project(session, team)
         ledger = Ledger(session)
-        pack = await ledger.grant(
-            school, 10, source=GrantSource.TEAM_BOUGHT_FOR_MEMBER, member_user_id=me
+        forever = await ledger.grant(team, 10, source=GrantSource.PURCHASE)
+        soon = await ledger.grant(
+            team, 10, expires_at=datetime.now(UTC) + timedelta(days=3)
         )
-        # Nobody else's spending reaches it.
-        await ledger.grant(elsewhere, 100)
-        await ledger.charge(await payer_for_project(session, their_project), 5)
-        await ledger.charge(await payer_for_person(session, other), 5)
-        assert await _used(session, pack) == 0
+        later = await ledger.grant(
+            team, 10, expires_at=datetime.now(UTC) + timedelta(days=30)
+        )
 
-        # The member's own project does, and so do their own questions once
-        # their monthly plan is spent.
-        await ledger.charge(await payer_for_project(session, my_project), 2)
-        monthly = settings.personal_credits_monthly
-        await ledger.charge(await payer_for_person(session, me), monthly + 3)
-        assert await _used(session, pack) == 5
+        await ledger.charge(await payer_for_project(session, pid), 15)
+
+        assert await _used(session, soon) == 10
+        assert await _used(session, later) == 5
+        assert await _used(session, forever) == 0
+
+
+@pytest.mark.anyio
+async def test_another_members_call_in_a_personal_project_charges_its_owners_team(
+    db_factory,
+):
+    """Where the call happens decides who pays: a personal project pays from
+    its owner's personal team, not the caller's."""
+    async with db_factory() as session:
+        owner = await registered(session, "owner")
+        guest = await registered(session, "guest")
+        owners = await _personal_team(session, owner)
+        guests = await _personal_team(session, guest)
+        pid = await _project(session, owners)
+        ledger = Ledger(session)
+        mine = await ledger.grant(owners, 10, source=GrantSource.PURCHASE)
+        theirs = await ledger.grant(guests, 10, source=GrantSource.PURCHASE)
+
+        await ledger.charge(await payer_for_project(session, pid), 4)
+
+        assert await _used(session, mine) == 4
+        assert await _used(session, theirs) == 0
 
 
 @pytest.mark.anyio

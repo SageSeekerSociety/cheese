@@ -275,6 +275,7 @@ async def _settle(
             if result.prompt_tokens is not None:
                 await Ledger(session).charge_priced(
                     await payer_for_person(session, user_id),
+                    user_id=user_id,
                     model=settings.docs_assistant_model,
                     rates=rates,
                     input_tokens=result.prompt_tokens,
