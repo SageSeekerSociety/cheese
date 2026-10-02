@@ -11,9 +11,10 @@ import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/pro
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
-import { compareRoundTrip, exportMarkdown, writeMarkdown } from '../src/lib/docSchema'
+import { compareRoundTrip, exportMarkdown, liveNode, liveSuggestions, writeMarkdown } from '../src/lib/docSchema'
 
 import { deriveKey } from './auth'
+import { applyEdits, writeNode } from './edit'
 import { createCollabServer } from './service'
 
 const SECRET = 'test-secret'
@@ -25,12 +26,23 @@ interface Version {
   converted?: boolean
 }
 
+/** What one store sent, besides the state. */
+interface StoreSent {
+  content: string | null
+  actors: string[]
+  suggestions: { id: string; author: string; old: string; new: string }[]
+  requested_by?: string | null
+  edits?: { old: string; new: string; suggestion_id?: string }[] | null
+  suggested?: boolean
+}
+
 /** The backend's side, kept in memory: what was stored, and by whom. */
 class FakeBackend {
   state: Buffer | null = null
   content = ''
   versions: Version[] = []
   stores = 0
+  sent: StoreSent[] = []
   server: HttpServer
   constructor(seed = '') {
     this.content = seed
@@ -56,6 +68,7 @@ class FakeBackend {
         }
         const body = JSON.parse(Buffer.concat(chunks).toString())
         this.stores++
+        this.sent.push({ ...body, state: undefined })
         this.state = Buffer.from(body.state, 'base64')
         if (body.content !== null && body.content !== this.content) {
           this.content = body.content
@@ -296,5 +309,188 @@ describe('the live document', () => {
     })
     expect(response.status).toBe(200)
     await until(() => exportMarkdown(a.doc).includes('字面标签'))
+  })
+})
+
+interface EditBody {
+  edits: { old: string; new: string }[]
+  actor: string
+  requested_by?: string | null
+  mode: 'direct' | 'suggest'
+  reason?: string | null
+}
+
+function edit(http: string, body: EditBody) {
+  return fetch(`${http}/internal/documents/${encodeURIComponent(DOC)}/edit`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${deriveKey(SECRET, 'internal')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+const TWO = '第一段讲目标。\n\n第二段讲范围。'
+
+async function opened(seed = TWO) {
+  const env = await setup(seed)
+  const a = client(env.url, ticket('xiaowang'))
+  await until(() => exportMarkdown(a.doc).includes('第二段'))
+  await until(() => env.backend.state !== null)
+  return { ...env, a }
+}
+
+describe('an edit to part of the live document', () => {
+  it('changes that passage, stores it as the writer and for whoever asked, and reaches every editor', async () => {
+    const { backend, http, a } = await opened()
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }],
+      actor: 'cheese-agent',
+      requested_by: 'teacher',
+      mode: 'direct',
+    })
+    expect(response.status).toBe(200)
+    expect((await response.json()).edits).toEqual([{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }])
+    expect(backend.content).toBe('第一段讲目标。\n\n第二段讲范围和不做的事。')
+    expect(backend.versions.at(-1)?.actors).toEqual(['cheese-agent'])
+    expect(backend.sent.at(-1)?.requested_by).toBe('teacher')
+    await until(() => exportMarkdown(a.doc).includes('不做的事'))
+  })
+
+  it('keeps what someone is typing elsewhere in the document at the same time', async () => {
+    const { backend, http, a } = await opened()
+    writeMarkdown(a.doc, '第一段讲目标，人正在补。\n\n第二段讲范围。\n')
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲范围，芝士补的。' }],
+      actor: 'cheese-agent',
+      mode: 'direct',
+    })
+    expect(response.status).toBe(200)
+    const both = (text: string) => text.includes('人正在补') && text.includes('芝士补的')
+    await until(() => both(exportMarkdown(a.doc)))
+    await until(() => both(backend.content))
+  })
+
+  it('applies nothing when a passage is missing or appears more than once, and says which one', async () => {
+    const { backend, http, a } = await opened()
+    const versions = backend.versions.length
+    for (const [edits, index, reason] of [
+      [
+        [
+          { old: '第一段讲目标。', new: '第一段改了。' },
+          { old: '第三段', new: '没有这段' },
+        ],
+        1,
+        'not_found',
+      ],
+      [[{ old: '段讲', new: '段说' }], 0, 'ambiguous'],
+    ] as const) {
+      const response = await edit(http, { edits: [...edits], actor: 'cheese-agent', mode: 'direct' })
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({ error: 'edit', index, reason })
+    }
+    await new Promise((r) => setTimeout(r, 200))
+    expect(backend.versions.length).toBe(versions)
+    expect(exportMarkdown(a.doc)).toBe(TWO)
+  })
+
+  it('refuses an edit that would lose visible text, and changes nothing', async () => {
+    const { backend, http, a } = await opened()
+    const versions = backend.versions.length
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲范围。[^1]\n\n[^1]: 出自教务处的数据' }],
+      actor: 'cheese-agent',
+      mode: 'direct',
+    })
+    expect(response.status).toBe(422)
+    expect((await response.json()).error).toBe('content')
+    await new Promise((r) => setTimeout(r, 200))
+    expect(backend.versions.length).toBe(versions)
+    expect(exportMarkdown(a.doc)).not.toContain('教务处')
+  })
+
+  it('as a suggestion leaves the text as it was and shows everyone a pending change by its author', async () => {
+    const { backend, http, a } = await opened()
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲边界。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+      reason: '范围这个词太宽',
+    })
+    expect(response.status).toBe(200)
+    const [applied] = (await response.json()).edits
+    expect(backend.content).toBe(TWO)
+    const last = backend.sent.at(-1)!
+    expect(last.suggested).toBe(true)
+    expect(last.suggestions).toEqual([{ id: applied.suggestion_id, author: 'cheese-agent', old: '范围', new: '边界' }])
+    await until(() => liveSuggestions(a.doc).length === 1)
+    expect(exportMarkdown(a.doc)).toBe(TWO)
+  })
+
+  it('applied directly, leaves somebody else’s pending suggestion where it was', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第一段讲目标。', new: '第一段讲目的。' }],
+      actor: 'teacher',
+      mode: 'suggest',
+    })
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲范围和时间。' }],
+      actor: 'cheese-agent',
+      mode: 'direct',
+    })
+    expect(response.status).toBe(200)
+    expect(backend.content).toBe('第一段讲目标。\n\n第二段讲范围和时间。')
+    expect(backend.sent.at(-1)?.suggestions).toEqual([expect.objectContaining({ author: 'teacher', new: '的' })])
+    await until(() => exportMarkdown(a.doc).includes('和时间'))
+    expect(liveSuggestions(a.doc)).toEqual([expect.objectContaining({ author: 'teacher' })])
+  })
+
+  it('refuses to change text that has a suggestion pending on it', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第一段讲目标。', new: '第一段讲目的。' }],
+      actor: 'teacher',
+      mode: 'suggest',
+    })
+    const versions = backend.versions.length
+    const response = await edit(http, {
+      edits: [{ old: '讲目标', new: '讲任务' }],
+      actor: 'cheese-agent',
+      mode: 'direct',
+    })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'suggested' })
+    expect(backend.versions.length).toBe(versions)
+    expect(exportMarkdown(a.doc)).toBe(TWO)
+  })
+
+  it('cannot suggest turning a paragraph into a list, and changes nothing', async () => {
+    const { backend, http, a } = await opened()
+    const stores = backend.stores
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '- 第二段讲范围。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
+    expect(backend.stores).toBe(stores)
+    expect(liveSuggestions(a.doc)).toEqual([])
+  })
+
+  it('tells the backend what is still pending every time the document is stored', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲边界。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    await until(() => liveSuggestions(a.doc).length === 1)
+    const stores = backend.stores
+    // Somebody types in the first paragraph; their editor keeps the suggestion.
+    const typed = applyEdits(liveNode(a.doc), [{ old: '讲目标', new: '讲目标，人改的' }], 'direct', 'xiaowang')
+    if (!typed.ok) throw new Error('could not type')
+    writeNode(a.doc, typed.doc)
+    await until(() => backend.stores > stores && backend.content.includes('人改的'))
+    expect(backend.sent.at(-1)?.suggestions).toEqual([expect.objectContaining({ author: 'cheese-agent' })])
   })
 })

@@ -23,4 +23,13 @@ export { compareRoundTrip, normalizeMarkdown } from './fidelity'
 export { docMarked, finishMarkdown, serializeDoc } from './markdown'
 export type { PendingSuggestion } from './suggestions'
 export { pendingSuggestions, suggestionAuthor, suggestionId, withoutSuggestions } from './suggestions'
-export { exportMarkdown, FIELD, liveNode, liveSuggestions, parseMarkdown, readsAs, writeMarkdown } from './yjs'
+export {
+  exportMarkdown,
+  FIELD,
+  liveNode,
+  liveSuggestions,
+  nodeMarkdown,
+  parseMarkdown,
+  readsAs,
+  writeMarkdown,
+} from './yjs'

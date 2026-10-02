@@ -108,8 +108,11 @@ export function pendingSuggestions(node: PMNode): PendingSuggestion[] {
       const id = String(mark.attrs.id ?? '')
       if (!id) continue
       const entry = byId.get(id) ?? { id, author: suggestionAuthor(id), old: '', new: '' }
-      if (name === 'insertion') entry.new += child.text ?? ''
-      else entry.old += child.text ?? ''
+      // A zero-width space is the anchor a suggestion leaves where it splits
+      // or joins blocks, not text anyone wrote.
+      const text = (child.text ?? '').replace(/\u200B/g, '')
+      if (name === 'insertion') entry.new += text
+      else entry.old += text
       byId.set(id, entry)
     }
   })

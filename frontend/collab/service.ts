@@ -5,10 +5,11 @@
 // it back — the Yjs state and the Markdown exported from it — a few seconds
 // after the typing stops. That store is the ONLY way a new version reaches the
 // backend, so a write that does not come from an editor (芝士's
-// `cheese_doc_set`, a restore, an accepted AI proposal) comes here too, through
-// `/internal/documents/:name/replace`, and becomes a change to the live
-// document. Written to the database directly it would be overwritten by the
-// next store.
+// `cheese_doc_set`, a restore) comes here too, through
+// `/internal/documents/:name/replace` (the whole document) or
+// `/internal/documents/:name/edit` (passages of it, directly or as suggestions;
+// see ./edit.ts), and becomes a change to the live document. Written to the
+// database directly it would be overwritten by the next store.
 //
 // Three rules hold the record together:
 //   - A document opened from Markdown is converted and its state stored before
@@ -16,23 +17,31 @@
 //     second instance), the same text becomes a structurally different Yjs
 //     document, and a client still holding the first one would merge in a
 //     second copy of everything.
-//   - A store and a replace never interleave: both run under the document's
-//     save lock.
-//   - A replace lands in the live document only after the backend has
-//     recorded it. It is computed on a copy, stored, and only then merged in —
+//   - A store and a replace or an edit never interleave: all run under the
+//     document's save lock.
+//   - A replace or an edit lands in the live document only after the backend
+//     has recorded it. It is computed on a copy, stored, and only then merged in —
 //     as a merge, so whatever was typed meanwhile survives next to it.
 
-import type { Document, Extension } from '@hocuspocus/server'
+import type { Document, Extension, Hocuspocus } from '@hocuspocus/server'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { Redis } from '@hocuspocus/extension-redis'
 import { Server } from '@hocuspocus/server'
 import * as Y from 'yjs'
 
-import { compareRoundTrip, exportMarkdown, readsAs, writeMarkdown } from '../src/lib/docSchema'
+import {
+  compareRoundTrip,
+  exportMarkdown,
+  liveNode,
+  liveSuggestions,
+  readsAs,
+  writeMarkdown,
+} from '../src/lib/docSchema'
 
 import { deriveKey, verifyBearer, verifyTicket } from './auth'
 import { Backend, BackendError } from './backend'
+import { applyEdits, type Edit, type EditMode, writeNode } from './edit'
 import { checkMarkdownWrite } from './writeCheck'
 
 export interface CollabConfig {
@@ -94,6 +103,7 @@ export function createCollabServer(config: CollabConfig): Server {
         state: Y.encodeStateAsUpdate(document),
         content: exportMarkdown(document),
         actors,
+        suggestions: liveSuggestions(document),
       })
     } catch (error) {
       putBack(name, counts)
@@ -157,6 +167,7 @@ export function createCollabServer(config: CollabConfig): Server {
         content: exported === loaded.content ? null : exported,
         actors: ['system'],
         converted: true,
+        suggestions: liveSuggestions(document),
       })
       return document
     },
@@ -176,13 +187,17 @@ export function createCollabServer(config: CollabConfig): Server {
         respond(response, 200, { ok: true })
         throw null
       }
-      const match = /^\/internal\/documents\/([^/]+)\/replace$/.exec(url.pathname)
+      const match = /^\/internal\/documents\/([^/]+)\/(replace|edit)$/.exec(url.pathname)
       if (!match || request.method !== 'POST') return
       if (!verifyBearer(request.headers.authorization, internalKey)) {
         respond(response, 403, { message: 'not the backend' })
         throw null
       }
       const name = decodeURIComponent(match[1])
+      if (match[2] === 'edit') {
+        await edit(instance, name, (await readJson(request)) as EditBody, response)
+        throw null
+      }
       const body = (await readJson(request)) as {
         content: string
         base: string | null
@@ -209,6 +224,7 @@ export function createCollabServer(config: CollabConfig): Server {
             content: exportMarkdown(copy),
             actors: [body.actor],
             operation: body.operation ?? null,
+            suggestions: liveSuggestions(copy),
           })
           Y.applyUpdate(document, Y.encodeStateAsUpdate(copy, Y.encodeStateVector(document)))
           return { conflict: false as const, stored }
@@ -238,6 +254,41 @@ export function createCollabServer(config: CollabConfig): Server {
     },
   }
 
+  // Part of the document changed by a writer outside an editor (see ./edit.ts).
+  // Like a replace, it is computed on a copy, stored, and only then merged in.
+  async function edit(instance: Hocuspocus, name: string, body: EditBody, response: ServerResponse) {
+    const connection = await instance.openDirectConnection(name, { handle: body.actor, agent: true })
+    try {
+      const document = connection.document as Document
+      const outcome = await document.saveMutex.runExclusive(async () => {
+        const result = applyEdits(liveNode(document), body.edits, body.mode, body.actor)
+        if (!result.ok) return result
+        const copy = new Y.Doc()
+        Y.applyUpdate(copy, Y.encodeStateAsUpdate(document))
+        writeNode(copy, result.doc)
+        const stored = await backend.store(name, {
+          state: Y.encodeStateAsUpdate(copy),
+          content: exportMarkdown(copy),
+          actors: [body.actor],
+          suggestions: liveSuggestions(copy),
+          requested_by: body.requested_by ?? null,
+          edits: result.edits,
+          suggested: body.mode === 'suggest',
+          reason: body.reason ?? null,
+        })
+        Y.applyUpdate(document, Y.encodeStateAsUpdate(copy, Y.encodeStateVector(document)))
+        return { ok: true as const, stored, edits: result.edits }
+      })
+      if (outcome.ok) respond(response, 200, { stored: outcome.stored, edits: outcome.edits })
+      else respond(response, outcome.status, outcome.body)
+    } catch (error) {
+      console.error(`[collab] edit ${name} failed`, error)
+      respond(response, 502, { message: 'the document could not be stored' })
+    } finally {
+      await connection.disconnect()
+    }
+  }
+
   const extensions: Extension[] = []
   if (config.redisUrl) {
     const url = new URL(config.redisUrl)
@@ -265,6 +316,14 @@ export function createCollabServer(config: CollabConfig): Server {
     maxDebounce: config.maxDebounceMs ?? 30000,
     extensions,
   })
+}
+
+interface EditBody {
+  edits: Edit[]
+  actor: string
+  requested_by?: string | null
+  mode: EditMode
+  reason?: string | null
 }
 
 function respond(response: ServerResponse, status: number, body: unknown) {

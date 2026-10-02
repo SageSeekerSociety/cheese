@@ -38,7 +38,13 @@ export function liveNode(doc: Y.Doc): PMNode {
 /** The document's text: what is stored, searched and given to the agent. A
  *  pending suggestion is not part of it yet (see ./suggestions.ts). */
 export function exportMarkdown(doc: Y.Doc): string {
-  return finishMarkdown(markdown.serialize(withoutSuggestions(liveNode(doc)).toJSON()))
+  return nodeMarkdown(withoutSuggestions(liveNode(doc)))
+}
+
+/** A document node's Markdown, exactly as it stands (suggestion marks and all
+ *  are written as their text). */
+export function nodeMarkdown(node: PMNode): string {
+  return finishMarkdown(markdown.serialize(node.toJSON()))
 }
 
 /** The suggestions in the live document still waiting for a decision. */
