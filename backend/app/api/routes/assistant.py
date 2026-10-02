@@ -25,7 +25,6 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.deps import get_personal_sessions
 from app.api.response import ok
 from app.api.routes.admin_common import DbSession
-from app.api.routes.tasks import _ensure_task_readable
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
@@ -52,7 +51,7 @@ from app.domain.assistant import tools as personal_tools
 from app.domain.assistant.keys import person_key
 from app.domain.assistant.prompt import task_brief
 from app.domain.feature_stats import pricing
-from app.domain.task.services import TaskService
+from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
@@ -70,7 +69,7 @@ async def _readable_task(db, task_id: int, auth: AuthUserInfo):
     task = await TaskService.of(db).get_task(task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    await _ensure_task_readable(db=db, task=task, auth_user=auth)
+    await ensure_task_readable(session=db, task=task, user_id=auth.user_id)
     return task
 
 

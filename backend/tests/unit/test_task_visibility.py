@@ -501,7 +501,7 @@ class TestResolveUserEmailDomain:
     @pytest.mark.anyio
     async def test_resolve_from_email_domain_field(self):
         """email_domain field takes priority over email parsing."""
-        from app.api.routes.tasks import _resolve_user_email_domain
+        from app.domain.task.visibility_service import resolve_user_email_domain
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
@@ -511,17 +511,17 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository",
+            "app.domain.task.visibility_service.UserRepository",
             return_value=user_repo,
         ):
-            result = await _resolve_user_email_domain(mock_db, user_id=42)
+            result = await resolve_user_email_domain(mock_db, user_id=42)
 
         assert result == "bar.edu.cn"
 
     @pytest.mark.anyio
     async def test_resolve_from_email_when_domain_none(self):
         """Fall back to splitting email when email_domain is None."""
-        from app.api.routes.tasks import _resolve_user_email_domain
+        from app.domain.task.visibility_service import resolve_user_email_domain
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
@@ -531,17 +531,17 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository",
+            "app.domain.task.visibility_service.UserRepository",
             return_value=user_repo,
         ):
-            result = await _resolve_user_email_domain(mock_db, user_id=42)
+            result = await resolve_user_email_domain(mock_db, user_id=42)
 
         assert result == "physics.edu.cn"
 
     @pytest.mark.anyio
     async def test_resolve_returns_lowercase(self):
         """Domain is always lowercased regardless of storage."""
-        from app.api.routes.tasks import _resolve_user_email_domain
+        from app.domain.task.visibility_service import resolve_user_email_domain
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
@@ -551,51 +551,51 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository",
+            "app.domain.task.visibility_service.UserRepository",
             return_value=user_repo,
         ):
-            result = await _resolve_user_email_domain(mock_db, user_id=42)
+            result = await resolve_user_email_domain(mock_db, user_id=42)
 
         assert result == "cs.edu.cn"
 
     @pytest.mark.anyio
     async def test_resolve_returns_none_for_missing_user(self):
         """When user doesn't exist, returns None."""
-        from app.api.routes.tasks import _resolve_user_email_domain
+        from app.domain.task.visibility_service import resolve_user_email_domain
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = None
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository",
+            "app.domain.task.visibility_service.UserRepository",
             return_value=user_repo,
         ):
-            result = await _resolve_user_email_domain(mock_db, user_id=999)
+            result = await resolve_user_email_domain(mock_db, user_id=999)
 
         assert result is None
 
     @pytest.mark.anyio
     async def test_resolve_returns_none_for_empty_email_and_domain(self):
         """User with no email and no email_domain returns None."""
-        from app.api.routes.tasks import _resolve_user_email_domain
+        from app.domain.task.visibility_service import resolve_user_email_domain
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(email="", email_domain="")
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository",
+            "app.domain.task.visibility_service.UserRepository",
             return_value=user_repo,
         ):
-            result = await _resolve_user_email_domain(mock_db, user_id=42)
+            result = await resolve_user_email_domain(mock_db, user_id=42)
 
         assert result is None
 
     @pytest.mark.anyio
     async def test_resolve_handles_email_without_at(self):
         """Email without '@' → returns None (no domain to extract)."""
-        from app.api.routes.tasks import _resolve_user_email_domain
+        from app.domain.task.visibility_service import resolve_user_email_domain
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
@@ -604,10 +604,10 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository",
+            "app.domain.task.visibility_service.UserRepository",
             return_value=user_repo,
         ):
-            result = await _resolve_user_email_domain(mock_db, user_id=42)
+            result = await resolve_user_email_domain(mock_db, user_id=42)
 
         assert result is None
 

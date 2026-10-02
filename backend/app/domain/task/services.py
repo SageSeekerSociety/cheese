@@ -9,12 +9,13 @@ from app.core.config import settings
 
 if TYPE_CHECKING:
     from app.domain.team.repositories import TeamRepository
+from app.auth.space_access import may_teach_task
 from app.core.domain_errors import (
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
     TeamSizeTooLargeError,
 )
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import SpaceRepository, SpaceUserRankRepository
 from app.domain.task.claims import members_claiming_through_another_team
@@ -37,6 +38,7 @@ from app.domain.task.submission_state import (
     refresh_completion_status,
     refresh_completion_status_for_submission,
 )
+from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
 
@@ -1259,3 +1261,99 @@ async def claim_backs_project(
     return await TaskMembershipService(
         TaskMembershipRepository(session=session)
     ).has_live_claim(task=task, user_id=user_id, team_id=team_id)
+
+
+async def count_distinct_participants(
+    session: AsyncSession,
+    *,
+    space_id: int,
+    task_ids: list[int],
+) -> int:
+    """这些题上加起来**有多少个不同的人**领过。
+
+    逐题的 `participants.total` 是 `TaskMembership` 的行数 —— 一个人领三道题就是 3，
+    求和得到的是「领取次数」。首页那句「参与 N 人」要的是**跨题去重后的人**，而列表
+    接口不给报名名单（`_enrich_task_models` 把 `participants.examples` 写死成空数组，
+    且 `TaskParticipantSummary` 里没有 username），客户端拼不出来，只能在这一层算。
+
+    `task_ids` 就是同一个响应里返回的那几道题，所以这个数和逐题的 `participants.total`
+    **同一批题**：两个数字摆在同一行上，不能一个数的是这一页、另一个数的是全板。
+
+    只在 `queryDistinctParticipants` 为真时调用：它跑的 `list_memberships_for_space`
+    与 `_enrich_task_models` 里那次是同一条查询，不该让每个调 `/tasks` 的页面都付两遍。
+    """
+    if not task_ids:
+        return 0
+    wanted = set(task_ids)
+    memberships = await TaskMembershipRepository(
+        session=session
+    ).list_memberships_for_space(space_id)
+    return len(
+        {
+            membership.member_id
+            for membership in memberships
+            if membership.task_id in wanted
+        }
+    )
+
+
+async def ensure_task_visible_for_ordinary_user(
+    *,
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> None:
+    # 出题者或本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给成员看的。
+    if await may_teach_task(session=session, task=task, user_id=user_id):
+        return
+    space = await SpaceRepository(session=session).get_by_id(task.space_id)
+    if space is None:
+        raise NotFoundError(
+            "Resource space not found", data={"type": "space", "id": task.space_id}
+        )
+    task_repo = TaskRepository(session=session)
+    if not await task_repo.is_task_visible_for_space_limit(
+        task=task,
+        visible_task_limit=space.visible_task_limit,
+    ):
+        raise NotFoundError(
+            "Resource task not found", data={"type": "task", "id": task.id}
+        )
+
+
+async def ensure_task_readable(
+    *,
+    session: AsyncSession,
+    task: Task,
+    user_id: int,
+) -> None:
+    """「这道题在这个读者眼里存不存在」—— 题目详情与它的附属读路由共用的那一个判断。
+
+    三道闸，按顺序各答一句话：
+
+    1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
+       对其他人还不该存在 —— 403；
+    2. **看不见**（``TaskVisibilityService.can_view_task``）：题目自己设了可见范围
+       而这个人不在里面 —— 404，与「这道题不存在」同一句话；
+    3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
+       404。
+
+    为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
+    路由，它只走了第 2 道 —— 而第 2 道在 ``access_control_enabled`` 为假（题目
+    默认值）时对任何登录用户都放行，于是 403 / 404 的题照旧把材料清单交出去。
+    「题看不见，清单也看不见」是同一件事，只该有一处判断。
+    """
+    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
+        if not await may_teach_task(session=session, task=task, user_id=user_id):
+            raise ForbiddenError(
+                "Only space admins or task creator can view unapproved tasks"
+            )
+    if not await TaskVisibilityService(session=session).can_view_task(
+        task=task, user_id=user_id
+    ):
+        raise NotFoundError(
+            "Resource task not found", data={"type": "task", "id": task.id}
+        )
+    await ensure_task_visible_for_ordinary_user(
+        session=session, task=task, user_id=user_id
+    )

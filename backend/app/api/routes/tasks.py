@@ -47,6 +47,13 @@ from app.domain.task.attachment_service import (
     TaskAttachmentRepository,
     TaskAttachmentService,
 )
+from app.domain.task.inputs import (
+    apply_pdf_task_options,
+    map_approve_type,
+    map_approve_type_to_int,
+    map_submitter_type,
+    pdf_attachment_ids,
+)
 from app.domain.task.models import (
     Task,
     TaskAttachment,
@@ -69,10 +76,16 @@ from app.domain.task.services import (
     TaskService,
     TaskSubmissionReviewService,
     TaskSubmissionService,
+    count_distinct_participants,
+    ensure_task_readable,
+    ensure_task_visible_for_ordinary_user,
 )
 from app.domain.task.submission_state import claim_state
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
-from app.domain.task.visibility_service import TaskVisibilityService
+from app.domain.task.visibility_service import (
+    TaskVisibilityService,
+    resolve_user_email_domain,
+)
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
@@ -193,62 +206,6 @@ class CreateTaskRequest(BaseModel):
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
     teaching: TeachingRequest | None = None
-
-
-PDF_DRAFT_CONTENT_FIELDS = {"name", "intro", "description"}
-
-
-def _apply_pdf_task_options(
-    *,
-    draft: dict,
-    task_options: dict,
-) -> dict:
-    if not isinstance(draft, dict):
-        raise BadRequestError("Each draft must be an object")
-    if not isinstance(task_options, dict):
-        raise BadRequestError("taskOptions must be an object")
-
-    missing_content_fields = [
-        field
-        for field in PDF_DRAFT_CONTENT_FIELDS
-        if field not in draft or str(draft.get(field) or "").strip() == ""
-    ]
-    if missing_content_fields:
-        raise BadRequestError(
-            f"Draft missing required content fields: {', '.join(sorted(missing_content_fields))}"  # noqa: E501
-        )
-
-    merged = dict(task_options)
-    for field in PDF_DRAFT_CONTENT_FIELDS:
-        merged[field] = draft[field]
-
-    if "space" not in merged and "space" in draft:
-        merged["space"] = draft["space"]
-    if "categoryId" not in merged and "categoryId" in draft:
-        merged["categoryId"] = draft["categoryId"]
-
-    return merged
-
-
-def _pdf_attachment_ids(task_options: dict) -> list[int]:
-    """``taskOptions.attachmentIds``：这一批题共用的材料，勾了才有。
-
-    与其它字段一样是自由 dict（``ConfirmTaskPublishFromPdfRequest`` 不看里面的结
-    构），所以形状自己看住：不是列表、或者元素不是整数，是请求写错了 —— 与「没带这
-    个键」（不勾任何附件）不是同一件事，不能都当成空。
-    """
-    raw = task_options.get("attachmentIds")
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise BadRequestError("attachmentIds must be a list")
-    ids: list[int] = []
-    for item in raw:
-        try:
-            ids.append(int(item))
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid attachmentIds entry: {item!r}") from exc
-    return ids
 
 
 class TaskParticipantRequest(BaseModel):
@@ -390,40 +347,6 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
         task_model["submissionSchema"] = _submission_schema_to_api(
             grouped.get(model_id, [])
         )
-
-
-async def _count_distinct_participants(
-    db,
-    *,
-    space_id: int,
-    task_ids: list[int],
-) -> int:
-    """这些题上加起来**有多少个不同的人**领过。
-
-    逐题的 `participants.total` 是 `TaskMembership` 的行数 —— 一个人领三道题就是 3，
-    求和得到的是「领取次数」。首页那句「参与 N 人」要的是**跨题去重后的人**，而列表
-    接口不给报名名单（`_enrich_task_models` 把 `participants.examples` 写死成空数组，
-    且 `TaskParticipantSummary` 里没有 username），客户端拼不出来，只能在这一层算。
-
-    `task_ids` 就是同一个响应里返回的那几道题，所以这个数和逐题的 `participants.total`
-    **同一批题**：两个数字摆在同一行上，不能一个数的是这一页、另一个数的是全板。
-
-    只在 `queryDistinctParticipants` 为真时调用：它跑的 `list_memberships_for_space`
-    与 `_enrich_task_models` 里那次是同一条查询，不该让每个调 `/tasks` 的页面都付两遍。
-    """
-    if not task_ids:
-        return 0
-    wanted = set(task_ids)
-    memberships = await TaskMembershipRepository(session=db).list_memberships_for_space(
-        space_id
-    )
-    return len(
-        {
-            membership.member_id
-            for membership in memberships
-            if membership.task_id in wanted
-        }
-    )
 
 
 async def _enrich_task_models(
@@ -861,30 +784,6 @@ def _membership_to_api_model(
     return model
 
 
-def _map_submitter_type(value: str) -> int:
-    """Map TaskSubmitterTypeDTO string to smallint ordinal."""
-    mapping = {
-        "USER": 0,
-        "TEAM": 1,
-    }
-    if value not in mapping:
-        raise BadRequestError(f"Invalid submitterType: {value}")
-    return mapping[value]
-
-
-def _map_approve_type(value: str) -> int:
-    """Map ApproveTypeDTO string to smallint ordinal."""
-    mapping = {
-        "APPROVED": 0,
-        "DISAPPROVED": 1,
-        "NONE": 2,
-    }
-    upper = value.upper()
-    if upper not in mapping:
-        raise BadRequestError(f"Invalid approved value: {value}")
-    return mapping[upper]
-
-
 async def _validate_and_get_category_id(
     *,
     space_repo: SpaceRepository,
@@ -947,93 +846,6 @@ async def _ensure_domain_groups_belong_to_space(
         raise NotFoundError("Domain group not found or does not belong to space.")
 
 
-def _map_approve_type_to_int(value: str | None) -> int | None:
-    if value is None:
-        return None
-    mapping = {
-        "APPROVED": 0,
-        "DISAPPROVED": 1,
-        "NONE": 2,
-    }
-    upper = value.upper()
-    if upper not in mapping:
-        raise BadRequestError(f"Invalid approved value: {value}")
-    return mapping[upper]
-
-
-async def _resolve_user_email_domain(db, user_id: int) -> str | None:
-    user_repo = UserRepository(session=db)
-    user = await user_repo.get_by_id(user_id)
-    if user is None:
-        return None
-    if user.email_domain:
-        return user.email_domain.lower()
-    if user.email and "@" in user.email:
-        return user.email.split("@", 1)[1].lower()
-    return None
-
-
-async def _ensure_task_visible_for_ordinary_user(
-    *,
-    db,
-    task: Task,
-    auth_user: AuthUserInfo,
-) -> None:
-    # 出题者或本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给成员看的。
-    if await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        return
-    space_repo = SpaceRepository(session=db)
-    space = await space_repo.get_by_id(task.space_id)
-    if space is None:
-        raise NotFoundError(
-            "Resource space not found", data={"type": "space", "id": task.space_id}
-        )
-    task_repo = TaskRepository(session=db)
-    if not await task_repo.is_task_visible_for_space_limit(
-        task=task,
-        visible_task_limit=space.visible_task_limit,
-    ):
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task.id}
-        )
-
-
-async def _ensure_task_readable(
-    *,
-    db,
-    task: Task,
-    auth_user: AuthUserInfo,
-) -> None:
-    """「这道题在这个读者眼里存不存在」—— 题目详情与它的附属读路由共用的那一个判断。
-
-    三道闸，按顺序各答一句话：
-
-    1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
-       对其他人还不该存在 —— 403；
-    2. **看不见**（``TaskVisibilityService.can_view_task``）：题目自己设了可见范围
-       而这个人不在里面 —— 404，与「这道题不存在」同一句话；
-    3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
-       404。
-
-    为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
-    路由，它只走了第 2 道 —— 而第 2 道在 ``access_control_enabled`` 为假（题目
-    默认值）时对任何登录用户都放行，于是 403 / 404 的题照旧把材料清单交出去。
-    「题看不见，清单也看不见」是同一件事，只该有一处判断。
-    """
-    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
-        if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-            raise ForbiddenError(
-                "Only space admins or task creator can view unapproved tasks"
-            )
-    if not await TaskVisibilityService(session=db).can_view_task(
-        task=task, user_id=auth_user.user_id
-    ):
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task.id}
-        )
-    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
-
-
 async def _create_task_entity(
     *,
     payload: dict | CreateTaskRequest,
@@ -1043,7 +855,7 @@ async def _create_task_entity(
     # Accept both dict (from PDF draft flow) and validated CreateTaskRequest
     if isinstance(payload, CreateTaskRequest):
         name = payload.name
-        submitter_type = _map_submitter_type(payload.submitter_type)
+        submitter_type = map_submitter_type(payload.submitter_type)
         resubmittable = payload.resubmittable
         editable = payload.editable
         intro = payload.intro
@@ -1083,7 +895,7 @@ async def _create_task_entity(
         try:
             name = str(payload["name"])
             submitter_type_raw = str(payload["submitterType"])
-            submitter_type = _map_submitter_type(submitter_type_raw)
+            submitter_type = map_submitter_type(submitter_type_raw)
             resubmittable = bool(payload["resubmittable"])
             editable = bool(payload["editable"])
             intro = str(payload["intro"])
@@ -1408,14 +1220,14 @@ async def list_task_attachments(
     「出题人 / 板管理员 / 已领取者」。前端只据此决定那行显示「下载」还是
     「领取这道题之后才能下载」，不自己猜。
 
-    「看得见这道题」用的是题目详情那三道闸（``_ensure_task_readable``），不是
+    「看得见这道题」用的是题目详情那三道闸（``ensure_task_readable``），不是
     服务里那条更宽的 ``can_view_task``：后者在题目没开可见范围时对任何登录用户
     都放行，于是未审批（403）与超出板上限（404）的题会在这里把材料清单交出去。
     清单不比题更公开 —— 文件名常常就是答案，而「有没有清单」本身就是那道题的
     探针。
     """
     task = await _require_task(db, task_id)
-    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
+    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     files, links, can_download = await _task_attachment_service(db).list_for_task(
         task=task, user_id=auth_user.user_id
     )
@@ -1479,12 +1291,12 @@ async def download_task_attachment(
 ) -> Response:
     """下载一道题的材料。
 
-    先过题目详情那三道闸（``_ensure_task_readable``），再看「你来不来得到」：
+    先过题目详情那三道闸（``ensure_task_readable``），再看「你来不来得到」：
     一道 403 / 404 的题，它的材料连「拿不到（403）」这个回答都不该给 —— 对读者
     来说这道题不存在，回答里不该有它的 id 之外的任何东西。
     """
     task = await _require_task(db, task_id)
-    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
+    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     content, filename, content_type = await _task_attachment_service(db).download(
         task=task,
         user_id=auth_user.user_id,
@@ -1670,7 +1482,7 @@ async def confirm_publish_task_from_pdf(
     # 勾中的附件跟着**每一道**生成出来的题走（不是随机分给某一道）：预览那一步把原
     # PDF 与抽出的插图报了回来，人在这里勾「原 PDF / 抽出的插图」，所以这一批题拿到
     # 的是同一份材料。不勾就一个都不带 —— 默认行为与这条路今天的样子完全一样。
-    attachment_ids = _pdf_attachment_ids(task_options)
+    attachment_ids = pdf_attachment_ids(task_options)
     if attachment_ids:
         # **先校验、后建题**：一个挂不上的 id（不存在的、别人的、已经在别的题上的）
         # 让整条请求立刻失败，一道题都不建。异常时 ``get_db`` 会回滚整个请求，所以顺
@@ -1683,7 +1495,7 @@ async def confirm_publish_task_from_pdf(
     created_tasks: list[Task] = []
     space_id: int | None = None
     for draft in drafts:
-        task_payload = _apply_pdf_task_options(draft=draft, task_options=task_options)
+        task_payload = apply_pdf_task_options(draft=draft, task_options=task_options)
         created = await _create_task_entity(
             payload=task_payload,
             db=db,
@@ -1814,7 +1626,9 @@ async def create_task_participant(
         raise NotFoundError(
             "Resource task not found", data={"type": "task", "id": task_id}
         )
-    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+    await ensure_task_visible_for_ordinary_user(
+        session=db, task=task, user_id=auth_user.user_id
+    )
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -1909,7 +1723,9 @@ async def join_task_as_user(
         raise NotFoundError(
             "Resource task not found", data={"type": "task", "id": task_id}
         )
-    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+    await ensure_task_visible_for_ordinary_user(
+        session=db, task=task, user_id=auth_user.user_id
+    )
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -1983,7 +1799,9 @@ async def join_task_as_team(
         raise NotFoundError(
             "Resource task not found", data={"type": "task", "id": task_id}
         )
-    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
+    await ensure_task_visible_for_ordinary_user(
+        session=db, task=task, user_id=auth_user.user_id
+    )
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -2038,7 +1856,7 @@ async def patch_task_participant(
 
     approved_value: int | None = None
     if payload.approved is not None:
-        approved_value = _map_approve_type_to_int(payload.approved)
+        approved_value = map_approve_type_to_int(payload.approved)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -2099,9 +1917,9 @@ async def get_task(
         )
 
     # 权限检查：未审批的题只有出题者与本版管理员能看 —— 一道还没过审的题在他们手上
-    # 是「草稿」，对其他人来说还不该存在。三道闸都在 `_ensure_task_readable` 里，
+    # 是「草稿」，对其他人来说还不该存在。三道闸都在 `ensure_task_readable` 里，
     # 题目的附属读路由（材料清单）走同一个判断。
-    await _ensure_task_readable(db=db, task=task, auth_user=auth_user)
+    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。  # noqa: E501
     participation: dict
@@ -2377,7 +2195,7 @@ async def patch_task(
         if not is_space_admin:
             raise ForbiddenError("Only space admins can approve or reject tasks")
         if payload.approved is not None:
-            next_approved = _map_approve_type(payload.approved)
+            next_approved = map_approve_type(payload.approved)
             if next_approved == 0 and task.approved != 0:
                 if await task_repo.has_prior_pending_task_for_creator(task):
                     raise BadRequestError(
@@ -2611,7 +2429,7 @@ async def get_tasks(
 
     admin_repo = SpaceAdminRelationRepository(session=db)
     is_space_admin = await admin_repo.get_relation(space, auth_user.user_id) is not None
-    viewer_email_domain = await _resolve_user_email_domain(db, auth_user.user_id)
+    viewer_email_domain = await resolve_user_email_domain(db, auth_user.user_id)
     space_repo = SpaceRepository(session=db)
     space_entity = await space_repo.get_by_id(space)
     if space_entity is None:
@@ -2722,7 +2540,7 @@ async def get_tasks(
     if queryDistinctParticipants:
         # 正是上面返回的那几道题（`items`），不是全板 —— 页面上的「领取次数」也是
         # 这几道题的和，两个数字要对得上。
-        data["distinctParticipants"] = await _count_distinct_participants(
+        data["distinctParticipants"] = await count_distinct_participants(
             db, space_id=space, task_ids=[item["id"] for item in items]
         )
     return {
@@ -2870,7 +2688,7 @@ async def patch_task_membership_by_member(
 
     approved_value: int | None = None
     if payload.approved is not None:
-        approved_value = _map_approve_type_to_int(payload.approved)
+        approved_value = map_approve_type_to_int(payload.approved)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
