@@ -39,8 +39,10 @@ const props = withDefaults(
     topicList?: Topic[]
     /** 项目 AI 队友的名字：文档被它改过时，提示里说的是它，不写死「芝士」。 */
     agentName?: string
+    /** 画在一整页里，见 PanelDocView。 */
+    bare?: boolean
   }>(),
-  { topicList: () => [], agentName: () => t('work.room.defaultAgentName') }
+  { topicList: () => [], agentName: () => t('work.room.defaultAgentName'), bare: false }
 )
 
 // open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
@@ -101,6 +103,7 @@ defineExpose({ pulse, highlightTurn })
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"
     :agent-name="props.agentName"
+    :bare="props.bare"
     :session="doc.session.value"
     :editable="doc.editable.value"
     :read-only="doc.readOnly.value"
@@ -128,7 +131,7 @@ defineExpose({ pulse, highlightTurn })
     @open-ai="ai.prepare($event)"
     @close-ai="ai.opened.value = false"
   >
-    <template #ai>
+    <template v-if="!props.bare" #ai>
       <DocAiPanel
         docked
         :opened="ai.opened.value"
