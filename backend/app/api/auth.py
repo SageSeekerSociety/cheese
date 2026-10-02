@@ -792,10 +792,10 @@ async def require_seated_agent(
     if not claims.get("a") and not claims.get("t"):
         return
     # The room this request acts in; without one (a project-wide route), the
-    # room the credential was minted in — unless it is a project-scope
-    # credential, which is bounded by the project and judged against that.
+    # room the credential was minted in. An agent holds no project-roster
+    # grant, so its seat in that room is the only standing it has.
     room = topic_id
-    if room is None and claims.get("s") != "project" and claims.get("t"):
+    if room is None and claims.get("t"):
         room = uuid.UUID(claims["t"])
     resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
     actor = await resolver.resolve(

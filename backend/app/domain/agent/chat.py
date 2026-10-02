@@ -29,6 +29,13 @@ from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 
+# 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
+# 网关的用量落库）搬去了 `gateway_usage.py`（那里有它们各自的文档）。这里重新导出，
+# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
+# 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
+# 搬走，不再是 `ChatService` 的属性。
+from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
+
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
 # 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面
 # 带 noqa 的几个本文件不用 —— 它们是被搬走的落库那几步的零件，测试仍然从
@@ -47,12 +54,6 @@ from app.domain.agent.event_lines import (
     _tool_event_meta,  # noqa: F401 — 测试仍从 chat.py 导它
 )
 from app.domain.agent.gateway import LlmGateway
-
-# 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
-# 网关的用量落库）搬去了 `gateway_usage.py`（那里有它们各自的文档）。这里重新导出，
-# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
-# 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
-# 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
     _drain_gateway_usage,
     _gateway_project_env,
@@ -264,7 +265,7 @@ from app.domain.topic import doc_nudge, naming
 from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 from app.domain.usage.models import ResourceUsage
 
@@ -2301,7 +2302,9 @@ class ChatService(SessionRecovery):
         try:
             async with self._lock_for(root_topic_id):
                 model_kwargs = (
-                    await self._model_kwargs(project_id, provider, root_topic_id)
+                    await self._model_kwargs(
+                        project_id, provider, root_topic_id, platform=True
+                    )
                 )[0]
                 async for event in runtime.run_turn(
                     project_id=project_id,
@@ -2369,9 +2372,7 @@ class ChatService(SessionRecovery):
                     files=[] if refusal else changed,
                     now=datetime.now(UTC),
                 )
-            # 整理自己那一轮的花销记成 `memory_dream`：判据按 kind 前缀剔掉它，
-            # 所以下一轮的窗口里不会把整理自己的花费算成「这个项目写了很多记忆」。
-            await _record_dream_usage(
+            await record_dream_usage(
                 session,
                 project_id=project_id,
                 root_topic_id=root_topic_id,
@@ -2384,6 +2385,14 @@ class ChatService(SessionRecovery):
             status.value,
             project_id,
             len(changed),
+        )
+        await drain_dream_spend(
+            self._sessions,
+            self._gateway,
+            self._gateway_lock,
+            project_id,
+            root_topic_id,
+            run_id,
         )
         team_changed = [path for path in changed if path.startswith("team/")]
         if status is MemoryDreamRunStatus.completed and team_changed:
@@ -2589,11 +2598,10 @@ class ChatService(SessionRecovery):
                 )
             elif state.route != "gateway" or self._gateway is None:
                 payer = await payer_for_project(session, state.project_id)
-                priced = state.route == "gateway"
                 for u in usages:
                     await Ledger(session).record(
                         payer,
-                        credits=usage_to_credits(u, spend_priced=priced),
+                        credits=spend_to_credits(u.cost_usd),
                         topic_id=state.topic_id,
                         model=u.model or state.model or settings.agent_model,
                         input_tokens=u.input_tokens,
@@ -3506,6 +3514,7 @@ class ChatService(SessionRecovery):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
+        platform: bool = False,
     ) -> tuple[dict, str]:
         """Resolve a turn's model, model environment and usage route
         (gateway_usage.py)."""
@@ -3520,6 +3529,7 @@ class ChatService(SessionRecovery):
             topic_id,
             agent=agent,
             acting_agent=acting_agent,
+            platform=platform,
         )
 
     async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
@@ -4701,33 +4711,3 @@ async def _dream_rooms(
             lines.append("这段时间的发言：\n" + dream.clip(body, dream.ROOM_LOG_MAX))
         out.append("\n\n".join(lines))
     return out
-
-
-async def _record_dream_usage(
-    session: AsyncSession,
-    *,
-    project_id: uuid.UUID,
-    root_topic_id: uuid.UUID,
-    usage: AgentUsage | None,
-    turn_id: uuid.UUID,
-) -> None:
-    """把整理自己那一轮的花销记成 `memory_dream`。
-
-    钩子骨架报不出 token 数，所以这一行的 tokens 常常是 0——它记的是「这里跑过一次
-    整理」，这和「什么都没发生」是两件事。真正要紧的是 `kind`：判据聚合时按前缀剔
-    掉它，自己的花费就不会把自己算成「写了很多记忆」。
-    """
-    model = usage.model if usage is not None and usage.model else settings.agent_model
-    await Ledger(session).record(
-        await payer_for_project(session, project_id),
-        credits=0.0,
-        topic_id=root_topic_id,
-        model=model,
-        input_tokens=usage.input_tokens if usage is not None else 0,
-        output_tokens=usage.output_tokens if usage is not None else 0,
-        cost_usd=usage.cost_usd if usage is not None else 0.0,
-        kind=dream.DREAM_KIND,
-        metered=usage is not None,
-        route="",
-        turn_id=turn_id,
-    )

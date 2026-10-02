@@ -55,7 +55,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
-from app.domain.usage.credits import usage_to_credits
+from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,11 @@ logger = logging.getLogger(__name__)
 _GW_KEY = "llm_gateway_key"
 _GW_CKPT = "llm_gateway_usage_ckpt"
 _GW_BUDGET = "llm_gateway_budget_usd"
+#: 平台自己在项目里干活（记忆整理）用的第二把 key 和它的检查点。这把 key 的花
+#: 费是平台的，不进项目付钱的那把 key，所以结算时不会算到团队头上（#2233）；它
+#: 也不带预算：平台的活不受团队额度约束。
+_GW_PLATFORM_KEY = "llm_gateway_platform_key"
+_GW_PLATFORM_CKPT = "llm_gateway_platform_usage_ckpt"
 
 
 class _GatewayUsage(Protocol):
@@ -134,8 +139,13 @@ async def _model_kwargs(
     *,
     agent: ResolvedAgent | None = None,
     acting_agent: str | None = None,
+    platform: bool = False,
 ) -> tuple[dict, str]:
     """Resolve a turn's model, model environment and usage route.
+
+    ``platform`` is a turn the platform runs for itself (memory
+    consolidation): it runs on the project's platform key, whose spend
+    `_drain_gateway_usage(platform=True)` lands as the platform's.
 
     Which model comes from the binding of the work this turn belongs to —
     and a room's main thread is not a piece of work, so it always gets the
@@ -286,7 +296,7 @@ async def _model_kwargs(
         # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
         # the master key (containment), attributable + budget-capped.
         override = await _gateway_project_env(
-            service, sessions, gateway, gateway_lock, project_id
+            service, sessions, gateway, gateway_lock, project_id, platform=platform
         )
         if not override:
             raise GatewayUnavailableError(
@@ -320,6 +330,8 @@ async def _gateway_project_env(
     gateway: LlmGateway | None,
     gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
+    *,
+    platform: bool = False,
 ) -> dict | None:
     """Env override for a gateway-routed turn: mint (once) and return the
     project's virtual key, and keep its L2 max_budget in step with the
@@ -338,7 +350,12 @@ async def _gateway_project_env(
     minted, no budget drift to apply — still fanned out into a 5.8 s tail.
     Nothing about answering that request is exclusive, so it is answered
     before the lock is reached.
+
+    ``platform`` answers with the project's platform key instead: minted once
+    the same way, never budget-capped.
     """
+    if platform:
+        return await _gateway_platform_env(sessions, gateway, gateway_lock, project_id)
     try:
         # Read path: the key exists and is in step → nothing to write.
         async with sessions() as session:
@@ -385,6 +402,41 @@ async def _gateway_project_env(
         return None
 
 
+async def _gateway_platform_env(
+    sessions: async_sessionmaker,
+    gateway: LlmGateway | None,
+    gateway_lock: asyncio.Lock,
+    project_id: uuid.UUID,
+) -> dict | None:
+    """The project's platform key as a turn env, minted on first use."""
+    try:
+        async with sessions() as session:
+            project = await ProjectRepository(session).get(project_id)
+            if project is None or gateway is None:
+                return None
+            key = (project.settings or {}).get(_GW_PLATFORM_KEY)
+            if isinstance(key, str) and key:
+                return {"ANTHROPIC_AUTH_TOKEN": key}
+        async with gateway_lock:
+            async with sessions() as session:
+                project = await ProjectRepository(session).get(project_id)
+                if project is None:
+                    return None
+                s = dict(project.settings or {})
+                key = s.get(_GW_PLATFORM_KEY)
+                if not isinstance(key, str) or not key:
+                    key = await gateway.mint_project_key(project_id, platform=True)
+                    if not key:
+                        return None
+                    s[_GW_PLATFORM_KEY] = key
+                    project.settings = s
+                    await session.commit()
+        return {"ANTHROPIC_AUTH_TOKEN": key}
+    except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
+        logger.exception("gateway platform-env failed for %s", project_id)
+        return None
+
+
 def _schedule_deferred_drain(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
@@ -427,8 +479,14 @@ async def _drain_gateway_usage(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
+    *,
+    platform_kind: str | None = None,
 ) -> list[AgentUsage] | None:
     """L1: real usage for gateway-routed turns, **one entry per model**.
+
+    ``platform_kind`` drains the project's platform key instead (the work the
+    platform did there for itself) and lands its rows as the platform's,
+    under that kind: no team pays for them.
 
     The hooks backends can't see token usage locally (interactive Claude
     Code reports none → usage=0), so read the project's NEW spend from the
@@ -442,6 +500,9 @@ async def _drain_gateway_usage(
     do."""
     if gateway is None:
         return None
+    key_field, ckpt_field = (
+        (_GW_PLATFORM_KEY, _GW_PLATFORM_CKPT) if platform_kind else (_GW_KEY, _GW_CKPT)
+    )
     try:
         for attempt in range(2):
             if attempt:
@@ -461,10 +522,10 @@ async def _drain_gateway_usage(
                 if project is None:
                     return None
                 s = dict(project.settings or {})
-                key = s.get(_GW_KEY)
+                key = s.get(key_field)
                 if not isinstance(key, str) or not key:
                     return None  # nothing ever routed → nothing to meter
-                ckpt = s.get(_GW_CKPT)
+                ckpt = s.get(ckpt_field)
                 ckpt = ckpt if isinstance(ckpt, dict) else None
             drained = await drain_new_usage(gateway, key, ckpt)
             if not attempt and (drained is None or not drained[0]):
@@ -486,7 +547,7 @@ async def _drain_gateway_usage(
                     # Lock and refresh the row before comparing checkpoints.
                     await session.refresh(project, with_for_update=True)
                     s = dict(project.settings or {})
-                    if s.get(_GW_CKPT) != ckpt:
+                    if s.get(ckpt_field) != ckpt:
                         return None
                     usages = [
                         AgentUsage(
@@ -497,11 +558,27 @@ async def _drain_gateway_usage(
                         )
                         for row in rows
                     ]
-                    payer = await payer_for_project(session, project_id)
+                    payer = (
+                        None
+                        if platform_kind
+                        else await payer_for_project(session, project_id)
+                    )
                     for usage in usages:
+                        if payer is None:
+                            await Ledger(session).record_platform(
+                                kind=platform_kind or "",
+                                model=usage.model or settings.agent_model,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                                cost_usd=usage.cost_usd,
+                                project_id=project_id,
+                                topic_id=topic_id,
+                                turn_id=turn_id,
+                            )
+                            continue
                         await Ledger(session).record(
                             payer,
-                            credits=usage_to_credits(usage, spend_priced=True),
+                            credits=spend_to_credits(usage.cost_usd),
                             topic_id=topic_id,
                             model=usage.model or settings.agent_model,
                             input_tokens=usage.input_tokens,
@@ -510,7 +587,7 @@ async def _drain_gateway_usage(
                             route="gateway",
                             turn_id=turn_id,
                         )
-                    s[_GW_CKPT] = next_ckpt
+                    s[ckpt_field] = next_ckpt
                     project.settings = s
                     await session.commit()
             # `model=""` is the one pre-split migration row (see

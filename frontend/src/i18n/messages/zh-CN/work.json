@@ -189,49 +189,9 @@
   },
   "room": {
     "docTools": {
-      "title": "文档工具",
       "backToDocument": "返回正文",
       "float": "在浮窗中打开",
       "dock": "停靠到侧栏"
-    },
-    "docAi": {
-      "review": "查看修改",
-      "explanation": "修改说明",
-      "comparison": "原文与建议",
-      "closeReview": "关闭对照",
-      "original": "原文",
-      "suggested": "建议文字",
-      "staleProposal": "文档已有更新，这份建议无法直接采纳",
-      "title": "文档 AI",
-      "selectionToolbar": "选区操作",
-      "failed": "请求失败，输入已保留",
-      "signIn": "请登录后使用文档 AI",
-      "unverified": "选区未通过当前已保存原文核验。请先保存、处理冲突，或重新选择受支持的正文。",
-      "refresh": "刷新记录",
-      "close": "关闭 AI 面板，保留草稿",
-      "unknown": "请求结果未知。按原操作恢复，避免重复发送。",
-      "recover": "恢复原操作",
-      "question": "问题或修改要求",
-      "contextQuestion": "原问题",
-      "contextSelection": "已选原文",
-      "contextDocument": "针对整篇文档",
-      "contextUnavailable": "该版本原文暂不可用",
-      "contextInvalid": "原文校验未通过",
-      "ask": "问 AI",
-      "propose": "生成修改提案",
-      "aiProposal": "AI 请求与提案",
-      "replacement": "建议替换原文",
-      "baseVersion": "基于文档第 {version} 版",
-      "humanAccept": "由我采纳并保存",
-      "accepted": "{actor} 已采纳，保存为第 {version} 版",
-      "cancel": "取消请求",
-      "state": {
-        "pending": "等待执行",
-        "running": "生成中",
-        "succeeded": "已完成",
-        "failed": "失败",
-        "cancelled": "已取消"
-      }
     },
     "docLink": {
       "title": "链接操作",
@@ -433,7 +393,9 @@
       "detail": "详情",
       "docDiff": "文档修改对比",
       "added": "新增",
-      "removed": "删除"
+      "removed": "删除",
+      "docEditCount": "改了 {n} 处",
+      "viewSuggestions": "查看"
     },
     "message": {
       "copy": "复制",
@@ -759,6 +721,8 @@
     },
     "doc": {
       "pickTopic": "选择一个话题查看文档",
+      "outdated": "页面已更新，刷新后继续编辑",
+      "reload": "刷新",
       "loading": "加载中…",
       "connecting": "连接中…",
       "offline": "未连接",
@@ -811,7 +775,8 @@
       "liveRefTitle": "「{title}」· {status} — 点击打开",
       "thisTask": "这件任务",
       "subtopic": "子话题",
-      "topic": "话题"
+      "topic": "话题",
+      "selectionToolbar": "选区操作"
     },
     "comments": {
       "comment": "评论",
@@ -976,6 +941,52 @@
       "typingTwo": "{first}和{second}正在输入…",
       "typingMany": "多人正在输入…",
       "separator": " · "
+    },
+    "docEdit": {
+      "ask": "问{agent}",
+      "rewrite": "让{agent}改",
+      "boxLabel": "让{agent}改选中的文字",
+      "boxPlaceholder": "写下修改要求",
+      "boxKeyHint": "Enter 发送，Shift+Enter 换行",
+      "preset": {
+        "concise": "更简洁",
+        "specific": "更具体",
+        "formal": "改正式",
+        "list": "改成列表"
+      },
+      "send": "发送",
+      "pending": "{agent} 修改中…",
+      "done": "已按你的要求修改",
+      "undo": "撤销",
+      "again": "再改改",
+      "undone": "已撤销{agent}的修改",
+      "redo": "恢复",
+      "failed": "修改失败：{reason}",
+      "failedRetry": "修改失败，稍后重试",
+      "stale": "这段已经被改过，重新选一下",
+      "unmappable": "无法单独修改这段选区，重新选一下",
+      "unavailable": "这篇文档暂时无法修改",
+      "prev": "上一处",
+      "next": "下一处"
+    },
+    "docSuggest": {
+      "title": "{agent}的建议",
+      "pending": "{agent}的建议 · 还有 {n} 处待处理",
+      "rejectAll": "全部拒绝",
+      "acceptAll": "全部接受",
+      "allDone": "{agent}的建议都处理完了：接受 {accepted} 处，拒绝 {rejected} 处",
+      "dismiss": "关闭",
+      "position": "{i}/{n}",
+      "reject": "拒绝",
+      "accept": "接受"
+    },
+    "docReview": {
+      "label": "改动",
+      "title": "{requester}让{agent}改的 {n} 处",
+      "allRestored": "{requester}让{agent}改的几处都已还原",
+      "close": "收起改动",
+      "position": "第 {i}/{n} 处",
+      "restore": "还原这处"
     }
   },
   "board": {
@@ -1306,7 +1317,6 @@
     },
     "credits": {
       "title": "额度",
-      "rate": "1 额度 = {n} tokens",
       "none": "暂无额度信息",
       "unlimited": "未设置额度上限",
       "remaining": "额度剩余",

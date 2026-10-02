@@ -189,49 +189,9 @@
   },
   "room": {
     "docTools": {
-      "title": "Document tools",
       "backToDocument": "Back to document",
       "float": "Open in a floating window",
       "dock": "Dock to sidebar"
-    },
-    "docAi": {
-      "review": "Review changes",
-      "explanation": "Explanation",
-      "comparison": "Original and suggested text",
-      "closeReview": "Close comparison",
-      "original": "Original",
-      "suggested": "Suggested text",
-      "staleProposal": "The document has changed. This suggestion can no longer be applied directly",
-      "title": "Document AI",
-      "selectionToolbar": "Selection actions",
-      "failed": "Request failed; input retained",
-      "signIn": "Sign in to use document AI",
-      "unverified": "The selection could not be verified against saved source. Save, resolve conflicts, or select supported text again.",
-      "refresh": "Refresh records",
-      "close": "Close AI panel and retain draft",
-      "unknown": "Outcome unknown. Recover the original operation to avoid duplicate requests.",
-      "recover": "Recover operation",
-      "question": "Question or rewrite instructions",
-      "contextQuestion": "Original question",
-      "contextSelection": "Selected original text",
-      "contextDocument": "Ask about the whole document",
-      "contextUnavailable": "Original text for this version is unavailable",
-      "contextInvalid": "Original text could not be verified",
-      "ask": "Ask AI",
-      "propose": "Propose rewrite",
-      "aiProposal": "AI request and proposal",
-      "replacement": "Proposed source replacement",
-      "baseVersion": "Based on document version {version}",
-      "humanAccept": "Accept and save as me",
-      "accepted": "Accepted by {actor}, saved as version {version}",
-      "cancel": "Cancel request",
-      "state": {
-        "pending": "Pending",
-        "running": "Generating",
-        "succeeded": "Completed",
-        "failed": "Failed",
-        "cancelled": "Cancelled"
-      }
     },
     "docLink": {
       "title": "Link actions",
@@ -433,7 +393,9 @@
       "detail": "Details",
       "docDiff": "Document changes",
       "added": "Added",
-      "removed": "Removed"
+      "removed": "Removed",
+      "docEditCount": "Changes: {n}",
+      "viewSuggestions": "View"
     },
     "message": {
       "copy": "Copy",
@@ -759,6 +721,8 @@
     },
     "doc": {
       "pickTopic": "Select a topic to see its document",
+      "outdated": "This page has been updated. Refresh to keep editing",
+      "reload": "Refresh",
       "loading": "Loading…",
       "connecting": "Connecting…",
       "offline": "Offline",
@@ -811,7 +775,8 @@
       "liveRefTitle": "“{title}” · {status}. Click to open",
       "thisTask": "This task",
       "subtopic": "Subtopic",
-      "topic": "Topic"
+      "topic": "Topic",
+      "selectionToolbar": "Selection actions"
     },
     "comments": {
       "comment": "Comment",
@@ -976,6 +941,52 @@
       "typingTwo": "{first} and {second} are typing…",
       "typingMany": "Several people are typing…",
       "separator": " · "
+    },
+    "docEdit": {
+      "ask": "Ask {agent}",
+      "rewrite": "Have {agent} edit",
+      "boxLabel": "Have {agent} edit the selected text",
+      "boxPlaceholder": "Describe the change",
+      "boxKeyHint": "Enter to send, Shift+Enter for a new line",
+      "preset": {
+        "concise": "More concise",
+        "specific": "More specific",
+        "formal": "More formal",
+        "list": "As a list"
+      },
+      "send": "Send",
+      "pending": "{agent} is editing…",
+      "done": "Edited as you asked",
+      "undo": "Undo",
+      "again": "Edit again",
+      "undone": "Undid {agent}'s edit",
+      "redo": "Restore",
+      "failed": "Edit failed: {reason}",
+      "failedRetry": "Edit failed. Try again later",
+      "stale": "This text has changed. Select it again",
+      "unmappable": "This selection can't be edited on its own. Select it again",
+      "unavailable": "This document can't be edited right now",
+      "prev": "Previous",
+      "next": "Next"
+    },
+    "docSuggest": {
+      "title": "{agent}'s suggestion",
+      "pending": "{agent}'s suggestions · Left to review: {n}",
+      "rejectAll": "Reject all",
+      "acceptAll": "Accept all",
+      "allDone": "All of {agent}'s suggestions reviewed · Accepted: {accepted} · Rejected: {rejected}",
+      "dismiss": "Close",
+      "position": "{i}/{n}",
+      "reject": "Reject",
+      "accept": "Accept"
+    },
+    "docReview": {
+      "label": "Changes",
+      "title": "Changes {requester} asked {agent} to make: {n}",
+      "allRestored": "All changes {requester} asked {agent} to make are restored",
+      "close": "Hide changes",
+      "position": "Change {i} of {n}",
+      "restore": "Restore this"
     }
   },
   "board": {
@@ -1306,7 +1317,6 @@
     },
     "credits": {
       "title": "Credits",
-      "rate": "1 credit = {n} tokens",
       "none": "No credit information",
       "unlimited": "No credit limit set",
       "remaining": "credits left",

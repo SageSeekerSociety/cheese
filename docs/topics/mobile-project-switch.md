@@ -32,7 +32,7 @@
 ## 3. 移动端文档溢出 —— 待确认具体症状
 
 还没动手，缺一个关键信息：溢出的是哪一处、什么内容。已看到的可疑点：
-- 文档正文的左右内边距是给桌面留的：<&frontend/src/components/panels/PanelDoc.vue> 的 `.doc-page` 是 `padding: 32px 48px 72px`，<&frontend/src/components/DocEditor.vue> 的 `.doc-editor` 还有 `padding-left: 56px`（给 ＋/⠿ 拖拽手柄留的位，手机上没有 hover，这块位是白占的）。390px 宽的屏上光内边距就吃掉 152px。
+- 文档正文的左右内边距是给桌面留的：<&frontend/src/components/panels/PanelDoc.vue> 的 `.doc-page` 是 `padding: 32px 48px 72px`。390px 宽的屏上光内边距就吃掉 96px。
 - 这几个文件里**一条 `@media` 都没有**，和「只在 PC 端修复了」对得上。
 
 等 @符露夀 回一张截图或说清是哪一处再改。

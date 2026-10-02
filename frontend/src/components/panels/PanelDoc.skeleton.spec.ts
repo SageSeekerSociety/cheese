@@ -5,7 +5,7 @@
 // 于是每一篇有内容的文档，在到达之前都先被说成空的。所以加载期间摆的必须是骨架，
 // 编辑器让位。
 import type { Component } from 'vue'
-import type { Block, Topic } from '../../cx_types'
+import type { Topic } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -13,7 +13,6 @@ import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getDoc = vi.fn()
 const getComments = vi.fn()
 const getDocNodes = vi.fn()
 
@@ -24,7 +23,6 @@ vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    getDoc: (...a: unknown[]) => getDoc(...a),
     getComments: (...a: unknown[]) => getComments(...a),
     getDocNodes: (...a: unknown[]) => getDocNodes(...a),
   }
@@ -53,10 +51,6 @@ const topic = {
   updated_at: '2026-08-01T00:00:00Z',
 } as Topic
 
-function doc(content: string): Block {
-  return { id: 'd1', kind: 'doc', content, doc_version: 3 } as unknown as Block
-}
-
 let vuetify: ReturnType<typeof createVuetify>
 
 beforeAll(() => {
@@ -65,8 +59,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetRooms()
-  getDoc.mockReset()
-  getDoc.mockResolvedValue(doc('## 一段\n\n正文'))
   getComments.mockResolvedValue({ data: [], total: 0 })
   getDocNodes.mockResolvedValue({ data: [], total: 0 })
 })

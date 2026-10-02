@@ -76,7 +76,7 @@ auth_entries:
   preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
   document.member: "topics_comment_threads.member_in_room uses _actor_in_place, doc_identity.operation_actor and authorize_topic(enforce=True); mutations also bind comment to actual room. Source: app/api/routes/topics_comment_threads.py."
-  document.human: "topics_doc_ai.human_in_room uses canonical room check, _actor_in_place, doc_identity.human_operation_actor (verified human, not agent identity), and authorize_topic(enforce=True). Source: app/api/routes/topics_doc_ai.py; app/api/doc_identity.py."
+  document.human: "living_docs.rewrite_selection uses _actor_in_place, doc_identity.human_operation_actor (verified human, not agent identity), and authorize_topic(enforce=True). Source: app/api/routes/living_docs.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
   living.document: "living_docs resolves room actor; state-changing/history/receipt/restore branches enforce topic access and use doc_identity.operation_actor; plain get uses _actor_in_place. Source: app/api/routes/living_docs.py. Endpoint-specific branch is kept in the map below."
   editor.link: "room_files.editor_fetches_file authenticates the signed/expiring document link with documents.editor.read_link; that link is the only credential. Source: app/api/routes/room_files.py; domain/documents/editor.py."
@@ -261,7 +261,6 @@ owners:
   topic.chat: "Room messaging/live chat relay; domain/agent/ChatService and topic/member identity, with route owning delivery/broadcast ordering."
   delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
   documents: "Office/spreadsheet conversion, revisions and editor callbacks; domain/documents editor/convert/revisions/spreadsheet."
-  doc_ai: "Document AI asks and proposals; domain/doc_ai/DocAiService and ProposalAcceptance, separate from room agent execution."
   living_doc: "Canonical living-document journal, receipts, history and restoration; domain/living_doc/DocumentJournal, with block/document persistence. Versions are recorded only by the collaboration service's store (api/doc_store.py); other writers go through living_doc/collab.replace."
   room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
   project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
@@ -650,6 +649,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/ticket", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/doc", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/edits", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/rewrite", auth: "document.human", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/history", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/restore", auth: "living.document", owner: "living_doc"}
@@ -1035,14 +1036,6 @@ routes:
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}
   # app.api.routes.topics_deliveries
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/deliveries", auth: "actor.topic.enforced", owner: "delivery"}
-  # app.api.routes.topics_doc_ai
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/source", auth: "document.human", owner: "doc_ai"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc-ai/requests", auth: "document.human", owner: "doc_ai"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/requests", auth: "document.human", owner: "doc_ai"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/requests/{request_id}", auth: "document.human", owner: "doc_ai"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc-ai/requests/{request_id}/cancel", auth: "document.human", owner: "doc_ai"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc-ai/proposals/{proposal_id}", auth: "document.human", owner: "doc_ai"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc-ai/proposals/{proposal_id}/accept", auth: "document.human", owner: "doc_ai"}
   # app.api.routes.topics_documents
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/recalc", auth: "actor.topic", owner: "documents"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/documents/convert", auth: "actor.topic", owner: "documents"}

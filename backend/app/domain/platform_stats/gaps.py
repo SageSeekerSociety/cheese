@@ -34,7 +34,6 @@ from app.domain.machine.models import ProjectMachine, WarmMachine
 from app.domain.platform_stats.windows import utc_day_window
 from app.domain.project.models import Project
 from app.domain.usage import ledger
-from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage
 
 #: 磁盘压力档位的阈值。写在读这一侧：它们是**看板的判据**（「多少算紧张」），不是
@@ -55,7 +54,7 @@ class GapRepository:
     async def credits_burnout(self, *, days: int) -> dict[str, Any]:
         """已耗尽 / 快烧完 / unlimited 三个互斥名单，外加燃烧速率与估尽时刻。
 
-        `burn_rate` 从 `resource_usage` 推（`usage_to_credits`），**不是**余额差分
+        `burn_rate` 从 `resource_usage.credits` 推，**不是**余额差分
         —— 理由见模块 docstring 第 1 条。`exhaust_eta` 是线性外推，两个半边都会在
         新发放到账或项目安静下来时立刻失效，所以 unlimited 与零燃烧都回 `None`
         （画破折号），0 和 Infinity 在这里都是谎言。
@@ -130,51 +129,23 @@ class GapRepository:
         }
 
     async def _burn_rate(self, *, since, until) -> dict[str, Any]:
-        """窗口内的 credit 燃烧速率。来源是 `resource_usage`，不是余额差分。
-
-        分 `spend_priced` 与扁平 token 率两条路（`usage_to_credits` 的口径）——
-        两者的换算不一样，加在一起之前必须先各自算完。
-        """
-        rows = (
-            await self._session.execute(
-                select(
-                    ResourceUsage.route,
-                    func.sum(ResourceUsage.input_tokens),
-                    func.sum(ResourceUsage.output_tokens),
-                    func.sum(ResourceUsage.cost_usd),
-                )
-                .where(
+        """窗口内的 credit 燃烧速率：`resource_usage.credits` 之和，也就是每一行
+        记账时实际折算的额度，不是余额差分。"""
+        credits = float(
+            await self._session.scalar(
+                select(func.coalesce(func.sum(ResourceUsage.credits), 0.0)).where(
                     ResourceUsage.created_at >= since,
                     ResourceUsage.created_at < until,
                     # The rate project and team credits burn at; personal
                     # spend draws on other grants.
                     ResourceUsage.project_id.is_not(None),
                 )
-                .group_by(ResourceUsage.route)
             )
-        ).all()
-        credits = 0.0
-        priced_credits = 0.0
-        flat_credits = 0.0
-        for route, inp, out, cost in rows:
-
-            class _U:
-                input_tokens = int(inp or 0)
-                output_tokens = int(out or 0)
-                cost_usd = float(cost or 0.0)
-
-            spend_priced = route == "gateway"
-            c = usage_to_credits(_U(), spend_priced=spend_priced)
-            credits += c
-            if spend_priced:
-                priced_credits += c
-            else:
-                flat_credits += c
+            or 0.0
+        )
         return {
             "credits_in_window": credits,
             "credits_per_day": credits / max(1, (until - since).days),
-            "priced_credits": priced_credits,
-            "flat_credits": flat_credits,
             "method": "derived_from_resource_usage",
         }
 

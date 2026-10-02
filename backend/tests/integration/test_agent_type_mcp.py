@@ -208,3 +208,49 @@ def test_a_types_stdio_server_is_handed_only_to_its_teammates_sessions(
     assert own["agent_mcp"] == {"lint": LINT}
     other = _central_target(client, monkeypatch, pid, tid, "plain-1", plain)
     assert "agent_mcp" not in other
+
+
+def _private_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
+    """The execution target a private chat's session of this teammate starts
+    with: a turn there rents no place, so it runs in the chat's scratch."""
+    central: Any = central_sessions.channel(client, monkeypatch)
+    ref = SessionRef(pid, tid, handle, harness="claude-code")
+
+    async def open_session():
+        await central.ensure_ready(
+            session=ref,
+            token=mint_scoped_token(
+                project_id=str(pid), topic_id=str(tid), agent_handle=seat
+            ),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=await central.precheck(ref, needs_place=False),
+            turn_id=uuid.uuid4(),
+        )
+        opening = central._ensure_screen.await_args.kwargs
+        return json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
+
+    return client.portal.call(open_session)
+
+
+def test_a_private_chat_keeps_the_teammates_type_servers(
+    client, room, upstream, types, monkeypatch
+):
+    """The teammate in a private chat is the same teammate: its type's servers
+    come with it — the stdio one to run in the chat's scratch, the remote one
+    through the project's connection — and another type's teammate gets none."""
+    pid, tid = room
+    tracer = _teammate(client, pid, "tracer-1", "tracer")
+    plain = _teammate(client, pid, "plain-1", "plain")
+    assert _connect(client, pid, name="ticket").status_code == 302
+
+    own = _private_target(client, monkeypatch, pid, tid, "tracer-1", tracer)
+    assert own["kind"] == "private"
+    assert own["agent_mcp"] == {"lint": LINT}
+    assert "ticket" in own["remote_mcp"]["servers"]
+    assert own["remote_mcp"]["path"] == f"/topics/{tid}/mcp"
+
+    other = _private_target(client, monkeypatch, pid, tid, "plain-1", plain)
+    assert other["kind"] == "private"
+    assert "agent_mcp" not in other
+    assert "ticket" not in (other.get("remote_mcp") or {}).get("servers", [])

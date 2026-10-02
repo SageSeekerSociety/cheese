@@ -12,7 +12,7 @@ import { computed, ref, watch } from 'vue'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
 import { getProjectCredits } from '@/api'
-import i18n, { t } from '@/i18n'
+import { t } from '@/i18n'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -63,14 +63,6 @@ watch(
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-gauge</v-icon>
       <span class="page-section-title">{{ t('work.projectSettings.credits.title') }}</span>
-      <v-spacer />
-      <span v-if="credits && !credits.unlimited" class="ln-num c-muted">
-        {{
-          t('work.projectSettings.credits.rate', {
-            n: credits.tokens_per_credit.toLocaleString(i18n.global.locale.value),
-          })
-        }}
-      </span>
     </div>
     <div class="page-section-body">
       <div v-if="!credits" class="t-body c-muted py-2">{{ t('work.projectSettings.credits.none') }}</div>

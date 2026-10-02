@@ -11,11 +11,13 @@ iterator owned the turn, so the turn died when that process did. The rooms it
 ran are gone; what remains is the shape that can be reconnected to.
 """
 
+import contextlib
 import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 from app.core.config import settings
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     CLAUDE_CODE,
     CODEX,
@@ -178,7 +180,11 @@ class ComputePool:
             if previous is not runtime and previous.holds(
                 session.topic_id, session.agent_handle
             ):
-                await previous.interrupt(session)
+                # A runner that let its idle session go is still on record
+                # here, and there is nothing left of it to stop. Parking is
+                # about taking the seat back, and it is taken back either way.
+                with contextlib.suppress(DeviceCallError, DeviceOffline):
+                    await previous.interrupt(session)
                 await previous.close(session)
         self._owners[(session.topic_id, session.agent_handle)] = runtime
 

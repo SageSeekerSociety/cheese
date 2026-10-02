@@ -10,7 +10,14 @@ internal route — so the backend side is exercised for real: its HTTP client,
 the internal route's authentication and parsing, the store transaction and the
 error it answers with.
 
+``edit`` changes passages of that text the way the service's ``/edit`` does,
+as plain string replacement: each ``old`` must occur exactly once. A
+suggestion leaves the text alone and is kept here as pending, and every store
+reports what is pending, as the service does.
+
 ``type_in`` is somebody typing in an editor: a store carrying their handle.
+``type_unsaved`` is typing the service holds but has not stored yet; like the
+service, this one stores it before refusing a writer that did not see it.
 """
 
 import base64
@@ -30,6 +37,10 @@ class FakeCollab:
         #: tested there); here a test says what it would answer: (message, line)
         #: for every checked write, or None to take them.
         self.refuse_writes: tuple[str, int] | None = None
+        #: Per document: the suggestions pending in it.
+        self.pending: dict[str, list[dict]] = {}
+        #: Per document: (text, handle) typed since the last store.
+        self._unsaved: dict[str, tuple[str, str]] = {}
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -42,6 +53,8 @@ class FakeCollab:
     async def handle(self, request: httpx.Request) -> httpx.Response:
         name = request.url.path.split("/")[3]
         body = _json(request)
+        if request.url.path.endswith("/edit"):
+            return await self._edit(name, body)
         if body.get("check") and self.refuse_writes is not None:
             message, line = self.refuse_writes
             return httpx.Response(
@@ -49,9 +62,15 @@ class FakeCollab:
             )
         async with self._client() as backend:
             loaded = (await backend.get(f"/internal/collab/documents/{name}")).json()
-            live = loaded["content"]
+            unsaved = self._unsaved.pop(name, None)
+            live = unsaved[0] if unsaved else loaded["content"]
             stale = live.strip() if body["base"] is None else live != body["base"]
             if stale:
+                if unsaved:
+                    await self._store(backend, name, *unsaved)
+                    loaded = (
+                        await backend.get(f"/internal/collab/documents/{name}")
+                    ).json()
                 return httpx.Response(409, json={"doc_version": loaded["doc_version"]})
             stored = await backend.put(
                 f"/internal/collab/documents/{name}",
@@ -60,6 +79,7 @@ class FakeCollab:
                     "content": body["content"],
                     "actors": [body["actor"]],
                     "operation": body["operation"],
+                    "suggestions": self.pending.get(name, []),
                 },
             )
         if stored.status_code == 409:
@@ -74,18 +94,73 @@ class FakeCollab:
             return httpx.Response(502, json={"message": stored.text})
         return httpx.Response(200, json={"stored": stored.json()})
 
-    async def type_in(self, room_id: uuid.UUID, content: str, *actors: str) -> dict:
+    async def _edit(self, name: str, body: dict) -> httpx.Response:
         async with self._client() as backend:
-            response = await backend.put(
-                f"/internal/collab/documents/{collab.document_name(room_id)}",
+            text = (await backend.get(f"/internal/collab/documents/{name}")).json()[
+                "content"
+            ]
+            suggest = body["mode"] == "suggest"
+            pending = list(self.pending.get(name, []))
+            applied = []
+            for index, edit in enumerate(body["edits"]):
+                found = text.count(edit["old"])
+                if found != 1:
+                    reason = "not_found" if found == 0 else "ambiguous"
+                    return httpx.Response(
+                        422, json={"error": "edit", "index": index, "reason": reason}
+                    )
+                if suggest:
+                    sid = f"{body['actor']}:{len(pending) + 1}"
+                    pending.append({"id": sid, "author": body["actor"], **_pair(edit)})
+                    applied.append({**_pair(edit), "suggestion_id": sid})
+                else:
+                    text = text.replace(edit["old"], edit["new"])
+                    applied.append(_pair(edit))
+            self.pending[name] = pending
+            stored = await backend.put(
+                f"/internal/collab/documents/{name}",
                 json={
                     "state": base64.b64encode(b"yjs").decode(),
-                    "content": content,
-                    "actors": list(actors),
+                    "content": text,
+                    "actors": [body["actor"]],
+                    "suggestions": pending,
+                    "requested_by": body.get("requested_by"),
+                    "edits": applied,
+                    "suggested": suggest,
+                    "reason": body.get("reason"),
                 },
             )
+        if stored.status_code != 200:
+            return httpx.Response(502, json={"message": stored.text})
+        return httpx.Response(200, json={"stored": stored.json(), "edits": applied})
+
+    async def type_in(self, room_id: uuid.UUID, content: str, *actors: str) -> dict:
+        async with self._client() as backend:
+            return await self._store(
+                backend, collab.document_name(room_id), content, *actors
+            )
+
+    def type_unsaved(self, room_id: uuid.UUID, content: str, actor: str) -> None:
+        self._unsaved[collab.document_name(room_id)] = (content, actor)
+
+    async def _store(
+        self, backend: httpx.AsyncClient, name: str, content: str, *actors: str
+    ) -> dict:
+        response = await backend.put(
+            f"/internal/collab/documents/{name}",
+            json={
+                "state": base64.b64encode(b"yjs").decode(),
+                "content": content,
+                "actors": list(actors),
+                "suggestions": self.pending.get(name, []),
+            },
+        )
         response.raise_for_status()
         return response.json()
+
+
+def _pair(edit: dict) -> dict:
+    return {"old": edit["old"], "new": edit["new"]}
 
 
 def _json(request: httpx.Request) -> dict:

@@ -12,7 +12,6 @@ from app.api.response import ok
 from app.api.routes.machines import _require_project_access
 from app.api.routes.spaces import get_space_service
 from app.auth.project_access import may_read_project
-from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -135,7 +134,6 @@ async def project_credits(
     return ok(
         {
             "team_id": await ProjectRepository(db).team_for_project(project_id),
-            "tokens_per_credit": settings.compute_credit_tokens,
             "unlimited": summary["unlimited"],
             "credits_total": summary["credits_total"],
             "credits_used": summary["credits_used"],

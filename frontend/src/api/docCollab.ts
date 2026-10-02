@@ -2,6 +2,7 @@
 // where the browser reaches it.
 
 import { request } from '../api'
+import { DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from '../lib/docSchema/version'
 
 // A short-lived ticket that opens this room's living document in the
 // collaboration service. Whether it may be changed is decided by the backend and
@@ -17,8 +18,9 @@ export function getDocTicket(topicId: string): Promise<DocTicket> {
 }
 
 // Where the browser reaches the collaboration service: the frontend's own
-// /collab location (nginx in production, vite's proxy in development).
+// /collab location (nginx in production, vite's proxy in development). It says
+// which document schema this build speaks: the service refuses another one.
 export function collabWsUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${window.location.host}/collab`
+  return `${proto}://${window.location.host}/collab/?${DOC_SCHEMA_PARAM}=${DOC_SCHEMA_VERSION}`
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 压在正文上、跟着正文走的那几块：选中文字后的「评论」、右键菜单式的 slash 菜单浮层、
+// 压在正文上、跟着正文走的那几块：选中文字后的浮条（评论、问 AI 队友、让它改、链接）、
+// 右键菜单式的 slash 菜单浮层、
 // 代码块工具条（语言 + 复制）、块手柄。
 //
 // 为什么要一行行地算坐标：这几块都不是正文的一部分，而是**贴在正文上的**。它们的位置
@@ -13,7 +14,6 @@ import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Selection } from '@tiptap/pm/state'
 import type { Block } from '../../../cx_types'
-import type { DocSelectionSnapshot } from '../../../lib/docAiSelection'
 import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 
@@ -40,13 +40,22 @@ const props = withDefaults(
     slashMenu?: { items: SlashItem[]; index: number; top: number; left: number } | null
     /** 父层每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
+    /** 项目 AI 队友的名字：浮条上「问…」「让…改」说的是它。 */
+    agentName: string
+    /** 能不能让 AI 队友改选中的字（有这个动作时才给那一项）。 */
+    canRewrite?: boolean
+    /** 认得出 AI 队友（知道它的点名）：评论里问它，它才收得到。 */
+    canAskAgent?: boolean
   }>(),
-  { editor: null, slashMenu: null, scrollTick: 0 }
+  { editor: null, slashMenu: null, scrollTick: 0, canRewrite: false, canAskAgent: false }
 )
 
 const emit = defineEmits<{
-  /** 选中一段正文点了「评论」：锚点和引文都算好了，去开写评论的框。 */
-  (e: 'open-comment', payload: { anchorId: string | null; quote: string }): void
+  /** 选中一段正文点了「评论」（`ask`：点的是「问…」，评论框里先写上 @ 它）：锚点和引文
+   *  都算好了，去开写评论的框。 */
+  (e: 'open-comment', payload: { anchorId: string | null; quote: string; ask: boolean }): void
+  /** 选中一段正文点了「让…改」。 */
+  (e: 'rewrite', range: { from: number; to: number }): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
   /** slash 菜单里挑了一项（键盘回车走的是上面那条路，这里只有鼠标）。 */
@@ -55,7 +64,6 @@ const emit = defineEmits<{
   (e: 'hover', index: number): void
   /** ＋ 手柄往新块里种了一个「/」：菜单关掉时若是它种的那一个，要收回去。 */
   (e: 'planted'): void
-  (e: 'open-ai', snapshot: DocSelectionSnapshot): void
   (e: 'open-link', target: DocLinkTarget): void
 }>()
 
@@ -249,7 +257,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', schedulePosition)
   document.removeEventListener('keydown', escapeSelection, true)
 })
-async function commentOnSelection() {
+async function commentOnSelection(ask = false) {
   const cta = commentCta.value
   if (!cta || !props.editable || !cta.editor.isEditable) return
   const id = ++requestId
@@ -276,7 +284,7 @@ async function commentOnSelection() {
   while (blocks.length && blocks[blocks.length - 1].tagName === 'P' && !blocks[blocks.length - 1].textContent?.trim())
     blocks.pop()
   const anchor = cta.nodeIndex >= nodes.length || nodes.length !== blocks.length ? null : nodes[cta.nodeIndex].id
-  emit('open-comment', { anchorId: anchor, quote: cta.quote })
+  emit('open-comment', { anchorId: anchor, quote: cta.quote, ask })
 }
 
 // ---- Code block copy (hover, like the chat's quiet .im-act buttons). The
@@ -460,10 +468,19 @@ function newLink() {
   const target = captureNewDocLink(cta.editor, cta.selection)
   if (target) emit('open-link', target)
 }
-function askSelection() {
+/** 「让…改」只认一段之内的普通选区：改写按段落发给服务端。 */
+function rewritable(cta: CommentCta): boolean {
+  const sel = cta.selection
+  return (
+    props.canRewrite && sel instanceof TextSelection && sel.$from.depth > 0 && sel.$from.before(1) === sel.$to.before(1)
+  )
+}
+function rewriteSelection() {
   const cta = commentCta.value
-  if (!cta || !(cta.selection instanceof TextSelection) || cta.editor.state.doc !== cta.doc) return
-  emit('open-ai', { editor: cta.editor, doc: cta.doc, from: cta.selection.from, to: cta.selection.to })
+  if (!cta || cta.editor.state.doc !== cta.doc || !rewritable(cta)) return
+  dismissed = { editor: cta.editor, doc: cta.doc, selection: cta.selection }
+  commentCta.value = null
+  emit('rewrite', { from: cta.selection.from, to: cta.selection.to })
 }
 defineExpose({ onHover, onEdited })
 </script>
@@ -475,18 +492,21 @@ defineExpose({ onHover, onEdited })
     v-if="commentCta"
     ref="toolbar"
     role="toolbar"
-    :aria-label="t('work.room.docAi.selectionToolbar')"
+    :aria-label="t('work.room.doc.selectionToolbar')"
     class="doc-comment-cta"
     :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
     @mousedown.prevent
   >
-    <button type="button" :aria-label="t('work.room.doc.commentOnSelection')" @click="commentOnSelection">
-      <v-icon size="14">mdi-comment-plus-outline</v-icon>
+    <button type="button" :aria-label="t('work.room.doc.commentOnSelection')" @click="commentOnSelection()">
       {{ t('work.room.comments.comment') }}
     </button>
-    <button v-if="commentCta.selection instanceof TextSelection" type="button" @click="askSelection">
-      {{ t('work.room.docAi.ask') }}
+    <button v-if="canAskAgent" type="button" @click="commentOnSelection(true)">
+      {{ t('work.room.docEdit.ask', { agent: agentName }) }}
     </button>
+    <button v-if="rewritable(commentCta)" type="button" @click="rewriteSelection">
+      {{ t('work.room.docEdit.rewrite', { agent: agentName }) }}
+    </button>
+    <span class="doc-comment-cta__sep" aria-hidden="true" />
     <button type="button" @click="newLink">{{ t('work.room.docLink.title') }}</button>
   </div>
   <!-- Notion-style slash menu: anchored to the caret (suggestion
@@ -557,34 +577,41 @@ defineExpose({ onHover, onEdited })
 </template>
 
 <style scoped>
-/* B4 Feishu-style: floating "评论" CTA over a text selection. */
+/* The selection bar: a dark tile over the page (inverse tokens, both themes). */
 .doc-comment-cta {
   position: absolute;
   z-index: 6;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 3px 10px;
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--ink);
-  background: var(--surface);
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--inverse-ink);
+  background: var(--inverse-surface);
   box-shadow: var(--shadow-2);
   cursor: pointer;
-  border: 1px solid var(--line);
-  min-height: 32px;
+  min-height: 36px;
   white-space: nowrap;
 }
 .doc-comment-cta button {
+  height: 30px;
   border: none;
   background: transparent;
   color: inherit;
-  padding: 4px 8px;
+  padding: 0 9px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
 }
 .doc-comment-cta button:hover {
-  background: var(--fill);
+  background: var(--inverse-fill);
+}
+.doc-comment-cta__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--inverse-fill);
 }
 .doc-comment-cta button:focus-visible {
   outline: 2px solid var(--accent);

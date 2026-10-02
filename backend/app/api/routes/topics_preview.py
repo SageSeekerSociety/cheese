@@ -44,8 +44,10 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
+from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.domain.agent.preview_hub import preview_hub
+from app.domain.agent.preview_owner import inspect_owner
 from app.domain.library import service as library
 from app.domain.project.room_files import ARTIFACT_MIME, clean_artifact_path
 from app.domain.topic.services import TopicService
@@ -75,9 +77,19 @@ async def get_preview(
         # the machine goes offline, the helper's token ages out — and each of
         # those renders as a white iframe unless the two states are reported
         # apart. `tunnel_up` without a `url` is 「通道在，应用没在跑」.
-        tunnel_up = preview_hub.is_online(topic_id, art.author)
-        alive = tunnel_up and await preview_hub.probe(topic_id, art.author)
-        instance = await preview_hub.instance(topic_id, art.author) if alive else None
+        if settings.preview_connection_mode == "owner":
+            inspection = await inspect_owner(topic_id, art.author, probe=True)
+            tunnel_up, alive, instance = (
+                inspection.tunnel_up,
+                inspection.alive,
+                inspection.instance,
+            )
+        else:
+            tunnel_up = preview_hub.is_online(topic_id, art.author)
+            alive = tunnel_up and await preview_hub.probe(topic_id, art.author)
+            instance = (
+                await preview_hub.instance(topic_id, art.author) if alive else None
+            )
         return ok(
             {
                 "kind": "app",

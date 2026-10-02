@@ -22,7 +22,7 @@ from app.core.storage import (
 )
 from app.domain.gateway_chat import GatewayCallError, GatewayChat, Usage
 from app.domain.service_keys import KeySpec, service_key
-from app.domain.usage.ledger import Ledger, Rates, payer_for_person
+from app.domain.usage.ledger import Ledger, RateRow, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def task_draft_key_spec() -> KeySpec:
     )
 
 
-RateTable = Mapping[str, tuple[float, float, float, float]]
+RateTable = Mapping[str, RateRow]
 _NOT_OPEN = "从 PDF 生成草稿暂未开放，稍后再试。"
 
 

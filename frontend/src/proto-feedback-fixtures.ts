@@ -1558,7 +1558,7 @@ function feedbackStats(url: URL): Record<string, unknown> {
  *    合计对不上，是这一块最容易被信以为真的假。
  *  * `cost_usd` 由 token 按一个单价算出来（`USD_PER_MTOK`），不是随手编一个钱数：
  *    「几百万 token 配 $0.00」正是这一块最容易出的那种错。
- *  * `unpriced_tokens` 是其中**算不出价钱**的那一份（订阅按月计费的行 `cost_usd = 0`
+ *  * `unpriced_tokens` 是其中**算不出价钱**的那一份（没有单价的行 `cost_usd = 0`
  *    意思是「没有价」，不是免费），它从 `cost_usd` 的分母里扣掉。
  *  * **周日恒为 0**：每个 7 天窗口里正好有一个周日，所以「缺的天补 0」这件事在
  *    **每一条**窗口里都看得见，而不是碰巧有个空档。
@@ -1734,7 +1734,7 @@ function byRoute(bucket: ReturnType<typeof usageWindow>) {
   shares.push(bucket.tokens - shares.reduce((acc, n) => acc + n, 0))
   return ROUTES.map((route, i) => {
     const tokens = shares[i]
-    // **订阅那一行的 unpriced 就是全部未定价** —— 订阅按月计费，行上没有单价。这一行
+    // **样例里的未定价全在订阅那一行**（按单价估算之前记下的订阅用量）。这一行
     // 和 KPI 里「未定价 token」那个数必须相等，否则「来源就在这里」那句话是假的。
     const unpriced = route.key === 'subscription' ? bucket.unpriced : 0
     const usd = ((tokens - unpriced) / 1_000_000) * USD_PER_MTOK
@@ -1805,8 +1805,6 @@ function creditsBurnout(): Record<string, unknown> {
     burn: {
       credits_in_window: 42,
       credits_per_day: 6,
-      priced_credits: 30,
-      flat_credits: 12,
       method: 'derived_from_resource_usage',
     },
   }

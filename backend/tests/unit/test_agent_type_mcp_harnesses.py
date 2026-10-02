@@ -16,6 +16,7 @@ import asyncio
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -288,6 +289,97 @@ def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
         ("PostToolUse", "hello"),
         ("PreToolUse", "FORBIDDEN"),
     ]
+
+
+def _scratch(folder: Path):
+    """A private chat's scratch executor: the executor its container runs, in
+    private mode, started here instead of inside the container. The target is
+    the one the platform gives a private chat, pointed at it."""
+    from app.domain.agent.harness.claude_code.remote_execution import private
+
+    work, state = folder / "work", folder / "state"
+    work.mkdir(parents=True)
+    runtime = Path(private.__file__).with_name("runtime.py")
+    target = {
+        **private.target(uuid.uuid4()),
+        "command": [sys.executable, str(runtime)],
+        "state": str(state),
+    }
+    configuration = {
+        "workspace": str(work),
+        "claude": claude_binary(),
+        "private": True,
+        "mcp_servers": {},
+    }
+    subprocess.run(
+        [*target["command"], "start", "--state", str(state)],
+        input=json.dumps(configuration),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return target, work
+
+
+def test_a_private_chats_scratch_runs_the_types_server(tmp_path):
+    """A private chat has no checkout, but its teammate keeps its type's stdio
+    server: the chat's scratch executor starts it from the definition the call
+    carries, for Codex and pi alike."""
+    from app.domain.agent.executor_transport import RemoteClient
+    from app.domain.agent.harness.codex.tools import RemoteTools
+    from app.domain.agent.harness.pi.machine import Machine
+    from app.domain.agent.harness.pi.runner import Runner
+
+    target, work = _scratch(tmp_path / "scratch")
+    own = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    try:
+        tools = RemoteTools(own)
+        names = [tool["name"] for tool in asyncio.run(tools.discover())]
+        assert "mcp__lint__where" in names
+        other = [
+            tool["name"] for tool in asyncio.run(RemoteTools(dict(target)).discover())
+        ]
+        assert "mcp__lint__where" not in other
+
+        called = asyncio.run(
+            tools(
+                "item/tool/call",
+                {
+                    "tool": "mcp__lint__where",
+                    "callId": "call-1",
+                    "arguments": {"note": "codex"},
+                },
+            )
+        )
+        assert called["success"] is True, called
+        assert called["contentItems"][0]["text"] == (
+            f"TYPE_SERVER from-the-type codex @{work}"
+        )
+
+        runner = Runner(tmp_path / "pi")
+
+        async def pi():
+            runner.machine = Machine(dict(own))
+            try:
+                await runner.open_servers()
+                return await runner.dispatch(
+                    "mcp",
+                    {
+                        "id": "call-2",
+                        "tool": "mcp__lint__where",
+                        "arguments": {"note": "pi"},
+                    },
+                )
+            finally:
+                await runner.close()
+
+        answer = asyncio.run(pi())
+        assert answer["content"][0]["text"] == f"TYPE_SERVER from-the-type pi @{work}"
+    finally:
+        subprocess.run(
+            RemoteClient(target).command("stop"), capture_output=True, timeout=30
+        )
 
 
 @pytest.mark.skipif(

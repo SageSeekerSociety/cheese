@@ -33,7 +33,6 @@ vi.mock('../panels/preview/PreviewPages.vue', () => ({
   default: { name: 'PreviewPages', props: ['data'], template: '<div class="stub-pages" />' },
 }))
 
-const getDoc = vi.fn()
 const readPreviewFile = vi.fn()
 const listFiles = vi.fn()
 const readFile = vi.fn()
@@ -49,7 +48,6 @@ vi.mock('../../api', async () => {
     ...actual,
     // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
-    getDoc: (...a: unknown[]) => getDoc(...a),
     readPreviewFile: (...a: unknown[]) => readPreviewFile(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
@@ -76,9 +74,8 @@ vi.mock('../../api', async () => {
 import { seedRoom } from '../../test/fakeDocCollab'
 import WorkPanel from '../WorkPanel.vue'
 
-// 文档那一格的正文在协同文档里，已存的那一版在 getDoc 里：两边说的是同一篇。
+// 文档那一格的正文在协同文档里。
 function docSays(content: string) {
-  getDoc.mockResolvedValue({ content })
   seedRoom('topic-A', content)
 }
 

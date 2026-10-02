@@ -72,7 +72,6 @@ vi.mock('../../api', async () => {
     readFile: (...a: unknown[]) => readFile(...a),
     writeFile: (...a: unknown[]) => writeFile(...a),
     // Everything else the panel calls on mount — quiet, empty answers.
-    getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),

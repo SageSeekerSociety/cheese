@@ -49,12 +49,15 @@ _TIMEOUT_S = 8.0
 class Rate(NamedTuple):
     """USD per token. ``input`` and ``output`` are > 0; a cached prompt token is
     billed at ``cache_read`` and a token written to the cache at
-    ``cache_write``, each ``input`` when the gateway names no price for it."""
+    ``cache_write``, each ``input`` when the gateway names no price for it; a
+    token written to the one-hour cache at ``cache_write_1h``, ``cache_write``
+    when the gateway names none."""
 
     input: float
     output: float
     cache_read: float
     cache_write: float
+    cache_write_1h: float | None = None
 
 
 # ``model_name`` -> its rates.
@@ -110,11 +113,16 @@ def _rates_from_info(payload: object) -> dict[str, Rate]:
         if inp > 0 and out > 0:
             cache_read = _price((params, info), "cache_read_input_token_cost")
             cache_write = _price((params, info), "cache_creation_input_token_cost")
+            cache_write_1h = _price(
+                (params, info), "cache_creation_input_token_cost_above_1hr"
+            )
+            write = inp if cache_write is None else cache_write
             rates[name] = Rate(
                 inp,
                 out,
                 inp if cache_read is None else cache_read,
-                inp if cache_write is None else cache_write,
+                write,
+                write if cache_write_1h is None else cache_write_1h,
             )
     return rates
 

@@ -15,9 +15,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
 
+from app.api import doc_rewrite
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
-from app.api.doc_identity import operation_actor
+from app.api.doc_edits import decide
+from app.api.doc_identity import human_operation_actor, operation_actor
 from app.api.doc_store import announce, store
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
@@ -26,13 +28,14 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
-from app.domain.living_doc.schemas import RestoreIn
+from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn, RewriteIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
@@ -55,6 +58,10 @@ async def get_topic_doc(
         return ok(None)
     snapshot = BlockOut.model_validate(doc).model_dump(mode="json")
     snapshot["content_hash"] = content_hash(doc.content)
+    # What is proposed and not yet decided: not part of `content`.
+    snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(
+        place.room_id
+    )
     return ok(snapshot)
 
 
@@ -99,21 +106,33 @@ async def _frozen(db, place: Place) -> bool:
 
 
 async def _base(db, place: Place, expected_version: int) -> str | None:
-    """The document a writer based its change on, if it is still current.
+    """The document a writer based its change on: the version it read.
 
-    The stored version can only trail the live document, never lead it, so a
-    writer behind the stored version is behind the live one too and is refused
-    here. A writer AT the stored version may still be behind the live document
-    (typing not stored yet); the service decides that one.
+    Whether that is still the live document is for the service to decide, even
+    when the stored version has moved past it. The stored version trails the
+    live document by up to a store cycle; refused here, the writer would read
+    it again and come back already behind. The service refuses only after
+    storing what was typed since, so the writer reads the live document and
+    its retry lands unless somebody types again.
     """
     doc = await TopicService(db).doc_of_room(place.room_id)
     current = doc.doc_version if doc is not None else 0
-    if expected_version != current:
-        raise ConflictError(
-            "实况文档已经被改过了，你手上这份是旧的",
-            data={"doc_version": current},
+    if expected_version == current:
+        return doc.content if doc is not None else None
+    if expected_version == 0:
+        return None
+    read = None
+    if expected_version < current:
+        read = await DocumentJournal(db).version_content(
+            place.room_id, expected_version
         )
-    return doc.content if doc is not None else None
+    if read is not None:
+        return read
+    # A version that was never recorded: nothing to compare.
+    raise ConflictError(
+        "实况文档已经被改过了，你手上这份是旧的",
+        data={"doc_version": current},
+    )
 
 
 @router.put("/{topic_id}/doc")
@@ -165,6 +184,130 @@ async def edit_topic_doc(
         operation=operation,
         check=True,
     )
+
+
+@router.post("/{topic_id}/doc/edits")
+async def edit_doc_passages(
+    topic_id: uuid.UUID,
+    body: PassageEditsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Change passages of the document: each ``old`` (once in its Markdown)
+    becomes ``new``, directly or as suggestions (``app.api.doc_edits``).
+
+    For the room's agent and for people alike: a person restoring one change
+    edits directly, as themselves. Nothing is applied unless every edit can
+    be; a refusal names the edit (``data.index``)."""
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.author, topic_id=place.room_id, project_id=place.project_id
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("修改文档需要已认证的写入者")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    topics.require_doc_writable(place)
+    doc = await topics.doc_of_room(place.room_id)
+    if doc is None:
+        raise NotFoundError("本话题还没有实况文档")
+    edits = [edit.model_dump() for edit in body.edits]
+    decision = await decide(
+        db,
+        room_id=place.room_id,
+        actor=actor.handle,
+        content=doc.content,
+        edits=edits,
+        asked=body.mode,
+    )
+    # The service's store takes the room's lock in a transaction of its own.
+    await db.commit()
+    result = await collab.edit(
+        place.room_id,
+        edits=edits,
+        actor=actor.handle,
+        requested_by=decision.requested_by,
+        mode=decision.mode,
+        reason=body.reason,
+    )
+    stored = result.get("stored") or {}
+    return ok(
+        {
+            "mode": decision.mode,
+            "requested_by": decision.requested_by,
+            "edits": result.get("edits") or [],
+            "doc_version": (stored.get("data") or {}).get("doc_version"),
+        },
+        warnings=stored.get("warnings"),
+    )
+
+
+@router.post("/{topic_id}/doc/rewrite")
+async def rewrite_selection(
+    topic_id: uuid.UUID,
+    body: RewriteIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """「让芝士改」: the room's agent rewrites what a person selected, as they
+    instructed, and the change is made at once, recorded as theirs to answer
+    for. The block holding the selection must still read as the person saw
+    it: otherwise 409, and they select again.
+
+    Undoing it is an ordinary passage edit by the person, ``new`` back to
+    ``old`` (``POST /doc/edits``)."""
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    await human_operation_actor(db, actor)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    topics.require_doc_writable(place)
+    if not body.start < body.end <= len(body.block):
+        raise ValidationError("选中的范围不在这段文字里")
+    doc = await topics.doc_of_room(place.room_id)
+    if doc is None:
+        raise ConflictError(_REWRITE_MOVED)
+    # Whether the block still reads as the person saw it is the live
+    # document's to say (the edit below): the stored text trails what was
+    # typed by a few seconds, and a block someone just changed would be
+    # refused here before it was ever looked at.
+    bound = await doc_rewrite.bind(db, place.room_id)
+    await doc_rewrite.admit(db, place.project_id, bound)
+    document = doc.content
+    # Nothing of this request stays open across the model call or the edit.
+    await db.commit()
+    replacement = await doc_rewrite.rewrite(
+        project_id=place.project_id,
+        room_id=place.room_id,
+        bound=bound,
+        document=document,
+        block=body.block,
+        start=body.start,
+        end=body.end,
+        instruction=body.instruction,
+    )
+    new = body.block[: body.start] + replacement + body.block[body.end :]
+    try:
+        await collab.edit(
+            place.room_id,
+            edits=[{"old": body.block, "new": new}],
+            actor=bound.agent_handle,
+            requested_by=actor.handle,
+            mode="direct",
+        )
+    except UnprocessableEntityError as exc:
+        # Typed over while the model was answering.
+        if (exc.data or {}).get("reason") in ("not_found", "ambiguous"):
+            raise ConflictError(_REWRITE_MOVED) from exc
+        raise
+    return ok({"old": body.block, "new": new, "replacement": replacement})
+
+
+_REWRITE_MOVED = "这段已经被改过，重新选一下"
 
 
 async def _replayed(db, place: Place, operation: dict) -> dict | None:
@@ -307,6 +450,15 @@ class StoreIn(BaseModel):
     #: The service's first conversion of a Markdown document: it respells the
     #: text the way the document exports it, and is not news to the room.
     converted: bool = False
+    #: Every suggestion pending in the stored state: ``{id, author, old, new}``.
+    suggestions: list[dict] = Field(default_factory=list)
+    #: An edit made for someone (``/edit``): who asked for it.
+    requested_by: str | None = None
+    #: An edit's passages, ``{old, new, suggestion_id?}``.
+    edits: list[dict] | None = None
+    #: The edit proposed its changes instead of making them.
+    suggested: bool = False
+    reason: str | None = None
 
 
 @internal.put("/documents/{name}")
@@ -328,6 +480,11 @@ async def store_document(
         actors=body.actors or ["system"],
         operation=body.operation,
         quiet=body.converted,
+        suggestions=body.suggestions,
+        requested_by=body.requested_by,
+        edits=body.edits,
+        suggested=body.suggested,
+        reason=body.reason,
     )
     await db.commit()
     await announce(room_id, stored, chat)

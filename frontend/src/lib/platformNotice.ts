@@ -31,6 +31,7 @@
  */
 import type { Block } from '../cx_types'
 import type { BackendErrorPresentation } from './backendErrorEvent'
+import type { DocEdit } from './docEdits'
 import type { PlatformErrorPresentation } from './platformEvents'
 
 import { backendErrorPresentation } from './backendErrorEvent'
@@ -248,7 +249,17 @@ export type PlatformNotice =
   /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
   | { mode: 'backend-error'; error: BackendErrorPresentation }
   /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
-  | { mode: 'action'; resource: string; text: string; detail?: string; detailLabel?: string }
+  | {
+      mode: 'action'
+      resource: string
+      text: string
+      detail?: string
+      detailLabel?: string
+      /** 文档：有人让 AI 队友改的，谁让改的（handle）和改的那几处。 */
+      docRequest?: { requestedBy: string; edits: DocEdit[] }
+      /** 文档：AI 队友提的修改建议有几处。 */
+      docSuggestions?: number
+    }
   /**
    * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
    *
@@ -308,6 +319,24 @@ export function actionResource(block: Block): string | null {
   if (typeof metaAction === 'string') return metaAction
   const r = (block.refs || []).find((x) => x.startsWith('action:'))
   return r ? r.slice('action:'.length) : null
+}
+
+/** 文档那一行带的「谁让改的、改了哪几处」和「提了几处建议」（后端写在 meta 里）。 */
+function docChange(block: Block): { docRequest?: { requestedBy: string; edits: DocEdit[] }; docSuggestions?: number } {
+  const m = meta(block)
+  if (!m) return {}
+  if (m.doc_suggested === true) {
+    const ids = Array.isArray(m.doc_suggestions) ? m.doc_suggestions.filter((id) => typeof id === 'string') : []
+    return { docSuggestions: ids.length }
+  }
+  const by = str(m.doc_requested_by)
+  const edits = Array.isArray(m.doc_edits)
+    ? m.doc_edits.flatMap((e: unknown) => {
+        const item = e as { old?: unknown; new?: unknown } | null
+        return typeof item?.old === 'string' && typeof item?.new === 'string' ? [{ old: item.old, new: item.new }] : []
+      })
+    : []
+  return by && edits.length ? { docRequest: { requestedBy: by, edits } } : {}
 }
 
 /** meta.action 事件的 content 自带主语（张衡/芝士 编辑了文档）；老卡片要补「芝士」。 */
@@ -391,6 +420,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
       text: actionText(block),
       detail: noticeText(block, 'detail'),
       detailLabel: noticeText(block, 'detail_label'),
+      ...docChange(block),
     }
 
   const error = backendErrorPresentation(block)
@@ -553,6 +583,8 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
 /** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
 function summaryPart(row: NoticeRow): boolean {
   if (row.notice?.mode === 'action' && row.notice.detail) return false
+  // 带着「查看改动 / 查看建议」的文档行要有自己的按钮，不折进摘要。
+  if (row.notice?.mode === 'action' && (row.notice.docRequest || row.notice.docSuggestions)) return false
   return row.notice?.mode === 'action' || changeSummary(row.block) !== null
 }
 

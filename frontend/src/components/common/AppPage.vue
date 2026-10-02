@@ -27,8 +27,10 @@ withDefaults(
     // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
     // 一段点回去。
     parent?: { label: string; to: NavTarget }
+    // 正文自己会滚（一整篇文档、带自己的工具条和评论栏）：这一层不滚，把整个高度让给它。
+    fill?: boolean
   }>(),
-  { width: 'read', parent: undefined }
+  { width: 'read', parent: undefined, fill: false }
 )
 
 defineSlots<{
@@ -91,8 +93,8 @@ const { mdAndUp } = useDisplay()
         </div>
       </div>
     </header>
-    <div class="app-page__body" :class="`app-page__body--${width}`">
-      <div class="app-page__column" :class="`app-page__column--${width}`">
+    <div class="app-page__body" :class="[`app-page__body--${width}`, { 'app-page__body--fill': fill }]">
+      <div class="app-page__column" :class="[`app-page__column--${width}`, { 'app-page__column--fill': fill }]">
         <slot />
       </div>
     </div>
@@ -206,6 +208,18 @@ const { mdAndUp } = useDisplay()
 .app-page__column {
   margin-inline: auto;
   padding: 24px 16px 48px;
+}
+.app-page__body--fill {
+  display: flex;
+  overflow: hidden;
+}
+.app-page__column--fill {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-bottom: 0;
 }
 .app-page__column--read {
   max-width: calc(var(--page-w) + 32px);
