@@ -5,7 +5,6 @@
     "notConnected": "还没连接飞书"
   },
   "admin": {
-    "title": "飞书应用",
     "sub": "成员不再各建一个飞书应用。这里填一次，成员在「我的连接」里点一下就接上了。",
     "appId": "App ID",
     "appSecret": "App Secret",

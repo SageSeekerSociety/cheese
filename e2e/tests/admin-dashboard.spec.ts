@@ -154,7 +154,7 @@ test('后台能切到私密那一栏 —— 它就在 URL 里，也只在 URL �
   // 的控件是另一半（见话题文档的待办），两半都能单独坏。
   await page.goto('/admin/queue?tab=private');
 
-  await expect(page.getByRole('heading', { name: '反馈队列' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '反馈', exact: true })).toBeVisible();
   await expect(page.getByText('队列加载失败')).toHaveCount(0);
 });
 

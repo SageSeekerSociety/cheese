@@ -1,5 +1,5 @@
 /**
- * 管理后台的外壳：门开在**这里**，子页只管自己的内容。
+ * 管理后台的外壳（侧栏 + 内容区）：门开在**这里**，子页只管自己的内容。
  *
  * 这三条原来长在 `views/feedback/AdminFeedbackPage.spec.ts` 上，随门一起搬过来（门
  * 搬到壳上的那一轮）。搬的理由不是「测试跟着代码走」：门只要还留在子页里，加第二块
@@ -65,6 +65,7 @@ vi.mock('vue-i18n', async () => {
 
 import AdminLayout from './AdminLayout.vue'
 
+import AdminSidebar from '@/components/admin/AdminSidebar.vue'
 import { setLocale } from '@/i18n'
 
 // 这组用例读的是中文界面上的字。
@@ -83,7 +84,7 @@ async function mountAt(path: string) {
     routes: [
       {
         path: '/admin',
-        component: AdminLayout,
+        components: { default: AdminLayout, sidebar: AdminSidebar },
         children: [
           { path: 'feedback', name: 'AdminFeedback', component: FeedbackChild },
           { path: 'queue', name: 'AdminQueue', component: QueueChild },
@@ -97,7 +98,8 @@ async function mountAt(path: string) {
   await router.push(path)
   await router.isReady()
   const vuetify = createVuetify({ components, directives })
-  const Wrapper = { template: '<v-app><RouterView /></v-app>' }
+  // 侧栏和内容区是同一条路由上的两个视图，和应用外框里一样各画一个。
+  const Wrapper = { template: '<v-app><RouterView name="sidebar" /><v-main><RouterView /></v-main></v-app>' }
   const utils = render(Wrapper as unknown as Component, {
     global: { plugins: [vuetify, createPinia(), router] },
   })
@@ -158,6 +160,9 @@ describe('管理后台外壳', () => {
 
     expect(await findByText('这一页是管理员后台')).toBeTruthy()
     expect(queryByText('反馈管理的表')).toBeNull()
+    // 侧栏里也没有分区：进不去的地方不给入口。
+    expect(queryByText('队列')).toBeNull()
+    expect(queryByText('看板')).toBeNull()
   })
 
   it('是管理员就画分区，切分区换的是右边那一块', async () => {

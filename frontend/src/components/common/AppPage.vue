@@ -11,7 +11,7 @@
 // 这里把它们画成按钮。手机上这一行不画，同一批命令由顶栏画（MobileAppBar）。
 //
 // 宽度也归这里：`read` 是读和填表的那一栏（--page-w），`full` 给多列的工作面（看
-// 板）。页面不再各自写一个数字。
+// 板），`admin` 是管理后台的工作台（--page-w-admin）。页面不再各自写一个数字。
 import type { NavTarget } from '@/lib/navTarget'
 
 import { useDisplay } from 'vuetify'
@@ -22,7 +22,7 @@ import NavLink from '@/components/common/NavLink.vue'
 withDefaults(
   defineProps<{
     title: string
-    width?: 'read' | 'full'
+    width?: 'read' | 'full' | 'admin'
     // 这一页是另一页里的一项（成员名册里的一个人）：页头写成「成员 / 名字」，前
     // 一段点回去。
     parent?: { label: string; to: NavTarget }
@@ -46,49 +46,51 @@ const { mdAndUp } = useDisplay()
   <div class="app-page">
     <!-- 手机上页名写在顶栏里（路由的 title），按钮也由顶栏画，这一条只剩状态；没有
          状态就整条不画。 -->
-    <header v-if="mdAndUp || $slots.meta" class="app-page__head">
-      <h1 v-if="mdAndUp" class="app-page__title t-title">
-        <template v-if="parent">
-          <NavLink :to="parent.to" class="app-page__parent">{{ parent.label }}</NavLink>
-          <span class="app-page__sep" aria-hidden="true">/</span>
-        </template>
-        {{ title }}
-      </h1>
-      <div v-if="$slots.meta" class="app-page__meta"><slot name="meta" /></div>
-      <!-- 页头上的按钮是小号的文字按钮，图标在字前面；标了 accent 的那一颗是这一页
+    <header v-if="mdAndUp || $slots.meta" class="app-page__head" :class="`app-page__head--${width}`">
+      <div class="app-page__head-row">
+        <h1 v-if="mdAndUp" class="app-page__title t-title">
+          <template v-if="parent">
+            <NavLink :to="parent.to" class="app-page__parent">{{ parent.label }}</NavLink>
+            <span class="app-page__sep" aria-hidden="true">/</span>
+          </template>
+          {{ title }}
+        </h1>
+        <div v-if="$slots.meta" class="app-page__meta"><slot name="meta" /></div>
+        <!-- 页头上的按钮是小号的文字按钮，图标在字前面；标了 accent 的那一颗是这一页
            的主操作，琥珀色实心。 -->
-      <div v-if="$slots.controls || (mdAndUp && headerCommands.length)" class="app-page__actions">
-        <slot name="controls" />
-        <template v-for="command in headerCommands" :key="command.id">
-          <v-btn
-            v-if="command.header?.iconOnly"
-            :icon="command.icon"
-            variant="text"
-            size="small"
-            :to="command.to"
-            :loading="command.loading"
-            :disabled="command.disabled"
-            :aria-label="command.title"
-            :title="command.title"
-            @click="command.run?.()"
-          />
-          <v-btn
-            v-else
-            :prepend-icon="command.icon"
-            :color="command.header?.accent ? 'primary' : undefined"
-            :variant="command.header?.accent ? 'flat' : 'text'"
-            size="small"
-            :to="command.to"
-            :loading="command.loading"
-            :disabled="command.disabled"
-            @click="command.run?.()"
-          >
-            {{ command.title }}
-          </v-btn>
-        </template>
+        <div v-if="$slots.controls || (mdAndUp && headerCommands.length)" class="app-page__actions">
+          <slot name="controls" />
+          <template v-for="command in headerCommands" :key="command.id">
+            <v-btn
+              v-if="command.header?.iconOnly"
+              :icon="command.icon"
+              variant="text"
+              size="small"
+              :to="command.to"
+              :loading="command.loading"
+              :disabled="command.disabled"
+              :aria-label="command.title"
+              :title="command.title"
+              @click="command.run?.()"
+            />
+            <v-btn
+              v-else
+              :prepend-icon="command.icon"
+              :color="command.header?.accent ? 'primary' : undefined"
+              :variant="command.header?.accent ? 'flat' : 'text'"
+              size="small"
+              :to="command.to"
+              :loading="command.loading"
+              :disabled="command.disabled"
+              @click="command.run?.()"
+            >
+              {{ command.title }}
+            </v-btn>
+          </template>
+        </div>
       </div>
     </header>
-    <div class="app-page__body">
+    <div class="app-page__body" :class="`app-page__body--${width}`">
       <div class="app-page__column" :class="`app-page__column--${width}`">
         <slot />
       </div>
@@ -111,6 +113,32 @@ const { mdAndUp } = useDisplay()
   height: var(--app-page-header-height);
   padding: 0 16px;
   border-bottom: var(--app-page-header-rule);
+}
+/* 一般情况下这一层不占盒子，页头照旧是一条 flex 行。 */
+.app-page__head-row {
+  display: contents;
+}
+/* 后台那一档的内容列 1440 封顶、居中。页头那一行跟着它一起封顶居中，标题和正文在任何
+   宽度下都从同一条竖线开始。正文滚动时右边有滚动条，页头和正文都留出同样宽的滚动条
+   槽位（`scrollbar-gutter`），两边居中的基准才是同一个宽度。 */
+.app-page__head--admin,
+.app-page__body--admin {
+  scrollbar-gutter: stable;
+}
+.app-page__head--admin {
+  display: block;
+  overflow: hidden;
+  padding: 0;
+}
+.app-page__head--admin .app-page__head-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  max-width: var(--page-w-admin);
+  height: 100%;
+  margin-inline: auto;
+  padding: 0 16px;
 }
 .app-page__title {
   min-width: 0;
@@ -165,6 +193,19 @@ const { mdAndUp } = useDisplay()
 }
 .app-page__column--read {
   max-width: calc(var(--page-w) + 32px);
+}
+/* 后台那一档也自己管内边距（表格、卡片各有各的内缩）。断点都是容器查询，所以这一列
+   是查询容器；`container-type` 做了行内尺寸包含，宽度推不出来，必须写 `width: 100%`。
+   列至少和正文一样高：队列那张表要撑到底。 */
+.app-page__column--admin {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--page-w-admin);
+  min-height: 100%;
+  padding: 0;
+  container-type: inline-size;
 }
 /* 满宽的那种自己管内边距：看板那几列各自滚动，得把高度一路钉到底。 */
 .app-page__column--full {

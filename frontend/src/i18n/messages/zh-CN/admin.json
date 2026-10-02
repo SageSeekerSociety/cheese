@@ -49,8 +49,6 @@
     "brand": "芝士 · 管理",
     "sections": "管理后台分区",
     "leave": "返回工作区",
-    "collapseNav": "折叠导航",
-    "collapse": "收起",
     "checking": "正在确认权限…",
     "deniedTitle": "这一页是管理员后台",
     "deniedBody": "你的账号不在管理员名单里，无法访问管理后台。",

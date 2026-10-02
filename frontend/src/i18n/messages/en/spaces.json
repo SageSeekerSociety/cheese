@@ -14,7 +14,6 @@
   "review": {
     "applicant": "Applicant",
     "mine": "My space applications",
-    "title": "Space applications",
     "PENDING": "Pending",
     "APPROVED": "Approved",
     "REJECTED": "Rejected",

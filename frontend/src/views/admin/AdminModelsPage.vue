@@ -7,6 +7,7 @@ import AdminBudgetDialog from '@/components/admin/AdminBudgetDialog.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminModelDetailDrawer from '@/components/admin/AdminModelDetailDrawer.vue'
 import AdminModelFormDialog from '@/components/admin/AdminModelFormDialog.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminModelsAudit from '@/components/admin/models/AdminModelsAudit.vue'
 import AdminModelsBudgets from '@/components/admin/models/AdminModelsBudgets.vue'
 import AdminModelsConfirmDialog from '@/components/admin/models/AdminModelsConfirmDialog.vue'
@@ -64,7 +65,6 @@ const {
   modelsState,
   projectsState,
   kpis,
-  num,
   projectTotalsText,
   writeError,
   notice,
@@ -102,17 +102,18 @@ const {
 </script>
 
 <template>
-  <div class="amd admin-page">
-    <div class="amd__inner admin-page__col page-container--admin">
-      <AdminModelsHeader
-        :sub="subLine"
-        :health="health"
-        :days="days"
-        :windows="windows"
-        :loading="loading"
-        @change-window="changeWindow"
-        @refresh="load"
-      />
+  <div class="amd">
+    <AdminPage :title="t('navigation.admin.models')" :sub="subLine">
+      <template #tools>
+        <AdminModelsHeader
+          :health="health"
+          :days="days"
+          :windows="windows"
+          :loading="loading"
+          @change-window="changeWindow"
+          @refresh="load"
+        />
+      </template>
 
       <div class="amd__body admin-page__body">
         <!-- 写失败 / 提示。**读失败不在这里说** —— 那一条画在各自那一段的位置上
@@ -123,11 +124,10 @@ const {
           <AdminKpiCard v-for="kpi in kpis" :key="kpi.key" :label="kpi.label" :value="kpi.value" :loading="loading" />
         </div>
 
-        <!-- 模型段。页面上唯一的主操作（新增模型）在这一段，所以琥珀只出现在这里一处。 -->
+        <!-- 模型段。页面上唯一的主操作（新增模型）在这一段，所以琥珀只出现在这里一处。
+             这一段不另写小标题：页头已经叫「模型」。 -->
         <section class="amd__section">
           <div class="amd__sectiontools">
-            <h2 class="amd__sectionlabel t-title">{{ t('models.page.section.models') }}</h2>
-            <span class="amd__count t-meta-read">{{ num(models?.models.length) }}</span>
             <div class="amd__spacer" />
             <v-btn color="primary" size="small" prepend-icon="mdi-plus" :disabled="gatewayDown" @click="openAdd">
               {{ t('models.page.add') }}
@@ -181,7 +181,7 @@ const {
           />
         </section>
       </div>
-    </div>
+    </AdminPage>
 
     <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" />
 
@@ -231,26 +231,12 @@ const {
 </template>
 
 <style scoped>
-/* 滚动归这一页自己领（和看板同一套约定）：外壳只让高度和宽度。 */
+/* 高度给满：滚动由 `AppPage` 的正文领。 */
 .amd {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  background: var(--canvas);
 }
 
-/* 只剩 `flex: 0 0 auto`：内容短时这一列不拉伸，长时它按内容长、由 `.amd` 滚。
-   宽度、居中、1440 上限和断点现在都来自共享骨架（`.admin-page__col` +
-   `.page-container--admin`），这里不再写第二份 —— 两份迟早分叉。 */
-.amd__inner {
-  flex: 0 0 auto;
-}
-
-/* 内容区的内边距在这里，不在 `.amd` 上 —— 页头（`AdminPageHeader`）自带 24px
-   内边距和底下那条发丝线，两边各写一份就会在两者之间多出一段谁都说不清是谁的空白。 */
 .amd__body {
   display: flex;
   flex-direction: column;
@@ -274,22 +260,6 @@ const {
 @media (max-width: 900px) {
   .amd__kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-/* 窄屏的页头折行交给 `AdminPageHeader` 自己（它的工具槽是 `flex-wrap: wrap`），
-   这里只管内容区的内边距收一档 —— 两页的 24px 在 390px 上占掉了 48px 宽度。 */
-@media (max-width: 700px) {
-  /* 时间窗口这一组比标题还宽（三段加起来 ~260px），而页头那一行是**一起缩**的：
-     不干预的话被挤掉的是标题 —— 390px 上「模型管理」会只剩「模型…」。让工具槽
-     自己占一整行，标题就还在一整行上。（`:deep` 只为了改页头那一行的折行，尺寸、
-     字号、内边距都还是 `AdminPageHeader` 自己的。） */
-  .amd__inner :deep(.aph__row) {
-    flex-wrap: wrap;
-  }
-
-  .amd__inner :deep(.aph__tools) {
-    flex: 1 1 100%;
   }
 }
 

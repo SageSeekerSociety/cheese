@@ -37,7 +37,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import AdminFlash from '@/components/admin/AdminFlash.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminRatchetArea from '@/components/admin/ratchet/AdminRatchetArea.vue'
 
 defineOptions({ name: 'AdminRatchetPageView' })
@@ -104,117 +104,108 @@ const collectionFailedLine = computed(() => {
 </script>
 
 <template>
-  <div class="arc admin-page">
-    <div class="arc__inner admin-page__col page-container--admin">
-      <AdminPageHeader :title="t('ratchet.page.title')" :sub="t('ratchet.page.subtitle')">
-        <template #tools>
-          <v-btn
-            icon="mdi-refresh"
-            variant="text"
-            size="small"
-            :aria-label="t('ratchet.action.refresh')"
-            :loading="refreshing"
-            @click="emit('refresh')"
-          />
-        </template>
-      </AdminPageHeader>
+  <AdminPage :title="t('navigation.admin.ratchet')" :sub="t('ratchet.page.subtitle')">
+    <template #tools>
+      <v-btn
+        icon="mdi-refresh"
+        variant="text"
+        size="small"
+        :aria-label="t('ratchet.action.refresh')"
+        :loading="refreshing"
+        @click="emit('refresh')"
+      />
+    </template>
 
-      <div class="arc__body admin-page__body">
-        <AdminFlash v-if="pull" :tone="pullFailed ? 'error' : 'ok'" :text="pull" />
+    <div class="arc__body admin-page__body">
+      <AdminFlash v-if="pull" :tone="pullFailed ? 'error' : 'ok'" :text="pull" />
 
-        <div v-if="loading" class="arc__skel">
-          <span v-for="n in 3" :key="n" class="arc__bone" />
-        </div>
+      <div v-if="loading" class="arc__skel">
+        <span v-for="n in 3" :key="n" class="arc__bone" />
+      </div>
 
-        <!-- 读失败**不是**「还没有采集」：两句话，两个画面。board 拿到过就不再走这一支。 -->
-        <AdminEmptyState
-          v-else-if="failed && !board"
-          :title="t('ratchet.state.loadFailed')"
-          :desc="t('ratchet.state.loadFailedDesc')"
-          :action="t('ratchet.state.retry')"
+      <!-- 读失败**不是**「还没有采集」：两句话，两个画面。board 拿到过就不再走这一支。 -->
+      <AdminEmptyState
+        v-else-if="failed && !board"
+        :title="t('ratchet.state.loadFailed')"
+        :desc="t('ratchet.state.loadFailedDesc')"
+        :action="t('ratchet.state.retry')"
+        tone="error"
+        @action="emit('retry')"
+      />
+
+      <AdminEmptyState
+        v-else-if="!board || !collections"
+        :title="t('ratchet.state.empty')"
+        :desc="t('ratchet.state.emptyDesc')"
+        :action="t('ratchet.state.emptyAction')"
+        @action="emit('refresh')"
+      />
+
+      <template v-else>
+        <!-- 数据从哪来。这一块是这一页可信度的全部依据：没有它，下面每个数都只是
+           「某个时候的某个东西」。 -->
+        <p class="arc__prov t-meta">
+          <span>
+            {{ t('ratchet.prov.collected') }}
+            <b class="arc__mono">{{ short(board.collected_commit) }}</b>
+          </span>
+          <span
+            >{{ t('ratchet.prov.commitTime') }} <b>{{ stamp(board.collected_at) }}</b></span
+          >
+          <span>
+            {{ t('ratchet.prov.archived', { count: stored }) }}
+          </span>
+          <span>
+            {{ t('ratchet.prov.deployed') }}
+            <b class="arc__mono">{{ short(board.deployed_commit) }}</b>
+          </span>
+          <a v-if="board.run_url" class="arc__link" :href="board.run_url" target="_blank" rel="noopener">
+            {{ t('ratchet.prov.run') }}
+          </a>
+        </p>
+
+        <!-- 归档里一条测量都没有时不说这一句：那时整页走「这次没有可用的测量」，两句话
+           说的是同一件事，说两遍就成了两种说法。 -->
+        <AdminFlash
+          v-if="checks && board.collection && board.collection !== 'ok'"
           tone="error"
-          @action="emit('retry')"
+          :text="collectionFailedLine"
         />
 
+        <!-- 只有一个点的时候不画走势：这一句解释为什么下面是空的，也解释了什么时候会有。 -->
+        <p v-if="collections < 2" class="arc__note t-meta-read">{{ t('ratchet.note.singlePoint') }}</p>
+
         <AdminEmptyState
-          v-else-if="!board || !collections"
-          :title="t('ratchet.state.empty')"
-          :desc="t('ratchet.state.emptyDesc')"
+          v-if="!checks"
+          :title="t('ratchet.state.noMeasurements')"
+          :desc="noMeasurementsDesc"
           :action="t('ratchet.state.emptyAction')"
           @action="emit('refresh')"
         />
 
         <template v-else>
-          <!-- 数据从哪来。这一块是这一页可信度的全部依据：没有它，下面每个数都只是
-             「某个时候的某个东西」。 -->
-          <p class="arc__prov t-meta">
-            <span>
-              {{ t('ratchet.prov.collected') }}
-              <b class="arc__mono">{{ short(board.collected_commit) }}</b>
-            </span>
-            <span
-              >{{ t('ratchet.prov.commitTime') }} <b>{{ stamp(board.collected_at) }}</b></span
-            >
-            <span>
-              {{ t('ratchet.prov.archived', { count: stored }) }}
-            </span>
-            <span>
-              {{ t('ratchet.prov.deployed') }}
-              <b class="arc__mono">{{ short(board.deployed_commit) }}</b>
-            </span>
-            <a v-if="board.run_url" class="arc__link" :href="board.run_url" target="_blank" rel="noopener">
-              {{ t('ratchet.prov.run') }}
-            </a>
+          <ul class="arc__legend t-meta">
+            <li>{{ t('ratchet.legend.actual') }}</li>
+            <li>{{ t('ratchet.legend.notCollected') }}</li>
+            <li>{{ t('ratchet.legend.frozen') }}</li>
+            <li>{{ t('ratchet.legend.ruleChanged') }}</li>
+            <li>{{ t('ratchet.legend.newExemptions') }}</li>
+            <li>{{ t('ratchet.legend.stale') }}</li>
+            <li>{{ t('ratchet.legend.failed') }}</li>
+          </ul>
+
+          <AdminRatchetArea v-for="area in areas" :key="area.area" :area="area.area" :checks="area.checks" />
+
+          <p class="arc__foot t-meta">
+            {{ t('ratchet.foot.source', { repo: board.repo, checks }) }}
           </p>
-
-          <!-- 归档里一条测量都没有时不说这一句：那时整页走「这次没有可用的测量」，两句话
-             说的是同一件事，说两遍就成了两种说法。 -->
-          <AdminFlash
-            v-if="checks && board.collection && board.collection !== 'ok'"
-            tone="error"
-            :text="collectionFailedLine"
-          />
-
-          <!-- 只有一个点的时候不画走势：这一句解释为什么下面是空的，也解释了什么时候会有。 -->
-          <p v-if="collections < 2" class="arc__note t-meta-read">{{ t('ratchet.note.singlePoint') }}</p>
-
-          <AdminEmptyState
-            v-if="!checks"
-            :title="t('ratchet.state.noMeasurements')"
-            :desc="noMeasurementsDesc"
-            :action="t('ratchet.state.emptyAction')"
-            @action="emit('refresh')"
-          />
-
-          <template v-else>
-            <ul class="arc__legend t-meta">
-              <li>{{ t('ratchet.legend.actual') }}</li>
-              <li>{{ t('ratchet.legend.notCollected') }}</li>
-              <li>{{ t('ratchet.legend.frozen') }}</li>
-              <li>{{ t('ratchet.legend.ruleChanged') }}</li>
-              <li>{{ t('ratchet.legend.newExemptions') }}</li>
-              <li>{{ t('ratchet.legend.stale') }}</li>
-              <li>{{ t('ratchet.legend.failed') }}</li>
-            </ul>
-
-            <AdminRatchetArea v-for="area in areas" :key="area.area" :area="area.area" :checks="area.checks" />
-
-            <p class="arc__foot t-meta">
-              {{ t('ratchet.foot.source', { repo: board.repo, checks }) }}
-            </p>
-          </template>
         </template>
-      </div>
+      </template>
     </div>
-  </div>
+  </AdminPage>
 </template>
 
 <style scoped>
-/* 骨架三层（灰画布 + 1440 那一列 + 正文）由 `.admin-page` / `__col` / `__body` 给，
-   和队列、看板、模型那几页同一套 —— 这一页原来自己写了一份（`.arc` + `.arc__inner`），
-   后果是页头那道发丝线通到窗口两边，而别的页止于 1440 栏；切分区时页头和内容的左沿
-   会横着跳一下。类名留着当这一页的落点，几何一律不再自己写。 */
-
 .arc__mono {
   font-family: var(--font-mono);
 }

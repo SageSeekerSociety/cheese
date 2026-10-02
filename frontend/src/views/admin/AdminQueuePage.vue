@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { useAdminQueue } from '@/composables/useAdminQueue'
 
 import AdminFeedbackTable from '@/components/admin/AdminFeedbackTable.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
 import AdminQueueFoot from '@/components/admin/AdminQueueFoot.vue'
 import AdminQueueList from '@/components/admin/AdminQueueList.vue'
@@ -35,6 +37,8 @@ import AdminFeedbackDetailDrawer from '@/components/feedback/AdminFeedbackDetail
 // 的排序/筛选状态互相覆盖，不做的原因写在规格里 —— 多一份列表就多一次
 // `/admin/feedback` 请求。
 defineOptions({ name: 'AdminQueuePage' })
+
+const { t } = useI18n()
 
 /** 搜索框住在 `AdminQueueToolbar` 里，而 `/` 键和清窗口之后都要把焦点送进去。
  *  位置是那一件的事、时机是这一层的事，所以这里只交给 composable 一个「怎么办到」。 */
@@ -91,8 +95,8 @@ const {
 </script>
 
 <template>
-  <div class="qpage admin-page">
-    <!-- 宽屏的详情是**整页接管**（§4.4：200 导航 + 440 左栏 + 760 右栏）。队列行本身
+  <div class="qpage">
+    <!-- 宽屏的详情是**整页接管**（§4.4：440 左栏 + 760 右栏）。队列行本身
          就要 1100px，两个并排在任何常见视口里都塞不下 —— 塞得下的那种宽度下，
          `AdminQueueDetail` 自己那条 1280 媒体查询又已经把它拆成两栏了。 -->
     <AdminQueueDetail
@@ -107,8 +111,8 @@ const {
       @triage="onDetailTriage"
     />
 
-    <template v-else>
-      <div class="qpage__inner admin-page__col page-container--admin">
+    <AdminPage v-else :title="t('navigation.admin.queue')" :sub="t('feedback.queue.sub')">
+      <template #tools>
         <AdminQueueHeader
           :unread="unread"
           :view="view"
@@ -116,88 +120,88 @@ const {
           @refresh="reload"
           @update:view="setView"
         />
+      </template>
 
-        <AdminQueueToolbar
-          ref="toolbarRef"
-          :lane="adminTab"
-          :lanes="laneOptions"
-          :query="draft"
-          :chips="windowChips"
-          :status="statusTab"
-          :status-options="tabOptions"
-          :show-scope-note="statusTab !== 'all'"
-          @update:query="setDraft"
-          @update:status="setStatusTab"
-          @select-lane="selectLane"
-          @clear-window="clearWindow"
-        />
+      <AdminQueueToolbar
+        ref="toolbarRef"
+        :lane="adminTab"
+        :lanes="laneOptions"
+        :query="draft"
+        :chips="windowChips"
+        :status="statusTab"
+        :status-options="tabOptions"
+        :show-scope-note="statusTab !== 'all'"
+        @update:query="setDraft"
+        @update:status="setStatusTab"
+        @select-lane="selectLane"
+        @clear-window="clearWindow"
+      />
 
-        <!-- 队列与总表**同时只挂一个**（§8 末：视图切换时解绑），否则同一个 `j` 会被两个
+      <!-- 队列与总表**同时只挂一个**（§8 末：视图切换时解绑），否则同一个 `j` 会被两个
              `role="grid"` 各收一次。 -->
-        <AdminQueueList
-          v-if="view === 'list'"
-          :items="visible"
-          :active-index="cursorIndex"
-          :loading="showSkeleton"
-          :show-status-word="showStatusWord"
-          @update:active-index="onActiveIndex"
-          @advance="advance"
-          @open="openItem"
-        >
-          <template #empty>
-            <AdminQueueEmpty
-              :title="copy.title"
-              :desc="copy.desc"
-              :action="copy.action"
-              :tone="state === 'error' ? 'error' : 'neutral'"
-              @action="runAction"
-            />
-          </template>
+      <AdminQueueList
+        v-if="view === 'list'"
+        :items="visible"
+        :active-index="cursorIndex"
+        :loading="showSkeleton"
+        :show-status-word="showStatusWord"
+        @update:active-index="onActiveIndex"
+        @advance="advance"
+        @open="openItem"
+      >
+        <template #empty>
+          <AdminQueueEmpty
+            :title="copy.title"
+            :desc="copy.desc"
+            :action="copy.action"
+            :tone="state === 'error' ? 'error' : 'neutral'"
+            @action="runAction"
+          />
+        </template>
 
-          <template #foot>
-            <!-- 脚的内容两个视图共用一份（`AdminQueueFoot`），壳在各自的列表组件里。 -->
-            <AdminQueueFoot
-              :scope="scoped"
-              :rows="visible.length"
-              :has-prev="hasPrev"
-              :has-next="hasNext"
-              @prev="prev"
-              @next="next"
-            />
-          </template>
-        </AdminQueueList>
+        <template #foot>
+          <!-- 脚的内容两个视图共用一份（`AdminQueueFoot`），壳在各自的列表组件里。 -->
+          <AdminQueueFoot
+            :scope="scoped"
+            :rows="visible.length"
+            :has-prev="hasPrev"
+            :has-next="hasNext"
+            @prev="prev"
+            @next="next"
+          />
+        </template>
+      </AdminQueueList>
 
-        <AdminFeedbackTable
-          v-else
-          :items="visible"
-          :active-id="cursorId"
-          :loading="showSkeleton"
-          @activate="onTableActivate"
-          @open="openItem"
-        >
-          <template #empty>
-            <AdminQueueEmpty
-              :title="copy.title"
-              :desc="copy.desc"
-              :action="copy.action"
-              :tone="state === 'error' ? 'error' : 'neutral'"
-              @action="runAction"
-            />
-          </template>
+      <AdminFeedbackTable
+        v-else
+        :items="visible"
+        :active-id="cursorId"
+        :loading="showSkeleton"
+        @activate="onTableActivate"
+        @open="openItem"
+      >
+        <template #empty>
+          <AdminQueueEmpty
+            :title="copy.title"
+            :desc="copy.desc"
+            :action="copy.action"
+            :tone="state === 'error' ? 'error' : 'neutral'"
+            @action="runAction"
+          />
+        </template>
 
-          <template #foot>
-            <AdminQueueFoot
-              :scope="scoped"
-              :rows="visible.length"
-              :has-prev="hasPrev"
-              :has-next="hasNext"
-              @prev="prev"
-              @next="next"
-            />
-          </template>
-        </AdminFeedbackTable>
-      </div>
-    </template>
+        <template #foot>
+          <AdminQueueFoot
+            :scope="scoped"
+            :rows="visible.length"
+            :has-prev="hasPrev"
+            :has-next="hasNext"
+            @prev="prev"
+            @next="next"
+          />
+        </template>
+      </AdminFeedbackTable>
+    </AdminPage>
 
     <!-- <1280：详情是那个 520px 的抽屉（§4.4「右栏变 520px 抽屉」）。它在两种宽度下
          都是同一个组件：`AdminQueueDetail` 自己那条 1280 媒体查询按**视口**分档，所以
@@ -224,20 +228,12 @@ const {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--canvas);
 }
 
-/* 内容列锁 1440（--page-w-admin）：16 + 4 + 12 + F + 16 + 116 + 16 + 88 + 16 +
-   B + 20 = 1440，即 F = 1156 − B（B 是 max-content 的推进按钮，56–84 → F ≈ 1072–1100）。
-   F 的下限仍是 740：可用区不足时整行在 `.qlist` 里横着滚，窄屏行为和 1100 时代一致。
-   居中而不是靠左：这一页的右边没有东西，靠左会让不同视口下的行宽差出一截。
-
-   列宽、居中和断点这一层由后台共用骨架给（`.admin-page__col` + `page-container--admin`，
-   见 `src/style.css`）：八页各写一份的结果是发丝线的长度每页都不一样。这里只留队列
-   自己的那一条 —— 这一列要跟着页面一起长高，所以是 `flex: 1 1 auto`。 */
-.qpage__inner {
-  flex: 1 1 auto;
-}
+/* 内容列锁 1440（--page-w-admin，由 `AdminPage` 的 `admin` 档给）：16 + 4 + 12 + F +
+   16 + 116 + 16 + 88 + 16 + B + 20 = 1440，即 F = 1156 − B（B 是 max-content 的推进
+   按钮，56–84 → F ≈ 1072–1100）。F 的下限仍是 740：可用区不足时整行在 `.qlist` 里横着
+   滚。居中而不是靠左：这一页的右边没有东西，靠左会让不同视口下的行宽差出一截。 */
 
 /* 无效按键的闪底。0.2s（§7.7 的「出现 / 消失」那一档），中性色 —— 一次落空的按键
    不该借状态三连色里的任何一支说话。类名是这一层加上去的（`flashRow` 直接改 DOM），
