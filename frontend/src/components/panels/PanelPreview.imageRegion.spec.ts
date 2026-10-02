@@ -104,7 +104,7 @@ it('routes a confirmed natural-pixel region from the actual named image and veri
   expect(ui.emitted().locate).toBeUndefined()
   await fireEvent.update(input, '让这块留白更紧凑')
   await fireEvent.click(ui.getByRole('button', { name: '发送' }))
-  const message = (ui.emitted().locate as [string][] | undefined)?.[0]?.[0] ?? ''
+  const message = (ui.emitted().locate as [{ message: string }][] | undefined)?.[0]?.[0]?.message ?? ''
   expect(message).toContain('design.png')
   expect(message).toContain(`topic=room source=committed task= version=${version}`)
   expect(message).toContain('1000 × 500')

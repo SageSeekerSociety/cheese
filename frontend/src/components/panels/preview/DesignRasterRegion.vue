@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import type { ImageGeometry, Point, RasterRegion, RasterSelection } from './designRegion'
+import type { ContentProfile } from './designSnap'
 
 import { computed, ref, watch } from 'vue'
 
-import { displayedRegion, imageRegion } from './designRegion'
+import { displayedRegion, imagePoint, imageRegion } from './designRegion'
+import { blockAt, snapRegion } from './designSnap'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{ image: HTMLImageElement | null; enabled: boolean; identity: string }>()
+const props = defineProps<{
+  image: HTMLImageElement | null
+  enabled: boolean
+  identity: string
+  /** 有内容分界线时就智能起来：拖动吸附到块的边，单击直接框住整块。 */
+  profile?: ContentProfile | null
+}>()
 const emit = defineEmits<{ select: [selection: RasterSelection]; cancel: [] }>()
 const start = ref<Point | null>(null)
 const draft = ref<RasterRegion | null>(null)
@@ -45,6 +53,11 @@ function move(event: PointerEvent) {
   if (event.pointerId !== pointer || !start.value || !geometry.value) return
   draft.value = imageRegion(start.value, { x: event.clientX, y: event.clientY }, geometry.value)
 }
+/** 一次点击（而不是拖动）：位移不到 4 个显示像素，人没打算框，只是想点那一块。 */
+function tapped(region: RasterRegion | null, size: ImageGeometry) {
+  if (!region) return true
+  return (region.width * size.width) / size.naturalWidth < 4 && (region.height * size.height) / size.naturalHeight < 4
+}
 function up(event: PointerEvent) {
   if (event.pointerId !== pointer) return
   move(event)
@@ -61,9 +74,17 @@ function up(event: PointerEvent) {
     context.src === (current.getAttribute('src') ?? '') &&
     size.naturalWidth === current.naturalWidth &&
     size.naturalHeight === current.naturalHeight
+  const profile = props.profile
+  let picked = region
+  if (profile && size && start.value) {
+    if (tapped(region, size)) {
+      const point = imagePoint(start.value, size)
+      picked = point ? blockAt(point, profile, size.naturalWidth, size.naturalHeight) : null
+    } else if (region) picked = snapRegion(region, profile)
+  }
   reset()
-  if (region && valid)
-    emit('select', { region, ...context, naturalWidth: size.naturalWidth, naturalHeight: size.naturalHeight })
+  if (picked && valid)
+    emit('select', { region: picked, ...context, naturalWidth: size.naturalWidth, naturalHeight: size.naturalHeight })
 }
 function cancel() {
   reset()

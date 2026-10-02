@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, ProjectMemberRow, Topic } from '@/cx_types'
+import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, Topic } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
@@ -60,7 +60,7 @@ const emit = defineEmits<{
 
 const chatRef = ref<{
   connected: boolean
-  send: (content: string, summon: boolean) => boolean
+  send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
@@ -73,8 +73,9 @@ defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
-  // 普通定位沿用聊天提交；明确的整页 AI 提问由 submitQuestion 在正文点名。
-  say: (content: string) => chatRef.value?.send(content, true) ?? false,
+  // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
+  // submitQuestion 在正文点名。
+  say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
   submitQuestion,
 })
 </script>

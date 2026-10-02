@@ -11,16 +11,17 @@
 // 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
 // 需要问后端。
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
-import type { FileContent } from '../../cx_types'
+import type { ChatAttachment, FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
-import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
+import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import type { RasterSelection } from './preview/designRegion'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
+import { uploadAttachment } from '../../api'
 import { t } from '../../i18n'
 import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
@@ -106,7 +107,7 @@ const emit = defineEmits<{
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
   (e: 'document-changed'): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
-  (e: 'locate', message: string): void
+  (e: 'locate', payload: PreviewLocate): void
   /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
 }>()
@@ -118,6 +119,8 @@ const {
   toggle: toggleFullscreen,
 } = useFullscreen(panelElement)
 const fullscreenError = ref('')
+/** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
+const annotateError = ref('')
 
 /** 在新标签页打开这一格看着的东西。
  *
@@ -290,7 +293,7 @@ function sendLocator() {
   if (imageRegion.target.value) {
     const message = imageRegion.message(note)
     if (!message) return
-    emit('locate', message)
+    emit('locate', { message })
     clearLocator()
     return
   }
@@ -314,16 +317,58 @@ function sendLocator() {
     if (accepted) clearLocator()
     return
   }
-  emit(
-    'locate',
-    t('work.room.preview.locateMessage', {
+  emit('locate', {
+    message: t('work.room.preview.locateMessage', {
       path: props.previewFile?.path ?? '',
       address: target.address,
       quote: target.quote,
       note,
-    })
-  )
+    }),
+  })
   clearLocator()
+}
+
+/** 图上画完、按了「加入对话」：先把那张合成图传进房间，再把那一句连同附件发出去。
+ *
+ * 上传在这一层，因为只有这里知道 topicId；消息要等上传回来才拼得出来（附件路径是
+ * 上传给的）。origin 用 clipboard：标注图是这一句话的配图，不是一份要进资料库供人
+ * 浏览的文档。
+ *
+ * 发之前再核一次版本：合成的是屏幕上那张图，而 `selectionEnabled` 正是「这张图就是
+ * 当前这个版本」的判据。版本在画的过程中被人换掉时，这句话宁可不发，也不能配着一张
+ * 说的不是它的图发出去。 */
+async function onAnnotate(payload: {
+  blob: Blob
+  filename: string
+  naturalWidth: number
+  naturalHeight: number
+  count: number
+  note: string
+}) {
+  const topicId = props.topicId
+  const identity = props.docIdentity
+  if (!topicId || !identity || !imageRegion.selectionEnabled.value) return
+  let attachment: ChatAttachment
+  try {
+    const file = new File([payload.blob], payload.filename, { type: 'image/png' })
+    attachment = await uploadAttachment(topicId, file, 'clipboard')
+  } catch (error) {
+    annotateError.value = error instanceof Error ? error.message : String(error)
+    return
+  }
+  if (props.topicId !== topicId) return
+  annotateError.value = ''
+  emit('locate', {
+    message: t('design.sketchMessage', {
+      ...identity,
+      task: identity.taskId ?? '',
+      naturalWidth: payload.naturalWidth,
+      naturalHeight: payload.naturalHeight,
+      count: payload.count,
+      note: payload.note,
+    }),
+    attachments: [attachment],
+  })
 }
 </script>
 
@@ -649,6 +694,7 @@ function sendLocator() {
         :selection-enabled="imageRegion.selectionEnabled.value"
         :active-region="imageRegion.target.value?.selection.region ?? null"
         @region="onImageRegion"
+        @annotate="onAnnotate"
       >
         <template #region-note="{ geometry, restoreFocus, focusOrigin }">
           <DesignRegionNote
@@ -673,6 +719,7 @@ function sendLocator() {
         <span v-if="docError">{{ docError }}</span>
         <v-progress-circular v-else indeterminate color="primary" size="24" />
       </div>
+      <p v-if="annotateError" class="file-image__error" role="alert">{{ annotateError }}</p>
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -739,6 +786,12 @@ function sendLocator() {
   flex-direction: column;
   min-width: 0;
   min-height: var(--preview-min);
+}
+.file-image__error {
+  padding: 6px 8px;
+  color: var(--danger, #e5484d);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .image-open {
   padding: 4px 8px;

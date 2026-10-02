@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
+import type { AgentControlState, Block, ChatAttachment, Topic, TopicMemberRow } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
-import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
+import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -154,7 +154,7 @@ const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
   reloadFeedback: () => void
-  say: (content: string) => boolean
+  say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 
@@ -188,8 +188,8 @@ const composerReady = computed(() => !!chatColumn.value?.connected)
 
 // 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
 // 长期锚点：它只在下一轮被读一次。
-function onLocate(message: string) {
-  chatColumn.value?.say(message)
+function onLocate(payload: PreviewLocate) {
+  chatColumn.value?.say(payload.message, payload.attachments)
 }
 const submitQuestion: SubmitPreviewQuestion = (request) => chatColumn.value?.submitQuestion(request) ?? false
 

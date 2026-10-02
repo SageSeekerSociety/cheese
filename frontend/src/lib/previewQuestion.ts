@@ -15,6 +15,16 @@ export interface PreviewQuestion {
 /** True means accepted into the normal outbox, not delivered or answered. */
 export type SubmitPreviewQuestion = (request: PreviewQuestion) => boolean
 
+/** 预览里指出的一处，作为一条普通房间消息发出去。
+ *
+ * 图上画过东西时那一份合成图随行带上（`attachments`）：一句「把这里改成蓝色」离开
+ * 那张画了圈和箭头的图就指不明白，而附件是 agent 真看得到的那条路——它被渲染成一条
+ * 原生图片输入，不是只给人看的缩略图。 */
+export interface PreviewLocate {
+  message: string
+  attachments?: ChatAttachment[]
+}
+
 export function createQuestionSubmit(options: {
   topic: () => Topic | null
   agentSeat: () => { handle: string; label: string } | null

@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import type { RasterRegion, RasterSelection } from './designRegion'
+import type { Point, RasterRegion, RasterSelection } from './designRegion'
 import type { NoteRect, RegionNoteGeometry } from './designRegionNotePosition'
+import type { SketchStroke, SketchTool } from './designSketch'
+import type { ContentProfile } from './designSnap'
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import DesignRasterRegion from './DesignRasterRegion.vue'
+import { composeSketch, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
+import DesignSketchCanvas from './DesignSketchCanvas.vue'
+import DesignSketchOverlay from './DesignSketchOverlay.vue'
+import DesignSketchToolbar from './DesignSketchToolbar.vue'
+import { blockAt, contentProfile } from './designSnap'
 
 import { t } from '@/i18n'
 
@@ -22,11 +29,24 @@ const props = withDefaults(
     activeRegion: undefined,
   }
 )
-const emit = defineEmits<{ region: [selection: RasterSelection] }>()
+const emit = defineEmits<{
+  region: [selection: RasterSelection]
+  /** 画完的那张合成图；上传和发消息由外面做，这里只管把它做出来。 */
+  annotate: [
+    payload: {
+      blob: Blob
+      filename: string
+      naturalWidth: number
+      naturalHeight: number
+      count: number
+      note: string
+    },
+  ]
+}>()
 const pane = ref<HTMLElement | null>(null)
 const viewport = ref<HTMLElement | null>(null)
 const selectedBox = ref<HTMLElement | null>(null)
-const regionButton = ref<HTMLButtonElement | null>(null)
+const toolbar = ref<InstanceType<typeof DesignSketchToolbar> | null>(null)
 const focusOrigin = ref<Element | null>(null)
 const geometry = ref<RegionNoteGeometry | null>(null)
 const image = ref<HTMLImageElement | null>(null)
@@ -34,8 +54,28 @@ const natural = ref({ width: 0, height: 0 })
 const available = ref(0)
 const zoom = ref(1)
 const fitted = ref(true)
-const selecting = ref(false)
 const standaloneRegion = ref<RasterRegion | null>(null)
+
+const tool = ref<SketchTool>('select')
+const color = ref<string>(SKETCH_COLORS[0])
+const strokes = ref<SketchStroke[]>([])
+const undone = ref<SketchStroke[]>([])
+/** 图上画得下箭头，说不清「改成什么」，所以那一句是必填的。 */
+const note = ref('')
+const profile = ref<ContentProfile | null>(null)
+const textEditing = ref(false)
+const exporting = ref(false)
+const spaceHeld = ref(false)
+const panning = ref(false)
+
+/** 框选是默认工具：打开就能拖，不用先点一下按钮。 */
+const selecting = computed(() => tool.value === 'select')
+const drawing = computed(() => tool.value !== 'select')
+const penWidth = computed(() => strokeWidth(natural.value.width))
+const canUndo = computed(() => strokes.value.length > 0)
+const canRedo = computed(() => undone.value.length > 0)
+const canSend = computed(() => strokes.value.length > 0 && note.value.trim().length > 0 && !textEditing.value)
+
 const selectedRegion = computed(() => (props.activeRegion === undefined ? standaloneRegion.value : props.activeRegion))
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
 const scale = computed(() => {
@@ -120,7 +160,7 @@ function scheduleMeasure() {
   if (!frame) frame = requestAnimationFrame(measure)
 }
 function restoreFocus(resourceKey: string) {
-  const button = regionButton.value
+  const button = toolbar.value?.selectButton
   if (!button?.isConnected || button.disabled || resourceKey !== props.identity) return
   const document = button.ownerDocument
   if (!document.hasFocus() || (document.activeElement && document.activeElement !== document.body)) return
@@ -158,17 +198,19 @@ watch(
   [() => props.src, () => props.identity],
   () => {
     natural.value = { width: 0, height: 0 }
-    selecting.value = false
     standaloneRegion.value = null
     geometry.value = null
     fitted.value = true
+    strokes.value = []
+    undone.value = []
+    note.value = ''
+    profile.value = null
   },
   { flush: 'sync' }
 )
 watch(
   () => props.selectionEnabled,
   () => {
-    selecting.value = false
     standaloneRegion.value = null
     geometry.value = null
   },
@@ -176,12 +218,72 @@ watch(
 )
 function loaded(event: Event) {
   const current = image.value
-  if (current && event.currentTarget === current && current.getAttribute('src') === props.src)
-    natural.value = { width: current.naturalWidth, height: current.naturalHeight }
+  if (!current || event.currentTarget !== current || current.getAttribute('src') !== props.src) return
+  natural.value = { width: current.naturalWidth, height: current.naturalHeight }
+  readProfile(current)
+}
+/** 内容分界线读一次就够：它只随图和版本变，不随缩放变。 */
+function readProfile(current: HTMLImageElement) {
+  const sample = sampleImage(current)
+  profile.value = sample ? contentProfile(sample, current.naturalWidth, current.naturalHeight) : null
 }
 function setZoom(value: number) {
   zoom.value = Math.max(0.1, Math.min(3, value))
   fitted.value = false
+}
+/** 滚轮缩放：光标底下那个点不动，缩放才不「跑掉」。 */
+let anchor: { clientX: number; clientY: number; naturalX: number; naturalY: number } | null = null
+function wheel(event: WheelEvent) {
+  const current = image.value
+  const bounds = current?.getBoundingClientRect()
+  if (!current || !bounds?.width || !natural.value.width) return
+  const before = bounds.width / natural.value.width
+  anchor = {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    naturalX: (event.clientX - bounds.left) / before,
+    naturalY: (event.clientY - bounds.top) / before,
+  }
+  setZoom(scale.value * Math.exp(-event.deltaY / 400))
+  void nextTick(applyAnchor)
+}
+function applyAnchor() {
+  const pending = anchor
+  anchor = null
+  const host = pane.value
+  const current = image.value
+  if (!pending || !host || !current || !natural.value.width) return
+  const bounds = current.getBoundingClientRect()
+  const after = bounds.width / natural.value.width
+  if (!after) return
+  host.scrollLeft += bounds.left + pending.naturalX * after - pending.clientX
+  host.scrollTop += bounds.top + pending.naturalY * after - pending.clientY
+}
+/** 空格或中键按住拖动＝平移，和画布类应用一套手感。 */
+let pan: { x: number; y: number; left: number; top: number } | null = null
+function panStart(event: PointerEvent) {
+  rememberFocus()
+  const host = pane.value
+  if (!host) return
+  if (!spaceHeld.value && event.button !== 1) return
+  event.preventDefault()
+  event.stopPropagation()
+  panning.value = true
+  pan = { x: event.clientX, y: event.clientY, left: host.scrollLeft, top: host.scrollTop }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+function panMove(event: PointerEvent) {
+  const host = pane.value
+  if (!host || !pan) return
+  host.scrollLeft = pan.left - (event.clientX - pan.x)
+  host.scrollTop = pan.top - (event.clientY - pan.y)
+}
+function panEnd() {
+  pan = null
+  panning.value = false
+}
+function cancelSelection() {
+  tool.value = 'select'
 }
 function selected(selection: RasterSelection) {
   const current = image.value
@@ -195,9 +297,82 @@ function selected(selection: RasterSelection) {
     selection.naturalHeight !== current.naturalHeight
   )
     return
-  selecting.value = false
   if (props.activeRegion === undefined) standaloneRegion.value = selection.region
   emit('region', { ...selection, identity: props.identity })
+}
+function addStroke(stroke: SketchStroke) {
+  strokes.value = [...strokes.value, stroke]
+  // 画了新的一笔，原来撤销掉的那些就不该再回来了。
+  undone.value = []
+}
+function undo() {
+  const last = strokes.value.at(-1)
+  if (!last) return
+  strokes.value = strokes.value.slice(0, -1)
+  undone.value = [last, ...undone.value]
+}
+function redo() {
+  const [next, ...rest] = undone.value
+  if (!next) return
+  undone.value = rest
+  strokes.value = [...strokes.value, next]
+}
+function clearStrokes() {
+  strokes.value = []
+  undone.value = []
+}
+/** 点一下内容块：不画东西，直接把那一块框出来并编上号。 */
+function pickBlock(point: Point) {
+  const bounds = profile.value
+  if (!bounds || !natural.value.width) return
+  addStroke({
+    tool: 'rect',
+    color: color.value,
+    width: penWidth.value,
+    region: blockAt(point, bounds, natural.value.width, natural.value.height),
+  })
+}
+async function sendAnnotated() {
+  const current = image.value
+  if (!current || !strokes.value.length || exporting.value) return
+  exporting.value = true
+  try {
+    const blob = await composeSketch(current, strokes.value)
+    if (!blob) return
+    const base = props.alt.replace(/\.[^.]+$/, '') || 'image'
+    emit('annotate', {
+      blob,
+      filename: `${base}-annotated.png`,
+      naturalWidth: natural.value.width,
+      naturalHeight: natural.value.height,
+      count: strokes.value.length,
+      note: note.value.trim(),
+    })
+  } finally {
+    exporting.value = false
+  }
+}
+function isTyping(target: EventTarget | null) {
+  const element = target as HTMLElement | null
+  if (!element) return false
+  return (
+    element.isContentEditable === true ||
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) ||
+    element.closest?.('input, textarea, [contenteditable="true"]') != null
+  )
+}
+function keyDown(event: KeyboardEvent) {
+  if (event.code !== 'Space' || isTyping(event.target)) return
+  // 空格在浏览器里是翻页，按住时要把它让给平移。
+  event.preventDefault()
+  spaceHeld.value = true
+}
+function keyUp(event: KeyboardEvent) {
+  if (event.code === 'Space') spaceHeld.value = false
+}
+function blur() {
+  spaceHeld.value = false
+  panEnd()
 }
 watch(
   () => props.activeRegion,
@@ -212,6 +387,9 @@ onMounted(() => {
   window.addEventListener('resize', scheduleMeasure)
   window.visualViewport?.addEventListener('resize', scheduleMeasure)
   window.visualViewport?.addEventListener('scroll', scheduleMeasure)
+  window.addEventListener('keydown', keyDown)
+  window.addEventListener('keyup', keyUp)
+  window.addEventListener('blur', blur)
 })
 onBeforeUnmount(() => {
   observer?.disconnect()
@@ -220,6 +398,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', scheduleMeasure)
   window.visualViewport?.removeEventListener('resize', scheduleMeasure)
   window.visualViewport?.removeEventListener('scroll', scheduleMeasure)
+  window.removeEventListener('keydown', keyDown)
+  window.removeEventListener('keyup', keyUp)
+  window.removeEventListener('blur', blur)
 })
 </script>
 
@@ -234,27 +415,44 @@ onBeforeUnmount(() => {
         +
       </button>
       <button type="button" :aria-pressed="fitted" @click="fitted = true">{{ t('design.fit') }}</button>
-      <button
-        ref="regionButton"
-        type="button"
-        :disabled="!natural.width || !selectionEnabled"
-        :title="selectionEnabled ? undefined : t('design.regionUnavailable')"
-        :aria-pressed="selecting"
-        @click="selecting = !selecting"
-      >
-        {{ t(selecting ? 'design.cancelRegion' : 'design.region') }}
-      </button>
       <slot name="actions" />
     </div>
+    <DesignSketchToolbar
+      ref="toolbar"
+      v-model:note="note"
+      :tool="tool"
+      :color="color"
+      :can-undo="canUndo"
+      :can-redo="canRedo"
+      :has-strokes="strokes.length > 0"
+      :can-send="canSend"
+      :can-select="selectionEnabled && !!natural.width"
+      :busy="exporting"
+      @pick="tool = $event"
+      @recolor="color = $event"
+      @undo="undo"
+      @redo="redo"
+      @clear="clearStrokes"
+      @send="sendAnnotated"
+    />
     <output v-if="selectedRegion" class="t-meta" aria-live="polite">{{
       t('design.selectedRegion', selectedRegion)
     }}</output>
-    <div ref="viewport" class="design-image__viewport" @pointerdown.capture="rememberFocus">
-      <div ref="pane" class="design-image__pane" @scroll="selecting = false">
+    <div
+      ref="viewport"
+      class="design-image__viewport"
+      :class="{ 'is-pannable': spaceHeld, 'is-panning': panning }"
+      @pointerdown.capture="panStart"
+      @pointermove.capture="panMove"
+      @pointerup.capture="panEnd"
+      @pointercancel.capture="panEnd"
+    >
+      <div ref="pane" class="design-image__pane" @wheel.prevent="wheel">
         <div class="design-image__sheet" :style="dimensions">
           <img :key="`${identity}:${src}`" ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
+          <DesignSketchOverlay v-if="strokes.length" :strokes="strokes" :scale="scale" :natural-width="natural.width" />
           <div
-            v-if="selectedRegion && !selecting"
+            v-if="selectedRegion"
             ref="selectedBox"
             class="design-image__selection"
             :style="selectedStyle"
@@ -264,8 +462,21 @@ onBeforeUnmount(() => {
             :image="image"
             :enabled="selecting && selectionEnabled"
             :identity="regionIdentity"
+            :profile="profile"
             @select="selected"
-            @cancel="selecting = false"
+            @cancel="cancelSelection"
+          />
+          <DesignSketchCanvas
+            v-if="drawing"
+            :image="image"
+            :identity="regionIdentity"
+            :tool="tool"
+            :color="color"
+            :width="penWidth"
+            :profile="profile"
+            @stroke="addStroke"
+            @pick-block="pickBlock"
+            @text-editing="textEditing = $event"
           />
         </div>
       </div>
@@ -311,6 +522,12 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-height: 0;
+}
+.design-image__viewport.is-pannable {
+  cursor: grab;
+}
+.design-image__viewport.is-panning {
+  cursor: grabbing;
 }
 .design-image__pane {
   height: 100%;

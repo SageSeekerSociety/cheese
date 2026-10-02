@@ -9,9 +9,28 @@
   "scale": "Display scale",
   "fit": "Fit viewport",
   "region": "Select image region",
-  "cancelRegion": "Cancel region selection",
   "selectedRegion": "Natural image pixels: x={x}, y={y}, width={width}, height={height}",
   "regionUnavailable": "The image version has not been verified. Region selection is unavailable.",
   "regionOutsideView": "The selected region is outside the current view",
-  "regionMessage": "Image region: {path}\ntopic={topicId} source={source} task={task} version={version}\nNatural image: {naturalWidth} × {naturalHeight}\nx={x} y={y} width={width} height={height}\nNote: {note}"
+  "regionMessage": "Image region: {path}\ntopic={topicId} source={source} task={task} version={version}\nNatural image: {naturalWidth} × {naturalHeight}\nx={x} y={y} width={width} height={height}\nNote: {note}",
+  "sketchTools": "Image annotation tools",
+  "tools": {
+    "select": "Select image region",
+    "pen": "Freehand pen",
+    "line": "Line",
+    "arrow": "Arrow",
+    "rect": "Rectangle",
+    "ellipse": "Ellipse",
+    "text": "Text",
+    "redact": "Redact"
+  },
+  "sketchColor": "Annotation color {color}",
+  "undo": "Undo",
+  "redo": "Redo",
+  "clear": "Clear annotations",
+  "addToChat": "Add to chat",
+  "sketchLayer": "Image annotation canvas",
+  "textPlaceholder": "Type a label, Enter to place",
+  "notePlaceholder": "Say what to change, Enter to send",
+  "sketchMessage": "Annotated image: {path}\ntopic={topicId} source={source} task={task} version={version}\nNatural image: {naturalWidth} × {naturalHeight}\nAnnotations: {count}\nNote: {note}"
 }
