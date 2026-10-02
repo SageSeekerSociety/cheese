@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
 from app.domain.block.models import Block
+from app.domain.delivery.answer_ownership import unread_input_with_over_work
 from app.domain.delivery.ask_inputs import guard_ask_inputs
 from app.domain.delivery.ask_receipt_wait import AskReceiptPending
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
@@ -414,6 +415,11 @@ async def held_blocks(
 
     An echo cannot release an initial batch for another prompt before its Stop.
     Re-admission requires explicit reconciliation, never a different input UUID.
+
+    One row is not a hold: an input nobody ever read whose work the platform has
+    already ended (:func:`unread_input_with_over_work`). Nothing can settle its
+    outcome, so continuing to hide its batch is what would lose it — the next
+    prompt has to be able to carry it again (#416).
     """
     batches = (
         await session.execute(
@@ -424,6 +430,7 @@ async def held_blocks(
                 NativeInput.id != exclude_input_id
                 if exclude_input_id is not None
                 else true(),
+                ~unread_input_with_over_work(),
             )
         )
     ).all()
@@ -626,6 +633,12 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         execution_work,
     ):
         raise ValidationError("Native input has a different execution owner")
+    if execution_work is None and row.execution_work_id is None:
+        # An echo that names no execution work is an echo under the input's own
+        # work: that is the one ``identity.work_id`` names, and the only work a
+        # completion for this input may later claim. Leaving it empty would make
+        # the input uncompletable — its holds could never be released again.
+        execution_work = identity.work_id
     if row.settled_at is not None:
         if execution_work is not None:
             row.execution_work_id = execution_work

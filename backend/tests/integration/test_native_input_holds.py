@@ -12,9 +12,33 @@ from dataclasses import replace
 
 from sqlalchemy import select
 
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import record_receipt, register_input
+from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
+
+
+async def _blocks(factory, project_id, topic_id, count=2):
+    """Rows in the addressed room: a hold owns blocks, and registration proves
+    they belong to that room before it will take them."""
+    ids = tuple(uuid.uuid4() for _ in range(count))
+    async with factory() as session:
+        for block_id in ids:
+            session.add(
+                Block(
+                    id=block_id,
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="user-1",
+                    content="answer",
+                    meta={"consumed_turn": None},
+                )
+            )
+        await session.commit()
+    return ids
 
 _QUERY = """
 import asyncio, json, sys, uuid
@@ -36,32 +60,36 @@ asyncio.run(run())
 def test_new_process_finds_only_the_addressed_batch_and_echo_does_not_release_it(
     client,
 ):
+    project = uuid.UUID(_project(client, "durable holds"))
+    other_project = uuid.UUID(_project(client, "another project"))
+    topic = uuid.UUID(_room(client, str(project), "holds"))
+    other_topic = uuid.UUID(_room(client, str(project), "another room"))
+
     async def run():
         factory = client.test_request_factory
         identity = InputIdentity(
-            uuid.uuid4(),
-            uuid.uuid4(),
+            project,
+            topic,
             "cheese-test",
             "claude_code",
             str(uuid.uuid4()),
             uuid.uuid4(),
             uuid.uuid4(),
         )
-        blocks = (uuid.uuid4(), uuid.uuid4())
+        blocks = await _blocks(factory, identity.project_id, identity.topic_id)
         effects = InputEffects(held_block_ids=blocks)
         async with factory() as session:
             await register_input(session, identity, effects)
             await session.commit()
         for field, value in [
-            ("project_id", uuid.uuid4()),
-            ("topic_id", uuid.uuid4()),
+            ("project_id", other_project),
+            ("topic_id", other_topic),
             ("recipient_handle", "another-seat"),
         ]:
             other = replace(identity, **{field: value, "input_id": uuid.uuid4()})
+            foreign = await _blocks(factory, other.project_id, other.topic_id, count=1)
             async with factory() as session:
-                await register_input(
-                    session, other, InputEffects(held_block_ids=(uuid.uuid4(),))
-                )
+                await register_input(session, other, InputEffects(held_block_ids=foreign))
                 await session.commit()
         async with factory() as session:
             url = session.bind.url.render_as_string(hide_password=False)

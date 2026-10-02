@@ -2,8 +2,9 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
+from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import Delivery, NativeInput
 
@@ -109,18 +110,64 @@ async def reconcile_answer(session, delivery_id, attempt_id):
     return True
 
 
+def _work_interval_is_over():
+    """This input's own work interval is one the platform has ended.
+
+    Correlated on the input row: an input names its work by ``work_id``, and
+    the platform ends work by stamping that interval's ``stopped_at``. A work
+    the platform has no row for is not over — silence is not a conclusion.
+    """
+    return (
+        select(AgentTurn.id)
+        .where(
+            AgentTurn.id == NativeInput.work_id,
+            AgentTurn.topic_id == NativeInput.topic_id,
+            AgentTurn.stopped_at.is_not(None),
+        )
+        .exists()
+    )
+
+
+def unread_input_with_over_work():
+    """No native receipt can settle this input any more, so it may not hold.
+
+    Only an echoed input is journaled under its execution work, and that
+    journal is the interval completion and termination both read. An input the
+    session never took therefore has no interval a receipt could name.
+
+    An input's OWN work is the turn opened to carry it (``input_id`` names the
+    same work): a turn that existed only to deliver this batch, ended by the
+    platform with the batch never read, has nothing left to wait for — keeping
+    its hold would swallow a person's message, which is the one thing #416 does
+    not allow. A batch that was an addition to another work (a mid-turn
+    delivery) is different: a transport error does not prove the working
+    session did not read it, so its outcome stays unknown and it keeps holding
+    and blocking the seat.
+    """
+    return and_(
+        NativeInput.echoed_at.is_(None),
+        NativeInput.input_id == NativeInput.work_id,
+        _work_interval_is_over(),
+    )
+
+
 async def seat_has_unfinished_input(session, topic_id, recipient_handle):
     """Missing native start or outstanding holds cannot authorize a new send.
 
     A work interval that is confirmed dead is not an outstanding hold. Its rows
     stay unfinished — nothing says the answer inside them was taken — but they
     stop standing between the seat and a NEW input, which is a different input
-    with an identity of its own. An interval nobody confirmed still blocks.
+    with an identity of its own. An interval nobody confirmed still blocks. So
+    does one whose batch nobody ever read, for as long as its work is alive:
+    that is the interval a receipt is still on its way for. A batch nobody read
+    whose work the platform has already ended cannot get one
+    (:func:`unread_input_with_over_work`).
     """
     rows = await session.scalars(
         select(NativeInput).where(
             NativeInput.topic_id == topic_id,
             NativeInput.recipient_handle == recipient_handle,
+            ~unread_input_with_over_work(),
         )
     )
     return any(row.completed_at is None and row.terminated_at is None for row in rows)

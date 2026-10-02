@@ -1384,7 +1384,16 @@ async def test_midturn_delivery_holds_no_topic_lock(
     in_flight = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_deliver(tid, text, images=None, agent_handle=None, owes_reply=False):
+    async def slow_deliver(
+        tid,
+        text,
+        images=None,
+        *,
+        register_input=None,
+        expected_work_id=None,
+        agent_handle=None,
+        owes_reply=False,
+    ):
         in_flight.set()
         await release.wait()
         return True

@@ -29,7 +29,6 @@ from app.domain.agent.runtime import (
     addressed_to_agent,
     announce_stale,
 )
-from app.domain.block.answer_submission import add_answer_wake, submit_answer
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -42,7 +41,6 @@ from app.domain.block.notice_text import say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
-from app.domain.delivery.ask_wake import record_single_answer_wake, single_answer_wake
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1014,87 +1012,6 @@ async def summon_agent(
         provision_actor=actor,
     )
     return ok({"started": True})
-
-
-@router.post("/blocks/{block_id}/answers")
-async def submit_versioned_answer(
-    block_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """Answer a single option question with an option, note or rejection.
-
-    Submit client_op_id and expect_version with kind (option / note / reject),
-    plus option or note as appropriate. The answer, timeline wake and delivery
-    are authorized and persisted atomically.
-
-    Authorization precedes replay lookup. Block owns answer rules and timeline
-    writes; delivery owns addressing and intent. Commit before publication or
-    dispatch. Calling receive_message here would duplicate the durable wake.
-
-    This is the versioned answer path (`answer_log`): `POST
-    /topics/blocks/{block_id}/answers`. A question group settles atomically
-    through `POST /topics/asks/{group_id}/settle` instead — one member at a
-    time is refused here. Rows an older question left behind keep their shape
-    and are answered through this same route.
-    """
-    blk = await BlockRepository(db).get(block_id)
-    if blk is None:
-        raise NotFoundError(say("optionQuestionNotFound"))
-
-    # A body author is an addressing fallback, never authentication.
-    actor = await resolver.resolve(
-        fallback_handle=body.get("author"),
-        topic_id=blk.topic_id,
-        project_id=blk.project_id,
-    )
-    await resolver.authorize_topic(
-        actor, project_id=blk.project_id, topic_id=blk.topic_id
-    )
-    author = actor.handle
-
-    answer = await submit_answer(db, block_id=block_id, author=author, body=body)
-    if answer.replay:
-        return ok(answer.updated)
-    wake = await single_answer_wake(
-        db,
-        project_id=answer.project_id,
-        topic_id=answer.topic_id,
-        block_id=block_id,
-        asked_by=answer.asked_by,
-        entry=answer.entry,
-    )
-    answer_out = await add_answer_wake(
-        db,
-        project_id=answer.project_id,
-        topic_id=answer.topic_id,
-        author=author,
-        content=wake.content,
-        meta=wake.meta,
-    )
-    await record_single_answer_wake(
-        db,
-        topic_id=answer.topic_id,
-        block_id=block_id,
-        version=answer.entry["v"],
-        wake=wake,
-    )
-    # Publish only committed state; failed publication is recoverable by GET.
-    await db.commit()
-    await get_broker().publish(
-        str(answer.topic_id), {"type": "block_updated", "block": answer.updated}
-    )
-    await get_broker().publish(
-        str(blk.topic_id), {"type": "block_added", "block": answer_out}
-    )
-    # Committed pending intent survives a crash before dispatch.
-    from app.domain.delivery.agent import dispatch_pending
-
-    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
-    return ok(answer.updated)
 
 
 @router.post("/{topic_id}/webhook-token")
