@@ -2,9 +2,11 @@
 
 What is pinned here is what the person who filed the report sees once the
 release that fixes it is live: the status, a timeline step that names the PR,
-and an unread count that moved — the same things a person pressing the admin
-button produces.
+an 已修复 step dated when the PR merged, and an unread count that moved — the
+same things a person pressing the admin buttons produces.
 """
+
+from datetime import UTC, datetime
 
 import pytest
 
@@ -12,6 +14,9 @@ import scripts.ship_feedback as ship_feedback
 from tests.integration.conftest import session_auth_headers
 
 REPO = "https://github.com/example/repo"
+#: When the PR merged — deliberately not "now", so a step stamped with the
+#: deploy's own clock cannot pass for one stamped with the merge.
+MERGED_AT = "2026-03-04T05:06:07Z"
 REPORTER = "ship-reporter"
 BYSTANDER = "ship-bystander"
 
@@ -23,9 +28,9 @@ def run_deploy(client, monkeypatch):
         ship_feedback, "async_session_factory", client.test_request_factory
     )
 
-    def run(*messages: str) -> None:
+    def run(*messages: str, merged_at: str = MERGED_AT) -> None:
         commits = [
-            {"sha": f"{index:040x}", "message": message}
+            {"sha": f"{index:040x}", "message": message, "merged_at": merged_at}
             for index, message in enumerate(messages, start=1)
         ]
         client.portal.call(ship_feedback.main, REPO, commits)
@@ -185,3 +190,45 @@ def test_a_step_a_person_took_has_no_note(client, monkeypatch):
     )
 
     assert all(step["note"] is None for step in _detail(client, row)["timeline"])
+
+
+def test_a_shipped_fix_is_recorded_as_fixed_at_the_time_its_pr_merged(
+    client, run_deploy
+):
+    row = _report(client, REPORTER)
+
+    run_deploy(f"fix: it (#55)\n\nFixes-feedback: FB-{_number(row)}\n")
+
+    steps = {s["status"]: s for s in _detail(client, row)["timeline"]}
+    fixed = steps["resolved"]
+    assert datetime.fromisoformat(fixed["at"]) == datetime(
+        2026, 3, 4, 5, 6, 7, tzinfo=UTC
+    )
+    assert fixed["by_handle"] is None
+    assert f"{REPO}/pull/55" in fixed["note"]
+    assert datetime.fromisoformat(steps["deployed"]["at"]) > datetime.fromisoformat(
+        fixed["at"]
+    )
+
+
+def test_a_fix_a_person_already_marked_keeps_their_step(
+    client, run_deploy, monkeypatch
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "feedback_triage_handles", [BYSTANDER])
+    row = _report(client, REPORTER)
+    r = client.post(
+        f"/admin/feedback/{row['id']}/status",
+        json={"status": "resolved"},
+        headers=session_auth_headers(BYSTANDER),
+    )
+    assert r.status_code == 200, r.text
+
+    run_deploy(f"fix: it (#56)\n\nFixes-feedback: FB-{_number(row)}\n")
+
+    detail = _detail(client, row)
+    assert detail["status"] == "deployed"
+    fixed = [s for s in detail["timeline"] if s["status"] == "resolved"]
+    assert len(fixed) == 1
+    assert fixed[0]["by_handle"] == BYSTANDER

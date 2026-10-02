@@ -32,6 +32,8 @@ permissions:
   actions: read
   contents: read
   packages: read
+  # The feedback step at the end reads when each shipped commit's PR merged.
+  pull-requests: read
 
 jobs:
   eligibility:
@@ -284,10 +286,14 @@ jobs:
           python3 deploy/check-auto-deploy.py --require-ci "$release_sha"
           bash deploy/release-metering-proxy.sh "$release_sha"
 
-      # A commit carrying `Fixes-feedback: FB-<n>` moves that report to 已上线
-      # once the release containing it is live, which is here: every step above
-      # succeeded. Only the commits since the replaced release are read, so a
-      # report someone reopened later is not moved back by an unrelated deploy.
+      # A commit carrying `Fixes-feedback: FB-<n>` moves that report to 已修复
+      # at the time its PR merged and to 已上线 once the release containing it is
+      # live, which is here: every step above succeeded. Only the commits since
+      # the replaced release are read, so a report someone reopened later is not
+      # moved back by an unrelated deploy. The merge time is the PR's
+      # `merged_at`: the commit's own dates are from when it entered the merge
+      # queue, which is minutes earlier. A commit pushed without a PR falls back
+      # to its committer date, which is when it was pushed.
       # The status change goes through the backend's own service in the running
       # container, the way the deploy already runs its other backend scripts —
       # no endpoint, no credential. Convention: app/domain/feedback/shipping.py.
@@ -304,7 +310,29 @@ jobs:
           backend="$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT:-cheese}" \
             --filter label=com.docker.compose.service=backend \
             --filter label=com.docker.compose.oneoff=False | head -n 1)"
+          commits="$RUNNER_TEMP/shipped-commits.json"
           gh api "repos/$GITHUB_REPOSITORY/compare/$PREVIOUS...$(git rev-parse HEAD)" \
-            --jq '[.commits[] | {sha, message: .commit.message}]' \
+            --jq '[.commits[] | {sha, message: .commit.message, merged_at: .commit.committer.date}]' \
+            > "$commits"
+          COMMITS="$commits" python3 - <<'PY' \
             | docker exec -i "$backend" python -m scripts.ship_feedback \
                 --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          import json
+          import os
+          import subprocess
+          import sys
+
+          commits = json.load(open(os.environ["COMMITS"]))
+          for commit in commits:
+              merged = subprocess.run(
+                  [
+                      "gh", "api",
+                      f"repos/{os.environ['GITHUB_REPOSITORY']}/commits/{commit['sha']}/pulls",
+                      "--jq", "[.[] | select(.merged_at != null) | .merged_at][0] // empty",
+                  ],
+                  check=True, capture_output=True, text=True,
+              ).stdout.strip()
+              if merged:
+                  commit["merged_at"] = merged
+          json.dump(commits, sys.stdout)
+          PY

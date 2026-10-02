@@ -180,7 +180,9 @@ async def patch_admin_feedback(
     """改优先级 / 指派人 / 是否安全问题。**不接受 visibility，也不接受 status。**
 
     status 只走 `POST /{id}/status`，因为状态和它那条时间线必须在同一个事务里一起
-    写 —— 从 PATCH 的字段里溜进去的话，就多了一条不写历史的路径。
+    写 —— 从 PATCH 的字段里溜进去的话，就多了一条不写历史的路径。唯一的例外是
+    指派：指派给某人会把还没到「处理中」的反馈推到「处理中」，同样经由服务层连
+    时间线一起写（`FeedbackService.advance`）。
     """
     row = await service.patch_admin(feedback_id, body, by_handle=handle)
     response = ok(await _detail(service, row, handle=handle))
