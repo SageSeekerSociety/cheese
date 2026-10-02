@@ -81,6 +81,7 @@ const {
   load,
   downloadArtifact,
   refreshDocument,
+  uploadAnnotation,
 } = usePanelPreview(props, {
   frameName,
   // 元数据回来一次就报一次：房间拿它标「预览有新内容」。
@@ -100,6 +101,8 @@ function refresh() {
   <PanelPreviewView
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
+    :upload-annotation="uploadAnnotation"
+    :active="props.active"
     :project-id="props.projectId"
     :path="props.path"
     :frame-name="frameName"

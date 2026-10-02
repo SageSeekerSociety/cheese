@@ -106,3 +106,35 @@ it('Esc 退出手里的画笔，回到默认的框选', async () => {
   expect(ui.queryByRole('application', { name: '图片标注画布' })).toBeNull()
   expect(ui.getByRole('button', { name: '选择图片区域' }).getAttribute('aria-pressed')).toBe('true')
 })
+
+it('输入法组字中的那一次回车是选词，不算发送', async () => {
+  const ui = mount()
+  await painted(ui)
+  await drawRect(ui)
+  const note = ui.getByPlaceholderText('说一句要改什么，回车发送')
+  await fireEvent.update(note, '把这里改成蓝色')
+  const composing = new KeyboardEvent('keydown', {
+    key: 'Enter',
+    keyCode: 229,
+    isComposing: true,
+    bubbles: true,
+    cancelable: true,
+  })
+  note.dispatchEvent(composing)
+  expect(composing.defaultPrevented).toBe(false)
+  const plain = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+  note.dispatchEvent(plain)
+  expect(plain.defaultPrevented).toBe(true)
+})
+
+it('收起来的那一页不接全局快捷键：⌘Z 改不到它', async () => {
+  const ui = render(DesignImage, {
+    props: { src: 'blob:sketch', alt: 'design.png', identity: 'v1', active: false },
+  })
+  await painted(ui)
+  await drawRect(ui)
+  await drawRect(ui)
+  expect(rects(ui)).toBe(2)
+  await fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', metaKey: true })
+  expect(rects(ui)).toBe(2)
+})

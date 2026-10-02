@@ -31,6 +31,13 @@ const emit = defineEmits<{
   clear: []
   send: []
 }>()
+/** 回车发送。输入法组字中的那一次回车是「选词」，不是「发送」：放它过去，
+ *  否则用中文打字的人每选一个词就把标注发出去一次。 */
+function onNoteEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  emit('send')
+}
 /** 每个工具的示意图标；不引图标库，路径就写在这里，省一个依赖。 */
 const GLYPH: Record<SketchTool, string> = {
   select: 'M3 3h6M3 3v6M15 3h-6M15 3v6M3 15v-6M15 15h-6M15 15v-6',
@@ -118,7 +125,7 @@ const GLYPH: Record<SketchTool, string> = {
       autocomplete="off"
       :placeholder="t('design.notePlaceholder')"
       :aria-label="t('design.notePlaceholder')"
-      @keydown.enter.prevent="emit('send')"
+      @keydown.enter="onNoteEnter"
     />
     <button type="button" class="is-primary" :disabled="!canSend || busy" @click="emit('send')">
       {{ t('design.addToChat') }}

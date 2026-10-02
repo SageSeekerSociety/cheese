@@ -21,6 +21,13 @@ const props = withDefaults(
     alt: string
     identity: string
     selectionEnabled?: boolean
+    /**
+     * 这一格正显示着没有。
+     *
+     * 撤销、退出、空格平移都挂在 window 上（图未必拿着焦点），而工作面板把收起的那
+     * 几页用 v-show 留着——不给这一样，收起来的那张图照样会吃掉空格、会被 ⌘Z 改。
+     */
+    active?: boolean
     /** Undefined keeps standalone selection; null is an explicitly cleared controlled region. */
     activeRegion?: RasterRegion | null
     /**
@@ -33,6 +40,7 @@ const props = withDefaults(
   }>(),
   {
     selectionEnabled: true,
+    active: true,
     activeRegion: undefined,
     zoomOnWheel: false,
   }
@@ -75,6 +83,8 @@ const note = ref('')
 const profile = ref<ContentProfile | null>(null)
 const textEditing = ref(false)
 const exporting = ref(false)
+/** 合成失败时的那一句：它发生在这里（画布在这一层），上传失败那句在外面。 */
+const sendError = ref('')
 const spaceHeld = ref(false)
 const panning = ref(false)
 
@@ -349,9 +359,15 @@ async function sendAnnotated() {
   const current = image.value
   if (!current || !strokes.value.length || exporting.value) return
   exporting.value = true
+  sendError.value = ''
   try {
     const blob = await composeSketch(current, strokes.value)
-    if (!blob) return
+    // 合成不出来（画布不可用，或者压到最小还是太大）时说一声：不说的话，按了按钮
+    // 看着像什么都没发生。
+    if (!blob) {
+      sendError.value = t('design.composeFailed')
+      return
+    }
     const base = props.alt.replace(/\.[^.]+$/, '') || 'image'
     emit('annotate', {
       blob,
@@ -361,6 +377,8 @@ async function sendAnnotated() {
       count: strokes.value.length,
       note: note.value.trim(),
     })
+  } catch (error) {
+    sendError.value = error instanceof Error ? error.message : t('design.composeFailed')
   } finally {
     exporting.value = false
   }
@@ -399,6 +417,9 @@ function exitCurrent(): boolean {
  */
 function keyDown(event: KeyboardEvent) {
   if (isTyping(event.target)) return
+  // 收起来的那几页（工作面板用 v-show 留着的）照样挂着这个 listener，但它们没在看
+  // 图：空格该去翻页，⌘Z 也不该去动一张没人看着的图。
+  if (!props.active) return
   const mod = event.metaKey || event.ctrlKey
   // ⌘/Ctrl+Z 撤销；⇧⌘/Ctrl+Z 与 Ctrl+Y 重做。认 key 不认 code：撤销绑的是 Z 这个字母。
   if (mod && event.key.toLowerCase() === 'z') {
@@ -439,6 +460,13 @@ watch(
     standaloneRegion.value = null
   },
   { flush: 'sync' }
+)
+// 收起来的那一刻把手里的东西放下：按着的空格、（真在拖的话）正在进行的平移。
+watch(
+  () => props.active,
+  (on) => {
+    if (!on) blur()
+  }
 )
 watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush: 'post' })
 onMounted(() => {
@@ -494,6 +522,7 @@ onBeforeUnmount(() => {
       @clear="clearStrokes"
       @send="sendAnnotated"
     />
+    <output v-if="sendError" class="design-image__error" role="alert">{{ sendError }}</output>
     <output v-if="selectedRegion" class="t-meta" aria-live="polite">{{
       t('design.selectedRegion', selectedRegion)
     }}</output>
@@ -562,6 +591,12 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 8px;
   border-bottom: 1px solid var(--line);
+}
+.design-image__error {
+  padding: 6px 8px;
+  color: var(--danger, #e5484d);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .design-image__tools button {
   padding: 4px 8px;

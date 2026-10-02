@@ -31,6 +31,7 @@
   "redoShortcut": "Redo (⇧⌘Z / Ctrl+Y)",
   "clear": "Clear annotations",
   "addToChat": "Add to chat",
+  "composeFailed": "Could not build the annotated image: no canvas, or still too large at the smallest scale",
   "sketchLayer": "Image annotation canvas",
   "textPlaceholder": "Type a label, Enter to place",
   "notePlaceholder": "Say what to change, Enter to send",

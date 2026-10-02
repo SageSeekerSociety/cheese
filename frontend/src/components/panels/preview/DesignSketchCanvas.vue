@@ -71,6 +71,17 @@ function cancel() {
   reset()
   cancelText()
 }
+/** 组字中的回车是「选词」、Esc 是「取消候选」，都归输入法：别当成提交/放弃。 */
+function onTextEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  commitText()
+}
+function onTextEscape(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  cancelText()
+}
 defineExpose({ cancel })
 
 const scale = computed(() => {
@@ -291,8 +302,8 @@ const textStyle = computed(() => {
       autocomplete="off"
       :style="textStyle"
       :placeholder="t('design.textPlaceholder')"
-      @keydown.enter.prevent="commitText"
-      @keydown.esc.prevent="cancelText"
+      @keydown.enter="onTextEnter"
+      @keydown.esc="onTextEscape"
       @blur="commitText"
       @pointerdown.stop
     />

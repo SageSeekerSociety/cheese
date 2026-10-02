@@ -10,6 +10,7 @@
 // 留在这里的是「画」和「只和这一格有关的手势」：全屏（它要的就是这个 DOM 节点）、
 // 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
 // 需要问后端。
+import type { AnnotateDraft, UploadAnnotation } from '../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
 import type { ChatAttachment, FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
@@ -21,7 +22,6 @@ import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
-import { uploadAttachment } from '../../api'
 import { t } from '../../i18n'
 import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
@@ -46,6 +46,10 @@ const props = withDefaults(
   defineProps<{
     topicId: string | null
     submitQuestion?: SubmitPreviewQuestion
+    /** 标注图的上传：取数那一层给的能力。这一格只调它，自己不碰 fetch。 */
+    uploadAnnotation?: UploadAnnotation
+    /** 这一格是不是正显示着的那一页：收起来的那几页不接全局键（见 DesignImage）。 */
+    active?: boolean
     projectId: string | null
     /**
      * 这一格看的是房间里指定的哪一份文件（工作面板自由区的一个页签）。不给就是
@@ -87,6 +91,8 @@ const props = withDefaults(
   }>(),
   {
     submitQuestion: undefined,
+    uploadAnnotation: undefined,
+    active: true,
     path: null,
     frames: undefined,
     displayedFrame: null,
@@ -328,30 +334,19 @@ function sendLocator() {
   clearLocator()
 }
 
-/** 图上画完、按了「加入对话」：先把那张合成图传进房间，再把那一句连同附件发出去。
+/** 图上画完、按了「加入对话」：把那张合成图交出去传进房间，再发那一句连同附件。
  *
- * 上传在这一层，因为只有这里知道 topicId；消息要等上传回来才拼得出来（附件路径是
- * 上传给的）。origin 用 clipboard：标注图是这一句话的配图，不是一份要进资料库供人
- * 浏览的文档。
- *
- * 发之前再核一次版本：合成的是屏幕上那张图，而 `selectionEnabled` 正是「这张图就是
- * 当前这个版本」的判据。版本在画的过程中被人换掉时，这句话宁可不发，也不能配着一张
- * 说的不是它的图发出去。 */
-async function onAnnotate(payload: {
-  blob: Blob
-  filename: string
-  naturalWidth: number
-  naturalHeight: number
-  count: number
-  note: string
-}) {
+ * 上传是外面递进来的能力（`uploadAnnotation`），消息要等它回来才拼得出来。发之前再
+ * 核一次版本：合成的是屏幕上那张图，版本在画的过程中被人换掉时宁可不发，也不能配着
+ * 一张说的不是它的图发出去。 */
+async function onAnnotate(payload: AnnotateDraft) {
   const topicId = props.topicId
   const identity = props.docIdentity
-  if (!topicId || !identity || !imageRegion.selectionEnabled.value) return
+  const upload = props.uploadAnnotation
+  if (!topicId || !identity || !upload || !imageRegion.selectionEnabled.value) return
   let attachment: ChatAttachment
   try {
-    const file = new File([payload.blob], payload.filename, { type: 'image/png' })
-    attachment = await uploadAttachment(topicId, file, 'clipboard')
+    attachment = await upload(topicId, payload)
   } catch (error) {
     annotateError.value = error instanceof Error ? error.message : String(error)
     return
@@ -695,6 +690,7 @@ async function onAnnotate(payload: {
         :identity="imageRegion.imageIdentity.value"
         :selection-enabled="imageRegion.selectionEnabled.value"
         :active-region="imageRegion.target.value?.selection.region ?? null"
+        :active="active"
         :zoom-on-wheel="previewFull"
         @region="onImageRegion"
         @annotate="onAnnotate"
