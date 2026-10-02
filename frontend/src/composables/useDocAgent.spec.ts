@@ -101,6 +101,21 @@ describe('让 AI 队友改选中的字', () => {
     ])
   })
 
+  it('选中跨了两段也能直接改', async () => {
+    const { doc, editor } = room('先用 PostgreSQL。\n\n双写一周再切过去。\n\n第三段。')
+    const rewrite = service(doc, '先用 PostgreSQL，双写一周再切过去。')
+    const { ctl } = controller(editor, rewrite)
+
+    const [from] = select(editor, '先用')
+    const [, to] = select(editor, '切过去。')
+    ctl.open(from, to, { anchorId: null, quote: '' })
+    expect(ctl.editable.value).toBe(true)
+    await ctl.edit('合成一段')
+
+    expect(exportMarkdown(doc)).toBe('先用 PostgreSQL，双写一周再切过去。\n\n第三段。')
+    expect(ctl.phase.value).toBe('done')
+  })
+
   it('别人在前面打了字，发出去的仍是自己选中的那几个字', async () => {
     const { doc, editor } = room('数据量到一千万行时开始评估迁移。')
     const rewrite = service(doc, '五百万')
