@@ -1,20 +1,27 @@
 ---
 title: 话题预览
 kind: 流程
-summary: 房间里的预览怎么托管、怎么鉴权，和项目网站共用哪一套、分开在哪。
+summary: 房间里的预览怎么托管、怎么鉴权，和项目网站共用哪一套、分开在哪；一份文件落进哪一种查看器，读者指着它说一句话时发出去的是什么。
 covers:
   - backend/app/api/preview_host.py
   - backend/app/domain/agent/preview_hub.py
   - backend/app/domain/agent/preview_tunnel.py
   - backend/app/api/routes/app_preview.py
   - backend/app/api/routes/preview_sessions.py
+  - frontend/src/components/panels/PanelPreviewView.vue
+  - frontend/src/components/panels/preview/PreviewSlides.vue
+  - frontend/src/components/panels/preview/PreviewPages.vue
+  - frontend/src/components/panels/preview/PreviewSheet.vue
+  - frontend/src/components/panels/preview/DesignImage.vue
+  - frontend/src/lib/previewQuestion.ts
+  - frontend/src/lib/quotedContext.ts
 ---
 
 # 话题预览 {#preview}
 
 房间里的预览怎么托管、怎么鉴权。项目网站和它用同一套内容域与凭证交换，但快照、入口和上限是另一个部件。
 
-> 讲：两个独立源、凭证交换、静态预览与运行中的应用。不讲：发布快照，见[项目网站](/dev/sites)；用户怎么发布网站，见使用文档[发布网站](/sites#sites)。
+> 讲：两个独立源、凭证交换、静态预览与运行中的应用、查看器与指认。不讲：发布快照，见[项目网站](/dev/sites)；用户怎么发布网站，见使用文档[发布网站](/sites#sites)。
 
 ## 两个独立的源 {#origins}
 
@@ -125,6 +132,35 @@ steps:
 
 - 静态预览读选中文件所在目录，相对路径只能在这个目录里，拒绝隐藏文件和逃出目录的软链接。
 - 运行中的应用（`cheese serve`）保留原始的 HTTP 和 WebSocket 路径，要求开发机器和服务一直在线。
+
+## 查看器与指认 {#viewers}
+
+预览格有两种。房间那格叫「预览」，跟着当前预览走，里面是内容域的 iframe（读者在里面看到的是网页，不是我们的组件）。自由区打开的某一份文件是它自己的格（带 `path`），由下面这几个查看器直接画在页面上。
+
+`frontend/src/lib/fileKind.ts` 判一个文件是哪种类型，取数那一层按同一个答案决定把不把字节交给 iframe —— 一个文件是哪种类型只有一个答案。查看器再按这个答案分派（`PanelPreviewView.vue`）：
+
+| 文件 | 查看器 | 能指什么 |
+|---|---|---|
+| `.md` | 就地渲染（`lib/markdown`，不传 `breaks`） | 不能指 |
+| `.pptx` `.ppt` `.odp` | `preview/PreviewSlides.vue` | 一页里的文字、整页 |
+| `view === 'pages'`：pdf、docx/doc/odt/rtf | `preview/PreviewPages.vue` | 一页里的文字 |
+| `view === 'sheet'`：xlsx/xls/csv | `preview/PreviewSheet.vue` | 一个单元格 |
+| 图片（`IMAGE_SUFFIXES`） | `preview/DesignImage.vue` | 一块矩形、画笔、打码 |
+
+选哪个查看器看的是**读者事后能指着什么**。分页文档留着文字，读者指一句话；表格留着单元格地址，`B7` 是芝士能直接打开的地址，把它分页恰好毁掉这一点；markdown 既没有页也没有格子，就按它本来的样子渲染，不转换成别的。幻灯片那种「一页」标准里没有对应的锚点型，见下。
+
+指出去的是**一条普通房间消息**：没有就地编辑，也没有能长期保留的批注 —— 读者要改的那句话正是芝士下一轮要改掉的那句话，锚点必然失效。四种形状：
+
+| 读者做了什么 | 消息 |
+|---|---|
+| 在图上画了东西 | `design.sketchMessage` 正文 + 合成图作附件（`attachments`） |
+| 在图上框了一块 | `design.regionMessage`：文件身份、原图尺寸、矩形坐标 |
+| 对幻灯片整页提问 | `kind: 'slide-page'` 的冻结引用（`lib/quotedContext.ts`，带文件身份、页码、该页全部文字），并自动 @当前席位的队友 |
+| PDF 里选中一段文字、点一个单元格 | `work.room.preview.locateMessage`：文件名、地址、原文 |
+
+合成图走附件那条路是有意的：「把这里改成蓝色」离开那张画了圈和箭头的图就指不明白，而附件是 agent 真看得到的那条路 —— 它渲染成一条原生图片输入，不是只给人看的缩略图。
+
+发出去之前重核一遍版本。文件版本在画的过程中被人换掉时宁可不发，也不能配着一张说的不是它的图发出去（`preview/usePreviewImageRegion.ts` 的 `matches`、`PanelPreviewView.vue` 的 `canUsePageContext`）。同一个理由，图片那块要先「版本已验证」才让选。
 
 ## 发布快照 {#sites}
 
