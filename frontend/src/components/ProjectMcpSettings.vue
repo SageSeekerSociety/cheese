@@ -113,6 +113,14 @@ function statusLine(server: McpServer) {
   }
 }
 
+// 它从哪来：项目的 .mcp.json，或声明它的那几个队友类型（名字取类型的标题）。
+function source(server: McpServer) {
+  const types = server.declared_by
+  if (!types) return t('work.mcp.source.project')
+  const titles = types.map((type) => type.title || type.name).join(t('work.mcp.listSeparator'))
+  return t('work.mcp.source.types', { types: titles }, types.length)
+}
+
 const DOT: Record<McpServer['status'], string> = {
   connected: 'status-dot--ok',
   ready: 'status-dot--ok',
@@ -169,6 +177,7 @@ watch(() => props.projectId, load)
               <div class="mcp-row__name">
                 <span class="t-body c-ink mcp-row__title">{{ server.name }}</span>
                 <span class="t-meta">{{ server.host }}</span>
+                <span class="t-meta" data-testid="mcp-source">{{ source(server) }}</span>
               </div>
               <div class="mcp-row__state">
                 <span class="status-dot" :class="DOT[server.status]" />

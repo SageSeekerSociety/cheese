@@ -1182,6 +1182,10 @@
       "missingValues": "需要填写 {names}",
       "disconnected": "未连接"
     },
+    "source": {
+      "project": "来自项目的 .mcp.json",
+      "types": "由 {types} 类型声明 | 由 {types} 类型声明"
+    },
     "action": {
       "connect": "连接",
       "reconnect": "重新连接",
