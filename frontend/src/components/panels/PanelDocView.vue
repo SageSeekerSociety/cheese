@@ -45,6 +45,8 @@ const props = withDefaults(
     /** 同一篇文档打开着的其他人。 */
     peers: DocPeer[]
     errorMsg: string | null
+    /** Authorized stored source when initial live conversion was refused. */
+    fallbackSource?: string | null
     aiOpened?: boolean
     // ---- 评论区 ----
     comments: Block[]
@@ -65,7 +67,13 @@ const props = withDefaults(
     toggleEditable: () => void
     setError: (message: string | null) => void
   }>(),
-  { agentName: () => t('work.room.defaultAgentName'), topicList: () => [], commentAuthor: '', sendComment: undefined }
+  {
+    agentName: () => t('work.room.defaultAgentName'),
+    topicList: () => [],
+    commentAuthor: '',
+    sendComment: undefined,
+    fallbackSource: null,
+  }
 )
 
 const emit = defineEmits<{
@@ -252,7 +260,9 @@ defineExpose({
               <!-- Large document title (Feishu Docs), = the topic title -->
               <h1 class="doc-page__title">{{ topicTitle(topic) }}</h1>
               <!-- 正文本身。 -->
+              <pre v-if="fallbackSource !== null" class="doc-source">{{ fallbackSource }}</pre>
               <DocSurface
+                v-else
                 ref="surfaceRef"
                 :editable="editable"
                 :loading="loading"
@@ -365,6 +375,15 @@ defineExpose({
   line-height: 1.5;
   letter-spacing: -0.02em;
   color: var(--ink);
+}
+
+.doc-source {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */

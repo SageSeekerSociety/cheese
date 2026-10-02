@@ -12,8 +12,9 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '../../api'
 import { exportMarkdown } from '../../lib/docSchema'
-import { remoteEdit, resetRooms, seedRoom, serverDoc } from '../../test/fakeDocCollab'
+import { arrive, remoteEdit, resetRooms, seedRoom, serverDoc } from '../../test/fakeDocCollab'
 
 const mocks = vi.hoisted(() => ({
   getDoc: vi.fn(),
@@ -86,6 +87,120 @@ function prose(container: Element): string {
 }
 
 describe('打开一篇协同文档', () => {
+  it('转换被拒绝时仍能完整读取授权接口中的原文，且不能编辑', async () => {
+    const original = '| 项目 | 分值 |\n| --- | --- |\n| 完成度 | 60 | 必须保留的附注 |\n\n[^1]: 必须保留的脚注\n'
+    seedRoom('t1', '', { error: '这份文档暂时无法编辑，原文已保留', refusedContent: true })
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: original, doc_version: 7 })
+    const { container, getByRole } = open(room('t1'))
+
+    await waitFor(() => expect(container.textContent).toContain('必须保留的附注'))
+    expect(container.textContent).toContain('[^1]: 必须保留的脚注')
+    expect(container.querySelector('.doc-prose')).toBeNull()
+    expect((getByRole('button', { name: /^只读$/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((window as unknown as { __docPanel: { matchesStored: () => boolean } }).__docPanel.matchesStored()).toBe(
+      false
+    )
+  })
+
+  it.each([401, 403])('原文接口以 %s 拒绝访问时，不保留上一份已授权正文', async (status) => {
+    const original = '[^1]: 不应在权限拒绝后显示的正文\n'
+    seedRoom('t1', '', { error: '这份文档暂时无法编辑，原文已保留', refusedContent: true })
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: original, doc_version: 7 })
+    const view = open(room('t1'))
+    await waitFor(() => expect(view.container.textContent).toContain('不应在权限拒绝后显示的正文'))
+
+    mocks.getDoc.mockRejectedValue(new ApiError(status, '你不是这个房间的成员'))
+    await view.rerender({ topic: room('t1'), activityTick: 1, topicList: [] })
+    await waitFor(() => expect(view.container.textContent).not.toContain('不应在权限拒绝后显示的正文'))
+    expect(view.container.textContent).toContain('你不是这个房间的成员')
+    expect(view.container.querySelector('.doc-prose')).toBeNull()
+  })
+
+  it('原文接口先拒绝访问、协同转换后被拒绝时，仍说明原文访问权限失败', async () => {
+    seedRoom('t1', '', { pending: true, error: '原文已保留', refusedContent: true })
+    mocks.getDoc.mockRejectedValue(new ApiError(403, '原文访问权限已撤销'))
+    const view = open(room('t1'))
+    await waitFor(() => expect(mocks.getComments).toHaveBeenCalled())
+    arrive('t1')
+    await waitFor(() => expect(view.container.textContent).toContain('原文访问权限已撤销'))
+    expect(view.container.querySelector('.doc-prose')).toBeNull()
+  })
+
+  it('换房间后到达的旧原文，不能替换当前房间的只读原文', async () => {
+    let finishOld!: (doc: unknown) => void
+    const oldRead = new Promise((resolve) => {
+      finishOld = resolve
+    })
+    seedRoom('a', '', { error: '原文已保留', refusedContent: true })
+    seedRoom('b', '', { error: '原文已保留', refusedContent: true })
+    mocks.getDoc.mockImplementation((id: string) =>
+      id === 'a'
+        ? oldRead
+        : Promise.resolve({ id: 'd-b', kind: 'doc', content: '[^1]: 乙房间的完整原文', doc_version: 9 })
+    )
+    const view = open(room('a'))
+    await view.rerender({ topic: room('b'), activityTick: 0, topicList: [] })
+    await waitFor(() => expect(view.container.textContent).toContain('乙房间的完整原文'))
+    finishOld({ id: 'd-a', kind: 'doc', content: '[^1]: 不属于当前房间的旧原文', doc_version: 7 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(view.container.textContent).toContain('乙房间的完整原文')
+    expect(view.container.textContent).not.toContain('不属于当前房间的旧原文')
+    expect(
+      (
+        window as unknown as { __docPanel: { getMarkdown: () => string | null; matchesStored: () => boolean } }
+      ).__docPanel.getMarkdown()
+    ).toBeNull()
+  })
+
+  it('权限拒绝不启用格式拒绝的原文视图', async () => {
+    seedRoom('t1', '', { error: '你不是这个房间的成员' })
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: '不得通过缓存显示的正文', doc_version: 7 })
+    const { container } = open(room('t1'))
+    await waitFor(() => expect(container.textContent).toContain('你不是这个房间的成员'))
+    expect(container.textContent).not.toContain('不得通过缓存显示的正文')
+    expect(container.querySelector('.doc-prose')).toBeNull()
+  })
+
+  it('从格式被拒绝的文档换到受支持文档后，恢复正常编辑且不留旧原文', async () => {
+    seedRoom('a', '', { error: '原文已保留', refusedContent: true })
+    seedRoom('b', '可以编辑的新正文')
+    mocks.getDoc.mockImplementation((id: string) =>
+      Promise.resolve({
+        id: `d-${id}`,
+        kind: 'doc',
+        doc_version: id === 'a' ? 7 : 8,
+        content: id === 'a' ? '[^1]: 上一份只读原文' : exportMarkdown(serverDoc('b')),
+      })
+    )
+    const view = open(room('a'))
+    await waitFor(() => expect(view.container.textContent).toContain('上一份只读原文'))
+
+    await view.rerender({ topic: room('b'), activityTick: 0, topicList: [] })
+    await waitFor(() => expect(prose(view.container)).toContain('可以编辑的新正文'))
+    expect(view.container.textContent).not.toContain('上一份只读原文')
+    expect(view.container.querySelector('.doc-prose')?.getAttribute('contenteditable')).toBe('true')
+    const probe = (window as unknown as { __docPanel: { matchesStored: () => boolean } }).__docPanel
+    await waitFor(() => expect(probe.matchesStored()).toBe(true))
+  })
+
+  it('格式仍被拒绝时跟随已存版本更新原文，文档 AI 的选区核对仍不可用', async () => {
+    seedRoom('t1', '', { error: '原文已保留', refusedContent: true })
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: '[^1]: 第七版原文', doc_version: 7 })
+    const view = open(room('t1'))
+    await waitFor(() => expect(view.container.textContent).toContain('第七版原文'))
+
+    mocks.getDoc.mockResolvedValue({ id: 'd1', kind: 'doc', content: '[^1]: 第八版原文', doc_version: 8 })
+    await view.rerender({ topic: room('t1'), activityTick: 1, topicList: [] })
+    await waitFor(() => expect(view.container.textContent).toContain('第八版原文'))
+    expect(view.container.textContent).not.toContain('第七版原文')
+    const probe = (
+      window as unknown as { __docPanel: { getMarkdown: () => string | null; matchesStored: () => boolean } }
+    ).__docPanel
+    expect(probe.getMarkdown()).toBeNull()
+    expect(probe.matchesStored()).toBe(false)
+  })
+
   it('打不开时说原因，不摆一个空编辑器冒充空文档', async () => {
     seedRoom('t1', '', { error: '你不是这个房间的成员' })
     const { container } = open(room('t1'))

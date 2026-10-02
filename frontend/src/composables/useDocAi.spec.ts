@@ -5,9 +5,12 @@ const flushPromises = async () => {
   await nextTick()
   await Promise.resolve()
 }
+import { Editor } from '@tiptap/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../api'
+import { captureDocSelection } from '../lib/docAiSelection'
+import { docExtensions } from '../lib/docSchema'
 
 import { useDocAi } from './useDocAi'
 
@@ -62,6 +65,62 @@ function setup() {
   return { ai, topic, version, blocked, reload }
 }
 describe('document AI operation recovery', () => {
+  it.each(['blocked', 'version'] as const)(
+    'retires an old selected quote and proposal after the document becomes %s',
+    async (change) => {
+      const { ai, blocked, version } = setup()
+      const editor = new Editor({ extensions: docExtensions(), content: 'text', contentType: 'markdown' })
+      try {
+        editor.commands.setTextSelection({ from: 1, to: 5 })
+        api.getDocAiSource.mockResolvedValue({
+          document_id: 'doc',
+          base_version: 4,
+          source: 'text',
+          offset_unit: 'utf8-bytes',
+          nodes: [{ node_id: 'n', start: 0, end: 4 }],
+        })
+        await ai.prepare(captureDocSelection(editor))
+        expect(ai.preparedContext.value).toMatchObject({ state: 'verified', original: 'text', scope: 'selection' })
+        ai.cards.value = [
+          {
+            request: {
+              request_id: 'r',
+              state: 'succeeded',
+              kind: 'propose',
+              generation: 1,
+              proposal_id: 'p',
+              answer: 'done',
+              error: null,
+            },
+            proposal: {
+              proposal_id: 'p',
+              request_id: 'r',
+              revision: 2,
+              state: 'pending',
+              document_id: 'doc',
+              base_version: 4,
+              selection: ai.selection.value!,
+              replacement: 'new',
+              answer: 'done',
+              accepted_by: null,
+              accepted_version: null,
+            },
+          },
+        ]
+        ai.question.value = 'use that quote'
+        if (change === 'blocked') blocked.value = true
+        else version.value = 5
+        expect(ai.preparedContext.value).toEqual({ state: 'unavailable' })
+        await ai.submit('propose')
+        await ai.accept('p')
+        expect(api.createDocAiRequest).not.toHaveBeenCalled()
+        expect(api.acceptDocAiProposal).not.toHaveBeenCalled()
+      } finally {
+        editor.destroy()
+      }
+    }
+  )
+
   it('reads the original question and document from the persisted request after later edits', async () => {
     const { ai, version } = setup()
     version.value = 9

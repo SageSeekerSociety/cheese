@@ -764,6 +764,8 @@
       "offline": "Offline",
       "offlineHint": "Your changes will sync when the connection is back",
       "noEditAccess": "You cannot edit this document",
+      "sourcePreserved": "The editor does not yet support this document's format. The original source is preserved.",
+      "openRefused": "Unable to open this document. Check your access to the room.",
       "backToEdit": "Back to editing",
       "readOnly": "Read-only",
       "options": "Document options",

@@ -58,6 +58,12 @@ interface Context {
   agent: boolean
 }
 
+function refuseInitialContent(message: string, line?: number): never {
+  // Hocuspocus sends reason through authenticationFailed when loading fails,
+  // including after it has accepted the first reader's ticket.
+  throw Object.assign(new Error(message), { reason: JSON.stringify({ error: 'content', message, line }) })
+}
+
 export function createCollabServer(config: CollabConfig): Server {
   const ticketKey = deriveKey(config.secret, 'ticket')
   const internalKey = deriveKey(config.secret, 'internal')
@@ -141,24 +147,31 @@ export function createCollabServer(config: CollabConfig): Server {
         return document
       }
       if (!loaded.content.trim()) return document
-      writeMarkdown(document, loaded.content)
-      const exported = exportMarkdown(document)
-      const report = compareRoundTrip(loaded.content, exported)
-      if (!report.clean) {
-        // The original stays in the version history; this says where to look.
-        console.warn(`[collab] ${documentName}: converting changed the Markdown\n${report.diff}`)
+      const problem = checkMarkdownWrite(loaded.content)
+      if (problem) refuseInitialContent(problem.message, problem.line)
+      // Validate privately: refusal must leave both stored and live state alone.
+      const converted = new Y.Doc()
+      try {
+        writeMarkdown(converted, loaded.content)
+        const exported = exportMarkdown(converted)
+        const report = compareRoundTrip(loaded.content, exported)
+        if (!report.clean) {
+          console.warn(`[collab] ${documentName}: converting changed the Markdown\n${report.diff}`)
+          refuseInitialContent('这份文档的写法不能完整转换，原文已保留')
+        }
+        // Store supported respelling once, before the first live publication.
+        const state = Y.encodeStateAsUpdate(converted)
+        await backend.store(documentName, {
+          state,
+          content: exported === loaded.content ? null : exported,
+          actors: ['system'],
+          converted: true,
+        })
+        Y.applyUpdate(document, state)
+        return document
+      } finally {
+        converted.destroy()
       }
-      // From here on the stored text is what the document exports, so whatever
-      // reads it (芝士, the document AI's offsets) reads the document people see.
-      // A conversion that only respells the text is the platform's, and is not
-      // news to anyone in the room.
-      await backend.store(documentName, {
-        state: Y.encodeStateAsUpdate(document),
-        content: exported === loaded.content ? null : exported,
-        actors: ['system'],
-        converted: true,
-      })
-      return document
     },
 
     async onChange({ documentName, context }) {

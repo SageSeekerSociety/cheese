@@ -108,6 +108,7 @@ defineExpose({ pulse, highlightTurn })
     :connection="doc.connection.value"
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
+    :fallback-source="doc.fallbackSource.value"
     :ai-opened="ai.opened.value"
     :comments="doc.comments.value"
     :comment-author="doc.commentAuthor"
