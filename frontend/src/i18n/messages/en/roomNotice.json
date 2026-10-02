@@ -106,7 +106,7 @@
   "contextCompactFailed": "Context compaction did not finish",
   "contextCompactRunning": "The conversation is too long, so the context is being compacted; work resumes afterwards, with no replies in the meantime",
   "contextCompactSessionEnded": "The session ended before compaction finished",
-  "creditsExhausted": "The available token allowance is used up, so this turn did not run",
+  "creditsExhausted": "The credits are used up, so this turn did not run",
   "creditsExhaustedDetail": "Ask the team admin, or whoever grants the allowance, to top it up.",
   "deliveryFallback": "The message could not reach the running session and has been queued",
   "deliveryFallbackDetail": "The message is saved and the platform will handle it from the queue. No need to resend.",
@@ -352,5 +352,6 @@
   "workTaskSyncFailed": "Task {task}: {reason}",
   "workspaceVcsPerms": "This turn did not start: the workspace repository has the wrong permissions.",
   "workspaceVcsPermsDetail": "The repository directory belongs to another system user, so the platform cannot access it. Project files, committed changes and history are unaffected. An admin needs to change the owner once on the machine (deploy/fix-workspace-ownership.sh); the platform cannot do it by itself. Forward this notice to an admin and retry once it is fixed.",
-  "workspaceVcsPermsTitle": "Wrong permissions on the workspace repository"
+  "workspaceVcsPermsTitle": "Wrong permissions on the workspace repository",
+  "creditsRefused": "{reason} This turn did not run."
 }

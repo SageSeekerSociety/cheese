@@ -22,7 +22,6 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import memory_changed_notice
@@ -44,7 +43,6 @@ from app.domain.room_task.place import Place
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.ledger import Ledger, payer_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -189,14 +187,10 @@ async def _gateway_budget_target(
     gateway must not be told one at all (no price knob, or the project is
     unmetered). Reading it belongs to the READ path: a caller that finds the
     key's budget already in step has nothing to write and nothing to lock."""
-    if not settings.llm_gateway_credit_usd:
-        return None
-    balance = await Ledger(session).balance(
-        await payer_for_project(session, project_id)
-    )
-    if balance.unlimited:
-        return None
-    return round(balance.ever_granted * settings.llm_gateway_credit_usd, 6)
+    from app.domain.usage.services import UsageService
+
+    credits = await UsageService(session).project_credits(project_id)
+    return credits["gateway_budget_usd"]
 
 
 async def _pass_policy_gate(

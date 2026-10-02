@@ -267,5 +267,9 @@
   "mcpServerNeedsHttps": "MCP 服务器地址必须是 HTTPS：{host}",
   "repoTakenVisible": "仓库 {repo} 已经连接在项目「{project}」上，一个仓库只能连接一个项目。请到那个项目里工作，或者换一个仓库。",
   "repoTakenHidden": "仓库 {repo} 已经连接在另一个你看不到的项目上，一个仓库只能连接一个项目。请换一个仓库，或者请那个项目的成员邀请你加入。",
-  "siteBuildRequired": "当前已采纳版本没有可直接发布的静态网站。需要先准备包含全部资源的静态网站，并提交审阅。"
+  "siteBuildRequired": "当前已采纳版本没有可直接发布的静态网站。需要先准备包含全部资源的静态网站，并提交审阅。",
+  "creditsMonthSpent": "本月额度已用完，{month}月{day}日重置。",
+  "creditsSpent": "额度已用完。",
+  "creditsWindowFull": "{hours} 小时内的用量已达上限，{month}月{day}日 {time} 恢复。",
+  "modelNotInPlan": "当前方案不能使用模型「{label}」。"
 }

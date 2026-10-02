@@ -391,11 +391,9 @@ class GatewayModelsService:
         key = by_alias.get(f"project-{project.id}") or by_user.get(
             f"project:{project.id}"
         )
-        # 刹车值的「应有」值是算力换算来的；unlimited（没有发放记录）时没有这个数，
-        # 此时 key 上任何 max_budget 都是一次显式的覆盖。
-        derived = None
-        if not summary["unlimited"] and settings.llm_gateway_credit_usd is not None:
-            derived = summary["ever_granted"] * settings.llm_gateway_credit_usd
+        # 刹车值的「应有」值：key 已花的加上还能花的额度折成美元；方案不限量时没有
+        # 这个数，此时 key 上任何 max_budget 都是一次显式的覆盖。
+        derived = summary["gateway_budget_usd"]
         max_budget = key.max_budget if key else None
         override = (
             max_budget if max_budget is not None and max_budget != derived else None

@@ -33,7 +33,7 @@ from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
-from tests.integration.conftest import registered
+from tests.integration.conftest import put_on_plan, registered
 from tests.unit.test_device_provider import FakeHub
 
 
@@ -55,6 +55,8 @@ async def _room(factory) -> dict[str, uuid.UUID]:
     async with factory() as session:
         await registered(session, "alice")
         project = await ProjectService(session).create(name="P", owner_handle="alice")
+        # The work here binds Claude subscription models, which Free leaves out.
+        await put_on_plan(session, project.team_id, "reserve")
         room = await TopicService(session).create(
             project_id=project.id, title="房间", created_by="alice"
         )

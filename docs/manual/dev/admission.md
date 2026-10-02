@@ -5,7 +5,6 @@ summary: 每个模型请求能不能跑、走哪条路、用哪个模型名，�
 covers:
   - backend/app/api/routes/llm_proxy.py
   - backend/app/domain/agent/supply.py
-  - backend/app/domain/agent/budget_proxy.py
   - backend/app/domain/agent/profiles.py
   - backend/app/domain/room_task/binding.py
   - backend/app/domain/agent_instance/configuration.py
@@ -45,8 +44,8 @@ covers:
 ## 预算这一半 {#budget}
 
 - 项目来自 scoped token 的已验证 claims（`claims["p"]`），不是请求头——头是可以自称的。没有 token 或没有 `p` 就是 401。
-- `UsageService.project_credits()`（`usage/ledger.py` 的余额）给出 `credits_used` 与 `credits_total`；`unlimited` 时 `limit` 是 `None`。`budget_proxy.decide` 是纯函数，三种答案：`unlimited`、`{remaining:.4f} of budget remaining`、`budget spent: {spent:.4f} of {limit:.4f}`。
-- 同一个计算额度余额，网关那把 `max_budget` 也是按它折成美元价——**一个预算，两个执行点**。
+- `UsageService.admit_project()`（`usage/ledger.py` 的 `Ledger.admit`）答能不能跑：放行时 `reason` 是 `admitted`，拒绝时是账本的那句话（「本月额度已用完，11月1日重置。」或时间窗口满了几点恢复），见[计费流程](/dev/billing#plans)。
+- 同一份额度，网关那把 `max_budget` 也按它折成美元——**一个预算，两个执行点**。
 - 拒绝时顺手告诉房间：`note_credits_refusal(place)` 给正在跑的那个回合发一条额度耗尽事件（#715）。它用自己的数据库会话。
 
 ## 供给这一半 {#supply}
@@ -77,10 +76,9 @@ covers:
 | 模块 | 管什么 |
 | --- | --- |
 | `api/routes/llm_proxy.py` | `/llm/admission` 本身，以及给 Codex / Pi 这类走 base URL 的 harness 用的 catch-all 转发 |
-| `domain/agent/budget_proxy.py` | `BudgetState(spent, limit)` 与 `decide()`，纯函数，没有 IO |
 | `domain/agent/supply.py` | `SUBSCRIPTION` / `GATEWAY` 两个池的名字与 `resolve_pool`，池的定义只有这一处 |
 | `room_task/binding.py` | `WorkBinding(model, supply, effort)`、`wire_model`、`catalog()`、`resolve()` |
-| `agent_instance/configuration.py` | `project_pool()` 与 `model_choices()`：订阅的清单加网关目录里可上架的（tier 标 `TIER_INCLUDED`），按 harness 过滤掉跑不起来的模型；项目的 harness 没注册时是空列表 |
+| `agent_instance/configuration.py` | `project_pool()` 与 `model_choices()`：订阅的清单加网关目录里可上架的（tier 取网关上的 `cheese_tier`，缺省 included），按 harness 过滤掉跑不起来的模型；项目的 harness 没注册时是空列表 |
 | `domain/agent/profiles.py` | 执行 profile：一个项目跑哪个模型、带哪套供应商环境；`full_env()` 显式把 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` 清成空串，免得从后端 `os.environ` 漏进来的别的供应商配置把路由劫走 |
 
 ## 反过来那半：不能改 base URL 的 harness {#catch-all}

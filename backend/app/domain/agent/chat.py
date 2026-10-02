@@ -280,9 +280,8 @@ from app.domain.topic.models import TitleSource, Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
-from app.domain.usage.ledger import Ledger, payer_for_project
+from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 from app.domain.usage.models import ResourceUsage
-from app.domain.usage.repositories import UsageRepository
 
 PRIVATE_SKILLS = ["private-chat"]
 
@@ -2665,8 +2664,9 @@ class ChatService(SessionRecovery):
                     work_id=state.work_id,
                 )
             if not usages:
-                await UsageRepository(session).add(
-                    project_id=state.project_id,
+                await Ledger(session).record(
+                    await payer_for_project(session, state.project_id),
+                    credits=0.0,
                     topic_id=state.topic_id,
                     model=state.model or settings.agent_model,
                     input_tokens=0,
@@ -3979,11 +3979,11 @@ class ChatService(SessionRecovery):
                     }
             if project is not None:
                 actor_handle = acting_agent or agent.handle
-                policy = gate.policy_of(project.settings)
-                # 不限档的项目——今天的每一个——在机器这一侧一步也不多走：把「要哪
-                # 台机器」写成一次调用得列一遍项目设备、列一遍 host health、再取一
-                # 次机主，而不限档时判决与这几条查询无关。闸门对现有项目透明，代价
-                # 上也得透明，这是每一轮都走的路。
+                tiers = (await team_terms(session, project.team_id)).model_tiers
+                policy = gate.policy_of(project.settings, tiers)
+                # 项目不限档时，机器这一侧一步也不多走：把「要哪台机器」写成一次调用
+                # 得列项目设备、host health、再取机主，而判决与这些查询无关。方案的
+                # 档位只管模型，不进这一侧。
                 if (
                     needs_place
                     and not provider.deferred_work
@@ -4769,14 +4769,14 @@ async def _record_dream_usage(
 ) -> None:
     """把整理自己那一轮的花销记成 `memory_dream`。
 
-    钩子骨架报不出 token 数（交互式 Claude Code 本地看不见），所以这一行的 tokens
-    常常是 0——它记的是「这里跑过一次整理」，而这一条和「什么都没发生」是两件事
-    （`UsageRepository.add` 的 docstring 讲的就是这个）。真正要紧的是 `kind`：判据
-    聚合时按前缀剔掉它，自己的花费就不会把自己算成「写了很多记忆」。
+    钩子骨架报不出 token 数，所以这一行的 tokens 常常是 0——它记的是「这里跑过一次
+    整理」，这和「什么都没发生」是两件事。真正要紧的是 `kind`：判据聚合时按前缀剔
+    掉它，自己的花费就不会把自己算成「写了很多记忆」。
     """
     model = usage.model if usage is not None and usage.model else settings.agent_model
-    await UsageRepository(session).add(
-        project_id=project_id,
+    await Ledger(session).record(
+        await payer_for_project(session, project_id),
+        credits=0.0,
         topic_id=root_topic_id,
         model=model,
         input_tokens=usage.input_tokens if usage is not None else 0,

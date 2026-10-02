@@ -56,7 +56,7 @@ from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.credits import usage_to_credits
-from app.domain.usage.ledger import Ledger, payer_for_project
+from app.domain.usage.ledger import Ledger, payer_for_project, team_terms
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,10 @@ async def _model_kwargs(
             session,
             topic_id,
             _model_policy_call(project, agent),
-            gate.policy_of(project.settings),
+            gate.policy_of(
+                project.settings,
+                (await team_terms(session, project.team_id)).model_tiers,
+            ),
             actor=acting_agent or agent.handle,
         )
         if proposed is not None:

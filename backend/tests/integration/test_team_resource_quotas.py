@@ -20,7 +20,11 @@ from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.services import UsageService
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import (
+    free_plan_credits,
+    post_project,
+    set_free_plan_credits,
+)
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -95,6 +99,8 @@ async def test_team_override_survives_default_change_and_can_inherit_again(db_fa
 async def test_shared_tokens_and_earmarked_credits_keep_their_boundaries(db_factory):
     teams, (a, b, c) = await seed_projects(db_factory)
     async with db_factory() as session:
+        # Only the grants below pay: the teams' plan issues nothing.
+        await set_free_plan_credits(session, 0)
         ledger = Ledger(session)
         credits = UsageService(session)
 
@@ -111,7 +117,7 @@ async def test_shared_tokens_and_earmarked_credits_keep_their_boundaries(db_fact
         assert restricted.credits_used == 3
         assert shared.credits_used == 2
         assert (await credits.project_credits(b))["credits_remaining"] == 8
-        assert (await credits.project_credits(c))["unlimited"] is True
+        assert (await credits.project_credits(c))["credits_remaining"] == 0
         await charge(b, 8)
         assert (await credits.project_credits(a))["credits_remaining"] == 0
         assert (await credits.project_credits(b))["unlimited"] is False
@@ -126,6 +132,7 @@ async def test_shared_tokens_and_earmarked_credits_keep_their_boundaries(db_fact
 async def test_concurrent_project_settlements_do_not_lose_team_spend(db_factory):
     teams, (a, b, _) = await seed_projects(db_factory)
     async with db_factory() as session:
+        await set_free_plan_credits(session, 0)
         await Ledger(session).grant(teams[0], 5)
         await Ledger(session).grant(teams[0], 10)
         await session.commit()
@@ -207,6 +214,7 @@ async def test_migration_preserves_existing_balances_and_project_restrictions(
 
 
 def test_team_quota_view_is_private_and_preserves_project_usage(client):
+    free_plan_credits(client, 0)
     owner = seed_user(client, "quota_viewer")
     outsider = seed_user(client, "quota_outsider")
     headers = {"Authorization": f"Bearer {owner}"}

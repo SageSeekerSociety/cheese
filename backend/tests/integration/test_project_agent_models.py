@@ -11,7 +11,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from tests.conftest import stub_compute
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    put_on_plan,
+    session_auth_headers,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +35,15 @@ def create(client):
     assert response.status_code == 200, response.text
     project = response.json()["data"]
     client.headers.update(session_auth_headers("alice"))
+
+    # These tests are about routing the Claude subscription models; Free
+    # leaves those out, Reserve allows every model.
+    async def reserve() -> None:
+        async with client.test_request_factory() as session:  # type: ignore[attr-defined]
+            await put_on_plan(session, project["team_id"], "reserve")
+            await session.commit()
+
+    client.portal.call(reserve)  # type: ignore[union-attr]
     return project
 
 

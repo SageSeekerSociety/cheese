@@ -36,6 +36,7 @@ from app.core.errors import (
     BaseError,
     ForbiddenError,
     NotFoundError,
+    message_key,
 )
 from app.core.redis import get_redis_client
 from app.core.sandbox_auth import personal_claims
@@ -187,9 +188,12 @@ class AskIn(BaseModel):
 
 def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
     headers = {"Retry-After": str(retry_after)} if retry_after else {}
-    return JSONResponse(
-        {"code": status, "message": message}, status_code=status, headers=headers
-    )
+    body: dict = {"code": status, "message": message}
+    key = message_key(message)
+    if key is not None:
+        # A catalog sentence: the browser renders it in its reader's language.
+        body["error"] = {"message": message, "i18n": key}
+    return JSONResponse(body, status_code=status, headers=headers)
 
 
 @router.post("/conversations/{conversationId}/ask")
@@ -209,10 +213,10 @@ async def ask(
     key = await person_key(db, auth.user_id, async_session_factory)
     if rates is None or key is None or not people.available():
         return _refuse(503, "芝士暂未开放，稍后再试。", 60)
-    balance = await Ledger(db).balance(await payer_for_person(db, auth.user_id))
+    refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
-    if balance.exhausted:
-        return _refuse(429, balance.exhausted_message(), balance.retry_after_s())
+    if refused is not None:
+        return _refuse(429, refused.message, refused.retry_after_s())
 
     redis = get_redis_client()
     if redis is None or not await asking.hold(redis, conversation_id):

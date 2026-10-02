@@ -64,12 +64,9 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "description": "平台模型池",
             "default": not subscription_default and item.id == settings.agent_model,
             "supply": GATEWAY,
-            # The pool's models are 档位 `included`: the gateway only offers what
-            # it can bill (`gateway_catalog.offerable`), and what they cost the
-            # project is already capped by the project key's `max_budget`. The
-            # tiers a policy gates on are about spend a budget does NOT cap —
-            # subscription quota, and a machine that belongs to somebody else.
-            "tier": TIER_INCLUDED,
+            # The tier an administrator set on the gateway (`cheese_tier`):
+            # which plans may use it.
+            "tier": item.tier,
         }
         for item in gateway_catalog.offerable()
     )

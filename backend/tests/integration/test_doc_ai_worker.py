@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.api.doc_ai_runtime import authorize_work, reconcile_usage
 from app.core.config import settings
@@ -18,15 +18,20 @@ from app.domain.doc_ai.worker import run_one
 from app.domain.project.models import Project
 from app.domain.topic.services import TopicService
 from app.domain.usage.ledger import Ledger
-from app.domain.usage.models import ComputeGrant
+from app.domain.usage.models import ComputeGrant, Plan
 from app.domain.usage.repositories import UsageRepository
 from app.domain.user.services import user_by_handle
+from tests.integration.conftest import put_on_plan
 from tests.integration.test_living_doc_journal import seed
 from tests.support.living_doc import write_doc
 
 
 async def _spent_earmark(session, project_id) -> None:
-    """A project whose only credits are earmarked and already spent."""
+    """A project whose only credits are earmarked and already spent: its
+    team's plan issues nothing."""
+    await session.execute(
+        update(Plan).where(Plan.key == "free").values(credits_per_period=0)
+    )
     pack = await Ledger(session).grant_earmark(
         project_id=project_id, source_task_id=None, credits_total=1
     )
@@ -43,6 +48,9 @@ async def pending(factory, *, supply="gateway", empty_budget=False):
             "supply": supply,
             "default_model": settings.agent_model if supply == "gateway" else "sonnet",
         }
+        if supply != "gateway":
+            # Free leaves the Claude subscription models out; Reserve has them.
+            await put_on_plan(session, project.team_id, "reserve")
         doc, _ = await write_doc(session, room, "原文", "alice")
         bound = await project_binding(session, room)
         user = await user_by_handle(session, "alice")
@@ -234,7 +242,7 @@ async def test_http_failure_is_durable_unpriced_metered_and_not_reinvoked(
     "supply,empty_budget,reason",
     [
         ("subscription", False, "尚不支持"),
-        ("gateway", True, "budget spent"),
+        ("gateway", True, "额度已用完"),
     ],
 )
 async def test_subscription_or_budget_refusal_is_durable_without_fallback(
@@ -351,7 +359,7 @@ async def test_key_wait_cannot_bypass_changed_admission_or_lease(
         row = await DocAiService(session).get(room, request_id)
         assert row.state == ("cancelled" if change == "cancel" else "failed")
         if change == "budget":
-            assert "budget spent" in row.error
+            assert "额度已用完" in row.error
         assert (await TopicService(session).get_doc(room)).content == "原文"
         assert (await TopicService(session).get_doc(room)).doc_version == 1
 

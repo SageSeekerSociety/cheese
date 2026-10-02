@@ -77,6 +77,9 @@ class Policy:
 
     allowed_tiers: frozenset[str] | None = None
     over_tier: str = DENY
+    #: 团队方案允许的模型档位（#2397），`None` 是不限。只管模型，不管机器；项目
+    #: 只能在它里面再收紧。
+    plan_model_tiers: frozenset[str] | None = None
 
     @property
     def lets_everything_through(self) -> bool:
@@ -90,7 +93,9 @@ class Policy:
         return self.allowed_tiers is None
 
 
-def policy_of(project_settings: dict | None) -> Policy:
+def policy_of(
+    project_settings: dict | None, plan_model_tiers: frozenset[str] | None = None
+) -> Policy:
     """从项目设置读出这两句话。读不懂的值按默认算。
 
     一个拼错的设置不能让项目下不去线——和 `agent/supply.py` 的 `resolve_pool` 同
@@ -106,6 +111,7 @@ def policy_of(project_settings: dict | None) -> Policy:
     return Policy(
         allowed_tiers=allowed,
         over_tier=disposition if disposition in DISPOSITIONS else DENY,
+        plan_model_tiers=plan_model_tiers,
     )
 
 
@@ -156,12 +162,22 @@ class OverTier(ValidationError):
     """超档且项目的处置是拒绝——一次说得出口的拒绝，不是悄悄降档（I27）。"""
 
 
+class OverPlan(OverTier):
+    """模型不在团队方案允许的档位内。总是拒绝：项目主人点头也解除不了方案。"""
+
+
 def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
     """这次调用可以自己发生吗。
 
     **全仓只有这一处回答「超档怎么办」。** 调用点问的是这一句，不自己判；
     `tests/unit/test_policy_gate.py` 里有一条守卫盯着这件事。
     """
+    if (
+        call.resource == Resource.model
+        and policy.plan_model_tiers is not None
+        and call.tier not in policy.plan_model_tiers
+    ):
+        raise OverPlan(say("modelNotInPlan", label=call.label))
     if policy.allowed_tiers is None or call.tier in policy.allowed_tiers:
         return Allowed(call)
     if policy.over_tier == PROPOSE:

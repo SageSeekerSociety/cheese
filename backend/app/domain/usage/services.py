@@ -17,8 +17,19 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
+
+
+def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
+    """The ``max_budget`` a project's gateway key should carry: what the key
+    has spent so far, plus what the project may still spend, in USD. None is no
+    brake at all: an unlimited plan, or no price per credit to convert with."""
+    price = settings.llm_gateway_credit_usd
+    if balance.unlimited or not price:
+        return None
+    return round(spent_usd + max(0.0, balance.credits_remaining) * price, 4)
 
 
 class UsageService:
@@ -34,14 +45,42 @@ class UsageService:
         「刹车上被设成了多少」，所以这扇门得把它转出去。
         """
         payer = await ledger.payer_for_project(self._session, project_id)
-        return (await ledger.Ledger(self._session).balance(payer)).summary()
+        return (await self._summaries({project_id: payer}))[project_id]
+
+    async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
+        """The model tiers the team's plan allows; None is every tier."""
+        return (await ledger.team_terms(self._session, team_id)).model_tiers
+
+    async def admit_project(self, project_id: uuid.UUID):
+        """Whether a call in this project may run now: None, or the
+        ``ledger.Refusal`` saying why not and until when."""
+        payer = await ledger.payer_for_project(self._session, project_id)
+        return await ledger.Ledger(self._session).admit(payer)
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
         """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回
         额度包，再按与逐项目同一条规则（`ledger._applies`）归给各项目。"""
         payers = await ledger.payers_for_projects(self._session, projects)
+        return await self._summaries(payers)
+
+    async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
-        return {key: balance.summary() for key, balance in balances.items()}
+        spent = await self._repo.gateway_spend(list(payers))
+        out = {}
+        for key, balance in balances.items():
+            summary = balance.summary()
+            summary["gateway_budget_usd"] = _gateway_budget(
+                balance, spent.get(key, 0.0)
+            )
+            out[key] = summary
+        return out
+
+    async def team_credits(self, team_id: int) -> dict:
+        """What a team may spend across its projects: its plan's pack for the
+        month and the credits bought or granted to it, earmarks aside."""
+        terms = await ledger.team_terms(self._session, team_id)
+        payer = ledger.Payer(team_id=team_id, terms=terms)
+        return (await ledger.Ledger(self._session).balance(payer)).summary()
 
     async def team_packs(self, team_id: int) -> list:
         """Every live pack a team holds, its project earmarks too."""

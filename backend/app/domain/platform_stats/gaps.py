@@ -179,11 +179,8 @@ class GapRepository:
         }
 
     async def _unlimited_project_ids(self) -> list:
-        """不计量（unlimited）的项目：手上一个可用的额度包都没有，而部署开着
-        `credits_unlimited`。判据与准入同一处（`usage.ledger`）——这里数的是「没有
-        额度包」，不是「额度用完了」。"""
-        if not settings.credits_unlimited:
-            return []
+        """不计量（unlimited）的项目：所属团队挂在不限量的方案上。判据与准入同一
+        处（`usage.ledger`）——这里数的是「方案不限量」，不是「额度用完了」。"""
         projects = list((await self._session.execute(select(Project))).scalars())
         payers = await ledger.payers_for_projects(self._session, projects)
         balances = await ledger.Ledger(self._session).balances(payers)
@@ -248,8 +245,6 @@ class GapRepository:
         **只覆盖这一台**（模块 docstring 第 4 条）。远端设备、云主机各有各的盘。
         """
         import shutil
-
-        from app.core.config import settings
 
         root = getattr(settings, "workspace_root", None)
         if not root or not Path(root).exists():

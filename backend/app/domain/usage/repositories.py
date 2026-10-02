@@ -93,6 +93,38 @@ class UsageRepository:
         await self._session.flush()
         return row
 
+    async def team_window(
+        self, team_id: int, *, since: datetime
+    ) -> tuple[float, datetime | None]:
+        """Credits ``team_id`` was charged since ``since``, and its oldest row
+        in that span — read from the ``(team_id, created_at)`` index alone."""
+        row = (
+            await self._session.execute(
+                select(
+                    func.coalesce(func.sum(ResourceUsage.credits), 0.0),
+                    func.min(ResourceUsage.created_at),
+                ).where(
+                    ResourceUsage.team_id == team_id,
+                    ResourceUsage.created_at >= since,
+                )
+            )
+        ).one()
+        return float(row[0]), row[1]
+
+    async def gateway_spend(self, project_ids: list[uuid.UUID]) -> dict:
+        """Project → USD its gateway key has been recorded spending, ever."""
+        if not project_ids:
+            return {}
+        rows = await self._session.execute(
+            select(ResourceUsage.project_id, func.sum(ResourceUsage.cost_usd))
+            .where(
+                ResourceUsage.project_id.in_(project_ids),
+                ResourceUsage.route == "gateway",
+            )
+            .group_by(ResourceUsage.project_id)
+        )
+        return {pid: float(spent or 0.0) for pid, spent in rows}
+
     async def _agg(self, column, value) -> dict:
         # The public `turns` key is retained for wire compatibility, but its
         # number now means distinct originating human messages or platform work

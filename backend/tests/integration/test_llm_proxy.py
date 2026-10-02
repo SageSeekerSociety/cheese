@@ -14,7 +14,7 @@ import pytest
 from app.api.routes import llm_proxy
 from app.core.db import pool_status
 from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, set_free_plan_credits
 
 
 def _make_project(client) -> str:
@@ -243,18 +243,19 @@ async def test_admission_requires_a_scoped_token(client):
 
 @pytest.mark.anyio
 async def test_admission_answers_from_the_grant_balance(client):
-    """One budget, two enforcement points: the same compute grants the gateway
-    prices into max_budget answer the subscription proxy's yes/no here."""
+    """One budget, two enforcement points: the same credits the gateway prices
+    into max_budget answer the subscription proxy's yes/no here."""
+    from app.domain.usage.ledger import Ledger, payer_for_project
+
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)
+    async with client.test_factory() as session:
+        await set_free_plan_credits(session, 0)
 
-    # No grants at all = 自治项目: never refused.
+    # A plan that issues nothing, and no other credits: refused.
     r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
-    body = r.json()["data"]
-    assert body["allow"] is True and body["reason"] == "unlimited"
-
-    from app.domain.usage.ledger import Ledger, payer_for_project
+    assert r.json()["data"]["allow"] is False
 
     async with client.test_factory() as session:
         await Ledger(session).grant_earmark(
@@ -273,13 +274,14 @@ async def test_admission_answers_from_the_grant_balance(client):
     r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
     body = r.json()["data"]
     assert body["allow"] is False
-    assert "5.0000" in body["reason"]
+    assert "额度已用完" in body["reason"]
 
 
 async def _exhaust(client, pid: str) -> None:
     from app.domain.usage.ledger import Ledger, payer_for_project
 
     async with client.test_factory() as session:
+        await set_free_plan_credits(session, 0)
         ledger = Ledger(session)
         await ledger.grant_earmark(
             project_id=uuid.UUID(pid), source_task_id=None, credits_total=1.0
