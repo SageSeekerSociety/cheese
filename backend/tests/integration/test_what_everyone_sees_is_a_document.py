@@ -10,8 +10,8 @@ everyone` 往这份文档里追加的那一路——它把总览写成了只增�
 几头：停用要明说、并且说清该去哪写；别的房间跑一轮时，总览文档在它的提示词里；
 迁移把旧项目池落进这份文档。
 
-文档本身现在分四块，只有「项目是什么」是写的（#1889 第 1 条）：总览房间的一轮拿
-得到 ②~④（从话题、里程碑、结论现拼），别的房间只拿到 ①。手抄进正文的副本谁都
+文档本身现在分三块，只有「项目是什么」是写的（#1889 第 1 条）：总览房间的一轮拿
+得到 ②③（从话题、结论现拼），别的房间只拿到 ①。手抄进正文的副本谁都
 读不到——写在别块的字一个字都不该进提示词。
 """
 
@@ -258,25 +258,19 @@ def test_the_overview_room_does_not_read_its_own_document_twice(client, stub_hoo
     assert prompt.count(FACT) == 1
 
 
-MILESTONE = "中期答辩"
-
-
-def test_the_overview_room_reads_the_other_three_blocks_from_the_data(
-    client, stub_hooks
-):
-    """总览房间那一轮，②~④ 现拼：话题、里程碑、结论都不在文档正文里。
+def test_the_overview_room_reads_the_other_blocks_from_the_data(client, stub_hooks):
+    """总览房间那一轮，②③ 现拼：话题、结论都不在文档正文里。
 
     这一块有个前提：注入的那一份必须**不是**文档原文。人写进正文的副本，和平台
     从结构化数据拼的那一份，是两个版本；一旦拼接，读到的人分不出哪个算数。
     """
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
-    client.post(f"/projects/{project_id}/milestones", json={"title": MILESTONE})
     client.put(
         f"/topics/{overview}/doc",
         json={
             "content": "## 项目是什么\n\n给高中生做算法课。\n\n"
-            "## 里程碑\n\n- 这一条是手抄的，不算数。\n",
+            "## 现在在做什么\n\n- 这一条是手抄的，不算数。\n",
             "author": "user-1",
             "expected_version": 0,
         },
@@ -287,19 +281,16 @@ def test_the_overview_room_reads_the_other_three_blocks_from_the_data(
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert "给高中生做算法课" in prompt
-    for heading in ("## 现在在做什么", "## 里程碑"):
-        assert heading in prompt
+    assert "## 现在在做什么" in prompt
     assert "干活的房间" in prompt
-    assert MILESTONE in prompt
     # 手抄进正文的那一份谁都读不到：写在那儿等于没写。
     assert "这一条是手抄的" not in prompt
 
 
 def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
-    """别的房间只注入 ①，②~④ 要哪一块自己查——不必每轮往每间房塞项目快照。"""
+    """别的房间只注入 ①，②③ 要哪一块自己查——不必每轮往每间房塞项目快照。"""
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
-    client.post(f"/projects/{project_id}/milestones", json={"title": MILESTONE})
     client.put(
         f"/topics/{overview}/doc",
         json={
@@ -314,20 +305,18 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert "给高中生做算法课" in prompt
-    assert "## 里程碑" not in prompt
-    assert MILESTONE not in prompt
+    assert "## 现在在做什么" not in prompt
 
 
-def test_the_panel_gets_the_same_three_blocks_as_structured_data(client):
-    """前端那一栏读的是同一份 ②~④，只是给的是点得动的条目。
+def test_the_panel_gets_the_same_blocks_as_structured_data(client):
+    """前端那一栏读的是同一份 ②③，只是给的是点得动的条目。
 
-    提示词那一份 markdown 是给模型读的；这一份每条要带上自己的去处（话题 id /
-    里程碑 id）和一句话结论。人看总览时读到的东西，和芝士那一轮读到
+    提示词那一份 markdown 是给模型读的；这一份每条要带上自己的去处（话题 id）
+    和一句话结论。人看总览时读到的东西，和芝士那一轮读到
     的是同一次取数（`TopicService.overview_auto_data`）——两个读者，一份来源。
     """
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
-    client.post(f"/projects/{project_id}/milestones", json={"title": MILESTONE})
     ended = client.post(
         "/topics",
         json={"project_id": project_id, "title": "做完的房间", "created_by": "user-1"},
@@ -341,18 +330,10 @@ def test_the_panel_gets_the_same_three_blocks_as_structured_data(client):
 
     body = client.get(f"/topics/{overview}/overview").json()["data"]
     assert body["root_topic_id"] == overview
-    # 块按 ②③④ 排，空块整块不出现（同提示词那一份）。
-    assert [b["key"] for b in body["blocks"]] == [
-        "active_topics",
-        "milestones",
-        "closed_topics",
-    ]
+    # 块按 ②③ 排，空块整块不出现（同提示词那一份）。
+    assert [b["key"] for b in body["blocks"]] == ["active_topics", "closed_topics"]
     blocks = {b["key"]: b for b in body["blocks"]}
-    assert [b["title"] for b in body["blocks"]] == [
-        "现在在做什么",
-        "里程碑",
-        "已结束的话题",
-    ]
+    assert [b["title"] for b in body["blocks"]] == ["现在在做什么", "已结束的话题"]
 
     # ② 活跃话题：去处是那个房间，状态是它最新的那张卡（还没开活）。
     (active,) = blocks["active_topics"]["items"]
@@ -362,14 +343,7 @@ def test_the_panel_gets_the_same_three_blocks_as_structured_data(client):
     assert active["status"] == "还没开活"
     assert active["owner"] is None
 
-    # ③ 里程碑：状态给原值（界面按它上点），日期没定就是没有。
-    (milestone,) = blocks["milestones"]["items"]
-    assert milestone["kind"] == "milestone"
-    assert milestone["title"] == MILESTONE
-    assert milestone["status"] == "upcoming"
-    assert milestone["due"] is None
-
-    # ④ 已结束的话题：归档的那一间落在这里，不在 ②。
+    # ③ 已结束的话题：归档的那一间落在这里，不在 ②。
     (closed,) = blocks["closed_topics"]["items"]
     assert closed["kind"] == "topic"
     assert closed["topic_id"] == ended

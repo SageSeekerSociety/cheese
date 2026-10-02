@@ -9,11 +9,13 @@ exactly once, on purpose — when the session has sat idle (``driven.runner``),
 or when the screen that supervises this runner goes away.
 
 Every line read is recorded in the journal under a stable sequence, stamped with
-the room's work it belongs to. The stamp is decided here because only this side
-sees the order things happened in: the echo of an input we wrote
-(``--replay-user-messages``) is what opens a turn for that input's work, a turn
-that opens without one (a background task finishing woke the session) is a turn
-the session started for itself, and ``result`` closes whichever is open.
+the room's work it belongs to — except the deltas of the block being written,
+which are only shown while it is written (``stream``). The stamp is decided
+here because only this side sees the order things happened in: the echo of an
+input we wrote (``--replay-user-messages``) is what opens a turn for that
+input's work, a turn that opens without one (a background task finishing woke
+the session) is a turn the session started for itself, and ``result`` closes
+whichever is open.
 
 One thing Claude Code does not put on stdout is read from disk into the same
 journal: the transcripts of agents a subagent or a workflow starts, which only
@@ -372,6 +374,10 @@ class Runner(runner.Runner[Journal]):
         self.execution: str | None = None
         self.helpers: list[asyncio.Task] = []
         self.proven = False
+        # The index of the content block being shown (``stream``).
+        self.streaming: int | None = None
+
+    capabilities = (runner.LONG_POLL, runner.LIVE)
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -535,7 +541,55 @@ class Runner(runner.Runner[Journal]):
                 # line per streamed delta of a token or two. Nothing reads it,
                 # and journaled it was nineteen records in twenty.
                 continue
+            if kind == "stream_event":
+                # What the build is in the middle of writing
+                # (`--include-partial-messages`): shown, never journaled.
+                self.stream(record)
+                continue
             self.observe(record)
+
+    def stream(self, record: dict) -> None:
+        """Show the block the session is writing as its deltas arrive.
+
+        The build writes each finished block as an ``assistant`` record of its
+        own before it says the block stopped, so that record is what replaces
+        what is shown (``observe``). A subagent's writing is its own, and
+        reasoning is not shown: a thinking block clears what was.
+        """
+        if record.get("parent_tool_use_id") is not None:
+            return
+        event = record.get("event") or {}
+        kind = event.get("type")
+        if kind == "content_block_start":
+            block = event.get("content_block") or {}
+            self.streaming = event.get("index")
+            work = self.work if self.working else None
+            if block.get("type") == "text":
+                self.show([{"type": "text", "text": block.get("text") or ""}], work)
+            elif block.get("type") == "tool_use":
+                self.show(
+                    [
+                        {
+                            "type": "tool",
+                            "id": block.get("id"),
+                            "name": block.get("name"),
+                            "arguments": "",
+                        }
+                    ],
+                    work,
+                )
+            else:
+                self.show([], None)
+        elif kind == "content_block_delta" and self.live_blocks:
+            if event.get("index") != self.streaming:
+                return
+            delta, block = event.get("delta") or {}, self.live_blocks[-1]
+            if delta.get("type") == "text_delta" and block["type"] == "text":
+                block["text"] += str(delta.get("text") or "")
+                self.shown()
+            elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
+                block["arguments"] += str(delta.get("partial_json") or "")
+                self.shown()
 
     def observe(self, record: dict, *, from_file: bool = False) -> None:
         """Stamp one record with the work it belongs to, and journal it."""
@@ -607,6 +661,9 @@ class Runner(runner.Runner[Journal]):
             if self.working and self.unsolicited:
                 owner["unsolicited"] = True
         self.journal.append({**lighter(record), "cheese": {**owner, **stamp}})
+        if main and kind in ("assistant", "result"):
+            # The block being shown has landed, or the turn ended without it.
+            self.show([], None)
         if kind == "result":
             waiting = {str(record.get("user_message_uuid"))} | {
                 str(identifier) for identifier in record.get("user_message_uuids") or []
@@ -1024,7 +1081,9 @@ class Runner(runner.Runner[Journal]):
 
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "events":
-            return {"events": self.records(int(params.get("after", 0)))}
+            after = int(params.get("after", 0))
+            news = await self.news_for(after, params)
+            return {"events": self.records(after), **news}
         if method in ("send", "steer"):
             return await self.send(
                 params["input_id"],
@@ -1062,6 +1121,7 @@ class Runner(runner.Runner[Journal]):
                 "working": self.working,
                 "work_id": self.work if self.working else None,
                 "tasks": dict(self.tasks),
-                "alive": self.process is not None and self.process.returncode is None,
+                "alive": self.alive(),
+                "capabilities": list(self.capabilities),
             }
         raise ValueError(f"Unknown Claude Code session operation: {method}")

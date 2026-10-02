@@ -1,8 +1,8 @@
 import type { Block } from '../../cx_types'
 import type { AskFormState } from '../../lib/askPresentation'
 
-import { fireEvent, render, screen } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { setLocale } from '../../i18n'
 import { emptyAskDraft } from '../../lib/askState'
@@ -10,6 +10,7 @@ import { emptyAskDraft } from '../../lib/askState'
 import AskQuestionForm from './AskQuestionForm.vue'
 
 setLocale('zh-CN')
+afterEach(cleanup)
 const block = (): Block => ({
   id: 'q',
   topic_id: 't',
@@ -33,6 +34,36 @@ const state = (): AskFormState => ({
 })
 
 describe('real question form', () => {
+  it('accepts a custom grouped response directly without first choosing a separate radio', async () => {
+    const b = block()
+    b.meta!.allow_other = true
+    const view = render(AskQuestionForm, {
+      props: { block: b, viewer: 'alice', names: {}, state: state(), grouped: true },
+    })
+    await fireEvent.update(screen.getByRole('textbox', { name: '你的回答' }), '我的方案')
+    expect(view.emitted().action).toEqual([
+      [{ type: 'draft', draft: { ...emptyAskDraft(), kind: 'note', note: '我的方案' } }],
+    ])
+    await fireEvent.submit(screen.getByRole('textbox').closest('form')!)
+    expect(view.emitted().action).toHaveLength(1)
+  })
+
+  it('allows numbered selection outside text input, while typing digits keeps the response intact', async () => {
+    const b = block()
+    b.meta!.allow_other = true
+    const view = render(AskQuestionForm, {
+      props: { block: b, viewer: 'alice', names: {}, state: state(), grouped: true },
+    })
+    await fireEvent.keyDown(screen.getByRole('group'), { key: '2' })
+    expect(view.emitted().action?.at(-1)).toEqual([
+      { type: 'draft', draft: { ...emptyAskDraft(), kind: 'option', option: 'B' } },
+    ])
+    const count = view.emitted().action!.length
+    await fireEvent.keyDown(screen.getByRole('textbox'), { key: '1' })
+    await fireEvent.keyDown(screen.getByRole('group'), { key: '1', isComposing: true })
+    expect(view.emitted().action).toHaveLength(count)
+  })
+
   it('selection only emits a draft; explicit submit sends the action', async () => {
     const s = state()
     const view = render(AskQuestionForm, { props: { block: block(), viewer: 'alice', names: {}, state: s } })
@@ -69,7 +100,7 @@ describe('real question form', () => {
     expect(screen.queryByRole('button', { name: '更正' })).toBeNull()
   })
 
-  it('freezes pending payload and offers the original retry, not a new edit', () => {
+  it('freezes pending payload and retries the original submission', async () => {
     const s = state()
     s.pending = {
       account: '1',
@@ -79,8 +110,10 @@ describe('real question form', () => {
       payload: { kind: 'option', option: 'A', client_op_id: 'same', expect_version: 0 },
     }
     s.draft = { ...emptyAskDraft(), kind: 'option', option: 'A' }
-    render(AskQuestionForm, { props: { block: block(), viewer: 'alice', names: {}, state: s } })
+    const view = render(AskQuestionForm, { props: { block: block(), viewer: 'alice', names: {}, state: s } })
     expect(screen.getByRole('button', { name: '重试原提交' })).toBeTruthy()
     expect(screen.getByRole('group').hasAttribute('disabled')).toBe(true)
+    await fireEvent.submit(screen.getByRole('button', { name: '重试原提交' }).closest('form')!)
+    expect(view.emitted().action).toEqual([[{ type: 'submit' }]])
   })
 })

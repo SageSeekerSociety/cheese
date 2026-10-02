@@ -73,7 +73,7 @@ async def authorize_group(resolver, place):
     return actor
 
 
-@router.post("/{topic_id}/ask")
+@router.post("/{topic_id}/asks")
 async def create_ask_group(
     topic_id: uuid.UUID,
     body: dict,

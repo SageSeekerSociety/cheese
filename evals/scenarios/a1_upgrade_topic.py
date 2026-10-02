@@ -50,7 +50,7 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
     assert upgrade_block_id is not None
     ctx.log.info("A1 upgrading block %s", upgrade_block_id)
 
-    new_topic = await api.upgrade_block(upgrade_block_id, "alice")
+    new_topic = await api.upgrade_block(upgrade_block_id)
     ctx.log.info("A1 new topic %s — waiting for 分身 kickoff turn", new_topic["id"])
 
     # The 分身 kickoff runs in the background; wait via structured turn records.

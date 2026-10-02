@@ -27,18 +27,6 @@
     "deleteTitle": "删除《{name}》",
     "deleteBody": "删除后它不再列在这里，已完成的交付记录保留"
   },
-  "calendar": {
-    "loadFailed": "加载日历失败",
-    "tbd": "待定",
-    "noDate": "日期待定",
-    "overdue": "已过期 {count} 天",
-    "dueToday": "今天截止",
-    "daysLeft": "还剩 {count} 天",
-    "upcoming": "即将到来",
-    "noUpcoming": "暂无即将到来的里程碑",
-    "due": "截止 {date}",
-    "done": "已完成"
-  },
   "connect": {
     "missingCode": "缺少设备码，请从命令行打开的链接进入",
     "failed": "审批失败",

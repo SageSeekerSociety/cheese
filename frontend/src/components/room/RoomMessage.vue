@@ -53,7 +53,6 @@ const props = defineProps<{
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
   active?: boolean
-  askBusy?: boolean
   askState?: AskFormState
   /** 这条是队友此刻正在推进的清单（房间在跑，且是它最新的一条）。 */
   live?: boolean
@@ -117,14 +116,17 @@ function renderPlain(text: string): string {
 }
 
 // 芝士的回复里每个代码块右上角一颗「复制」。按钮是渲染之后加上去的，文字取自
-// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。
+// 这一处自己的文案，不来自消息内容，所以不必再过一遍净化。还没落库的那条（正在写、
+// 正在送）不带：它的代码块还在长。
 const agentHtml = computed(() =>
-  renderMarkdown(props.block.content)
-    .replaceAll(
-      '<pre>',
-      `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
-    )
-    .replaceAll('</pre>', '</pre></div>')
+  props.outgoing
+    ? renderMarkdown(props.block.content)
+    : renderMarkdown(props.block.content)
+        .replaceAll(
+          '<pre>',
+          `<div class="md-pre"><button type="button" class="md-copy">${t('work.room.message.copy')}</button><pre>`
+        )
+        .replaceAll('</pre>', '</pre></div>')
 )
 
 const COPIED_MS = 1500

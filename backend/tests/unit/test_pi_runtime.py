@@ -291,8 +291,8 @@ async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch)
     sending cut that interval short. A deadline shorter than the interval would
     measure how fast the machine running the suite is instead.
     """
-    monkeypatch.setattr(driven_runtime, "READ_FLOOR_S", 3600.0)
-    monkeypatch.setattr(driven_runtime, "READ_CEILING_S", 3600.0)
+    monkeypatch.setattr(driven_runtime, "OLD_RUNNER_TURN_READ_S", 3600.0)
+    monkeypatch.setattr(driven_runtime, "OLD_RUNNER_IDLE_READ_S", 3600.0)
     session, runtime, runner = wire(tmp_path)
     consumer = AsyncMock()
     runtime.bind_events(consumer)

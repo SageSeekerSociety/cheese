@@ -32,6 +32,9 @@ class AgentMessage:
     (Slack-style discrete messages instead of one growing streamed bubble)."""
 
     text: str
+    # The conversation the harness produced it in (FB-56 legacy③): what a
+    # session-started turn is stamped with when its row opens.
+    session_id: str | None = None
     # Stable per-event id (see AgentToolUse.eid), so a record read twice lands
     # once.
     eid: str | None = None
@@ -47,6 +50,30 @@ class AgentMessage:
     # module note: the label the agent gave the subagent it spawned, None for
     # the main thread.
     thread_label: str | None = None
+    agent_handle: str | None = None
+
+
+@dataclass
+class AgentUserEntry:
+    """A native user entry the journal landed: somebody's input, durably.
+
+    The platform's binding point for an input it sent (FB-56): the text may
+    carry the input's nonce; ``entry_id`` and ``pos`` are the mirror's own
+    identity for the entry, and ``generation`` the mirror's, so the platform
+    never has to trust position, page order, or a pre-RPC owner stamp.
+    """
+
+    text: str
+    entry_id: str
+    pos: int
+    generation: str
+    session_id: str | None = None
+    harness: str | None = None
+    # The subscription instance that produced this event (FB-56):
+    # its identity, not the session's — a replaced subscription's drain
+    # is refused at the mutation boundary.
+    attachment: str | None = None
+    eid: str | None = None
     agent_handle: str | None = None
 
 
@@ -74,6 +101,11 @@ class AgentToolUse:
     # in-memory bookkeeping, which a backend that took the turn over mid-way
     # does not have.
     agent_handle: str | None = None
+    # The conversation the harness ran it in (FB-56 legacy③), same role as
+    # AgentMessage.session_id: a session-started turn that opens on tool
+    # output is stamped with it, so its row is attributable to that
+    # conversation's death evidence — and only that conversation's.
+    session_id: str | None = None
 
 
 #: 一条失败摘要在现场占多少。和分身结论同一个数（``_SUBAGENT_RESULT_MAX``），
@@ -169,6 +201,10 @@ class AgentSessionInfo:
     session_id: str
     agent_handle: str | None = None
     harness: str | None = None
+    # The journal generation the session's mirror lives on (FB-56 epoch):
+    # a resume keeps it, a rebuild changes it. None where the harness does
+    # not report one.
+    generation: str | None = None
 
 
 @dataclass

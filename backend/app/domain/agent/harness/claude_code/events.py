@@ -86,19 +86,29 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _authored(events: list[AgentEvent], record: dict) -> list[AgentEvent]:
+def _authored(
+    events: list[AgentEvent], record: dict, session_id: str | None = None
+) -> list[AgentEvent]:
     """Name who wrote these, from the runner's stamp on the record.
 
     Every record carries it, not just the init and the result. Read only there,
     the words and calls in between were signed by whatever the backend holding
     the turn remembered — and a backend that took the turn over during a deploy
     remembers nothing, so it signed them as the room's default agent.
+
+    The record's own conversation id rides along too (FB-56 legacy③): a turn
+    the session started on its own opens on one of these events, and its row
+    is stamped with it — the only way that row is later attributable to this
+    conversation's death evidence, and to no other's.
     """
     handle = (record.get("cheese") or {}).get("agent_handle")
-    if handle:
-        for event in events:
-            if isinstance(event, AgentMessage | AgentToolUse | AgentToolResult):
+    conversation = str(record.get("session_id") or "") or session_id
+    for event in events:
+        if isinstance(event, AgentMessage | AgentToolUse | AgentToolResult):
+            if handle:
                 event.agent_handle = event.agent_handle or handle
+            if conversation and isinstance(event, AgentMessage | AgentToolUse):
+                event.session_id = event.session_id or conversation
     return events
 
 
@@ -254,9 +264,9 @@ class Assembler:
             return self._system(record)
         message, thread = _message(record)
         if message.get("type") == "assistant":
-            return _authored(self._assistant(message, thread), record)
+            return _authored(self._assistant(message, thread), record, self.session_id)
         if message.get("type") == "user" and not message.get("isReplay"):
-            return _authored(self._returned(message, thread), record)
+            return _authored(self._returned(message, thread), record, self.session_id)
         return []
 
     def _assistant(self, message: dict, thread: str | None) -> list[AgentEvent]:

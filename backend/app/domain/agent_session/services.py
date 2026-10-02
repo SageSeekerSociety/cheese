@@ -100,21 +100,29 @@ class AgentSessionService:
 
     async def placed_sessions(
         self,
-    ) -> list[tuple[uuid.UUID, uuid.UUID, str, str, SessionPlace]]:
-        """``(project_id, room_id, agent_handle, harness, place)`` for every
-        placed session — what a channel re-adopts after a restart.
+    ) -> list[tuple[uuid.UUID, uuid.UUID, str, str, str | None, SessionPlace]]:
+        """``(project_id, room_id, agent_handle, harness, resume_token, place)``
+        for every placed session — what a channel re-adopts after a restart.
 
         One per (room, agent, harness) seat, because a room seats as many
         agents as it has and each one's session comes back on its own seat.
         Every channel reads this same list and keeps the rows whose harness is
-        its own.
+        its own. The stored resume token travels because it is the provenance
+        a terminal answer has to match before it may close anything (FB-56).
         """
         found = []
         for row, project_id in await self._repo.placed_everywhere():
             place = row.place()
             if place is not None:
                 found.append(
-                    (project_id, row.topic_id, row.agent_handle, row.harness, place)
+                    (
+                        project_id,
+                        row.topic_id,
+                        row.agent_handle,
+                        row.harness,
+                        row.resume_token,
+                        place,
+                    )
                 )
         return found
 

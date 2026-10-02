@@ -44,7 +44,12 @@ from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.conftest import StubChannel, finish_turn, settle_turn
-from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.ask_fixtures import legacy_question
+from tests.integration.conftest import (
+    post_project,
+    registered,
+    session_auth_headers,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -81,7 +86,9 @@ def central_over_offline_hands(client, monkeypatch):
     )
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
-    central._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    central._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center", sid="s1")
+    )
     central._wait_executor = AsyncMock()
     return central
 
@@ -198,7 +205,9 @@ async def test_the_hands_decide_the_workspace_not_the_memory_scope(
     hub: Any = SimpleNamespace(is_online=lambda device: True)
     channel = DeviceChannel(hub=hub, session_factory=business_db_factory)
     channel._existing_screen = lambda *args: None
-    channel._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    channel._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center", sid="s1")
+    )
     session = SessionRef(project, topic, "cheese", harness="pi")
     token = mint_scoped_token(project_id=str(project), topic_id=str(topic))
 
@@ -311,13 +320,13 @@ class HandsRefused(StubChannel):
         super().__init__()
         self.asked: list[bool] = []
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         # The turn says whether it needs hands (`Opening.needs_place`); a
         # channel with no machine to give refuses only the turn that does.
         self.asked.append(opening.needs_place)
         if opening.needs_place:
             raise ScreenSetupError("没有在线的绑定设备可运行本轮")
-        return await super().ensure(session, opening)
+        return await super().ensure(session, opening, live)
 
 
 async def test_a_private_chat_answers_while_every_work_machine_is_offline(
@@ -400,12 +409,9 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     project, topic = room
     alice = session_auth_headers("alice")
     # 一道等人回答的题：它同时走时间线、通知投递和 `/awaiting-me` 三条路。
-    said = client.post(
-        f"/topics/{topic}/ask",
-        json={"question": "先记一句", "options": ["记", "不记"]},
-        headers=alice,
-    )
-    assert said.status_code == 200, said.text
+    # 直插一条历史行 —— 这里要的是「有题在等」这个状态，不是提问这条路本身。
+    said = legacy_question(client, topic, question="先记一句", asked="alice")
+    assert said["id"]
 
     async with client.test_factory() as session:
         for table in ("device_topic", "device_health", "project_machines", "device"):

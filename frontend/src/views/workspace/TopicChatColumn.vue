@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '@/cx_types'
+import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 
 import { computed, ref } from 'vue'
@@ -39,6 +40,8 @@ const emit = defineEmits<{
   // 漏掉不报错，只是现场又回到「打开才刷新」。
   (e: 'site-block', block: Block): void
   (e: 'site-turns', turns: Record<string, number>): void
+  // 谁在这个房间里忙：现场那一格画同一份。
+  (e: 'activity', lines: MemberActivityLine[]): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string, taskId?: string | null): void
@@ -89,6 +92,7 @@ defineExpose({
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
+      @activity="emit('activity', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path, taskId) => emit('open-file', path, taskId)"

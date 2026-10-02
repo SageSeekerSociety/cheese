@@ -22,6 +22,7 @@ has its own installation_id, looked up from ``project_git_installations``.
 """
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -32,6 +33,7 @@ import httpx
 import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import forge_quota
 from app.core.config import settings
 from app.core.forge_http import forge_client
 from app.domain.project.repositories import ProjectGitInstallationRepository
@@ -58,6 +60,13 @@ _REFRESH_MARGIN_S = 20 * 60
 # How long a fetched grant map is trusted. Grants only change when a human
 # edits the App, so this is really "how fast that edit reaches sandboxes".
 _GRANTS_TTL_S = 10 * 60
+
+
+logger = logging.getLogger(__name__)
+
+#: The status of the last `/rate_limit` answer that carried no quota, per
+#: installation, so a lasting refusal is logged when it starts, not per check.
+_unreadable_quota: dict[int, int] = {}
 
 
 class GitHubAppError(RuntimeError):
@@ -95,6 +104,10 @@ class GitHubAppTokens:
     @property
     def api_base(self) -> str:
         return self._api_base
+
+    @property
+    def installation_id(self) -> int:
+        return self._installation_id
 
     def _key(self) -> str:
         if self._key_text is None:
@@ -203,11 +216,22 @@ class GitHubAppTokens:
                 },
             )
         if resp.status_code != 200:
+            if _unreadable_quota.get(self._installation_id) != resp.status_code:
+                logger.warning(
+                    "GitHub did not report installation %s's quota (HTTP %s): %s",
+                    self._installation_id,
+                    resp.status_code,
+                    resp.text[:200],
+                )
+            _unreadable_quota[self._installation_id] = resp.status_code
             return None
+        _unreadable_quota.pop(self._installation_id, None)
         core = resp.json().get("resources", {}).get("core", {})
         remaining, limit = core.get("remaining"), core.get("limit")
         if not isinstance(remaining, int) or not isinstance(limit, int):
             return None
+        if isinstance(reset := core.get("reset"), int):
+            forge_quota.record(self._installation_id, remaining, limit, float(reset))
         return remaining, limit
 
     async def _mint(
@@ -251,6 +275,7 @@ class GitHubAppTokens:
                 body["expires_at"].replace("Z", "+00:00")
             ).timestamp()
             self._cached[slot] = (token, expires_epoch)
+            forge_quota.own(token, self._installation_id, expires_epoch)
             return token, _iso(expires_epoch)
 
 

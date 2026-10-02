@@ -75,9 +75,10 @@ MESSAGES: Final[dict[str, str]] = {**NOTICE_MESSAGES, **ERROR_MESSAGES}
 
 #: Keys that only replay stored room/notification descriptors; new notices must
 #: not say them. Ordinary comments no longer schedule agent turns, and agents no
-#: longer record decisions (the 「记录了一条决策」 line stays on old rooms).
+#: longer record decisions or add milestones (the 「记录了决策」 and 「添加了里程碑」
+#: lines stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
-    {"docCommented", "docCommentedHandedTo", "actionDecision"}
+    {"docCommented", "docCommentedHandedTo", "actionDecision", "actionMilestone"}
 )
 
 

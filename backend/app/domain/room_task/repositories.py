@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task
 
 
 class TaskRepository:
@@ -88,24 +88,6 @@ class TaskRepository:
             select(Task)
             .where(Task.project_id == project_id)
             .order_by(Task.created_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_worked_open_for_rooms(self, room_ids: list[uuid.UUID]) -> list[Task]:
-        """These rooms' threads that a worker may still be on right now: open,
-        bound to a 分身, and not yet handed back a conclusion.
-
-        Only these can be 「运行中」 on the board (`presentation.task_presentation`),
-        so the sidebar's "work is going on in this room" asks for just them —
-        one query for the whole project, not every thread it ever had.
-        """
-        if not room_ids:
-            return []
-        stmt = select(Task).where(
-            Task.room_id.in_(room_ids),
-            Task.status == TaskStatus.open,
-            Task.subagent_id.isnot(None),
-            Task.conclusion.is_(None),
         )
         return list((await self._session.scalars(stmt)).all())
 

@@ -1,5 +1,5 @@
-// 现场顶上那一行的那个词（思考中、正在读文件、重试中……）。现场顶栏和对话里在动的
-// 头像说的是同一句话，所以只在这里写一遍。
+// 一位队友此刻那一步的那个词（思考中、正在读文件、重试中……）。输入框下面那一行和
+// 对话里在动的头像说的是同一句话，所以只在这里写一遍。
 
 import type { SiteState, SiteStatus } from './siteStatus'
 
@@ -10,8 +10,6 @@ const PLAIN: Record<Exclude<SiteState, 'acting' | 'retrying'>, string> = {
   thinking: 'work.room.site.status.thinking',
   compacting: 'work.room.site.status.compacting',
   waiting: 'work.room.site.status.waiting',
-  stopped: 'work.room.site.status.stopped',
-  idle: 'work.room.site.status.idle',
 }
 
 export function siteStatusLabel(s: SiteStatus): string {

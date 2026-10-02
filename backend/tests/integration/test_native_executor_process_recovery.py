@@ -22,6 +22,7 @@ from tests.conftest import settle_turn
 from tests.integration.conftest import (
     add_external_member,
     chat_ws_url,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -85,8 +86,12 @@ def test_new_full_service_process_reuses_original_native_executor(
         async def prepare_topic(self, **kwargs):
             return True, ""
 
-        async def ensure(self, session, opening):
+        async def ensure(self, session, opening, live=None):
             nonlocal screen, handle
+            # ``live`` is the seat's handle when this process already confirmed
+            # it — hand it back rather than greet the runner a second time.
+            if live is not None:
+                return live
             if screen is None:
                 screen = Screen(
                     machine,
@@ -135,7 +140,11 @@ def test_new_full_service_process_reuses_original_native_executor(
             else "初始回答"
         )
         with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
-            ws.send_json({"type": "message", "content": f"<@{recipient}> " + directive})
+            # 这个 socket 只把房间里的东西推过来，不收发言（`test_chat_ws_auth`
+            # 钉的就是那条拒绝）；说话走 POST，和别的用例一样。
+            post_message(
+                client, str(topic), "alice", {"content": f"<@{recipient}> " + directive}
+            )
             observed = _until(
                 ws,
                 lambda frame: (
@@ -152,26 +161,36 @@ def test_new_full_service_process_reuses_original_native_executor(
             )
             assert observed["type"] != "error", observed
 
+        async def first_work_id():
+            records = await asyncio.to_thread(screen.records)
+            return next(
+                row["record"]["cheese"]["work_id"]
+                for row in records
+                if row["record"]["cheese"].get("turn_start")
+            )
+
         question = None
         if http:
-            from app.core.sandbox_auth import mint_scoped_token
+            # 这道题是**已有的那一形状**：非组题，`POST /topics/blocks/{id}/answers`
+            # 答它（重试、非原答者 422、原答者更正到 v2）。新建的题都是整组的，而组
+            # 成员被那条路由整组拒收，走 `settle` —— 那条路另有用例。本例钉的是重启
+            # 之后原执行器接着把这道题答完，不是「怎么问出一道题」。
+            from tests.ask_fixtures import legacy_question
 
-            asked = client.post(
-                f"/topics/{topic}/ask",
-                json={
-                    "question": "恢复后接着执行哪个方案？",
-                    "options": [{"text": "继续"}, {"text": "更正"}],
-                },
-                headers={
-                    "X-Cheese-Token": mint_scoped_token(
-                        project_id=str(project_id),
-                        topic_id=str(topic),
-                        agent_handle=handle.agent_handle,
-                    )
-                },
+            question = legacy_question(
+                client,
+                topic,
+                seat=recipient,
+                # 题挂在这一轮真正跑过的那条 turn 上，`ask_origin` 的 owner/turn
+                # 因此都是真的：`turn` 在 `agent_turns` 里存在，native session 是
+                # 这台执行器自己的。
+                turn=client.portal.call(first_work_id),
+                native_session_id=handle.session_id,
+                harness=before.runtime.harness,
+                question="恢复后接着执行哪个方案？",
+                asked="alice",
+                options=[{"text": "继续"}, {"text": "更正"}],
             )
-            assert asked.status_code == 200, asked.text
-            question = asked.json()["data"]
             assert question["author"] == recipient
 
         async def replace_backend():
@@ -179,12 +198,7 @@ def test_new_full_service_process_reuses_original_native_executor(
                 await settle_turn(old, topic)
             await before.runtime.stop_listening()
             status = await asyncio.to_thread(screen.call, "ping")
-            records = await asyncio.to_thread(screen.records)
-            first_work = next(
-                row["record"]["cheese"]["work_id"]
-                for row in records
-                if row["record"]["cheese"].get("turn_start")
-            )
+            first_work = await first_work_id()
             assert status["working"] == busy
             ids = (
                 await _blocks(client.test_request_factory, project_id, topic)

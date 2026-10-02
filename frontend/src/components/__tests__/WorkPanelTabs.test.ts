@@ -349,7 +349,6 @@ describe('工作面板 · Tab 容器', () => {
     await flush()
 
     expect(container.querySelector('.tabbar__pulse')).toBeTruthy()
-    expect(tabButton(container, '现场').getAttribute('title')).toContain('芝士正在工作')
     expect(visible(container, '.panel-overview')).toBe(true)
   })
 
@@ -381,14 +380,14 @@ describe('工作面板 · Tab 容器', () => {
   })
 
   // 规则 3: 打开话题那一刻不算抢占，所以这是面板唯一一次自己选 tab 的机会。
-  // 阶段是异步到的（验收卡要先拉回来），所以它到之前 phase 是 undefined 而不是
+  // 阶段是异步到的（验收卡要先拉回来），所以它到之前 cardPhase 是 undefined 而不是
   // 「没有卡」—— 否则待验收的话题会先停在文档上，再也不动。
   it('待验收的话题开在改动上', async () => {
     const { container, rerender } = mountPanel()
     await flush()
     expect(visible(container, '.panel-overview')).toBe(true)
 
-    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: 'pending' })
     await flush()
 
     expect(visible(container, '.panel-changes')).toBe(true)
@@ -397,7 +396,7 @@ describe('工作面板 · Tab 容器', () => {
   it('芝士正干着的话题开在现场上', async () => {
     const { container, rerender } = mountPanel()
     await flush()
-    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true, phase: 'working' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true, cardPhase: null })
     await flush()
 
     expect(visible(container, '.panel-site')).toBe(true)
@@ -406,7 +405,7 @@ describe('工作面板 · Tab 容器', () => {
   it('其余一律开在文档上', async () => {
     const { container, rerender } = mountPanel()
     await flush()
-    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'open' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: null })
     await flush()
 
     expect(visible(container, '.panel-overview')).toBe(true)
@@ -415,7 +414,7 @@ describe('工作面板 · Tab 容器', () => {
   it('地址点名了 tab 就以地址为准，阶段不许改它', async () => {
     const { container, rerender } = mountPanel('topic-A', { tab: 'doc' })
     await flush()
-    await rerender({ topic: topic('topic-A'), activityTick: 0, tab: 'doc', phase: 'reviewing' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, tab: 'doc', cardPhase: 'pending' })
     await flush()
 
     expect(visible(container, '.panel-overview')).toBe(true)
@@ -426,7 +425,7 @@ describe('工作面板 · Tab 容器', () => {
     await flush()
     await openTab(container, '现场')
 
-    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: 'pending' })
     await flush()
 
     expect(visible(container, '.panel-site')).toBe(true)
@@ -435,10 +434,10 @@ describe('工作面板 · Tab 容器', () => {
   it('阶段后来变了也不动——只有打开那一刻算数', async () => {
     const { container, rerender } = mountPanel()
     await flush()
-    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'open' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: null })
     await flush()
 
-    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, cardPhase: 'pending' })
     await flush()
 
     expect(visible(container, '.panel-overview')).toBe(true)
@@ -463,7 +462,7 @@ describe('工作面板 · Tab 容器', () => {
     await fireEvent.keyDown(box!, { key: 'Enter' })
     await flush()
 
-    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', expect.anything(), undefined, '')
+    expect(addComment).toHaveBeenCalledWith('topic-A', '这段读不通', undefined, '')
     // 发完收起来，评论区回到只读的样子。
     expect(container.querySelector('.comment-draft')).toBeNull()
   })

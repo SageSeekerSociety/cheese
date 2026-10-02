@@ -114,7 +114,7 @@ def test_complete_group_is_one_platform_request_with_object_options(platform, to
 
     assert len(calls) == 1
     path, body, headers = calls[0]
-    assert path == "/topics/room/ask"
+    assert path == "/topics/room/asks"
     assert body == {"questions": questions, "ask_group": GROUP}
     assert questions == original
     assert headers["X-Cheese-Token"] == "fixture-agent-credential"

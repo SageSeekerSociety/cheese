@@ -8,8 +8,14 @@
 // 位置负责表达语义：左边是「这条消息本身」的动作（贴什么上去），右边是「它会怎么
 // 发出去」（谁在跑、叫不叫芝士、发）。话题级的设置——谁在跑、在哪跑——由外面从
 // `chips` 插槽交进来，这一行不必认识算力池。
+//
+// 手机上这一行放不下每一颗：清单、提醒收进一颗 ⋯，从底部升起一个面板
+// （设计系统 §10.4，`AdaptiveMenu`）。附件和照片留在外面，它们是最常点的。
+import type { MenuAction } from '@/components/common/menuAction'
+
 import { computed, ref } from 'vue'
 
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -32,6 +38,8 @@ const props = defineProps<{
   canChecklist?: boolean
   /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
   canRemind?: boolean
+  /** 窄屏：清单、提醒收进一颗 ⋯。 */
+  collapseExtras?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -62,6 +70,28 @@ function onFilePicked(e: Event) {
   if (input.files?.length) emit('files', Array.from(input.files))
   input.value = '' // allow re-picking the same file
 }
+
+// 清单、提醒：桌面上是两颗图标，手机上是 ⋯ 里的两行。只剩一样时不收，
+// 一颗 ⋯ 里只有一行，比那一颗本身还多点一下。
+const extras = computed<MenuAction[]>(() => {
+  const list: MenuAction[] = []
+  if (props.canChecklist)
+    list.push({
+      key: 'checklist',
+      label: t('work.room.checklist.compose'),
+      icon: 'mdi-format-list-checks',
+      onSelect: () => emit('checklist'),
+    })
+  if (props.canRemind)
+    list.push({
+      key: 'remind',
+      label: t('work.room.reminder.open'),
+      icon: 'mdi-bell-outline',
+      onSelect: () => emit('remind'),
+    })
+  return list
+})
+const extrasCollapsed = computed(() => !!props.collapseExtras && extras.value.length > 1)
 
 // 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
 const summonText = computed(() => ({
@@ -105,9 +135,23 @@ const summonText = computed(() => ({
       :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
     />
+    <AdaptiveMenu v-if="extrasCollapsed" :actions="extras" location="top start">
+      <template #activator="{ props: menu }">
+        <v-btn
+          v-bind="menu"
+          class="composer-icon"
+          icon="mdi-dots-horizontal"
+          variant="text"
+          size="small"
+          color="medium-emphasis"
+          :title="t('work.room.composer.more')"
+          :aria-label="t('work.room.composer.more')"
+        />
+      </template>
+    </AdaptiveMenu>
     <!-- 发一张自己的清单：也是「这条消息本身」，所以和附件站在左边。 -->
     <v-btn
-      v-if="canChecklist"
+      v-if="canChecklist && !extrasCollapsed"
       class="composer-icon"
       icon="mdi-format-list-checks"
       variant="text"
@@ -120,7 +164,7 @@ const summonText = computed(() => ({
     <!-- 「提醒我」：到点给自己发一条通知。它说的是这个房间里的一件事，不是这条
          消息本身，但和附件一样是安静的图标，不跟右边「怎么发出去」那几样并列。 -->
     <v-btn
-      v-if="canRemind"
+      v-if="canRemind && !extrasCollapsed"
       class="composer-icon"
       icon="mdi-bell-outline"
       variant="text"

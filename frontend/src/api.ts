@@ -39,7 +39,6 @@ import type {
   MarketNodes,
   MarketPools,
   MemberSummary,
-  MilestoneFull,
   OAuthConnectionInfo,
   OverviewAuto,
   PrChecks,
@@ -591,7 +590,7 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
   return request<ListPayload<Project>>(`/projects/by-task/${taskId}`)
 }
 
-// Single project card (includes `summary`, the 一页纸总结).
+// Single project card.
 export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
@@ -635,11 +634,6 @@ export function requestSiteSession(projectId: string): Promise<{ url: string; gr
     method: 'POST',
   })
 }
-
-// NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
-// called is parked (see `backend/app/api/routes/activities.py`), so keeping the
-// wrapper would only leave a 404 waiting for its first caller. `summary` still
-// arrives on the project card above — it just has no trigger in the UI.
 
 // A 1:1 private chat as a normal Topic (open the chat WS on its id). `peerHandle`
 // is a person-to-person DM between the two humans (shared by both); `agentHandle`
@@ -873,17 +867,15 @@ export function setTopicNaming(projectId: string, mode: TopicNamingMode): Promis
 
 // ---- 归档去向: manual archive / unarchive ----
 
-export function archiveTopic(topicId: string, by: string): Promise<Topic> {
+export function archiveTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
     method: 'POST',
-    body: JSON.stringify({ by }),
   })
 }
 
-export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
+export function unarchiveTopic(topicId: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
     method: 'POST',
-    body: JSON.stringify({ by }),
   })
 }
 
@@ -891,11 +883,11 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
 /** 升级一条消息。房间里的消息变成这个房间的一张**卡**（回来的是 RoomTask），
- *  私聊里的变成一个新房间（回来的是 Topic）。 */
-export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic | RoomTask> {
+ *  私聊里的变成一个新房间（回来的是 Topic）。升级的人由会话认，不由请求体说。 */
+export function upgradeBlock(blockId: string): Promise<Topic | RoomTask> {
   return request<Topic | RoomTask>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
-    body: JSON.stringify({ created_by: createdBy }),
+    body: JSON.stringify({}),
   })
 }
 
@@ -1330,17 +1322,17 @@ export function listBlocks(
   return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
 }
 
-// Emoji reactions (Slack semantics): toggles (emoji, author) on a block and
-// returns the block's fresh aggregate. Other clients get the same aggregate
-// pushed as a `reaction` WS frame on the topic channel.
+// Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and
+// returns the block's fresh aggregate. The caller is whoever the session names.
+// Other clients get the same aggregate pushed as a `reaction` WS frame on the
+// topic channel.
 export function toggleReaction(
   blockId: string,
-  emoji: string,
-  author: string
+  emoji: string
 ): Promise<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }> {
   return request<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }>(
     `/blocks/${encodeURIComponent(blockId)}/reactions`,
-    { method: 'POST', body: JSON.stringify({ emoji, author }) }
+    { method: 'POST', body: JSON.stringify({ emoji }) }
   )
 }
 
@@ -1836,7 +1828,7 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
-// 项目总览的自动区 (#1889): the overview room's ②~④, structured so the doc
+// 项目总览的自动区 (#1889): the overview room's ②③, structured so the doc
 // panel can render them below the body and make each line clickable. Only the
 // project's root topic has one — any other room answers 404 — and the caller
 // must be able to read the room, same as the doc itself.
@@ -1861,10 +1853,10 @@ export function getProgress(topicId: string, taskId?: string): Promise<TopicProg
 // doc yet"). The doc is only ever written whole, so the write is conditional on
 // it: if 芝士 set the doc in between, the backend answers 409 instead of letting
 // this save erase what it wrote.
-export function putDoc(topicId: string, content: string, author: string, expectedVersion: number): Promise<Block> {
+export function putDoc(topicId: string, content: string, expectedVersion: number): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/doc`, {
     method: 'PUT',
-    body: JSON.stringify({ content, author, expected_version: expectedVersion }),
+    body: JSON.stringify({ content, expected_version: expectedVersion }),
   })
 }
 
@@ -1880,16 +1872,10 @@ export function getComments(topicId: string): Promise<{ data: Block[]; total: nu
   return request(`/topics/${encodeURIComponent(topicId)}/comments`)
 }
 
-export function addComment(
-  topicId: string,
-  content: string,
-  author: string,
-  anchor?: string,
-  quote?: string
-): Promise<Block> {
+export function addComment(topicId: string, content: string, anchor?: string, quote?: string): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ content, author, anchor, quote }),
+    body: JSON.stringify({ content, anchor, quote }),
   })
 }
 
@@ -2330,23 +2316,11 @@ export function getRoomTask(
 
 /** 在一张卡下面说话。落在这条活的时间线上，房间被叫来转达 —— 做这条活的分身住在
  *  房间的会话里，只有房间的芝士递得到话。 */
-export function sayOnRoomTask(roomId: string, taskId: string, content: string, author: string): Promise<Block> {
+export function sayOnRoomTask(roomId: string, taskId: string, content: string): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(roomId)}/tasks/${encodeURIComponent(taskId)}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content, author }),
+    body: JSON.stringify({ content }),
   })
-}
-
-// ---- 日历 / 里程碑 (§7.2) ----
-
-// Upcoming milestones (already sorted by due date).
-export function getCalendar(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/calendar`)
-}
-
-// All milestones (any status), for showing done ones faded.
-export function listMilestones(projectId: string): Promise<ListPayload<MilestoneFull>> {
-  return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
 }
 
 // ---- 反馈 (feedback) ----

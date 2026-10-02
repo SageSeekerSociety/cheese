@@ -52,7 +52,7 @@ def group(client, monkeypatch):
             {"question": "Second?", "options": [{"text": "A"}, {"text": "B"}]},
         ],
     }
-    response = client.post(f"/topics/{topic}/ask", json=body)
+    response = client.post(f"/topics/{topic}/asks", json=body)
     assert response.status_code == 200, response.text
     return response.json()["data"], body
 
@@ -84,6 +84,28 @@ def settle(client, data, payload):
         json=payload,
         headers=session_auth_headers("user-1"),
     )
+
+
+def answer_all(data, *, operation, group_version=0, choice="A"):
+    """Settle a group with every member answered and nothing deferred."""
+    return {
+        "topic_id": data["group"]["topic_id"],
+        "asked_by": data["group"]["asked_by"],
+        "client_op_id": operation,
+        "expect_version": group_version,
+        "answered": [
+            {
+                "block_id": block_id,
+                "kind": "option",
+                "option": choice,
+                "client_op_id": f"{operation}-{position}",
+                "expect_version": 0,
+            }
+            for position, block_id in enumerate(data["group"]["members"])
+        ],
+        "later": [],
+        "unanswered": [],
+    }
 
 
 def read(client, data):
@@ -139,7 +161,7 @@ def test_last_member_error_leaves_every_answer_unchanged(client, group):
     assert all(block["meta"]["answer_log"] == [] for block in current["blocks"])
     # Fixed groups cannot be submitted as a loop over the single-answer route.
     response = client.post(
-        f"/topics/blocks/{data['group']['members'][0]}/answer",
+        f"/topics/blocks/{data['group']['members'][0]}/answers",
         json=body["answered"][0],
         headers=session_auth_headers("user-1"),
     )
@@ -207,9 +229,52 @@ def test_deferred_member_remains_in_waiting_list_with_exact_block(client, group)
 
 def test_human_cannot_create_group_or_append_members(client, group):
     data, body = group
-    path = f"/topics/{data['group']['topic_id']}/ask"
+    path = f"/topics/{data['group']['topic_id']}/asks"
     response = client.post(path, json=body, headers=session_auth_headers("user-1"))
     assert response.status_code == 403, response.text
     response = client.post(path, json=body)
     assert response.status_code == 409, response.text
     assert read(client, data)["group"]["total"] == 2
+
+
+def test_answering_a_later_group_leaves_the_earlier_one_pending(client, group):
+    """答完后发的那组，不会把先发那组的待答冲掉。
+
+    待答读的是「哪一组还有没答的题」，不是「最近那组答完没有」。两组同在一个房间
+    里，后发那组整组答完就退场，先发那组一道没答，仍旧挂在它第一道没答的题上。
+    """
+    earlier, _ = group
+    topic_id = earlier["group"]["topic_id"]
+    created = client.post(
+        f"/topics/{topic_id}/asks",
+        json={
+            "ask_group": "later-group",
+            "questions": [
+                {"question": "Third?", "options": [{"text": "A"}, {"text": "B"}]},
+                {"question": "Fourth?", "options": [{"text": "A"}, {"text": "B"}]},
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    later = created.json()["data"]
+
+    response = settle(client, later, answer_all(later, operation="later-op"))
+    assert response.status_code == 200, response.text
+    assert [
+        block["meta"]["answer_log"][-1]["option"]
+        for block in response.json()["data"]["blocks"]
+    ] == ["A", "A"]
+
+    waiting = client.get(
+        "/awaiting-me",
+        headers={**session_auth_headers("user-1"), "X-Cheese-Token": ""},
+    )
+    assert waiting.status_code == 200, waiting.text
+    pending = {
+        row["blockId"]
+        for row in waiting.json()["data"]["data"]
+        if row["topicId"] == topic_id and row["reason"] == "asked"
+    }
+    assert earlier["group"]["members"][0] in pending, "先发那组该还挂着第一道没答的题"
+    assert not set(later["group"]["members"]) & pending, "后发那组答完就不该再挂"
+    assert read(client, earlier)["settlement"] is None

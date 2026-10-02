@@ -1,12 +1,29 @@
-import type { AskGroupState } from '../../lib/askGroupState'
+import type { AskGroupAction, AskGroupState } from '../../lib/askGroupState'
 
-import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { effectScope } from 'vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useAskGroups } from '../../composables/useAskGroups'
 import { setLocale } from '../../i18n'
+import { groupKey } from '../../lib/askGroup'
 import { emptyAskDraft } from '../../lib/askState'
 
 import AskGroupFlow from './AskGroupFlow.vue'
+
+const mocks = vi.hoisted(() => ({ read: vi.fn(), settle: vi.fn() }))
+vi.mock('../../services/askGroups', () => ({ readAskGroup: mocks.read, settleAskGroup: mocks.settle }))
+vi.mock('../../me', () => ({ myId: () => 'alice-id' }))
+vi.mock('../../api', () => ({
+  ApiError: class extends Error {
+    constructor(
+      readonly status: number,
+      message: string
+    ) {
+      super(message)
+    }
+  },
+}))
 
 function fixture(): AskGroupState {
   const scope = { topic_id: 'room', asked_by: 'agent', id: 'group', members: ['q1', 'q2'], total: 2 }
@@ -63,9 +80,102 @@ beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
 describe('group question presentation', () => {
+  it('offers a retry after the initial question group could not be loaded', async () => {
+    const state = fixture()
+    state.data = null
+    state.error = '无法读取'
+    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    await fireEvent.click(ui.getByRole('button', { name: '刷新状态' }))
+    expect(ui.emitted().action).toEqual([[{ type: 'refresh' }]])
+  })
+  it('keeps the selected question through refresh while following new references and groups', async () => {
+    const data = fixture().data!
+    mocks.read.mockResolvedValue(data)
+    const scope = effectScope()
+    try {
+      const controller = scope.run(() =>
+        useAskGroups({
+          blocks: () => data.blocks,
+          account: () => 'alice-id',
+          viewer: () => 'alice',
+          replace: () => {},
+        })
+      )!
+      const state = controller.askGroups[groupKey(data.group)]!
+      const ui = render(AskGroupFlow, {
+        props: {
+          state,
+          viewer: 'alice',
+          names: {},
+          focusBlock: 'q2',
+          onAction: (action: AskGroupAction) => controller.askGroupAction(state.scope, action),
+        },
+      })
+      await waitFor(() => expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy())
+      await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
+      await fireEvent.click(ui.getByRole('button', { name: '第 1 题' }))
+      expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
+      const previous = state.data
+      mocks.read.mockResolvedValue({ ...data, blocks: data.blocks.slice() })
+      await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
+      await fireEvent.click(ui.getByRole('button', { name: '刷新状态' }))
+      await waitFor(() => expect(state.data).not.toBe(previous))
+      expect(ui.getByRole('heading').textContent).toBe('问题 1')
+
+      await ui.rerender({ focusBlock: 'q1' })
+      await ui.rerender({ focusBlock: 'q2' })
+      expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
+
+      const next = fixture()
+      next.scope = { ...next.scope, id: 'next-group', members: ['q3', 'q4'] }
+      next.forms = { q3: next.forms.q1!, q4: next.forms.q2! }
+      next.data = {
+        ...next.data!,
+        group: next.scope,
+        blocks: next.data!.blocks.map((block, index) => ({
+          ...block,
+          id: next.scope.members[index]!,
+          content: `下一组问题 ${index + 1}`,
+          meta: { ...block.meta, ask_group: { ...next.scope, index } },
+        })),
+      }
+      await ui.rerender({ state: next, focusBlock: 'q4' })
+      expect(ui.getByRole('heading', { name: '下一组问题 2' })).toBeTruthy()
+      await ui.rerender({ state: fixture(), focusBlock: undefined })
+      expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('can dismiss and reopen a question without discarding drafts or sending an answer', async () => {
+    const state = fixture()
+    state.forms.q1!.draft = { ...emptyAskDraft(), kind: 'option', option: 'A' }
+    state.forms.q1!.editing = true
+    const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    await fireEvent.click(ui.getByRole('button', { name: '收起提问' }))
+    expect(ui.queryByRole('heading', { name: '问题 1' })).toBeNull()
+    await fireEvent.click(ui.getByRole('button', { name: '展开提问' }))
+    expect((ui.getByRole('radio', { name: /A/ }) as HTMLInputElement).checked).toBe(true)
+    await fireEvent.keyDown(ui.getByRole('region', { name: '整组回答' }), { key: 'Escape' })
+    expect(ui.queryByRole('heading', { name: '问题 1' })).toBeNull()
+    expect(ui.emitted().action).toBeUndefined()
+  })
+  it('moves between questions from the header while leaving text-entry keys alone', async () => {
+    const ui = render(AskGroupFlow, { props: { state: fixture(), viewer: 'alice', names: {} } })
+    await fireEvent.click(ui.getByRole('button', { name: '下一题' }))
+    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
+    await fireEvent.keyDown(ui.getByRole('textbox'), { key: 'ArrowLeft' })
+    expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
+    await fireEvent.keyDown(ui.getByRole('region', { name: '整组回答' }), { key: 'ArrowLeft' })
+    expect(ui.getByRole('heading', { name: '问题 1' })).toBeTruthy()
+    expect(ui.emitted().action).toBeUndefined()
+  })
+
   it('navigates the complete group and emits a draft without submitting', async () => {
     const state = fixture()
     const ui = render(AskGroupFlow, { props: { state, viewer: 'alice', names: {} } })
+    await fireEvent.click(ui.getByRole('button', { name: '切换问题' }))
     await fireEvent.click(ui.getByRole('button', { name: '第 2 题' }))
     expect(ui.getByRole('heading', { name: '问题 2' })).toBeTruthy()
     await fireEvent.change(ui.getByRole('radio', { name: /A/ }))

@@ -14,7 +14,15 @@ name: Deploy (dev/test box)
 # finished by then; the eligibility job still checks both for the candidate SHA
 # without occupying the deployment runner.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      automatic:
+        # desktop.yml sets this after rebuilding the images for new installers:
+        # a build it starts raises no workflow_run event, so it asks here
+        # instead, and gets the same guards as an event-driven release.
+        description: Release like an automatic deploy (check images, Required CI and the running version)
+        type: boolean
+        default: false
   workflow_run:
     workflows: ["Build and Push Docker Image"]
     types: [completed]
@@ -40,8 +48,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          AUTOMATIC: ${{ inputs.automatic }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "${AUTOMATIC:-}" != true ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
@@ -102,10 +111,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          AUTOMATIC: ${{ inputs.automatic }}
         run: |
           # A manual dispatch is an explicit release or rollback, including a
-          # commit that predates the automatic guard itself.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          # commit that predates the automatic guard itself. One marked
+          # automatic (desktop.yml's) takes the guard like any automatic release.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "${AUTOMATIC:-}" != true ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

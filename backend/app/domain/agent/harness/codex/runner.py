@@ -252,7 +252,9 @@ class Runner(runner.Runner[Journal]):
             self.session.model = params.get("model")
             return {"configured": True}
         if method == "events":
-            return {"events": self.records(int(params.get("after", 0)))}
+            after = int(params.get("after", 0))
+            news = await self.news_for(after, params)
+            return {"events": self.records(after), **news}
         if method == "send":
             return await self.send(
                 params["input_id"],
@@ -273,6 +275,7 @@ class Runner(runner.Runner[Journal]):
                 "work_id": self.journal.recall(
                     f"work:{self.journal.recall('thread_id')}"
                 ),
-                "alive": self.process is not None and self.process.returncode is None,
+                "alive": self.alive(),
+                "capabilities": list(self.capabilities),
             }
         raise ValueError(f"Unknown session operation: {method}")

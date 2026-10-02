@@ -54,7 +54,7 @@ cd backend
 PYTHONPATH=. uv run python scripts/smoke_agent.py   # 流式 + 记忆 + 会话恢复
 PYTHONPATH=. uv run python scripts/smoke_tools.py    # 芝士真的调工具改平台状态
 ```
-新增 🤖 行为（工具、巡检、活动消化、一页纸总结等）时，写/扩 smoke 脚本，对真模型跑一遍再说"通了"。
+新增 🤖 行为（工具等）时，写/扩 smoke 脚本，对真模型跑一遍再说"通了"。
 
 ### 迁移
 改了 model（新表/新列）：`uv run alembic revision --autogenerate -m "..."` → `upgrade head`。
@@ -75,7 +75,7 @@ PYTHONPATH=. uv run python scripts/smoke_tools.py    # 芝士真的调工具改�
 ```
 
 ### 截图工具
-`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/日历/看板/个人主页/章程/决策/私聊）。
+`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/看板/个人主页/章程/决策/私聊）。
 
 ```bash
 # 服务要先起好 + seed

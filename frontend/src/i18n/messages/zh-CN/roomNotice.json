@@ -83,6 +83,8 @@
   "cloudMachineError": "机器供应方报告创建失败",
   "cloudMachineFailing": "云端工作电脑「{name}」连续失败",
   "cloudMachineFailingNext": "话题会留在这台机器上，不会换到其他机器。需要有人检查这台机器上的连接器和会话，修复后可以重试。",
+  "cloudMachineGaveUp": "连续 {count} 台机器创建失败，{minutes} 分钟内不再自动申请",
+  "cloudMachineReplaced": "正在删除创建失败的机器，改为申请第 {attempt} 台",
   "cloudMachineRunning": "机器已启动，等待接入任务",
   "cloudMachineStarting": "机器正在启动",
   "cloudProvisioningDetail": "本话题会保留这条消息，机器就绪后自动继续。",

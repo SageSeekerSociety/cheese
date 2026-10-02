@@ -27,7 +27,7 @@ def mirrored(tmp_path, entries=None):
 
 
 def drain(path, session_id="session-1"):
-    backlog = PiBacklog(path, session_id)
+    backlog = PiBacklog(path, session_id, harness="pi")
     events = []
     while page := backlog.unread():
         for entry in page:
@@ -55,17 +55,17 @@ def test_nothing_is_ever_half_arrived(tmp_path):
 
 def test_a_reader_that_died_midway_resumes_and_still_bills_the_whole_turn(tmp_path):
     path = mirrored(tmp_path)
-    assert len(PiBacklog(path, "session-1").unread()) == len(ENTRIES)
+    assert len(PiBacklog(path, "session-1", harness="pi").unread()) == len(ENTRIES)
     _, complete = drain(path)
 
     # A pass that landed the first half and then died.
-    partial = PiBacklog(path, "session-1")
+    partial = PiBacklog(path, "session-1", harness="pi")
     half = partial.unread()[:5]
     for entry in half:
         partial.assemble(entry)
     partial.landed(through=half[-1].key)
 
-    assert len(PiBacklog(path, "session-1").unread()) == len(ENTRIES) - 5
+    assert len(PiBacklog(path, "session-1", harness="pi").unread()) == len(ENTRIES) - 5
     _, rest = drain(path)
 
     # The turn ends once, in the second pass, and its bill covers the messages
@@ -92,9 +92,9 @@ def test_retention_removes_an_entry_never_having_been_read(tmp_path):
     path = mirrored(tmp_path)
     backlog, _ = drain(path)
     backlog.forget(older_than_s=0)
-    assert len(PiBacklog(path, "session-1").unread()) == len(ENTRIES), (
+    assert len(PiBacklog(path, "session-1", harness="pi").unread()) == len(ENTRIES), (
         "an unlanded entry must survive retention"
     )
-    backlog.landed(through=PiBacklog(path, "session-1").unread()[-1].key)
+    backlog.landed(through=PiBacklog(path, "session-1", harness="pi").unread()[-1].key)
     backlog.forget(older_than_s=0)
-    assert PiBacklog(path, "session-1").unread() == []
+    assert PiBacklog(path, "session-1", harness="pi").unread() == []

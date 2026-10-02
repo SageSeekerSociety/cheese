@@ -15,6 +15,7 @@ room has taken, so a reader that dies anywhere re-reads rather than skips.
 
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 PAGE = 256
@@ -30,6 +31,9 @@ class Journal:
     #: ``CREATE TABLE`` for the records table; it must have ``sequence``,
     #: ``recorded_at`` and ``column``.
     schema: str
+    #: Told after records were written: the runner's reads that wait for news
+    #: are waiting on this (``driven.runner``). Nothing listens on a mirror.
+    on_grow: Callable[[], None] | None = None
 
     def __init__(self, path: Path):
         self.connection = sqlite3.connect(path)
@@ -59,6 +63,11 @@ class Journal:
                 (after, PAGE),
             )
         ]
+
+    def grew(self) -> None:
+        """Records were just written: tell whoever waits for them."""
+        if self.on_grow is not None:
+            self.on_grow()
 
     def last(self) -> int:
         """The newest record's sequence, 0 while there is none."""

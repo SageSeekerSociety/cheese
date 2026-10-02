@@ -150,18 +150,30 @@ async def _apply(fn_name: str) -> None:
         await engine.dispose()
 
 
-async def _set_meta(block_id: str, meta: dict) -> None:
-    """Write meta straight through — this is the seeding step, not a shortcut."""
+async def _set_row(
+    block_id: str, *, meta: dict | None = None, author: str | None = None
+) -> None:
+    """Write the seeded columns straight through — not a shortcut around a route.
+
+    Both columns are seeded: ``meta`` is what the migration rewrites, and
+    ``author`` is what decides whether the row is in its scope at all.
+    """
     engine = _engine()
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
-            await session.execute(
-                text("UPDATE blocks SET meta = CAST(:meta AS json) WHERE id = :id"),
-                {"id": uuid.UUID(block_id), "meta": json.dumps(meta)},
-            )
+            if meta is not None:
+                await session.execute(
+                    text("UPDATE blocks SET meta = CAST(:meta AS json) WHERE id = :id"),
+                    {"id": uuid.UUID(block_id), "meta": json.dumps(meta)},
+                )
+            if author is not None:
+                await session.execute(
+                    text("UPDATE blocks SET author = :author WHERE id = :id"),
+                    {"id": uuid.UUID(block_id), "author": author},
+                )
             await session.commit()
     finally:
         await engine.dispose()
@@ -178,13 +190,15 @@ def _topic(client) -> str:
     return t["id"]
 
 
-def _seed_question(client, tid: str, meta: dict) -> str:
-    """One timeline message whose ``meta`` is the seeded pre-migration shape.
+def _seed_question(client, tid: str, meta: dict, *, author: str | None = None) -> str:
+    """One timeline message carrying the seeded pre-migration shape.
 
     The block row comes from the plain message route because its columns are
-    not what this migration touches. Only ``meta`` is under test, so only
-    ``meta`` is seeded. That route publishes as a room agent (it accepts no
-    human author), which is fine: the author column is not under test either.
+    not what this migration rewrites. ``meta`` is seeded because that is what
+    the migration transforms; ``author`` is seeded too because it is what
+    decides whether the row is in scope — who signed the question. That route
+    publishes as a room agent (it accepts no human author), which is why the
+    signature is written straight through on top of it.
     """
     from app.core.sandbox_auth import mint_scoped_token
 
@@ -200,7 +214,7 @@ def _seed_question(client, tid: str, meta: dict) -> str:
     )
     assert r.status_code == 200, r.text
     block_id = r.json()["data"]["id"]
-    anyio.run(_set_meta, block_id, meta)
+    anyio.run(lambda: _set_row(block_id, meta=meta, author=author))
     return block_id
 
 
@@ -323,3 +337,73 @@ def test_the_new_reader_reads_migrated_history(client):
     waiting = anyio.run(_read)
     assert uuid.UUID(answered_room) not in waiting, "答过的题不该再挂待办"
     assert waiting[uuid.UUID(unanswered_room)] == "user-1"
+
+
+def test_the_scope_is_who_signed_the_question_including_a_retired_seat(client):
+    """升级和降级认的是「谁签的这道题」，不是今天的名册。
+
+    退席的那条 `agent_instances` 行还在：退役只把 `is_active` 置 false，行不删，
+    因为记忆池还挂在它上面，房间也还指向它。所以它署过名的历史照样是 agent 的
+    历史，两个方向都在范围内。人的题从头到尾没被碰过——人自己的答题路径今天写的
+    还是那两个键，把它搬进 `answer_log` 反而是替它编了一段它没有的历史。
+    """
+    tid = _topic(client)
+    project_id = client.get(f"/topics/{tid}").json()["data"]["project_id"]
+
+    made = client.post(
+        f"/projects/{project_id}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    ).json()["data"]
+    seat = made["seat_handle"]
+    assert (
+        client.delete(f"/projects/{project_id}/agents/{made['id']}").status_code == 200
+    )
+    roster = client.get(f"/projects/{project_id}/agents").json()["data"]["data"]
+    retired = next(row for row in roster if row["id"] == made["id"])
+    # 退了，行还在，署名用的那个 handle 也没变——这就是按署名划范围要覆盖它的地方。
+    assert retired["is_active"] is False
+    assert retired["seat_handle"] == seat
+
+    by_retired_seat = _seed_question(client, tid, PRE_ANSWER_META, author=seat)
+    # 芝士这个名字是实例行出现之前签下的历史，范围里单列一条。
+    by_default_agent = _seed_question(client, tid, PRE_ASK_META, author="cheese")
+    by_a_person = _seed_question(client, tid, PRE_ANSWER_META, author="user-1")
+
+    anyio.run(_apply, "upgrade")
+
+    moved = _meta(client, tid, by_retired_seat)
+    assert [o["text"] for o in moved["options"]] == ["cursor", "pageStart", "offset"]
+    assert "answered" not in moved and "answered_by" not in moved
+    assert moved["answer_log"] == [
+        {
+            "v": 1,
+            "kind": "option",
+            "option": "pageStart",
+            "note": None,
+            "by": "user-1",
+            "at": None,
+            "client_op_id": "migrated",
+        }
+    ]
+
+    legacy = _meta(client, tid, by_default_agent)
+    assert [o["text"] for o in legacy["options"]] == ["cursor", "pageStart", "offset"]
+    assert "answer_log" not in legacy
+
+    untouched = _meta(client, tid, by_a_person)
+    assert untouched == PRE_ANSWER_META, "人的题不该被搬进 answer_log"
+
+    anyio.run(_apply, "downgrade")
+
+    back = _meta(client, tid, by_retired_seat)
+    assert back["options"] == ["cursor", "pageStart", "offset"]
+    assert back["answered"] == "pageStart"
+    assert back["answered_by"] == "user-1"
+    assert "answer_log" not in back
+
+    legacy_back = _meta(client, tid, by_default_agent)
+    assert legacy_back["options"] == ["cursor", "pageStart", "offset"]
+    assert "answer_log" not in legacy_back
+    assert "answered" not in legacy_back
+
+    assert _meta(client, tid, by_a_person) == PRE_ANSWER_META

@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import InternalServerError
 from app.domain.user.models import UserTrustedDevice
 
 TRUST_DAYS = 30
@@ -102,8 +103,18 @@ class TrustedDeviceService:
             )
         )
 
-    async def used(self, trust: UserTrustedDevice, session_id: uuid.UUID) -> None:
-        """Record a sign-in made with the trust. Its expiry does not move."""
+    async def mark_used(
+        self, trust_device_id: uuid.UUID, session_id: uuid.UUID
+    ) -> None:
+        """Record a sign-in made with the trust. Its expiry does not move.
+
+        Refuses when the id names no device: the caller read the trust
+        from this same session a moment ago, so an id that finds nothing
+        is not a sign-in to record.
+        """
+        trust = await self._db.get(UserTrustedDevice, trust_device_id)
+        if trust is None:
+            raise InternalServerError("暂时无法完成登录，请稍后重试")
         trust.last_used_at = _now()
         trust.session_id = session_id
         await self._db.flush()

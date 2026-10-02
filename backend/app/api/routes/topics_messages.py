@@ -17,9 +17,16 @@ plus `ChatMessageIn` (the body schema of the first) and `_summon_the_named`
 (the helper the first calls). They are one group because they are one
 direction of the conversation -- what is said INTO the room: a message from a
 person or an agent, the @-mentions an agent's message wakes through
-`_summon_the_named`, and a note to a sister thread of the same handle.
-Each writes a line and hands it to whoever is meant to
-read it; none of them reads the room's history back.
+`_summon_the_named`, and a note to a sister thread of the same handle. Each
+writes a line and hands it to whoever is meant to read it; none of them reads
+the room's history back.
+
+The one-click option question (`POST /topics/{topic_id}/ask`) and its one-shot
+`POST /topics/blocks/{block_id}/answer` are gone again: a question is a whole
+group opened by `POST /topics/{topic_id}/asks` in `topics_asks.py`, and its
+answer is the versioned `POST /topics/blocks/{block_id}/answers` in topics.py.
+Rows an older question left behind keep their shape and are answered through
+that same versioned route.
 
 What stays behind, and why. `POST /{topic_id}/summon` stays: it is the
 general "wake an agent now" door that is not a message at all, and it reads

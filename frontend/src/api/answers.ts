@@ -15,7 +15,7 @@ export type AnswerPayload = {
 }
 
 export function answerOptions(blockId: string, payload: AnswerPayload, author: string): Promise<Block> {
-  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
+  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answers`, {
     method: 'POST',
     body: JSON.stringify({ author, ...payload }),
   })

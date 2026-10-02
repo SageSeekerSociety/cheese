@@ -93,10 +93,6 @@ class ProjectRepository:
         project.root_topic_id = root_topic_id
         await self._session.flush()
 
-    async def set_summary(self, project: Project, summary: str) -> None:
-        project.summary = summary
-        await self._session.flush()
-
     async def set_settings(self, project: Project, settings: dict[str, object]) -> None:
         """Replace the free-form settings blob. Callers merge — assigning a NEW
         dict is what makes SQLAlchemy see the change (the column is plain JSON,

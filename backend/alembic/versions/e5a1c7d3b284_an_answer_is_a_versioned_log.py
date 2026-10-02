@@ -28,6 +28,25 @@ Only the shape the ask route ever produced is touched (``meta`` an object,
 ``89fb9b9a11e0``: an array of any other shape was never written, and guessing
 at one would be a second corruption.
 
+Who gets converted is decided by WHO SIGNED THE QUESTION, not by anything the
+row says about how it was asked (an old row records no origin, and inventing
+one would be the lie above) and not by any roster that only describes today.
+An agent's history moves because the agent's answer path now writes the log; a
+person's question stays in the two keys it was asked with, because the person's
+answer path — the one click from the composer — still writes exactly that. So
+the scope is rows whose ``author`` the backend itself calls an agent: the union
+of the historical default ``cheese``, of every handle derived from an
+``agent_instances`` row (``cheese-`` plus the first 12 hex chars of the
+instance id — a pure function of the id, so it survives the seat being
+retired), and of every username carrying an ``agent_bindings`` row, which is
+the very test ``IdentityService.is_agent`` makes. No prefix guessing: a human
+cannot register under ``cheese``/``cheese-…`` (#345), so those strings match
+exactly.
+
+Upgrade and downgrade use that same scope. A retired seat's rows are in it on
+purpose: retiring drops the roster entry, not the agent's identity, and what it
+signed is still the agent's history.
+
 Revision ID: e5a1c7d3b284
 Revises: b84d0f9ac721
 Create Date: 2026-09-30
@@ -50,10 +69,22 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # `meta` is json, not jsonb (see `Block.meta`), so cast to jsonb to walk it
-    # and cast back on assignment.
+    # and cast back on assignment. The author filter is the scope spelled out in
+    # the module docstring: only what an agent signed is converted, so a person's
+    # question keeps the two keys its own answer path still writes.
     op.execute(
         """
-        WITH ask AS (
+        WITH agent_authors AS (
+            SELECT 'cheese' AS handle
+            UNION
+            SELECT 'cheese-' || left(replace(id::text, '-', ''), 12)
+              FROM agent_instances
+            UNION
+            SELECT u.username
+              FROM "user" u
+              JOIN agent_bindings ab ON ab.user_id = u.id
+        ),
+        ask AS (
             SELECT b.id, to_jsonb(b.meta) AS m
               FROM blocks b
              WHERE b.meta IS NOT NULL
@@ -64,6 +95,7 @@ def upgrade() -> None:
                      FROM jsonb_array_elements(to_jsonb(b.meta) -> 'options') AS e
                     WHERE jsonb_typeof(e) <> 'string'
                )
+               AND b.author IN (SELECT handle FROM agent_authors)
         ),
         rebuilt AS (
             SELECT id,
@@ -122,12 +154,23 @@ def downgrade() -> None:
     # up and is not recoverable from anywhere, so it is not written back.
     op.execute(
         """
-        WITH ask AS (
+        WITH agent_authors AS (
+            SELECT 'cheese' AS handle
+            UNION
+            SELECT 'cheese-' || left(replace(id::text, '-', ''), 12)
+              FROM agent_instances
+            UNION
+            SELECT u.username
+              FROM "user" u
+              JOIN agent_bindings ab ON ab.user_id = u.id
+        ),
+        ask AS (
             SELECT b.id, to_jsonb(b.meta) AS m
               FROM blocks b
              WHERE b.meta IS NOT NULL
                AND json_typeof(b.meta) = 'object'
                AND json_typeof(b.meta -> 'options') = 'array'
+               AND b.author IN (SELECT handle FROM agent_authors)
         ),
         texts AS (
             SELECT id, m,

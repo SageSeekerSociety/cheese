@@ -96,10 +96,8 @@ class EvalApi:
     async def get_doc(self, topic_id: str) -> dict | None:
         return await self.get(f"/api/topics/{topic_id}/doc")
 
-    async def upgrade_block(self, block_id: str, created_by: str) -> dict:
-        return await self.post(
-            f"/api/blocks/{block_id}/upgrade", {"created_by": created_by}
-        )
+    async def upgrade_block(self, block_id: str) -> dict:
+        return await self.post(f"/api/blocks/{block_id}/upgrade", {})
 
     # ---- memory (cheese-gated write; the runner owns this backend's token) --
 

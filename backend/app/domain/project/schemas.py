@@ -45,7 +45,6 @@ class ProjectOut(BaseModel):
     team_handle: str | None = None
     external_task_id: int | None = None
     ai_mode: AiMode
-    summary: str
     intent: str = ""
     root_topic_id: uuid.UUID | None
     created_at: datetime

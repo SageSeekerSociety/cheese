@@ -386,6 +386,7 @@ defineExpose({
         :agent-name="agentName"
         :can-checklist="!!postChecklist"
         :can-remind="!!topic"
+        :collapse-extras="!mdAndUp"
         @files="emit('files', $event)"
         @checklist="checklistOpen = true"
         @toggle-summon="toggleSummon"

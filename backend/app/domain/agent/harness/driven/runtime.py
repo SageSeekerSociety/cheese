@@ -30,6 +30,7 @@ from typing import Protocol
 import httpx
 
 from app.core.errors import ValidationError
+from app.domain.agent import attachments
 from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -43,6 +44,7 @@ from app.domain.agent.harness import (
     SessionRef,
     UnreadProbe,
 )
+from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.driven.subscription import (
     OUTPUT,
     PROGRESS,
@@ -66,13 +68,18 @@ from app.domain.delivery.input_identity import (
     InputRegistrar,
 )
 
-# Every read of a room's journal is a call to its device, and an idle room
-# answers it with nothing. Read at the floor while there is anything to read;
-# let the wait grow towards the ceiling once the journal has gone quiet. The
-# ceiling is a safety net, not how a quiet room hears its session: a runner
-# rings for records nobody has read (``driven.runner``), which wakes the read.
-READ_FLOOR_S = 0.1
-READ_CEILING_S = 30.0
+# Every read of a room's journal is a call to its device. A runner holds a read
+# until it has something to answer it with (``driven.runner``), so the poller
+# asks again as soon as it is answered: a quiet seat costs one read per
+# ``READ_WAIT_S``, and a record or a token the session writes is read the
+# moment it is written. Far below every timeout on the way: the call's own
+# (660 s), the connection owner's, and the connector's.
+READ_WAIT_S = 25.0
+# A runner started before runners could hold a read answers at once; it is read
+# at a fixed rate instead, faster while a turn is open. Such runners exit once
+# idle, and a runner started since can hold a read (``Handle.capabilities``).
+OLD_RUNNER_TURN_READ_S = 0.1
+OLD_RUNNER_IDLE_READ_S = 5.0
 # How long a runner may go unanswered while a turn is open before the turn is
 # called dead. Longer than the connection owner takes to come back after a
 # release, and than a device takes to reconnect after a network blip: those
@@ -86,6 +93,12 @@ IDLE_GONE_READ_S = 60.0
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
 TALKING_S = 300.0
+
+
+#: What the agent of a seat is in the middle of writing, handed on as it changes:
+#: (room, the work it is for if the runner knows, the agent writing, the blocks
+#: — ``driven.runner``; [] once it wrote nothing more or the record landed).
+LiveConsumer = Callable[[uuid.UUID, uuid.UUID | None, str, list[dict]], Awaitable[None]]
 
 
 @dataclass
@@ -131,6 +144,9 @@ class Handle(Protocol):
     @property
     def mirror(self) -> Path: ...
 
+    @property
+    def capabilities(self) -> frozenset[str]: ...
+
 
 class SessionChannel[H: Handle](Protocol):
     name: str
@@ -142,7 +158,18 @@ class SessionChannel[H: Handle](Protocol):
 
     async def prepare_topic(self, **kwargs) -> tuple[bool, str]: ...
 
-    async def ensure(self, session: SessionRef, opening: Opening) -> H: ...
+    async def ensure(
+        self, session: SessionRef, opening: Opening, live: H | None = None
+    ) -> H:
+        """The seat's session, started if it has to be.
+
+        ``live`` is the seat's handle when this process started or confirmed it
+        and its runner has answered alive on every read since. The channel
+        hands it back without asking the machine again when nothing the
+        session was started with has changed, and otherwise ensures it as if
+        it were not given.
+        """
+        ...
 
     async def call(self, handle: H, method: str, params: dict) -> dict: ...
 
@@ -196,6 +223,24 @@ class DrivenRuntime[H: Handle]:
         self.told_waiting: dict[Seat, uuid.UUID] = {}
         self.unread: UnreadProbe | None = None
         self.live: dict[Seat, H] = {}
+        # (seat, conversation) pairs this process saw die (`_died` / a
+        # verdict): the only thing that makes "no live handle" a fact
+        # rather than an unanswered question (FB-56 legacy③). A turn on
+        # the same seat in a DIFFERENT conversation is not covered by it.
+        self.dead: set[tuple[Seat, str]] = set()
+        # Conversations this round's recovery found alive, and found
+        # TERMINATED by an authority's own per-conversation answer (FB-56
+        # legacy③): the channel that placed them reports each pointer's
+        # outcome, and only a terminal answer bound to the stored resume
+        # token lands here. "Not heard from" never does — that is unknown.
+        self.found_conversations: set[tuple[Seat, str]] = set()
+        self.terminal_conversations: set[tuple[Seat, str]] = set()
+        self._owns_sessions_provider = None
+        # Seats whose handle this process ensured and whose runner has answered
+        # alive on every read since: what a send hands the channel as ``live``.
+        # A read that fails or says the agent process is gone takes the seat
+        # out, and only the next ensure puts it back.
+        self.answering: set[Seat] = set()
         self.subscriptions: dict[Seat, Subscription] = {}
         self.tasks: dict[Seat, asyncio.Task] = {}
         self.work: dict[Seat, uuid.UUID] = {}
@@ -211,6 +256,7 @@ class DrivenRuntime[H: Handle]:
         # `runtime_checkable` 的 Protocol，`isinstance` 拿不到方法就答否——
         # 于是每一个 runtime 都「跑不了 harness」。别的消费者没这个问题。
         self._memory: MemoryConsumer | None = None
+        self.live_consumer: LiveConsumer | None = None
 
     # --- what the harness supplies -------------------------------------------
 
@@ -277,6 +323,9 @@ class DrivenRuntime[H: Handle]:
 
     def bind_memory(self, consumer: MemoryConsumer) -> None:
         self._memory = consumer
+
+    def bind_live(self, consumer: "LiveConsumer") -> None:
+        self.live_consumer = consumer
 
     def _memory_hook(self, topic: uuid.UUID) -> Callable[[], Awaitable[None]]:
         """`reconcile_memory` 绑到这一间房，给订阅那一侧的一轮结束用（它不带参数）。
@@ -452,18 +501,56 @@ class DrivenRuntime[H: Handle]:
         if self.activity and work not in self.queues:
             await self.activity(project, seat[0], work, active, agent_handle=seat[1])
 
+    def bind_owns_sessions(self, provider) -> None:
+        """Who answers ``owns_sessions`` at attach time (FB-56)."""
+        self._owns_sessions_provider = provider
+
     async def _attach(self, handle: H) -> None:
         seat = self._seat_of_handle(handle)
-        if self.live.get(seat) == handle and seat in self.subscriptions:
-            return
+        async with attachments.lock(seat):
+            # Ownership is checked FIRST, and the idempotent fast path is
+            # checked INSIDE the lock with it (FB-56): an early return ahead
+            # of both would wave a same-handle recover through while the
+            # platform is not owning sessions — the old maps still answer
+            # "attached", and the caller goes on bookkeeping a recovery the
+            # ownership gate never allowed.
+            if self._owns_sessions_provider is not None and (
+                not self._owns_sessions_provider().owns_sessions
+            ):
+                raise DeviceOffline(
+                    f"platform is not owning sessions right now (topic={seat[0]})"
+                )
+            if self.live.get(seat) == handle and seat in self.subscriptions:
+                return
         await self._detach(seat)
         handle.mirror.parent.mkdir(parents=True, exist_ok=True)
 
         async def call(method: str, params: dict) -> dict:
             return await self.channel.call(handle, method, params)
 
-        self.live[seat] = handle
-        self.subscriptions[seat] = self.subscribe(handle, call)
+        # The subscription instance IS this seat's attachment (FB-56): mint
+        # its id under the seat's lock, so an ownership mutation is either
+        # whole-before or whole-after this swap, never interleaved with it.
+        subscription = self.subscribe(handle, call)
+        subscription.waits = LONG_POLL in handle.capabilities
+        subscription.attachment_id = uuid.uuid4().hex
+        async with attachments.lock(seat):
+            # The flag is checked HERE, under the lock — not once at some
+            # route's entry (FB-56): while a stop is being taken, an attach
+            # can land between the flag flip and the swap, and only the lock
+            # makes the order real. A refused attach registers nothing. The
+            # provider is bound at wiring time (`api/deps.py`), never
+            # imported here — the import is a cycle.
+            if self._owns_sessions_provider is not None and (
+                not self._owns_sessions_provider().owns_sessions
+            ):
+                raise DeviceOffline(
+                    f"platform is not owning sessions right now (topic={seat[0]})"
+                )
+            self.live[seat] = handle
+            self.dead = {pair for pair in self.dead if pair[0] != seat}
+            self.subscriptions[seat] = subscription
+            attachments.note(seat, subscription.attachment_id)
 
     def _listen(self, seat: Seat) -> None:
         if seat not in self.tasks or self.tasks[seat].done():
@@ -476,13 +563,26 @@ class DrivenRuntime[H: Handle]:
         if event := self.woken.get(seat):
             event.set()
 
-    def wake(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
-        """Read this seat now, if this runtime reads it at all."""
-        seat = (topic_id, agent_handle)
-        if seat not in self.subscriptions:
-            return False
-        self._wake(seat)
-        return True
+    def _wait_s(self, seat: Seat) -> float:
+        """How long a read may be held: never so long that a turn's own
+        clocks (``verdict``) are read late by more than a fraction of them."""
+        if seat not in self.work:
+            return READ_WAIT_S
+        clocks = [s / 4 for s in (self.no_progress_s, self.unread_grace_s) if s > 0]
+        return min([READ_WAIT_S, *clocks])
+
+    async def _show(self, seat: Seat, live: dict) -> None:
+        """Hand on what the seat's agent is in the middle of writing."""
+        handle = self.live.get(seat)
+        if self.live_consumer is None or handle is None:
+            return
+        work = live.get("work_id")
+        await self.live_consumer(
+            seat[0],
+            uuid.UUID(work) if work else self.work.get(seat),
+            handle.agent_handle,
+            list(live.get("blocks") or []),
+        )
 
     async def _wait(self, seat: Seat, delay: float) -> None:
         event = self.woken.setdefault(seat, asyncio.Event())
@@ -499,14 +599,26 @@ class DrivenRuntime[H: Handle]:
         # it, so the wait is said once and the return is said once. Per-task
         # state: one of these runs per seat.
         waiting = False
-        delay = READ_FLOOR_S
         while seat in self.subscriptions:
+            subscription = self.subscriptions[seat]
             try:
-                delivered = await self.subscriptions[seat].drain()
+                delivered = await subscription.drain(wait=self._wait_s(seat))
+                if not subscription.heard.get("alive", True):
+                    self.answering.discard(seat)
                 self.unreachable.pop(seat, None)
-                if seat in self.work and time.monotonic() - checked_at >= 1:
+                if live := subscription.heard.get("live"):
+                    await self._show(seat, live)
+                # A runner that held the read says with its answer whether its
+                # agent is still there; an old one is asked, once a second.
+                if seat in self.work and (
+                    subscription.waits or time.monotonic() - checked_at >= 1
+                ):
                     handle = self.live[seat]
-                    status = await self.channel.call(handle, "ping", {})
+                    status = (
+                        subscription.heard
+                        if subscription.waits
+                        else await self.channel.call(handle, "ping", {})
+                    )
                     checked_at = time.monotonic()
                     if not status.get("alive", True):
                         await self._died(handle)
@@ -514,6 +626,7 @@ class DrivenRuntime[H: Handle]:
                     if verdict := self.verdict(seat):
                         await self._end_by_verdict(handle, verdict)
             except DeviceOffline:
+                self.answering.discard(seat)
                 # A room whose machine is switched off is the ordinary state of
                 # a platform nobody is using this minute, and this loop exists
                 # to wait it out. Logged as an exception it was two ERROR lines
@@ -530,6 +643,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except DeviceCallError as exc:
+                self.answering.discard(seat)
                 # The machine is there and said no — the runner's socket is not
                 # up yet (a cold one can take about a minute) or its home is gone.
                 # Either way the next read is what tells, and the machine's
@@ -559,6 +673,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except httpx.TransportError as exc:
+                self.answering.discard(seat)
                 # The connection owner is being replaced, or the socket to it
                 # went while this read was in flight. Retrying is what this loop
                 # is for, and the owner is back within seconds — but at ERROR
@@ -577,6 +692,7 @@ class DrivenRuntime[H: Handle]:
                     return
                 await asyncio.sleep(2)
             except Exception:
+                self.answering.discard(seat)
                 # The runner outlives a backend or connector outage. Re-reading
                 # is safe because the landing cursor only moves after the
                 # persistence callback returned.
@@ -587,18 +703,17 @@ class DrivenRuntime[H: Handle]:
                     waiting = False
                     self.logger.info("%s resumed topic=%s", self.records, topic)
                     await self._say_resumed(seat)
-                # A room being worked reads at the floor, and so does one whose
-                # journal just gave us something — the next record of a stream
-                # is due immediately. A room nobody is talking to costs a call
-                # every 100ms for an empty page, and the cost is per room:
-                # eleven of them idling held a core between them. Sending wakes
-                # the wait, and so does the runner's ring, so neither a person
-                # nor the session is served at the backed-off rate.
-                if delivered or seat in self.work:
-                    delay = READ_FLOOR_S
-                else:
-                    delay = min(delay * 2, READ_CEILING_S)
-                await self._wait(seat, delay)
+                if subscription.waits and not subscription.heard.get("alive", True):
+                    # Its agent process is gone with no turn open: the runner
+                    # goes with it, and the next message starts it again.
+                    await self._wait(seat, IDLE_GONE_READ_S)
+                elif not subscription.waits:
+                    await self._wait(
+                        seat,
+                        OLD_RUNNER_TURN_READ_S
+                        if delivered or seat in self.work
+                        else OLD_RUNNER_IDLE_READ_S,
+                    )
 
     async def _say_waiting(self, seat: Seat, reason: str) -> None:
         """Tell the room this seat's open turn is waiting on the machine — once
@@ -681,6 +796,12 @@ class DrivenRuntime[H: Handle]:
         await self._activity(handle.session.project_id, seat, work, False)
         self.closed.add(work)
         self.live.pop(seat, None)
+        if not out_of_reach:
+            # A verdict/exit the runner itself reported is death. Merely
+            # being out of reach is not — a machine still being prepared
+            # looks exactly the same, and that one stays "unknown".
+            self.dead.add((seat, self.conversation(handle)))
+        self.answering.discard(seat)
 
     async def ensure(self, session, opening, *, work_id=None) -> H:
         seat = self._seat_of(session)
@@ -693,8 +814,18 @@ class DrivenRuntime[H: Handle]:
             with contextlib.suppress(DeviceCallError):
                 await self.interrupt(session)
             await self.close(session)
-        handle = await self.channel.ensure(session, opening)
+        task = self.tasks.get(seat)
+        live = (
+            self.live.get(seat)
+            if seat in self.answering and task is not None and not task.done()
+            else None
+        )
+        handle = await self.channel.ensure(session, opening, live)
         await self._attach(handle)
+        # Only a runner that says when it has news is heard from between sends;
+        # an old one is pinged instead, so nothing here vouches for it.
+        if LONG_POLL in handle.capabilities:
+            self.answering.add(seat)
         return handle
 
     async def check_input_protocol(self, handle: H) -> None:
@@ -875,6 +1006,21 @@ class DrivenRuntime[H: Handle]:
             "recipient_handle": agent_handle,
         }
 
+    def seat_state(self, seat: Seat) -> str:
+        """ "live" if this process holds the seat, "dead" if it watched the
+        seat die, else "unknown" — the sweep's third answer (FB-56 legacy③)."""
+        if seat in self.live:
+            return "live"
+        if any(pair[0] == seat for pair in self.dead):
+            return "dead"
+        return "unknown"
+
+    def dead_conversations(self, seat: Seat) -> set[str]:
+        """The conversations on this seat this process saw die (FB-56)."""
+        return {
+            conversation for pair_seat, conversation in self.dead if pair_seat == seat
+        }
+
     def holds(self, topic_id, agent_handle=None) -> bool:
         if agent_handle is not None:
             return (topic_id, agent_handle) in self.live
@@ -900,7 +1046,11 @@ class DrivenRuntime[H: Handle]:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         subscription = self.subscriptions.pop(seat, None)
+        if subscription is not None:
+            async with attachments.lock(seat):
+                attachments.note(seat, None)
         self.live.pop(seat, None)
+        self.answering.discard(seat)
         self.work.pop(seat, None)
         self.woken.pop(seat, None)
         self.clocks.pop(seat, None)
@@ -915,22 +1065,57 @@ class DrivenRuntime[H: Handle]:
         A read already under way finishes first. The landing cursor only moves
         once a record is persisted, so whatever this process had not landed is
         still unread for the process that listens next.
+
+        The swap is per seat and by INSTANCE (FB-56): each seat's registry
+        note and map removal happen under its own attachment lock, and only
+        for the exact subscription this stop started with — an attach that
+        won the seat in the meantime keeps its subscription, its registry
+        entry and every map, because the swap it made was complete. The old
+        instances are cancelled, awaited and released outside the lock.
         """
-        subscriptions = dict(self.subscriptions)
-        self.subscriptions.clear()
-        for seat in subscriptions:
+        # Stop targets are pinned at the START, as (subscription, poll)
+        # pairs from the same map moment: the cleanup below waits on,
+        # cancels and releases exactly these, whatever the maps say by then
+        # — a re-attach cannot take the old poll's source away, and the new
+        # source's poll is not in the snapshot to begin with (FB-56).
+        targets = [
+            (seat, subscription, self.tasks.get(seat))
+            for seat, subscription in self.subscriptions.items()
+        ]
+        for seat, subscription, _poll in targets:
+            async with attachments.lock(seat):
+                # Identity, not position: clear this seat's CURRENT state
+                # only while it is still the instance this stop took. A
+                # newer attach is a complete swap and owns everything from
+                # here on — and the registry note is part of that state:
+                # clearing it before the identity check would wipe the NEW
+                # attachment's entry, and its events would then be refused
+                # as source-less.
+                if self.subscriptions.get(seat) is subscription:
+                    attachments.note(seat, None)
+                    self.subscriptions.pop(seat, None)
+                    self.tasks.pop(seat, None)
+                    self.answering.discard(seat)
+                    for held in (
+                        self.live,
+                        self.work,
+                        self.woken,
+                        self.clocks,
+                        self.unreachable,
+                        self.told_waiting,
+                    ):
+                        held.pop(seat, None)
             self._wake(seat)
-        polls = [task for task in self.tasks.values() if not task.done()]
-        if polls:
-            _, stuck = await asyncio.wait(polls, timeout=5)
+            subscription.unpark()
+        pending = [
+            poll for _, _, poll in targets if poll is not None and not poll.done()
+        ]
+        if pending:
+            _, stuck = await asyncio.wait(pending, timeout=5)
             for task in stuck:
                 task.cancel()
             await asyncio.gather(*stuck, return_exceptions=True)
-        await asyncio.gather(*(each.release() for each in subscriptions.values()))
-        for held in (self.tasks, self.live, self.work, self.woken, self.clocks):
-            held.clear()
-        self.unreachable.clear()
-        self.told_waiting.clear()
+        await asyncio.gather(*(each.release() for _, each, _ in targets))
 
     async def close(self, session: SessionRef) -> None:
         seat = self._seat_of(session)
@@ -942,7 +1127,24 @@ class DrivenRuntime[H: Handle]:
         await self._detach(seat)
 
     async def recover(self, device_id=None) -> list[SessionRef]:
+        # These answer for THIS round only — a conversation the last round
+        # reached says nothing about this one. (The cumulative witness is
+        # `dead`: a death once seen stays seen.)
+        self.found_conversations.clear()
+        self.terminal_conversations.clear()
         handles = await self.channel.discover(device_id)
+        # The channel's own per-conversation observations (FB-56 legacy③):
+        # a terminal answer bound to the stored resume token is death;
+        # anything the channel cannot place stays unknown by absence here.
+        # The probe is structural: a channel that cannot report outcomes —
+        # including one that answers every attribute — has none, and none
+        # means unknown, never dead.
+        outcomes = getattr(self.channel, "last_outcomes", None)
+        if not isinstance(outcomes, dict):
+            outcomes = {}
+        for (room_id, agent, resume_token), outcome in outcomes.items():
+            if outcome == "dead":
+                self.terminal_conversations.add(((room_id, agent), resume_token))
         recovered = []
         for handle in handles:
             try:
@@ -957,7 +1159,13 @@ class DrivenRuntime[H: Handle]:
                     exc,
                 )
                 continue
-            await self._attach(handle)
+            self.found_conversations.add(
+                (self._seat_of_handle(handle), self.conversation(handle))
+            )
+            try:
+                await self._attach(handle)
+            except DeviceOffline:
+                continue
             if self.working(status) and status.get("work_id"):
                 seat = self._seat_of_handle(handle)
                 self.work[seat] = uuid.UUID(status["work_id"])

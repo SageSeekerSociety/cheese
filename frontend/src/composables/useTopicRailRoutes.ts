@@ -32,7 +32,7 @@ export function useTopicRailRoutes(projectId: () => string | null, on: TopicRail
   /** 当前页的名字（不是字符串就给 null）——置顶行和项目菜单凭它画选中态。 */
   const routeName = computed<string | null>(() => (typeof route.name === 'string' ? route.name : null))
 
-  /** 打开项目里的一页（总览/日历/资料库/…）。没选项目时什么都不做。 */
+  /** 打开项目里的一页（看板/资料库/…）。没选项目时什么都不做。 */
   function openPage(name: string) {
     const id = projectId()
     if (!id) return

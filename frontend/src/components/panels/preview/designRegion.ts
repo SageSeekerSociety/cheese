@@ -1,5 +1,12 @@
 export type Point = { x: number; y: number }
 export type RasterRegion = { x: number; y: number; width: number; height: number }
+export type RasterSelection = {
+  region: RasterRegion
+  identity: string
+  src: string
+  naturalWidth: number
+  naturalHeight: number
+}
 export type ImageGeometry = {
   left: number
   top: number

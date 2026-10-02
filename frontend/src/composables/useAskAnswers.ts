@@ -22,6 +22,7 @@ import {
   submittedAnswer,
   validAskDraft,
 } from '../lib/askState'
+import { askOptions } from '../lib/blockDisplay'
 import { myHandle, myId } from '../me'
 import { currentUserId, currentUserName } from '../services/account'
 
@@ -84,7 +85,7 @@ export function useAskAnswers(options: { blocks: () => Block[]; replace: (block:
     () => [account.value, options.blocks()] as const,
     () => {
       for (const block of options.blocks()) {
-        if (!block.meta?.options?.length || block.meta.ask_group) continue
+        if (!askOptions(block) || block.meta?.ask_group) continue
         const identity = `${questionIdentity(block)}:${answerVersion(block)}`
         if (identities.get(block.id) === identity || sending.has(block.id)) continue
         identities.set(block.id, identity)

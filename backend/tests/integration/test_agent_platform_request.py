@@ -109,7 +109,7 @@ def test_an_operation_is_found_with_what_it_takes(room):
     answering = cheese.run_platform_tool(
         "platform_request", {"find": "option question"}, agent
     )
-    assert "POST /topics/blocks/{block_id}/answer" in answering
+    assert "POST /topics/blocks/{block_id}/answers" in answering
     assert "option" in answering
 
 
@@ -117,7 +117,7 @@ def test_the_agent_reacts_to_a_message_in_its_room(client, room):
     _, tid, seat, agent = room
     block = post_message(client, tid, "alice", {"content": "分页用哪个？"})["id"]
 
-    agent.call("POST", f"/blocks/{block}/reactions", {"emoji": "👍", "author": seat})
+    agent.call("POST", f"/blocks/{block}/reactions", {"emoji": "👍"})
 
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     reactions = next(b for b in blocks if b["id"] == block)["reactions"]
@@ -159,7 +159,7 @@ def test_the_agent_answers_another_members_question(client, room):
     client_op_id = str(uuid.uuid4())
     answered = agent.call(
         "POST",
-        f"/topics/blocks/{block['id']}/answer",
+        f"/topics/blocks/{block['id']}/answers",
         {
             "kind": "option",
             "option": "cursor",

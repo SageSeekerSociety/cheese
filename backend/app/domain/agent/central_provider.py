@@ -122,7 +122,7 @@ class CentralChannel(DeviceChannel):
         scopes = list(
             dict.fromkeys(
                 (project_id, room_id, place.machine)
-                for project_id, room_id, _handle, _harness, place in sessions
+                for project_id, room_id, _handle, _harness, _token, place in sessions
                 if place.channel == self.name
                 and (device_id is None or place.machine == device_id)
                 and self._hub.is_online(place.machine)
@@ -142,6 +142,7 @@ class CentralChannel(DeviceChannel):
         owner=None,
         turn_id=None,
         runtime_factory=None,
+        runner_alive=False,
     ):
         # Central screens require a launch plan supporting remote execution.
         # Their independent hands are acquired later by the first project tool.
@@ -172,6 +173,7 @@ class CentralChannel(DeviceChannel):
                 env=prepared.env,
                 launch=launch,
                 environment_before={},
+                runner_alive=runner_alive,
             )
 
     @asynccontextmanager
@@ -287,9 +289,9 @@ class CentralChannel(DeviceChannel):
                 # A session started before its lease was ready sees the project
                 # at a placeholder. One started on the machine sees it where the
                 # machine holds it, and that path is part of what it was
-                # started with (`_launch_identity`), so the first turn that
-                # finds a placeholder session idle, with its machine there,
-                # relaunches it onto the machine.
+                # started with (`screen_identity.launch_identity`), so the
+                # first turn that finds a placeholder session idle, with its
+                # machine there, relaunches it onto the machine.
                 "workspace": leased["workspace"]
                 if leased
                 and await self._starts_on_machine(leased, center, topic_id, resource)
@@ -301,7 +303,7 @@ class CentralChannel(DeviceChannel):
             # the session's from its start. Only the usable ones: a server
             # someone still has to connect is a capability line in the prompt
             # instead. Part of the target, so connecting one relaunches an idle
-            # session with it (`_launch_identity`).
+            # session with it (`screen_identity.launch_identity`).
             async with factory() as db:
                 remote = await remote_mcp.session_target(
                     db, project_id, topic_id, agent_handle

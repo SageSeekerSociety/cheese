@@ -24,8 +24,12 @@ its built-in AI channels) is in its README and is not repeated here.
   operator key is the dev box's own, so `ssh cheese@<machine ip>` from the dev box works.
 
 After create, the enrolment sweep (`MachineEnrollmentSweeper`, every
-`MACHINE_ENROLL_INTERVAL_SECONDS` = 10 s) does the rest with no human: refresh unsettled
-machines and enrol every machine that is `running`: mint a device credential, ssh in with
+`MACHINE_ENROLL_INTERVAL_SECONDS` = 10 s) does the rest with no human: refresh machines
+still changing, re-check settled ones every `MICROCLOUD_RECONCILE_INTERVAL_S` (120 s; reads of a
+project's machines report what this sweep last saw and never call MicroCloud; a team's
+compute page hears which projects' machines changed on `/api/teams/{id}/live` and
+reads those, instead of polling), and
+enrol every machine that is `running`: mint a device credential, ssh in with
 the bootstrap key, install the connector as a service. Ready leases
 then go to `CloudWakeup`, which delivers the message the room has been holding. The
 connector route also wakes the topic the moment the device attaches, so the room does not
@@ -49,7 +53,12 @@ error) and, separately, `aiStatus` (disabled / provisioning / ready / error). A 
 created with `aiMode: none` reports `aiStatus: disabled` from the moment it exists.
 Enrolment waits only for `status: running`. A room's lease counts a machine as ready
 when it is `running`, enrolled, and its `aiStatus` is `ready` or `disabled`; an `error`
-in either field is handed to the room as a failed lease.
+in either field is handed to the room as a failed lease, with one exception. A session's
+machine that reports `status: error` before it was enrolled holds none of the room's work,
+so the room's next request for it deletes it and asks for another. Quota, offering and spec
+problems are refused at create time, so this `error` means building the machine failed.
+After three such failures within an hour the room stops asking and the session is told
+that retries were made. The count is the room's own 「正在删除创建失败的机器」 lines.
 
 Since micro-cloud#84 every machine has an event log at `GET /machine/{id}/events` (tenant
 secret, page parameters, optional `since`): every Proxmox task with its UPID and duration,
@@ -73,7 +82,11 @@ interrupted creation and claims, retires unused machines after
 them. Claimed machines never return to the pool. After five failed cleanup attempts,
 the record is kept and never retried, since its machine may still be billed. It does
 not take a place in the pool, but once three such records exist the pool stops
-replacing machines and logs an error until they are resolved at the provider.
+replacing machines and logs an error until they are resolved at the provider. The
+worker reads each such record back from the provider and closes it once the provider
+no longer has the machine, so removing it at the provider is all a person has to do.
+A record whose error starts with `Quarantined` was set aside by a person and is never
+closed on its own.
 
 This first version prepares the deployment's default offering with `aiMode: none`.
 It does not prepare every cloud specification. Configure a small pool only after the

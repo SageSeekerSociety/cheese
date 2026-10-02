@@ -42,7 +42,7 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
         "client_op_id": "initial",
     }
     if case == "corrections":
-        response = client.post(f"/topics/blocks/{block_id}/answer", json=initial)
+        response = client.post(f"/topics/blocks/{block_id}/answers", json=initial)
         assert response.status_code == 200, response.text
 
     a = {
@@ -140,7 +140,7 @@ def test_overlapping_answers_keep_one_winner(client, monkeypatch, case):
                 token = requester.set(name)
                 try:
                     return await http.post(
-                        f"/topics/blocks/{block_id}/answer", json=payload
+                        f"/topics/blocks/{block_id}/answers", json=payload
                     )
                 finally:
                     requester.reset(token)

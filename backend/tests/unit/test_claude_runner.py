@@ -714,6 +714,160 @@ async def test_the_builds_thinking_estimate_is_not_journaled(monkeypatch, tmp_pa
     ]
 
 
+def _streamed(event: dict) -> dict:
+    return {"type": "stream_event", "parent_tool_use_id": None, "event": event}
+
+
+def _delta(index: int, **delta) -> dict:
+    return _streamed({"type": "content_block_delta", "index": index, "delta": delta})
+
+
+#: What the build prints for one message with a text block and a tool call,
+#: step by step: each step waits for a line on its stdin before the next.
+_WRITING = [
+    [{"type": "system", "subtype": "init", "session_id": "s", "model": "m"}],
+    [
+        _streamed({"type": "message_start", "message": {"id": "msg_1"}}),
+        _streamed(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            }
+        ),
+        _delta(0, type="text_delta", text="Hel"),
+    ],
+    [_delta(0, type="text_delta", text="lo")],
+    [
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parent_tool_use_id": None,
+            "message": {
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello"}],
+            },
+        },
+        _streamed({"type": "content_block_stop", "index": 0}),
+        _streamed(
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "mcp__cheese__chat_send",
+                    "input": {},
+                },
+            }
+        ),
+        _delta(1, type="input_json_delta", partial_json='{"text": "Hi'),
+    ],
+    [_delta(1, type="input_json_delta", partial_json=' there"}')],
+    [
+        {
+            "type": "assistant",
+            "uuid": "a2",
+            "parent_tool_use_id": None,
+            "message": {
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "mcp__cheese__chat_send",
+                        "input": {"text": "Hi there"},
+                    }
+                ],
+            },
+        },
+        _streamed({"type": "content_block_stop", "index": 1}),
+        _streamed({"type": "message_stop"}),
+        {"type": "result", "subtype": "success", "is_error": False, "uuid": "r"},
+    ],
+]
+
+
+@pytest.mark.anyio
+async def test_the_block_being_written_is_shown_as_it_grows_and_never_journaled(
+    monkeypatch, tmp_path
+):
+    """With `--include-partial-messages` the build streams each block as it is
+    written. A backend waiting on the runner sees the text, and a tool call's
+    arguments, grow; the finished block's own record replaces it; and none of
+    the deltas is kept."""
+    build = tmp_path / "build.py"
+    build.write_text(
+        "import json, sys\n"
+        f"for step in {_WRITING!r}:\n"
+        "    for record in step:\n"
+        "        print(json.dumps(record), flush=True)\n"
+        "    sys.stdin.readline()\n"
+        "sys.stdin.read()\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        command=shlex.join([sys.executable, str(build)]),
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "config")},
+        resume=None,
+        agent_handle=AGENT,
+    )
+    assert runner.process is not None and runner.process.stdin is not None
+    stdin = runner.process.stdin
+
+    async def shown(seen: str | None) -> dict:
+        answer = await runner.dispatch(
+            "events", {"after": runner.journal.last(), "wait": 10, "live": seen}
+        )
+        assert "live" in answer, "nothing new was shown"
+        return answer["live"]
+
+    async def step() -> None:
+        stdin.write(b"\n")
+        await stdin.drain()
+
+    try:
+        async with asyncio.timeout(30):
+            while not runner.journal.last():
+                await asyncio.sleep(0.05)
+            mark = runner.live_mark()
+            await step()
+            live = await shown(mark)
+            assert live["blocks"] == [{"type": "text", "text": "Hel"}]
+            await step()
+            live = await shown(live["mark"])
+            assert live["blocks"] == [{"type": "text", "text": "Hello"}]
+            await step()
+            live = await shown(live["mark"])
+            assert live["blocks"] == [
+                {
+                    "type": "tool",
+                    "id": "toolu_1",
+                    "name": "mcp__cheese__chat_send",
+                    "arguments": '{"text": "Hi',
+                }
+            ]
+            await step()
+            live = await shown(live["mark"])
+            assert json.loads(live["blocks"][0]["arguments"]) == {"text": "Hi there"}
+            await step()
+            live = await shown(live["mark"])
+            assert live["blocks"] == []
+            records = [e["record"] for e in runner.journal.read(0)]
+    finally:
+        await runner.close()
+
+    assert [(r["type"], r.get("subtype")) for r in records] == [
+        ("system", "init"),
+        ("assistant", None),
+        ("assistant", None),
+        ("result", "success"),
+    ]
+
+
 # --- a session that dies on its way up says why --------------------------------
 
 

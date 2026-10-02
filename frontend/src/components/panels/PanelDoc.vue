@@ -50,8 +50,6 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  // 总览自动区里的一条决策 / 里程碑：去向不在话题里，交给拿着路由的那一层。
-  (e: 'open-resource', resource: 'milestone'): void
 }>()
 
 // 展示组件也是组合式函数要的那两个口子：读编辑器里现在这一版、把服务端那一版装进去。
@@ -202,7 +200,6 @@ defineExpose({ pulse, highlightTurn })
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
-    @open-resource="emit('open-resource', $event)"
     @edited="markEdited"
     @close-lossy-confirm="lossyConfirmOpen = false"
     @open-ai="ai.prepare($event)"

@@ -5,14 +5,19 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
 from app.domain.agent.announce import announce
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.notice_text import say
 from app.domain.block.schemas import BlockOut
-from app.domain.machine.models import ProjectMachine
+from app.domain.machine.models import (
+    MAX_PROVIDER_ERRORS,
+    PROVIDER_ERROR_WINDOW,
+    ProjectMachine,
+)
 from app.domain.machine.repositories import ProjectMachineRepository
 
 logger = logging.getLogger(__name__)
@@ -31,6 +36,68 @@ CONNECT_GRACE = timedelta(minutes=5)
 SETTLE_WINDOW = timedelta(hours=1)
 
 _STARTUP_EVENTS = ("cloud_startup", "cloud_provisioning")
+
+#: ``meta.retired`` on the line that tells a room one of its machines failed at
+#: the provider and was let go. Those lines are the room's count of failures:
+#: the machine rows themselves are dropped once the provider has deleted them.
+PROVIDER_ERROR = "provider_error"
+
+
+async def provider_errors(session: AsyncSession, topic_id: uuid.UUID) -> int:
+    """How many of the room's machines the provider failed within the window."""
+    since = datetime.now(UTC) - PROVIDER_ERROR_WINDOW
+    return (
+        await session.scalar(
+            select(func.count())
+            .select_from(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.kind == BlockKind.event,
+                Block.created_at >= since,
+                Block.meta["retired"].as_string() == PROVIDER_ERROR,
+            )
+        )
+        or 0
+    )
+
+
+async def tell_machine_replaced(
+    session: AsyncSession, machine: ProjectMachine, *, failures: int
+) -> dict | None:
+    """Say in the machine's room that it was let go after a provider error,
+    and whether another is coming; written in the caller's transaction, since
+    the line is also the count. Returns what to publish once committed."""
+    topic_id = machine.topic_id
+    assert topic_id is not None
+    exhausted = failures >= MAX_PROVIDER_ERRORS
+    minutes = int(PROVIDER_ERROR_WINDOW.total_seconds() // 60)
+    block = await announce(
+        session,
+        place_id=topic_id,
+        content=say("cloudMachineGaveUp", count=failures, minutes=minutes)
+        if exhausted
+        else say("cloudMachineReplaced", attempt=failures + 1),
+        meta={
+            "event_type": "cloud_startup",
+            "severity": "error" if exhausted else "info",
+            "who": "platform",
+            "machine": str(machine.id),
+            "retired": PROVIDER_ERROR,
+            **({"state": "failed"} if exhausted else {}),
+        },
+    )
+    if block is None:
+        return None
+    return BlockOut.model_validate(block).model_dump(mode="json")
+
+
+async def publish_line(topic_id: uuid.UUID, payload: dict | None) -> None:
+    from app.domain.agent.runtime import get_broker
+
+    if payload is not None:
+        await get_broker().publish(
+            str(topic_id), {"type": "event_block", "block": payload}
+        )
 
 
 async def startup_progress(

@@ -41,6 +41,7 @@ from app.domain.agent.harness import HARNESSES, AgentRuntime, Opening, SessionRe
 from app.domain.agent.harness.claude_code.events import Assembler as ClaudeAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
 from app.domain.agent.harness.pi.events import Assembler as PiAssembler
+from app.domain.agent.harness.pi.runtime import PI
 from tests.support.contract_harness import ContractHarness, fixtures, vocabulary
 
 VOCABULARY = vocabulary()
@@ -107,7 +108,7 @@ def _translate(harness: str, records: list[dict]) -> list:
         assembler = ClaudeAssembler({}, "session-1")
         return [event for r in records for event in assembler.accept(r)]
     if harness == "pi":
-        assembler = PiAssembler("session-1")
+        assembler = PiAssembler("session-1", harness=PI)
         return [event for r in records for event in assembler.accept(r)]
     if harness == "codex":
         assembler = CodexAssembler()

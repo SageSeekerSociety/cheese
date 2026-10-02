@@ -16,7 +16,7 @@ from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import chat_ws_url, post_message, post_project
 from tests.integration.test_claude_session_records import StillWorking, _until
 from tests.integration.test_native_batch_ownership import _blocks
 
@@ -40,7 +40,9 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
     old = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old
     with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 等待回答"})
+        # 这个 socket 只推不收（`test_chat_ws_auth` 钉的就是那条拒绝）；
+        # 说话走 POST。
+        post_message(client, str(topic), "alice", {"content": "@芝士 等待回答"})
         _until(
             ws,
             lambda frame: (

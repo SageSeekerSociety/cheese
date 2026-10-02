@@ -205,7 +205,7 @@ def test_http_group_answer_resumes_asking_session_while_other_native_session_is_
             runner_a = runners[seat_a]
             native_a, process_a = runner_a.session_id, runner_a.process
             asked = client.post(
-                f"/topics/{topic}/ask",
+                f"/topics/{topic}/asks",
                 json={
                     "questions": [
                         {

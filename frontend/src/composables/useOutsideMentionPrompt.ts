@@ -62,7 +62,7 @@ export function useOutsideMentionPrompt(deps: {
     error.value = ''
     try {
       for (const person of [...outside.value]) {
-        await addTopicMember(topicId, person.handle, 'member', deps.me())
+        await addTopicMember(topicId, person.handle, 'member')
         outside.value = outside.value.filter((p) => p.handle !== person.handle)
       }
     } catch (e) {

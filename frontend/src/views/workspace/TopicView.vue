@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, Topic, TopicMemberRow } from '@/cx_types'
-import type { CardPhase, TopicPhase } from '@/lib/topicState'
+import type { MemberActivityLine } from '@/lib/memberActivity'
+import type { CardPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -19,7 +20,7 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames } from '@/lib/agentNames'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
-import { topicPhase, topicTitle } from '@/lib/topicState'
+import { topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -193,7 +194,7 @@ function onLocate(message: string) {
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
-  'working-agents': (names: string[]) => (workingAgents.value = names),
+  activity: (lines: MemberActivityLine[]) => (activity.value = lines),
   'agent-control': (state: AgentControlState) => (agentControl.value = state),
   'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
   'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
@@ -208,29 +209,22 @@ const chatEvents = {
   review: onReview,
 }
 
-// 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
+// 有没有队友正在这个话题里跑一轮 —— 工作面板的「现场」那一格和推送提示读它。
 const working = ref(false)
-// 正在干活的队友们的名字（一间房几个座位并行在跑就几个），对话栏按轮次帧报
-// 上来；空名单 = 帧没带座位（老后端），工作面板退回 agentName 的单数说法。
-const workingAgents = ref<string[]>([])
+// 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
+const activity = ref<MemberActivityLine[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
 const agentControl = ref<AgentControlState | null>(null)
-// 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场的状态条读它。
+// 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场读它分出哪一组还在进行。
 const siteTurns = ref<Record<string, number>>({})
 
-// ---- 话题此刻处在哪一段 (规则 3/4) ----
-// The accept card owns its own data, but not the one word that summarises it:
-// the header states where the topic stands, and the panel opens on the tab that
-// stage calls for. Both live above the card, so the word travels up rather than
-// the card list travelling out.
-// undefined until the card box has actually answered — the header falls back to
-// the topic's own status meanwhile, and the panel does not get to pick a tab on
-// an answer nobody has yet.
+// ---- 采纳卡处在哪一段 ----
+// The accept card owns its own data, but the panel opens on the tab its stage
+// calls for, so the one word travels up rather than the card list travelling
+// out. undefined until the card box has actually answered — the panel does not
+// get to pick a tab on an answer nobody has yet. The room header does not show
+// it: a card's stage is the card's, shown on the card and on the board.
 const cardPhase = ref<CardPhase | undefined>(undefined)
-const phase = computed<TopicPhase | undefined>(() => {
-  if (cardPhase.value === undefined) return undefined
-  return topicPhase({ status: selectedTopic.value?.status, working: working.value, card: cardPhase.value })
-})
 
 // 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
 // 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
@@ -260,14 +254,12 @@ function handleStateChanged(resource: string) {
   else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
-  else activityTick.value += 1 // doc / milestone / notify → reload
+  else activityTick.value += 1 // doc / notify → reload
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).
 async function handleOpenResource(resource: string, turnId?: string) {
-  if (resource === 'milestone') {
-    void router.push({ name: 'calendar', params: { projectId: props.projectId } })
-  } else if (resource === 'site') {
+  if (resource === 'site') {
     // 对话里在动的那个头像：它此刻在干什么，去现场看。
     focusMode.value = false
     onPanelTab('site')
@@ -356,7 +348,6 @@ void openPlace()
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
-        :phase="phase"
         :members="store.members"
         :me="AUTHOR"
         :connected="composerReady"
@@ -400,7 +391,7 @@ void openPlace()
         <WorkPanel
           ref="panelRef"
           :agent-name="store.agentName"
-          :working-agents="workingAgents"
+          :activity="activity"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
@@ -410,7 +401,7 @@ void openPlace()
           :site-turns="siteTurns"
           :topic-list="store.topics"
           :tab="panelTab"
-          :phase="phase"
+          :card-phase="cardPhase"
           :with-chat="!mdAndUp"
           :open-card-id="openCardId"
           :card-focus-block="cardFocusBlock"
@@ -419,7 +410,6 @@ void openPlace()
           @open-card="onOpenCard"
           @review="onReview"
           @mention-click="handleMentionClick"
-          @open-resource="handleOpenResource"
           @update:tab="onPanelTab"
           @locate="onLocate"
         >

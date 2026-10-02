@@ -218,12 +218,12 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
     chat = client.app.dependency_overrides[get_chat_service]()
     original = stub_hooks.ensure
 
-    async def fail_room(session, opening):
+    async def fail_room(session, opening, live=None):
         if session.topic_id == t:
             raise EnvironmentPreparationError(
                 {"state": "failed", "attempt": "actual", "stage": "setup"}
             )
-        return await original(session, opening)
+        return await original(session, opening, live)
 
     monkeypatch.setattr(stub_hooks, "ensure", fail_room)
 

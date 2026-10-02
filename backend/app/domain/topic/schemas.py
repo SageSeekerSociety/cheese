@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +18,23 @@ class TopicCreate(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     parent_id: uuid.UUID | None = None
     created_by: str | None = None
+
+
+class MemberActivityOut(BaseModel):
+    member: str
+    kind: Literal["typing", "working"]
+    # Epoch seconds, as on the socket frames.
+    since: float
+    # Typing only: how long it lasts without another ping.
+    expires_in: float | None = None
+
+
+class MemberWaitOut(BaseModel):
+    # The awaited member's handle; None when the timeline does not say whose.
+    member: str | None
+    reason: str
+    since: datetime
+    pr: int | None = None
 
 
 class TopicOut(BaseModel):
@@ -37,25 +55,17 @@ class TopicOut(BaseModel):
     # activity here", read `last_activity_at`.
     updated_at: datetime
     # 最后活动时间: the newest block in the topic, falling back to its creation.
-    # Derived per query, so — like `running` — only the endpoints that ask for
-    # it (list_topics/get_topic) fill it in; elsewhere it stays None.
+    # Derived per query, so only the endpoints that ask for it
+    # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
-    # 有人点了 AI 的名、到现在还没有 AI 回话：最早那条没人接的消息的时间，没有就
-    # None。侧栏拿它亮红灯（等了太久）——阈值在前端，因为「多久算太久」要跟着
-    # 当下的钟走，而这一行是某一刻读出来的。同样只有 list_topics/get_topic 填。
-    awaiting_reply_since: datetime | None = None
-    # 上面那段等待多半为什么还没人回：mention / check，或等待期间最近一条机器/
-    # 环境事件（machine_provisioning / device_waiting / sandbox_rebuilt /
-    # environment_repaired）。侧栏据此选阈值和悬停说明。没在等就 None。
-    reply_wait_reason: str | None = None
-    # 卡停在要 AI 修的那几种上时，那张卡的 PR 号：悬停时写出是哪个 PR。
-    reply_wait_pr: int | None = None
-    # 最近一轮以报错收场（「本轮未完成：…」、502/404）而之后 AI 还没开过口：那
-    # 次报错的时间，没有就 None。侧栏见到它立刻亮红灯，不等五分钟。
-    turn_failed_at: datetime | None = None
-    # 已采纳、在等检查 / 合并队列走完，而此刻没有 AI 在干活：侧栏绿灯常亮。
-    # 合并完卡结算，它随之变回 False。只有 list/get 话题时填。
-    merging: bool = False
+    # 成员动态：此刻谁在这个房间里忙——在输入框里打字的人、有一轮在跑的 AI 队友
+    # （`agent/activity.py`）。房间自己没有状态，有的是成员在做什么。和房间
+    # socket 上 `activity_snapshot` 同一份条目。只有 list/get 话题时填。
+    activity: list[MemberActivityOut] = Field(default_factory=list)
+    # 这个房间在等哪位成员、从什么时候开始、为什么（`block/waits.py`）：它那一轮
+    # 报错了、有人点了它的名还没回、卡停在要它修的地方。多久算太久在前端按当下的
+    # 钟判。同样只有 list/get 话题时填。
+    waits: list[MemberWaitOut] = Field(default_factory=list)
     # Lifecycle markers (spec §6.3): who accepted, when archived, and — for an
     # upgraded topic — which block it grew from (for the 活引用 back-link).
     accepted_by: str | None = None
@@ -64,11 +74,6 @@ class TopicOut(BaseModel):
     cleanup_due_at: datetime | None = None
     can_archive: bool = False
     upgraded_from_block_id: uuid.UUID | None = None
-    # 本轮是否在跑 (AgentWorkRunner, in-memory — separate from `status`/归档: a topic
-    # can be "active" and idle, or "active" and mid-turn). False unless the
-    # caller explicitly fills it in (see list_topics/get_topic) — the ORM model
-    # has no such attribute, so from_attributes just leaves the default.
-    running: bool = False
     # 与我的相关性 (C2): what this topic is to the CALLER, so the sidebar can
     # show "我参与的" flat and fold everyone else's away. Two orthogonal
     # booleans rather than one relevance enum — an enum has to grow a new value
@@ -86,7 +91,7 @@ class TopicOut(BaseModel):
     # awaited is also a way of participating), so the folding rule only ever
     # reads one of the two.
     #
-    # Derived per caller, so — like `last_activity_at` and `running` — only the
+    # Derived per caller, so — like `last_activity_at` and `activity` — only the
     # endpoints that ask for them fill them in (list_topics/get_topic);
     # elsewhere both stay False, meaning "nobody computed this", not "no".
     i_participate: bool = False
@@ -98,7 +103,6 @@ class TopicOut(BaseModel):
 
 
 class UpgradeBlockIn(BaseModel):
-    created_by: str | None = None
     reviewer_handle: str | None = Field(default=None, max_length=64)
 
 

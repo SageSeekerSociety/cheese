@@ -56,9 +56,9 @@ class SocketChannel:
     async def prepare_topic(self, **kwargs):
         return True, ""
 
-    async def ensure(self, session, opening):
+    async def ensure(self, session, opening, live=None):
         assert session == self.handle.session
-        return self.handle
+        return live if live is not None else self.handle
 
     async def discover(self, device_id):
         status = await self.call(self.handle, "ping", {})

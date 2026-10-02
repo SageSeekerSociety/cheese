@@ -17,7 +17,9 @@
     "revise": "Edit against latest version",
     "originalOnly": "Only the original respondent can correct this answer",
     "waitingFor": "Waiting for {name} to answer",
-    "unknownAnswerer": "the designated respondent"
+    "unknownAnswerer": "the designated respondent",
+    "recommended": "Recommended",
+    "replyPlaceholder": "Or write your own response"
   },
   "history": {
     "version": "Version {version} · {name}",
@@ -63,6 +65,13 @@
     "conflict": "The group version changed. The original submission is unconfirmed. Refresh or retry it; a new submission is blocked",
     "operationConfirmed": "Original submission confirmed (group version {version}); its receipt follows",
     "rejected": "The server confirmed the original operation was not saved. Refresh to edit against the latest version",
-    "cleanupError": "Original submission confirmed, but browser cleanup failed. Restore storage and refresh before starting another submission"
+    "cleanupError": "Original submission confirmed, but browser cleanup failed. Restore storage and refresh before starting another submission",
+    "heading": "Question",
+    "previous": "Previous question",
+    "next": "Next question",
+    "continue": "Next",
+    "collapse": "Dismiss question",
+    "expand": "Expand question",
+    "position": "{index} of {total}"
   }
 }

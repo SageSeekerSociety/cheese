@@ -15,6 +15,17 @@ import { teamDataInjectionKey } from '@/keys'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { handle: 'crew' } }) }))
 vi.mock('@/api', () => ({
+  ApiError: class extends Error {
+    constructor(
+      readonly status: number,
+      message: string
+    ) {
+      super(message)
+    }
+  },
+  authToken: () => 'tok',
+  BASE: '/api',
+  chatWsUrl: vi.fn(),
   changeProjectMachinePower: vi.fn(),
   deleteProjectMachine: vi.fn(),
   listMyDevices: vi.fn(async () => ({ devices: [] })),
@@ -69,6 +80,36 @@ beforeAll(() => {
   )
 })
 afterEach(cleanup)
+
+// Stands in for the browser socket: records what the page opened and lets a test
+// deliver the frames the team's live feed would send.
+class FakeSocket {
+  static OPEN = 1
+  static opened: FakeSocket[] = []
+  readyState = 1
+  onopen: (() => void) | null = null
+  onmessage: ((event: { data: string }) => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+  constructor(readonly url: string) {
+    FakeSocket.opened.push(this)
+    queueMicrotask(() => this.onopen?.())
+  }
+  // The server answers every ping; a socket that never did would be replaced.
+  send(data: string) {
+    if (JSON.parse(data).type === 'ping') queueMicrotask(() => this.deliver({ type: 'pong' }))
+  }
+  close() {
+    this.readyState = 3
+  }
+  deliver(frame: object) {
+    this.onmessage?.({ data: JSON.stringify(frame) })
+  }
+}
+beforeAll(() => vi.stubGlobal('WebSocket', FakeSocket))
+afterEach(() => {
+  FakeSocket.opened = []
+})
 
 it('lists the machines projects already have and offers no way to open one', async () => {
   const machine = {
@@ -254,20 +295,24 @@ const starting = {
   ai_status: 'provisioning',
 } as ProjectMachine
 
-function visibility(state: 'visible' | 'hidden') {
-  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
-  document.dispatchEvent(new Event('visibilitychange'))
+function latestSocket(): FakeSocket {
+  const socket = FakeSocket.opened.at(-1)
+  if (!socket) throw new Error('the page opened no socket')
+  return socket
 }
 
-it('while a machine is starting, asks again only about the project it belongs to', async () => {
+it("listens on the team's live feed and asks nothing until it hears of a change", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   try {
     const view = mountWith({ p1: [starting], p2: [settled] })
     expect(await view.findByText('starting')).toBeTruthy()
+    expect(latestSocket().url).toBe(`ws://${window.location.host}/api/teams/1/live?token=tok`)
     vi.mocked(listProjectMachines).mockClear()
 
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(listProjectMachines).not.toHaveBeenCalled()
 
+    latestSocket().deliver({ type: 'state', resource: 'machines', project_ids: ['p1'] })
     await vi.waitFor(() => expect(listProjectMachines).toHaveBeenCalled())
     expect(vi.mocked(listProjectMachines).mock.calls.map(([id]) => id)).toEqual(['p1'])
     expect(view.getByText('settled')).toBeTruthy()
@@ -276,21 +321,66 @@ it('while a machine is starting, asks again only about the project it belongs to
   }
 })
 
-it('does not ask while the page is hidden, and asks as soon as it is shown again', async () => {
+it('reads every project again after the feed reconnects', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const view = mountWith({ p1: [starting], p2: [settled] })
+    expect(await view.findByText('starting')).toBeTruthy()
+    vi.mocked(listProjectMachines).mockClear()
+
+    latestSocket().onclose?.()
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(FakeSocket.opened).toHaveLength(2)
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(listProjectMachines)
+          .mock.calls.map(([id]) => id)
+          .sort()
+      ).toEqual(['p1', 'p2'])
+    )
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('a refused feed says why and stops asking, instead of retrying into the refusal', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   try {
     const view = mountWith({ p1: [starting] })
     expect(await view.findByText('starting')).toBeTruthy()
-    visibility('hidden')
     vi.mocked(listProjectMachines).mockClear()
 
-    await vi.advanceTimersByTimeAsync(30000)
-    expect(listProjectMachines).not.toHaveBeenCalled()
+    latestSocket().deliver({ type: 'error', code: 'auth_expired', message: '登录状态已失效，请重新登录' })
+    latestSocket().onclose?.()
+    expect(await view.findByText('登录状态已失效，请重新登录')).toBeTruthy()
 
-    visibility('visible')
-    await vi.waitFor(() => expect(listProjectMachines).toHaveBeenCalledWith('p1'))
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(FakeSocket.opened).toHaveLength(1)
+    expect(listProjectMachines).not.toHaveBeenCalled()
   } finally {
-    visibility('visible')
+    vi.useRealTimers()
+  }
+})
+
+it('re-reads every project on the resync while the page is shown', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const view = mountWith({ p1: [starting], p2: [settled] })
+    expect(await view.findByText('starting')).toBeTruthy()
+    vi.mocked(listProjectMachines).mockClear()
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(listProjectMachines)
+          .mock.calls.map(([id]) => id)
+          .sort()
+      ).toEqual(['p1', 'p2'])
+    )
+  } finally {
     vi.useRealTimers()
   }
 })

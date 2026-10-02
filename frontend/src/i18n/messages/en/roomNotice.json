@@ -83,6 +83,8 @@
   "cloudMachineError": "The machine provider reported that creation failed",
   "cloudMachineFailing": "Cloud work machine “{name}” keeps failing",
   "cloudMachineFailingNext": "The topic stays on this machine and will not move to another one. Someone needs to check the connector and the session on this machine; retry once it is fixed.",
+  "cloudMachineGaveUp": "{count} machines in a row failed to be created; no new one will be requested for {minutes} minutes",
+  "cloudMachineReplaced": "Deleting the machine that failed to be created; requesting machine {attempt} instead",
   "cloudMachineRunning": "Machine started; waiting to be enrolled",
   "cloudMachineStarting": "Machine starting",
   "cloudProvisioningDetail": "This topic keeps the message and continues automatically once the machine is ready.",

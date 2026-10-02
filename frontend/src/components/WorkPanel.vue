@@ -24,7 +24,8 @@
 // 话，聊一小时能攒出二十个页签。
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, PreviewInfo, Topic } from '../cx_types'
-import type { TopicPhase } from '../lib/topicState'
+import type { MemberActivityLine } from '../lib/memberActivity'
+import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -57,7 +58,7 @@ const props = withDefaults(
     working?: boolean
     // 会话状态的最近一帧，一路透传给现场那格的会话详情。
     agentControl?: AgentControlState | null
-    // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格的状态条。
+    // 正在跑的轮次各自的开始时间（毫秒），一路透传给现场那格：哪一组还在进行。
     siteTurns?: Record<string, number>
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
@@ -66,9 +67,10 @@ const props = withDefaults(
     // keeps the panel mountable without a router, which is how its four suites
     // exercise it. An unknown or absent value leaves the choice here.
     tab?: string
-    // 话题此刻处在哪一段. Only used to pick which tab a topic OPENS on, and only
-    // when the address named none — after that it is the reader's choice.
-    phase?: TopicPhase
+    // 采纳卡处在哪一段（还没答 = undefined）。Only used, with `working`, to pick
+    // which tab a topic OPENS on, and only when the address named none — after
+    // that it is the reader's choice.
+    cardPhase?: CardPhase
     // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
     // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
     withChat?: boolean
@@ -81,9 +83,8 @@ const props = withDefaults(
     memberNames?: Record<string, string>
     /** 项目 AI 队友的名字（项目可以给它改名），提示和空态里用它，不写死「芝士」。 */
     agentName?: string
-    // 正在干活的队友们的名字（几个座位并行在跑就几个），「现场」tab 的标签把
-    // 他们并列报出来。空着 = 帧没带座位（老后端），退回 agentName 的单数说法。
-    workingAgents?: string[]
+    // 此刻谁在这个房间里忙（对话栏从 socket 上学来）。现场那一格画其中在干活的队友。
+    activity?: MemberActivityLine[]
   }>(),
   {
     working: false,
@@ -94,10 +95,10 @@ const props = withDefaults(
     cardFocusBlock: null,
     memberNames: () => ({}),
     tab: undefined,
-    phase: undefined,
+    cardPhase: undefined,
     withChat: false,
     agentName: () => t('work.room.defaultAgentName'),
-    workingAgents: () => [],
+    activity: () => [],
   }
 )
 
@@ -107,8 +108,6 @@ const emit = defineEmits<{
   /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
   (e: 'review'): void
   (e: 'mention-click', handle: string): void
-  /** 总览自动区里的一条决策 / 里程碑：去向是项目里的一页，交给 `TopicView`。 */
-  (e: 'open-resource', resource: 'milestone'): void
   (e: 'update:tab', key: string): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
   (e: 'locate', message: string): void
@@ -168,7 +167,7 @@ function setTab(key: string) {
 // so it is the one moment the panel gets to choose: 芝士 干着活的时候你多半是来
 // 看它在干什么的，卡等你验收的时候你是来看它干了什么的。
 //
-// `settled` is what keeps it to that moment. The phase arrives asynchronously —
+// `settled` is what keeps it to that moment. The card's phase arrives asynchronously —
 // the accept card has to load before anyone knows a card is pending, and until
 // it has the prop is undefined rather than 「没有卡」 — so this cannot run when the
 // topic opens. It runs on the first phase this topic reports, and never again
@@ -177,9 +176,9 @@ const settled = ref(false)
 
 // 只挑有东西可看的那一格：挑中一格空的，人一进房间看到的就是一句「暂无」——
 // 待验收的房间没有改动文件（比如项目还没接仓库）时，原来就落在一块报错上。
-function tabForPhase(phase: TopicPhase): TabKey {
-  if (phase === 'working') return 'site'
-  if ((phase === 'reviewing' || phase === 'delivering') && hasContent('changes')) return 'changes'
+function openingTab(card: CardPhase): TabKey {
+  if (props.working) return 'site'
+  if (card && hasContent('changes')) return 'changes'
   return defaultTab.value
 }
 
@@ -370,18 +369,10 @@ useCommands(() =>
   }))
 )
 
-// 「现场」tab 上「谁正在工作」的说法：几个队友并行在干就把名字并列报出来
-// （对话栏按轮次帧学来的名单）；名单空着 = 帧没带座位（老后端），退回默认
-// 队友的单数说法，和从前一样。
-const workingNames = computed(() =>
-  props.workingAgents.length ? props.workingAgents.join(t('work.room.panel.nameSeparator')) : props.agentName
-)
-
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(tab: TabDef): string {
   const detailed = (detail: string) => t('work.room.panel.tabDetail', { label: tab.label, detail })
   const pair = (first: string, second: string) => t('work.room.panel.detailPair', { first, second })
-  if (tab.key === 'site' && props.working) return detailed(t('work.room.panel.working', { names: workingNames.value }))
   if (tab.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
     const tasks = t('work.room.panel.taskCount', { count: total })
@@ -445,17 +436,17 @@ const panelTabs = computed<PanelTab[]>(() =>
 // 待验收 / 交付中要等 summary 回来才挑：开在「改动」的前提是真有改动，而两个请求
 // 同时发出，谁先到说不准。等到的是一个事实，不是一场赛跑。
 watch(
-  [() => props.phase, summaryLoaded],
-  ([phase, loaded]) => {
-    if (settled.value || !phase) return
+  [() => props.cardPhase, summaryLoaded],
+  ([card, loaded]) => {
+    if (settled.value || card === undefined) return
     // 手机上房间永远开在对话：输入框就在那一格里，自动跳去现场等于把它藏起来。
     // 现场那一格上的呼吸点照样说着「正在工作」。
     if (props.withChat) {
       settled.value = true
       return
     }
-    if ((phase === 'reviewing' || phase === 'delivering') && !loaded) return
-    const want = tabForPhase(phase)
+    if (!props.working && card && !loaded) return
+    const want = openingTab(card)
     if (want === active.value) settled.value = true
     else setTab(want)
   },
@@ -613,7 +604,6 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
-          @open-resource="emit('open-resource', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"
@@ -627,6 +617,7 @@ defineExpose({ pulse, highlightTurn, openFile, siteBlock })
           :refresh-tick="refreshTick"
           :member-names="memberNames"
           :working="working"
+          :activity="activity"
           :agent-control="agentControl"
           @open-file="openFile"
           @open-topic="emit('open-topic', $event)"

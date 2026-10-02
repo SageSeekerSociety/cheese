@@ -96,9 +96,8 @@ const {
   archivedUnread,
   privateUnreadTotal,
   stalledOf,
+  memberMarks,
   toggleTitle,
-  agentName,
-  clock,
   topicById,
 } = useTopicRail(props)
 
@@ -113,7 +112,7 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
   { rename: (topic) => (renamingTopicId.value = topic.id) }
 )
 
-// 项目级页面（总览/看板/日历/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
+// 项目级页面（看板/资料库/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 //
@@ -124,7 +123,7 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
 //
 // 这张表是**这一版前端认得**的项目页：key → 它长什么样。露出哪几格、什么顺序、谁
 // 开局收着，全部由这个项目的壳说（catalog.py）。default 壳说的是「今天」的样子：
-// 侧栏那一面资料库和名册是常驻那两格，只有日历收进项目名旁边那个 ⋯ 菜单——#1330
+// 侧栏那一面资料库和名册是常驻那两格，例行和技能收进项目名旁边那个 ⋯ 菜单——#1330
 // 把这条竖线收窄过一轮，名册又回到侧栏（#6：「退出项目」长在名册页上，名册收进 ⋯
 // 就没人找得到怎么退出），壳的 default 声明跟着一起改，否则这一版会把别人刚挪走的
 // 几格又摆回来。
@@ -134,7 +133,6 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
 const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
   // 看板就是首页（项目名那一行点下去就到），但它仍然是一页：壳想把它摆回侧栏也行。
   'workspace-running': { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
-  calendar: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
   'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
   'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
@@ -499,9 +497,8 @@ const onDocs = computed(() => !!props.activeDocs)
                     :renaming="renamingTopicId === row.topic.id"
                     :menu-open="actionsMenuFor === row.topic.id"
                     :stalled="stalledOf(row.topic.id)"
+                    :marks="memberMarks(row.topic)"
                     :toggle-title="toggleTitle(row)"
-                    :now="clock"
-                    :agent-name="agentName"
                     :actions="actionsFor"
                     @select="emit('select-topic', $event)"
                     @hover="emit('hover-topic', $event)"

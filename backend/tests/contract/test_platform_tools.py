@@ -77,11 +77,6 @@ CALLS = {
         "POST",
         f"/topics/fixture/tasks/{TASK}/messages",
     ),
-    "cheese_milestone": (
-        {"title": "中期汇报"},
-        "POST",
-        "/projects/fixture-project/milestones",
-    ),
     "cheese_title": ({"text": "推荐原型"}, "POST", "/topics/fixture/title"),
     "cheese_notify": (
         {"title": "看一眼"},
@@ -106,7 +101,7 @@ CALLS = {
             ]
         },
         "POST",
-        "/topics/fixture/ask",
+        "/topics/fixture/asks",
     ),
     "cheese_feedback_propose": (
         {
@@ -220,7 +215,7 @@ def _serve(executor):
                 "doc_version": 1,
                 **payload,
             }
-            if self.path == "/topics/fixture/ask":
+            if self.path == "/topics/fixture/asks":
                 data = {
                     "group": {
                         "topic_id": "fixture",

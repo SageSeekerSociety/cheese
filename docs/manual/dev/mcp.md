@@ -13,13 +13,13 @@ covers:
 
 # 平台工具与会话侧 MCP {#mcp}
 
-芝士在房间里做的事——发消息、开任务、递卡、写文档、钉里程碑——都是调用平台工具。这一页讲这张表长什么样、它怎么变成三种骨架各自手里的工具，以及机器够不着时会发生什么。
+芝士在房间里做的事——发消息、开任务、递卡、写文档——都是调用平台工具。这一页讲这张表长什么样、它怎么变成三种骨架各自手里的工具，以及机器够不着时会发生什么。
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己声明的 MCP 服务，见[项目自定义 MCP](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，37 样 {#table}
+## 一张表，36 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 37 样：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 36 样：
 
 | 类别 | 工具 |
 | --- | --- |
@@ -27,7 +27,7 @@ covers:
 | 读房间 | `cheese_chat_list`、`cheese_chat_search`、`cheese_chat_get`、`cheese_chat_replies` |
 | 文档 | `cheese_doc_get`、`cheese_doc_set` |
 | 任务与验收 | `cheese_task`、`cheese_close_task`、`cheese_accept_request`、`cheese_describe`、`cheese_ready`、`cheese_tell` |
-| 记录 | `cheese_milestone`、`cheese_title` |
+| 记录 | `cheese_title` |
 | 通知与拍板 | `cheese_notify`、`cheese_ask` |
 | 资料 | `cheese_fetch`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
 | 锁 | `cheese_lock`、`cheese_unlock` |

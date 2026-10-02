@@ -21,9 +21,11 @@ out of a WebAuthn `clientDataJSON`, and `POST /users/auth/sudo` reads one too
 both and stays in `users.py`, imported here. `_passkey_enrollment` (what a
 finished sign-in hands back when the account is due the offer) also stays:
 every sign-in route calls it. `_spend_sudo_ticket` is the shared helper and
-lives in `users_common.py`. `issue_session`, `get_passkey_service` and
-`get_user_auth_service` are defined in `users.py` and imported from there, the
-way `app_sign_in.py` already imports `issue_session`.
+lives in `users_common.py`, and `issue_session` joined it there: every way
+of signing in ends in it, so the mint sits beside the ticket these modules
+already share, imported here the way `app_sign_in.py` imports it.
+`get_passkey_service` is defined in `users.py` and imported from there.
+`get_user_auth_service` is a FastAPI dependency in `app/api/deps.py`.
 
 Ordering. This module sorts after `users.py`, `users_2fa.py` and
 `users_identity.py`, so its paths mount after every path that stays. The two
@@ -49,14 +51,13 @@ from fastapi import APIRouter, Body, Depends, Path, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_user_auth_service
 from app.api.routes.users import (
     SudoTicketRequest,
     _challenge_from_credential,
     get_passkey_service,
-    get_user_auth_service,
-    issue_session,
 )
-from app.api.routes.users_common import _spend_sudo_ticket
+from app.api.routes.users_common import _spend_sudo_ticket, issue_session
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose

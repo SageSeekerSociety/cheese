@@ -8,13 +8,16 @@ import asyncio
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 
-from app.domain.agent.harness import Opening
+from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.pi.runner import Runner, socket_path
+from app.domain.agent.harness.pi.subscription import Subscription
+from app.domain.agent.nonce import new_nonce
 from tests.support.room_machine import NO_MACHINE, room_machine
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
@@ -120,14 +123,23 @@ async def test_an_input_reaches_the_model_once_however_often_it_is_resent(tmp_pa
     try:
         identifier = str(uuid.uuid4())
         work = str(uuid.uuid4())
-        payload = {"input_id": identifier, "text": "改一下 greet", "work_id": work}
+        payload = {
+            "input_id": identifier,
+            "text": "改一下 greet ⟪w:00000000000000000000f001⟫",
+            "work_id": work,
+        }
         first = await call(runner.state, "send", payload)
         # A backend that never saw the answer resends the same id.
         assert await call(runner.state, "send", payload) == first
 
         entries = (await call(runner.state, "entries"))["entries"]
         assert len(entries) == len(json.loads(FIXTURE.read_text())["entries"])
-        assert {entry["cheese"]["work_id"] for entry in entries} == {work}
+        # Session metadata (model/thinking changes) belongs to no turn and
+        # carries no work_id by design (FB-56); the turn's entries all
+        # carry this turn's.
+        worked = [entry for entry in entries if entry["type"] == "message"]
+        assert worked
+        assert {entry["cheese"]["work_id"] for entry in worked} == {work}
         assert {entry["cheese"]["harness"] for entry in entries} == {"pi"}
 
         # One prompt reached pi, not two.
@@ -175,6 +187,247 @@ async def test_a_reader_with_a_cursor_is_given_only_what_it_has_not_seen(tmp_pat
             "entries"
         ] == everything
     finally:
+        await runner.close()
+
+
+def _update(**event) -> dict:
+    return {"event": {"type": "message_update", "assistantMessageEvent": event}}
+
+
+#: One assistant message pi writes in steps, as `--mode rpc` prints it (each
+#: `pause` holds it until the next prompt or steer): reasoning, then text, then
+#: a tool call whose arguments stream as raw JSON, then the entry and its end.
+_WRITTEN = {
+    "type": "message",
+    "id": "e-reply",
+    "parentId": None,
+    "timestamp": "2026-10-01T00:00:00.000Z",
+    "message": {
+        "role": "assistant",
+        "timestamp": 1759276800000,
+        "content": [
+            {"type": "thinking", "thinking": "plan"},
+            {"type": "text", "text": "Hello"},
+            {
+                "type": "toolCall",
+                "id": "call_1",
+                "name": "chat_send",
+                "arguments": {"text": "Hi there"},
+            },
+        ],
+    },
+}
+_WRITING = {
+    "stream": [
+        {"event": {"type": "agent_start"}},
+        {
+            "event": {
+                "type": "message_start",
+                "message": {"role": "assistant", "timestamp": 1759276800000},
+            }
+        },
+        _update(type="thinking_start", contentIndex=0),
+        _update(type="thinking_delta", contentIndex=0, delta="plan"),
+        _update(type="text_start", contentIndex=1),
+        _update(type="text_delta", contentIndex=1, delta="Hel"),
+        {"pause": True},
+        _update(type="text_delta", contentIndex=1, delta="lo"),
+        _update(type="text_end", contentIndex=1, content="Hello"),
+        _update(
+            type="toolcall_start", contentIndex=2, id="call_1", toolName="chat_send"
+        ),
+        _update(type="toolcall_delta", contentIndex=2, delta='{"text": "Hi'),
+        {"pause": True},
+        _update(type="toolcall_delta", contentIndex=2, delta=' there"}'),
+        {"pause": True},
+        {"entry": _WRITTEN},
+        {"event": {"type": "message_end", "message": _WRITTEN["message"]}},
+        {"event": {"type": "agent_end", "messages": []}},
+        {"event": {"type": "agent_settled"}},
+    ]
+}
+
+
+@pytest.mark.anyio
+async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
+    tmp_path,
+):
+    text = f"go on {new_nonce()}"
+    user_entry = {
+        "type": "message",
+        "id": "e-user",
+        "parentId": None,
+        "timestamp": "2026-10-01T00:00:00.000Z",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": text}],
+        },
+    }
+    recording = tmp_path / "writing.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "stream": [
+                    {"entry": user_entry},
+                    {"pause": True},
+                    *_WRITING["stream"],
+                ]
+            }
+        )
+    )
+    binary = tmp_path / "pi"
+    binary.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE} {recording} "$@"\n')
+    binary.chmod(0o700)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        Opening("system prompt", None, agent_handle="teammate"),
+        binary=str(binary),
+        cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin"},
+        args=[],
+        target=NO_MACHINE,
+    )
+    work = str(uuid.uuid4())
+
+    async def shown(seen: str) -> dict:
+        answer = await call(runner.state, "entries", {"wait": 10, "live": seen})
+        assert "live" in answer, "nothing new was shown"
+        return answer["live"]
+
+    async def step(method: str) -> None:
+        await call(
+            runner.state,
+            method,
+            {"input_id": str(uuid.uuid4()), "text": text, "work_id": work},
+        )
+
+    try:
+        mark = runner.live_mark()
+        await step("send")
+        # Consume the native user entry before the assistant starts writing.
+        await call(runner.state, "entries")
+        await step("steer")
+        live = await shown(mark)
+        assert live["work_id"] == work
+        assert live["blocks"] == [{"type": "text", "text": "Hel"}]
+
+        await step("steer")
+        live = await shown(live["mark"])
+        assert live["blocks"] == [
+            {"type": "text", "text": "Hello"},
+            {
+                "type": "tool",
+                "id": "call_1",
+                "name": "chat_send",
+                "arguments": '{"text": "Hi',
+            },
+        ]
+
+        await step("steer")
+        live = await shown(live["mark"])
+        assert json.loads(live["blocks"][1]["arguments"]) == {"text": "Hi there"}
+
+        await step("steer")
+        while live["blocks"]:
+            live = await shown(live["mark"])
+        entries = (await call(runner.state, "entries"))["entries"]
+    finally:
+        await runner.close()
+
+    # The finished message is the record; what was shown of it never was.
+    assert [entry["id"] for entry in entries] == ["e-user", "e-reply"]
+
+
+@pytest.mark.anyio
+async def test_a_record_of_the_runners_own_is_news_once(tmp_path):
+    """The runner writes records of its own into the log (a compaction, a
+    failed call's verdict). Once a backend has them, a read that waits is not
+    answered with them again: it waits for something new."""
+    text = f"go {new_nonce()}"
+    work = str(uuid.uuid4())
+    recording = tmp_path / "compacting.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "stream": [
+                    {
+                        "entry": {
+                            "type": "message",
+                            "id": "e-user",
+                            "parentId": None,
+                            "timestamp": "2026-10-01T00:00:00.000Z",
+                            "message": {
+                                "role": "user",
+                                "content": [{"type": "text", "text": text}],
+                            },
+                        }
+                    },
+                    {"pause": True},
+                    {"event": {"type": "agent_start"}},
+                    {"event": {"type": "compaction_start", "reason": "threshold"}},
+                    {"event": {"type": "compaction_end", "reason": "threshold"}},
+                    {"event": {"type": "agent_settled"}},
+                ]
+            }
+        )
+    )
+    binary = tmp_path / "pi"
+    binary.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE} {recording} "$@"\n')
+    binary.chmod(0o700)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        Opening("system prompt", None, agent_handle="teammate"),
+        binary=str(binary),
+        cwd=str(tmp_path),
+        env={"PATH": "/usr/bin:/bin"},
+        args=[],
+        target=NO_MACHINE,
+    )
+    landed: list = []
+
+    async def consume(*args):
+        landed.append(args[3])
+
+    async def activity(*_):
+        pass
+
+    mirror = Subscription(
+        SessionRef(uuid.uuid4(), uuid.uuid4(), "teammate", harness="pi"),
+        tmp_path / "mirror" / "entries.sqlite",
+        lambda method, params: call(runner.state, method, params),
+        consume,
+        activity,
+    )
+    mirror.path.parent.mkdir()
+    mirror.waits = True
+    try:
+        await call(
+            runner.state,
+            "send",
+            {"input_id": str(uuid.uuid4()), "text": text, "work_id": work},
+        )
+        # Consume only the user prelude; compaction starts with the next steer.
+        await mirror.drain()
+        landed.clear()
+        await call(
+            runner.state,
+            "steer",
+            {"input_id": str(uuid.uuid4()), "text": "go", "work_id": work},
+        )
+        async with asyncio.timeout(10):
+            while not any(
+                entry.get("type") == "cheese_compacting"
+                for entry in (await call(runner.state, "entries"))["entries"]
+            ):
+                await asyncio.sleep(0.05)
+        await mirror.drain(wait=1.0)
+        assert landed
+
+        started = time.monotonic()
+        await mirror.drain(wait=1.0)
+        assert time.monotonic() - started >= 0.8
+    finally:
+        await mirror.release()
         await runner.close()
 
 

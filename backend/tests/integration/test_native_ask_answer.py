@@ -223,7 +223,7 @@ def test_http_answer_continues_original_native_executor(
             if not mode.startswith("history-multi"):
                 assert native_runner.working
                 asked = client.post(
-                    f"/topics/{topic}/ask",
+                    f"/topics/{topic}/asks",
                     json={
                         "questions": [
                             {

@@ -148,7 +148,7 @@ async def answer_after_recovery(descriptor, chat, channel, factory):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
         ) as http:
-            path = f"/topics/blocks/{question}/answer"
+            path = f"/topics/blocks/{question}/answers"
             first_body = body("继续", "fresh-http-first", 0)
             first = await http.post(
                 path, json=first_body, headers=descriptor["alice_headers"]

@@ -67,6 +67,8 @@ const props = defineProps<{
   agentName: string
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
   outbox: Outgoing[]
+  /** 队友正在写、还没发出的那几条（useTypingPreview），接在发件箱后面。 */
+  typing: { block: Block; edge: RunEdge }[]
   editingId: string | null
   editSaving: boolean
   askStates?: Record<string, AskFormState>
@@ -445,6 +447,30 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @avatar-error="emit('avatar-error', $event)"
         />
       </TransitionGroup>
+
+      <!-- 队友正在写的那条：和它落下来之后同一个样子，淡一档，时间那一格写「正在输入…」。
+           它还不是消息，所以没有悬停条、没有表情、不进未读。 -->
+      <RoomMessage
+        v-for="{ block: m, edge } in typing"
+        :key="m.id"
+        :block="m"
+        :parent="null"
+        :parent-name="null"
+        :run-start="edge !== 'cont'"
+        :regroup="edge === 'regroup'"
+        :mine="false"
+        :topic-id="topic?.id ?? null"
+        :author-name="displayName(m)"
+        :external="isExternal(m.author)"
+        :avatar="avatarSrc(m.author)"
+        :is-agent="isAgentBlock(m)"
+        :time="t('work.room.chat.typing')"
+        :refs="refs"
+        :viewer="viewer"
+        :ask-busy="false"
+        :outgoing="{ failed: false }"
+        @avatar-error="emit('avatar-error', $event)"
+      />
 
       <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
       <div class="px-4">

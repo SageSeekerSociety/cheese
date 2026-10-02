@@ -1,5 +1,5 @@
 // 一个房间里有几个队友在干活时，现场可以只看其中一个：顶上一排「全部」加每个队友
-// 的名字，状态条说的是选中的那一个（「全部」下是此刻在动的那一个）。
+// 的名字；顶上那一行说谁在干活，只看一个队友时只说它。
 import type { Component } from 'vue'
 import type { Block, Topic } from '../../cx_types'
 
@@ -96,7 +96,7 @@ function args(container: Element): string[] {
 }
 
 function status(container: Element): string {
-  return container.querySelector('[data-testid="site-status"]')?.textContent?.replace(/\s+/g, ' ') ?? ''
+  return container.querySelector('[data-testid="member-activity"]')?.textContent?.replace(/\s+/g, ' ') ?? ''
 }
 
 describe('现场按队友看', () => {
@@ -141,15 +141,14 @@ describe('现场按队友看', () => {
     expect(view.container.querySelector('[data-testid="turn-who"]')).toBeNull()
   })
 
-  it('状态条：「全部」下说此刻在动的那个队友，选中别的队友时说它闲着', async () => {
-    const running = { 'turn-b': Date.parse('2026-09-25T10:00:50Z') }
-    const view = await openSite(TWO.slice(0, 3), { working: true, runningTurns: running })
+  it('顶上那一行说谁在干活：「全部」下是在干活的那位，只看别的队友时不替它说', async () => {
+    const activity = [{ handle: 'cheese-b2', name: '小苔', kind: 'working', since: 1, detail: '正在执行命令' }]
+    const view = await openSite(TWO.slice(0, 3), { working: true, activity })
 
-    expect(status(view.container)).toContain('小苔')
+    expect(status(view.container)).toContain('小苔正在工作')
     expect(status(view.container)).toContain('正在执行命令')
 
     await fireEvent.click(view.getByRole('tab', { name: '芝士' }))
-    expect(status(view.container)).toContain('芝士')
-    expect(status(view.container)).toContain('空闲')
+    expect(status(view.container)).toBe('')
   })
 })

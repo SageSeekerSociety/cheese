@@ -495,10 +495,9 @@ class AgentRuntime(Protocol):
         place, and the errand would silently rent a second machine every time.
 
         ``ensure`` + ``send`` + read, for a caller that has nothing to recover
-        to: the platform's OWN errands — the activity digest and the project
-        summary — have no room waiting on them and no
-        timeline to backfill, so the turn is worth exactly as much as the
-        iterator that reads it.
+        to: the platform's OWN errand — the memory consolidation (dream) — has
+        no room waiting on it and no timeline to backfill, so the turn is worth
+        exactly as much as the iterator that reads it.
 
         A room's turn does NOT go through here. It sends, and reads what comes
         back through the subscription and the backlog, because there the work
