@@ -17,6 +17,9 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 `BlockKind.weekly`，写在调用点，读的人一眼看得见。
 """
 
+# Public reads leave transaction management to the caller: no explicit
+# begin/commit/rollback; SQLAlchemy autobegin and autoflush are unchanged.
+
 import uuid
 from collections.abc import Iterable
 
@@ -41,6 +44,9 @@ async def weeklies_for_project(
     """这个项目的周报集，最新在前；每条在 `meta` 里带它覆盖的那一段。
 
     一份周报说的是过去的一段时间，窗口（since/until）是那一行的身份。
+
+    Callers authorize and own this session and its transaction. This read
+    does not explicitly begin, commit or roll back.
     """
     blocks = await BlockRepository(db).list_by_kind_for_project(
         project_id, BlockKind.weekly
@@ -57,5 +63,8 @@ async def tasks_awaiting_an_answer(
     和别的批次事实一样，从外面喂进纯函数（见 `room_task/presentation.py`）。
     主语是活、不是房间，所以判据在 `BlockRepository.tasks_awaiting_an_answer`
     里，这里只把路由和那条查询之间的名字固定下来。
+
+    Callers authorize and own this session and its transaction. This read
+    does not explicitly begin, commit or roll back.
     """
     return await BlockRepository(db).tasks_awaiting_an_answer(list(task_ids))

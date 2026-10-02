@@ -19,9 +19,8 @@ is named anywhere else in the tree.
 What stays behind, and why. `_spend_sudo_ticket` is not this group's: it is
 what every sudo-gated route in the tree redeems a ticket through, so it lives
 in `users_common.py` with the reservation scope it claims in, and this module
-imports it. `SudoTicketRequest` stays in `users.py` and is imported from
-there, because the OAuth unbind that does not move reads it too, and so does
-`PasskeyRepository` — `GET /users/{userId}/2fa/status` builds one to count the
+imports it together with the shared SudoTicketRequest. `PasskeyRepository`
+still comes from users.py: `GET /users/{userId}/2fa/status` builds one to count the
 account's passkeys, and `get_passkey_service` next to it builds one for the
 passkey routes — so it is taken from `users.py`, where the guard in
 `tests/unit/test_domain_import_guard.py` freezes that pair, rather than from
@@ -55,8 +54,8 @@ from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users import PasskeyRepository, SudoTicketRequest
-from app.api.routes.users_common import _spend_sudo_ticket
+from app.api.routes.users import PasskeyRepository
+from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose

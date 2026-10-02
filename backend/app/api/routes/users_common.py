@@ -1,4 +1,4 @@
-"""The sudo ticket and the sign-in session, for the route modules that share them.
+"""Shared sudo requests, WebAuthn parsing, tickets and sign-in sessions.
 
 Fourth slice of `app/api/routes/users.py` (arch review C-backend.md §3.3):
 the passkey, two-factor and real-name identity groups move into
@@ -9,7 +9,7 @@ through `_spend_sudo_ticket`, and so do two things that stay behind:
 in `users.py` itself. A helper five modules redeem through does not belong to
 any one of them, which is what makes this module the one place it can live.
 
-What is here. Two groups. The first is `_spend_sudo_ticket` and the
+The stateful helpers have two groups. The first is `_spend_sudo_ticket` and the
 reservation scope it claims in. The scope travels with it rather than staying
 behind because it is a single value, not a name to re-export: the ticket's
 issuer, `_issue_sudo_ticket`, is the only other writer, and it lives in
@@ -38,11 +38,15 @@ row: a route module may not import a domain's models (C2), and the id is all
 the issue needs — the domain's `TrustedDeviceService.mark_used` records the
 sign-in against it, and refuses when the id names no device.
 
+The shared pure contracts are `SudoTicketRequest`, used by passkey, two-factor,
+identity and OAuth-unbind operations, and `challenge_from_credential`, used by passkey
+verification and sudo's WebAuthn assertion. Neither performs I/O or grants
+authorization; the calling route retains those responsibilities.
+
 What is deliberately not here. `_issue_sudo_ticket` stays in `users.py`: only
 that file mints, so moving it would put the minting side of the pair in a
 module named after what the *four* sides share while its sole caller sits
-somewhere else. `_challenge_from_credential` also stays: `POST /users/auth/sudo`
-reads a WebAuthn assertion too, so it is not the passkey module's to keep.
+somewhere else.
 `_trusted_device` stays: its callers read `trust is None` to pick the login
 method, so they still need the ORM row itself — only the session issue needed
 the id. `_require_same_origin` stays: it guards refresh and logout, not the
@@ -62,11 +66,12 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import Request, Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.auth import SudoPurpose, create_access_token
 from app.core.config import GATEWAY_MOUNT, settings
-from app.core.errors import InternalServerError, SudoRequiredError
+from app.core.errors import BadRequestError, InternalServerError, SudoRequiredError
 from app.domain.block.notice_text import say
 from app.domain.user.sessions import SessionService
 from app.domain.user.trusted_devices import Granted, TrustedDeviceService
@@ -76,6 +81,34 @@ logger = logging.getLogger(__name__)
 # Namespaces the reservations behind a sudo ticket. Its own scope, so a ticket
 # can never be redeemed by whatever else happens to hold a matching ``jti``.
 _SUDO_TICKET_SCOPE = "sudo_ticket"
+
+
+class SudoTicketRequest(BaseModel):
+    """The body of an operation that redeems a sudo ticket and needs nothing
+    else."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
+
+
+def challenge_from_credential(credential: dict) -> str:
+    """Recover the challenge echoed inside the WebAuthn clientDataJSON. The
+    reference contract sends only the credential — the server must not trust a
+    separately-supplied challenge anyway."""
+    import base64
+    import json as _json
+
+    try:
+        raw = credential["response"]["clientDataJSON"]
+        padded = raw + "=" * (-len(raw) % 4)
+        client_data = _json.loads(base64.urlsafe_b64decode(padded))
+        challenge = client_data["challenge"]
+        if not isinstance(challenge, str) or not challenge:
+            raise KeyError("challenge")
+        return challenge
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BadRequestError("Malformed WebAuthn credential") from exc
 
 
 async def _spend_sudo_ticket(

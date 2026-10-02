@@ -14,8 +14,8 @@ account", as five routes:
 and the two shapes they read, `PutUserIdentityRequest` and
 `PatchUserIdentityRequest`: nothing else in the tree names either, so they are
 this module's own request models rather than two more classes at the top of
-the file being split. `SudoTicketRequest` is the opposite case and stays in
-`users.py`, imported from there, because the OAuth unbind reads it too.
+the file being split. SudoTicketRequest is shared with passkey and two-factor
+operations, so it is imported from users_common beside the ticket spender.
 
 The three writes and the precise read each spend a sudo ticket; that is the
 decision this slice had to make once for all three of its modules, and it is
@@ -43,11 +43,8 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.routes.users import (
-    SudoTicketRequest,
-    get_user_realname_service,
-)
-from app.api.routes.users_common import _spend_sudo_ticket
+from app.api.routes.users import get_user_realname_service
+from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
