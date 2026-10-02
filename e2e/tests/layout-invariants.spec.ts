@@ -479,6 +479,32 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   }
 });
 
+// 读的那一栏（`AppPage` 的 `read` 档）在宽屏上封顶居中，页头那一行跟着它：标题和正文
+// 从同一条竖线开始。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
+// 1920 宽时差三百多。量的是渲染出来的字，因为这种错 vitest 和类型检查都看不见。
+test('读的那一栏，页头标题和正文同一条左沿', async ({ page }) => {
+  await apiLogin(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openFirstProject(page);
+  const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
+  expect(projectPath).toBeTruthy();
+
+  for (const width of [1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const path of ['/inbox', `${projectPath}/members`]) {
+      await page.goto(path);
+      const title = page.locator('.app-page__title');
+      await expect(title).toBeVisible();
+      const column = page.locator('.app-page__column--read');
+      const [titleX, bodyX] = await Promise.all([
+        title.evaluate((el) => el.getBoundingClientRect().x),
+        column.evaluate((el) => el.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft)),
+      ]);
+      expect(Math.abs(titleX - bodyX), `${path} @ ${width}`).toBeLessThanOrEqual(1);
+    }
+  }
+});
+
 /** 首屏以下的内容里，有没有**够不着**的 —— 它在视野外，而页面上没有任何祖先能滚。
  *
  *  平台的外壳把整页钉死在窗口高度（`styles/common.scss` 把 html/body/#app 定成
