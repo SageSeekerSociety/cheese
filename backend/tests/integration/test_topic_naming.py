@@ -70,7 +70,10 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
 
     class Stubbed(real):
         def __init__(self, *args, **kwargs):
-            kwargs["transport"] = transport
+            # Only the model's calls: a client already given a transport (the
+            # collaboration service's stand-in) keeps it.
+            if kwargs.get("transport") is None:
+                kwargs["transport"] = transport
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", Stubbed)

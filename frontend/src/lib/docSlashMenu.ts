@@ -179,8 +179,7 @@ export function createSlashCommands(handlers: SlashMenuHandlers) {
           items: ({ query }) => filterSlashItems(query),
           allow: ({ state, range }) => {
             // Never inside code blocks ("/" is code) or table cells (block-type
-            // conversions there would produce markdown a GFM table can't hold —
-            // the round-trip guard would flag the doc as lossy).
+            // conversions there would produce markdown a GFM table can't hold).
             const $from = state.doc.resolve(range.from)
             for (let d = $from.depth; d > 0; d--) {
               const name = $from.node(d).type.name

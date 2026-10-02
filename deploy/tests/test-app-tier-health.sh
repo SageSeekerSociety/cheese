@@ -65,6 +65,35 @@ test_deploy_accepts_healthy_pair() {
   echo "PASS: deploy accepts one healthy current backend/frontend pair"
 }
 
+test_deploy_requires_released_collab() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-collab.XXXXXX")"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=collab_absent \
+    APP_TIER_MAIN_SHA=testsha \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded with the collaboration service missing"
+  fi
+  if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=collab_unreleased \
+    APP_TIER_MAIN_SHA=testsha \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy refused a release that predates the collaboration service"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: collab is required exactly when the release has it"
+}
+
 test_deploy_keeps_connection_owner_running() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner.XXXXXX")"
@@ -123,7 +152,7 @@ test_local_deploy_installs_owner_from_verified_backend_image() {
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
     DEPLOY_APP_IMAGE_SOURCE=local BACKEND_IMAGE=repo/backend:local \
-    FRONTEND_IMAGE=repo/frontend:local DEPLOY_HEALTH_ATTEMPTS=1 \
+    FRONTEND_IMAGE=repo/frontend:local COLLAB_IMAGE=repo/collab:local DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
     "$ROOT/deploy/deploy-docker.sh" testsha \
       "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
@@ -568,7 +597,7 @@ test_local_app_images_skip_registry_pull() {
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
     BACKEND_IMAGE=repo/backend:testsha \
-    FRONTEND_IMAGE=repo/frontend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
     DEPLOY_APP_IMAGE_SOURCE=local \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
@@ -596,7 +625,7 @@ test_local_app_images_must_exist() {
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
     BACKEND_IMAGE=repo/backend:testsha \
-    FRONTEND_IMAGE=repo/frontend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
     DEPLOY_APP_IMAGE_SOURCE=local \
     HOME="$run_dir" \
     "$ROOT/deploy/deploy-docker.sh" testsha \
@@ -733,7 +762,7 @@ test_rollback_restores_exact_previous_images() {
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
     BACKEND_IMAGE=repo/backend:testsha \
-    FRONTEND_IMAGE=repo/frontend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
     DEPLOY_APP_IMAGE_SOURCE=local \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
@@ -934,7 +963,7 @@ ownership_run() {
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
     BACKEND_IMAGE=repo/backend:testsha \
-    FRONTEND_IMAGE=repo/frontend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
     DEPLOY_APP_IMAGE_SOURCE=local \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
@@ -1224,6 +1253,7 @@ case "$CASE" in
   forge-migration) test_forge_migration_release ;;
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
+  deploy-collab) test_deploy_requires_released_collab ;;
   connection-owner) test_deploy_keeps_connection_owner_running ;;
   connection-owner-local) test_local_deploy_installs_owner_from_verified_backend_image ;;
   journal-retention) test_deploy_applies_journal_retention ;;
@@ -1260,6 +1290,7 @@ case "$CASE" in
     test_forge_migration_release
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
+    test_deploy_requires_released_collab
     test_deploy_keeps_connection_owner_running
     test_deploy_applies_journal_retention
     test_local_deploy_installs_owner_from_verified_backend_image

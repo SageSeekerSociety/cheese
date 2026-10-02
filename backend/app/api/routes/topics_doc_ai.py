@@ -1,27 +1,22 @@
 """Document AI asks and proposals have no writable room execution context."""
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker, get_chat_service
 from app.api.doc_identity import human_operation_actor
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
-from app.core.errors import ForbiddenError, ValidationError
-from app.domain.agent.chat import ChatService
+from app.core.errors import ConflictError, ForbiddenError, ValidationError
 from app.domain.block.doc_selection import DocumentSelections
-from app.domain.block.documents import persisted_notice
-from app.domain.block.schemas import BlockOut
+from app.domain.doc_ai import acceptance
 from app.domain.doc_ai.acceptance import ProposalAcceptance
 from app.domain.doc_ai.routing import project_binding
 from app.domain.doc_ai.schemas import AcceptIn, RequestIn
 from app.domain.doc_ai.services import DocAiService
-from app.domain.living_doc.delivery import dispatch_pending
+from app.domain.living_doc import collab
 from app.domain.living_doc.services import DocumentJournal
-from app.domain.topic import naming
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["doc-ai"])
@@ -195,27 +190,38 @@ async def accept_proposal(
     body: AcceptIn,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     place, actor, identity = await human_in_room(db, resolver, topic_id)
-    receipt, notice = await ProposalAcceptance(db).apply(
+    operation = {
+        "actor": identity,
+        "action": acceptance.ACTION,
+        "operation_id": str(body.operation_id),
+        "payload": acceptance.operation_payload(proposal_id, body),
+    }
+    replayed = await DocumentJournal(db).replay(
         room_id=place.room_id,
-        proposal_id=proposal_id,
-        body=body,
-        verified_actor=identity,
-        author=actor.handle,
+        actor=identity,
+        action=acceptance.ACTION,
+        operation_id=body.operation_id,
+        payload=operation["payload"],
     )
+    if replayed is not None:
+        return ok(replayed)
+    source, content = await ProposalAcceptance(db).prepare(
+        room_id=place.room_id, proposal_id=proposal_id, body=body
+    )
+    doc = await TopicService(db).doc_of_room(place.room_id)
+    if doc is None or doc.doc_version != body.expected_version:
+        raise ConflictError("提案或文档版本已经变化")
+    # The live document applies it; the store marks the proposal accepted in
+    # the same transaction as the version. Nothing here may hold the room lock
+    # across that call.
     await db.commit()
-    if notice is not None:
-        await get_broker().publish(
-            str(place.room_id),
-            {
-                "type": "event_block",
-                "block": BlockOut.model_validate(notice).model_dump(mode="json"),
-            },
-        )
-        if line := persisted_notice(notice):
-            await chat.notify_running_turn(place.room_id, line, blocks=[notice.id])
-        naming.nudge(place.room_id, "signal")
-    await dispatch_pending(db, get_broker().publish, place.room_id)
+    receipt = await collab.replace(
+        place.room_id,
+        content=content,
+        base=source,
+        actor=actor.handle,
+        operation=operation,
+    )
     return ok(receipt)

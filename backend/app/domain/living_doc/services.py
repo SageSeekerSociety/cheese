@@ -8,6 +8,7 @@ are serialized by that lock too, including the first creation of a document.
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -17,7 +18,7 @@ from app.core.errors import ConflictError
 from app.domain.living_doc.models import (
     DocumentLock,
     DocumentOperation,
-    DocumentRefresh,
+    DocumentState,
     DocumentVersion,
 )
 
@@ -28,18 +29,6 @@ def content_hash(content: str) -> str:
 
 def payload_fingerprint(payload: dict) -> str:
     return content_hash(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-
-
-def refresh_hint(row: DocumentRefresh) -> dict:
-    return {
-        "type": "state",
-        "resource": "doc",
-        "document_id": str(row.document_id),
-        "version": row.version,
-        "cursor": row.version,
-        "content_hash": row.content_hash,
-        "event_id": str(row.event_id) if row.event_id else None,
-    }
 
 
 class DocumentJournal:
@@ -94,6 +83,35 @@ class DocumentJournal:
         await self.session.flush()
         return row
 
+    async def replay(
+        self,
+        *,
+        room_id: uuid.UUID,
+        actor: str,
+        action: str,
+        operation_id: uuid.UUID,
+        payload: dict,
+    ) -> dict | None:
+        """A completed operation's receipt, read without the room lock.
+
+        For the write paths that go through the collaboration service: they
+        must not hold the lock across that call (its store takes it), so they
+        look for a finished receipt first and leave the claim to the store.
+        """
+        row = await self.session.scalar(
+            select(DocumentOperation).where(
+                DocumentOperation.room_id == room_id,
+                DocumentOperation.actor == actor,
+                DocumentOperation.action == action,
+                DocumentOperation.operation_id == operation_id,
+            )
+        )
+        if row is None:
+            return None
+        if row.fingerprint != payload_fingerprint(payload):
+            raise ConflictError("同一 operation_id 已用于不同的文档请求")
+        return row.receipt
+
     async def append(
         self,
         *,
@@ -105,7 +123,6 @@ class DocumentJournal:
         base_version: int | None,
         operation_id: uuid.UUID | None = None,
         event_id: uuid.UUID | None = None,
-        refresh: bool = True,
     ) -> None:
         self.session.add(
             DocumentVersion(
@@ -121,26 +138,7 @@ class DocumentJournal:
                 event_id=event_id,
             )
         )
-        if refresh:
-            self.session.add(
-                DocumentRefresh(
-                    room_id=room_id,
-                    document_id=document_id,
-                    version=version,
-                    content_hash=content_hash(content),
-                    event_id=event_id,
-                )
-            )
         await self.session.flush()
-
-    async def refreshes(self, room_id: uuid.UUID, *, after: int = 0) -> list[dict]:
-        rows = await self.session.scalars(
-            select(DocumentRefresh)
-            .where(DocumentRefresh.room_id == room_id, DocumentRefresh.version > after)
-            .order_by(DocumentRefresh.version)
-            .limit(100)
-        )
-        return [refresh_hint(row) for row in rows]
 
     async def seed_existing(
         self,
@@ -166,7 +164,6 @@ class DocumentJournal:
                 content=content,
                 actor=actor,
                 base_version=None,
-                refresh=False,
             )
 
     async def finish(self, operation: DocumentOperation, receipt: dict) -> None:
@@ -216,3 +213,18 @@ class DocumentJournal:
             }
             for row in rows
         ]
+
+    async def state(self, room_id: uuid.UUID) -> bytes | None:
+        return await self.session.scalar(
+            select(DocumentState.state).where(DocumentState.room_id == room_id)
+        )
+
+    async def put_state(self, room_id: uuid.UUID, state: bytes) -> None:
+        await self.session.execute(
+            insert(DocumentState)
+            .values(room_id=room_id, state=state, updated_at=datetime.now(UTC))
+            .on_conflict_do_update(
+                index_elements=[DocumentState.room_id],
+                set_={"state": state, "updated_at": datetime.now(UTC)},
+            )
+        )

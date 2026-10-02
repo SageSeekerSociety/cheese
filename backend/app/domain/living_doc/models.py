@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -51,26 +52,19 @@ class DocumentVersion(UuidPk, Base):
     )
 
 
-class DocumentRefresh(UuidPk, Base):
-    __tablename__ = "living_doc_refreshes"
-    __table_args__ = (
-        UniqueConstraint("room_id", "version", name="uq_living_doc_refresh"),
-    )
+class DocumentState(Base):
+    """The room document's collaborative (Yjs) state, as the collaboration
+    service last stored it. The root block's content is the Markdown exported
+    from this same state."""
+
+    __tablename__ = "living_doc_states"
 
     room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE")
+        ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("blocks.id", ondelete="CASCADE")
-    )
-    version: Mapped[int] = mapped_column(Integer)
-    content_hash: Mapped[str] = mapped_column(String(64))
-    event_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
+    state: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-    dispatched_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
     )
 
 

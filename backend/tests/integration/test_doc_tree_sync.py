@@ -39,10 +39,12 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     edits = [
         block for block in blocks if (block.get("meta") or {}).get("action") == "doc"
     ]
+    # The two writes came in a row, so the room reads one line for both.
     change = next(block for block in edits if block["meta"]["doc_version"] == 2)
     assert change["author"] == changed_author
-    assert "-搭建原型。" in change["meta"]["detail"]
+    assert "<@alice>" in change["content"] and "芝士" in change["content"]
     assert "+先做三个路口的实地观察。" in change["meta"]["detail"]
+    assert "搭建原型" not in change["meta"]["detail"]
 
 
 def _nodes(client, tid: str) -> list[dict]:

@@ -16,6 +16,9 @@ if [[ "$remote_command" == *com.docker.compose.service* ]]; then
     printf 'frontend\trepo/frontend:%s\trunning\tUp 1 minute (healthy)\n' \
       "$frontend_tag"
   fi
+  if [ "$scenario" != "collab_absent" ]; then
+    printf 'collab\trepo/collab:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+  fi
 else
   printf 'cheese-backend-1 repo/backend:%s\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then

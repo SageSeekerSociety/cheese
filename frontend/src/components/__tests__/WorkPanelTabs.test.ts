@@ -42,6 +42,9 @@ const getTopicWorkSummary = vi.fn()
 const addComment = vi.fn()
 const getComments = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -58,7 +61,6 @@ vi.mock('../../api', async () => {
     getTopicWorkSummary: (...a: unknown[]) => getTopicWorkSummary(...a),
     addComment: (...a: unknown[]) => addComment(...a),
     getComments: (...a: unknown[]) => getComments(...a),
-    putDoc: vi.fn().mockResolvedValue({}),
     writeFile: vi.fn().mockResolvedValue({ path: 'a.py', version: 'v2' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
@@ -71,6 +73,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { seedRoom } from '../../test/fakeDocCollab'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -202,6 +205,7 @@ describe('工作面板 · Tab 容器', () => {
   // 用例点的是文档里真实渲染出来的那颗 chip，走完整条线。
   it('文档里的 <&path> chip → 落到改动 tab 的文件半边，并打开那个文件', async () => {
     getDoc.mockResolvedValue({ content: '详见 <&src/b.ts> 这个文件\n' })
+    seedRoom('topic-A', '详见 <&src/b.ts> 这个文件\n')
     readFile.mockResolvedValue({
       path: 'src/b.ts',
       content: 'export const b = 1\n',
@@ -322,6 +326,7 @@ describe('工作面板 · Tab 容器', () => {
 
   it('从别处打开一个文件也算换 tab，一样报出去', async () => {
     getDoc.mockResolvedValue({ content: '详见 <&a.py> 这个文件\n' })
+    seedRoom('topic-A', '详见 <&a.py> 这个文件\n')
     const { container, emitted } = mountPanel()
     await flush()
 

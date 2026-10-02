@@ -31,6 +31,9 @@ const getPreview = vi.fn()
 const readFile = vi.fn()
 const requestPreviewSession = vi.fn()
 
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -46,7 +49,6 @@ vi.mock('../../api', async () => {
     readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
-    putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),

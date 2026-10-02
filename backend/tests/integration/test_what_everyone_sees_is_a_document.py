@@ -32,6 +32,7 @@ from tests.integration.conftest import (
     registered,
     session_auth_headers,
 )
+from tests.support.living_doc import write_doc
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -172,11 +173,8 @@ def test_the_migration_lands_every_project_pool_row_in_that_document(
             name="有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
         )
         assert project.root_topic_id is not None
-        await TopicService(db_session).edit_doc(
-            topic_id=project.root_topic_id,
-            content="## 目标\n做课程推荐系统",
-            author="andyl",
-            expected_version=0,
+        await write_doc(
+            db_session, project.root_topic_id, "## 目标\n做课程推荐系统", "andyl"
         )
         facts = ["数据来源是教务处脱敏数据", FACT]
         for fact in facts:

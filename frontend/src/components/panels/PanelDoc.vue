@@ -6,14 +6,14 @@
 // 里都得先立一个假后端，而任何一行样式调整都要在一个两千行的文件里找。
 //
 // 现在两边分家，和 #2130 的「改动」、#2158 的「预览」是同一个形状：
-//   - 取数（正文的读写、评论与节点、自动保存的那只时钟、冲突与草稿的状态机）
+//   - 取数（打开协同文档、已存的那一版、评论与节点）
 //     → `composables/usePanelDoc.ts`
-//   - 画（横条上写哪句话、源码模式、一栏正文、评论区、两个对话框）
+//   - 画（横条上写哪句话、一栏正文、评论区）
 //     → `components/panels/PanelDocView.vue`，只凭 props 渲染
-//   - 编辑器本身（tiptap 实例、三种装饰、段落闪一下）
+//   - 编辑器本身（tiptap 实例、几种装饰、别人的光标、段落闪一下）
 //     → `components/panels/doc/DocSurface.vue`，画不动的一层放在那儿
 // 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，加画法
-// 在展示组件里加，这一只基本不再长。props 一次摊开而不是 v-bind 一整包：这三十来样东西
+// 在展示组件里加，这一只基本不再长。props 一次摊开而不是 v-bind 一整包：这二十来样东西
 // 就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
 import type { Topic } from '../../cx_types'
 
@@ -52,92 +52,35 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
 }>()
 
-// 展示组件也是组合式函数要的那两个口子：读编辑器里现在这一版、把服务端那一版装进去。
-// 中间隔着两层（这一层 → 展示组件 → 编辑器），所以两个口子都在这儿现接 —— 组合式函数
-// 在 setup 里就要拿到它们，那时 ref 还是空的，所以只能给箭头函数（调用发生在挂载之后）。
+// 组合式函数要读编辑器里现在这一版（文档 AI 拿它和已存的那一版比）。中间隔着两层（这
+// 一层 → 展示组件 → 编辑器），组合式函数在 setup 里就要拿到它，那时 ref 还是空的，所以只
+// 能给箭头函数（调用发生在挂载之后）。
 const viewRef = ref<InstanceType<typeof PanelDocView> | null>(null)
 
-const {
-  editable,
-  editingBlocked,
-  mdAndUp,
-  loading,
-  saveStatus,
-  paused,
-  pausedHint,
-  errorMsg,
-  lossy,
-  lossyConfirmOpen,
-  sourceMode,
-  sourceDraft,
-  rawDoc,
-  titlePrefix,
-  docVersion,
-  reloadFromActivity,
-  pendingEdits,
-  hasPendingEdits,
-  externalDoc,
-  comments,
-  anchorNodes,
-  liveRefIndex,
-  commentMarkIndex,
-  refreshComments,
-  commentAuthor,
-  sendComment,
-  save,
-  confirmLossySave,
-  onBlur: handleBlur,
-  toggleEditable,
-  toggleSourceMode,
-  enterSourceMode,
-  applyPendingEdits,
-  discardPendingEdits,
-  viewExternalDoc,
-  overwriteWithMine,
-  onSourceInput: handleSourceInput,
-  onDocKeydown: handleDocKeydown,
-  fetchDocNodes,
-  imageSrc,
-  dirty,
-  markEdited,
-  setError,
-} = usePanelDoc(props, {
+const doc = usePanelDoc(props, {
   serializeVisual: () => viewRef.value?.serializeVisual() ?? null,
-  installMarkdown: (body) => viewRef.value?.installMarkdown(body),
 })
 
 const threads = useDocThreads(() => props.topic?.id ?? null)
-const aiBlocked = () =>
-  loading.value ||
-  dirty.value ||
-  lossy.value ||
-  externalDoc.value !== null ||
-  hasPendingEdits.value ||
-  sourceMode.value ||
-  editingBlocked.value
+// 文档 AI 的选区按已存原文定位：屏幕上这一份和已存的那一版不一致时（还有字没存回、
+// 还没连上），它既不提问也不采纳，等存回之后再说。
+const aiBlocked = () => doc.loading.value || !doc.matchesStored()
 const ai = useDocAi({
   topic: () => props.topic?.id ?? null,
-  raw: () => rawDoc.value,
-  prefix: () => titlePrefix.value,
-  version: () => docVersion.value,
+  raw: () => doc.rawDoc.value,
+  prefix: () => '',
+  version: () => doc.docVersion.value,
   blocked: aiBlocked,
-  reload: reloadFromActivity,
+  reload: doc.reloadStored,
 })
 
-// Dev-only probe hook: lets Playwright inspect serialization/dirty state
-// without guessing at DOM classes (observability rule). The counters are read off
-// this object by the surface's onUpdate, so it has to exist before the editor does.
+// Dev-only probe hook: lets Playwright inspect the live document without
+// guessing at DOM classes (observability rule).
 if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__docPanel = {
     getMarkdown: () => viewRef.value?.serializeVisual() ?? null,
-    isDirty: () => dirty.value,
-    // 军规 1 state: probes assert that nothing was dropped, not that a class
-    // name happened to render.
-    saveStatus: () => saveStatus.value,
-    isAutosavePaused: () => paused.value,
-    pendingEdits: () => [...pendingEdits.value],
-    externalDoc: () => externalDoc.value,
-    updates: 0,
+    connection: () => doc.connection.value,
+    matchesStored: () => doc.matchesStored(),
   }
 }
 
@@ -158,51 +101,30 @@ defineExpose({ pulse, highlightTurn })
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"
     :agent-name="props.agentName"
-    :md-and-up="mdAndUp"
-    :editable="editable"
-    :editing-blocked="editingBlocked"
-    :loading="loading"
-    :save-status="saveStatus"
-    :paused="paused"
-    :paused-hint="pausedHint"
-    :error-msg="errorMsg"
-    :lossy="lossy"
-    :lossy-confirm-open="lossyConfirmOpen"
-    :source-mode="sourceMode"
-    :source-draft="sourceDraft"
+    :session="doc.session.value"
+    :editable="doc.editable.value"
+    :read-only="doc.readOnly.value"
+    :loading="doc.loading.value"
+    :connection="doc.connection.value"
+    :peers="doc.peers.value"
+    :error-msg="doc.errorMsg.value"
     :ai-opened="ai.opened.value"
-    :pending-edits="pendingEdits"
-    :has-pending-edits="hasPendingEdits"
-    :external-doc="externalDoc"
-    :comments="comments"
-    :comment-author="commentAuthor"
-    :send-comment="sendComment"
+    :comments="doc.comments.value"
+    :comment-author="doc.commentAuthor"
+    :send-comment="doc.sendComment"
     :thread-state="threads.state"
     :thread-actions="threads.actions"
-    :anchor-nodes="anchorNodes"
-    :live-ref-index="liveRefIndex"
-    :comment-mark-index="commentMarkIndex"
-    :fetch-doc-nodes="fetchDocNodes"
-    :image-src="imageSrc"
-    :save="save"
-    :handle-blur="handleBlur"
-    :handle-doc-keydown="handleDocKeydown"
-    :handle-source-input="handleSourceInput"
-    :confirm-lossy-save="confirmLossySave"
-    :refresh-comments="refreshComments"
-    :toggle-editable="toggleEditable"
-    :toggle-source-mode="toggleSourceMode"
-    :enter-source-mode="enterSourceMode"
-    :apply-pending-edits="applyPendingEdits"
-    :discard-pending-edits="discardPendingEdits"
-    :view-external-doc="viewExternalDoc"
-    :overwrite-with-mine="overwriteWithMine"
-    :set-error="setError"
+    :anchor-nodes="doc.anchorNodes.value"
+    :live-ref-index="doc.liveRefIndex.value"
+    :comment-mark-index="doc.commentMarkIndex.value"
+    :fetch-doc-nodes="doc.fetchDocNodes"
+    :image-src="doc.imageSrc"
+    :refresh-comments="doc.refreshComments"
+    :toggle-editable="doc.toggleEditable"
+    :set-error="doc.setError"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
-    @edited="markEdited"
-    @close-lossy-confirm="lossyConfirmOpen = false"
     @open-ai="ai.prepare($event)"
     @close-ai="ai.opened.value = false"
   >
@@ -219,7 +141,7 @@ defineExpose({ pulse, highlightTurn })
         :has-selection="ai.preparedContext.value.state === 'verified' && !!ai.selection.value"
         :blocked="aiBlocked()"
         :unknown="!!ai.unknown.value"
-        :version="docVersion"
+        :version="doc.docVersion.value"
         @update:question="ai.question.value = $event"
         @submit="ai.submit"
         @accept="ai.accept"

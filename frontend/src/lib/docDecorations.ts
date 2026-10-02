@@ -11,10 +11,12 @@
 // 导出的是**工厂**：面板把两份输入作为回调递进来，扩展只读它们，不自己去取。
 import type { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
+import type { Transaction } from '@tiptap/pm/state'
 
 import { Extension as TiptapExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { ySyncPluginKey } from '@tiptap/y-tiptap'
 
 import { t } from '@/i18n'
 
@@ -44,6 +46,15 @@ function statusLabel(s: string): string {
 // track, which created cursor dead zones. ----
 
 export const liveRefKey = new PluginKey('cheeseLiveRefBadges')
+
+// A change that arrived from the collaborative document rather than this
+// editor's own typing: the document opening, somebody else's edit, an undo.
+// Mapping the old decorations through it would carry them along a document they
+// were never built for (opening maps an empty set onto the whole text), so
+// those rebuild from the index, as a fresh load did.
+function fromDocument(tr: Transaction): boolean {
+  return !!(tr.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined)?.isChangeOrigin
+}
 
 // Build the badge element a live-ref widget renders as.
 function liveRefWidget(topicId: string, facts: LiveRefFacts): HTMLElement {
@@ -124,7 +135,9 @@ export function createLiveRefBadges(opts: {
             init: (_cfg, state) => liveRefDecorations(state.doc, opts.index(), opts.factsOf),
             apply: (tr, old) => {
               // Explicit poke (fresh /docs data or topicList change) → rebuild.
-              if (tr.getMeta(liveRefKey)) return liveRefDecorations(tr.doc, opts.index(), opts.factsOf)
+              if (tr.getMeta(liveRefKey) || fromDocument(tr)) {
+                return liveRefDecorations(tr.doc, opts.index(), opts.factsOf)
+              }
               // Local edits: map the existing widgets along, so a badge stays
               // glued to its paragraph while the user types (indices may shift
               // until the next server refresh; mapping avoids mis-attachment).
@@ -249,7 +262,7 @@ export function createCommentMarks(opts: {
             init: (_cfg, state) => commentMarkDecorations(state.doc, opts.index()),
             apply: (tr, old) => {
               if (tr.getMeta(commentMarkKey) === 'active-only') return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
-              if (tr.getMeta(commentMarkKey)) return commentMarkDecorations(tr.doc, opts.index())
+              if (tr.getMeta(commentMarkKey) || fromDocument(tr)) return commentMarkDecorations(tr.doc, opts.index())
               return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
             },
           },
@@ -353,6 +366,30 @@ export function createTokenChips(opts: { titleOf: (tid: string) => string | unde
           props: {
             decorations(state) {
               return this.getState(state)
+            },
+          },
+        }),
+      ]
+    },
+  })
+}
+
+// ---- 与话题标题重复的大标题：面板上方已经用话题标题当页面标题，文档第一行若是
+// 一模一样的一级标题，再显示一遍就是重复。它仍是文档的一部分（芝士读得到、导出也在），
+// 只是不画出来：判据是纯字符串相等，不猜。----
+export function createTitleEcho(opts: { title: () => string | null | undefined }): Extension {
+  return TiptapExtension.create({
+    name: 'cheeseTitleEcho',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          props: {
+            decorations(state) {
+              const first = state.doc.firstChild
+              const title = opts.title()?.trim()
+              if (!first || !title || first.type.name !== 'heading' || first.attrs.level !== 1) return null
+              if (first.textContent.trim() !== title) return null
+              return DecorationSet.create(state.doc, [Decoration.node(0, first.nodeSize, { class: 'doc-title-echo' })])
             },
           },
         }),

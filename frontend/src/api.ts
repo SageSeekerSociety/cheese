@@ -1832,20 +1832,6 @@ export function getProgress(topicId: string, taskId?: string): Promise<TopicProg
   return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress${q}`)
 }
 
-// PUT upserts the living doc and appends a "📝 编辑了文档" event to the
-// conversation. Returns the doc Block.
-//
-// `expectedVersion` is the doc_version this edit is based on (0 = "there is no
-// doc yet"). The doc is only ever written whole, so the write is conditional on
-// it: if 芝士 set the doc in between, the backend answers 409 instead of letting
-// this save erase what it wrote.
-export function putDoc(topicId: string, content: string, expectedVersion: number): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(topicId)}/doc`, {
-    method: 'PUT',
-    body: JSON.stringify({ content, expected_version: expectedVersion }),
-  })
-}
-
 // B1: the living doc's structured node tree (heading/paragraph/list/…), in order.
 // Each node has a stable id + the turn_id that produced it — used for cross-view
 // highlight (B1 P2) and comment anchoring (B4).
