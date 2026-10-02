@@ -17,6 +17,8 @@ REPO = "https://github.com/example/repo"
 #: When the PR merged — deliberately not "now", so a step stamped with the
 #: deploy's own clock cannot pass for one stamped with the merge.
 MERGED_AT = "2026-03-04T05:06:07Z"
+#: When that PR was opened.
+OPENED_AT = "2026-03-04T04:00:00Z"
 REPORTER = "ship-reporter"
 BYSTANDER = "ship-bystander"
 
@@ -28,9 +30,16 @@ def run_deploy(client, monkeypatch):
         ship_feedback, "async_session_factory", client.test_request_factory
     )
 
-    def run(*messages: str, merged_at: str = MERGED_AT) -> None:
+    def run(
+        *messages: str, merged_at: str = MERGED_AT, opened_at: str | None = OPENED_AT
+    ) -> None:
         commits = [
-            {"sha": f"{index:040x}", "message": message, "merged_at": merged_at}
+            {
+                "sha": f"{index:040x}",
+                "message": message,
+                "merged_at": merged_at,
+                **({"pr_created_at": opened_at} if opened_at else {}),
+            }
             for index, message in enumerate(messages, start=1)
         ]
         client.portal.call(ship_feedback.main, REPO, commits)
@@ -232,3 +241,56 @@ def test_a_fix_a_person_already_marked_keeps_their_step(
     fixed = [s for s in detail["timeline"] if s["status"] == "resolved"]
     assert len(fixed) == 1
     assert fixed[0]["by_handle"] == BYSTANDER
+
+
+def test_a_fix_nobody_assigned_shows_it_was_handled_from_when_the_pr_opened(
+    client, run_deploy
+):
+    row = _report(client, REPORTER)
+
+    run_deploy(f"fix: it (#57)\n\nFixes-feedback: FB-{_number(row)}\n")
+
+    steps = {s["status"]: s for s in _detail(client, row)["timeline"]}
+    assert set(steps) == {"received", "in_progress", "resolved", "deployed"}
+    handled = steps["in_progress"]
+    assert datetime.fromisoformat(handled["at"]) == datetime(
+        2026, 3, 4, 4, 0, 0, tzinfo=UTC
+    )
+    assert "PR #57" in handled["note"]
+
+
+def test_a_report_already_being_handled_keeps_its_own_step(
+    client, run_deploy, monkeypatch
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "feedback_triage_handles", [BYSTANDER])
+    row = _report(client, REPORTER)
+    r = client.patch(
+        f"/admin/feedback/{row['id']}",
+        json={"assignee_handle": BYSTANDER},
+        headers=session_auth_headers(BYSTANDER),
+    )
+    assert r.status_code == 200, r.text
+
+    run_deploy(f"fix: it (#58)\n\nFixes-feedback: FB-{_number(row)}\n")
+
+    handled = [
+        s for s in _detail(client, row)["timeline"] if s["status"] == "in_progress"
+    ]
+    assert len(handled) == 1
+    assert handled[0]["by_handle"] == BYSTANDER
+
+
+def test_a_fix_pushed_without_a_pr_does_not_invent_when_work_started(
+    client, run_deploy
+):
+    row = _report(client, REPORTER)
+
+    run_deploy(
+        f"fix: pushed directly\n\nFixes-feedback: FB-{_number(row)}\n", opened_at=None
+    )
+
+    statuses = [s["status"] for s in _detail(client, row)["timeline"]]
+    assert "in_progress" not in statuses
+    assert statuses[-1] == "deployed"

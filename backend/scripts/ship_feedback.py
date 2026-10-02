@@ -3,9 +3,9 @@
     python -m scripts.ship_feedback --repository-url https://github.com/OWNER/REPO \\
       < commits.json
 
-`commits.json` is GitHub's compare endpoint's commit list with the time each
-commit's PR merged —
-`[{"sha": ..., "message": ..., "merged_at": "2026-10-02T17:35:27Z"}]`.
+`commits.json` is GitHub's compare endpoint's commit list with the times each
+commit's PR merged and was opened (the latter absent without a PR) —
+`[{"sha": ..., "message": ..., "merged_at": ..., "pr_created_at": ...}]`.
 `.github/workflows/deploy-dev.yml` builds it. The convention and the reasoning
 are in `app/domain/feedback/shipping.py`.
 Prints one line per report named. Safe to run twice: a report already

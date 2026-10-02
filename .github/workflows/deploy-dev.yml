@@ -32,7 +32,8 @@ permissions:
   actions: read
   contents: read
   packages: read
-  # The feedback step at the end reads when each shipped commit's PR merged.
+  # The feedback step at the end reads when each shipped commit's PR was
+  # opened and merged.
   pull-requests: read
 
 jobs:
@@ -293,7 +294,9 @@ jobs:
       # moved back by an unrelated deploy. The merge time is the PR's
       # `merged_at`: the commit's own dates are from when it entered the merge
       # queue, which is minutes earlier. A commit pushed without a PR falls back
-      # to its committer date, which is when it was pushed.
+      # to its committer date, which is when it was pushed. The same lookup
+      # gives the PR's `created_at`, recorded as 处理中 on a report nobody
+      # assigned; without a PR there is none.
       # The status change goes through the backend's own service in the running
       # container, the way the deploy already runs its other backend scripts —
       # no endpoint, no credential. Convention: app/domain/feedback/shipping.py.
@@ -324,15 +327,16 @@ jobs:
 
           commits = json.load(open(os.environ["COMMITS"]))
           for commit in commits:
-              merged = subprocess.run(
+              pulls = json.loads(subprocess.run(
                   [
                       "gh", "api",
                       f"repos/{os.environ['GITHUB_REPOSITORY']}/commits/{commit['sha']}/pulls",
-                      "--jq", "[.[] | select(.merged_at != null) | .merged_at][0] // empty",
+                      "--jq", "[.[] | select(.merged_at != null) | {merged_at, created_at}]",
                   ],
                   check=True, capture_output=True, text=True,
-              ).stdout.strip()
-              if merged:
-                  commit["merged_at"] = merged
+              ).stdout)
+              if pulls:
+                  commit["merged_at"] = pulls[0]["merged_at"]
+                  commit["pr_created_at"] = pulls[0]["created_at"]
           json.dump(commits, sys.stdout)
           PY
