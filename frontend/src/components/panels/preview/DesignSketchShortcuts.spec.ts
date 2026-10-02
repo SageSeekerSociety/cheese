@@ -53,16 +53,23 @@ function mount() {
 }
 
 /** 画一个矩形：够大、不会被当成「点一下选区」。 */
+/** 已画好的矩形数：Overlay 上一笔矩形一个 <rect>。 */
+const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length
+
+/** 画一个矩形：够大、不会被当成「点一下选区」。 */
 async function drawRect(ui: ReturnType<typeof render>) {
+  const before = rects(ui)
   await fireEvent.click(ui.getByRole('button', { name: '矩形' }))
   const layer = ui.getByRole('application', { name: '图片标注画布' })
   layer.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 11, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(layer, { pointerId: 11, clientX: 160, clientY: 120 })
   await fireEvent.pointerUp(layer, { pointerId: 11, clientX: 160, clientY: 120 })
+  // 撒手是同步的，可这一笔要等 Vue 再渲染一次才出现在 DOM 上。慢机器上「立刻问」会
+  // 问在半路上，后面的断言于是找不到输入框，报出来的却是「找不到元素」——离真正的
+  // 原因（这一笔还没画上）很远。在这里等，失败的这一句也能自己说清是哪一步。
+  await waitFor(() => expect(rects(ui)).toBe(before + 1))
 }
-/** 已画好的矩形数：Overlay 上一笔矩形一个 <rect>。 */
-const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length
 
 it('⌘/Ctrl+Z 撤销，⇧⌘+Z 与 Ctrl+Y 重做', async () => {
   const ui = mount()
