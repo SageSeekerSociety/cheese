@@ -72,7 +72,12 @@ def test_oversized_combined_question_and_quote_is_refused_without_landing(client
             "quoted_context": slide_quote("引用文字"),
         },
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 400, response.text[:1000]
+    details = response.json()["error"]["data"]["details"]
+    assert (
+        details[0]["msg"]
+        == "Value error, message and quoted context exceed 100000 characters"
+    )
     assert _messages(client, topic_id) == []
 
 
