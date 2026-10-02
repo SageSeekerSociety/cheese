@@ -44,13 +44,17 @@ const emit = defineEmits<{
 const COPIED_MS = 1500
 const copied = ref(false)
 const menuOpen = ref(false)
+const focusWithin = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 watch(
   () => props.block?.id,
   () => {
     copied.value = false
     clearTimeout(copiedTimer)
-    if (!props.block) menuOpen.value = false
+    if (!props.block) {
+      menuOpen.value = false
+      focusWithin.value = false
+    }
   }
 )
 onBeforeUnmount(() => clearTimeout(copiedTimer))
@@ -112,14 +116,20 @@ function menuReact(emoji: string) {
   menuOpen.value = false
   emit('react', menuTarget.value.block, emoji)
 }
+function onFocusOut(event: FocusEvent) {
+  focusWithin.value =
+    event.relatedTarget instanceof Node && (event.currentTarget as HTMLElement).contains(event.relatedTarget)
+}
 </script>
 
 <template>
   <div
     class="hover-bar"
-    :class="{ 'hover-bar--shown': shown || menuOpen, 'hover-bar--jump': jump }"
+    :class="{ 'hover-bar--shown': shown || menuOpen || focusWithin, 'hover-bar--jump': jump }"
     :style="{ transform: `translateY(${top}px)` }"
-    :aria-hidden="!shown && !menuOpen"
+    :aria-hidden="!shown && !menuOpen && !focusWithin"
+    @focusin="focusWithin = true"
+    @focusout="onFocusOut"
   >
     <template v-if="block">
       <div class="hover-bar__wide">
@@ -263,6 +273,14 @@ function menuReact(emoji: string) {
   display: contents;
 }
 .hover-bar__more {
+  display: none;
+}
+/* Esc 从浮层回到更多入口后，指针可能已在列外。列变宽也不藏掉当前
+   焦点；离开入口才恢复完整动作，避免把键盘留在不可见按钮上。 */
+.hover-bar__more:focus {
+  display: inline-flex;
+}
+.hover-bar:has(.hover-bar__more:focus) .hover-bar__wide {
   display: none;
 }
 @container chat-timeline (width < 310px) {

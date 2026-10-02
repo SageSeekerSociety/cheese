@@ -415,12 +415,10 @@ test("180px desktop pane preserves author clicks and keeps actions within the he
       scrollWidth: scroll.scrollWidth,
     };
   });
-  await test
-    .info()
-    .attach("180px-desktop-header", {
-      body: JSON.stringify(geometry, null, 2),
-      contentType: "application/json",
-    });
+  await test.info().attach("180px-desktop-header", {
+    body: JSON.stringify(geometry, null, 2),
+    contentType: "application/json",
+  });
   expect(geometry.clientWidth).toBe(180);
   expect(geometry.scrollWidth).toBe(geometry.clientWidth);
   expect(geometry.body.width).toBe(110);
@@ -437,12 +435,10 @@ test("180px desktop pane preserves author clicks and keeps actions within the he
   );
   await expect(page.locator(".rx-picker")).toHaveCount(0);
   await expect(page.locator(".hover-bar__more")).toBeVisible();
-  await test
-    .info()
-    .attach("180px-desktop-header", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("180px-desktop-header", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await page.locator("main").evaluate((el) => {
     el.style.width = "460px";
   });
@@ -488,12 +484,10 @@ test("compact desktop menu keeps all actions on its captured message after hover
     await expect(menu.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(menu.getByText("编辑", { exact: true })).toHaveCount(0);
-  await test
-    .info()
-    .attach("180px-desktop-actions", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("180px-desktop-actions", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   // Move the physical pointer to another row while the menu is open. The menu
   // must keep its original target even though the single timeline bar moves.
   const next = await page.locator('[data-mid="self"] .im-text').boundingBox();
@@ -514,12 +508,10 @@ test("compact desktop menu keeps all actions on its captured message after hover
   );
   expect(hoverTarget.row).toBe("self");
   expect(hoverTarget.barTop).toBe(hoverTarget.rowTop + 4);
-  await test
-    .info()
-    .attach("compact-menu-hover-retarget", {
-      body: JSON.stringify(hoverTarget, null, 2),
-      contentType: "application/json",
-    });
+  await test.info().attach("compact-menu-hover-retarget", {
+    body: JSON.stringify(hoverTarget, null, 2),
+    contentType: "application/json",
+  });
   await menu.getByText("回复", { exact: true }).click();
   await expect(page.locator(".reply-chip")).toContainText("前一条消息。");
   await expect(page.locator(".reply-chip")).not.toContainText("自己的消息。");
@@ -550,4 +542,50 @@ test("compact desktop menu keeps all actions on its captured message after hover
     "自己的消息。",
   );
   await expect(row.locator(".im-text")).toContainText("前一条消息。");
+});
+
+test("compact menu returns visible focus and preserves it when the pane grows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.route("**/__chat-file-hit-fixture__", (route) =>
+    route.fulfill({ contentType: "text/html", body: narrowFixture }),
+  );
+  await page.goto("/__chat-file-hit-fixture__", { waitUntil: "commit" });
+  await expect(page.locator('[data-mid="before"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "180px";
+  });
+  await page.locator('[data-mid="before"] .im-text').hover();
+  const more = page.locator(".hover-bar__more");
+  await more.click();
+  const menu = page.locator(".v-overlay--active .v-list");
+  await expect(menu).toBeVisible();
+  await page.mouse.move(800, 600);
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(more).toBeFocused();
+  await expect
+    .poll(() =>
+      page.locator(".hover-bar").evaluate((el) => getComputedStyle(el).opacity),
+    )
+    .toBe("1");
+  await expect(page.locator(".hover-bar")).toHaveAttribute(
+    "aria-hidden",
+    "false",
+  );
+  await page.locator("main").evaluate((el) => {
+    el.style.width = "460px";
+  });
+  await expect(more).toBeVisible();
+  await expect(more).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(menu.getByText("回复", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(more).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(more).not.toBeFocused();
+  await expect(more).toBeHidden();
 });
