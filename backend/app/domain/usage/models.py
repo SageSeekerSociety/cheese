@@ -9,7 +9,9 @@ from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -17,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,6 +38,52 @@ class GrantSource(StrEnum):
     TASK_EARMARK = "task_earmark"
     PURCHASE = "purchase"
     ADMIN_GRANT = "admin_grant"
+
+
+class Plan(Timestamps, Base):
+    """A credit plan, a record an administrator edits rather than code (#2397).
+
+    Every team is on one (``team.plan_key``). A plan issues ``credits_per_period``
+    credits to each of its teams every ``period``, may cap spending inside time
+    windows, and says which model tiers its teams may use. ``unlimited`` plans
+    issue nothing and refuse nothing.
+    """
+
+    __tablename__ = "plans"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    # Who may be put on it: "personal" teams, shared "team"s, or "both".
+    audience: Mapped[str] = mapped_column(String(16), default="both")
+    # The plan's pack per period; NULL issues none.
+    credits_per_period: Mapped[float | None] = mapped_column(Float, nullable=True)
+    period: Mapped[str] = mapped_column(String(16), default="month")
+    # ``[{"hours": 5, "credits": 100}, ...]``: at most that many credits within
+    # any window of that many hours.
+    windows: Mapped[list] = mapped_column(JSON, default=list)
+    # The gateway model tiers its teams may use; NULL is every tier.
+    model_tiers: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Whether its teams may use the platform's subscription (Claude) models.
+    allows_subscription: Mapped[bool] = mapped_column(Boolean, default=False)
+    unlimited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Only an administrator can put a team on it, and only the console lists it.
+    admin_only: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class CreditAdminAudit(UuidPk, Timestamps, Base):
+    """Every change an administrator makes to plans and credit packs: who, to
+    what, and what it was before and after."""
+
+    __tablename__ = "credit_admin_audit"
+    __table_args__ = (
+        Index("ix_credit_admin_audit_created_at", text("created_at DESC")),
+    )
+
+    actor_handle: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(32))
+    target: Mapped[str] = mapped_column(String(128))
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class ComputeGrant(UuidPk, Timestamps, Base):
@@ -79,6 +128,9 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Why an administrator issued it (a contract, a refund); shown only to
+    # administrators.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     credits_total: Mapped[float] = mapped_column(Float)
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -93,6 +145,13 @@ class ResourceUsage(UuidPk, Timestamps, Base):
         Index("ix_resource_usage_created_at", "created_at"),
         # A person's spend in a month: the personal usage page reads it.
         Index("ix_resource_usage_user_created_at", "user_id", "created_at"),
+        # A team's spend inside a plan's time window, read without the rows.
+        Index(
+            "ix_resource_usage_team_created_at",
+            "team_id",
+            "created_at",
+            postgresql_include=["credits"],
+        ),
     )
 
     # NULL when the spend happened outside any project (see ``user_id``).
@@ -130,6 +189,12 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # "subscription" (metering proxy), "native" (profile-pinned credentials).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
+    # The team that paid, and the credits charged for this row (#2397). NULL
+    # and 0 on rows written before they were recorded.
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("team.id", ondelete="CASCADE"), nullable=True
+    )
+    credits: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
 
 class IngestCheckpoint(Base):

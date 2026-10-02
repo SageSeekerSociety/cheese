@@ -179,7 +179,7 @@ describe('document tools workspace', () => {
     await fireEvent.click(screen.getByRole('tab', { name: /^文档 AI$/ }))
     expect(screen.getByRole('region', { name: '文档 AI' }).getAttribute('aria-busy')).toBe('true')
     expect(question.value).toBe('保留这个问题')
-    await fireEvent.click(screen.getByText('返回正文'))
+    await fireEvent.click(screen.getByRole('button', { name: '返回正文' }))
     expect(document.activeElement).toBe(launcher)
     expect(screen.queryByRole('tab', { name: /^文档 AI$/ })).toBeNull()
     expect(ai.busy).toBe(true)

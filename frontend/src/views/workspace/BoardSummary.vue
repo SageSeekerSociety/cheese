@@ -5,17 +5,17 @@
 // 现在什么在等我」在手机上要多走一步才看得到。这一行把那一眼搬到列表顶上：三列各
 // 几件，该你动的那一列打头、带上看板给它的那颗暖色点；其余的不抢眼。
 //
-// 数字和看板同一个来源（listProjectTasks + lib/board.ts 的 liveBoardTasks），两边对
-// 得上。读失败就留着上一次的数（第一次就失败则只写「看板」）：一次网络抖动不该让
-// 这一行说「暂无任务」。
+// 数字和看板同一个来源（lib/projectTasks.ts 那一次读 + lib/board.ts 的
+// liveBoardTasks），两边对得上。读失败就留着上一次的数（第一次就失败则只写「看
+// 板」）：一次网络抖动不该让这一行说「暂无任务」。
 import type { RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { listProjectTasks } from '@/api'
 import { t } from '@/i18n'
 import { boardColumnCounts, columnDotStyle } from '@/lib/board'
+import { readProjectTasks } from '@/lib/projectTasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
@@ -25,16 +25,17 @@ const store = useWorkspaceStore()
 
 const tasks = ref<RoomTask[] | null>(null)
 
-/** 看板自己 15 秒一拉；这一行只是个摘要，慢一倍够了。 */
+/** 看板自己 15 秒一拉；这一行只是个摘要，慢一倍够了。看板也开着的时候它刚读过，
+ *  这一行到点就拿它那一份（`maxAgeMs`），不另发一次。 */
 const REFRESH_MS = 30_000
 
 let inFlight = false
-async function load() {
+async function load(maxAgeMs?: number) {
   const pid = props.projectId
   if (inFlight) return
   inFlight = true
   try {
-    const payload = await listProjectTasks(pid)
+    const payload = await readProjectTasks(pid, { maxAgeMs })
     if (props.projectId === pid) tasks.value = payload.data
   } catch {
     // 留着上一次的数。
@@ -45,12 +46,12 @@ async function load() {
 
 let timer: number | undefined
 function onVisibility() {
-  if (!document.hidden) void load()
+  if (!document.hidden) void load(REFRESH_MS)
 }
 onMounted(() => {
   void load()
   timer = window.setInterval(() => {
-    if (!document.hidden) void load()
+    if (!document.hidden) void load(REFRESH_MS)
   }, REFRESH_MS)
   document.addEventListener('visibilitychange', onVisibility)
 })

@@ -2,6 +2,7 @@
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
+import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, ref } from 'vue'
 
@@ -60,19 +61,21 @@ const emit = defineEmits<{
 const chatRef = ref<{
   connected: boolean
   send: (content: string, summon: boolean) => boolean
+  submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const connected = computed(() => !!chatRef.value?.connected)
+const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
 defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
   reloadFeedback: () => feedbackRef.value?.reload(),
-  // 预览面板里「指出位置」发出来的那一句。带 summon：读者指着文档说了一处要改，
-  // 等下一轮顺路捎上等于没说。
+  // 普通定位沿用聊天提交；明确的整页 AI 提问由 submitQuestion 在正文点名。
   say: (content: string) => chatRef.value?.send(content, true) ?? false,
+  submitQuestion,
 })
 </script>
 

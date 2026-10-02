@@ -13,6 +13,7 @@ max_budget 刹车静默失效」得和网关目录刷新、审计落库一起说
 """
 
 import re
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
@@ -92,6 +93,8 @@ class _ModelBodyBase(BaseModel):
     label: str | None = None
     prices: ModelPrices | None = None
     capabilities: ModelCapabilities | None = None
+    # 档位（网关的 `cheese_tier`）：方案按它限定可用的模型（#2397）。
+    tier: Literal["included", "premium", "frontier"] | None = None
 
     @field_validator("api_base")
     @classmethod

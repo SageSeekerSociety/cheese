@@ -236,6 +236,7 @@ auth_entries:
   observed.task.teams: "require_auth_user 登录后检查 TEAM 类别并查询本人 teams；没有调用共享 task readability，eligibility 未完整检查（源码明确标注）。任务可见性/eligibility 意图待确认。Source: backend/app/api/routes/tasks.py:3107."
 owners:
   admin: "Platform admin membership and allow-list; domain/admin/AdminService, not every /admin route business domain."
+  usage.plans: "Credit plans, which plan each team is on, credits administrators issue, and their audit; domain/usage/plans.py and ledger.py."
   agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models.py."
   agent.execution: "Agent session execution/control/diagnostics; domain/agent runtime and domain/agent_session. HTTP diagnostics are assembled in app/main.py."
   agent.types: "Agent type catalogue; domain/agent_type/library.py."
@@ -373,6 +374,15 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/users", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "POST", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "DELETE", path: "/admin/admins/{target}", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "GET", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "POST", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "PUT", path: "/admin/plans/{key}", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/teams", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}/history", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "PUT", path: "/admin/teams/{teamId}/plan", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "POST", path: "/admin/teams/{teamId}/grants", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "GET", path: "/admin/credits/audit", auth: "platform.admin", owner: "usage.plans"}
   # app.api.routes.admin_memory
   - {protocol: "http", method: "POST", path: "/admin/memory/migration/projects/{project_id}/dry-run", auth: "platform.admin", owner: "memory"}
   - {protocol: "http", method: "GET", path: "/admin/memory/migration/projects/{project_id}/plans", auth: "platform.admin", owner: "memory"}

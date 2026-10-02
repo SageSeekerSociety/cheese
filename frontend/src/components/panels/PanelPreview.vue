@@ -13,6 +13,8 @@
 //     → `components/panels/PanelPreviewView.vue`，只凭 props 渲染
 // 这一只只负责把两边接起来：状态递下去、事件接回来。加取数动作在组合式函数里加，
 // 加画法在展示组件里加，这一只基本不再长。
+import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
+
 import { useId } from 'vue'
 
 import { usePanelPreview } from '../../composables/usePanelPreview'
@@ -22,6 +24,7 @@ import PanelPreviewView from './PanelPreviewView.vue'
 const props = withDefaults(
   defineProps<{
     topicId: string | null
+    submitQuestion?: SubmitPreviewQuestion
     projectId: string | null
     // This tab is the one on screen. Loads happen on the rising edge.
     active?: boolean
@@ -30,7 +33,7 @@ const props = withDefaults(
     // 自由区的一个页签：这一格只看房间里这一份文件，不跟着当前预览走。
     path?: string | null
   }>(),
-  { active: false, refreshTick: 0, path: null }
+  { active: false, refreshTick: 0, path: null, submitQuestion: undefined }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -96,6 +99,7 @@ function refresh() {
        谁传谁看得见；将来哪一样不传了，typecheck 也会点名。 -->
   <PanelPreviewView
     :topic-id="props.topicId"
+    :submit-question="props.submitQuestion"
     :project-id="props.projectId"
     :path="props.path"
     :frame-name="frameName"

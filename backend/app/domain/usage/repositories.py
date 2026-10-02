@@ -53,6 +53,8 @@ class UsageRepository:
         route: str = "",
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
+        team_id: int | None = None,
+        credits: float = 0.0,
     ) -> ResourceUsage:
         """Record spend against its originating message or platform work id.
 
@@ -84,6 +86,8 @@ class UsageRepository:
             cost_usd=cost_usd,
             kind=kind if metered else f"{kind}:unmetered",
             route=route,
+            team_id=team_id,
+            credits=credits,
         )
         self._session.add(row)
         await self._session.flush()

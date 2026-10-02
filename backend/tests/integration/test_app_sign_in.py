@@ -2,8 +2,8 @@
 
 Signing in: someone signed in in the browser hands that sign-in to the app
 (`POST /users/auth/app-sign-in`), and the app takes it over with the secret it
-kept (`.../finish`). What must hold: the code is useless without that secret
-and good once, and what the app gets is a sign-in of its own.
+kept (`.../finish`). What must hold: the code is useless without that secret,
+good once and for a few minutes, and what the app gets is a sign-in of its own.
 
 Connecting: a flow started in the app shows its result in the app, and one
 started in a browser stays there (`app/api/app_return.py`).
@@ -13,8 +13,12 @@ import base64
 import hashlib
 import secrets
 import uuid
+from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
+import jwt.api_jwt
+
+from app.common.auth import APP_SIGN_IN_TTL_S
 from app.core.config import settings
 from tests.conftest import seed_user
 from tests.integration.conftest import UserCreator
@@ -97,6 +101,25 @@ def test_a_code_signs_in_once(api_client, user_client):
 
     assert _finish(client, code, verifier).status_code == 200
     assert _finish(client, code, verifier).status_code == 401
+
+
+def test_a_code_left_unused_expires(api_client, user_client, monkeypatch):
+    client = api_client
+    _, browser = _signed_in(client, user_client)
+    verifier, challenge = _secret()
+    code = _code(client, browser, challenge)
+
+    class _Later(datetime):
+        """The server's clock, once the code has outlived its few minutes."""
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(seconds=APP_SIGN_IN_TTL_S + 60)
+
+    monkeypatch.setattr(jwt.api_jwt, "datetime", _Later)
+    finished = _finish(client, code, verifier)
+    assert finished.status_code == 401
+    assert "cheese_refresh" not in finished.cookies
 
 
 def test_only_someone_signed_in_can_hand_a_sign_in_over(client):

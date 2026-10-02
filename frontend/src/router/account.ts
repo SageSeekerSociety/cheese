@@ -1,5 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 
+import { signInHappensInBrowser } from '@/views/account/appSignIn'
+
 export default {
   path: '/account',
   name: 'Account',
@@ -15,6 +17,7 @@ export default {
       meta: {
         titleKey: 'account.signIn.title',
       },
+      beforeEnter: signInHappensInBrowser,
     },
     {
       path: 'signin/email',
@@ -23,6 +26,7 @@ export default {
       meta: {
         titleKey: 'account.emailCode.title',
       },
+      beforeEnter: signInHappensInBrowser,
     },
     {
       path: 'signin/email/verify',
@@ -39,6 +43,7 @@ export default {
       meta: {
         titleKey: 'account.signUp.title',
       },
+      beforeEnter: signInHappensInBrowser,
     },
     {
       path: 'signup/verify-email',
@@ -55,6 +60,7 @@ export default {
       meta: {
         titleKey: 'account.recover.title',
       },
+      beforeEnter: signInHappensInBrowser,
     },
     {
       path: 'recover/password/verify',
@@ -123,8 +129,16 @@ export default {
         titleKey: 'account.signIn.title',
       },
     },
-    // Signing in to the desktop app through a provider (lib/desktopApp.ts):
-    // started and handed back in the browser, finished in the app.
+    // Signing in to the desktop app (views/account/appSignIn.ts): started in
+    // the app, done and handed back in the browser, finished in the app.
+    {
+      path: 'app',
+      name: 'DesktopSignIn',
+      component: () => import('@/views/account/DesktopSignIn.vue'),
+      meta: {
+        titleKey: 'account.signIn.title',
+      },
+    },
     {
       path: 'oauth/app',
       name: 'AppSignInStart',

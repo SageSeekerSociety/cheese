@@ -22,7 +22,11 @@ import { useDisplay } from 'vuetify'
 import { useOutsideMentionPrompt } from '@/composables/useOutsideMentionPrompt'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
-import { expandMentions as expandMentionNames, mentionsHandle } from '../../lib/expandMentions'
+import {
+  expandComposerMentions,
+  mentionsAgent as containsAgentMention,
+  withAgentMention as addAgentMention,
+} from '../../lib/composerMentions'
 import { myHandle } from '../../me'
 
 import AskDialog from './AskDialog.vue'
@@ -137,8 +141,9 @@ const { busy: addingOutside, error: addOutsideError } = outsidePrompt
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
 // module so this stays identical to the backend's backstop.
 function expandMentions(text: string): string {
-  return expandMentionNames(
+  return expandComposerMentions(
     text,
+    props.agentSeat,
     props.mentionPool,
     props.topicList.filter((t) => t.kind !== 'root')
   )
@@ -163,9 +168,7 @@ function expandMentions(text: string): string {
 // 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
 // 发出去，那颗按钮不亮，看起来就像只有芝士叫得动。
 function mentionsAgent(expanded: string): boolean {
-  if (mentionsHandle(expanded, props.agentSeat?.handle)) return true
-  if (props.agentSeat === null) return false
-  return props.mentionPool.some((m) => m.agent && mentionsHandle(expanded, m.handle))
+  return containsAgentMention(expanded, props.agentSeat, props.mentionPool)
 }
 
 // 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
@@ -181,9 +184,12 @@ const summonReady = computed(() => props.agentSeat !== null)
 // 动。所以这两个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
 // 也不要一个点了不算数的入口。
 function withAgentMention(text: string): string {
-  const agent = props.agentSeat
-  if (!agent || mentionsAgent(expandMentions(text))) return text
-  return `@${agent.label} ${text}`
+  return addAgentMention(
+    text,
+    props.agentSeat,
+    props.mentionPool,
+    props.topicList.filter((t) => t.kind !== 'root')
+  )
 }
 
 // 「交给芝士」这颗按钮：它不改任何隐藏状态，它只是替你打那五个字，写完你看得见、
