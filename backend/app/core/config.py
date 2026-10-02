@@ -976,6 +976,14 @@ class Settings(BaseSettings):
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
+    # The draft models whose deployment accepts image content blocks. A PDF page
+    # with no text layer (a scan) is rendered to a PNG and sent to the model only
+    # when `task_draft_model` is named here. These models are text models by
+    # default, and an image sent to one that cannot read it is a wasted, billed
+    # call — so the fallback is opt-in per model, not inferred. Deployment env
+    # name TASK_DRAFT_VISION_MODELS carries a JSON array (pydantic-settings
+    # parsing for a set/list field).
+    task_draft_vision_models: set[str] = {"deepseek-flash"}
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
