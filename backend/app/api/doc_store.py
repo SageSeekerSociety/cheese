@@ -23,8 +23,6 @@ from app.domain.block.documents import DocumentWriter, persisted_notice
 from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.doc_ai import acceptance
-from app.domain.doc_ai.acceptance import ProposalAcceptance
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.topic import naming
 from app.domain.topic.doc_change import summarize_doc_change
@@ -142,14 +140,6 @@ async def store(
     if doc is None:
         # An operation that wrote an empty document into a room that has none.
         receipt = {"doc_version": 0, "operation_id": str(operation_id)}
-    elif claim.action == acceptance.ACTION:
-        receipt = await ProposalAcceptance(db).complete(
-            room_id=room_id,
-            payload=operation["payload"],
-            operation_id=operation_id,
-            verified_actor=operation["actor"],
-            doc=doc,
-        )
     else:
         receipt = snapshot(doc, operation_id)
     await journal.finish(claim, receipt)
@@ -174,7 +164,7 @@ async def announce(room_id: uuid.UUID, stored: Stored, chat: ChatService) -> Non
             await chat.notify_running_turn(room_id, line, blocks=[stored.notice.id])
     if stored.changed:
         # The editors already hold the text; what refreshes on this frame is
-        # everything derived from the stored version — comment anchors, the
-        # document AI's source, the overview.
+        # everything derived from the stored version — comment anchors and the
+        # overview.
         await broker.publish(str(room_id), {"type": "state", "resource": "doc"})
         naming.nudge(room_id, "signal")

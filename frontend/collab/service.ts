@@ -159,7 +159,7 @@ export function createCollabServer(config: CollabConfig): Server {
         console.warn(`[collab] ${documentName}: converting changed the Markdown\n${report.diff}`)
       }
       // From here on the stored text is what the document exports, so whatever
-      // reads it (芝士, the document AI's offsets) reads the document people see.
+      // reads it (芝士, search, comment anchors) reads the document people see.
       // A conversion that only respells the text is the platform's, and is not
       // news to anyone in the room.
       await backend.store(documentName, {
