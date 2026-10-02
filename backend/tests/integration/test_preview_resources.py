@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.library import service as library
+from app.domain.textfile import MAX_TEXT_BYTES, content_version
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_app_preview_proxy import (
     FakeMachine,
@@ -84,6 +85,41 @@ def test_fixed_file_survives_latest_change_and_rejects_changed_entry(
         headers=session_auth_headers("alice"),
     )
     assert denied.status_code == 404
+
+
+def test_oversized_file_reports_the_version_its_session_check_uses(
+    client, static_preview
+):
+    """A file past MAX_TEXT_BYTES has no body to hand over, but it still has a
+    version -- and the preview panel opens a session for the version it was
+    shown. Reporting `null` there made every large file unopenable: the panel
+    asked, the route compared `null` against the real hash, and answered
+    "Preview entry changed or unavailable" for a file that had not changed.
+    """
+    project, topic, _html, _assets = static_preview
+    body = b"<html>" + b"x" * MAX_TEXT_BYTES + b"</html>"
+    library.write_room_file(project, topic, "web/huge.html", body)
+
+    read = client.get(
+        f"/topics/{topic}/preview/file",
+        params={"path": "web/huge.html"},
+        headers=session_auth_headers("alice"),
+    )
+    assert read.status_code == 200, read.text
+    data = read.json()["data"]
+    assert data["too_large"] is True and data["content"] is None
+    assert data["version"] == content_version(body)
+    assert data["version"] == library.preview_file_version(
+        project, topic, "web/huge.html"
+    )
+
+    opened = client.post(
+        f"/topics/{topic}/preview-session",
+        json={"path": "web/huge.html", "version": data["version"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["data"]["resource"]["version"] == data["version"]
 
 
 class InstanceMachine(FakeMachine):
