@@ -135,11 +135,13 @@ describe('resizeRegion / resizeBox', () => {
   })
 
   it('角 + Shift 从零点起步：边长至少 1，别锁死成 0', () => {
-    expect(resizeBox({ x: 0, y: 0, width: 0, height: 0 }, 'se', { x: 100, y: 50 }, true)).toEqual({
+    // 这个下限只在整块位移不足 1 像素时才咬得住——位移够大时 `max(|dx|,|dy|)` 本来
+    // 就大于 1，改不改都一样。所以取一个亚像素的落点。
+    expect(resizeBox({ x: 0, y: 0, width: 0, height: 0 }, 'se', { x: 0.2, y: 0.1 }, true)).toEqual({
       x: 0,
       y: 0,
-      width: 100,
-      height: 100,
+      width: 1,
+      height: 1,
     })
   })
 })

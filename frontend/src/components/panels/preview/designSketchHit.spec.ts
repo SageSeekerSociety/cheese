@@ -175,16 +175,23 @@ describe('显示缩放', () => {
 })
 
 describe('distanceToEllipse', () => {
-  it('真边界上的点距离接近 0，不受 64 点采样弦长的影响', () => {
-    // 2000x1000 的椭圆相邻采样点之间弦长约 98px：只比采样点近远，中间那一段全是「命不中」。
-    const big = { x: 0, y: 0, width: 2000, height: 1000 }
-    expect(distanceToEllipse({ x: 1000, y: 999.4 }, big)).toBeLessThan(1)
-    expect(distanceToEllipse({ x: 1000, y: 900 }, big)).toBeCloseTo(100, 0)
+  it('两采样点之间的真边界也算近，靠解析那条兜底，不是靠采样密度', () => {
+    // 400x100 的椭圆、64 点采样：长半轴那一端的相邻采样点相隔近 20px，中间那段
+    // 采样点一个都够不着（(209.8, 0.5) 到最近的采样点约 9.8）。只比采样点的话这个
+    // 点会被判成「离轮廓很远」；解析兜底把它拉回真距离。
+    const wide = { x: 0, y: 0, width: 400, height: 100 }
+    expect(distanceToEllipse({ x: 209.8, y: 0.5 }, wide)).toBeLessThan(1)
+    // 出轮廓 20 像素的点解析值也是 20，取 min 不会把远处点拉近。
+    expect(distanceToEllipse({ x: 200, y: 120 }, wide)).toBeCloseTo(20, 0)
   })
 
-  it('退化的椭圆不返回 NaN：rx=0 时按到中心的距离算', () => {
+  it('退化成线段（某一半轴为 0）时，按到那条线段的距离算', () => {
+    // width=0、height>0 是能提交的（`isEmptyStroke` 只在宽高都为 0 时才拦）。
+    // 这时椭圆就是 (100,100)-(100,200) 这条竖线，落在它延长线上的点离轮廓很近。
     const flat = { x: 100, y: 100, width: 0, height: 100 }
     expect(distanceToEllipse({ x: 100, y: 150 }, flat)).toBe(0)
     expect(distanceToEllipse({ x: 104, y: 150 }, flat)).toBe(4)
+    // 端点外面 5 像素：到线段的距离，而不是到中心 (100,150) 的 55。
+    expect(distanceToEllipse({ x: 100, y: 205 }, flat)).toBe(5)
   })
 })

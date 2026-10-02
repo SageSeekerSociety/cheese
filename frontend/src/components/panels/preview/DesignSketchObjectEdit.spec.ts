@@ -286,6 +286,42 @@ it('拖角把手 + Shift 把矩形改成正方形', async () => {
   expect(Number(box.getAttribute('height'))).toBe(350)
 })
 
+it('文字的角只挪不改大小：文字没有缩放这一档', async () => {
+  const ui = mount()
+  await painted(ui)
+  await placeText(ui)
+  // 放完文字，选中的是它，但工具还停在「文字」上（再点一下是接着放，不是拖动）。
+  // 切回选择会放下选中，所以还要点它一下把选中找回来。
+  await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  const layer = sheet(ui)
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 80, clientX: 110, clientY: 120 })
+  await fireEvent.pointerUp(layer, { button: 0, pointerId: 80, clientX: 110, clientY: 120 })
+  await waitFor(() => expect(handleCount(ui)).toBe(4))
+  const text = () => ui.container.querySelector('.sketch-overlay text')!
+  const frame = () => ui.container.querySelector('.sketch-overlay__frame') as SVGRectElement
+  const before = {
+    x: Number(text().getAttribute('x')),
+    y: Number(text().getAttribute('y')),
+    width: Number(frame().getAttribute('width')),
+    height: Number(frame().getAttribute('height')),
+  }
+
+  // 第一个把手是左上角，正好压在锚点上。图片显示在 (10,20)（见 `painted`），所以
+  // client = 显示坐标 + (10,20)。拖它 40/30，文字整支平移，字号量出来的宽高不动
+  // （`canResize` 对文字是假，这一下手势是 move 不是 resize）。
+  const handle = ui.container.querySelector('.sketch-overlay__handle') as SVGCircleElement
+  const grabX = Number(handle.getAttribute('cx')) + 10
+  const grabY = Number(handle.getAttribute('cy')) + 20
+  await fireEvent.pointerDown(layer, { button: 0, pointerId: 83, clientX: grabX, clientY: grabY })
+  await fireEvent.pointerMove(layer, { pointerId: 83, clientX: grabX + 40, clientY: grabY + 30 })
+  await fireEvent.pointerUp(layer, { pointerId: 83, clientX: grabX + 40, clientY: grabY + 30 })
+
+  await waitFor(() => expect(Number(text().getAttribute('x'))).toBe(before.x + 40))
+  expect(Number(text().getAttribute('y'))).toBe(before.y + 30)
+  expect(Number(frame().getAttribute('width'))).toBe(before.width)
+  expect(Number(frame().getAttribute('height'))).toBe(before.height)
+})
+
 /** 文字工具下点一下、输入、回车：屏上多一条文字。 */
 async function placeText(ui: ReturnType<typeof render>, clientX = 110, clientY = 120, text = '标签') {
   await fireEvent.click(ui.getByRole('button', { name: '文字' }))

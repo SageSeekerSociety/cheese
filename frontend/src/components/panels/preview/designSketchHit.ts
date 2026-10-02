@@ -73,17 +73,16 @@ export function distanceToRectBorder(point: Point, region: RasterRegion): number
  * 点到椭圆周长的最短距离：沿周长采样固定点数取最小（和参考物同法），再用一条解析
  * 上界兜底。
  *
- * 采样是会漏的：相邻两点在周长上相隔 `rx·π/samples`，大到超过容差时，轮廓上两点
- * 之间的地方就点不中（400×100、容差 6 的椭圆，扁端能差出近 10 像素）。兜底那条取
- * 「点与圆心连线交椭圆于一点」的距离——它是一条到轮廓的真实距离，只会比最短距离大，
- * 所以补得上漏掉的命中，又造不出假的。
+ * 采样是会漏的：相邻两点在周长上的距离最大到 `2π·max(rx,ry)/samples`，超过容差时，
+ * 轮廓上两点之间的地方就点不中（400×100 的椭圆、64 点、容差 6，长半轴那一端能差出
+ * 近 10 像素）。兜底那条取「点与圆心连线交椭圆于一点」的距离——它是一条到轮廓的真实
+ * 距离，只会比最短距离大，所以补得上漏掉的命中，又造不出假的。
  */
 export function distanceToEllipse(point: Point, region: RasterRegion, samples = ELLIPSE_SAMPLES): number {
   const cx = region.x + region.width / 2
   const cy = region.y + region.height / 2
   const rx = region.width / 2
   const ry = region.height / 2
-  if (rx <= 0 || ry <= 0) return Math.hypot(point.x - cx, point.y - cy)
   let best = Infinity
   for (let index = 0; index < samples; index += 1) {
     const angle = (index / samples) * Math.PI * 2
@@ -91,6 +90,10 @@ export function distanceToEllipse(point: Point, region: RasterRegion, samples = 
     const y = cy + ry * Math.sin(angle)
     best = Math.min(best, Math.hypot(point.x - x, point.y - y))
   }
+  // 某一半轴为 0 时椭圆退化成一条线段（`isEmptyStroke` 只在宽高**都**为 0 时才拦，
+  // 所以这种形状到得了这里）。采样点正好落在那条线段上，`best` 就是到它的距离；解析
+  // 那一支会把 0 当除数，跳过。
+  if (rx <= 0 || ry <= 0) return best
   const qx = (point.x - cx) / rx
   const qy = (point.y - cy) / ry
   const radius = Math.hypot(qx, qy)
