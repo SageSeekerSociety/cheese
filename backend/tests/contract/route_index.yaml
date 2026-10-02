@@ -651,6 +651,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/ticket", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/doc", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/edits", auth: "living.document", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/rewrite", auth: "document.human", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/history", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/doc/operations/{operation_id}", auth: "living.document", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/doc/restore", auth: "living.document", owner: "living_doc"}

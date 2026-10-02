@@ -36,3 +36,17 @@ class PassageEditsIn(BaseModel):
     #: Legacy authorship fallback, like ``DocEditIn.author``; identity comes
     #: from the credential.
     author: str = "anonymous"
+
+
+class RewriteIn(BaseModel):
+    """Rewrite a selection (``POST /topics/{id}/doc/rewrite``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The Markdown of the top-level block holding the selection, as the
+    #: editor serializes it.
+    block: str = Field(min_length=1, max_length=20000)
+    #: The selection, as offsets into ``block``.
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    instruction: str = Field(min_length=1, max_length=2000)

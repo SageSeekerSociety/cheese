@@ -19,8 +19,8 @@ async def operation_actor(db: AsyncSession, actor: Actor) -> str:
 
 async def human_operation_actor(db: AsyncSession, actor: Actor) -> str:
     if actor.via != "token":
-        raise AuthenticationRequiredError("文档提案采纳需要真实用户登录")
+        raise AuthenticationRequiredError("这个文档操作需要真实用户登录")
     identity = await operation_actor(db, actor)
     if await IdentityService(db).is_agent(actor.handle):
-        raise ForbiddenError("AI 账号不能代替人采纳文档提案")
+        raise ForbiddenError("AI 账号不能代替人做这个文档操作")
     return identity
