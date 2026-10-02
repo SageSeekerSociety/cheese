@@ -16,7 +16,7 @@
 
 | 情况 | 证据是什么 | 什么时候结束 | 房间看到什么 |
 |---|---|---|---|
-| 进程没了 | 一轮开着时 runner 答读的时候带着 `alive: false`（会话进程已退出；部署前起的旧 runner 由 `ping` 答）；或者 runner 连续 `RUNNER_GONE_S`（120 秒）够不着 | 立刻 | 「会话进程已退出」的失败结束 |
+| 进程没了 | 一轮开着时 runner 答读的时候带着 `alive: false`（会话进程已退出）；或者 runner 连续 `RUNNER_GONE_S`（120 秒）够不着 | 立刻 | 「会话进程已退出」的失败结束 |
 | 只说话不干活 | 最近 `TALKING_S`（5 分钟）内有输出，但最近一次「动作」（工具调用、工具返回、一轮结束）已经是 `agent_no_progress_s`（30 分钟）以前 | 到点即结束 | 轮次超时事件（`TURN_TIMEOUT`） |
 | 发给它的消息它一直不读 | 一轮进行中又说给它的一条消息，`agent_unread_grace_s`（30 分钟）内没有回执 | 到点即结束；没读的消息带进下一轮 | 「没读到你」事件（`PROMPT_UNDELIVERED`） |
 | API 拒绝 | Claude Code 的 `result` 带 `is_error: true`（额度用完、密钥失效、529 都是它） | 立刻，作为一次失败结束 | Claude Code 自己的那句话原文进房间 |

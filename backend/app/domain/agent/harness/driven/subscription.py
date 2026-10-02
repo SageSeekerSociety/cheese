@@ -162,9 +162,6 @@ class Subscription[B: Backlog]:
         self.disk = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"mirror {session.topic_id}"
         )
-        # Whether the runner holds a read until there is news (``read``), set
-        # from what it said it can do when it was greeted.
-        self.waits = False
         # What the first read of the drain under way asks besides the cursor,
         # what that read answered besides records, and that read while the
         # runner holds it: it has nothing in hand yet, so a drain that wants
@@ -256,14 +253,14 @@ class Subscription[B: Backlog]:
     async def drain(self, wait: float = 0.0) -> int:
         """Land what the runner has past the cursor; how many events that was.
 
-        ``wait`` lets a runner that can (``waits``) hold the first read up to
-        that long until there is something to answer it with.
+        ``wait`` has the runner hold the first read up to that long until there
+        is something to answer it with.
         """
         if wait <= 0:
             self.unpark()
         async with self.lock:
             self.heard = {}
-            if wait > 0 and self.waits:
+            if wait > 0:
                 self.asking = {"wait": wait, "live": self.live_mark}
             try:
                 await self.receive()

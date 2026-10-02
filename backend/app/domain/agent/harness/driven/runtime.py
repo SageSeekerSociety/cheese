@@ -42,6 +42,7 @@ from app.domain.agent.harness import (
     SessionRef,
     UnreadProbe,
 )
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.driven.subscription import (
     OUTPUT,
@@ -67,11 +68,6 @@ from app.domain.block.notice_text import say
 # moment it is written. Far below every timeout on the way: the call's own
 # (660 s), the connection owner's, and the connector's.
 READ_WAIT_S = 25.0
-# A runner started before runners could hold a read answers at once; it is read
-# at a fixed rate instead, faster while a turn is open. Such runners exit once
-# idle, and a runner started since can hold a read (``Handle.capabilities``).
-OLD_RUNNER_TURN_READ_S = 0.1
-OLD_RUNNER_IDLE_READ_S = 5.0
 # How long a runner may go unanswered while a turn is open before the turn is
 # called dead. Longer than the connection owner takes to come back after a
 # release, and than a device takes to reconnect after a network blip: those
@@ -85,6 +81,11 @@ IDLE_GONE_READ_S = 60.0
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
 TALKING_S = 300.0
+
+
+class RunnerUnsupported(ScreenSetupError):
+    """The runner a seat was greeted by cannot hold a read (``LONG_POLL``), and
+    every read of a seat is one the runner holds until there is news."""
 
 
 #: What the agent of a seat is in the middle of writing, handed on as it changes:
@@ -514,6 +515,12 @@ class DrivenRuntime[H: Handle]:
                 )
             if self.live.get(seat) == handle and seat in self.subscriptions:
                 return
+        if LONG_POLL not in handle.capabilities:
+            raise RunnerUnsupported(
+                f"The {self.label} runner on {handle.device_id} at {handle.state} "
+                f"cannot hold a read (it announced {sorted(handle.capabilities)}, "
+                f"without {LONG_POLL!r}); it is not supported"
+            )
         await self._detach(seat)
         handle.mirror.parent.mkdir(parents=True, exist_ok=True)
 
@@ -524,7 +531,6 @@ class DrivenRuntime[H: Handle]:
         # its id under the seat's lock, so an ownership mutation is either
         # whole-before or whole-after this swap, never interleaved with it.
         subscription = self.subscribe(handle, call)
-        subscription.waits = LONG_POLL in handle.capabilities
         subscription.attachment_id = uuid.uuid4().hex
         async with attachments.lock(seat):
             # The flag is checked HERE, under the lock — not once at some
@@ -586,7 +592,6 @@ class DrivenRuntime[H: Handle]:
 
     async def _poll(self, seat: Seat) -> None:
         topic = seat[0]
-        checked_at = 0.0
         # Waiting for a device to come back is this loop's job, not a failure of
         # it, so the wait is said once and the return is said once. Per-task
         # state: one of these runs per seat.
@@ -594,25 +599,17 @@ class DrivenRuntime[H: Handle]:
         while seat in self.subscriptions:
             subscription = self.subscriptions[seat]
             try:
-                delivered = await subscription.drain(wait=self._wait_s(seat))
+                await subscription.drain(wait=self._wait_s(seat))
                 if not subscription.heard.get("alive", True):
                     self.answering.discard(seat)
                 self.unreachable.pop(seat, None)
                 if live := subscription.heard.get("live"):
                     await self._show(seat, live)
-                # A runner that held the read says with its answer whether its
-                # agent is still there; an old one is asked, once a second.
-                if seat in self.work and (
-                    subscription.waits or time.monotonic() - checked_at >= 1
-                ):
+                # The runner that held the read says with its answer whether
+                # its agent is still there.
+                if seat in self.work:
                     handle = self.live[seat]
-                    status = (
-                        subscription.heard
-                        if subscription.waits
-                        else await self.channel.call(handle, "ping", {})
-                    )
-                    checked_at = time.monotonic()
-                    if not status.get("alive", True):
+                    if not subscription.heard.get("alive", True):
                         await self._died(handle)
                         return
                     if verdict := self.verdict(seat):
@@ -695,17 +692,10 @@ class DrivenRuntime[H: Handle]:
                     waiting = False
                     self.logger.info("%s resumed topic=%s", self.records, topic)
                     await self._say_resumed(seat)
-                if subscription.waits and not subscription.heard.get("alive", True):
+                if not subscription.heard.get("alive", True):
                     # Its agent process is gone with no turn open: the runner
                     # goes with it, and the next message starts it again.
                     await self._wait(seat, IDLE_GONE_READ_S)
-                elif not subscription.waits:
-                    await self._wait(
-                        seat,
-                        OLD_RUNNER_TURN_READ_S
-                        if delivered or seat in self.work
-                        else OLD_RUNNER_IDLE_READ_S,
-                    )
 
     async def _say_waiting(self, seat: Seat, reason: str) -> None:
         """Tell the room this seat's open turn is waiting on the machine — once
@@ -814,10 +804,7 @@ class DrivenRuntime[H: Handle]:
         )
         handle = await self.channel.ensure(session, opening, live)
         await self._attach(handle)
-        # Only a runner that says when it has news is heard from between sends;
-        # an old one is pinged instead, so nothing here vouches for it.
-        if LONG_POLL in handle.capabilities:
-            self.answering.add(seat)
+        self.answering.add(seat)
         return handle
 
     async def send(
@@ -1083,6 +1070,14 @@ class DrivenRuntime[H: Handle]:
             try:
                 await self._attach(handle)
             except DeviceOffline:
+                continue
+            except RunnerUnsupported as exc:
+                self.logger.warning(
+                    "%s recovery refused topic=%s: %s",
+                    self.label,
+                    handle.session.topic_id,
+                    exc,
+                )
                 continue
             if self.working(status) and status.get("work_id"):
                 seat = self._seat_of_handle(handle)

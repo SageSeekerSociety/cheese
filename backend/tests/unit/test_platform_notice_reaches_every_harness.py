@@ -22,6 +22,7 @@ import pytest
 from app.domain.agent.harness import CLAUDE_CODE, Opening, SessionRef
 from app.domain.agent.harness.codex.runtime import CodexRuntime
 from app.domain.agent.harness.codex.runtime import Handle as CodexHandle
+from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi.runtime import Handle as PiHandle
 from app.domain.agent.harness.pi.runtime import PiRuntime
 from tests.conftest import StubChannel
@@ -62,6 +63,8 @@ class _Runner:
 
     async def call(self, handle, method, params):
         if method in ("events", "entries"):
+            # Held, as a runner holds a read with nothing to answer it with.
+            await asyncio.sleep(params.get("wait", 0))
             return {"events": [], "entries": []}
         if method == "ping":
             return self.working(self)
@@ -74,7 +77,15 @@ class _Runner:
 
 def _driven(runtime_class, handle_class, harness, working, tmp_path):
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness=harness)
-    handle = handle_class(session, "device", "/state", "id", "agent", tmp_path / "m")
+    handle = handle_class(
+        session,
+        "device",
+        "/state",
+        "id",
+        "agent",
+        tmp_path / "m",
+        frozenset({LONG_POLL}),
+    )
     runner = _Runner(working)
     channel = AsyncMock()
     channel.ensure.return_value = handle
