@@ -371,7 +371,49 @@ def test_a_state_is_spent_once(client, upstream):
     first = client.get("/mcp/oauth/callback?" + query, follow_redirects=False)
     assert "mcp_result" in first.headers["location"]
     replay = client.get("/mcp/oauth/callback?" + query, follow_redirects=False)
-    assert "mcp_error" in replay.headers["location"]
+    assert _landing(replay)["mcp_error"] == ["mcpAuthAlreadyUsed"]
+
+
+def _landing(back: httpx.Response) -> dict[str, list[str]]:
+    assert back.status_code == 302, back.text
+    return parse_qs(urlsplit(back.headers["location"]).query)
+
+
+def test_a_failed_connection_comes_back_as_a_sentence_key(client, upstream):
+    """The settings page says why in its reader's language, so the address it
+    lands on carries the sentence's key and parameters, never the sentence."""
+    pid = _project(client, upstream)
+    started = client.post(
+        f"/projects/{pid}/mcp/servers/tracker/connect",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["authorization_url"]
+    state = parse_qs(urlsplit(started).query)["state"][0]
+
+    denied = _landing(
+        client.get(
+            "/mcp/oauth/callback",
+            params={"state": state, "error": "access_denied"},
+            follow_redirects=False,
+        )
+    )
+    assert denied["mcp"] == ["tracker"]
+    assert denied["mcp_error"] == ["mcpAuthIncomplete"]
+    assert json.loads(denied["mcp_error_params"][0]) == {"error": "access_denied"}
+
+    no_code = _landing(
+        client.get(
+            "/mcp/oauth/callback", params={"state": state}, follow_redirects=False
+        )
+    )
+    assert no_code["mcp_error"] == ["mcpAuthIncomplete"]
+    assert json.loads(no_code["mcp_error_params"][0]) == {
+        "error": {"key": "mcpNoAuthCode", "params": {}}
+    }
+
+    forged = client.get(
+        "/mcp/oauth/callback", params={"state": "forged"}, follow_redirects=False
+    )
+    assert _landing(forged) == {"mcp_error": ["mcpAuthLinkInvalid"]}
 
 
 # --- reading `.mcp.json` --------------------------------------------------------

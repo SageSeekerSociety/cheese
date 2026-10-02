@@ -84,12 +84,12 @@ const OWN_APP_ROW = {
   shared_app: false,
 }
 
-async function mount() {
+async function mount(url = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/', component: { template: '<div />' } }],
   })
-  await router.push('/')
+  await router.push(url)
   await router.isReady()
   return render(MyConnectionsView as unknown as Component, {
     global: {
@@ -170,5 +170,32 @@ describe('已经有的连接', () => {
     // 走平台应用：连接的方式就是上面那颗按钮，所以这一行没有第二颗。
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
     expect(screen.getAllByText('授权个人账号（用于搜索）')).toHaveLength(1)
+  })
+})
+
+describe('从飞书授权回来', () => {
+  it("in English the outcome code and Feishu's own words are said in English", async () => {
+    setLocale('en')
+    await mount('/?feishu=denied&feishu_detail=access_denied')
+    expect(await screen.findByText('Authorization was not granted: access_denied')).toBeTruthy()
+  })
+
+  it('a refusal of ours arrives as its sentence key', async () => {
+    setLocale('en')
+    await mount('/?feishu=feishuAppNotConfigured')
+    expect(
+      await screen.findByText("An admin hasn't set up the Feishu app yet, so Feishu can't be connected for now")
+    ).toBeTruthy()
+  })
+
+  it('a code this build does not know says only that authorizing did not complete', async () => {
+    setLocale('en')
+    await mount('/?feishu=something_new')
+    expect(await screen.findByText('Feishu authorization did not complete')).toBeTruthy()
+  })
+
+  it('成功了说成功', async () => {
+    await mount('/?feishu=ok')
+    expect(await screen.findByText('飞书授权成功')).toBeTruthy()
   })
 })

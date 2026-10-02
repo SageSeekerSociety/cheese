@@ -182,6 +182,19 @@ def exception_text(exc: BaseException) -> str:
     return said if isinstance(said, NoticeText) else str(exc)
 
 
+def error_frame(message: str, **fields: object) -> dict:
+    """A live ``error`` frame: a room socket's, or a stream's ``event: error``.
+
+    ``message`` goes out as it is, for agents and anything else that is not a
+    screen. A sentence also carries its key as ``i18n``, the shape an error
+    body's ``error.i18n`` has, so the screen renders it in its reader's
+    language the same way."""
+    frame = {**fields, "message": message}
+    if isinstance(message, NoticeText):
+        frame["i18n"] = message.descriptor()
+    return frame
+
+
 def say(key: str, **params: object) -> NoticeText:
     """A current sentence with ``params`` filled in; replay uses from_descriptor."""
     if key in HISTORICAL_NOTICE_KEYS:

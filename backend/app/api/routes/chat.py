@@ -50,6 +50,7 @@ from app.core.obs import get_logger
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import InProcessBroker
 from app.domain.authz.policy import refuse_unauthenticated_chat
+from app.domain.block.notice_text import error_frame
 from app.domain.room_task.services import TaskService
 
 router = APIRouter(tags=["chat"])
@@ -132,7 +133,7 @@ async def chat(
             code, message = refusal
             _log.info("chat_ws_refused", code=code, topic=str(topic_id))
             await websocket.accept()
-            await send({"type": "error", "code": code, "message": message})
+            await send(error_frame(message, type="error", code=code))
             await websocket.close(code=1008)
             return
 

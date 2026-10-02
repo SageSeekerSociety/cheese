@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAssistant } from './useAssistant'
 
+import { setLocale } from '@/i18n'
+
 const CONVERSATION = { id: 'c1', title: '', lastActiveAt: '2026-10-01T08:00:00Z', questions: 0 }
 
 function envelope(data: unknown, status = 200): Response {
@@ -40,7 +42,10 @@ function serve(ask: () => Response) {
 
 describe('题目页上问芝士', () => {
   beforeEach(() => localStorage.clear())
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    setLocale('zh-CN')
+  })
 
   it('sends the question and keeps the streamed answer in the conversation', async () => {
     const asked = serve(() => events(['delta', { text: '先会' }], ['delta', { text: ' gdb。' }], ['done', {}]))
@@ -75,6 +80,52 @@ describe('题目页上问芝士', () => {
     expect(a.messages.value).toEqual([])
     expect(a.busy.value).toBe(false)
     expect(a.creditRefused.value).toBe(false)
+  })
+
+  it('in English a failed answer says so in English, from the key on the error event', async () => {
+    setLocale('en')
+    serve(() =>
+      events(
+        ['error', { message: '芝士暂时答不上来，稍后再试。', i18n: { key: 'assistantFailed', params: {} } }],
+        ['done', {}]
+      )
+    )
+    const a = useAssistant(() => 7)
+    await a.load()
+
+    await a.ask('要先会什么？', 'fallback')
+
+    expect(a.notice.value).toBe("Cheese can't answer right now. Try again later.")
+  })
+
+  it('an error event with an unknown key shows the server words', async () => {
+    serve(() =>
+      events(['error', { message: '服务端的原话', i18n: { key: 'noSuchSentence', params: {} } }], ['done', {}])
+    )
+    const a = useAssistant(() => 7)
+    await a.load()
+
+    await a.ask('要先会什么？', 'fallback')
+
+    expect(a.notice.value).toBe('服务端的原话')
+  })
+
+  it('a refusal answered as a stream frame is said in the reader language', async () => {
+    setLocale('en')
+    serve(
+      () =>
+        new Response(
+          `event: error\ndata: ${JSON.stringify({ message: '请先登录', i18n: { key: 'signInFirst', params: {} } })}\n\n`,
+          { status: 401, headers: { 'content-type': 'text/event-stream' } }
+        )
+    )
+    const a = useAssistant(() => 7)
+    await a.load()
+
+    await a.ask('要先会什么？', 'fallback')
+
+    expect(a.notice.value).toBe('Sign in first')
+    expect(a.messages.value).toEqual([])
   })
 
   it('a refusal for credits is flagged so the panel can point to the usage page', async () => {

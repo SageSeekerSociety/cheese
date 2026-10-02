@@ -63,19 +63,21 @@ class FeishuSettings:
 def _raise(status: int, body: dict | None, action: str) -> None:
     code = (body or {}).get("code")
     msg = (body or {}).get("msg") or (body or {}).get("message") or ""
-    detail = f"{action}：飞书返回 {code if code is not None else status} {msg}".strip()
+    reply = f"{code if code is not None else status} {msg}".strip()
+    detail = f"{action}：飞书返回 {reply}"
     if status == 401 or code in AUTH_CODES:
         raise IntegrationError(
-            "auth_failed", f"{detail}。授权已失效，到「我的连接」里重新授权"
+            "auth_failed", f"{detail}。授权已失效，到「我的连接」里重新授权", reply
         )
     if status == 403 or code in FORBIDDEN_CODES:
         raise IntegrationError(
             "forbidden",
             f"{detail}。没有这份文档的权限：把文档分享给应用或授权账号后再试",
+            reply,
         )
     if status == 404 or code in NOT_FOUND_CODES:
-        raise IntegrationError("not_found", f"{detail}。找不到这份文档")
-    raise IntegrationError("error", detail)
+        raise IntegrationError("not_found", f"{detail}。找不到这份文档", reply)
+    raise IntegrationError("error", detail, reply)
 
 
 class FeishuClient:
@@ -103,7 +105,7 @@ class FeishuClient:
                 response = await http.request(method, path, headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise IntegrationError(
-                "unreachable", f"{action}：连不上飞书（{exc}）"
+                "unreachable", f"{action}：连不上飞书（{exc}）", str(exc)
             ) from exc
         try:
             body = response.json()
@@ -165,7 +167,7 @@ class FeishuClient:
                 )
         except httpx.HTTPError as exc:
             raise IntegrationError(
-                "unreachable", f"{action}：连不上飞书（{exc}）"
+                "unreachable", f"{action}：连不上飞书（{exc}）", str(exc)
             ) from exc
         body = response.json() if response.content else {}
         if (

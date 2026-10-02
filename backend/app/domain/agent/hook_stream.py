@@ -79,7 +79,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
-from app.domain.block.notice_text import NoticeText, say
+from app.domain.block.notice_text import NoticeText, error_frame, say
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope
@@ -820,11 +820,9 @@ async def _consume_hook_event(
         elif event.is_error:
             await service._forget_room_claims(topic_id)
         if event.is_error:
-            frame_out = {
-                "type": "error",
-                "message": error_line or event.text,
-                "persisted": True,
-            }
+            frame_out = error_frame(
+                error_line or event.text, type="error", persisted=True
+            )
             if error_code:
                 frame_out["code"] = error_code
             await broker.publish(str(topic_id), frame_out)
