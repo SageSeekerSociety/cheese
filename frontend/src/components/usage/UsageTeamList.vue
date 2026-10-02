@@ -5,7 +5,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import { useI18n } from 'vue-i18n'
 
 import NavLink from '@/components/common/NavLink.vue'
-import { pct, remainingTone } from '@/lib/creditUsage'
+import { fmtPoints, pct, remainingTone } from '@/lib/creditUsage'
 
 // 我所在的团队：每个团队的方案和本月还剩多少，点一行去那个团队的额度页。
 defineProps<{
@@ -14,12 +14,13 @@ defineProps<{
   linkOf: (team: UsageTeam) => NavTarget
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 function left(team: UsageTeam): string {
   if (team.unlimited || team.remaining_ratio === null) return t('usage.teams.unlimited')
   if (team.remaining_ratio <= 0) return t('usage.teams.usedUp')
-  return t('usage.teams.remaining', { pct: pct(team.remaining_ratio) })
+  if (team.credits_remaining === null) return t('usage.teams.remainingWindow', { pct: pct(team.remaining_ratio) })
+  return t('usage.teams.remaining', { n: fmtPoints(team.credits_remaining, locale.value) })
 }
 </script>
 

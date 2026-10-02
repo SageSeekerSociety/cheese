@@ -4,7 +4,7 @@ import type { UsageDay, UsageLine } from '@/lib/creditUsage'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { fmtMonthDay, pct, USAGE_LINES } from '@/lib/creditUsage'
+import { fmtMonthDay, fmtPoints, USAGE_LINES } from '@/lib/creditUsage'
 
 // 每天用量：一天一根柱子，高度按本月用得最多的那天折算。给了产品线就分三色叠起来。
 const props = defineProps<{
@@ -15,7 +15,7 @@ const props = defineProps<{
 
 const { t, locale } = useI18n()
 
-const peak = computed(() => Math.max(0, ...props.days.map((d) => d.share ?? 0)))
+const peak = computed(() => Math.max(0, ...props.days.map((d) => d.credits ?? 0)))
 
 function height(value: number): string {
   return peak.value > 0 ? `${(value / peak.value) * 100}%` : '0%'
@@ -23,11 +23,14 @@ function height(value: number): string {
 
 function parts(day: UsageDay): { line: UsageLine | 'all'; value: number }[] {
   if (props.stacked && day.lines) return USAGE_LINES.map((line) => ({ line, value: day.lines?.[line] ?? 0 }))
-  return [{ line: 'all', value: day.share ?? 0 }]
+  return [{ line: 'all', value: day.credits ?? 0 }]
 }
 
 function label(day: UsageDay): string {
-  return t('usage.daily.aria', { date: fmtMonthDay(day.date, locale.value), pct: pct(day.share ?? 0) })
+  return t('usage.daily.aria', {
+    date: fmtMonthDay(day.date, locale.value),
+    n: fmtPoints(day.credits ?? 0, locale.value),
+  })
 }
 
 /** 轴上只标月初、月中、月末三天。 */
@@ -48,10 +51,10 @@ const ticks = computed(() => {
         v-for="day in days"
         :key="day.date"
         class="udc__col"
-        :class="{ 'udc__col--future': day.share === null, 'udc__col--idle': day.share === 0 }"
-        :title="day.share === null ? undefined : label(day)"
+        :class="{ 'udc__col--future': day.credits === null, 'udc__col--idle': day.credits === 0 }"
+        :title="day.credits === null ? undefined : label(day)"
       >
-        <template v-if="day.share">
+        <template v-if="day.credits">
           <span
             v-for="part in parts(day)"
             :key="part.line"

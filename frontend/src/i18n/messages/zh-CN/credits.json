@@ -18,7 +18,7 @@
     "column": {
       "name": "方案",
       "audience": "适用于",
-      "credits": "每月额度",
+      "credits": "每月点数",
       "windows": "使用上限",
       "tiers": "可用模型",
       "actions": "操作",
@@ -27,12 +27,12 @@
     "tagDefault": "默认",
     "tagAdminOnly": "仅后台",
     "noWindows": "无",
-    "window": "每 {hours} 小时最多 {credits}",
+    "window": "每 {hours} 小时最多 {credits} 点",
     "empty": "暂无方案",
     "loadFailed": "无法读取方案",
     "retry": "重试",
-    "windowWeek": "每周最多 {credits}",
-    "windowMonth": "每月最多 {credits}"
+    "windowWeek": "每周最多 {credits} 点",
+    "windowMonth": "每月最多 {credits} 点"
   },
   "planDialog": {
     "createTitle": "新建方案",
@@ -42,7 +42,7 @@
     "perPeriod": "每月发放",
     "windowHours": "每多少小时",
     "windowCredits": "最多",
-    "unit": "额度",
+    "unit": "点",
     "addWindow": "添加使用上限",
     "removeWindow": "删除这条上限",
     "tiers": "可用模型",
@@ -121,12 +121,12 @@
     "emptyHistory": "暂无操作记录",
     "historyFailed": "无法读取操作记录",
     "logPlan": "方案由 {from} 改为 {to}",
-    "logGrant": "发放 {credits} 额度，{expiry}",
+    "logGrant": "发放 {credits} 点，{expiry}",
     "by": "{'@'}{handle} · {time}"
   },
   "grantDialog": {
     "title": "给「{team}」发额度",
-    "amount": "数量",
+    "amount": "点数",
     "expiry": "到期时间",
     "never": "不过期",
     "onDate": "指定日期",
