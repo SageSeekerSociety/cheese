@@ -9,13 +9,17 @@
 // 同一份，协同服务在停手几秒后把它存回去。评论锚着的是服务端那一侧的节点，存回之后房
 // 间里会收到一帧 state/doc，父层把它变成 activityTick，这一层据此重读评论和节点。
 import type { Block, Topic } from '../cx_types'
+import type { DocEdit, DocRewriteRequest } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getComments, getDocNodes, workspaceFileRawUrl } from '../api'
+import { applyDocEdits, rewriteDocSelection } from '../api/docEdits'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+
+import { t } from '@/i18n'
 
 export interface PanelDocProps {
   topic: Topic | null
@@ -114,6 +118,20 @@ export function usePanelDoc(props: PanelDocProps) {
     return getDocNodes(tid).then((r) => r.data)
   }
 
+  /** 让 AI 队友改选中的字：它直接改协同文档，回执说改成了什么。 */
+  function rewriteSelection(request: DocRewriteRequest) {
+    const tid = props.topic?.id
+    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return rewriteDocSelection(tid, request)
+  }
+
+  /** 以自己的名义替换正文里的字：撤销、还原 AI 队友的修改都走这里。 */
+  function applyEdits(edits: DocEdit[]) {
+    const tid = props.topic?.id
+    if (!tid) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return applyDocEdits(tid, edits)
+  }
+
   // Display-time image src resolution: workspace-relative paths (uploads/x.png)
   // render through the raw-file API; absolute http(s)/data URLs pass through.
   // The node attr keeps the ORIGINAL path, so the Markdown never gets a URL.
@@ -180,5 +198,7 @@ export function usePanelDoc(props: PanelDocProps) {
     setError,
     fetchDocNodes,
     imageSrc,
+    rewriteSelection,
+    applyEdits,
   }
 }

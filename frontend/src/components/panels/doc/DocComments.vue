@@ -161,9 +161,10 @@ function commentAnchor(c: Block): Block | null {
 // silently retargeted by selecting text. It lives where the comments are now.
 const input = ref<{ focus?: () => void } | null>(null)
 
-function open(target: { anchorId: string | null; quote: string }) {
+/** `prefill`：新开的评论先写上的字（「问…」时是 @ AI 队友）。 */
+function open(target: { anchorId: string | null; quote: string }, prefill?: string) {
   folded.value = false
-  openDraft(target)
+  openDraft(target, prefill)
   const topic = props.topicId,
     author = props.author
   void nextTick(() => {

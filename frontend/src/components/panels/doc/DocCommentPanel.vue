@@ -108,8 +108,8 @@ async function showComments(inFloatingWindow?: boolean) {
   if (inFloatingWindow !== undefined) floating.value = inFloatingWindow
   return show()
 }
-async function open(target: { anchorId: string | null; quote: string }) {
-  if (await showComments(!!target.anchorId || !!target.quote)) commentsRef.value?.open(target)
+async function open(target: { anchorId: string | null; quote: string }, prefill?: string) {
+  if (await showComments(!!target.anchorId || !!target.quote)) commentsRef.value?.open(target, prefill)
 }
 async function locate(id: string) {
   if (await showComments(true)) commentsRef.value?.locate(id)

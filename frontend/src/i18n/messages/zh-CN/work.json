@@ -937,6 +937,31 @@
       "typingTwo": "{first}和{second}正在输入…",
       "typingMany": "多人正在输入…",
       "separator": " · "
+    },
+    "docEdit": {
+      "ask": "问{agent}",
+      "rewrite": "让{agent}改",
+      "boxLabel": "让{agent}改选中的文字",
+      "boxPlaceholder": "写下修改要求",
+      "boxKeyHint": "Enter 发送，Shift+Enter 换行",
+      "preset": {
+        "concise": "更简洁",
+        "specific": "更具体",
+        "formal": "改正式",
+        "list": "改成列表"
+      },
+      "send": "发送",
+      "pending": "{agent} 修改中…",
+      "done": "已按你的要求修改",
+      "undo": "撤销",
+      "again": "再改改",
+      "undone": "已撤销{agent}的修改",
+      "redo": "恢复",
+      "failed": "修改失败：{reason}",
+      "failedRetry": "修改失败，稍后重试",
+      "stale": "这段已经被改过，重新选一下",
+      "unmappable": "无法单独修改这段选区，重新选一下",
+      "unavailable": "这篇文档暂时无法修改"
     }
   },
   "board": {

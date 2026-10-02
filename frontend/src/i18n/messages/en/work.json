@@ -937,6 +937,31 @@
       "typingTwo": "{first} and {second} are typing…",
       "typingMany": "Several people are typing…",
       "separator": " · "
+    },
+    "docEdit": {
+      "ask": "Ask {agent}",
+      "rewrite": "Have {agent} edit",
+      "boxLabel": "Have {agent} edit the selected text",
+      "boxPlaceholder": "Describe the change",
+      "boxKeyHint": "Enter to send, Shift+Enter for a new line",
+      "preset": {
+        "concise": "More concise",
+        "specific": "More specific",
+        "formal": "More formal",
+        "list": "As a list"
+      },
+      "send": "Send",
+      "pending": "{agent} is editing…",
+      "done": "Edited as you asked",
+      "undo": "Undo",
+      "again": "Edit again",
+      "undone": "Undid {agent}'s edit",
+      "redo": "Restore",
+      "failed": "Edit failed: {reason}",
+      "failedRetry": "Edit failed. Try again later",
+      "stale": "This text has changed. Select it again",
+      "unmappable": "This selection can't be edited on its own. Select it again",
+      "unavailable": "This document can't be edited right now"
     }
   },
   "board": {

@@ -8,13 +8,16 @@
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { Block, Topic } from '../../cx_types'
+import type { DocEdit, DocRewriteRequest, DocRewriteResult } from '../../lib/docEdits'
 import type { DocThreadActions, DocThreadState } from '../../lib/docThreadTypes'
 
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { useDocRewrite } from '../../composables/useDocRewrite'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
+import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFormatToolbar from './doc/DocFormatToolbar.vue'
 import DocPresence from './doc/DocPresence.vue'
 import DocSurface from './doc/DocSurface.vue'
@@ -64,6 +67,10 @@ const props = withDefaults(
     refreshComments: () => Promise<void>
     toggleEditable: () => void
     setError: (message: string | null) => void
+    /** 让 AI 队友改选中的字；没有时浮条上不给「让…改」。 */
+    rewriteSelection?: (request: DocRewriteRequest) => Promise<DocRewriteResult>
+    /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
+    applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
   }>(),
   {
     agentName: () => t('work.room.defaultAgentName'),
@@ -71,6 +78,8 @@ const props = withDefaults(
     bare: false,
     commentAuthor: '',
     sendComment: undefined,
+    rewriteSelection: undefined,
+    applyDocEdits: undefined,
   }
 )
 
@@ -122,14 +131,24 @@ function highlightTurn(turnId: string) {
 function highlightNode(nodeId: string) {
   void surfaceRef.value?.highlightNode(nodeId)
 }
-function openComment(payload: { anchorId: string | null; quote: string }) {
-  commentsRef.value?.open(payload)
+function openComment(payload: { anchorId: string | null; quote: string; ask: boolean }) {
+  const { anchorId, quote } = payload
+  commentsRef.value?.open({ anchorId, quote }, payload.ask ? `@${props.agentName} ` : undefined)
 }
+
+const rewrite = useDocRewrite({
+  editor: () => surfaceRef.value?.editor ?? null,
+  rewrite: () => props.rewriteSelection,
+  applyEdits: () => props.applyDocEdits,
+  agentName: () => props.agentName,
+  onError: (message) => props.setError(message),
+})
 function locateComment(commentId: string) {
   commentsRef.value?.locate(commentId)
 }
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null
+  rewrite.close()
 })
 function quoteState(id: string) {
   return surfaceRef.value?.commentQuoteState(id) ?? 'missing'
@@ -253,13 +272,18 @@ defineExpose({
                 :image-src="imageSrc"
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
+                :agent-name="agentName"
+                :can-rewrite="!!rewriteSelection && editable"
                 @open-topic="emit('open-topic', $event)"
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
+                @rewrite="rewrite.open($event.from, $event.to)"
                 @locate-comment="locateComment"
                 @error="setError"
               />
+
+              <DocEditLayer :editor="surfaceRef?.editor ?? null" :agent-name="agentName" :rewrite="rewrite" />
 
               <!-- 总览房间的其余两块（#1889 ②③）紧跟正文。评论在独立侧栏。只有根话题
                  有——别的房间的文档就是它自己那一份，没有人从那里看项目全局。 -->
@@ -330,6 +354,7 @@ defineExpose({
 /* The document column: white surface (inherits .doc), text capped for
    readability and centered. No card border/radius — it IS the surface. */
 .doc-page {
+  position: relative;
   width: 100%;
   max-width: 48rem;
   background: transparent;

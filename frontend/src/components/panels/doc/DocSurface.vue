@@ -33,6 +33,7 @@ import {
   liveRefKey,
   mappedCommentQuoteState,
 } from '../../../lib/docDecorations'
+import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
@@ -70,6 +71,10 @@ const props = withDefaults(
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
     scrollTick?: number
+    /** 项目 AI 队友的名字（选中浮条上用）。 */
+    agentName: string
+    /** 选中浮条上给不给「让…改」。 */
+    canRewrite?: boolean
   }>(),
   {
     topicList: () => [],
@@ -77,6 +82,7 @@ const props = withDefaults(
     commentMarkIndex: () => new Map<number, { id: string; quote: string }[]>(),
     openCommentId: null,
     scrollTick: 0,
+    canRewrite: false,
     title: '',
   }
 )
@@ -89,7 +95,9 @@ const emit = defineEmits<{
   /** 点了正文里的评论下划线：滚到文档底部那张卡。 */
   (e: 'locate-comment', commentId: string): void
   /** 选中一段正文点了「评论」：浮层算好了锚点，转给页面去开写评论的框。 */
-  (e: 'open-comment', payload: { anchorId: string | null; quote: string }): void
+  (e: 'open-comment', payload: { anchorId: string | null; quote: string; ask: boolean }): void
+  /** 选中一段正文点了「让…改」。 */
+  (e: 'rewrite', range: { from: number; to: number }): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
 }>()
@@ -319,6 +327,7 @@ function buildEditor(session: DocSession): Editor {
         },
       }),
       createCommentMarks({ index: () => props.commentMarkIndex, openId: () => props.openCommentId ?? null }),
+      createEditMarks(),
       createSlashCommands({
         onStart: showSlashMenu,
         onUpdate: showSlashMenu,
@@ -440,7 +449,10 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
       :fetch-doc-nodes="fetchDocNodes"
       :slash-menu="slashMenu"
       :scroll-tick="scrollTick"
+      :agent-name="agentName"
+      :can-rewrite="canRewrite"
       @open-comment="emit('open-comment', $event)"
+      @rewrite="emit('rewrite', $event)"
       @open-link="openLink"
       @error="emit('error', $event)"
       @pick="runSlashItem"
@@ -492,6 +504,44 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  user-select: none;
+}
+/* 让 AI 队友改的那一段（lib/docEditMarks.ts）：选中、改写中（带一个写着名字的光标）、
+   刚改好时亮一下。 */
+.doc-editor :deep(.doc-edit-target--select),
+.doc-editor :deep(.doc-edit-target--pending) {
+  background: var(--selection-bg);
+}
+.doc-editor :deep(.doc-edit-target--flash) {
+  animation: docEditFlash 2.4s var(--ease-out) forwards;
+}
+@keyframes docEditFlash {
+  0%,
+  60% {
+    background: var(--ok-wash);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.doc-editor :deep(.doc-edit-caret) {
+  position: relative;
+  margin-right: -2px;
+  border-right: 2px solid var(--inverse-surface);
+  pointer-events: none;
+}
+.doc-editor :deep(.doc-edit-caret__label) {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border-bottom-left-radius: 0;
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
+  font-size: 12px;
   line-height: var(--lh-12);
   white-space: nowrap;
   user-select: none;

@@ -92,7 +92,8 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
   const surface = ref<InstanceType<typeof DocSurface> | null>(null)
   const nodes = [{ id: 'server-node-0', content: 'document' }] as Block[]
   let data!: ReturnType<typeof usePanelDoc>
-  const captured: { anchorId: string | null; quote: string }[] = []
+  const captured: { anchorId: string | null; quote: string; ask: boolean }[] = []
+  const rewrites: { from: number; to: number }[] = []
   const located: string[] = []
   const fetchNodes = vi.fn(fetch ?? (async () => nodes))
   const session = localDocSession()
@@ -115,7 +116,11 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
                 fetchDocNodes: fetchNodes,
                 commentMarkIndex: data.commentMarkIndex.value,
                 openCommentId: openId.value,
-                onOpenComment: (payload: { anchorId: string | null; quote: string }) => captured.push(payload),
+                agentName: '芝士',
+                canRewrite: true,
+                onOpenComment: (payload: { anchorId: string | null; quote: string; ask: boolean }) =>
+                  captured.push(payload),
+                onRewrite: (range: { from: number; to: number }) => rewrites.push(range),
                 onLocateComment: (id: string) => located.push(id),
               }),
             ]),
@@ -136,7 +141,7 @@ async function mountDoc(html: string, fetch?: () => Promise<Block[]>) {
     right: selectionLeft + 30,
   }))
   await nextTick()
-  return { ...view, ed, surface, topicId, editable, openId, data, nodes, captured, located, fetchNodes }
+  return { ...view, ed, surface, topicId, editable, openId, data, nodes, captured, rewrites, located, fetchNodes }
 }
 function span(ed: Editor, quote: string, occurrence = 0) {
   const spans: { from: number; to: number }[] = []
@@ -187,7 +192,7 @@ describe('production surface comment selections', () => {
     expect(f.ed.state.selection.from).toBe(selected.from)
     expect(f.ed.state.selection.to).toBe(selected.to)
     await fireEvent.click(button)
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '😀目标' }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '😀目标', ask: false }]))
     f.data.comments.value = [{ id: 'c1', reply_to: 'server-node-0', anchor_quote: '😀目标' }] as Block[]
     await nextTick()
     expect(marks(f.ed)).toEqual([{ ...selected, text: '😀目标' }])
@@ -210,7 +215,7 @@ describe('production surface comment selections', () => {
     const second = await select(f.ed, '目标', 1)
     expect(second.from).toBeGreaterThan(span(f.ed, '目标', 0).from)
     await fireEvent.click(commentAction())
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '目标' }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '目标', ask: false }]))
     f.data.comments.value = [{ id: 'repeat', reply_to: 'server-node-0', anchor_quote: '目标' }] as Block[]
     await nextTick()
     expect(marks(f.ed)).toEqual([])
@@ -221,7 +226,7 @@ describe('production surface comment selections', () => {
     const f = await mountDoc('<p>前 目标 后</p>', async () => [{ id: 'a' }, { id: 'b' }] as Block[])
     await select(f.ed, '目标')
     await fireEvent.click(commentAction())
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: null, quote: '目标' }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: null, quote: '目标', ask: false }]))
     expect(marks(f.ed)).toEqual([])
   })
 
@@ -232,7 +237,7 @@ describe('production surface comment selections', () => {
     await fireEvent.click(commentAction())
     f.ed.commands.setTextSelection(span(f.ed, '第二段'))
     pending.resolve(f.nodes)
-    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '第一段' }]))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '第一段', ask: false }]))
   })
 
   it.each(['topic', 'document', 'unmount'] as const)('ignores a late node receipt after %s changes', async (change) => {
@@ -339,5 +344,28 @@ describe('production surface comment selections', () => {
     await nextTick()
     expect(f.surface.value!.commentQuoteState('changed')).toBe('missing')
     expect(document.querySelector('[data-comment="changed"]')).toBeNull()
+  })
+})
+
+describe('asking the AI teammate from a selection', () => {
+  it('opens a comment on the selection that asks it', async () => {
+    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
+    await select(f.ed, '一千万')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docEdit.ask', { agent: '芝士' }) }))
+    await waitFor(() => expect(f.captured).toEqual([{ anchorId: 'server-node-0', quote: '一千万', ask: true }]))
+  })
+
+  it('asks it to rewrite exactly the selected text', async () => {
+    const f = await mountDoc('<p>数据量到一千万行时开始评估。</p>')
+    const selected = await select(f.ed, '一千万')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.docEdit.rewrite', { agent: '芝士' }) }))
+    expect(f.rewrites).toEqual([selected])
+  })
+
+  it('does not offer a rewrite for a selection across two paragraphs', async () => {
+    const f = await mountDoc('<p>第一段文字</p><p>第二段文字</p>')
+    f.ed.commands.setTextSelection({ from: span(f.ed, '一段').from, to: span(f.ed, '第二').to })
+    await waitFor(() => expect(document.querySelector('.doc-comment-cta')).not.toBeNull())
+    expect(screen.queryByRole('button', { name: t('work.room.docEdit.rewrite', { agent: '芝士' }) })).toBeNull()
   })
 })

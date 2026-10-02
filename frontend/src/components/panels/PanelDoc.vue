@@ -105,6 +105,8 @@ defineExpose({ pulse, highlightTurn })
     :refresh-comments="doc.refreshComments"
     :toggle-editable="doc.toggleEditable"
     :set-error="doc.setError"
+    :rewrite-selection="doc.rewriteSelection"
+    :apply-doc-edits="doc.applyEdits"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
