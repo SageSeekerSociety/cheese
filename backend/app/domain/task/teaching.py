@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
+from app.domain.space.material_service import member_readable_material_ids
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.task.protocol import Protocol, Teaching, resolve
@@ -57,7 +58,9 @@ class TeachingContext:
     #: category, which is a course-shaped config with nothing to name.
     course: str | None
     teaching: Teaching
-    #: The 课件 that still exist: `{id, name, url, type}`.
+    #: The 课件 an ordinary member may read and that still exist:
+    #: `{id, name, url, type}`. A 课件 locked to「仅管理员」on every board that
+    #: lists it is dropped before it gets here — see `for_project`.
     materials: list[dict] = field(default_factory=list)
     #: The 知识 entries that are still readable: `{id, name, description}`.
     #:
@@ -102,8 +105,17 @@ async def for_project(
     ).teaching
     if teaching.is_empty:
         return None
+    # A 课件 locked to「仅管理员」on every board that lists it must not reach a
+    # student's agent: the `url` this context carries is public. The check is on
+    # the read side because a teacher may flip a 课件's tier *after* a config
+    # already named it (`PATCH /spaces/{id}/materials/{mid}`), and nothing goes
+    # back to revisit the config. Filter BEFORE the fetch, so a locked 课件 never
+    # enters `TeachingContext.materials` at all.
+    readable = await member_readable_material_ids(
+        session, material_ids=teaching.material_ids
+    )
     materials = await MaterialService.for_lookup(session).get_many(
-        teaching.material_ids
+        [mid for mid in teaching.material_ids if mid in readable]
     )
     knowledge = await KnowledgeService.for_lookup(session).get_many(
         teaching.knowledge_ids

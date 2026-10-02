@@ -72,6 +72,7 @@ async def validate_task_teaching(
     await ensure_teaching_references(
         knowledge_service=KnowledgeService.for_lookup(db),
         material_service=MaterialService.for_lookup(db),
+        session=db,
         teaching=teaching,
         actor_user_id=actor_user_id,
     )
