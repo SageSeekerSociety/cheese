@@ -117,6 +117,17 @@ describe('离开前问一句', () => {
     await expect(confirmAnnotationDiscard()).resolves.toBe(true)
   })
 
+  it('换个工具不算离开：不弹框，没发出去的笔画照旧登记着', async () => {
+    const ui = mount()
+    await painted(ui)
+    await drawRect(ui)
+    await waitFor(() => expect(hasUnsentAnnotations()).toBe(true))
+    await fireEvent.click(ui.getByRole('button', { name: '自由画笔' }))
+    expect(ui.queryByRole('alertdialog')).toBeNull()
+    expect(hasUnsentAnnotations()).toBe(true)
+    expect(rects(ui)).toBe(1)
+  })
+
   it('这一页没在看了就不登记：画了东西、但收起来的那一页不拦别人', async () => {
     const ui = mount()
     await painted(ui)
