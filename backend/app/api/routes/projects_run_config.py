@@ -103,15 +103,14 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
     # plan would; the picker shows that plan and does not offer the model.
     choices = [access.mark(c) for c in model_choices(project_settings)]
     chosen = (project_settings or {}).get("default_model")
-    # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
-    # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
-    known_ids = {c["id"] for c in choices}
-    effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
+    # The saved name goes back as saved, even when it has left the catalog: turns
+    # refuse it (binding.resolve) rather than fall back to the deployment default,
+    # so the picker must show it as unavailable, not show the default in its place.
     deployment_settings = dict(project_settings or {})
     deployment_settings.pop("default_model", None)
     deployment_choices = model_choices(deployment_settings)
     return {
-        "model": effective,
+        "model": chosen if isinstance(chosen, str) and chosen else None,
         "subagent_model": (project_settings or {}).get("default_subagent_model"),
         "deployment_default": next(
             (c["id"] for c in deployment_choices if c["default"]), None
