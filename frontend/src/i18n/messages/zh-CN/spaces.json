@@ -521,7 +521,8 @@
       "templates": "题目模板",
       "inviteCodes": "邀请码",
       "domainGroups": "邮箱域名组",
-      "guidance": "给 AI 队友的指导"
+      "guidance": "给 AI 队友的指导",
+      "materials": "资料库"
     },
     "sections": {
       "categories": "分类",
@@ -566,6 +567,43 @@
       "materialIds": "材料编号",
       "knowledgeIds": "知识条目编号",
       "listHint": "用逗号分隔"
+    }
+  },
+  "materials": {
+    "upload": "上传资料",
+    "uploadTitle": "上传一份资料",
+    "pickFile": "选一个文件",
+    "visibility": "谁能看",
+    "visibilityValue": {
+      "members": "所有成员",
+      "admins": "仅管理员"
+    },
+    "hint": {
+      "members": "这块板上的人都看得见、都能下载。",
+      "admins": "只有这块板的管理员看得见、能下载。"
+    },
+    "cancel": "取消",
+    "download": "下载",
+    "remove": "移除",
+    "confirmRemove": "确认移除",
+    "empty": "暂无资料",
+    "type": {
+      "image": "图片",
+      "video": "视频",
+      "audio": "音频",
+      "file": "文件"
+    },
+    "uploadedOn": "{date} 上传",
+    "downloads": "{n} 次下载",
+    "toast": {
+      "loadFailed": "资料读不出来",
+      "uploaded": "已上传",
+      "uploadFailed": "上传失败",
+      "visibilityUpdated": "已改",
+      "visibilityFailed": "改可见范围失败",
+      "removed": "已移除，学生那边的清单里没有了",
+      "removeFailed": "移除失败",
+      "downloadFailed": "下载失败"
     }
   },
   "announcements": {

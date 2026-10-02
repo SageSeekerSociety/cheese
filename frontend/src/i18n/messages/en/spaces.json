@@ -484,7 +484,8 @@
       "templates": "Challenge templates",
       "inviteCodes": "Invite codes",
       "domainGroups": "Email domain groups",
-      "guidance": "Guidance for the AI teammate"
+      "guidance": "Guidance for the AI teammate",
+      "materials": "Library"
     },
     "sections": {
       "categories": "Categories",
@@ -529,6 +530,43 @@
       "materialIds": "Material IDs",
       "knowledgeIds": "Knowledge entry IDs",
       "listHint": "Comma-separated"
+    }
+  },
+  "materials": {
+    "upload": "Upload",
+    "uploadTitle": "Upload a file",
+    "pickFile": "Choose a file",
+    "visibility": "Who can see it",
+    "visibilityValue": {
+      "members": "All members",
+      "admins": "Admins only"
+    },
+    "hint": {
+      "members": "Everyone on this board can see and download it.",
+      "admins": "Only this board's admins can see and download it."
+    },
+    "cancel": "Cancel",
+    "download": "Download",
+    "remove": "Remove",
+    "confirmRemove": "Confirm remove",
+    "empty": "No files yet",
+    "type": {
+      "image": "Image",
+      "video": "Video",
+      "audio": "Audio",
+      "file": "File"
+    },
+    "uploadedOn": "Uploaded {date}",
+    "downloads": "{n} downloads",
+    "toast": {
+      "loadFailed": "Could not load the library",
+      "uploaded": "Uploaded",
+      "uploadFailed": "Upload failed",
+      "visibilityUpdated": "Updated",
+      "visibilityFailed": "Could not change who can see it",
+      "removed": "Removed — it is gone from the members' list",
+      "removeFailed": "Could not remove it",
+      "downloadFailed": "Download failed"
     }
   },
   "announcements": {
