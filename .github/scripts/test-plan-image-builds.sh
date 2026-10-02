@@ -151,6 +151,35 @@ git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path deploy/gateway/Dockerfile
 assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true,metering_proxy=false,private_executor=false' "$base_sha"
 
+# The collaboration service is built from the frontend package, from its own
+# sources, the document schema it shares with the editors, and the lockfile.
+collab_plan() {
+  (
+    cd "$test_repo"
+    BASE_SHA="$1" CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
+      GITHUB_OUTPUT=/dev/stdout bash "$planner" 2>/dev/null
+  ) | sed -n 's/^collab=//p'
+}
+git -C "$test_repo" switch -q --detach "$base_sha"
+mkdir -p "$test_repo/frontend/collab" "$test_repo/frontend/src/lib/docSchema"
+touch "$test_repo/frontend/collab/service.ts" "$test_repo/frontend/src/lib/docSchema/index.ts" \
+  "$test_repo/frontend/pnpm-lock.yaml"
+add_build_jobs collab
+git -C "$test_repo" add .
+git -C "$test_repo" commit -qm 'add collab image'
+collab_base="$(git -C "$test_repo" rev-parse HEAD)"
+for collab_file in frontend/collab/service.ts frontend/src/lib/docSchema/index.ts \
+  frontend/pnpm-lock.yaml; do
+  git -C "$test_repo" switch -q --detach "$collab_base"
+  commit_path "$collab_file"
+  [[ "$(collab_plan "$collab_base")" == true ]] \
+    || { echo "FAIL: $collab_file must rebuild collab" >&2; exit 1; }
+done
+git -C "$test_repo" switch -q --detach "$collab_base"
+commit_path frontend/src/main.ts
+[[ "$(collab_plan "$collab_base")" == false ]] \
+  || { echo "FAIL: an app-only change must not rebuild collab" >&2; exit 1; }
+
 # Every image is published under the first seven characters of its commit
 # (docker/metadata-action `type=sha`), and promotion and deploys must name it the
 # same way. The commit below is fixed to 7a5fcd85…, and the blob

@@ -21,7 +21,8 @@
 #                      ingress targets FRONTEND_PROXY_PORT (default 18080).
 #   FRONTEND_PORT_NEXT  temporary frontend port (default 18084, loopback only)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
-#                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
+#                      BACKEND_IMAGE, FRONTEND_IMAGE and COLLAB_IMAGE must name
+#                      existing images.
 #   DEPLOY_PULL_ATTEMPTS         how many times to try each pull   (default 3)
 #   DEPLOY_PULL_BACKOFF_SECONDS  waits between pull attempts       (default "5 15")
 #   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
@@ -382,6 +383,20 @@ if [ -z "${OFFICE_EDITOR_JWT_SECRET:-}" ]; then
   export OFFICE_EDITOR_JWT_SECRET
 fi
 
+# The same once-provisioned shape for the collaboration service, which the
+# backend signs document tickets for and the two services authenticate each
+# other with. Rotating it would close every open document.
+if [ -z "${COLLAB_SECRET:-}" ]; then
+  _collab_secret="$HOME/ops/collab.secret"
+  if [ ! -s "$_collab_secret" ]; then
+    mkdir -p "$HOME/ops"
+    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$_collab_secret" )
+    log "provisioned the collaboration service's secret in $_collab_secret"
+  fi
+  COLLAB_SECRET="$(cat "$_collab_secret")"
+  export COLLAB_SECRET
+fi
+
 case "$PULL_ATTEMPTS" in
   ''|*[!0-9]*|0) fail "DEPLOY_PULL_ATTEMPTS must be a positive integer (got: '$PULL_ATTEMPTS')" ;;
 esac
@@ -574,10 +589,24 @@ trap 'on_exit 143' TERM
 
 log_disk "before pull"
 
+COLLAB_EXPECTED=false
 case "$APP_IMAGE_SOURCE" in
   registry)
     log "pulling app images…"
     retry_pull "image pull" dc pull backend frontend
+    # The collaboration service, which every living document is edited
+    # through. build.yml builds or promotes it for every commit, so a release
+    # without it predates it — and its backend still saves documents itself,
+    # with no use for the service. Only a registry that says the tag does not
+    # exist means that; any other failure is a failed pull like the two above.
+    collab_ref="${COLLAB_IMAGE:-ghcr.io/sageseekersociety/cheese/collab:$IMAGE_TAG}"
+    if collab_err="$(docker manifest inspect "$collab_ref" 2>&1 >/dev/null)" \
+      || { [[ "$collab_err" != *"no such manifest"* ]] && [[ "$collab_err" != *"not found"* ]]; }; then
+      retry_pull "collab pull" dc pull collab
+      COLLAB_EXPECTED=true
+    else
+      log "$collab_ref does not exist: this release predates the collaboration service"
+    fi
     # The browser is an ENHANCEMENT to fetching, not a component of the app, so
     # its pull is deliberately outside the retry-and-fail path above: without it
     # fetching falls back a rung (measured: 19 of 20 real sites becomes 17) and
@@ -623,11 +652,16 @@ case "$APP_IMAGE_SOURCE" in
       fail "BACKEND_IMAGE is required when DEPLOY_APP_IMAGE_SOURCE=local"
     [ -n "${FRONTEND_IMAGE:-}" ] || \
       fail "FRONTEND_IMAGE is required when DEPLOY_APP_IMAGE_SOURCE=local"
+    [ -n "${COLLAB_IMAGE:-}" ] || \
+      fail "COLLAB_IMAGE is required when DEPLOY_APP_IMAGE_SOURCE=local"
     log "verifying locally built app images…"
     docker image inspect "$BACKEND_IMAGE" >/dev/null 2>&1 || \
       fail "local backend image not found: $BACKEND_IMAGE"
     docker image inspect "$FRONTEND_IMAGE" >/dev/null 2>&1 || \
       fail "local frontend image not found: $FRONTEND_IMAGE"
+    docker image inspect "$COLLAB_IMAGE" >/dev/null 2>&1 || \
+      fail "local collab image not found: $COLLAB_IMAGE"
+    COLLAB_EXPECTED=true
     ;;
   *)
     fail "DEPLOY_APP_IMAGE_SOURCE must be registry or local (got: $APP_IMAGE_SOURCE)"
@@ -914,6 +948,14 @@ else
   log "bringing up backend + frontend…"
   dc up -d backend frontend || fail "compose up failed"
 fi
+# After the backend it loads documents from and stores them to. Replacing it
+# closes open documents for a moment; every change is stored before it stops
+# (stop_grace_period) and the editors reconnect on their own.
+if [ "$COLLAB_EXPECTED" = true ]; then
+  log "bringing up the collaboration service…"
+  dc up -d --no-deps collab || fail "compose up collab failed"
+fi
+export COLLAB_EXPECTED
 
 # Same reasoning as the pull: never `fail` on these. A browser that will not
 # start must not hold back a backend that would have served.
@@ -1003,9 +1045,9 @@ if [ "$code" != ok ]; then
       BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
         FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" \
         IMAGE_TAG="$PREV_SHA" \
-        dc up -d backend frontend || true
+        dc up -d backend frontend collab || true
     else
-      IMAGE_TAG="$PREV_SHA" dc up -d backend frontend || true
+      IMAGE_TAG="$PREV_SHA" dc up -d backend frontend collab || true
     fi
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"

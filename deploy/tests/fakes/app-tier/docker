@@ -113,6 +113,9 @@ emit_contract_rows() {
     printf 'frontend\trepo/frontend:%s\trunning\tUp 1 minute (healthy)\n' \
       "$frontend_tag"
   fi
+  if [ "$scenario" != "collab_absent" ] && [ "$scenario" != "collab_unreleased" ]; then
+    printf 'collab\trepo/collab:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+  fi
 }
 
 if [ "${1:-}" = "compose" ]; then
@@ -155,6 +158,14 @@ if [ "${1:-}" = "compose" ]; then
     run|up|exec)
       ;;
   esac
+  exit 0
+fi
+
+if [ "${1:-}" = manifest ] && [ "${2:-}" = inspect ]; then
+  if [ "$scenario" = collab_unreleased ] && [[ "${3:-}" == */collab:* ]]; then
+    echo "no such manifest: ${3:-}" >&2
+    exit 1
+  fi
   exit 0
 fi
 

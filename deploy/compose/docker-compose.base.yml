@@ -90,6 +90,11 @@ services:
       - OFFICE_EDITOR_JWT_SECRET=${OFFICE_EDITOR_JWT_SECRET:-}
       - OFFICE_EDITOR_INTERNAL_URL=${OFFICE_EDITOR_INTERNAL_URL:-http://cheese-office-editor}
       - OFFICE_EDITOR_BACKEND_URL=${OFFICE_EDITOR_BACKEND_URL:-http://backend:8081}
+      # The collaboration service below. deploy-docker.sh provisions the
+      # shared secret once and keeps it in ops/; without it no living
+      # document opens or takes a write.
+      - COLLAB_SECRET=${COLLAB_SECRET:-}
+      - COLLAB_INTERNAL_URL=http://collab:8902
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
@@ -193,6 +198,7 @@ services:
       - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
       - DEVICE_CONNECTION_UPSTREAM=${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}
       - OFFICE_EDITOR_UPSTREAM=${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}
+      - COLLAB_UPSTREAM=${COLLAB_UPSTREAM:-collab:8902}
     # Lets API_UPSTREAM name the host; unused otherwise.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -220,6 +226,43 @@ services:
     logging:
       # Same reason as the backend above: a deploy must not delete the record
       # of what happened before it.
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
+  # Every room's living document, live: people edit it together here over a
+  # WebSocket (the frontend's /collab location), and it loads documents from
+  # and stores them to the backend. Part of the app tier — deployed, health
+  # checked and rolled back with the backend and frontend — because a document
+  # cannot be opened or written without it.
+  collab:
+    image: ${COLLAB_IMAGE:-ghcr.io/sageseekersociety/cheese/collab:${IMAGE_TAG:-main}}
+    # Not the backend's env file: this service needs three values, and that
+    # file holds every secret the backend has.
+    environment:
+      - COLLAB_SECRET=${COLLAB_SECRET:-}
+      # The same way in as the frontend's: on a box that deploys without
+      # downtime that is the host router that moves between backends.
+      - COLLAB_BACKEND_URL=http://${API_UPSTREAM:-backend:8081}
+      # Unset: one instance holds every document, which is what this file runs.
+      - REDIS_URL=${COLLAB_REDIS_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # On SIGTERM it stores every document with unsaved changes before exiting.
+    stop_grace_period: 30s
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8902/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 15s
+      timeout: 8s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+    logging:
       driver: journald
       options:
         tag: "{{.Name}}"
