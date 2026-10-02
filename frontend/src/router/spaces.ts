@@ -196,6 +196,11 @@ export default {
           component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
         },
         {
+          path: 'guidance',
+          name: 'SpacesDetailSettingsGuidance',
+          component: () => import('@/views/spaces/detail/settings/SpaceGuidance.vue'),
+        },
+        {
           path: 'materials',
           name: 'SpacesDetailSettingsMaterials',
           component: () => import('@/views/spaces/detail/settings/SpaceMaterials.vue'),

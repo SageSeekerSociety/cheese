@@ -7,6 +7,7 @@ import { confirmAnnotationDiscard, hasUnsentAnnotations } from './annotationDisc
 import DesignImage from './DesignImage.vue'
 
 import { setLocale } from '@/i18n'
+import { nextMillisecond } from '@/test/nextMillisecond'
 
 // 合成标注图要真 canvas，测试环境里没有；只把这一步换成成功，别的照旧。
 vi.mock('./designSketch', async (importOriginal) => {
@@ -80,7 +81,7 @@ function mount() {
   return render(DesignImage, { props: { src: 'blob:sketch', alt: 'design.png', identity: 'v1' } })
 }
 
-/** 挑一个工具，等它真的显示成选中再动手。见 DesignSketchObjectEdit.spec.ts 里的同名函数。 */
+/** 挑一个工具，等它显示成选中、并跨过挂载那一毫秒再动手。见 DesignSketchObjectEdit.spec.ts 里的同名函数。 */
 async function pickTool(ui: ReturnType<typeof render>, label: string) {
   await fireEvent.click(ui.getByRole('button', { name: label }))
   await waitFor(() =>
@@ -88,6 +89,7 @@ async function pickTool(ui: ReturnType<typeof render>, label: string) {
       ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
     ).toBe('true')
   )
+  await nextMillisecond()
 }
 
 const rects = (ui: ReturnType<typeof render>) => ui.container.querySelectorAll('.sketch-overlay rect').length

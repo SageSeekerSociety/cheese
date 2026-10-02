@@ -1,4 +1,4 @@
-import type { Material, Space, SpaceCategory, Team, TeamSummary, Topic, User } from '.'
+import type { Material, Space, SpaceCategory, SpaceTeaching, Team, TeamSummary, Topic, User } from '.'
 
 export type TaskSubmitterType = 'USER' | 'TEAM'
 export type TaskSubmissionEntryType = 'TEXT' | 'FILE'
@@ -111,6 +111,11 @@ export interface Task {
   attachmentCount?: number
   /** 我这条领取的档位。`null`/缺省 = 我没领这道题。随 `queryJoined` 一族回来。 */
   myClaimStatus?: TaskClaimStatus | null
+  /**
+   * 这道题自己那份「给 AI 队友的指导」覆盖（#944）。四级继承里题目那一层，整份
+   * 替换、不深合；`{}` = 没说，下面（项目集）或上面（空间）的默认原样生效。
+   */
+  teaching?: SpaceTeaching
 }
 
 export interface TaskSubmissionReview {
@@ -210,4 +215,9 @@ export type TaskFormSubmitData = {
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
   videoUrl?: string | null
+  /**
+   * 这道题自己的「给 AI 队友的指导」覆盖（#944）。留空 = 不设，用空间的默认
+   * （`PublishTask.vue` 那一栏据此决定要不要带上它）。
+   */
+  teaching?: SpaceTeaching
 }

@@ -44,9 +44,11 @@ const liveLabel = computed(() =>
       type="button"
       class="notice-row__avatar notice-row__live im-person"
       data-site=""
-      :title="liveLabel"
       :aria-label="liveLabel"
     >
+      <!-- 这一句带着每秒在走的秒数：不用原生 title（一换字就收起再弹，悬停时每秒
+           闪一下），用原地换字的气泡。 -->
+      <v-tooltip activator="parent" location="top" :text="liveLabel" />
       <CheeseAvatar :size="28" :name="name" :handle="handle" :state="face ?? null" />
     </button>
     <span v-else class="notice-row__avatar" :title="name" :aria-label="name" role="img">

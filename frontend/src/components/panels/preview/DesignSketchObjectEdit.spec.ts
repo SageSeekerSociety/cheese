@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import DesignImage from './DesignImage.vue'
 
 import { setLocale } from '@/i18n'
+import { nextMillisecond } from '@/test/nextMillisecond'
 
 let observed: Map<Element, ResizeObserverCallback>
 beforeEach(() => {
@@ -54,12 +55,17 @@ async function ready(ui: ReturnType<typeof render>) {
 }
 
 /**
- * 挑一个工具，等它真的显示成选中再动手。
+ * 挑一个工具，等它真的显示成选中、并且时钟走过这一毫秒，才让调用方动手。
  *
- * `fireEvent.click` 只等到 Vue 那一次 flush。工具是 DesignImage 的 ref 再当 prop 递给
- * 画布，机器慢的时候这一下未必已经落到工具栏的 aria-pressed 上，手势就按下去了——
- * `down()` 看见的还是上一个工具，要是 select 它直接什么都不做：一笔画不出来、输入框也
- * 不出现，测试里只看到「等了半天什么都没有」。
+ * 两件事都要等，各治一种跑法：
+ *
+ * - `fireEvent.click` 只等到 Vue 那一次 flush。工具是 DesignImage 的 ref 再当 prop 递给
+ *   画布，机器慢的时候这一下未必已经落到工具栏的 aria-pressed 上，手势就按下去了——
+ *   `down()` 看见的还是上一个工具，要是 select 它直接什么都不做：一笔画不出来、输入框也
+ *   不出现，测试里只看到「等了半天什么都没有」。
+ * - 点工具才挂上画布，而 Vue 会把「挂上那一毫秒里到达的事件」当成早于监听器的事件丢掉
+ *   （`event._vts <= invoker.attached`）；`waitFor` 第一次是同步判的，断言当场就成立时
+ *   一个计时器都不会走，可能还停在同一毫秒。所以还要显式跨过这一毫秒，见 nextMillisecond。
  */
 async function pickTool(ui: ReturnType<typeof render>, label: string) {
   await fireEvent.click(ui.getByRole('button', { name: label }))
@@ -68,6 +74,7 @@ async function pickTool(ui: ReturnType<typeof render>, label: string) {
       ui.container.querySelector(`.sketch-toolbar__tool[aria-label="${label}"]`)?.getAttribute('aria-pressed')
     ).toBe('true')
   )
+  await nextMillisecond()
 }
 
 /**
@@ -89,10 +96,13 @@ function probe(ui: ReturnType<typeof render>) {
   ].join(' | ')
 }
 
-/** 等文字输入框出现；没等到就把现场一起报出来。 */
+/** 等文字输入框出现；没等到就把现场一起报出来。跨过挂载那一毫秒，输入框上的按键才不会被
+ *  Vue 当成「挂上之前的事件」丢掉（见 nextMillisecond）。 */
 async function textField(ui: ReturnType<typeof render>) {
   try {
-    return (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
+    const field = (await waitFor(() => ui.getByPlaceholderText('输入文字，回车确认'))) as HTMLInputElement
+    await nextMillisecond()
+    return field
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error)
     throw new Error(`${probe(ui)}\n${why}`)

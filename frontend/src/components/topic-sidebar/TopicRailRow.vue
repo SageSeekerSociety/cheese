@@ -442,10 +442,12 @@ function onMenuToggle(open: boolean) {
 }
 /* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
    鼠标一离开行、菜单就没了根。
-   键盘焦点这里用 :has(:focus-visible)，不用 :focus-within：鼠标点一下行也会让它拿到
-   焦点，:focus-within 从那以后一直命中，⋯ 就挂在行尾不走了（同一个先例见 style.css
-   的 .fb-row:has(.fbrow__link:focus-visible)）。 */
+   键盘焦点这里用 :focus-visible（行自己）加 :has(:focus-visible)（行里的 ⋯），不用
+   :focus-within：鼠标点一下行也会让它拿到焦点，:focus-within 从那以后一直命中，⋯ 就
+   挂在行尾不走了（同一个先例见 style.css 的 .fb-row:has(.fbrow__link:focus-visible)）。
+   行本身可聚焦，而 :has() 只看后代，所以 Tab 停在行上那一条要单写。 */
 .topic-row:hover .row-actions,
+.topic-row:focus-visible .row-actions,
 .topic-row:has(:focus-visible) .row-actions,
 .topic-row.is-menu-open .row-actions {
   opacity: 1;
@@ -454,6 +456,7 @@ function onMenuToggle(open: boolean) {
 /* While the actions are out, the count steps aside (they share the tail). 只在有那颗
    ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
 .topic-row--hover-actions:hover .unread-badge,
+.topic-row--hover-actions:focus-visible .unread-badge,
 .topic-row--hover-actions:has(:focus-visible) .unread-badge,
 .topic-row.is-menu-open .unread-badge {
   opacity: 0;

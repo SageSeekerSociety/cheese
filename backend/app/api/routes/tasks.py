@@ -9,6 +9,15 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+# 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
+# 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
+from app.api.routes.spaces import TeachingRequest
+from app.api.task_serialization import _ms, _task_to_api_model
+from app.api.task_teaching import (
+    apply_task_teaching,
+    coerce_teaching,
+    validate_task_teaching,
+)
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_publish_in_space, may_teach_task
@@ -181,6 +190,9 @@ class CreateTaskRequest(BaseModel):
     # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
     # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
+    # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
+    teaching: TeachingRequest | None = None
 
 
 PDF_DRAFT_CONTENT_FIELDS = {"name", "intro", "description"}
@@ -315,6 +327,10 @@ class PatchTaskRequest(BaseModel):
     )
     ended_at: int | None = Field(default=None, alias="endedAt")
     has_ended_at: bool | None = Field(default=None, alias="hasEndedAt")
+    # 这道题自己的「给 AI 队友的指导」(#944)。Sending it replaces the WHOLE
+    # config — the protocol's whole-key semantics; omitting it leaves it exactly
+    # as it is, so a PATCH that only renames a 题目 does not wipe the 指导.
+    teaching: TeachingRequest | None = None
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -347,60 +363,6 @@ def _submission_schema_to_api(
         }
         for entry in entries
     ]
-
-
-def _ms(moment: datetime | None) -> int | None:
-    """A moment as epoch milliseconds, the unit the task API speaks; None stays None."""
-    return int(moment.timestamp() * 1000) if moment is not None else None
-
-
-def _task_to_api_model(task: Task) -> dict:
-    created_at_ms = _ms(task.created_at) or 0
-    updated_at_ms = _ms(task.updated_at) or 0
-    deadline_ms = _ms(task.deadline)
-    # 审核痕迹是后加的两列：老题（以及还没审过的题）没有它，一律回 null ——
-    # 界面上「没有审核人」与「不知道审核人」是同一件事，不做区分。
-    reviewed_by = getattr(task, "reviewed_by", None)
-    published_at_ms = _ms(getattr(task, "published_at", None))
-    ended_at_ms = _ms(getattr(task, "ended_at", None))
-    reviewed_at_ms = _ms(getattr(task, "reviewed_at", None))
-    registration_start_ms = _ms(task.registration_start_at)
-    approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
-    submitter_type_map = {0: "USER", 1: "TEAM"}
-    return {
-        "id": task.id,
-        "name": task.name,
-        "intro": task.intro,
-        "description": task.description,
-        "deadline": deadline_ms,
-        "registrationStartAt": registration_start_ms,
-        "defaultDeadline": task.default_deadline,
-        "resubmittable": task.resubmittable,
-        "editable": task.editable,
-        "approved": approved_map.get(task.approved, "NONE"),
-        "rank": task.rank,
-        "submitterType": submitter_type_map.get(task.submitter_type, "USER"),
-        "submissionSchema": [],
-        "space": {"id": task.space_id},
-        "category": {"id": task.category_id, "name": ""},
-        "categoryId": task.category_id,
-        "createdBy": task.creator_id,
-        "creator": {"id": task.creator_id},
-        "requireRealName": task.require_real_name,
-        "participantLimit": task.participant_limit,
-        "minTeamSize": task.min_team_size,
-        "maxTeamSize": task.max_team_size,
-        "teamLockingPolicy": task.team_locking_policy,
-        "rejectReason": task.reject_reason,
-        "videoUrl": task.video_url,
-        "accessControlEnabled": task.access_control_enabled,
-        "createdAt": created_at_ms,
-        "updatedAt": updated_at_ms,
-        "publishedAt": published_at_ms,
-        "endedAt": ended_at_ms,
-        "reviewedBy": reviewed_by,
-        "reviewedAt": reviewed_at_ms,
-    }
 
 
 async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
@@ -1102,6 +1064,7 @@ async def _create_task_entity(
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
+        teaching = coerce_teaching(payload.teaching)
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -1192,6 +1155,9 @@ async def _create_task_entity(
             else []
         )
 
+        # The PDF path carries `teaching` as free-form JSON, not a typed body.
+        teaching = coerce_teaching(payload.get("teaching"))
+
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
@@ -1235,6 +1201,9 @@ async def _create_task_entity(
     ):
         raise ForbiddenError("Only a member of this board can publish tasks here")
 
+    # 指导里的引用先查再建：拒了就不该留下半道题（同 项目集 PATCH 的顺序）。
+    await validate_task_teaching(db, teaching=teaching, actor_user_id=creator_user_id)
+
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await _validate_and_get_category_id(
         space_repo=space_repo,
@@ -1267,6 +1236,9 @@ async def _create_task_entity(
         access_control_enabled=access_control_enabled,
         video_url=video_url,
     )
+
+    # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。
+    apply_task_teaching(task, teaching)
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
@@ -2336,6 +2308,15 @@ async def patch_task(
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only task owner or space admin can update this task")
 
+    # 「给 AI 队友的指导」(#944) 的引用先查再改：拒了就不该动这一行的任何一格
+    # （同一个请求里可能还带着改名），所以拦住的位置与 项目集 PATCH 一样靠前。
+    if payload.teaching is not None:
+        await validate_task_teaching(
+            db,
+            teaching=coerce_teaching(payload.teaching),
+            actor_user_id=auth_user.user_id,
+        )
+
     # 基本字符串字段
     if payload.name is not None:
         task.name = payload.name
@@ -2526,6 +2507,9 @@ async def patch_task(
                 deleted_at=None,
             )
             db.add(rel)
+
+    # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
+    apply_task_teaching(task, coerce_teaching(payload.teaching))
 
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)

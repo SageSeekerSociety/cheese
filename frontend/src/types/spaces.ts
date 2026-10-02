@@ -12,24 +12,30 @@ export type Space = {
   visibleTaskLimit?: number | null
   /** 过审状态：没过审的板子，子资源（分类/题目/成员）一律读不到。 */
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
+  /**
+   * 这块板的默认「给 AI 队友的指导」（#944）。四级继承的最外层，与
+   * `SpaceCategory.teaching` 同形状；`{}` = 没说。
+   */
+  teaching?: SpaceTeaching
 }
 
 /**
- * 课程级教学配置（`SpaceCategory.teaching`；服务端见
- * `backend/app/domain/task/teaching.py`）。它存在**分组**上 —— 一门课一份教学
- * 安排，二十道题共享 —— 再继承给从这门课建的项目。
+ * 「给 AI 队友的指导」（`Space.teaching` / `SpaceCategory.teaching` / 题目覆盖；
+ * 服务端见 `backend/app/domain/task/teaching.py`）。四级继承里的同一份形状：
+ * 空间 → 项目集 → 题目 → 项目，整份替换、不深合 —— 某一层留空就是「没说」，
+ * 下一级原样说话。
  *
  * 每次新建会话时现读：改周次之后**新会话**立刻带上，**跑着的会话**保持它启动
  * 时那一份，要冷启动才换。
  */
 export type SpaceTeaching = {
-  /** 课程级 system prompt 模板，`{current_week}` 等占位会被本周的值替换。 */
+  /** system prompt 模板，`{current_week}` 等占位会被当前的值替换。 */
   systemPrompt?: string | null
-  /** 这是这门课的第几周。 */
+  /** 这是第几周。 */
   currentWeek?: number | null
-  /** 本周讲到的内容，用管理员自己的话写。 */
+  /** 目前的内容范围，用管理员自己的话写。 */
   allowedTopics?: string[]
-  /** 这门课还没教到的东西 —— 解法这周不该依赖的构造。 */
+  /** 暂时不该用到的写法 —— 解法这周不该依赖的构造。 */
   avoidInCode?: string[]
   /** 课件 / 知识的**引用**（id），不是副本。 */
   materialIds?: number[]
@@ -101,7 +107,7 @@ export type SpaceCategory = {
   createdAt: number
   updatedAt: number
   archivedAt: number | null
-  /** 课程级教学配置；不是课的板子是 `{}`。 */
+  /** 项目集级的「给 AI 队友的指导」；没设的分类是 `{}`。 */
   teaching?: SpaceTeaching
 }
 
