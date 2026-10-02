@@ -20,8 +20,9 @@ import type { RouteRecordRaw } from 'vue-router'
  * 长得不一样、口径不一样；**真的拆成独立域名是运维/鉴权的事**，不是这一轮要决定的
  * 事，所以这里不为它做任何特殊处理。
  *
- * 后台从「一整页反馈管理」改成了**壳**（`AdminLayout`）：左边分区、右边装模块，现在
- * 装三块。所以 `/admin` 是一条带 `children` 的父路由。
+ * 后台和别的内部页面住在同一个外框里：分区是 `sidebar` 视图（`AdminSidebar`，手机上
+ * 是抽屉），内容区是 `AdminLayout`（门、全局键）里装的子页。所以 `/admin` 是一条带
+ * `children` 的父路由。
  *
  * `/admin/queue` 和 `/admin/dashboard` 是这一轮新加的两条：
  *
@@ -70,7 +71,12 @@ export default [
   },
   {
     path: '/admin',
-    component: () => import('@/views/admin/AdminLayout.vue'),
+    components: {
+      default: () => import('@/views/admin/AdminLayout.vue'),
+      sidebar: () => import('@/components/admin/AdminSidebar.vue'),
+    },
+    // 手机上分区侧栏是抽屉，所以顶栏给汉堡。
+    meta: { drawer: true },
     // 只写地址不写组件：`/admin` 本身没有内容，直接落进队列 —— 后台里用得最多的那一块。
     redirect: '/admin/queue',
     children: [
@@ -114,7 +120,7 @@ export default [
         meta: { titleKey: 'navigation.admin.ratchet', isFullPage: true },
       },
       {
-        // 网关模型管理那一页。和其它分区一样是壳里的一块，不是独立域名。
+        // 网关模型管理那一页。和其它分区一样是后台里的一块，不是独立域名。
         path: 'models',
         name: 'AdminModels',
         component: () => import('@/views/admin/AdminModelsPage.vue'),
@@ -122,7 +128,7 @@ export default [
       },
       {
         // main 后加的这一块（开板申请：有人申请开一个新题目板，平台管理员批准 / 驳回），
-        // 地址与分区名都跟着它自己的 PR 走。名字改过一次 —— 见 AdminLayout 里那条注释。
+        // 地址与分区名都跟着它自己的 PR 走。
         path: 'spaces',
         name: 'AdminSpaces',
         component: () => import('@/views/admin/AdminSpacesPage.vue'),
