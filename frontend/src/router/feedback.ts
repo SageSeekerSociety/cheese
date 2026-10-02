@@ -84,7 +84,7 @@ export default [
         path: 'queue',
         name: 'AdminQueue',
         component: () => import('@/views/admin/AdminQueuePage.vue'),
-        meta: { titleKey: 'feedback.queue.label', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.queue', isFullPage: true },
       },
       {
         path: 'dashboard',
@@ -124,7 +124,7 @@ export default [
         path: 'models',
         name: 'AdminModels',
         component: () => import('@/views/admin/AdminModelsPage.vue'),
-        meta: { titleKey: 'navigation.pages.adminModels', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.models', isFullPage: true },
       },
       {
         // main 后加的这一块（开板申请：有人申请开一个新题目板，平台管理员批准 / 驳回），
@@ -140,13 +140,13 @@ export default [
         path: 'feedback',
         name: 'AdminFeedback',
         component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
-        meta: { titleKey: 'feedback.queue.label', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.queue', isFullPage: true },
       },
       {
         path: 'members',
         name: 'AdminMembers',
         component: () => import('@/views/admin/AdminMembersPage.vue'),
-        meta: { titleKey: 'navigation.pages.adminMembers', isFullPage: true },
+        meta: { titleKey: 'navigation.admin.members', isFullPage: true },
       },
       {
         // 平台上唯一一处飞书应用凭据：管理员填一次，成员在「我的连接」里点一下就连上。

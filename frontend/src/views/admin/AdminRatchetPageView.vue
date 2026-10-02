@@ -104,7 +104,7 @@ const collectionFailedLine = computed(() => {
 </script>
 
 <template>
-  <AdminPage :title="t('ratchet.page.title')" :sub="t('ratchet.page.subtitle')">
+  <AdminPage :title="t('navigation.admin.ratchet')" :sub="t('ratchet.page.subtitle')">
     <template #tools>
       <v-btn
         icon="mdi-refresh"

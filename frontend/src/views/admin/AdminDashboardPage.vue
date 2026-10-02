@@ -97,7 +97,7 @@ function onSelectDay(date: string | null) {
 </script>
 
 <template>
-  <AdminPage :title="t('feedback.dashboard.title')" :sub="t('feedback.dashboard.sub')">
+  <AdminPage :title="t('navigation.admin.dashboard')" :sub="t('feedback.dashboard.sub')">
     <template #tools>
       <AdminDashboardHeader :windowed="windowed" :days="days" :stamp="stampText" @set-days="setDays" />
     </template>

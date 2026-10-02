@@ -81,9 +81,9 @@ describe('打开管理端反馈页（旧地址）', () => {
   it('旧地址进来就是队列：拉了列表，行也画出来了', async () => {
     listAdminFeedback.mockResolvedValue({ data: [ROW], total: 1, counts: {} })
 
-    const { findByText } = mountPage()
+    const { findByText, findByRole } = mountPage()
 
-    expect(await findByText('反馈队列')).toBeTruthy()
+    expect(await findByRole('heading', { name: '队列' })).toBeTruthy()
     expect(await findByText('导出报表偶发 502')).toBeTruthy()
     expect(listAdminFeedback).toHaveBeenCalled()
   })

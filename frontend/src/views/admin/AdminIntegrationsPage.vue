@@ -106,7 +106,7 @@ onMounted(load)
 </script>
 
 <template>
-  <AdminPage :title="t('integrations.admin.title')" :sub="t('integrations.admin.sub')">
+  <AdminPage :title="t('navigation.admin.integrations')" :sub="t('integrations.admin.sub')">
     <div class="afi__body admin-form-card">
       <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
            **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。

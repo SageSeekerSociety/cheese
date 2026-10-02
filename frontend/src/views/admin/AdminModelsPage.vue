@@ -104,7 +104,7 @@ const {
 
 <template>
   <div class="amd">
-    <AdminPage :title="t('models.page.title')" :sub="subLine">
+    <AdminPage :title="t('navigation.admin.models')" :sub="subLine">
       <template #tools>
         <AdminModelsHeader
           :health="health"

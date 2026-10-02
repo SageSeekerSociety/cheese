@@ -110,9 +110,9 @@ const rowOf = (container: Element, display: string) => {
 
 describe('队列页', () => {
   it('把服务端那一页渲染成队列行，页头和工具行都在', async () => {
-    const { container, findByText } = await mountQueue()
+    const { container, findByText, findByRole } = await mountQueue()
 
-    expect(await findByText('反馈队列')).toBeTruthy()
+    expect(await findByRole('heading', { name: '队列' })).toBeTruthy()
     expect(await findByText('全部')).toBeTruthy()
     await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
     expect(listCalls).toBeGreaterThan(0)

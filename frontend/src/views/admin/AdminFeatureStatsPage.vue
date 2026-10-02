@@ -64,7 +64,7 @@ onMounted(load)
 </script>
 
 <template>
-  <AdminPage :title="t('featureStats.page.title')" :sub="t('featureStats.page.subtitle')">
+  <AdminPage :title="t('navigation.admin.featureStats')" :sub="t('featureStats.page.subtitle')">
     <div class="afs__body admin-page__body">
       <p class="afs__floor t-meta-read">{{ t('featureStats.page.noNumbers') }}</p>
 

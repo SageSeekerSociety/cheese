@@ -111,7 +111,7 @@ const {
       @triage="onDetailTriage"
     />
 
-    <AdminPage v-else :title="t('feedback.queue.label')" :sub="t('feedback.queue.sub')">
+    <AdminPage v-else :title="t('navigation.admin.queue')" :sub="t('feedback.queue.sub')">
       <template #tools>
         <AdminQueueHeader
           :unread="unread"

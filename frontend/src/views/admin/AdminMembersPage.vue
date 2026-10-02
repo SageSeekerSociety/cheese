@@ -279,7 +279,7 @@ onMounted(load)
 
 <template>
   <div class="am">
-    <AdminPage :title="t('members.header.title')" :sub="t('members.header.subtitle')">
+    <AdminPage :title="t('navigation.admin.members')" :sub="t('members.header.subtitle')">
       <template #tools>
         <span class="t-meta-read t-num am__count">{{ countLine }}</span>
         <v-btn

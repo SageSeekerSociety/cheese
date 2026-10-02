@@ -137,7 +137,7 @@ onMounted(load)
 
 <template>
   <div class="asp">
-    <AdminPage :title="t('spaces.review.title')" :sub="t('spaces.review.adminHelp')">
+    <AdminPage :title="t('navigation.admin.spaces')" :sub="t('spaces.review.adminHelp')">
       <template #tools>
         <v-btn
           icon="mdi-refresh"
