@@ -52,6 +52,11 @@ from app.domain.space.repositories import (
     SpaceUserRankRepository,
 )
 from app.domain.tag.repositories import TagRepository
+from app.domain.task.access import (
+    bind_review_path,
+    ensure_can_read_participation,
+    ensure_task_joinable,
+)
 from app.domain.task.attachment_service import (
     TaskAttachmentService,
 )
@@ -81,10 +86,8 @@ from app.domain.task.services import (
     TaskService,
     TaskSubmissionReviewService,
     TaskSubmissionService,
-    bind_review_path,
     count_distinct_participants,
     ensure_domain_groups_belong_to_space,
-    ensure_task_joinable,
     ensure_task_readable,
     validate_and_get_category_id,
 )
@@ -2389,17 +2392,14 @@ async def get_task_submissions(
 
     # 出题者或本版管理员看得到这道题下任何人的提交；成员只看自己（或自己
     # 所在小队）的那一份。
-    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
-    is_own_participant = (
-        membership.member_id == auth_user.user_id and not membership.is_team
+    await ensure_can_read_participation(
+        session=db,
+        task=task,
+        membership=membership,
+        user_id=auth_user.user_id,
+        team_service=team_service,
+        forbidden_message="You are not authorized to view these submissions",
     )
-    is_team_member = False
-    if membership.is_team:
-        is_team_member = await team_service.is_team_member(
-            membership.member_id, auth_user.user_id
-        )
-    if not is_teacher and not is_own_participant and not is_team_member:
-        raise ForbiddenError("You are not authorized to view these submissions")
 
     if sortBy not in {"createdAt", "updatedAt"}:
         raise BadRequestError(f"Invalid sortBy: {sortBy}")
@@ -2627,17 +2627,14 @@ async def get_task_submission_review(
         submission_id=submission_id,
     )
 
-    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
-    is_own_participant = (
-        membership.member_id == auth_user.user_id and not membership.is_team
+    await ensure_can_read_participation(
+        session=db,
+        task=task,
+        membership=membership,
+        user_id=auth_user.user_id,
+        team_service=team_service,
+        forbidden_message="You are not authorized to view this review",
     )
-    is_team_member = False
-    if membership.is_team:
-        is_team_member = await team_service.is_team_member(
-            membership.member_id, auth_user.user_id
-        )
-    if not is_teacher and not is_own_participant and not is_team_member:
-        raise ForbiddenError("You are not authorized to view this review")
 
     review_dto = await review_service.get_review_dto(submission_id)
 
