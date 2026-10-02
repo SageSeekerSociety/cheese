@@ -5,9 +5,11 @@ import { useRouter } from 'vue-router'
 import { useAdminDashboard } from '@/composables/useAdminDashboard'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminDashboardFeedback from '@/components/admin/dashboard/AdminDashboardFeedback.vue'
 import AdminDashboardHeader from '@/components/admin/dashboard/AdminDashboardHeader.vue'
 import AdminDashboardIntegrations from '@/components/admin/dashboard/AdminDashboardIntegrations.vue'
+import AdminDashboardKinds from '@/components/admin/dashboard/AdminDashboardKinds.vue'
 import AdminDashboardPerformance from '@/components/admin/dashboard/AdminDashboardPerformance.vue'
 import AdminDashboardPipeline from '@/components/admin/dashboard/AdminDashboardPipeline.vue'
 import AdminDashboardPlatform from '@/components/admin/dashboard/AdminDashboardPlatform.vue'
@@ -95,25 +97,26 @@ function onSelectDay(date: string | null) {
 </script>
 
 <template>
-  <div class="ad admin-page">
-    <div class="ad__inner admin-page__col page-container--admin">
-      <AdminDashboardHeader
+  <AdminPage :title="t('navigation.admin.dashboard')" :sub="t('feedback.dashboard.sub')">
+    <template #tools>
+      <AdminDashboardHeader :windowed="windowed" :days="days" :stamp="stampText" @set-days="setDays" />
+    </template>
+    <template #extra>
+      <AdminDashboardKinds
         :kinds="kinds"
         :tabs="tabs"
         :titles="titles"
         :pulse="pulse"
         :current="kind"
-        :windowed="windowed"
-        :days="days"
-        :stamp="stampText"
         @select="selectKind"
-        @set-days="setDays"
       />
+    </template>
 
+    <div class="ad__body admin-page__body">
       <!-- 错误是**整块**的（§9.3）：页头留着 —— 它是这一页的名字，不是数据。错误
-           正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
-           错误状态清掉装没事。块换成了共用的 `AdminEmptyState`（和队列、模型页的
-           出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
+             正文是**服务端原话**（不改写），重试是唯一主操作，而且真重拉 —— 不是把
+             错误状态清掉装没事。块换成了共用的 `AdminEmptyState`（和队列、模型页的
+             出错态同一个形状），这一页不再自己画一套 `ad__none-*`。 -->
       <AdminEmptyState
         v-if="failed"
         tone="error"
@@ -140,24 +143,12 @@ function onSelectDay(date: string | null) {
       <AdminDashboardPerformance v-else-if="kind === 'performance'" :data="performance" :loading="loading" />
       <AdminDashboardPlatform v-else :data="platform" :days="days" :loading="loading" />
     </div>
-  </div>
+  </AdminPage>
 </template>
 
 <style scoped>
-/* 骨架三层（画布 + 1440 那一列 + 正文）由 `.admin-page` / `__col` / `__body` 给。
-   以前这一页是「根上 `padding: 0 24px` + 页头负 margin 抵掉」，于是页头那道发丝线比
-   列宽多出 24px、比队列和模型两页的页头长一截；现在页头住进 1440 那一列，三者的
-   两端是同一条竖线。
-
-   `container-type: inline-size` 由 `__col` 给：这一页和它的各屏下面所有断点都是
-   **容器查询**（先例：`RunningWorkView`，理由相同 —— 侧栏能手折，折出来的 144px
-   视口媒体查询看不见，断点要看的是「这一格有多宽」）。 */
-.ad {
-  display: flex;
-  flex-direction: column;
-}
-
-.ad__inner {
-  flex: 1 0 auto;
+/* 各屏第一块（指标条）自带 16px 上外边距，正文不再加一层。 */
+.ad__body {
+  padding-top: 0;
 }
 </style>

@@ -291,15 +291,8 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
   min-height: 0;
   /* 卡片的形状由 `.admin-card` 给（和 `.qlist` 同一份定义）；这里只留这一页自己的
      布局：整块填满剩下的高度，滚动在 `.aft__scroll` 里（表头 sticky 的参照物）。 */
-  margin: 16px 24px 24px;
-}
-
-/* 内缩 16/24：数字和 `.admin-page__body` 的 padding 是同一套。 */
-@media (max-width: 700px) {
-  .aft {
-    margin-right: 16px;
-    margin-left: 16px;
-  }
+  /* 左右 16：和页头标题、`.admin-page__body` 同一条左沿。 */
+  margin: 16px 16px 24px;
 }
 
 .aft__scroll {

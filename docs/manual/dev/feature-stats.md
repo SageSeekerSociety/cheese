@@ -31,7 +31,7 @@ covers:
 - `backend/app/domain/feature_stats/` —— 服务端的**注册表**（`registry.py`）和每个功能一个模块（`features/`）。注册表里一条 `Feature` 只有四样：`id`、`title`、`summary`（一句话）、`load`（取报告的函数）。
 - 注册表**不带前端路由和组件路径**：路由是前端的，Python 里写一个 Vue 文件名，等于把 `router/feedback.ts` 抄了第二份，两份一定会分叉。
 - `frontend/src/views/admin/features/registry.ts` —— 前端的注册表：`id` + 两个 i18n 键 + 那个页面组件（懒加载）。**两边的 `id` 是唯一的握手点。**
-- 路由与导航是这一片共用的：`frontend/src/router/feedback.ts` 里两条（`feature-stats` 与 `feature-stats/:id`），`AdminLayout.vue` 侧栏里一个入口。
+- 路由与导航是这一片共用的：`frontend/src/router/feedback.ts` 里两条（`feature-stats` 与 `feature-stats/:id`），`composables/useAdminSections.ts` 的分区清单里一个入口（后台侧栏照它画）。
 
 两边的 id 对不上时不许崩：目录页拿服务端的 `title`/`summary` 兜底，点进一个前端还没写页面的 id 会看到一句「这个功能还没有数据页」。
 

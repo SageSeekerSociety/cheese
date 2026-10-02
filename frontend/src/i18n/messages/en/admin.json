@@ -49,8 +49,6 @@
     "brand": "Cheese · Admin",
     "sections": "Admin sections",
     "leave": "Back to workspace",
-    "collapseNav": "Collapse navigation",
-    "collapse": "Collapse",
     "checking": "Checking access…",
     "deniedTitle": "This is the admin console",
     "deniedBody": "Your account isn’t an admin, so you can’t open the admin console.",

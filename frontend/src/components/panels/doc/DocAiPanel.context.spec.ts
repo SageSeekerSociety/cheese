@@ -1,6 +1,9 @@
 import type { Component } from 'vue'
 import type { DocAiCard } from '../../../lib/docAiTypes'
 
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
 import { afterEach, expect, it } from 'vitest'
 
@@ -59,7 +62,7 @@ it('keeps a request original and question frozen while the prepared document quo
         baseVersion: 4,
       },
     },
-    global: { stubs: { 'v-icon': true } },
+    global: { plugins: [createVuetify({ components, directives })], stubs: { 'v-icon': true } },
   })
   expect(container.textContent).toContain('currently prepared original')
   expect(container.textContent).toContain('historic question')

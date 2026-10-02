@@ -152,7 +152,7 @@ function locateComment(commentId: string) {
 }
 function openAi(snapshot: DocSelectionSnapshot | null) {
   emit('open-ai', snapshot)
-  void commentsRef.value?.showAi()
+  void commentsRef.value?.showAi(snapshot !== null)
 }
 watch([() => props.topic?.id, () => props.commentAuthor], () => {
   openId.value = null

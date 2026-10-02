@@ -57,10 +57,3 @@ def test_operator_update_persists_and_reaches_existing_api_client(client):
         command("--team-id", team_id, "--inherit-machines")["max_machines_per_team"]
         == 30
     )
-    grant = command("--team-id", team_id, "--grant-credits", "100")
-    assert grant["credits_granted"] == 100
-    assert grant["grant_id"]
-    assert (
-        client.get(path, headers=headers).json()["data"]["credits"]["credits_remaining"]
-        == 100
-    )

@@ -106,7 +106,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 边，只是发起方从 chat.py 换成了 gateway_usage.py，所以按同一笔债入账。
         ("app.domain.agent.gateway_usage", "app.domain.project.repositories"),
         ("app.domain.agent.gateway_usage", "app.domain.topic.repositories"),
-        ("app.domain.agent.gateway_usage", "app.domain.usage.repositories"),
         # agent.work_policy 是从 agent.chat 里拆出来的那一块（准入前的那组事
         # 实：项目、并发上限、额度、这一轮的会话落不落在中心机上）。它摸的三个
         # repository 正是原先 chat.py 里 `work_policy` 用的那三个：读话题表、读

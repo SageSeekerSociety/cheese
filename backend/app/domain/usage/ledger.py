@@ -25,6 +25,7 @@ import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, or_, select, text, update
@@ -299,6 +300,22 @@ class Ledger:
         )
         return list(rows.scalars())
 
+    async def live_packs(self, team_ids: list[int]) -> dict[int, list[ComputeGrant]]:
+        """Every live pack each of ``team_ids`` holds, oldest first."""
+        if not team_ids:
+            return {}
+        now = datetime.now(UTC)
+        rows = await self._session.execute(
+            select(ComputeGrant)
+            .where(ComputeGrant.team_id.in_(team_ids))
+            .order_by(ComputeGrant.created_at, ComputeGrant.id)
+        )
+        out: dict[int, list[ComputeGrant]] = {}
+        for pack in rows.scalars():
+            if _live(pack, now):
+                out.setdefault(pack.team_id, []).append(pack)
+        return out
+
     async def team_packs(self, team_id: int) -> list[ComputeGrant]:
         """Every live pack held by ``team_id``, its project earmarks too."""
         now = datetime.now(UTC)
@@ -389,10 +406,13 @@ class Ledger:
     ) -> float:
         """Record what the gateway says a call ``user_id`` made outside any
         project spent, and charge it. Returns the credits deducted."""
-        row = await UsageRepository(self._session).add(
-            project_id=None,
+        spent = SimpleNamespace(
+            input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd
+        )
+        return await self.record(
+            payer,
+            credits=usage_to_credits(spent, spend_priced=True),
             user_id=user_id,
-            topic_id=None,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -400,7 +420,40 @@ class Ledger:
             kind=kind,
             route="gateway",
         )
-        return await self.charge(payer, usage_to_credits(row, spend_priced=True))
+
+    async def record(
+        self,
+        payer: Payer,
+        *,
+        credits: float,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        route: str,
+        kind: str = "chat",
+        topic_id: uuid.UUID | None = None,
+        turn_id: uuid.UUID | None = None,
+        user_id: int | None = None,
+    ) -> float:
+        """Write one usage row, naming the team that paid and the credits it
+        cost, and charge those credits: the row and the deduction cannot come
+        apart. Returns the credits deducted."""
+        await UsageRepository(self._session).add(
+            project_id=payer.project_id,
+            topic_id=topic_id,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            kind=kind,
+            route=route,
+            turn_id=turn_id,
+            user_id=user_id,
+            team_id=payer.team_id,
+            credits=credits,
+        )
+        return await self.charge(payer, credits)
 
     # ---- issuing -----------------------------------------------------------
 
@@ -457,6 +510,7 @@ class Ledger:
         *,
         source: GrantSource = GrantSource.ADMIN_GRANT,
         expires_at: datetime | None = None,
+        reason: str | None = None,
     ) -> ComputeGrant:
         if not math.isfinite(credits_total) or credits_total <= 0:
             raise ValueError("credits must be finite and positive")
@@ -465,6 +519,7 @@ class Ledger:
                 team_id=team_id,
                 source=source.value,
                 expires_at=expires_at,
+                reason=reason,
                 credits_total=credits_total,
             )
         )

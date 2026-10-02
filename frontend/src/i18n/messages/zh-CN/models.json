@@ -1,6 +1,5 @@
 {
   "page": {
-    "title": "模型管理",
     "subtitle": "网关上的模型、单价与每个项目的额度",
     "refresh": "刷新",
     "retry": "重试",
@@ -13,7 +12,6 @@
     "blockFailed": "没改成功，请重试。",
     "budgetFailed": "额度没设上，请重试。",
     "section": {
-      "models": "模型",
       "budgets": "额度",
       "audit": "最近操作"
     },

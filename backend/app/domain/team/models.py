@@ -92,6 +92,15 @@ class Team(Base):
     join_approval: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
+    # The credit plan the team is on (``usage.models.Plan``). Every team, a
+    # personal one too, starts on Free.
+    plan_key: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("plans.key"),
+        nullable=False,
+        default="free",
+        server_default="free",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

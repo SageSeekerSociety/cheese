@@ -10,7 +10,7 @@ import AdminHistogram from '@/components/admin/AdminHistogram.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminMetricList from '@/components/admin/AdminMetricList.vue'
-import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminQuestionTable from '@/components/admin/AdminQuestionTable.vue'
 import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
@@ -195,149 +195,145 @@ const outcomeSegments = computed(() => {
 </script>
 
 <template>
-  <div class="adoc admin-page">
-    <div class="adoc__inner admin-page__col page-container--admin">
-      <AdminPageHeader
-        :title="t('featureStats.features.docsAssistant.title')"
-        :sub="t('featureStats.features.docsAssistant.summary')"
-      >
-        <template #tools>
-          <AdminTabs
-            size="sm"
-            :label="t('featureStats.page.windowAria')"
-            :model-value="String(days)"
-            :options="dayOptions"
-            @update:model-value="setDays"
+  <AdminPage
+    :title="t('featureStats.features.docsAssistant.title')"
+    :sub="t('featureStats.features.docsAssistant.summary')"
+  >
+    <template #tools>
+      <AdminTabs
+        size="sm"
+        :label="t('featureStats.page.windowAria')"
+        :model-value="String(days)"
+        :options="dayOptions"
+        @update:model-value="setDays"
+      />
+    </template>
+
+    <div class="adoc__body admin-page__body">
+      <p v-if="window" class="adoc__stamp t-meta-read">{{ window }}</p>
+
+      <AdminEmptyState
+        v-if="failed"
+        :title="t('featureStats.page.loadFailed')"
+        :action="t('featureStats.page.retry')"
+        tone="error"
+        @action="load"
+      />
+
+      <template v-else>
+        <div class="admin-kpi-grid">
+          <AdminKpiCard
+            :label="t('featureStats.kpi.visitors')"
+            :value="count(numbers?.visitors.value ?? null)"
+            :unit="t('featureStats.unit.people')"
+            :loading="loading"
+            :note="t('featureStats.kpi.visitorsNote')"
+            :spark="report?.trend.map((point) => point.visitors) ?? []"
           />
-        </template>
-      </AdminPageHeader>
+          <AdminKpiCard
+            :label="t('featureStats.kpi.loggedIn')"
+            :value="count(numbers?.visitors.logged_in ?? null)"
+            :unit="t('featureStats.unit.people')"
+            :loading="loading"
+            :note="t('featureStats.kpi.loggedInNote')"
+            :delta="loggedInShare"
+            :delta-title="t('featureStats.kpi.loggedInNote')"
+          />
+          <AdminKpiCard
+            :label="t('featureStats.kpi.askers')"
+            :value="count(numbers?.askers.value ?? null)"
+            :unit="t('featureStats.unit.people')"
+            :loading="loading"
+            :note="t('featureStats.kpi.askersNote')"
+            :delta="askerShare"
+            :delta-title="t('featureStats.kpi.askersNote')"
+            :spark="report?.trend.map((point) => point.askers) ?? []"
+          />
+          <AdminKpiCard
+            :label="t('featureStats.kpi.questions')"
+            :value="count(numbers?.questions.value ?? null)"
+            :unit="t('featureStats.unit.times')"
+            :loading="loading"
+            :note="t('featureStats.kpi.questionsNote')"
+            :delta="perAsker"
+            :delta-title="t('featureStats.kpi.questionsNote')"
+            :spark="report?.trend.map((point) => point.questions) ?? []"
+          />
+          <AdminKpiCard
+            :label="t('featureStats.kpi.answerRate')"
+            :value="fmtPercent(numbers?.answer_rate.value ?? null)"
+            :loading="loading"
+            :note="t('featureStats.kpi.answerRateNote')"
+            :delta="answeredOf"
+            :delta-title="t('featureStats.kpi.answerRateNote')"
+          />
+          <AdminKpiCard
+            :label="costLabel"
+            :value="money(numbers?.cost.usd ?? null)"
+            :loading="loading"
+            :note="costNote"
+            :delta="perQuestion"
+            :delta-title="costNote"
+          />
+        </div>
 
-      <div class="adoc__body admin-page__body">
-        <p v-if="window" class="adoc__stamp t-meta-read">{{ window }}</p>
+        <div class="adoc__row">
+          <AdminLineChart
+            :title="t('featureStats.trend.title')"
+            :note="t('featureStats.trend.note')"
+            :x-labels="xLabels"
+            :series="series"
+            :loading="loading"
+          />
+        </div>
 
-        <AdminEmptyState
-          v-if="failed"
-          :title="t('featureStats.page.loadFailed')"
-          :action="t('featureStats.page.retry')"
-          tone="error"
-          @action="load"
-        />
+        <div class="adoc__row adoc__row--equal">
+          <AdminMetricList
+            :title="t('featureStats.tokens.title')"
+            :note="t('featureStats.tokens.note')"
+            :caption="t('featureStats.tokens.caption', { n: fmtNum(report?.tokens.count ?? 0) })"
+            :rows="tokenRows"
+            :emphasis="t('featureStats.metric.median')"
+            :loading="loading"
+          />
+          <AdminHistogram
+            :title="t('featureStats.histogram.title')"
+            :note="t('featureStats.histogram.note')"
+            :unit="t('featureStats.unit.chars')"
+            :rows="report?.tokens.histogram ?? []"
+            :loading="loading"
+          />
+        </div>
 
-        <template v-else>
-          <div class="admin-kpi-grid">
-            <AdminKpiCard
-              :label="t('featureStats.kpi.visitors')"
-              :value="count(numbers?.visitors.value ?? null)"
-              :unit="t('featureStats.unit.people')"
-              :loading="loading"
-              :note="t('featureStats.kpi.visitorsNote')"
-              :spark="report?.trend.map((point) => point.visitors) ?? []"
-            />
-            <AdminKpiCard
-              :label="t('featureStats.kpi.loggedIn')"
-              :value="count(numbers?.visitors.logged_in ?? null)"
-              :unit="t('featureStats.unit.people')"
-              :loading="loading"
-              :note="t('featureStats.kpi.loggedInNote')"
-              :delta="loggedInShare"
-              :delta-title="t('featureStats.kpi.loggedInNote')"
-            />
-            <AdminKpiCard
-              :label="t('featureStats.kpi.askers')"
-              :value="count(numbers?.askers.value ?? null)"
-              :unit="t('featureStats.unit.people')"
-              :loading="loading"
-              :note="t('featureStats.kpi.askersNote')"
-              :delta="askerShare"
-              :delta-title="t('featureStats.kpi.askersNote')"
-              :spark="report?.trend.map((point) => point.askers) ?? []"
-            />
-            <AdminKpiCard
-              :label="t('featureStats.kpi.questions')"
-              :value="count(numbers?.questions.value ?? null)"
-              :unit="t('featureStats.unit.times')"
-              :loading="loading"
-              :note="t('featureStats.kpi.questionsNote')"
-              :delta="perAsker"
-              :delta-title="t('featureStats.kpi.questionsNote')"
-              :spark="report?.trend.map((point) => point.questions) ?? []"
-            />
-            <AdminKpiCard
-              :label="t('featureStats.kpi.answerRate')"
-              :value="fmtPercent(numbers?.answer_rate.value ?? null)"
-              :loading="loading"
-              :note="t('featureStats.kpi.answerRateNote')"
-              :delta="answeredOf"
-              :delta-title="t('featureStats.kpi.answerRateNote')"
-            />
-            <AdminKpiCard
-              :label="costLabel"
-              :value="money(numbers?.cost.usd ?? null)"
-              :loading="loading"
-              :note="costNote"
-              :delta="perQuestion"
-              :delta-title="costNote"
-            />
-          </div>
+        <div class="adoc__row adoc__row--equal">
+          <AdminMetricList
+            :title="t('featureStats.latency.title')"
+            :note="t('featureStats.latency.note')"
+            :caption="t('featureStats.latency.caption', { n: fmtNum(report?.latency.count ?? 0) })"
+            :rows="latencyRows"
+            :emphasis="t('featureStats.metric.median')"
+            :loading="loading"
+          />
+          <AdminShareBar
+            :title="t('featureStats.outcomes.title')"
+            :note="t('featureStats.outcomes.note')"
+            :segments="outcomeSegments"
+            :loading="loading"
+          />
+        </div>
 
-          <div class="adoc__row">
-            <AdminLineChart
-              :title="t('featureStats.trend.title')"
-              :note="t('featureStats.trend.note')"
-              :x-labels="xLabels"
-              :series="series"
-              :loading="loading"
-            />
-          </div>
-
-          <div class="adoc__row adoc__row--equal">
-            <AdminMetricList
-              :title="t('featureStats.tokens.title')"
-              :note="t('featureStats.tokens.note')"
-              :caption="t('featureStats.tokens.caption', { n: fmtNum(report?.tokens.count ?? 0) })"
-              :rows="tokenRows"
-              :emphasis="t('featureStats.metric.median')"
-              :loading="loading"
-            />
-            <AdminHistogram
-              :title="t('featureStats.histogram.title')"
-              :note="t('featureStats.histogram.note')"
-              :unit="t('featureStats.unit.chars')"
-              :rows="report?.tokens.histogram ?? []"
-              :loading="loading"
-            />
-          </div>
-
-          <div class="adoc__row adoc__row--equal">
-            <AdminMetricList
-              :title="t('featureStats.latency.title')"
-              :note="t('featureStats.latency.note')"
-              :caption="t('featureStats.latency.caption', { n: fmtNum(report?.latency.count ?? 0) })"
-              :rows="latencyRows"
-              :emphasis="t('featureStats.metric.median')"
-              :loading="loading"
-            />
-            <AdminShareBar
-              :title="t('featureStats.outcomes.title')"
-              :note="t('featureStats.outcomes.note')"
-              :segments="outcomeSegments"
-              :loading="loading"
-            />
-          </div>
-
-          <div class="adoc__row">
-            <AdminQuestionTable
-              :title="t('featureStats.unanswered.title')"
-              :note="t('featureStats.unanswered.note')"
-              :empty="t('featureStats.unanswered.empty')"
-              :rows="report?.unanswered ?? []"
-              :loading="loading"
-            />
-          </div>
-        </template>
-      </div>
+        <div class="adoc__row">
+          <AdminQuestionTable
+            :title="t('featureStats.unanswered.title')"
+            :note="t('featureStats.unanswered.note')"
+            :empty="t('featureStats.unanswered.empty')"
+            :rows="report?.unanswered ?? []"
+            :loading="loading"
+          />
+        </div>
+      </template>
     </div>
-  </div>
+  </AdminPage>
 </template>
 
 <style scoped>

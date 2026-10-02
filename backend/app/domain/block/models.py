@@ -30,6 +30,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.domain.block.indexed_rows import (
+    FAILED_TURN_ROWS,
+    MACHINE_EVENT_ROWS,
+    QUESTION_ROWS,
+)
 from app.domain.common import Timestamps, UuidPk
 
 
@@ -220,6 +225,37 @@ class Block(UuidPk, Timestamps, Base):
             "created_at",
             "id",
             postgresql_where=text("(meta ->> 'event_type') = 'cloud_provisioning'"),
+        ),
+        # The four below serve reads the sidebar and the board poll for every
+        # room or every task of a project at once — which questions are still
+        # open, which rooms wait on a broken turn or a machine. Each looks for
+        # a few hundred rows in the whole table, and without an index of its
+        # own each read the whole table to find them. Partial on exactly the
+        # predicate the query filters by (`indexed_rows`), which is also why
+        # they stay tiny.
+        Index(
+            "ix_blocks_task_questions",
+            "task_id",
+            text("created_at DESC"),
+            postgresql_where=text(f"task_id IS NOT NULL AND {QUESTION_ROWS.text}"),
+        ),
+        Index(
+            "ix_blocks_room_questions",
+            "topic_id",
+            text("created_at DESC"),
+            postgresql_where=text(f"task_id IS NULL AND {QUESTION_ROWS.text}"),
+        ),
+        Index(
+            "ix_blocks_machine_events",
+            "topic_id",
+            "created_at",
+            postgresql_where=MACHINE_EVENT_ROWS,
+        ),
+        Index(
+            "ix_blocks_failed_turns",
+            "topic_id",
+            "created_at",
+            postgresql_where=FAILED_TURN_ROWS,
         ),
     )
 

@@ -40,7 +40,6 @@ from app.domain.topic.models import Topic
 from app.domain.usage.credits import tokens_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.models import IngestCheckpoint
-from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.tokens import input_output_tokens
 
 logger = logging.getLogger("cheese.usage.ingest")
@@ -192,8 +191,10 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
     input_tokens, output_tokens = input_output_tokens(row)
     if input_tokens + output_tokens <= 0:
         return False
-    await UsageRepository(session).add(
-        project_id=project_id,
+    total = int(row.get("total_tokens") or 0) or (input_tokens + output_tokens)
+    await Ledger(session).record(
+        await payer_for_project(session, project_id),
+        credits=tokens_to_credits(total),
         topic_id=topic_id,
         model=str(row.get("model") or ""),
         input_tokens=input_tokens,
@@ -207,10 +208,6 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
         # The proxy log has no work id and one attributed unit can make many
         # /v1/messages calls. Use the nearest block-carried id by timestamp.
         turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
-    )
-    total = int(row.get("total_tokens") or 0) or (input_tokens + output_tokens)
-    await Ledger(session).charge(
-        await payer_for_project(session, project_id), tokens_to_credits(total)
     )
     return True
 
