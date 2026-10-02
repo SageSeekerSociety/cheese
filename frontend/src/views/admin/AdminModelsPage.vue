@@ -80,6 +80,7 @@ const {
   deleteTarget,
   deleting,
   askDelete,
+  setTier,
   closeDelete,
   confirmDelete,
   blockTarget,
@@ -145,6 +146,7 @@ const {
             @edit="openEdit"
             @block="askBlock"
             @delete="askDelete"
+            @tier="setTier"
           />
         </section>
 

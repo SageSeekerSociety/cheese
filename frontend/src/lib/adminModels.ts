@@ -38,6 +38,8 @@ export interface ModelRow {
   usage: ModelUsage
   /** 行内 sparkline 的逐日 token（与详情折线同源同账）。 */
   series?: number[]
+  /** 档位：方案按它限定可用的模型。缺省是 included。 */
+  tier?: 'included' | 'premium' | 'frontier'
 }
 
 /** 网关这一侧的状态（契约 §2 的 `gateway` 那一块）。 */

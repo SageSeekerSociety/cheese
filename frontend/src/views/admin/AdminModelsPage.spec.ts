@@ -52,6 +52,8 @@ vi.mock('@/api', () => ({
   setGatewayProjectBudget: (...a: unknown[]) => setGatewayProjectBudget(...a),
   getGatewayAudit: (...a: unknown[]) => getGatewayAudit(...a),
 }))
+const setGatewayModelTier = vi.fn()
+vi.mock('@/api/adminCredits', () => ({ setGatewayModelTier: (...a: unknown[]) => setGatewayModelTier(...a) }))
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
@@ -149,6 +151,8 @@ function mountPage() {
 }
 
 beforeAll(() => {
+  // 档位下拉的菜单定位要读它，happy-dom 没有。
+  vi.stubGlobal('devicePixelRatio', 1)
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -180,6 +184,7 @@ beforeEach(() => {
   getGatewayProjects.mockReset().mockResolvedValue(projectsPayload())
   setGatewayProjectBudget.mockReset().mockResolvedValue({})
   getGatewayAudit.mockReset().mockResolvedValue({ items: [] })
+  setGatewayModelTier.mockReset().mockResolvedValue({})
 })
 afterEach(cleanup)
 
@@ -467,5 +472,32 @@ describe('模型管理 · 审计区 diff', () => {
     const page = mountPage()
     await page.findByText('GLM 4.7')
     expect(await page.findByText('models.audit.action.subscriptionComplete')).toBeTruthy()
+  })
+})
+
+describe('模型管理 · 档位', () => {
+  async function tierSelectOf(page: ReturnType<typeof mountPage>, label: string) {
+    const row = (await page.findByText(label)).closest('tr') as HTMLElement
+    return within(row).getByRole('combobox')
+  }
+
+  it('改一条模型的档位，写的是这条模型和选中的那一档，然后重拉列表', async () => {
+    const page = mountPage()
+    await fireEvent.mouseDown(await tierSelectOf(page, 'GLM 4.7'))
+    const menu = await within(document.body).findByRole('listbox')
+    await fireEvent.click(within(menu).getByText('credits.tier.premium'))
+
+    await waitFor(() => expect(setGatewayModelTier).toHaveBeenCalledWith('glm-4.7-runtime', 'premium'))
+    await waitFor(() => expect(getGatewayModels).toHaveBeenCalledTimes(2))
+  })
+
+  it('配置文件里来的模型档位改不了', async () => {
+    getGatewayModels.mockResolvedValue(modelsPayload([configModel()]))
+    const page = mountPage()
+    const select = await tierSelectOf(page, 'MiMo V2.6 Pro')
+    await fireEvent.mouseDown(select)
+
+    expect(within(document.body).queryByRole('listbox')).toBeNull()
+    expect(setGatewayModelTier).not.toHaveBeenCalled()
   })
 })
