@@ -17,15 +17,26 @@ import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
 
-const page = vi.hoisted(() => ({ blob: null as Blob | null, version: null as string | null }))
+const page = vi.hoisted(() => ({
+  blob: null as Blob | null,
+  version: null as string | null,
+  /** 页面查看器被要求撤掉记号几次。 */
+  cleared: 0,
+  /** 让页面查看器从外面「重排」一次。 */
+  drop: null as (() => void) | null,
+}))
 
 vi.mock('./preview/PreviewPages.vue', () => ({
   default: defineComponent({
     props: ['data', 'context'],
-    emits: ['quote', 'pin'],
+    emits: ['quote', 'pin', 'dropped'],
     setup(props: { context: { version: string } }, { emit, expose }) {
+      page.drop = () => emit('dropped')
       expose({
         snapshot: async () => (page.blob ? { blob: page.blob, width: 1200, height: 1600 } : null),
+        clearMark: () => {
+          page.cleared += 1
+        },
       })
       return () =>
         h('div', { 'data-testid': 'pages' }, [
@@ -100,6 +111,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   page.blob = new Blob(['png'], { type: 'image/png' })
   page.version = null
+  page.cleared = 0
+  page.drop = null
 })
 afterEach(cleanup)
 
@@ -168,5 +181,32 @@ it('指的那一版跟屏上这一份对不上时，连输入框都不给开', a
   await fireEvent.click(ui.getByText('pin'))
 
   expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+  expect(submit).not.toHaveBeenCalled()
+})
+
+it('发出去之后让页面查看器把记号撤掉，屏上不留已经交出去的那一点', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const upload = vi.fn().mockResolvedValue({ id: 'a1', name: 'page-3.png' })
+  const ui = mount(submit as unknown as SubmitPreviewQuestion, upload as unknown as UploadAnnotation)
+
+  const before = page.cleared
+  await fireEvent.click(ui.getByText('pin'))
+  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这里不对')
+  await fireEvent.click(ui.getByText('发送'))
+
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
+  expect(page.cleared).toBeGreaterThan(before)
+})
+
+it('页面重排把记号撤了，正在编的那句话也跟着收起来', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit as unknown as SubmitPreviewQuestion)
+
+  await fireEvent.click(ui.getByText('pin'))
+  expect(ui.queryByPlaceholderText('说明要改什么')).not.toBeNull()
+
+  page.drop?.()
+
+  await waitFor(() => expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull())
   expect(submit).not.toHaveBeenCalled()
 })

@@ -41,6 +41,11 @@ it('共同的部分缺一样就不收：文件身份、版本、页码', () => {
   expect(isQuotedContext({ ...pin, page: 0 })).toBe(false)
   expect(isQuotedContext({ ...pin, page: 1.5 })).toBe(false)
   expect(isQuotedContext({ ...pin, task_id: 3 })).toBe(false)
+  // 空串：后端那两个字段是 min_length=1，收下去也是 422。这边先拦。
+  expect(isQuotedContext({ ...pin, path: '' })).toBe(false)
+  expect(isQuotedContext({ ...pin, version: '' })).toBe(false)
+  expect(isQuotedContext({ ...page, path: '' })).toBe(false)
+  expect(isQuotedContext({ ...page, version: '' })).toBe(false)
 })
 
 it('比例是闭区间里的数，别的东西不算', () => {

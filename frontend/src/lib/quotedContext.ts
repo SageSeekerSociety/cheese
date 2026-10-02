@@ -46,11 +46,18 @@ export function frozenQuote(quote: QuotedContext): QuotedContext {
   return Object.freeze({ ...quote })
 }
 
+/** 两种引文共有的那一半：文件身份 + 版本 + 页码。
+ *
+ *  尺子照着后端 `PagePinQuoteIn`/`SlidePageQuoteIn` 来：`path`/`version` 后端收
+ *  `min_length=1`，空串发过去是 422，这里先拦下。`task_id` 的 UUID 形式不做检查
+ *  ——它只由后端给出（或为 null），前端从不自己造，多一条正则只是重复后端的规则。 */
 function hasIdentity(q: Record<string, unknown>): boolean {
   return (
     typeof q.path === 'string' &&
+    q.path.length > 0 &&
     (q.source === 'live' || q.source === 'committed') &&
     typeof q.version === 'string' &&
+    q.version.length > 0 &&
     (q.task_id === null || typeof q.task_id === 'string') &&
     typeof q.page === 'number' &&
     Number.isInteger(q.page) &&
@@ -68,10 +75,7 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
   const q = value as Record<string, unknown>
   if (!hasIdentity(q)) return false
   if (q.kind === 'slide-page') {
-    return (
-      (q.scope === undefined || q.scope === 'page' || q.scope === 'selection') &&
-      typeof q.text === 'string'
-    )
+    return (q.scope === undefined || q.scope === 'page' || q.scope === 'selection') && typeof q.text === 'string'
   }
   if (q.kind === 'page-pin') return isRatio(q.x) && isRatio(q.y)
   return false

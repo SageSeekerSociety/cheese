@@ -33,6 +33,8 @@ const emit = defineEmits<{
   (e: 'quote', payload: { text: string; page: number }): void
   /** 读者在一页上点了一下。 */
   (e: 'pin', payload: PagePin): void
+  /** 屏上那一点被撤掉了（重排把它撤了），外面记着的那一点也跟着作废。 */
+  (e: 'dropped'): void
 }>()
 
 /** `host` 是页里那块画布住的地方，和 `el` 分开是因为重画要 `replaceChildren`——
@@ -215,8 +217,12 @@ async function open(data: ArrayBuffer) {
 function relayout() {
   renderGeneration += 1
   // 页要重画，指过的那一点也得撤：它是按比例画在页上的，页面尺寸一变，同一个比例
-  // 落在别的内容上，读者看到的就不再是他指的那一处。
-  marked.value = null
+  // 落在别的内容上，读者看到的就不再是他指的那一处。撤了要告诉外面——外面还握着
+  // 那一点的副本，不撤的话读者能发出一条屏上已经没有的指认。
+  if (marked.value) {
+    marked.value = null
+    emit('dropped')
+  }
   for (const slot of pages.value) {
     slot.rendered = false
     slot.host?.replaceChildren()
@@ -270,8 +276,13 @@ function onPoint(event: MouseEvent) {
   const pageEl = (target instanceof Element ? target : null)?.closest('[data-page]') as HTMLElement | null
   if (!pageEl || !container.value?.contains(pageEl)) return
   const slot = pages.value.find((p) => p.el === pageEl)
-  if (!slot?.host?.querySelector('canvas')) return
-  const box = pageEl.getBoundingClientRect()
+  if (!slot) return
+  const canvas = slot.host?.querySelector('canvas')
+  if (!canvas) return
+  // 量画布，不量页框：页框那一圈 1px 描边不算纸面，而 `getBoundingClientRect` 给的
+  // 正是含描边的外框——拿它当原点和分母，落点会整体偏出约两个像素。标记本身按
+  // 百分比定位在内边距框里，也就是画布那一块，两边量的得是同一个框。
+  const box = canvas.getBoundingClientRect()
   if (!box.width || !box.height) return
   const x = ratio((event.clientX - box.left) / box.width)
   const y = ratio((event.clientY - box.top) / box.height)
@@ -311,7 +322,13 @@ async function snapshot(page: number): Promise<{ blob: Blob; width: number; heig
   }
 }
 
-defineExpose({ snapshot })
+/** 抹掉指过的那一点，并且退出指位置：这一点已经交出去了，或者它依据的东西没了，
+ *  屏上就不该再留着一个记号让读者以为还能再发一次。 */
+function clearMark() {
+  marked.value = null
+  pointing.value = false
+}
+defineExpose({ snapshot, clearMark })
 
 watch(
   () => props.data,

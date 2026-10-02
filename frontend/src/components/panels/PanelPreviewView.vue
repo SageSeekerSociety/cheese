@@ -17,13 +17,12 @@ import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes
 import type { FileKind } from '../../lib/fileKind'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import type { RasterSelection } from './preview/designRegion'
-import type { PagePin, SlidePageContext, SlideSource } from './preview/slidesContext'
+import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { t } from '../../i18n'
-import { sameDocumentIdentity } from '../../lib/documentBytes'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
 import { roomFileDestination } from '../../lib/previewSession'
 
@@ -36,6 +35,7 @@ import PreviewSlides from './preview/PreviewSlides.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 import { usePreviewImageRegion } from './preview/usePreviewImageRegion'
+import { usePreviewPagePin } from './preview/usePreviewPagePin'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -205,14 +205,18 @@ const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 // 失效。这条评论只在下一轮被读一次，之后它属于对话记录。
 const locator = ref<{ label: string; quote: string; address: string } | null>(null)
 const pageContext = ref<SlidePageContext | null>(null)
-const pagePin = ref<PagePin | null>(null)
 const locatorNote = ref('')
 const imageRegion = usePreviewImageRegion(props, clearLocator)
+const pageLocator = usePreviewPagePin(props, {
+  snapshot: async (page) => (await pagesRef.value?.snapshot(page)) ?? null,
+  open: openLocator,
+  clear: clearLocator,
+})
 
 function openLocator(label: string, quote: string, address: string) {
   imageRegion.clear()
   pageContext.value = null
-  pagePin.value = null
+  pageLocator.pin.value = null
   locator.value = { label, quote, address }
   locatorNote.value = ''
 }
@@ -221,7 +225,8 @@ function clearLocator() {
   imageRegion.clear()
   locator.value = null
   pageContext.value = null
-  pagePin.value = null
+  pageLocator.pin.value = null
+  pagesRef.value?.clearMark()
   locatorNote.value = ''
 }
 function onImageRegion(selection: RasterSelection) {
@@ -230,35 +235,8 @@ function onImageRegion(selection: RasterSelection) {
   openLocator(t('design.region'), t('design.selectedRegion', selection.region), '')
   imageRegion.target.value = captured
 }
-function canUsePageContext(context: SlideSource): boolean {
-  const expected = props.slideContext
-  const current = props.docIdentity
-  const displayed = props.docSnapshot
-  if (
-    !expected ||
-    !current ||
-    !displayed ||
-    props.docBytes !== displayed.bytes ||
-    props.docLoading ||
-    props.docError ||
-    props.docRendererMissing ||
-    props.topicId !== current.topicId ||
-    props.previewFile?.path !== current.path ||
-    props.previewFile?.version !== current.version ||
-    (props.previewFile?.source ?? 'live') !== current.source
-  )
-    return false
-  const identity = { ...context, taskId: context.taskId ?? null }
-  return (
-    sameDocumentIdentity(identity, current) &&
-    sameDocumentIdentity(current, displayed.identity) &&
-    sameDocumentIdentity({ ...expected, taskId: expected.taskId ?? null }, current) &&
-    displayed.sourceVersion === current.version
-  )
-}
-
 function onPageContext(payload: SlidePageContext) {
-  if (!canUsePageContext(payload.context)) return
+  if (!pageLocator.canUse(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
   openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
   pageContext.value = { ...payload, context: { ...payload.context } }
@@ -282,20 +260,6 @@ watch(
   { flush: 'sync' }
 )
 
-/** 页面上的一点：位置说的是这一页的哪个比例，交出去的是带版本的那一点。
- *
- *  比例换算成百分数是给人看的，那个数字和下面那句话里的 `locator.quote` 是同一份
- *  东西，不重新算一遍。 */
-function onPin(payload: PagePin) {
-  if (!canUsePageContext(payload.context)) return
-  const where = t('work.room.preview.pinWhere', {
-    left: Math.round(payload.x * 100),
-    top: Math.round(payload.y * 100),
-  })
-  openLocator(t('work.room.preview.page', { page: payload.page }), where, '')
-  pagePin.value = { ...payload, context: { ...payload.context } }
-}
-
 function onQuote(payload: { text: string; page: number }) {
   // 一整页的选中没有指向性，当作没指。
   const quote = payload.text.replace(/\s+/g, ' ').trim()
@@ -314,8 +278,8 @@ function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
-  if (pagePin.value) {
-    void sendPin(note)
+  if (pageLocator.pin.value) {
+    void pageLocator.send(note)
     return
   }
   if (imageRegion.target.value) {
@@ -327,7 +291,7 @@ function sendLocator() {
   }
   if (pageContext.value) {
     const payload = pageContext.value
-    if (!canUsePageContext(payload.context)) return
+    if (!pageLocator.canUse(payload.context)) return
     const accepted = props.submitQuestion?.({
       intent: 'ask-agent',
       topicId: payload.context.topicId,
@@ -355,50 +319,6 @@ function sendLocator() {
     }),
   })
   clearLocator()
-}
-
-/** 指出的一点发出去：那条消息带着它依据的那一版文件身份，随行带上这一页当时的图。
- *
- *  配图不是装饰：位置本身是「第 3 页 42% 处」，受话人拿这句话去原始文件里找，找到
- *  的是同一页没错，但上一版和这一版之间那一处可能整个挪过位。图是发出去的那一刻
- *  屏幕上那一页的样子，看出来的是同一件事。
- *
- *  上传要等一会儿，等回来再核一次房间和版本：等的时候人可能换了房间、文件可能被
- *  芝士改了，那时宁可不发，也不能配着一张说的不是它的图发出去。 */
-async function sendPin(note: string) {
-  const pin = pagePin.value
-  const topicId = props.topicId
-  const submit = props.submitQuestion
-  if (!pin || !topicId || !submit || !canUsePageContext(pin.context)) return
-  let attachments: ChatAttachment[] | undefined
-  const upload = props.uploadAnnotation
-  const shot = await pagesRef.value?.snapshot(pin.page)
-  if (upload && shot) {
-    try {
-      attachments = [await upload(topicId, { blob: shot.blob, filename: `page-${pin.page}.png` })]
-    } catch {
-      // 图没传上去就不带图：位置那句话自己站得住。
-      attachments = undefined
-    }
-  }
-  if (props.topicId !== topicId || !canUsePageContext(pin.context)) return
-  const accepted = submit({
-    intent: 'ask-agent',
-    topicId,
-    content: note,
-    attachments,
-    quotedContext: {
-      kind: 'page-pin',
-      path: pin.context.path,
-      source: pin.context.source,
-      version: pin.context.version,
-      task_id: pin.context.taskId ?? null,
-      page: pin.page,
-      x: pin.x,
-      y: pin.y,
-    },
-  })
-  if (accepted) clearLocator()
 }
 
 /** 图上画完、按了「加入对话」：把那张合成图交出去传进房间，再发那一句连同附件。
@@ -740,7 +660,8 @@ async function onAnnotate(payload: AnnotateDraft) {
           :data="docBytes"
           :context="slideContext"
           @quote="onQuote"
-          @pin="onPin"
+          @pin="pageLocator.onPin"
+          @dropped="clearLocator"
         />
         <PreviewSheet v-else :data="docBytes" :kind="documentSuffix === 'csv' ? 'csv' : 'workbook'" @cell="onCell" />
 
