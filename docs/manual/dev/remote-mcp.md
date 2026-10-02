@@ -67,6 +67,8 @@ covers:
 
 Claude Code 那边两类共用一座桥：`prepare()` 写 `mcp.json` 时把机器上的 stdio 服务和项目里已连的远程服务并进同一张 `bridged` 名单，每个都注册成本地的 stdio MCP 服务，服务器名就用服务自己的名字——**除了 `native`，那是文件操作的，撞上直接报错**。桥进程要么就地转发（每个 `tools/call` 走 `RemoteClient.call`），要么被 exec 到另一侧跑；送到哪由 `RemoteClient.call` 判：名字在远程服务名单里就走 `remote_mcp()`，也就是打成平台的那个 POST。Codex 走同一份名单（`harness/codex/channel.py`），`project_tools` 列服务时也是 stdio 与远程一起列。
 
+私聊没有检出，所以没有 checkout 里的 stdio 服务；但私聊里的队友还是同一位队友，执行目标照样带上项目的远程服务和它类型自己的服务（`central_provider.py` 对两种目标同一段代码），类型的 stdio 服务跑在私聊的草稿容器里。
+
 ## 没连接时，房间里说一声 {#notice}
 
 会话在一个房间里开起来的时候（`chat.py` 的 `_unconnected_mcp()`），`unusable` 里的每个服务在房间里落一条 event block（`platform_notices.EVENT_MCP_NOT_CONNECTED`，`meta.server` 记名字），正文是「`<名字>` 需要在项目设置里连接」。**每间房每个服务只说一次**：发之前先查这个房间有没有同名的这类 block。同一时刻提示里多一行：「项目的远程 MCP 服务器 …… 需要项目成员在项目设置里连接，这个会话里用不了它们的工具」——不说的话，agent 会去找那些不存在的工具，或者把它们的缺席当成环境坏了。整件事包在 `except` 里：一条通知永远不许弄坏一轮。
