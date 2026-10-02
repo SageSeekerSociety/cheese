@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.block.indexed_rows import (
+    CLOUD_PROVISIONING_ROWS,
     FAILED_TURN_ROWS,
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
@@ -224,7 +225,7 @@ class Block(UuidPk, Timestamps, Base):
             "topic_id",
             "created_at",
             "id",
-            postgresql_where=text("(meta ->> 'event_type') = 'cloud_provisioning'"),
+            postgresql_where=CLOUD_PROVISIONING_ROWS,
         ),
         # The four below serve reads the sidebar and the board poll for every
         # room or every task of a project at once — which questions are still
