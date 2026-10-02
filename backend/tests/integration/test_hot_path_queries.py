@@ -63,7 +63,7 @@ def _seeded_rooms(client, project_id: str, headers: dict) -> list[dict]:
 
 
 def _create_project(client, name: str = "Hot path") -> str:
-    r = post_project(client, json={"name": name, "owner_handle": OWNER})
+    r = post_project(client, json={"name": name}, owner=OWNER)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -155,7 +155,6 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
                 json={
                     "project_id": project_id,
                     "title": f"room {i}",
-                    "created_by": OWNER,
                 },
                 headers=headers,
             )
@@ -191,7 +190,7 @@ def test_topic_list_reports_last_activity_for_every_row(client, bearer):
         assert (
             client.post(
                 "/topics",
-                json={"project_id": project_id, "title": f"r{i}", "created_by": OWNER},
+                json={"project_id": project_id, "title": f"r{i}"},
                 headers=headers,
             ).status_code
             == 200
@@ -215,7 +214,7 @@ def test_talking_in_a_room_moves_it_to_the_top(client, bearer):
     for i in range(3):
         r = client.post(
             "/topics",
-            json={"project_id": project_id, "title": f"r{i}", "created_by": OWNER},
+            json={"project_id": project_id, "title": f"r{i}"},
             headers=headers,
         )
         ids.append(r.json()["data"]["id"])

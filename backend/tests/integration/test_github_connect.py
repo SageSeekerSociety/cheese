@@ -20,7 +20,8 @@ pytestmark = pytest.mark.usefixtures("github_binding_user")
 def _make_project(client) -> str:
     r = post_project(
         client,
-        json={"name": "P", "owner_handle": "alice", "forge_kind": "github_app"},
+        json={"name": "P", "forge_kind": "github_app"},
+        owner="alice",
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -177,7 +178,8 @@ _WIDGETS = {
 def _project_of(client, owner: str, name: str) -> str:
     r = post_project(
         client,
-        json={"name": name, "owner_handle": owner, "forge_kind": "github_app"},
+        json={"name": name, "forge_kind": "github_app"},
+        owner=owner,
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]

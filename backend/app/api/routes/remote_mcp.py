@@ -47,7 +47,7 @@ async def member(
     """The caller's handle, when they are a member of the project."""
     if await db.get(Project, project_id) is None:
         raise NotFoundError("Project not found")
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     resolver.reject_failed_credential(actor)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
@@ -188,9 +188,7 @@ async def proxy(
 async def room_servers(topic_id: uuid.UUID, db: Db, resolver: ActorResolverDep) -> dict:
     """The room's read-only view: whose authorization its sessions act with."""
     place = await TopicService(db).place_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
-    )
+    actor = await resolver.resolve(project_id=place.project_id, topic_id=place.room_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
     await resolver.authorize_topic(

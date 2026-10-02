@@ -19,10 +19,12 @@ from tests.integration.conftest import (
 
 @pytest.fixture
 def seated(client):
-    project = post_project(client, json={"name": "P", "owner_handle": "alice"})
+    project = post_project(client, json={"name": "P"}, owner="alice")
     pid = project.json()["data"]["id"]
     tid = client.post(
-        "/topics", json={"project_id": pid, "title": "T", "created_by": "alice"}
+        "/topics",
+        json={"project_id": pid, "title": "T"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
     seat = room_agent_seat(client, tid)
     task = delivery_task(client, tid, commit=False)

@@ -115,9 +115,7 @@ async def upload_attachment(
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
     )
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -176,9 +174,7 @@ async def attachment_raw(
         await resolver.require_verified_caller(
             project_id=topic.project_id, topic_id=topic_id
         )
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -226,9 +222,7 @@ async def attachment_as_pdf(
     point at afterwards. Those are drawn from the original bytes instead.
     """
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )

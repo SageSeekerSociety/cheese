@@ -17,7 +17,11 @@ import pytest
 from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task
-from tests.integration.conftest import chat_ws_url, post_message, post_project
+from tests.integration.conftest import (
+    chat_ws_url,
+    post_message,
+    post_project,
+)
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
 --- a/backend/app/x.py
@@ -64,10 +68,10 @@ def _chat(client, topic_id: str) -> None:
 
 
 def _topic(client) -> str:
-    p = post_project(client, json={"name": "P"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     room = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+        json={"project_id": p["id"], "title": "话题"},
     ).json()["data"]["id"]
     delivery_task(client, room, commit=False)
     return room

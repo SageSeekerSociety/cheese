@@ -68,7 +68,7 @@ def owner(client):
     ]["id"]
     tid = client.post(
         "/topics",
-        json={"project_id": pid, "title": "房间", "created_by": handle},
+        json={"project_id": pid, "title": "房间"},
         headers=headers,
     ).json()["data"]["id"]
     return {"handle": handle, "headers": headers, "pid": pid, "tid": tid}

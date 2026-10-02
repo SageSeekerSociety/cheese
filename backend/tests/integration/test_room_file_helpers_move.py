@@ -73,7 +73,7 @@ def _editor_on(monkeypatch):
 
 
 def _room(client, owner: str = "alice") -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
@@ -425,9 +425,7 @@ def test_a_task_bound_and_a_committed_source_read_the_same(client, task_machine)
     from tests.support import git_store
 
     pid = uuid.UUID(
-        _post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-            "data"
-        ]["id"]
+        _post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     )
     tid = str(_mktopic(client, pid))
     task = delivery_task_id(client, tid)
@@ -459,9 +457,7 @@ def test_binding_refuses_a_card_from_another_room(client, task_machine):  # noqa
     from tests.integration.conftest import post_project as _post_project
 
     pid = uuid.UUID(
-        _post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-            "data"
-        ]["id"]
+        _post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     )
     home = str(_mktopic(client, pid))
     elsewhere = str(_mktopic(client, pid))
@@ -479,9 +475,7 @@ def test_binding_refuses_a_card_that_has_no_branch(client, task_machine):  # noq
     from tests.integration.conftest import post_project as _post_project
 
     pid = uuid.UUID(
-        _post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-            "data"
-        ]["id"]
+        _post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     )
     tid = str(_mktopic(client, pid))
     task = delivery_task_id(client, tid)
@@ -517,9 +511,7 @@ def test_a_library_path_is_not_read_from_a_task_branch(client, task_machine):  #
     from tests.integration.conftest import post_project as _post_project
 
     pid = uuid.UUID(
-        _post_project(client, json={"name": "P", "owner_handle": "alice"}).json()[
-            "data"
-        ]["id"]
+        _post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
     )
     tid = str(_mktopic(client, pid))
     task = delivery_task_id(client, tid)

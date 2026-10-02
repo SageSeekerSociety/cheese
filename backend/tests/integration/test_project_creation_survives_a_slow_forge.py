@@ -148,7 +148,7 @@ def test_a_creation_repeated_after_it_succeeded_returns_the_same_project(
     assert again.json()["data"]["id"] == str(project_id)
     assert list(fake_forge.accounts) == [f"cheese-{project_id.hex}"]
 
-    stranger = post_project(client, json={**body, "owner_handle": "mallory"})
+    stranger = post_project(client, json={**body}, owner="mallory")
     assert stranger.status_code == 409, stranger.text
 
 

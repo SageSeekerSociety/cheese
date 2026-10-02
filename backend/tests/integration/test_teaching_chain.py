@@ -34,8 +34,8 @@ PROJECT = {"system_prompt": "项目的", "current_week": 4}
 
 def _project(client, *, external_task_id: int) -> int:
     seed_claim(client, external_task_id, handle=OWNER)
-    body = {"name": "团队", "owner_handle": OWNER, "external_task_id": external_task_id}
-    return post_project(client, json=body).json()["data"]["id"]
+    body = {"name": "团队", "external_task_id": external_task_id}
+    return post_project(client, json=body, owner=OWNER).json()["data"]["id"]
 
 
 def _set_project_teaching(client, *, project_id: int, teaching: dict) -> None:

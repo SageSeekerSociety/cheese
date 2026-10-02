@@ -111,14 +111,12 @@ async def _in_project(
         place = await TopicService(db).place_or_404(topic)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
-        actor = await resolver.resolve(
-            fallback_handle=None, project_id=project_id, topic_id=topic
-        )
+        actor = await resolver.resolve(project_id=project_id, topic_id=topic)
         await resolver.authorize_topic(
             actor, project_id=project_id, topic_id=topic, enforce=True
         )
         return actor
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return actor
 

@@ -65,26 +65,35 @@ class EvalApi:
         )
 
     async def post(
-        self, path: str, body: dict | None = None, *, cheese: bool = False
+        self,
+        path: str,
+        body: dict | None = None,
+        *,
+        cheese: bool = False,
+        as_handle: str | None = None,
     ) -> Any:
-        headers = {"X-Cheese-Token": self._sandbox_token} if cheese else None
+        """POST body; as_handle signs the request in as that person."""
+        headers: dict[str, str] = {}
+        if cheese:
+            headers["X-Cheese-Token"] = self._sandbox_token
+        if as_handle is not None:
+            headers["Authorization"] = f"Bearer {self.session_token(as_handle)}"
         return self._unwrap(
-            await self._http.post(path, json=body or {}, headers=headers)
+            await self._http.post(path, json=body or {}, headers=headers or None)
         )
 
     # ---- structure ---------------------------------------------------------
+    # The owner of a project and the creator of a topic are whoever the request
+    # is signed in as: the backend takes neither from the body.
 
-    async def create_project(self, name: str, owner_handle: str) -> dict:
-        return await self.post(
-            "/api/projects", {"name": name, "owner_handle": owner_handle}
-        )
+    async def create_project(self, name: str, owner: str) -> dict:
+        return await self.post("/api/projects", {"name": name}, as_handle=owner)
 
-    async def create_topic(
-        self, project_id: str, title: str, created_by: str
-    ) -> dict:
+    async def create_topic(self, project_id: str, title: str, creator: str) -> dict:
         return await self.post(
             "/api/topics",
-            {"project_id": project_id, "title": title, "created_by": created_by},
+            {"project_id": project_id, "title": title},
+            as_handle=creator,
         )
 
     async def get_topic(self, topic_id: str) -> dict:

@@ -294,8 +294,8 @@ class TopicService:
         #
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
         # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
-        # creating a topic, or a caller whose token didn't resolve (anonymous
-        # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
+        # creating a topic, or a caller whose token didn't resolve (anonymous),
+        # would leave the room OWNERLESS — seed() deliberately skips
         # "cheese"/None as owner — and then nobody can manage its roster, and
         # every sub-topic split beneath it inherits the same emptiness
         # (dispatch_task falls back to the PARENT's owner). Nearly the same

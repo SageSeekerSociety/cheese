@@ -29,7 +29,7 @@ from app.domain.block.models import AGENT_NOTICE_META_KEY, Block, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.main import app
 from tests.conftest import stub_compute
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 
 
 def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
@@ -54,10 +54,11 @@ async def _waiting_notices(client, topic_id: str) -> list[Block]:
 
 
 def _project_topic(client) -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": "alice"}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     t = client.post(
         "/topics",
-        json={"project_id": p["id"], "title": "推荐系统", "created_by": "alice"},
+        json={"project_id": p["id"], "title": "推荐系统"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     return p["id"], t["id"]
 
@@ -101,8 +102,8 @@ def _restore_chat_service():
 def _put(client, topic_id, content, version, author="alice", headers=None):
     return client.put(
         f"/topics/{topic_id}/doc",
-        json={"content": content, "author": author, "expected_version": version},
-        headers=headers or {},
+        json={"content": content, "expected_version": version},
+        headers=headers or session_auth_headers(author),
     )
 
 

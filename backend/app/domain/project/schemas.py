@@ -15,7 +15,6 @@ class ProjectCreate(BaseModel):
     # retry after a failure finishes the same project instead of starting another.
     id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=200)
-    owner_handle: str | None = None
     ai_mode: AiMode = AiMode.collaborative
     # The agent type the project's default 芝士 wears. Stored on that agent, not
     # on the project: the persona is one of the type's properties, and the

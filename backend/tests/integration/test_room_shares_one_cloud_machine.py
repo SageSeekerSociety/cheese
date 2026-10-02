@@ -38,7 +38,7 @@ from app.domain.team.models import Team
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.executor_release import running
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.unit.test_machine_service import FakeMicroCloud
 
 HANDLES = ("ada", "zed")
@@ -56,13 +56,14 @@ def cloud_room(client, monkeypatch):
     )
     monkeypatch.setattr("app.domain.machine.services.MicroCloudClient", lambda: cloud)
     project = post_project(
-        client, json={"name": "Shared cloud room", "owner_handle": "alice"}
+        client, json={"name": "Shared cloud room"}, owner="alice"
     ).json()["data"]
     project_id = uuid.UUID(project["id"])
     room_id = uuid.UUID(
         client.post(
             "/topics",
-            json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+            json={"project_id": project["id"], "title": "Room"},
+            headers=session_auth_headers("alice"),
         ).json()["data"]["id"]
     )
 

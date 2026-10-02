@@ -26,7 +26,7 @@ def _bearer(handle: str) -> dict:
 
 
 def _room(client, owner: str = "alice") -> tuple[str, str]:
-    p = post_project(client, json={"name": "P", "owner_handle": owner}).json()["data"]
+    p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     return p["id"], p["root_topic_id"]
 
 

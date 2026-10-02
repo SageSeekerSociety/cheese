@@ -48,8 +48,9 @@ def _team(client, owner: str) -> int:
 def _project(client, name: str, owner: str, **extra) -> dict:
     r = post_project(
         client,
-        json={"name": name, "owner_handle": owner, **extra},
+        json={"name": name, **extra},
         headers=session_auth_headers(owner),
+        owner=owner,
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]
@@ -82,15 +83,14 @@ def test_an_outsider_cannot_plant_a_project_in_someone_elses_team(client):
 
     planted = client.post(
         "/projects",
-        json={"name": "mallory-was-here", "owner_handle": OUTSIDER, "team_id": team_id},
+        json={"name": "mallory-was-here", "team_id": team_id},
         headers=session_auth_headers(OUTSIDER),
     )
     assert planted.status_code == 403, planted.text
 
     # 一个凭据都没有的调用方更不在任何团队里。
     anonymous = client.post(
-        "/projects",
-        json={"name": "anon-was-here", "owner_handle": OUTSIDER, "team_id": team_id},
+        "/projects", json={"name": "anon-was-here", "team_id": team_id}
     )
     assert anonymous.status_code == 401, anonymous.text
 
@@ -128,10 +128,10 @@ def test_a_stranger_cannot_build_a_project_from_a_task(client):
         client,
         json={
             "name": "freeloader",
-            "owner_handle": OUTSIDER,
             "external_task_id": task_id,
         },
         headers=session_auth_headers(OUTSIDER),
+        owner=OUTSIDER,
     )
     assert r.status_code == 403, r.text
 

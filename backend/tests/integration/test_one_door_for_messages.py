@@ -82,13 +82,13 @@ def test_oversized_combined_question_and_quote_is_refused_without_landing(client
 
 
 def _room(client, owner: str = "alice", *, members: tuple[str, ...] = ()) -> tuple:
-    project = post_project(client, json={"name": "P", "owner_handle": owner})
+    project = post_project(client, json={"name": "P"}, owner=owner)
     project_id = project.json()["data"]["id"]
     for handle in members:
         join_project_team(client, project_id, handle)
     topic = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "T", "created_by": owner},
+        json={"project_id": project_id, "title": "T"},
         headers=session_auth_headers(owner),
     ).json()["data"]
     for handle in members:

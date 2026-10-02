@@ -119,9 +119,7 @@ async def list_room_tasks(
     and whoever builds that view should decide what it is.
     """
     topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
@@ -266,8 +264,6 @@ AGENT_NOTE_CHARS = 4000
 
 class TaskMessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=100000)
-    # Phase-0 handle for a caller with no credential; a verified one wins.
-    author: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/{topic_id}/tasks/{task_id}/messages")
@@ -301,11 +297,7 @@ async def say_on_task(
     content = body.content.strip()
     if not content:
         raise ValidationError("消息内容不能为空")
-    actor = await resolver.resolve(
-        fallback_handle=body.author,
-        topic_id=place.room_id,
-        project_id=place.project_id,
-    )
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )

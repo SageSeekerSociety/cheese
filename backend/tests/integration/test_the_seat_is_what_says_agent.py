@@ -29,15 +29,14 @@ from tests.integration.conftest import (
 
 
 def _project(client, name, owner="alice"):
-    return post_project(client, json={"name": name, "owner_handle": owner}).json()[
-        "data"
-    ]
+    return post_project(client, json={"name": name}, owner=owner).json()["data"]
 
 
 def _room(client, project, title="Room", created_by="alice"):
     return client.post(
         "/topics",
-        json={"project_id": project["id"], "title": title, "created_by": created_by},
+        json={"project_id": project["id"], "title": title},
+        headers=session_auth_headers(created_by),
     ).json()["data"]
 
 

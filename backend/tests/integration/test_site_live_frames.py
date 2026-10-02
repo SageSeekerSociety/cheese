@@ -29,7 +29,7 @@ def _alice() -> dict:
 
 
 def _room(client) -> str:
-    project = post_project(client, {"name": "P", "owner_handle": "alice"}).json()
+    project = post_project(client, {"name": "P"}, owner="alice").json()
     return project["data"]["root_topic_id"]
 
 

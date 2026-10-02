@@ -47,7 +47,7 @@ async def require_project_steward(
     credential in the project generation, including any issued by an authorized
     agent.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise ForbiddenError("只有项目所有者或团队管理员能管理项目凭证")
     project = await ProjectRepository(db).get(project_id)

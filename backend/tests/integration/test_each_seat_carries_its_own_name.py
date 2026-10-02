@@ -11,10 +11,13 @@ from tests.integration.conftest import post_project, session_auth_headers
 
 
 def test_two_seated_agents_show_their_own_names(client):
-    project = post_project(client, json={"name": "Two names"}).json()["data"]
+    project = post_project(client, json={"name": "Two names"}, owner="alice").json()[
+        "data"
+    ]
     topic = client.post(
         "/topics",
-        json={"project_id": project["id"], "title": "Room", "created_by": "alice"},
+        json={"project_id": project["id"], "title": "Room"},
+        headers=session_auth_headers("alice"),
     ).json()["data"]
 
     made = []

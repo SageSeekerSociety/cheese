@@ -79,7 +79,7 @@ async def list_memory(
     the agent itself reads its notes on someone only in that person's private
     chat with it, and a teammate has no better claim than the agent does.
     """
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     if user_handle and user_handle != actor.handle:
         raise ForbiddenError("只能查看关于你自己的记忆")

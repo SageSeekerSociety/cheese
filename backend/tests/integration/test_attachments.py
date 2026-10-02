@@ -37,7 +37,7 @@ def _create_project_and_topic(client) -> tuple[str, str]:
     project_id = pr.json()["data"]["id"]
     tr = client.post(
         "/topics",
-        json={"project_id": project_id, "title": "图片话题", "created_by": "user-1"},
+        json={"project_id": project_id, "title": "图片话题"},
     )
     return project_id, tr.json()["data"]["id"]
 

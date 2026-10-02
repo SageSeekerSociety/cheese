@@ -64,7 +64,9 @@ async def test_creation_response_follows_commit(monkeypatch, commit_fails):
         ),
     )
     resolver = SimpleNamespace(
-        resolve=AsyncMock(return_value=SimpleNamespace(handle="owner")),
+        resolve=AsyncMock(
+            return_value=SimpleNamespace(handle="owner", authenticated=True)
+        ),
         authorize_project=AsyncMock(),
     )
     app = FastAPI()
