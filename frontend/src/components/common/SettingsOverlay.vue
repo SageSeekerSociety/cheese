@@ -161,7 +161,11 @@ onBeforeUnmount(() => {
 .so {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  /* One below Vuetify's overlays (2000), not equal: menus and dialogs opened in
+     here live in body > .v-overlay-container, which page-load tooltips create
+     before this layer mounts, so on a tie this layer paints over every one of
+     them and a dropdown opens invisible. */
+  z-index: 1999;
   display: flex;
   background: var(--surface);
   animation: so-in var(--dur-base) var(--ease-out);

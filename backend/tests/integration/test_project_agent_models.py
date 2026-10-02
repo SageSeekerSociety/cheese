@@ -501,3 +501,26 @@ async def test_the_requested_model_header_is_ignored_off_the_subagent_path(clien
     body = client.post("/llm/admission", headers=headers).json()["data"]
     assert body["allow"] is True
     assert body["supply"]["model"] == "deepseek-flash"
+
+
+def test_the_picker_reports_a_main_model_that_left_the_catalog_as_saved(
+    client, monkeypatch
+):
+    """A removed main model refuses every turn, so the settings page must say
+    that model is what is saved, not show the deployment default in its place."""
+    pid = create(client)["id"]
+    route = f"/projects/{pid}/default-model"
+    assert client.put(route, json={"model": "opus"}).status_code == 200
+    from app.domain.agent_instance import configuration
+
+    available = configuration.subscription_model_listings()
+    monkeypatch.setattr(
+        configuration,
+        "subscription_model_listings",
+        lambda: [item for item in available if item.id != "opus"],
+    )
+    state = client.get(route).json()["data"]
+    assert "opus" not in {c["id"] for c in state["choices"]}
+    assert state["model"] == "opus"
+    assert client.put(route, json={"model": "deepseek-flash"}).status_code == 200
+    assert client.get(route).json()["data"]["model"] == "deepseek-flash"

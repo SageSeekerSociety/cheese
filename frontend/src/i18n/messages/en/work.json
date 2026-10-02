@@ -12,7 +12,8 @@
     "chooseAvailable": "Choose a model available to this project",
     "loadError": "Could not load models",
     "requiresPlan": "Requires the {plan} plan",
-    "notInPlan": "Not included in your plan"
+    "notInPlan": "Not included in your plan",
+    "unavailable": "No longer available"
   },
   "teammate": {
     "title": "Your project's AI teammate",
