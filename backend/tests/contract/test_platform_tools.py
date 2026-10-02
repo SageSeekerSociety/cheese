@@ -60,6 +60,11 @@ CALLS = {
         "/topics/fixture/history",
     ),
     "cheese_doc_get": ({}, "GET", "/topics/fixture/doc"),
+    "cheese_doc_edit": (
+        {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
+        "POST",
+        "/topics/fixture/doc/edits",
+    ),
     "cheese_task": ({"title": "数据清洗"}, "POST", "/topics/fixture/split"),
     "cheese_close_task": (
         {"task": TASK},

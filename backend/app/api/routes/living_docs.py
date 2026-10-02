@@ -230,14 +230,15 @@ async def edit_doc_passages(
         mode=decision.mode,
         reason=body.reason,
     )
-    stored = (result.get("stored") or {}).get("data") or {}
+    stored = result.get("stored") or {}
     return ok(
         {
             "mode": decision.mode,
             "requested_by": decision.requested_by,
             "edits": result.get("edits") or [],
-            "doc_version": stored.get("doc_version"),
-        }
+            "doc_version": (stored.get("data") or {}).get("doc_version"),
+        },
+        warnings=stored.get("warnings"),
     )
 
 

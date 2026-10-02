@@ -324,8 +324,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_get",
-            "读本话题实况文档。读到的这一版就是接下来 cheese_doc_set 写回所依据的"
-            "那一版；没读过就写，只有本话题还没有文档时才让你建。",
+            "读本话题实况文档，末尾列出还没人处理的修改建议。读到的这一版就是接下来 "
+            "cheese_doc_set 写回所依据的那一版；没读过就写，只有本话题还没有文档时"
+            "才让你建。",
         ),
         _tool(
             "cheese_doc_set",
@@ -334,6 +335,34 @@ PLATFORM_TOOLS = ToolTable(
             "别原样重试。话题标题会渲染成大标题，正文别再用一级标题重复。",
             {"path": _text("机器上 markdown 文件的绝对路径；草稿别放在任务工作目录里")},
             ["path"],
+        ),
+        _tool(
+            "cheese_doc_edit",
+            "改本话题实况文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
+            "原文 old（照 cheese_doc_get 读到的 Markdown 原样抄，要在文档里只出现"
+            "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
+            "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
+            "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
+            "改别人写的段落时平台也会把它转成建议。别重复提已经在待处理的建议。",
+            {
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old": _text("文档里的原文，只出现一次"),
+                            "new": _text("改成的文字；删掉就给空字符串"),
+                        },
+                        "required": ["old", "new"],
+                    },
+                },
+                "suggest": {
+                    "type": "boolean",
+                    "description": "只提建议，不直接改",
+                },
+                "reason": _text("为什么改，一句话；作为建议时显示在建议旁边"),
+            },
+            ["edits"],
         ),
         _tool(
             "cheese_task",
@@ -843,6 +872,20 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_doc_get":
         return {"method": "GET", "path": f"/topics/{topic}/doc"}
+    if tool == "cheese_doc_edit":
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/doc/edits",
+            "body": {
+                "edits": [
+                    {"old": str(e["old"]), "new": str(e.get("new") or "")}
+                    for e in args["edits"]
+                ],
+                "author": env.get("CHEESE_AUTHOR", "cheese"),
+                **({"mode": "suggest"} if args.get("suggest") is True else {}),
+                **_given(args, "reason"),
+            },
+        }
     if tool == "cheese_task":
         return {
             "method": "POST",
@@ -1285,7 +1328,50 @@ def _doc_get(args: dict, host) -> str:
     host.doc_versions[host.environ.get("CHEESE_TOPIC", "")] = version
     if not doc.get("content"):
         return "本话题还没有实况文档；cheese_doc_set 会新建它。"
-    return doc["content"]
+    pending = doc.get("pending_suggestions") or []
+    if not pending:
+        return doc["content"]
+    # 建议还不是正文：上面读到的是没有它们的文本。列出来，免得再提一遍。
+    head = f"--- 待处理的修改建议（{len(pending)} 处，不在正文里）"
+    lines = [doc["content"], "", head]
+    for item in pending:
+        why = f"（{item['reason']}）" if item.get("reason") else ""
+        lines.append(
+            f"- {item.get('author') or '?'}：「{item.get('old') or ''}」→"
+            f"「{item.get('new') or ''}」{why}"
+        )
+    return "\n".join(lines)
+
+
+def _doc_edit(args: dict, host) -> str:
+    plan = request_plan("cheese_doc_edit", args, host.environ)
+    try:
+        answer = host.request(plan)
+    except Exception as exc:
+        status = getattr(exc, "status", None)
+        if status not in (409, 422):
+            raise
+        try:
+            why = json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+        except (ValueError, KeyError, TypeError):
+            raise exc from None
+        raise PlatformToolError(
+            f"一处都没改，文档没有变：{why.rstrip('。')}。"
+            "先 cheese_doc_get 重读，照读到的原文改好再试。"
+        ) from exc
+    data = answer.get("data") or {}
+    edits = data.get("edits") or []
+    if data.get("mode") == "suggest":
+        return f"已提出 {len(edits)} 处修改建议，等人接受或拒绝；正文还没有变。"
+    who = data.get("requested_by")
+    done = f"已改了 {len(edits)} 处"
+    if who:
+        done = f"已按 {who} 的要求改了 {len(edits)} 处"
+    version = data.get("doc_version")
+    lines = [f"{done}（第 {version} 版）。" if version else f"{done}。"]
+    # 和 cheese_doc_set 一样：格式警告跟着这次写入回来，改的机会就是现在。
+    lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
+    return "\n".join(lines)
 
 
 def _doc_set(args: dict, host) -> str:
@@ -1591,6 +1677,7 @@ _STEPS = {
     "cheese_chat_replies": _chat_page("cheese_chat_replies"),
     "cheese_doc_get": _doc_get,
     "cheese_doc_set": _doc_set,
+    "cheese_doc_edit": _doc_edit,
     "cheese_accept_request": _accept_request,
     "cheese_tell": _tell,
     "platform_request": _platform_request,
