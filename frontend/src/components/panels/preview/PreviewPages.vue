@@ -206,8 +206,11 @@ function onResize() {
 
 function onSelect() {
   const selection = window.getSelection()
-  const text = selection?.toString().trim() ?? ''
-  if (!text || !selection?.rangeCount) return
+  // 和 `PreviewSlides.quote()`、父级 `onQuote` 同一条门槛：先归一化空白，再要求不止
+  // 一个字。只 trim 的话，一个字符会一路发到父级、在那里被丢掉——读者看到的是「选了
+  // 没反应」，而这正是那句门槛存在的理由。
+  const text = selection?.toString().replace(/\s+/g, ' ').trim() ?? ''
+  if (text.length < 2 || !selection?.rangeCount) return
   const node = selection.getRangeAt(0).startContainer
   const host = (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest('[data-page]')
   if (!host) return

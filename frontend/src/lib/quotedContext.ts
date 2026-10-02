@@ -8,6 +8,16 @@ export type QuotedContext = Readonly<{
   version: string
   task_id: string | null
   page: number
+  /**
+   * 读者指的是整页还是这一页里的一段。
+   *
+   * 有了它，`text` 才有了确定的说法：`page` 时是整页文字，`selection` 时是选中的
+   * 那一段。少了它两件事从消息上分不开 —— 受话人会拿选中的一行当整页看。
+   *
+   * 可选是为了读得懂已经在库里的消息：那些消息写在那之前，一律当整页。
+   * 写出去的时候一定带上（`PanelPreviewView.vue` 的 `sendLocator`）。
+   */
+  scope?: 'page' | 'selection'
   text: string
 }>
 
@@ -26,6 +36,7 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
     (q.task_id === null || typeof q.task_id === 'string') &&
     Number.isInteger(q.page) &&
     (q.page ?? 0) > 0 &&
+    (q.scope === undefined || q.scope === 'page' || q.scope === 'selection') &&
     typeof q.text === 'string'
   )
 }

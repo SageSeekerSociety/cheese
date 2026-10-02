@@ -8,7 +8,9 @@ defineProps<{ quote: QuotedContext }>()
 
 <template>
   <details class="message-quote">
-    <summary>{{ t('slides.quotedPage', { page: quote.page }) }}</summary>
+    <summary>
+      {{ t(quote.scope === 'selection' ? 'slides.quotedSelection' : 'slides.quotedPage', { page: quote.page }) }}
+    </summary>
     <div class="message-quote__path">{{ quote.path }}</div>
     <div class="message-quote__identity">
       {{ t(quote.source === 'committed' ? 'slides.sourceCommitted' : 'slides.sourceLive') }}

@@ -254,9 +254,9 @@ function canUsePageContext(context: SlideSource): boolean {
 }
 
 function onPageContext(payload: SlidePageContext) {
-  if (payload.scope !== 'page' || !canUsePageContext(payload.context)) return
+  if (!canUsePageContext(payload.context)) return
   const page = t('work.room.preview.page', { page: payload.page })
-  openLocator(page, t('slides.wholePage'), page)
+  openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
   pageContext.value = { ...payload, context: { ...payload.context } }
 }
 watch(
@@ -317,6 +317,7 @@ function sendLocator() {
         version: payload.context.version,
         task_id: payload.context.taskId ?? null,
         page: payload.page,
+        scope: payload.scope,
         text: payload.text,
       },
     })
