@@ -5,26 +5,7 @@ import { computed, ref, toRaw, watch } from 'vue'
 
 import { t } from '@/i18n'
 
-/** 文档这一排按钮之外，宿主再往后接的按钮（题目详情等处的插图、表格）。 */
-export interface ExtraFormatAction {
-  key: string
-  icon: string
-  label: string
-  /** 不给就一直在；给了，只在它说在的时候出现（光标在表格里才有的那几个）。 */
-  visible?: (editor: Editor) => boolean
-  isActive?: (editor: Editor) => boolean
-  /** 编辑器命令；要先做别的事（选文件）就给 `run`。 */
-  command?: (c: ChainedCommands) => ChainedCommands
-  run?: () => void
-  busy?: boolean
-}
-
-const props = defineProps<{
-  editor: Editor | null
-  disabled: boolean
-  disabledReason: string
-  extra?: ExtraFormatAction[]
-}>()
+const props = defineProps<{ editor: Editor | null; disabled: boolean; disabledReason: string }>()
 const revision = ref(0)
 const toolbar = ref<HTMLElement | null>(null)
 const focused = ref(0)
@@ -102,25 +83,10 @@ const actions = computed(() => {
       active: editor?.isActive('blockquote'),
       command: (c: ChainedCommands) => c.toggleBlockquote(),
     },
-  ].map((item) => ({ ...item, label: label(item.key), run: undefined as (() => void) | undefined, busy: false }))
-  const extra = (props.extra ?? [])
-    .filter((item) => !editor || !item.visible || item.visible(editor))
-    .map((item) => ({
-      key: item.key,
-      icon: item.icon,
-      label: item.label,
-      active: editor ? item.isActive?.(editor) : false,
-      command: item.command,
-      run: item.run,
-      busy: !!item.busy,
-    }))
-  return [...items, ...extra].map((item) => ({
+  ]
+  return items.map((item) => ({
     ...item,
-    disabled:
-      props.disabled ||
-      item.busy ||
-      !editor?.isEditable ||
-      (item.command ? !item.command(editor.can().chain()).run() : false),
+    disabled: props.disabled || !editor?.isEditable || !item.command(editor.can().chain()).run(),
   }))
 })
 function moveFocus(event: KeyboardEvent) {
@@ -152,8 +118,7 @@ function execute(index: number) {
   const action = actions.value[index]
   const editor = toRaw(props.editor)
   if (!action || action.disabled || !editor?.isEditable) return
-  if (action.run) action.run()
-  else action.command?.(editor.chain().focus()).run()
+  action.command(editor.chain().focus()).run()
 }
 function label(key: string) {
   return t(`work.room.doc.format.${key}`)
@@ -176,8 +141,8 @@ function label(key: string) {
       :tabindex="index === focused ? 0 : -1"
       :aria-pressed="!!action.active"
       :aria-disabled="action.disabled"
-      :aria-label="action.label"
-      :title="action.disabled && !action.busy ? disabledReason || label('unavailable') : action.label"
+      :aria-label="label(action.key)"
+      :title="action.disabled ? disabledReason || label('unavailable') : label(action.key)"
       @focus="focused = index"
       @click="execute(index)"
     >

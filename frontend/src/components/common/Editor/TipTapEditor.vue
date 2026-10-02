@@ -5,7 +5,6 @@
 // v-model 的形状由 `output` 定：`json` 是 tiptap 的文档 JSON（题目、知识库、模板），
 // `html` 是一段 HTML（公告、团队简介）。两种都只在有人改了内容时才往外发。
 import type { JSONContent } from '@tiptap/core'
-import type { ExtraFormatAction } from '@/components/panels/doc/DocFormatToolbar.vue'
 
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
@@ -14,8 +13,8 @@ import { useEditor } from '@tiptap/vue-3'
 import { ATTACHMENT_IMAGE_SOURCE } from './attachmentImageSource'
 import { jsonContent, richTextExtensions } from './richText'
 import RichTextContent from './RichTextContent.vue'
+import RichTextToolbar from './RichTextToolbar.vue'
 
-import DocFormatToolbar from '@/components/panels/doc/DocFormatToolbar.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -99,72 +98,20 @@ async function insertImage(event: Event) {
   }
 }
 
-const inTable = (ed: { isActive: (name: string) => boolean }) => ed.isActive('table')
+// 全屏：编辑区铺满窗口，Esc 或再点一次退出。
+const fullscreen = ref(false)
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && fullscreen.value) fullscreen.value = false
+}
 
-const extraActions = computed<ExtraFormatAction[]>(() => [
-  {
-    key: 'codeBlock',
-    icon: 'mdi-code-braces',
-    label: t('editor.toolbar.codeBlock'),
-    isActive: (ed) => ed.isActive('codeBlock'),
-    command: (c) => c.toggleCodeBlock(),
-  },
-  {
-    key: 'image',
-    icon: 'mdi-image-plus-outline',
-    label: t('editor.toolbar.image'),
-    visible: () => images !== null,
-    run: () => fileInput.value?.click(),
-    busy: uploading.value,
-  },
-  {
-    key: 'table',
-    icon: 'mdi-table-plus',
-    label: t('editor.toolbar.table'),
-    visible: (ed) => !inTable(ed),
-    command: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
-  },
-  {
-    key: 'addRow',
-    icon: 'mdi-table-row-plus-after',
-    label: t('editor.toolbar.addRow'),
-    visible: inTable,
-    command: (c) => c.addRowAfter(),
-  },
-  {
-    key: 'addColumn',
-    icon: 'mdi-table-column-plus-after',
-    label: t('editor.toolbar.addColumn'),
-    visible: inTable,
-    command: (c) => c.addColumnAfter(),
-  },
-  {
-    key: 'deleteRow',
-    icon: 'mdi-table-row-remove',
-    label: t('editor.toolbar.deleteRow'),
-    visible: inTable,
-    command: (c) => c.deleteRow(),
-  },
-  {
-    key: 'deleteColumn',
-    icon: 'mdi-table-column-remove',
-    label: t('editor.toolbar.deleteColumn'),
-    visible: inTable,
-    command: (c) => c.deleteColumn(),
-  },
-  {
-    key: 'deleteTable',
-    icon: 'mdi-table-remove',
-    label: t('editor.toolbar.deleteTable'),
-    visible: inTable,
-    command: (c) => c.deleteTable(),
-  },
-])
-
-const bodyStyle = computed(() => ({
-  minHeight: props.minHeight ? `${props.minHeight}px` : undefined,
-  maxHeight: props.maxHeight ? `${props.maxHeight}px` : undefined,
-}))
+const bodyStyle = computed(() =>
+  fullscreen.value
+    ? {}
+    : {
+        minHeight: props.minHeight ? `${props.minHeight}px` : undefined,
+        maxHeight: props.maxHeight ? `${props.maxHeight}px` : undefined,
+      }
+)
 
 /** 点到正文下面的空白也算点进编辑器：最短的时候正文只有一行，框却有 200px 高。 */
 function focusBody(event: MouseEvent) {
@@ -179,20 +126,25 @@ defineExpose({
 </script>
 
 <template>
-  <div class="rt-editor">
-    <DocFormatToolbar
-      v-if="!hideToolbar"
-      class="rt-editor__toolbar"
-      :editor="editor ?? null"
-      :disabled="false"
-      disabled-reason=""
-      :extra="extraActions"
-    />
-    <div class="rt-editor__body" :style="bodyStyle" @click="focusBody">
-      <RichTextContent :editor="editor" :placeholder="placeholder ?? t('editor.placeholder')" />
+  <!-- 全屏时挪到 body 下：页面里的祖先可能自带层叠和裁切，fixed 铺不满窗口。 -->
+  <Teleport to="body" :disabled="!fullscreen">
+    <div class="rt-editor" :class="{ 'is-fullscreen': fullscreen }" @keydown="onKeydown">
+      <RichTextToolbar
+        v-if="!hideToolbar"
+        class="rt-editor__toolbar"
+        :editor="editor"
+        :can-insert-image="images !== null"
+        :uploading="uploading"
+        :fullscreen="fullscreen"
+        @insert-image="fileInput?.click()"
+        @toggle-fullscreen="fullscreen = !fullscreen"
+      />
+      <div class="rt-editor__body" :style="bodyStyle" @click="focusBody">
+        <RichTextContent :editor="editor" :placeholder="placeholder ?? t('editor.placeholder')" />
+      </div>
+      <input ref="fileInput" type="file" accept="image/*" hidden @change="insertImage" />
     </div>
-    <input ref="fileInput" type="file" accept="image/*" hidden @change="insertImage" />
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -206,6 +158,17 @@ defineExpose({
 }
 .rt-editor:focus-within {
   border-color: var(--muted);
+}
+.rt-editor.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  /* 盖住页面和弹窗（Vuetify 弹窗 2400），工具栏的下拉（2500）仍在它之上。 */
+  z-index: 2450;
+  border: none;
+  border-radius: 0;
+}
+.rt-editor.is-fullscreen .rt-editor__body {
+  padding: 24px max(16px, calc((100% - 760px) / 2));
 }
 .rt-editor__toolbar {
   flex: 0 0 auto;
