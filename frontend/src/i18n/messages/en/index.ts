@@ -29,6 +29,7 @@ import tasks from './tasks.json'
 import teams from './teams.json'
 import toolLabels from './toolLabels.json'
 import topic from './topic.json'
+import usage from './usage.json'
 import users from './users.json'
 import work from './work.json'
 
@@ -52,6 +53,7 @@ export default {
   feedback,
   featureStats,
   questions,
+  usage,
   users,
   tasks,
   teams,

@@ -52,6 +52,7 @@ async function mount(path: string) {
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
           { path: 'knowledge', name: 'TeamsDetailKnowledge', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
+          { path: 'credits', name: 'TeamsDetailCredits', component: blank },
         ],
       },
     ],
@@ -138,11 +139,19 @@ describe('首页目录', () => {
       expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/knowledge', '/teams/andy/compute']))
     )
     expect(hrefs()).not.toContain('/teams/andy/members')
+    // 自己的额度在个人设置里；团队才有「额度」这一页。
+    expect(hrefs()).not.toContain('/teams/andy/credits')
 
     const text = document.body.textContent ?? ''
     expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))
     expect(text.indexOf('团队')).toBeLessThan(text.indexOf('知是开发组'))
     expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
+  })
+
+  it('团队展开后有「额度」一页', async () => {
+    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'MEMBER')] } })
+    await mount('/teams/crew')
+    await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
   })
 
   it('空间点了就进那个空间', async () => {

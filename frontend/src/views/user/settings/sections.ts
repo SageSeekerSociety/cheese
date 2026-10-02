@@ -15,6 +15,7 @@ export function settingsGroups(): SettingsGroup[] {
         item('UserSettingsProfile', t('account.profile.title'), 'mdi-account'),
         item('UserSettingsRealName', t('account.settings.realName'), 'mdi-account-card'),
         item('UserSettingsSecurity', t('account.security.title'), 'mdi-lock'),
+        item('UserSettingsUsage', t('account.settings.usage'), 'mdi-chart-donut'),
       ],
     },
     {

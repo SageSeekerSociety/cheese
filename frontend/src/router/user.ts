@@ -31,6 +31,12 @@ export default {
           component: () => import('@/views/user/settings/Security.vue'),
         },
         {
+          // 芝士额度：自己本月用了多少，按协作、问答、写作分。
+          path: 'usage',
+          name: 'UserSettingsUsage',
+          component: () => import('@/views/user/settings/Usage.vue'),
+        },
+        {
           path: 'realname',
           name: 'UserSettingsRealName',
           component: () => import('@/views/user/settings/RealName.vue'),

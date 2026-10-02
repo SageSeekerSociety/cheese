@@ -392,7 +392,8 @@
       "devices": "Devices and connections",
       "app": "Desktop app"
     },
-    "closeHint": "Close settings (Esc)"
+    "closeHint": "Close settings (Esc)",
+    "usage": "Cheese credits"
   },
   "emailCode": {
     "title": "Sign in with an email code",
