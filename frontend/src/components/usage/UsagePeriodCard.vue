@@ -28,8 +28,9 @@ const { t, locale } = useI18n()
 const used = computed(() => props.period?.credits_used ?? null)
 const total = computed(() => props.period?.credits_total ?? null)
 const remaining = computed(() => props.period?.remaining_ratio ?? null)
-const tone = computed(() => remainingTone(remaining.value))
-const usedUp = computed(() => tone.value === 'out')
+const usedUp = computed(() => remainingTone(remaining.value) === 'out')
+/** 方案额度用完、还有其他额度时只是提醒：调用照常进行。 */
+const tone = computed(() => (usedUp.value && (props.otherCredits ?? 0) > 0 ? 'low' : remainingTone(remaining.value)))
 const usedUpText = computed(() =>
   (props.otherCredits ?? 0) > 0 ? t('usage.period.usedUpOther') : t('usage.period.usedUp')
 )
@@ -129,6 +130,7 @@ function windowUsed(w: UsageWindow): string {
 
 .upc__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
@@ -136,6 +138,7 @@ function windowUsed(w: UsageWindow): string {
 
 .upc__label {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   color: var(--ink);
@@ -145,6 +148,7 @@ function windowUsed(w: UsageWindow): string {
 }
 
 .upc__figure {
+  white-space: nowrap;
   color: var(--ink);
   font-size: 23px;
   font-weight: 600;
