@@ -8,6 +8,9 @@ Revision ID: 650de6af85af
 Revises: 1dd568ffdeef
 """
 
+import importlib.util
+from pathlib import Path
+
 from alembic import op
 
 revision = "650de6af85af"
@@ -24,7 +27,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError(
-        "irreversible: the document AI requests, attempts and proposals were "
-        "dropped with their rows"
-    )
+    # The tables come back as the migration that made them built them, empty:
+    # the rows went with the upgrade.
+    created = Path(__file__).with_name("a27d91f0b63e_document_ai_work.py")
+    spec = importlib.util.spec_from_file_location("document_ai_work", created)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.upgrade()
