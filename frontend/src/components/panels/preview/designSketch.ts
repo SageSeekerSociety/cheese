@@ -7,7 +7,12 @@ export type SketchTool = 'select' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse
 /** 会往图上画东西的工具；`select` 不在其中，它由工具栏最左边那颗单独的按钮表示。 */
 export const DRAW_TOOLS: readonly SketchTool[] = ['pen', 'line', 'arrow', 'rect', 'ellipse', 'text', 'redact']
 
-/** 五种颜色，和参考物一致：四个显眼的加上一个当涂黑用的近黑。 */
+/**
+ * 五种颜色：四个显眼的加上一个当涂黑用的近黑。
+ *
+ * 不是参考物那一套——参考物是 #E03131 #1971C2 #2F9E44 #1F1E1D 再加一个白。这里
+ * 没跟着换成白色：白在浅色底上看不见，要它看得见得先配一圈描边，那是另一件事。
+ */
 export const SKETCH_COLORS: readonly string[] = ['#e5484d', '#f5a524', '#30a46c', '#0091ff', '#16181d']
 
 export type PenStroke = { tool: 'pen'; color: string; width: number; points: Point[] }

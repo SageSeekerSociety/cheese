@@ -91,8 +91,24 @@ const GLYPH: Record<SketchTool, string> = {
       ●
     </button>
     <span class="sketch-toolbar__gap" />
-    <button type="button" :disabled="!canUndo" @click="emit('undo')">{{ t('design.undo') }}</button>
-    <button type="button" :disabled="!canRedo" @click="emit('redo')">{{ t('design.redo') }}</button>
+    <button
+      type="button"
+      :disabled="!canUndo"
+      aria-keyshortcuts="Meta+Z Control+Z"
+      :title="t('design.undoShortcut')"
+      @click="emit('undo')"
+    >
+      {{ t('design.undo') }}
+    </button>
+    <button
+      type="button"
+      :disabled="!canRedo"
+      aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
+      :title="t('design.redoShortcut')"
+      @click="emit('redo')"
+    >
+      {{ t('design.redo') }}
+    </button>
     <button type="button" :disabled="!hasStrokes" @click="emit('clear')">{{ t('design.clear') }}</button>
     <input
       v-if="hasStrokes"

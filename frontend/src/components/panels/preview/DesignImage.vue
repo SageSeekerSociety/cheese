@@ -55,6 +55,8 @@ const pane = ref<HTMLElement | null>(null)
 const viewport = ref<HTMLElement | null>(null)
 const selectedBox = ref<HTMLElement | null>(null)
 const toolbar = ref<InstanceType<typeof DesignSketchToolbar> | null>(null)
+/** 画布只在用着会画的工具时挂着，所以这一格多半是空的——Esc 要作废手里的这一笔时用它。 */
+const canvas = ref<InstanceType<typeof DesignSketchCanvas> | null>(null)
 const focusOrigin = ref<Element | null>(null)
 const geometry = ref<RegionNoteGeometry | null>(null)
 const image = ref<HTMLImageElement | null>(null)
@@ -372,8 +374,54 @@ function isTyping(target: EventTarget | null) {
     element.closest?.('input, textarea, [contenteditable="true"]') != null
   )
 }
+/**
+ * Esc 退出正在进行的操作，做掉了就报 true。
+ *
+ * 正在图上打字：这次文字作废，画笔留着，方便重打。否则是画到一半（或只是挑着一支
+ * 画笔）：手里的这一笔作废，光标交还默认的框选。已经框好的那一块不在这里动——它归
+ * 外面那条说明卡管（DesignRegionNote 自己接 Esc）。
+ */
+function exitCurrent(): boolean {
+  if (textEditing.value) {
+    canvas.value?.cancel()
+    return true
+  }
+  if (tool.value === 'select') return false
+  canvas.value?.cancel()
+  cancelSelection()
+  return true
+}
+/**
+ * 标注的键盘快捷键：撤销/重做/退出。
+ *
+ * 焦点落在输入框里时一律让开——那个「说一句要改什么」的框、图上的文字框，都要能用
+ * 自己的编辑键（含它们各自的撤销）。没有可撤销/可退的东西时也不拦，键照旧交回浏览器。
+ */
 function keyDown(event: KeyboardEvent) {
-  if (event.code !== 'Space' || isTyping(event.target)) return
+  if (isTyping(event.target)) return
+  const mod = event.metaKey || event.ctrlKey
+  // ⌘/Ctrl+Z 撤销；⇧⌘/Ctrl+Z 与 Ctrl+Y 重做。认 key 不认 code：撤销绑的是 Z 这个字母。
+  if (mod && event.key.toLowerCase() === 'z') {
+    if (event.shiftKey ? canRedo.value : canUndo.value) {
+      event.preventDefault()
+      if (event.shiftKey) redo()
+      else undo()
+    }
+    return
+  }
+  if (mod && event.key.toLowerCase() === 'y') {
+    if (canRedo.value) {
+      event.preventDefault()
+      redo()
+    }
+    return
+  }
+  if (event.key === 'Escape') {
+    // 没做到事就不拦：Esc 在浏览器里还管着退出全屏这类事。
+    if (exitCurrent()) event.preventDefault()
+    return
+  }
+  if (event.code !== 'Space') return
   // 空格在浏览器里是翻页，按住时要把它让给平移。
   event.preventDefault()
   spaceHeld.value = true
@@ -479,6 +527,7 @@ onBeforeUnmount(() => {
           />
           <DesignSketchCanvas
             v-if="drawing"
+            ref="canvas"
             :image="image"
             :identity="regionIdentity"
             :tool="tool"
