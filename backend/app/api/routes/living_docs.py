@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.doc_edits import decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store
 from app.api.response import ok
@@ -32,7 +33,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
-from app.domain.living_doc.schemas import RestoreIn
+from app.domain.living_doc.schemas import PassageEditsIn, RestoreIn
 from app.domain.living_doc.services import DocumentJournal, content_hash
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
@@ -55,6 +56,10 @@ async def get_topic_doc(
         return ok(None)
     snapshot = BlockOut.model_validate(doc).model_dump(mode="json")
     snapshot["content_hash"] = content_hash(doc.content)
+    # What is proposed and not yet decided: not part of `content`.
+    snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(
+        place.room_id
+    )
     return ok(snapshot)
 
 
@@ -176,6 +181,63 @@ async def edit_topic_doc(
         actor=actor.handle,
         operation=operation,
         check=True,
+    )
+
+
+@router.post("/{topic_id}/doc/edits")
+async def edit_doc_passages(
+    topic_id: uuid.UUID,
+    body: PassageEditsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Change passages of the document: each ``old`` (once in its Markdown)
+    becomes ``new``, directly or as suggestions (``app.api.doc_edits``).
+
+    For the room's agent and for people alike: a person restoring one change
+    edits directly, as themselves. Nothing is applied unless every edit can
+    be; a refusal names the edit (``data.index``)."""
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.author, topic_id=place.room_id, project_id=place.project_id
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("修改文档需要已认证的写入者")
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    topics.require_doc_writable(place)
+    doc = await topics.doc_of_room(place.room_id)
+    if doc is None:
+        raise NotFoundError("本话题还没有实况文档")
+    edits = [edit.model_dump() for edit in body.edits]
+    decision = await decide(
+        db,
+        room_id=place.room_id,
+        actor=actor.handle,
+        content=doc.content,
+        edits=edits,
+        asked=body.mode,
+    )
+    # The service's store takes the room's lock in a transaction of its own.
+    await db.commit()
+    result = await collab.edit(
+        place.room_id,
+        edits=edits,
+        actor=actor.handle,
+        requested_by=decision.requested_by,
+        mode=decision.mode,
+        reason=body.reason,
+    )
+    stored = (result.get("stored") or {}).get("data") or {}
+    return ok(
+        {
+            "mode": decision.mode,
+            "requested_by": decision.requested_by,
+            "edits": result.get("edits") or [],
+            "doc_version": stored.get("doc_version"),
+        }
     )
 
 
@@ -319,6 +381,15 @@ class StoreIn(BaseModel):
     #: The service's first conversion of a Markdown document: it respells the
     #: text the way the document exports it, and is not news to the room.
     converted: bool = False
+    #: Every suggestion pending in the stored state: ``{id, author, old, new}``.
+    suggestions: list[dict] = Field(default_factory=list)
+    #: An edit made for someone (``/edit``): who asked for it.
+    requested_by: str | None = None
+    #: An edit's passages, ``{old, new, suggestion_id?}``.
+    edits: list[dict] | None = None
+    #: The edit proposed its changes instead of making them.
+    suggested: bool = False
+    reason: str | None = None
 
 
 @internal.put("/documents/{name}")
@@ -340,6 +411,11 @@ async def store_document(
         actors=body.actors or ["system"],
         operation=body.operation,
         quiet=body.converted,
+        suggestions=body.suggestions,
+        requested_by=body.requested_by,
+        edits=body.edits,
+        suggested=body.suggested,
+        reason=body.reason,
     )
     await db.commit()
     await announce(room_id, stored, chat)

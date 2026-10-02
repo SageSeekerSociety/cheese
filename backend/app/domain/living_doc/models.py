@@ -45,6 +45,9 @@ class DocumentVersion(UuidPk, Base):
     previous_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     base_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     actor: Mapped[str] = mapped_column(String(128))
+    #: The person a change was made for, when someone else (the room's agent)
+    #: made it at their request.
+    requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     operation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     event_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -63,6 +66,10 @@ class DocumentState(Base):
         ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
     )
     state: Mapped[bytes] = mapped_column(LargeBinary)
+    #: The suggestions pending in this state: ``{id, author, old, new,
+    #: reason}``, as the service reported them (``reason`` kept from the edit
+    #: that proposed each one).
+    suggestions: Mapped[list] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
