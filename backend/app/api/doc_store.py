@@ -39,6 +39,8 @@ class Stored:
     answer: dict
     notice: Block | None = None
     changed: bool = False
+    #: The notice is an earlier line extended, not a new one.
+    merged: bool = False
 
 
 def snapshot(doc: Block, operation_id: uuid.UUID | None) -> dict:
@@ -85,7 +87,8 @@ async def store(
     if content is None:
         doc = await blocks.doc_root(room_id)
         return Stored(answer={"doc_version": doc.doc_version if doc else 0})
-    doc, notice = await DocumentWriter(db, summarize_doc_change).record(
+    writer = DocumentWriter(db, summarize_doc_change)
+    doc, notice = await writer.record(
         room_id=room_id,
         project_id=place.project_id,
         content=content,
@@ -101,6 +104,7 @@ async def store(
             answer=snapshot(doc, None) if doc else {"doc_version": 0},
             notice=notice,
             changed=changed,
+            merged=writer.notice_merged,
         )
     if doc is None:
         # An operation that wrote an empty document into a room that has none.
@@ -116,17 +120,20 @@ async def store(
     else:
         receipt = snapshot(doc, operation_id)
     await journal.finish(claim, receipt)
-    return Stored(answer=receipt, notice=notice, changed=changed)
+    return Stored(
+        answer=receipt, notice=notice, changed=changed, merged=writer.notice_merged
+    )
 
 
 async def announce(room_id: uuid.UUID, stored: Stored, chat: ChatService) -> None:
     """After the commit: tell the room what the store changed."""
     broker = get_broker()
     if stored.notice is not None:
+        # An extended line is replaced where it stands on every open page.
         await broker.publish(
             str(room_id),
             {
-                "type": "event_block",
+                "type": "block_updated" if stored.merged else "event_block",
                 "block": BlockOut.model_validate(stored.notice).model_dump(mode="json"),
             },
         )

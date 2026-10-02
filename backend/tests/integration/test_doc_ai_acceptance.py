@@ -207,7 +207,8 @@ async def test_two_acceptors_with_different_ops_have_only_one_effect(
                 Block.kind == BlockKind.event,
             )
         )
-        assert edits == 2
+        # The seed and the acceptance came in a row: one line in the room.
+        assert edits == 1
 
 
 @pytest.mark.anyio
@@ -308,7 +309,8 @@ async def test_distinct_same_base_proposals_have_one_canonical_effect(
             .select_from(Block)
             .where(Block.topic_id == room, Block.kind == BlockKind.event)
         )
-        assert events == 2
+        # The seed and the acceptance came in a row: one line in the room.
+        assert events == 1
 
 
 @pytest.mark.anyio
