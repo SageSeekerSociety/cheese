@@ -14,12 +14,13 @@ import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale } from '@/i18n'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -66,7 +67,7 @@ const Host = defineComponent({
   },
 })
 
-function mount(inner: Record<string, unknown> = {}) {
+function mount(inner: Record<string, unknown> = {}, pinia = createPinia()) {
   // 整页形态下项目头那一行填进顶栏那一格（Teleport 到 #app-bar-slot，真实环境里
   // 由 MobileAppBar 画）。落点不存在时 Teleport 会在卸载时炸，所以这里把它摆出来
   // ——和 v-navigation-drawer 必须有 v-layout 是同一类前置条件。
@@ -87,7 +88,7 @@ function mount(inner: Record<string, unknown> = {}) {
         ...inner,
       },
     },
-    global: { plugins: [vuetify, router, createPinia()] },
+    global: { plugins: [vuetify, router, pinia] },
   })
 }
 
@@ -338,6 +339,47 @@ describe('行左边那一个槽', () => {
     const { container } = mount({ topics: rows })
     const mark = topicRowFor(container, 'a').querySelector('[data-state="stalled"]')
     expect(mark?.getAttribute('title')).toContain('最近一轮报错了')
+  })
+
+  // 时间线说不出在等谁的那一笔（member 为 null），侧栏把它记在项目默认的队友头上。
+  // 那就得是**同一位**：同一个头像、同一种底色，和它在干活时画出来的一样。
+  describe('说不出是谁的等待，落在项目默认的那位队友身上', () => {
+    function withDefaultAgent() {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      useWorkspaceStore().members = [
+        member('me', '我'),
+        { user_handle: 'cheese-a1', name: '小芝', agent: true, project_default: true } as ProjectMemberRow,
+      ]
+      return pinia
+    }
+    const failedNow = () => ({ member: null, reason: 'failed', since: new Date().toISOString() })
+
+    it('它一边在干活、房间一边在等一个说不出是谁的成员：这一行只画它一次', () => {
+      const rows = topics.map((t) =>
+        t.id === 'a'
+          ? ({ ...t, waits: [failedNow()], activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
+          : t
+      )
+      const { container } = mount({ topics: rows }, withDefaultAgent())
+      const marks = topicRowFor(container, 'a').querySelectorAll('[data-state]')
+      expect(marks.length).toBe(1)
+    })
+
+    it('同一位队友在哪一行都是同一种底色', () => {
+      const rows = topics.map((t) =>
+        t.id === 'a'
+          ? ({ ...t, waits: [failedNow()] } as Topic)
+          : t.id === 'b'
+            ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
+            : t
+      )
+      const { container } = mount({ topics: rows }, withDefaultAgent())
+      const toneIn = (title: string) =>
+        topicRowFor(container, title).querySelector('[data-state] .cheese-avatar')?.getAttribute('data-tone')
+      expect(toneIn('b')).toBeTruthy()
+      expect(toneIn('a')).toBe(toneIn('b'))
+    })
   })
 
   it('选中的行和有未读的行给的不是同一个标记', () => {
