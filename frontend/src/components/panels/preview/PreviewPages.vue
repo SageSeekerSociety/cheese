@@ -5,10 +5,14 @@
 // 没有它，一页文档就是一张图：读的人不能选、不能搜、不能复制一句话给芝士看。
 // 有了它，读者指着一句话说「这里不对」这件事才成立——选中的原文就是交给芝士的坐标。
 //
+// 指不完的地方就指位置：图里的东西、排版的空当，那些没有文字可选的地方，「指位置」
+// 让读者在页面上点一下，交出去的是这一页的哪个比例位置。
+//
 // 页面按需渲染。一份几十页的文档一次性全画出来，等待的是空白，而且大多数页永远
 // 不会被看到。
 
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import type { PagePin, SlideSource } from './slidesContext'
 
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
@@ -19,20 +23,36 @@ type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 const props = defineProps<{
   /** 文档的原始字节。换一份文档就换一个 ArrayBuffer。 */
   data: ArrayBuffer | null
+  /** 这一份文档已验证的身份。没有它就不让指位置：指出去的一定带版本，指着一个
+   *  自己都说不上是哪一版的页面，受话人没法知道他说的是哪一份。 */
+  context?: SlideSource
 }>()
 
 const emit = defineEmits<{
   /** 读者选中了一段原文，附带它在第几页。 */
   (e: 'quote', payload: { text: string; page: number }): void
+  /** 读者在一页上点了一下。 */
+  (e: 'pin', payload: PagePin): void
 }>()
 
-type PageSlot = { number: number; el: HTMLElement | null; rendered: boolean }
+/** `host` 是页里那块画布住的地方，和 `el` 分开是因为重画要 `replaceChildren`——
+ *  清掉的只能是画出来的那一层，页上那点标记得留着。 */
+type PageSlot = {
+  number: number
+  el: HTMLElement | null
+  host: HTMLElement | null
+  rendered: boolean
+}
 
 const container = ref<HTMLElement | null>(null)
 const pages = ref<PageSlot[]>([])
 const loading = ref(false)
 const failure = ref('')
 const doc = shallowRef<PDFDocumentProxy | null>(null)
+/** 指位置模式。开着的时候点页面是「指这里」，不是选文字。 */
+const pointing = ref(false)
+/** 刚指过的那一点，画在页上，读者看得见自己指的是哪儿。 */
+const marked = ref<{ page: number; x: number; y: number } | null>(null)
 
 let lib: PdfLib | null = null
 // 关文档要关加载任务，不是文档对象：worker 挂在任务上，只丢掉文档会把它留下。
@@ -69,11 +89,12 @@ function scaleFor(page: PDFPageProxy): number {
 }
 
 async function renderPage(slot: PageSlot, mine: number) {
-  if (slot.rendered || !doc.value || !slot.el) return
+  if (slot.rendered || !doc.value || !slot.el || !slot.host) return
   slot.rendered = true
+  const host = slot.host
   try {
     const page = await doc.value.getPage(slot.number)
-    if (mine !== renderGeneration || !slot.el) return
+    if (mine !== renderGeneration || !slot.el || !slot.host) return
 
     const ratio = window.devicePixelRatio || 1
     const scale = scaleFor(page)
@@ -86,7 +107,7 @@ async function renderPage(slot: PageSlot, mine: number) {
     canvas.style.height = `${Math.floor(viewport.height)}px`
     slot.el.style.width = `${Math.floor(viewport.width)}px`
     slot.el.style.height = `${Math.floor(viewport.height)}px`
-    slot.el.replaceChildren(canvas)
+    host.replaceChildren(canvas)
 
     // 交画布本身，不交 2D 上下文：v6 起 canvasContext 只为兼容保留，而两个同时给
     // 是明确不允许的。
@@ -95,7 +116,7 @@ async function renderPage(slot: PageSlot, mine: number) {
       viewport,
       transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
     }).promise
-    if (mine !== renderGeneration || !slot.el) return
+    if (mine !== renderGeneration || !slot.el || !slot.host) return
 
     const textLayer = document.createElement('div')
     textLayer.className = 'pv-text'
@@ -104,7 +125,7 @@ async function renderPage(slot: PageSlot, mine: number) {
     // 文字层本身——少了它整层会缩在左上角，而屏幕上看不出来：画布还是对的，只有
     // 选中时高亮落在别处。
     textLayer.style.setProperty('--scale-factor', String(scale))
-    slot.el.appendChild(textLayer)
+    host.appendChild(textLayer)
     const layer = new lib!.TextLayer({
       textContentSource: page.streamTextContent(),
       container: textLayer,
@@ -112,7 +133,7 @@ async function renderPage(slot: PageSlot, mine: number) {
     })
     await layer.render()
   } catch (e) {
-    if (mine !== renderGeneration || !slot.el) return
+    if (mine !== renderGeneration || !slot.host) return
     showPageFailure(slot, e)
   }
 }
@@ -122,14 +143,14 @@ async function renderPage(slot: PageSlot, mine: number) {
  *  不这么做的话，屏幕上是永远的空白——和这个组件最初那个 bug 是同一副样子：读者
  *  分不出「还在画」「这一页没有内容」和「坏了」，也没有东西可点。别的页照旧画。 */
 function showPageFailure(slot: PageSlot, e: unknown) {
-  if (!slot.el) return
+  if (!slot.host) return
   const box = document.createElement('div')
   box.className = 'pv-error'
   box.textContent = t('work.room.preview.pageFailed', {
     page: slot.number,
     error: e instanceof Error ? e.message : t('work.room.preview.renderFailed'),
   })
-  slot.el.replaceChildren(box)
+  slot.host.replaceChildren(box)
 }
 
 function observe() {
@@ -156,6 +177,7 @@ async function open(data: ArrayBuffer) {
   loading.value = true
   failure.value = ''
   pages.value = []
+  marked.value = null
   try {
     const pdfjs = await library()
     // pdf.js 会接管这段内存，传副本进去，否则同一份字节第二次打开是空的。
@@ -167,6 +189,7 @@ async function open(data: ArrayBuffer) {
     pages.value = Array.from({ length: loaded.numPages }, (_, i) => ({
       number: i + 1,
       el: null,
+      host: null,
       rendered: false,
     }))
     await nextTick()
@@ -191,9 +214,12 @@ async function open(data: ArrayBuffer) {
  *  回调把一份还在解析的文档整个丢掉——见上面两份代际的说明。 */
 function relayout() {
   renderGeneration += 1
+  // 页要重画，指过的那一点也得撤：它是按比例画在页上的，页面尺寸一变，同一个比例
+  // 落在别的内容上，读者看到的就不再是他指的那一处。
+  marked.value = null
   for (const slot of pages.value) {
     slot.rendered = false
-    slot.el?.replaceChildren()
+    slot.host?.replaceChildren()
   }
   observe()
 }
@@ -220,6 +246,72 @@ function onSelect() {
 function setRef(slot: PageSlot, el: unknown) {
   slot.el = (el as HTMLElement) ?? null
 }
+
+function setHost(slot: PageSlot, el: unknown) {
+  slot.host = (el as HTMLElement) ?? null
+}
+
+function togglePointing() {
+  pointing.value = !pointing.value
+  if (!pointing.value) marked.value = null
+}
+
+function ratio(value: number): number {
+  return Math.min(1, Math.max(0, value))
+}
+
+/** 点了一下：算出它在那一页的哪个比例位置。
+ *
+ *  没画出来的页不接受——页框先摆在那儿，可它的尺寸还是零，点上去算出来的比例没有
+ *  意义，而读者看不见自己指了什么。 */
+function onPoint(event: MouseEvent) {
+  if (!pointing.value || !props.context) return
+  const target = event.target
+  const pageEl = (target instanceof Element ? target : null)?.closest('[data-page]') as HTMLElement | null
+  if (!pageEl || !container.value?.contains(pageEl)) return
+  const slot = pages.value.find((p) => p.el === pageEl)
+  if (!slot?.host?.querySelector('canvas')) return
+  const box = pageEl.getBoundingClientRect()
+  if (!box.width || !box.height) return
+  const x = ratio((event.clientX - box.left) / box.width)
+  const y = ratio((event.clientY - box.top) / box.height)
+  marked.value = { page: slot.number, x, y }
+  emit('pin', { page: slot.number, x, y, context: props.context })
+}
+
+/** 拿这一页现在画出来的样子换一张 PNG，交给指出的那一处当配图。
+ *
+ *  原尺寸交出去太大：高分屏上一页能到三千像素宽，而附件是给受话人看的。等比缩到
+ *  这个宽度以内，比例和落点是同一套，看的人拿它对照页上的位置不会错位。
+ *
+ *  没有画布（页面还没画出来）或浏览器不给 PNG 时返回 null——那时只是没有配图，
+ *  位置那句话照样成立。 */
+const SNAPSHOT_MAX_WIDTH = 1600
+async function snapshot(page: number): Promise<{ blob: Blob; width: number; height: number } | null> {
+  const canvas = pages.value.find((p) => p.number === page)?.host?.querySelector('canvas')
+  if (!canvas) return null
+  try {
+    let source: HTMLCanvasElement = canvas
+    if (canvas.width > SNAPSHOT_MAX_WIDTH) {
+      const scaled = document.createElement('canvas')
+      scaled.width = SNAPSHOT_MAX_WIDTH
+      scaled.height = Math.max(1, Math.round((canvas.height * SNAPSHOT_MAX_WIDTH) / canvas.width))
+      const ctx = scaled.getContext('2d')
+      if (!ctx) return null
+      ctx.drawImage(canvas, 0, 0, scaled.width, scaled.height)
+      source = scaled
+    }
+    const blob = await new Promise<Blob | null>((resolve) => source.toBlob((b) => resolve(b), 'image/png'))
+    if (!blob) return null
+    return { blob, width: source.width, height: source.height }
+  } catch {
+    // 这个浏览器给不出 PNG（画布被污染、toBlob 缺失）：位置那句话照样发得出去，
+    // 只是没有配图。
+    return null
+  }
+}
+
+defineExpose({ snapshot })
 
 watch(
   () => props.data,
@@ -252,7 +344,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="container" class="pv" @mouseup="onSelect">
+  <div ref="container" class="pv" :class="{ 'pv--pointing': pointing }" @mouseup="onSelect" @click="onPoint">
+    <div class="pv__tools">
+      <v-btn
+        size="small"
+        :variant="pointing ? 'flat' : 'tonal'"
+        :color="pointing ? 'primary' : undefined"
+        :prepend-icon="pointing ? 'mdi-crosshairs-gps' : 'mdi-crosshairs'"
+        :aria-pressed="pointing"
+        :disabled="!context"
+        :title="context ? t('work.room.preview.pinHint') : t('work.room.preview.pinNeedsVersion')"
+        @click.stop="togglePointing"
+      >
+        {{ t('work.room.preview.pin') }}
+      </v-btn>
+    </div>
     <div v-if="loading" class="pv__state">
       <v-progress-circular indeterminate color="primary" size="24" />
     </div>
@@ -267,7 +373,17 @@ onBeforeUnmount(() => {
       :ref="(el) => setRef(slot, el)"
       :data-page="slot.number"
       class="pv__page"
-    />
+    >
+      <div :ref="(el) => setHost(slot, el)" class="pv__canvas" />
+      <!-- 指过的那一点。画在页里，不画在容器上：页是按比例定位的，滚动和宽度变化
+           都跟着它走。 -->
+      <span
+        v-if="marked && marked.page === slot.number"
+        class="pv__pin"
+        :style="{ left: `${marked.x * 100}%`, top: `${marked.y * 100}%` }"
+        aria-hidden="true"
+      />
+    </div>
   </div>
 </template>
 
@@ -307,6 +423,42 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   overflow: hidden;
   flex: none;
+}
+
+/* 指位置的时候点的是纸，不是纸上的字：文字层整个让开，否则读者一点就选中一行字。 */
+.pv--pointing .pv__page {
+  cursor: crosshair;
+}
+.pv--pointing .pv__page :deep(.pv-text) {
+  pointer-events: none;
+}
+
+/* 页在上、工具条在右上：滚到哪儿它都在。 */
+.pv__tools {
+  position: sticky;
+  top: 0;
+  align-self: flex-end;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  margin-bottom: -8px;
+  padding-bottom: 8px;
+}
+
+.pv__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.pv__pin {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
 }
 
 .pv__page :deep(canvas) {

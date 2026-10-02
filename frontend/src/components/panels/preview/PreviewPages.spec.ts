@@ -101,11 +101,48 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-function mount() {
+const context = {
+  topicId: 'room',
+  path: 'deck.pdf',
+  source: 'committed' as const,
+  taskId: 'task',
+  version: 'v7',
+}
+
+function mount(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
   return render(PreviewPages, {
-    props: { data: new ArrayBuffer(8) },
-    global: { stubs: { VIcon: true, VProgressCircular: true } },
+    props,
+    global: {
+      // 按钮原样落成 <button>：这一条要读它的 disabled 和 aria-pressed。
+      stubs: {
+        VIcon: true,
+        VProgressCircular: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
   })
+}
+
+/** 打开一份能画出来的文档：pdf.js 是假的，解析得自己放行，然后等两页都画出来。 */
+async function opened(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+  const ui = mount(props)
+  await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
+  pdf.resolveDoc?.(DOCUMENT)
+  await waitFor(() => expect(ui.container.querySelectorAll('canvas')).toHaveLength(2))
+  return ui
+}
+
+/** 每次 emit 的实参表。组件的 emits 类型让 testing-library 的返回类型收得太窄，
+ *  读实参还得自己摊开。 */
+function pins(ui: ReturnType<typeof mount>): unknown[] {
+  return (ui.emitted('pin')?.[0] ?? []) as unknown[]
+}
+
+/** 页框的量测在 happy-dom 里全是零，而指位置要的正是比例：给那一页摆一个框。 */
+function pageBox(container: Element, number: number, rect = { left: 100, top: 200, width: 400, height: 800 }) {
+  const element = container.querySelector(`[data-page="${number}"]`) as HTMLElement
+  element.getBoundingClientRect = () => rect as DOMRect
+  return element
 }
 
 describe('分页文档的阅读视图', () => {
@@ -178,5 +215,62 @@ describe('分页文档的阅读视图', () => {
     await waitFor(() => expect(emitted().quote).toHaveLength(1))
     expect(emitted().quote![0]).toEqual([{ text: '第一页', page: 1 }])
     selection.removeAllRanges()
+  })
+})
+
+describe('在页面上指一点', () => {
+  it('这一页的版本没确认就不给指：按钮禁用，点了也不进指位置', async () => {
+    const ui = await opened()
+
+    const pin = ui.getByRole('button', { name: '指位置' })
+    expect(pin).toHaveProperty('disabled', true)
+
+    // 真浏览器里禁用的按钮根本收不到 click；这里直接点页面，守的是组件自己那道闸：
+    // 没有已确认的版本，怎么点都不发。
+    await fireEvent.click(pageBox(ui.container, 1), { clientX: 200, clientY: 400 })
+    expect(ui.emitted('pin')).toBeUndefined()
+    expect(ui.container.querySelector('.pv__pin')).toBeNull()
+  })
+
+  it('点一下报的是这一点在那一页里的比例，屏上同时留下标记', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+
+    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(pageBox(ui.container, 1), { clientX: 200, clientY: 400 })
+
+    expect(pins(ui)[0]).toEqual({ page: 1, x: 0.25, y: 0.25, context })
+    const mark = ui.container.querySelector('.pv__pin') as HTMLElement
+    expect(mark.style.left).toBe('25%')
+    expect(mark.style.top).toBe('25%')
+  })
+
+  it('点在页框外的坐标夹到边界；还没画出来的那一页不接受', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+
+    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    // 框是 (100,200)-(500,1000)，点在框右下方很远。
+    await fireEvent.click(pageBox(ui.container, 1), { clientX: 1000, clientY: 1400 })
+    expect(pins(ui)[0]).toMatchObject({ page: 1, x: 1, y: 1 })
+  })
+
+  it('快照交的是这一页画出来的样子；还没画出来就交不出图', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+
+    // 组件不把 snapshot 挂在 props 上，只有实例上拿得到——测试里就这么拿。
+    const host = ui.container.firstElementChild as Element & {
+      __vueParentComponent?: { exposed?: { snapshot?: (page: number) => Promise<unknown> } }
+    }
+    const snapshot = host.__vueParentComponent?.exposed?.snapshot
+    if (!snapshot) throw new Error('PreviewPages 没把 snapshot 交出来')
+
+    const canvas = ui.container.querySelector('canvas') as HTMLCanvasElement
+    canvas.toBlob = ((callback: (blob: Blob | null) => void) =>
+      callback(new Blob(['png'], { type: 'image/png' }))) as HTMLCanvasElement['toBlob']
+    canvas.width = 800
+    canvas.height = 1000
+
+    await expect(snapshot(1)).resolves.toMatchObject({ width: 800, height: 1000 })
+    // 第 2 页还没画出来：没有画布就不硬凑一张图。
+    await expect(snapshot(9)).resolves.toBeNull()
   })
 })

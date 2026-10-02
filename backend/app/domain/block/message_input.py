@@ -1,12 +1,14 @@
 """Typed data accepted by the room's single message door."""
 
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class QuotedContextIn(BaseModel):
+class SlidePageQuoteIn(BaseModel):
+    """A page of text, or a passage selected inside one."""
+
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["slide-page"]
@@ -20,6 +22,31 @@ class QuotedContextIn(BaseModel):
     # 只有整页。新发的一律显式带上。
     scope: Literal["page", "selection"] = "page"
     text: str
+
+
+class PagePinQuoteIn(BaseModel):
+    """A point on a page: `x`/`y` are ratios of the page's width and height, not pixels.
+
+    Ratios because the page is redrawn to the panel width and readers zoom: a pixel
+    coordinate only holds for the revision it was taken on, a ratio points back to the
+    same spot on any of them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["page-pin"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    page: int = Field(gt=0, strict=True)
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
+QuotedContextIn = Annotated[
+    SlidePageQuoteIn | PagePinQuoteIn, Field(discriminator="kind")
+]
 
 
 class ChatAttachmentIn(BaseModel):

@@ -22,6 +22,7 @@
   "wholePage": "Whole-page PDF text context",
   "quotedPage": "Quoted text from page {page}",
   "quotedSelection": "A quoted selection on page {page}",
+  "pinnedPage": "Pointed at a spot on page {page}",
   "sourceCommitted": "Committed file",
   "sourceLive": "Current working file",
   "removeQuote": "Remove reference",
