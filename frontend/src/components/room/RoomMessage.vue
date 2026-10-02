@@ -215,10 +215,12 @@ async function onAgentTextClick(e: MouseEvent) {
     <span v-if="outgoing && !runStart && time" class="im-pending-state">{{ time }}</span>
 
     <div class="im-main">
-      <div v-if="runStart" class="im-meta">
-        <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
-        <ExternalTag v-if="external && !isAgent" />
-        <span class="im-time">{{ time }}</span>
+      <div v-if="runStart || !outgoing" class="im-meta">
+        <template v-if="runStart">
+          <button type="button" class="im-name im-person" :data-handle="block.author">{{ authorName }}</button>
+          <ExternalTag v-if="external && !isAgent" />
+          <span class="im-time">{{ time }}</span>
+        </template>
       </div>
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
