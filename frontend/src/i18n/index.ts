@@ -14,13 +14,21 @@ export function isLocale(value: unknown): value is Locale {
   return value === 'en' || value === 'zh-CN'
 }
 
-export function resolveInitialLocale(): Locale {
+/** The language this browser keeps, or null when it was never picked here and
+ *  the page only follows the browser's own language. */
+export function storedLocale(): Locale | null {
   try {
     const saved = localStorage.getItem(preferenceKey)
     if (isLocale(saved)) return saved
   } catch {
     // Browser storage can be unavailable in private or restricted contexts.
   }
+  return null
+}
+
+export function resolveInitialLocale(): Locale {
+  const saved = storedLocale()
+  if (saved) return saved
   return typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
 }
 

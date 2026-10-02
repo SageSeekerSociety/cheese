@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import languages_by_ids
 
 #: At most this many are handed over at once: back from a night asleep, the
 #: system's notification list should not fill up.
@@ -75,8 +75,7 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
     latest = await repo.latest_id_for_user(user_id, PUSHABLE)
     if after is None:
         return {"latest": latest, "items": []}
-    person = await UserRepository(db).get_by_id(user_id)
-    locale = person.language if person else None
+    locale = (await languages_by_ids(db, [user_id])).get(user_id)
     items = []
     for row in await repo.pushable_after(user_id, PUSHABLE, after, NOTICES_AT_ONCE):
         payload = row.metadata_payload or {}

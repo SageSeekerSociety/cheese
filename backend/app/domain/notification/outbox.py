@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE, push_text
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import languages_by_ids
 
 LEASE_SECONDS = 120
 
@@ -44,7 +44,7 @@ class ChannelIntentHandler:
             for d in deliveries
             if self.push_enabled and d.type in PUSHABLE
         ]
-        recipients = await UserRepository(self.session).get_by_ids(pushed)
+        languages = await languages_by_ids(self.session, pushed)
         for delivery in deliveries:
             common = {
                 "recipientId": delivery.recipient_id,
@@ -54,11 +54,10 @@ class ChannelIntentHandler:
             }
             channels = [] if delivery.type in MAILBOX_ONLY else [("email", common)]
             if self.push_enabled and delivery.type in PUSHABLE:
-                recipient = recipients.get(delivery.recipient_id)
                 title, body = push_text(
                     delivery.type,
                     delivery.payload,
-                    recipient.language if recipient else None,
+                    languages.get(delivery.recipient_id),
                 )
                 channels.append(
                     (

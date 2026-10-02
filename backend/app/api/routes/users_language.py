@@ -22,7 +22,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.block.notice_text import LOCALES
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import set_language
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -42,12 +42,10 @@ async def set_my_language(
 ) -> dict:
     if payload.language not in LOCALES:
         raise BadRequestError(f"Unsupported language: {payload.language}")
-    user = await UserRepository(session=session).get_by_id(auth_user.user_id)
-    if user is None:
+    if not await set_language(session, auth_user.user_id, payload.language):
         raise NotFoundError("User not found")
-    user.language = payload.language
     return {
         "code": 200,
         "message": "Language saved.",
-        "data": {"language": user.language},
+        "data": {"language": payload.language},
     }

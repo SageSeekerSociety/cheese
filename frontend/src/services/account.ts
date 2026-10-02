@@ -3,7 +3,7 @@ import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
 
-import i18n, { isLocale, onLocaleChosen, setLocale } from '@/i18n'
+import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
@@ -98,10 +98,10 @@ export class AccountService {
   // 生人送进推广页。要靠登录态做路由决定的地方先 await 这一个。
   sessionRestored: Promise<void> = Promise.resolve()
   // 界面语言存在账号上：推送和桌面端通知是服务端按收件人的语言写的，服务端只能
-  // 从这里知道。登录后以账号上那份为准，浏览器里那份（i18n/index.ts）只是它的
-  // 缓存，也是未登录页面唯一的一份。这一次访问里登录之前选过语言，那是最新的选
-  // 择：登录时写上去，而不是被账号上那份盖掉。
-  private chosenSignedOut = false
+  // 从这里知道。登录着的时候以账号上那份为准（打开页面、续签都跟着它，别的设备上
+  // 改了这里也换过去），浏览器里那份（i18n/index.ts）是它的缓存，也是未登录页面
+  // 唯一的一份。新登录那一下例外：这个浏览器里选定过语言，人是看着它登录的，那就
+  // 是他眼下的选择，写到账号上；只是跟着浏览器默认语言的，才换成账号上的。
   // 正在保存的那个语言：保存回来之前到达的用户记录（续签、别的标签页）还是旧
   // 的，不能拿它把刚选的语言换回去。
   private savingLanguage: Locale | null = null
@@ -119,11 +119,8 @@ export class AccountService {
   /** 这个人在界面上选了一种语言（i18n 的 `chooseLocale`，界面已经换过去了）：
    *  登录着就记到账号上。 */
   public async languageChosen(locale: Locale) {
-    if (!this.loggedIn) {
-      this.chosenSignedOut = true
-      return
-    }
-    await this.saveLanguage(locale)
+    // 没登录时选择只记在浏览器里，登录那一下再写上去（followLanguage）。
+    if (this.loggedIn) await this.saveLanguage(locale)
   }
 
   private async saveLanguage(locale: Locale) {
@@ -142,12 +139,12 @@ export class AccountService {
     }
   }
 
-  /** 拿到服务端给的用户记录后，让界面和账号上的语言一致。 */
-  private followLanguage(user: User) {
+  /** 拿到服务端给的用户记录后，让界面和账号上的语言一致。`signingIn`：这条记录
+   *  来自一次新登录，而不是续签或打开页面。 */
+  private followLanguage(user: User, signingIn = false) {
     if (this.savingLanguage) return
     const current = i18n.global.locale.value as Locale
-    if (this.chosenSignedOut || !isLocale(user.language)) {
-      this.chosenSignedOut = false
+    if (!isLocale(user.language) || (signingIn && storedLocale() !== null)) {
       if (user.language !== current) void this.saveLanguage(current)
       return
     }
@@ -183,7 +180,7 @@ export class AccountService {
     }
   }
 
-  public async updateUserInfo() {
+  public async updateUserInfo(signingIn = false) {
     if (!this.loggedIn || !this.accessToken) return
 
     try {
@@ -191,7 +188,7 @@ export class AccountService {
       if (data.user) {
         this.user = data.user
         localStorage.setItem('user', JSON.stringify(data.user))
-        this.followLanguage(data.user)
+        this.followLanguage(data.user, signingIn)
       }
     } catch (error) {
       console.error('Failed to update user info:', error)
@@ -273,10 +270,10 @@ export class AccountService {
       // 如果提供了用户信息，直接使用
       this.user = user
       localStorage.setItem('user', JSON.stringify(user))
-      this.followLanguage(user)
+      this.followLanguage(user, true)
     } else {
       // 如果没有提供用户信息（如 OAuth 登录），获取完整的用户信息
-      await this.updateUserInfo()
+      await this.updateUserInfo(true)
     }
   }
 

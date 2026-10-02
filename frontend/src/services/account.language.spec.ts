@@ -66,15 +66,22 @@ describe('the UI language follows the account', () => {
     await vi.waitFor(() => expect(setLanguage).toHaveBeenCalledWith('en'))
   })
 
-  it('signing in elsewhere shows the language the account keeps', async () => {
-    localStorage.setItem('cheese:locale', 'zh-CN')
+  it('signing in on a browser that never picked one shows the language the account keeps', async () => {
     const { account, locale } = await freshPage()
+    expect(locale()).not.toBe('zh-CN')
+    await account.login('token', { ...ALICE, language: 'zh-CN' })
     expect(locale()).toBe('zh-CN')
-    await account.login('token', { ...ALICE, language: 'en' })
-    expect(locale()).toBe('en')
     expect(setLanguage).not.toHaveBeenCalled()
     // …and the browser remembers it for the signed-out pages too.
-    expect(localStorage.getItem('cheese:locale')).toBe('en')
+    expect(localStorage.getItem('cheese:locale')).toBe('zh-CN')
+  })
+
+  it('a language this browser kept from an earlier visit wins at sign-in', async () => {
+    localStorage.setItem('cheese:locale', 'en')
+    const { account, locale } = await freshPage()
+    await account.login('token', { ...ALICE, language: 'zh-CN' })
+    expect(locale()).toBe('en')
+    await vi.waitFor(() => expect(setLanguage).toHaveBeenCalledWith('en'))
   })
 
   it('reopening the page while signed in follows a change made on another device', async () => {
