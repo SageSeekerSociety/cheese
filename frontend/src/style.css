@@ -1072,55 +1072,15 @@ button:not(.v-btn) {
 .page-container--wide {
   max-width: var(--page-w-wide);
 }
-.page-container--admin {
-  max-width: var(--page-w-admin);
-}
 
-/* 后台每一页的骨架，三层。它在这一份文件里而不是在每页各写一份，因为三层一起管着两件
-   不能各写各的事：**谁来滚**（`common.scss` 把 html/body/#app 定成固定高度 +
-   `overflow: hidden`，滚动由每一页自己领；少写一次那一页的内容就有一截永远够不着，
-   而且屏幕上没有任何东西看起来坏了），以及**内容列宽和页边距**（`--page-w-admin`
-   居中 + 24/16）。
-
-   从上到下：
-     `.admin-page`        灰画布 + 自己滚
-     `.admin-page__col`   1440 那一列，居中
-     `.admin-page__body`  正文，白卡片（`.admin-card`）摆在它上面
-
-   白色页头带由 `AdminPageHeader` 自己给（白底 + 底边一道 `--line`），它就住在
-   `.admin-page__col` 里。于是两件事各页一致：**发丝线的两端就是 1440 栏的两端**
-   （这条以前有三种长度：队列/成员/模型止于 1440 栏内，看板和功能数据页借负 margin
-   多出 24px，飞书页没有列宽可言），**标题左沿就是卡片左沿**（都在栏内缩 24px）。
-   发丝线本身通栏不内缩：一道在白色页头带中间停住的线看着像画错。
-
-   断点用**容器查询**（`.admin-page__col` 上的 `container-type`）：侧栏能手折，折出来
-   的宽度视口媒体查询看不见，要看的是「这一格有多宽」（先例：`RunningWorkView`）。 */
-.admin-page {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  background: var(--canvas);
-}
-
-.admin-page__col {
-  display: flex;
-  flex-direction: column;
-  /* `width: 100%` 不是多余的：`container-type: inline-size` 对这一格做了**行内尺寸
-     包含**，宽度不再由内容推出来（收缩到合适宽度时直接算成 0）；再叠上 `margin: 0
-     auto` 在 flex 父级里关掉 stretch，看板/功能数据/飞书三页的整列就塌成一个字宽，
-     中文竖着排。宽度必须从外面给。 */
-  width: 100%;
-  min-height: 0;
-  margin: 0 auto;
-  container-type: inline-size;
-}
-
+/* 后台每一页的正文内缩。页头、列宽（`--page-w-admin`）和谁来滚都由 `AdminPage` →
+   `AppPage` 的 `admin` 档给；这里只剩正文离列边的距离。左右 16 和页头标题同一条左沿，
+   队列的列表、表格和工具行用的也是这个数。 */
 .admin-page__body {
   display: flex;
   flex: 1 0 auto;
   flex-direction: column;
-  padding: 16px 24px 24px;
+  padding: 16px 16px 24px;
 }
 
 /* 正文里的白卡片。设计系统规定卡片**不带投影**、只用一道 `--line` 勾轮廓 ——
@@ -1149,26 +1109,18 @@ button:not(.v-btn) {
    而不是让人的眼从左边扫到右边再折回来看下一格的标签。 */
 .admin-form-card {
   box-sizing: border-box;
-  width: calc(100% - 48px);
+  width: calc(100% - 32px);
   max-width: 720px;
   padding: 20px 24px;
-  margin: 16px 24px 24px;
+  margin: 16px 16px 24px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
 }
 
 @media (max-width: 700px) {
-  .admin-page__body {
-    padding-right: 16px;
-    padding-left: 16px;
-  }
-
   .admin-form-card {
-    width: calc(100% - 32px);
     padding: 16px;
-    margin-right: 16px;
-    margin-left: 16px;
   }
 }
 

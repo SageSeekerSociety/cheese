@@ -66,7 +66,8 @@ async def task_liveness(
     """
     if not tasks:
         return {}
-    screens = {t.room_id: chat.has_live_screen(t.room_id) for t in tasks}
+    # 一个房间问一次：一屏上同一个房间的活有好几条，屏幕是房间的。
+    screens = {room: chat.has_live_screen(room) for room in {t.room_id for t in tasks}}
     claims = {t.id: chat.worker_live(t.room_id, t.subagent_id) for t in tasks}
     # 内存答不上话的那几条，一次问完它们的开工轮次还开不开 —— 一条活不单独查一次。
     asked = [

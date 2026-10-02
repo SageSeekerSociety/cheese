@@ -40,19 +40,24 @@ const activeTool = ref<'comments' | 'ai'>('comments')
 const busy = ref(false)
 const paneWidth = ref(0)
 const preferred = ref(340)
+const floating = ref(false)
 try {
   const saved = Number(localStorage.getItem(WIDTH_KEY))
   if (Number.isFinite(saved) && saved > 0) preferred.value = saved
 } catch {
   /* Width storage is optional. */
 }
-const docked = computed(() => paneWidth.value >= 688)
-const max = computed(() => Math.max(0, docked.value ? Math.min(560, paneWidth.value - 400) : paneWidth.value - 16))
+const canDock = computed(() => paneWidth.value >= 688)
+const docked = computed(() => canDock.value && !floating.value)
+const compact = computed(() => paneWidth.value <= 480)
+const max = computed(() => Math.max(0, Math.min(560, paneWidth.value - 400)))
 const min = computed(() => Math.min(280, max.value))
 function clamp(value: number) {
   return Math.round(Math.max(min.value, Math.min(max.value, value)))
 }
-const width = computed(() => clamp(preferred.value))
+const width = computed(() =>
+  docked.value ? clamp(preferred.value) : compact.value ? paneWidth.value : Math.min(340, paneWidth.value - 24)
+)
 function commit(value: number) {
   preferred.value = clamp(value)
   try {
@@ -106,11 +111,13 @@ function toggle() {
   if (opened.value && activeTool.value === 'comments') close()
   else void showComments()
 }
-async function showComments() {
+async function showComments(inFloatingWindow?: boolean) {
+  if (inFloatingWindow !== undefined) floating.value = inFloatingWindow
   activeTool.value = 'comments'
   return show()
 }
-async function showAi() {
+async function showAi(inFloatingWindow?: boolean) {
+  if (inFloatingWindow !== undefined) floating.value = inFloatingWindow
   activeTool.value = 'ai'
   return show()
 }
@@ -129,10 +136,14 @@ function tabKey(event: KeyboardEvent) {
   void nextTick(() => tabs.value?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus())
 }
 async function open(target: { anchorId: string | null; quote: string }) {
-  if (await showComments()) commentsRef.value?.open(target)
+  if (await showComments(!!target.anchorId || !!target.quote)) commentsRef.value?.open(target)
 }
 async function locate(id: string) {
-  if (await showComments()) commentsRef.value?.locate(id)
+  if (await showComments(true)) commentsRef.value?.locate(id)
+}
+function switchSurface() {
+  finishResize(false)
+  floating.value = !floating.value
 }
 function onEscape(e: KeyboardEvent) {
   if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
@@ -147,6 +158,7 @@ watch(
     finishResize(false)
     opened.value = false
     activeTool.value = 'comments'
+    floating.value = false
     returnFocus = null
     emit('update:openId', null)
   },
@@ -232,6 +244,13 @@ function resizeKey(e: KeyboardEvent) {
   e.preventDefault()
   commit(next)
 }
+watch(
+  docked,
+  (value) => {
+    if (!value) finishResize(false)
+  },
+  { flush: 'sync' }
+)
 onBeforeUnmount(() => {
   disposed = true
   context++
@@ -246,22 +265,11 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
 <template>
   <div ref="root" class="doc-reading" :class="{ 'is-resizing': resizing }">
     <slot />
-    <button
-      v-if="opened && !docked"
-      type="button"
-      class="doc-comment-scrim"
-      :aria-label="t('work.room.docTools.backToDocument')"
-      :disabled="busy && activeTool === 'comments'"
-      :title="
-        busy && activeTool === 'comments' ? t('work.room.comments.waitForSend') : t('work.room.docTools.backToDocument')
-      "
-      @click="close"
-    />
     <aside
       v-show="opened"
       ref="aside"
       class="doc-comment-panel"
-      :class="{ 'doc-comment-panel--drawer': !docked }"
+      :class="{ 'doc-comment-panel--drawer': !docked, 'doc-comment-panel--compact': !docked && compact }"
       data-comments-panel
       :data-doc-tool="activeTool"
       :data-comments-drawer="!docked ? '' : undefined"
@@ -272,6 +280,7 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
       @keydown="onEscape"
     >
       <div
+        v-if="docked"
         class="doc-comment-panel__resize"
         role="separator"
         tabindex="0"
@@ -315,7 +324,7 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
             :aria-selected="activeTool === 'comments'"
             :aria-controls="`${dockId}-comments-content`"
             :tabindex="activeTool === 'comments' ? 0 : -1"
-            @click="showComments"
+            @click="showComments()"
           >
             {{ t('work.room.comments.title') }} <span class="t-meta">{{ comments.length }}</span>
           </button>
@@ -323,25 +332,36 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
         <span v-else
           >{{ t('work.room.comments.title') }} <span class="t-meta">{{ comments.length }}</span></span
         >
-        <button
-          type="button"
-          class="doc-comment-panel__close"
-          :disabled="busy && activeTool === 'comments'"
-          :aria-label="t('work.room.docTools.backToDocument')"
-          :title="
-            busy && activeTool === 'comments'
-              ? t('work.room.comments.waitForSend')
-              : t('work.room.docTools.backToDocument')
-          "
-          @click="close"
-        >
-          {{ t('work.room.docTools.backToDocument') }}
-          <v-icon size="18">mdi-close</v-icon>
-        </button>
+        <div class="doc-comment-panel__window-actions">
+          <button
+            v-if="canDock"
+            type="button"
+            class="doc-comment-panel__close"
+            :aria-label="t(docked ? 'work.room.docTools.float' : 'work.room.docTools.dock')"
+            :title="t(docked ? 'work.room.docTools.float' : 'work.room.docTools.dock')"
+            @click="switchSurface"
+          >
+            <v-icon size="18">{{ docked ? 'mdi-dock-window' : 'mdi-dock-right' }}</v-icon>
+          </button>
+          <button
+            type="button"
+            class="doc-comment-panel__close"
+            :disabled="busy && activeTool === 'comments'"
+            :aria-label="t('work.room.docTools.backToDocument')"
+            :title="
+              busy && activeTool === 'comments'
+                ? t('work.room.comments.waitForSend')
+                : t('work.room.docTools.backToDocument')
+            "
+            @click="close"
+          >
+            <v-icon size="18">mdi-close</v-icon>
+          </button>
+        </div>
       </header>
       <div
-        :id="`${dockId}-ai-content`"
         v-show="activeTool === 'ai'"
+        :id="`${dockId}-ai-content`"
         class="doc-tool-content"
         role="tabpanel"
         :aria-labelledby="`${dockId}-ai-tab`"
@@ -349,8 +369,8 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
         <slot name="ai" />
       </div>
       <div
-        :id="`${dockId}-comments-content`"
         v-show="activeTool === 'comments'"
+        :id="`${dockId}-comments-content`"
         class="doc-tool-content"
         :role="$slots.ai ? 'tabpanel' : undefined"
         :aria-labelledby="$slots.ai ? `${dockId}-comments-tab` : undefined"
@@ -395,16 +415,28 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
   min-width: 0;
   min-height: 0;
   max-width: 100%;
-  padding: 12px;
+  padding: 0;
   border-inline-start: 1px solid var(--line);
   background: var(--surface);
   outline: none;
 }
 .doc-comment-panel--drawer {
   position: absolute;
-  inset: 0 0 0 auto;
+  inset: 12px 12px auto auto;
+  height: min(640px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
   z-index: 22;
   box-shadow: var(--shadow-2);
+}
+.doc-comment-panel--compact {
+  inset: 0 0 auto;
+  height: min(640px, 100%);
+  max-height: 100%;
+  border-radius: 0;
+  border-inline: 0;
 }
 .doc-comment-panel__head {
   display: flex;
@@ -415,17 +447,18 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
   font-size: 14px;
   font-weight: 600;
   flex: 0 0 auto;
-  padding-bottom: 8px;
+  min-height: 48px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line);
 }
 .doc-tool-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 .doc-tool-tabs button {
-  padding: 4px;
+  padding: 8px;
   color: var(--muted);
   border-radius: var(--radius-sm);
 }
@@ -446,12 +479,19 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
   min-width: 0;
   overflow: hidden;
 }
+.doc-comment-panel__window-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
 .doc-comment-panel__close {
   display: flex;
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  padding-inline: 4px;
+  justify-content: center;
+  width: 28px;
   height: 28px;
   border-radius: var(--radius-sm);
   color: var(--muted);
@@ -479,11 +519,5 @@ defineExpose({ open, locate, toggle, close, showAi, opened, busy, activeTool })
   margin: 6px 0 0;
   color: var(--muted);
   font-size: 12px;
-}
-.doc-comment-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 21;
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 </style>

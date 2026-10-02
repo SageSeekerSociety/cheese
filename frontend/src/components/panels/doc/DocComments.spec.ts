@@ -1,9 +1,10 @@
 import type { Block } from '../../../cx_types'
+import type { DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DocComments from './DocComments.vue'
@@ -140,23 +141,21 @@ describe('comment card activation', () => {
       global: { plugins: [createVuetify({ components, directives })] },
     })
   }
-  it('activates only article Enter/Space, not a child control key', async () => {
+  it('opens a summary with its native button and leaves a child quote action independent', async () => {
     const view = cards()
     const article = screen.getByRole('article')
-    const quote = article.querySelector('button')!
-    await fireEvent.keyDown(quote, { key: 'Enter' })
-    expect(view.emitted()['update:openId']).toBeUndefined()
-    await fireEvent.keyDown(article, { key: 'Enter' })
+    const summary = within(article).getByRole('button')
+    expect(summary.tagName).toBe('BUTTON')
+    await fireEvent.click(summary)
     expect(view.emitted()['update:openId']).toEqual([['card-a']])
-    await fireEvent.keyDown(article, { key: ' ' })
-    expect(view.emitted()['update:openId']).toEqual([['card-a'], ['card-a']])
-    await fireEvent.keyDown(article, { key: 'Enter', isComposing: true })
-    expect(view.emitted()['update:openId']).toHaveLength(2)
+    const quote = within(article).getByRole('button', { name: '重复引用' })
+    await fireEvent.keyDown(quote, { key: 'Enter' })
+    expect(view.emitted()['update:openId']).toHaveLength(1)
     expect(quote.getAttribute('dir')).toBe('auto')
     expect(screen.getByText('这段引用出现多次，无法确定原选区')).toBeTruthy()
     await fireEvent.click(quote)
     expect(view.emitted()['locate-node']).toEqual([['node-a']])
-    expect(view.emitted()['update:openId']).toHaveLength(3)
+    expect(view.emitted()['update:openId']).toHaveLength(2)
   })
 
   it('does not activate a card while dragging a selection in its body', async () => {
@@ -179,9 +178,10 @@ describe('comment card activation', () => {
 
   it('expands a measured long body only on the active card', async () => {
     const view = cards()
+    await view.rerender({ openId: 'card-a' })
     const body = document.querySelector<HTMLElement>('[data-comment-body="card-a"]')!
     Object.defineProperty(body, 'scrollHeight', { configurable: true, value: 1000 })
-    await view.rerender({ openId: 'card-a' })
+    await view.rerender({ comments: [{ ...comment, content: '评论正文。\n'.repeat(30) }] })
     const expand = await screen.findByRole('button', { name: '展开全文' })
     await fireEvent.click(expand)
     expect(body.classList.contains('is-expanded')).toBe(true)
@@ -199,4 +199,53 @@ describe('comment card activation', () => {
     await screen.findByText('当前宿主未提供评论发送接口')
     expect(input.value).toBe('保留原稿')
   })
+})
+
+it('returns keyboard focus to the comment list and preserves each thread reply draft', async () => {
+  const comments = ['Alice', 'Bob'].map((author, index) => ({
+    id: `thread-${index}`,
+    author,
+    content: `Comment ${index}`,
+    created_at: '2026-10-01T07:00:00Z',
+    reply_to: null,
+    anchor_quote: null,
+  })) as Block[]
+  const threadState: DocThreadState = {
+    threads: Object.fromEntries(
+      comments.map((comment) => [comment.id, { comment, revision: 1, state: 'open', anchor: null, replies: [] }])
+    ),
+    errors: {},
+    busy: false,
+    unknown: null,
+  }
+  const threadActions: DocThreadActions = {
+    load: vi.fn(async () => undefined),
+    reply: vi.fn(async () => undefined),
+    resolve: vi.fn(async () => undefined),
+    reopen: vi.fn(async () => undefined),
+    recover: vi.fn(async () => undefined),
+  }
+  render(DocComments, {
+    props: {
+      topicId: `thread-drafts-${++serial}`,
+      author: 'reader',
+      comments,
+      anchorNodes: [],
+      threadState,
+      threadActions,
+    },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  const first = screen.getByRole('button', { name: /^Alice ·/ })
+  await fireEvent.click(first)
+  await fireEvent.update(screen.getByRole('textbox', { name: '回复' }), 'Alice thread draft')
+  await fireEvent.click(screen.getByRole('button', { name: '全部评论' }))
+  await waitFor(() => expect(document.activeElement).toBe(first))
+  await fireEvent.click(screen.getByRole('button', { name: /^Bob ·/ }))
+  expect((screen.getByRole('textbox', { name: '回复' }) as HTMLTextAreaElement).value).toBe('')
+  await fireEvent.update(screen.getByRole('textbox', { name: '回复' }), 'Bob thread draft')
+  await fireEvent.click(screen.getByRole('button', { name: '全部评论' }))
+  await fireEvent.click(first)
+  expect((screen.getByRole('textbox', { name: '回复' }) as HTMLTextAreaElement).value).toBe('Alice thread draft')
+  expect(threadActions.reply).not.toHaveBeenCalled()
 })

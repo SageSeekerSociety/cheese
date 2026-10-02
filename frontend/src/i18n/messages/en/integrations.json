@@ -5,7 +5,6 @@
     "notConnected": "Not connected to Feishu yet"
   },
   "admin": {
-    "title": "Feishu app",
     "sub": "Members no longer build a Feishu app of their own. Fill this in once and each member connects with one click in My connections.",
     "appId": "App ID",
     "appSecret": "App Secret",

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
+import AdminPage from '@/components/admin/AdminPage.vue'
 import { findFeatureView } from '@/views/admin/features/registry'
 
 // 功能数据页的**入口壳**（`/admin/feature-stats/:id`）。
@@ -29,23 +30,14 @@ const feature = computed(() => findFeatureView(id.value))
 <template>
   <component :is="feature.view" v-if="feature" />
 
-  <div v-else class="afp">
-    <AdminEmptyState
-      :title="t('featureStats.page.unknown')"
-      :desc="t('featureStats.page.unknownDesc', { id })"
-      tone="error"
-    />
-  </div>
+  <!-- 认不出的 id：页头写这一块的名字（和侧栏那一项一致），正文一句「还没有这一页」。 -->
+  <AdminPage v-else :title="t('navigation.admin.featureStats')">
+    <div class="admin-page__body">
+      <AdminEmptyState
+        :title="t('featureStats.page.unknown')"
+        :desc="t('featureStats.page.unknownDesc', { id })"
+        tone="error"
+      />
+    </div>
+  </AdminPage>
 </template>
-
-<style scoped>
-/* 认不出的 id 是**异常路径**上的一屏，不套页头：这里没有可看的标题，页头那行字只会
-   把「这一页不存在」这件事说两遍。 */
-.afp {
-  box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  padding: 0 24px;
-  overflow-y: auto;
-}
-</style>
