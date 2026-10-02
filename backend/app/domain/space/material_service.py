@@ -217,6 +217,23 @@ class SpaceMaterialService:
                 return True
         return False
 
+    async def readable_material_ids(
+        self, *, material_ids: Sequence[int], user_id: int
+    ) -> set[int]:
+        """这一批素材里，这个人在资料库这一侧读得到的是哪几个。
+
+        与 ``may_read_outside_space`` 是**同一句判据**，不多抄一份：一个素材包一次
+        带十几份，包一层循环只为让调用方少写一个 for。看不见的 id 从结果里消失，
+        调用方照它过滤（见 ``routes/materialbundles.py``）。
+        """
+        readable: set[int] = set()
+        for material_id in material_ids:
+            if await self.may_read_outside_space(
+                material_id=material_id, user_id=user_id
+            ):
+                readable.add(material_id)
+        return readable
+
     # ---- 写 ----
 
     async def add(
