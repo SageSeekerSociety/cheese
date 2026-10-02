@@ -26,7 +26,27 @@ from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
-from app.domain.task.protocol import Teaching, resolve
+from app.domain.task.protocol import Protocol, Teaching, resolve
+
+
+async def protocol_for_task(session: AsyncSession, task: Task) -> Protocol:
+    """这道题在三/四级链上读到的那份协议：把 项目集 / 空间 两级补齐后再 ``resolve``。
+
+    ``resolve`` 要的是三行（空间、项目集、题目），而调用方常常手上只有一个 ``Task``
+    —— 上游两级去哪取、空 id 就不去查，只在这里写一遍，免得每个读者各写一份、慢慢
+    长歪（题目级指导 #944 让每个域都得读协议，这处迟早会多起来）。
+    """
+    category = (
+        await session.get(SpaceCategory, task.category_id)
+        if getattr(task, "category_id", None)
+        else None
+    )
+    space = (
+        await session.get(Space, task.space_id)
+        if getattr(task, "space_id", None)
+        else None
+    )
+    return resolve(space=space, category=category, task=task)
 
 
 @dataclass(frozen=True)
