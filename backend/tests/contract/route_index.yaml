@@ -1,6 +1,6 @@
 # Handwritten navigation notes: format/coverage are checked; semantics require source review.
-# Fixed source: a5f8812d2c3f1cffc8aca9c387002f092a3ce3e9. Profile: route-index-local-uploads-v1.
-# Initial addresses are transcribed from the old committed real JSONL, not a regenerated profiled snapshot.
+# Fixed source: a5f8812d2c3f1cffc8aca9c387002f092a3ce3e9 plus main ac83786b. Profile: route-index-local-uploads-v1.
+# Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
 # Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.
 # Preserve duplicate leaf registrations in scripts/route_index.json; a shared address note is not a leaf id.
 # Intent still unconfirmed: /debug/turns, /frontend-errors, /market/nodes, question followers,
@@ -85,7 +85,6 @@ auth_entries:
   capability.llm: "llm_proxy validates _caller_token via scoped_token_claims; admission additionally binds agent/model, budget and policy gate. proxy reuses request capability instead of exposing provider credentials. Source: app/api/routes/llm_proxy.py,355."
   capability.llm.ws: "llm_tunnel.tunnel validates scoped_token_claims from X-Cheese-Session or token query before dialing only the configured meter listener; meter performs its own CONNECT/token/host gate. Source: app/api/routes/llm_tunnel.py."
   capability.session.lease: "topics_compute.acquire_session_work_lease requires scoped claims then machine.session_work.ensure checks actual topic/session/lease scope. Source: app/api/routes/topics_compute.py; domain/machine/session_work.py."
-  capability.journal: "sandbox.journal_written verifies scoped claims including bound project/topic before pool journal handling. Source: app/api/routes/sandbox.py."
   capability.cli: "sandbox.get_cheese_cli requires valid scoped cheese claims before serving the deployed CLI source. Source: app/api/routes/sandbox.py."
   sandbox.global: "sandbox.trigger_storage_sweep accepts only is_global_sandbox_token; not a project/room identity. Source: app/api/routes/sandbox.py."
   backend.errors: "backend_log._room accepts scoped_token_claims (claims override body IDs) or explicit global sandbox token; missing/invalid proof is Unauthorized. Source: app/api/routes/backend_log.py,57."
@@ -98,7 +97,7 @@ auth_entries:
   topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_archive_manager; archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
   cheese.room.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS: valid scoped cheese token, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/main.py,721."
-  cheese.project.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Milestone handler also resolves + authorize_topic/project. Source: app/main.py,721."
+  cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
   memory.closed.write: "POST project memory remains in main.cheese_token_gate, but projects.add_memory unconditionally rejects the obsolete write with ValidationError. No memory is persisted; this is a closed operation, not a newly granted permission. Source: app/api/routes/projects.py; app/main.py."
   public.catalogue: "public(catalogue): the cited read handler returns published static/catalogue choices without credential dependencies. This entry is only used for agent types, public resource limits, installer and public metadata reads verified below."
   public.health: "public(health/readiness/metrics/version): no route credential dependency or authorization call. Handler exposes health/build/metrics data as currently implemented. Source: app/api/routes/health.py; app/main.py,842."
@@ -111,6 +110,7 @@ auth_entries:
   project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_topic_naming and projects_run_config.get_default_model/get_compute_configs."
   project.private.chat: "projects.get_private_chat calls require_verified_caller; authenticated actors must pass authorize_project and be one of the named DM participants. Explicit global sandbox development override remains in resolver. Source: app/api/routes/projects.py."
   chat.ws: "chat.chat reads access credential from token query, constructs ActorResolver with bearer and no cheese token, applies authz.policy.refuse_unauthenticated_chat, then resolves actual task/room and authorize_topic for membership. Topic access setting applies to the membership step, not the initial login refusal. Source: app/api/routes/chat.py; domain/authz/policy.py."
+  team.live.ws: "team_live.team_live reads access credential from token query, constructs ActorResolver with bearer and no cheese token, requires resolve(fallback_handle=None) to be authenticated, then authorize_team(actor, team_id). AuthenticationRequiredError and ForbiddenError map to the room socket auth_expired/forbidden codes and close 1008. Source: app/api/routes/team_live.py; app/api/auth.py."
   routines.list: "routines.list_routines uses _viewer(enforced room access) for topic-filtered reads or resolve/authorize_project otherwise, then _readable_rules filters each rule. Source: app/api/routes/routines.py."
   library.save.shown: "topics_shown.save_shown_to_library uses require_verified_caller(project_id) then authorize_project before save_to_library. It does not call the library route helper. Source: app/api/routes/topics_shown.py."
   public.framework.docs: "public(FastAPI OpenAPI/Swagger/ReDoc): framework routes generated by app construction, with no application route credential dependency; effective methods include actual GET and HEAD. Source: app/main.py."
@@ -243,6 +243,7 @@ owners:
   agent.llm: "Model admission, budget metering/proxy and subscription tunnel; domain/agent budget_proxy/chat/supply plus core subscription meter. This is the existing transport responsibility."
   compute.availability: "Compute pool catalogue and node availability; domain/agent/market.py and work-runner active load (market.list_nodes)."
   machine: "Cloud machines, project supply and execution lease lifecycle; domain/machine/services.py, supply.py and session_work.py."
+  machine.live: "Signal to a team's open pages that its machines changed, naming the projects to read again; domain/machine/live.py (team_channel, note_change, announce_changes), written by domain/machine/repositories.py and runner.py and announced by machines.py after commit."
   device: "User/team hosted-device enrollment, session links and screen streams; domain/device/service.py, owner_reads.py and domain/agent/device_hub.py."
   local_fs: "User-selected local-directory grants and access audit; domain/local_fs services/enforcement."
   review: "Accept cards, reviewer decisions and PR readiness/merge; domain/review/AcceptService. Route owns request composition."
@@ -270,7 +271,6 @@ owners:
   library: "Project library files and source descriptions; domain/library records and file service."
   memory: "Agent/person memory entries and memory files; domain/memory stores/files. Private read/write boundaries stay distinct in notes."
   notification: "User/project inbox notifications and live notice delivery; domain/notification services/live/push."
-  milestone: "Project milestones and calendar; domain/milestone/MilestoneService."
   dashboard: "Viewer-filtered project/space/person dashboard assembly; domain/dashboard/DashboardService."
   feedback: "Feedback visibility, support/comments and proposals; domain/feedback/FeedbackService, proposals/shipping."
   feature_stats: "Feature usage catalogue and reports; domain/feature_stats registry/stats."
@@ -681,12 +681,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/memory/files", auth: "memory.files.read", owner: "memory"}
   - {protocol: "http", method: "PUT", path: "/memory/files", auth: "memory.files.write", owner: "memory"}
   - {protocol: "http", method: "POST", path: "/memory/files/delete", auth: "memory.files.write", owner: "memory"}
-  # app.api.routes.milestones
-  - {protocol: "http", method: "POST", path: "/projects/{project_id}/milestones", auth: "cheese.project.gate", owner: "milestone"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/milestones", auth: "project.reader", owner: "milestone"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/calendar", auth: "actor.project", owner: "milestone"}
-  - {protocol: "http", method: "PUT", path: "/milestones/{milestone_id}", auth: "actor.project", owner: "milestone"}
-  - {protocol: "http", method: "DELETE", path: "/milestones/{milestone_id}", auth: "actor.project", owner: "milestone"}
   # app.api.routes.notifications_flat
   - {protocol: "http", method: "GET", path: "/notifications/unread-count", auth: "user.session", owner: "notification"}
   - {protocol: "http", method: "GET", path: "/notifications", auth: "user.session", owner: "notification"}
@@ -841,7 +835,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/routine-runs/{run_id}/report", auth: "routines.room", owner: "routine"}
   # app.api.routes.sandbox
   - {protocol: "http", method: "POST", path: "/sandbox/storage-sweep", auth: "sandbox.global", owner: "sandbox.maintenance"}
-  - {protocol: "http", method: "POST", path: "/sandbox/journal-written", auth: "capability.journal", owner: "sandbox.maintenance"}
   - {protocol: "http", method: "GET", path: "/sandbox/cli/cheese", auth: "capability.cli", owner: "installer"}
   # app.api.routes.site_sessions
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/site-session", auth: "site.access", owner: "site"}
@@ -940,6 +933,8 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
+  # app.api.routes.team_live
+  - {protocol: "ws", method: "WS", path: "/teams/{team_id}/live", auth: "team.live.ws", owner: "machine.live"}
   # app.api.routes.teams
   - {protocol: "http", method: "GET", path: "/teams", auth: "legacy.teams.get_teams", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/my-teams", auth: "legacy.teams.get_my_teams", owner: "team"}
