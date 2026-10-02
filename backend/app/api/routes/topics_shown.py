@@ -57,8 +57,10 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
 from app.api.response import ok, page
 from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
+from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent.preview_hub import preview_hub
+from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block
 from app.domain.project import room_files
 from app.domain.project.room_files import (
@@ -88,14 +90,32 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
     machine is carrying a preview out) and the app behind it (the tunnel is up and
     the declared port answers nothing).
     """
-    if not await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S):
+    inspection = None
+    if settings.preview_connection_mode == "owner":
+        inspection = await inspect_owner(
+            topic_id,
+            seat,
+            wait_ms=min(8000, int(_PREVIEW_ATTACH_WAIT_S * 1000)),
+            probe=True,
+        )
+    tunnel_up = (
+        inspection.tunnel_up
+        if inspection is not None
+        else await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S)
+    )
+    if not tunnel_up:
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
             "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
             "或报告、表格这类文档。"
         )
-    if not await preview_hub.probe(topic_id, seat):
+    alive = (
+        inspection.alive
+        if inspection is not None
+        else await preview_hub.probe(topic_id, seat)
+    )
+    if not alive:
         raise ValidationError(
             "登记的端口上没有服务在应答，预览会是一个白框。"
             "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"

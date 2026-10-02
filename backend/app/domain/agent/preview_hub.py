@@ -32,7 +32,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 import anyio
 
@@ -55,6 +55,25 @@ MAX_BODY = 32 * 1024 * 1024
 # timeout: the panel asks this on every refresh, so a wedged app must not hold
 # each of those open for the full window.
 PROBE_TIMEOUT_S = 5.0
+
+
+class PreviewAdmissionError(Exception):
+    def __init__(
+        self,
+        state: Literal[
+            "transport_unavailable",
+            "app_unavailable",
+            "instance_gone",
+            "instance_identity_unsupported",
+        ],
+    ) -> None:
+        super().__init__(state)
+        self.state: Literal[
+            "transport_unavailable",
+            "app_unavailable",
+            "instance_gone",
+            "instance_identity_unsupported",
+        ] = state
 
 
 class PreviewTransport(Protocol):
@@ -94,6 +113,10 @@ class PreviewStream:
     @property
     def close_metadata(self) -> bool:
         return not self._terminal and "ws-close-v1" in self._machine.capabilities
+
+    @property
+    def maintenance(self) -> bool:
+        return self._machine.maintenance
 
     async def send(self, op: int, payload: bytes = b"") -> None:
         await self._machine.send(op, self.id, payload)
@@ -211,6 +234,8 @@ class PreviewMachine:
     next_stream: int = 0
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     pending_cancels: set[asyncio.Task[None]] = field(default_factory=set)
+    epoch: str = field(default_factory=lambda: uuid.uuid4().hex)
+    maintenance: bool = False
     stopped: bool = False
     failed: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -287,8 +312,10 @@ _Seat = tuple[uuid.UUID, str]
 
 class PreviewHub:
     def __init__(self) -> None:
+        self.accepting = True
         self._machines: dict[_Seat, PreviewMachine] = {}
         self._arrivals: dict[_Seat, asyncio.Event] = {}
+        self._waiting: dict[_Seat, int] = {}
 
     # -- the machine's side ----------------------------------------------------
 
@@ -328,6 +355,8 @@ class PreviewHub:
         wins: that is the same helper redialling after a dropped connection,
         whose previous socket the backend may not have noticed is dead yet.
         """
+        if not self.accepting:
+            return None
         key = (topic_id, seat)
         displaced = self._machines.get(key)
         if displaced is not None:
@@ -361,7 +390,7 @@ class PreviewHub:
 
     def is_online(self, topic_id: uuid.UUID, seat: str) -> bool:
         machine = self._machines.get((topic_id, seat))
-        return machine is not None and not machine.stopped
+        return self.accepting and machine is not None and not machine.stopped
 
     async def wait_online(self, topic_id: uuid.UUID, seat: str, timeout: float) -> bool:
         """Whether a helper is connected, waiting up to ``timeout`` for one.
@@ -371,24 +400,45 @@ class PreviewHub:
         upgrading. Without this wait the platform would refuse a preview that is
         one round trip from working.
         """
+        if not self.accepting:
+            return False
         key = (topic_id, seat)
         if self.is_online(topic_id, seat):
             return True
         event = self._arrivals.setdefault(key, asyncio.Event())
+        self._waiting[key] = self._waiting.get(key, 0) + 1
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
         except TimeoutError:
             return False
         finally:
-            if not self.is_online(topic_id, seat):
-                self._arrivals.pop(key, None)
+            remaining = self._waiting[key] - 1
+            if remaining:
+                self._waiting[key] = remaining
+            else:
+                self._waiting.pop(key)
+                if self._arrivals.get(key) is event:
+                    self._arrivals.pop(key)
         return self.is_online(topic_id, seat)
+
+    async def shutdown(self) -> None:
+        """Stop admission and wake waiters; ordinary loss lets helpers redial."""
+        self.accepting = False
+        for event in self._arrivals.values():
+            event.set()
+        self._arrivals.clear()
+        machines = tuple(self._machines.values())
+        for machine in machines:
+            machine.maintenance = True
+            self.detach(machine)
+            machine.failed.set()
+        await asyncio.gather(*(machine.drain() for machine in machines))
 
     # -- the browser's side ----------------------------------------------------
 
     def open_stream(self, topic_id: uuid.UUID, seat: str) -> PreviewStream | None:
         machine = self._machines.get((topic_id, seat))
-        return None if machine is None else machine.open()
+        return None if machine is None or not self.accepting else machine.open()
 
     async def request_stream(
         self,
@@ -402,16 +452,28 @@ class PreviewHub:
         timeout: float = STREAM_TIMEOUT_S,
         instance: str | None = None,
         inspect_instance: bool = False,
+        machine: PreviewMachine | None = None,
+        typed: bool = False,
     ) -> PreviewHttpResponse | None:
         """Return at RESP; the caller owns the body and cancellation."""
-        stream = self.open_stream(topic_id, seat)
+        # A captured inspection must never jump to a replacement connection.
+        if machine is not None:
+            if not self.accepting or self.machine(topic_id, seat) is not machine:
+                return None
+            stream = machine.open()
+        else:
+            stream = self.open_stream(topic_id, seat)
         if stream is None:
+            if typed:
+                raise PreviewAdmissionError("transport_unavailable")
             return None
         transferred = False
         try:
             if (
                 instance or inspect_instance
             ) and "instance-v1" not in stream._machine.capabilities:
+                if typed:
+                    raise PreviewAdmissionError("instance_identity_unsupported")
                 return None
             await stream.send(
                 wire.OP_REQ,
@@ -428,6 +490,14 @@ class PreviewHub:
             )
             op, payload = await stream.receive(timeout)
             if op != wire.OP_RESP:
+                if typed:
+                    raise PreviewAdmissionError(
+                        "instance_gone"
+                        if op == wire.OP_ERR and payload == b"preview instance gone"
+                        else "app_unavailable"
+                        if not stream._machine.stopped
+                        else "transport_unavailable"
+                    )
                 logger.info("preview request on %s failed: %s", topic_id, payload[:200])
                 return None
             meta, first = wire.decode_meta(payload)
@@ -442,6 +512,8 @@ class PreviewHub:
             return response
         except (TimeoutError, ValueError, OSError, RuntimeError) as exc:
             logger.info("preview request on %s did not complete: %s", topic_id, exc)
+            if typed:
+                raise PreviewAdmissionError("transport_unavailable") from exc
             return None
         finally:
             if not transferred:

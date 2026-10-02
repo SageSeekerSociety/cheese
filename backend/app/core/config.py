@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -164,6 +165,16 @@ class Settings(BaseSettings):
     # Feishu group's custom-bot webhook URL; empty disables alerting entirely,
     # which is what a developer's machine and every test wants.
     feishu_alert_webhook: str = ""
+
+    # Coordinated ingress cutover is a separate release. No implicit fallback.
+    preview_connection_mode: Literal["legacy", "owner"] = "legacy"
+    preview_connection_url: str = ""
+
+    @property
+    def preview_connection_auth_secret(self) -> str:
+        return hashlib.sha256(
+            b"cheesex:preview-owner-rpc:v1:" + self.jwt_secret.encode()
+        ).hexdigest()
 
     device_connection_url: str = ""
     device_connection_secret: str = ""
