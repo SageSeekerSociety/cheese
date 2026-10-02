@@ -118,6 +118,72 @@ it('without a content profile a drag still maps to natural pixels', async () => 
   expect(ui.emitted().select![0]).toEqual(mapped({ x: 100, y: 100, width: 200, height: 100 }))
 })
 
+// ---- 划过就看得见会框住哪一块 ----
+// 「智能识别」要在按下去之前就看得见：鼠标还没按，光标底下那一块先虚着框出来。
+// 上面的 `lines` 分界线把图切成四块，每块 200×200 原图像素；显示比例 1:2，
+// 所以中转出来的框是 100×100 显示像素。
+function hoverBox(ui: ReturnType<typeof render>) {
+  return ui.container.querySelector('.raster-region__hover') as HTMLElement | null
+}
+async function hover(ui: ReturnType<typeof render>, at: [number, number]) {
+  await fireEvent.pointerMove(ui.getByRole('group', { name: '选择图片区域' }), {
+    pointerId: 7,
+    clientX: at[0],
+    clientY: at[1],
+  })
+}
+it('shows the block under the pointer before any press', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  const box = hoverBox(ui)!
+  expect(box.style.left).toBe('50px')
+  expect(box.style.top).toBe('50px')
+  expect(box.style.width).toBe('100px')
+  expect(box.style.height).toBe('100px')
+  // 光划一下不发选择——选择还是那一次点击的事。
+  expect(ui.emitted().select).toBeUndefined()
+})
+it('re-frames the candidate box as the pointer moves, down to the whole image off the band', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  expect(hoverBox(ui)!.style.width).toBe('100px')
+  // (210,220) 在内容带外：底下没有「那一块」，候选框退回整张图——和点空白处一致。
+  await hover(ui, [210, 220])
+  expect(hoverBox(ui)!.style.left).toBe('0px')
+  expect(hoverBox(ui)!.style.top).toBe('0px')
+  expect(hoverBox(ui)!.style.width).toBe('500px')
+  expect(hoverBox(ui)!.style.height).toBe('250px')
+})
+it('drops the candidate box when the pointer leaves the image', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  await fireEvent.pointerLeave(ui.getByRole('group', { name: '选择图片区域' }))
+  expect(hoverBox(ui)).toBeNull()
+})
+it('yields the candidate box to the real one as soon as the press lands', async () => {
+  const ui = render(DesignRasterRegion, {
+    props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
+  })
+  await hover(ui, [110, 120])
+  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  overlay.setPointerCapture = vi.fn()
+  await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 110, clientY: 120 })
+  await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 160, clientY: 170 })
+  expect(hoverBox(ui)).toBeNull()
+  expect(ui.container.querySelector('.raster-region__box')).toBeTruthy()
+})
+it('without a content profile there is nothing to preview', async () => {
+  const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
+  await hover(ui, [110, 120])
+  expect(hoverBox(ui)).toBeNull()
+})
+
 describe('Design image fit in owning previews (DOM geometry doubles)', () => {
   let observed: Map<Element, ResizeObserverCallback>
   let urls: string[]

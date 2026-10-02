@@ -20,22 +20,22 @@ const emit = defineEmits<{ select: [selection: RasterSelection]; cancel: [] }>()
 const start = ref<Point | null>(null)
 const draft = ref<RasterRegion | null>(null)
 const geometry = ref<ImageGeometry | null>(null)
+/** 鼠标底下那一块：还没按下去，先让人看见「点下去会框住这里」。 */
+const hover = ref<RasterRegion | null>(null)
+const hoverGeometry = ref<ImageGeometry | null>(null)
 let pointer: number | null = null
 let captured: Pick<RasterSelection, 'identity' | 'src'> | null = null
 const rectangle = computed(() => (draft.value && geometry.value ? displayedRegion(draft.value, geometry.value) : null))
-function reset() {
-  start.value = null
-  draft.value = null
-  geometry.value = null
-  pointer = null
-  captured = null
-}
-function down(event: PointerEvent) {
-  if (!props.enabled || !props.image?.complete || event.button !== 0) return
+const hoverRectangle = computed(() =>
+  hover.value && hoverGeometry.value ? displayedRegion(hover.value, hoverGeometry.value) : null
+)
+/** 图当前在屏幕上的位置与尺寸；每次问都现算，滚动和缩放之后才不会指错地方。 */
+function measure(): ImageGeometry | null {
   const image = props.image
+  if (!image?.complete) return null
   const rect = image.getBoundingClientRect()
-  if (!image.naturalWidth || !image.naturalHeight || !rect.width || !rect.height) return
-  geometry.value = {
+  if (!image.naturalWidth || !image.naturalHeight || !rect.width || !rect.height) return null
+  return {
     left: rect.left,
     top: rect.top,
     width: rect.width,
@@ -43,15 +43,54 @@ function down(event: PointerEvent) {
     naturalWidth: image.naturalWidth,
     naturalHeight: image.naturalHeight,
   }
+}
+function reset() {
+  start.value = null
+  draft.value = null
+  geometry.value = null
+  hover.value = null
+  hoverGeometry.value = null
+  pointer = null
+  captured = null
+}
+function down(event: PointerEvent) {
+  if (!props.enabled || !props.image?.complete || event.button !== 0) return
+  const size = measure()
+  if (!size) return
+  geometry.value = size
+  // 已经在拖了，候选框就该让位给真正在画的那个框。
+  hover.value = null
+  hoverGeometry.value = null
   start.value = { x: event.clientX, y: event.clientY }
-  captured = { identity: props.identity, src: image.getAttribute('src') ?? '' }
+  captured = { identity: props.identity, src: props.image!.getAttribute('src') ?? '' }
   pointer = event.pointerId
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   event.preventDefault()
 }
+/**
+ * 鼠标划过时把光标下那一块框出来——「智能识别」得在按下去之前就看得见，
+ * 否则每换一处都要先点一下、不满意再点别处，等于在试。
+ */
+function hoverAt(event: PointerEvent) {
+  const profile = props.profile
+  if (!props.enabled || !profile) return
+  const size = measure()
+  hoverGeometry.value = size
+  const point = size ? imagePoint({ x: event.clientX, y: event.clientY }, size) : null
+  hover.value = point ? blockAt(point, profile, size!.naturalWidth, size!.naturalHeight) : null
+}
 function move(event: PointerEvent) {
-  if (event.pointerId !== pointer || !start.value || !geometry.value) return
+  if (event.pointerId !== pointer || !start.value || !geometry.value) {
+    hoverAt(event)
+    return
+  }
   draft.value = imageRegion(start.value, { x: event.clientX, y: event.clientY }, geometry.value)
+}
+function leave() {
+  if (pointer === null) {
+    hover.value = null
+    hoverGeometry.value = null
+  }
 }
 /** 一次点击（而不是拖动）：位移不到 4 个显示像素，人没打算框，只是想点那一块。 */
 function tapped(region: RasterRegion | null, size: ImageGeometry) {
@@ -105,8 +144,19 @@ watch([() => props.enabled, () => props.identity, () => props.image], reset, { f
     @pointerup="up"
     @pointercancel="reset"
     @lostpointercapture="reset"
+    @pointerleave="leave"
     @keydown.esc.prevent="cancel"
   >
+    <div
+      v-if="hoverRectangle"
+      class="raster-region__hover"
+      :style="{
+        left: `${hoverRectangle.x}px`,
+        top: `${hoverRectangle.y}px`,
+        width: `${hoverRectangle.width}px`,
+        height: `${hoverRectangle.height}px`,
+      }"
+    />
     <div
       v-if="rectangle"
       class="raster-region__box"
@@ -135,5 +185,12 @@ watch([() => props.enabled, () => props.identity, () => props.image], reset, { f
   pointer-events: none;
   border: 2px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* 候选态：虚线、浅一档，和已经框住的那一块（实线加淡底）一眼分得开。 */
+.raster-region__hover {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 </style>
