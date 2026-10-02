@@ -303,9 +303,11 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
         member_repo=member_repo,
         invite_code_repo=invite_code_repo,
         # The write side of `teaching`'s references: a 项目集 may only name
-        # 知识 its teacher could already read and 课件 that exist.
+        # 知识 its teacher could already read, 课件 that exist, and 课件 an
+        # ordinary member could read (never one locked to a board's managers).
         knowledge_service=KnowledgeService.for_lookup(db),
         material_service=MaterialService.for_lookup(db),
+        session=db,
     )
 
 

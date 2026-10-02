@@ -203,13 +203,14 @@ class SpaceMaterialService:
         （素材表只有上传者、没有归属，见 ``routes/attachments.py`` 顶部记的同一个
         缺口），本模块不假装把那条修好了。同一份素材挂在两块板上时按最宽的那道
         放行 —— 有一块板对所有人公开，另一块再怎么锁也锁不住它。
+
+        非管理员那一半判据只有一份：``_readable_by_a_member``（见它的说明），这里
+        只是把「要么本就人人可读、要么这人正好是某块相关板子的管理员」两句话说
+        完，判据本身与 ``member_readable_material_ids`` 共用，不各写一份。
         """
         links = await self._links.list_live_by_material_ids(material_ids=[material_id])
-        if not links:
+        if _readable_by_a_member([link.visibility for link in links]):
             return True
-        for link in links:
-            if link.visibility == SpaceMaterialVisibility.MEMBERS.value:
-                return True
         for link in links:
             if await is_space_admin(
                 self._session, space_id=link.space_id, user_id=user_id
@@ -340,6 +341,53 @@ class SpaceMaterialService:
     async def _require_admin(self, *, space_id: int, user_id: int) -> None:
         if not await self._require_member(space_id=space_id, user_id=user_id):
             raise ForbiddenError("Only a board manager can perform this action")
+
+
+def _readable_by_a_member(visibilities: Sequence[str]) -> bool:
+    """一份素材「普通成员读得到吗」—— 这条判据**只在这里写一遍**。
+
+    给它这份素材**当前活着的**板内关联行的档位集合，它回答非管理员那一半：
+    一条关联都没有（``material`` 行没人挂过）→ 是，它就是一份普通素材，今天
+    任何登录用户都读得到（这条口径本模块不改，见 ``may_read_outside_space``）；
+    有至少一条「所有成员」档 → 是，最宽的那道说了算；有行但没有一条是「所有
+    成员」档 → 否，全是「仅管理员」档。管理员那一层不归它管，由
+    ``may_read_outside_space`` 叠在上面。
+
+    ``may_read_outside_space``（一个人）与 ``member_readable_material_ids``
+    （一批 id，「有人的话最宽能到哪」）都走这一个函数，所以两处不可能对同一行
+    档位给出不同的答案。
+    """
+    if not visibilities:
+        return True
+    return SpaceMaterialVisibility.MEMBERS.value in visibilities
+
+
+async def member_readable_material_ids(
+    session: AsyncSession, *, material_ids: Sequence[int]
+) -> set[int]:
+    """这批素材里，一块板的**普通成员**能读到的是哪几个 —— 不问具体是谁。
+
+    与 ``may_read_outside_space`` 是同一句判据的另一半：那边问「这个人」，
+    这边问「哪怕是普通成员，最宽能读到哪些」。教学配置里的 ``material_ids``
+    正是要按它过滤（``app.domain.task.teaching.for_project``）：一份课件只在
+    「仅管理员」档里，就不该出现在任何普通成员的 agent 开场上下文里 —— 它带着的
+    ``url`` 是一条公开可猜的 ``/uploads/...`` 路径，发出去等于把文件发出去。
+
+    判据只有一份（``_readable_by_a_member``），这里只负责按 ``material_id`` 把
+    活着的关联行归堆，然后逐 id 问那一句。返回的是**能读的 id 集合**；调用方照它
+    过滤，看不见的 id 从结果里消失。没有任何关联行的 id 也算能读（普通素材）。
+    """
+    links = await SpaceMaterialRepository(session=session).list_live_by_material_ids(
+        material_ids=material_ids
+    )
+    by_material: dict[int, list[str]] = {}
+    for link in links:
+        by_material.setdefault(link.material_id, []).append(link.visibility)
+    return {
+        material_id
+        for material_id in material_ids
+        if _readable_by_a_member(by_material.get(material_id, []))
+    }
 
 
 def _link_to_dto(link: SpaceMaterial, material: Material) -> dict:

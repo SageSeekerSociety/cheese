@@ -27,27 +27,31 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
-from app.domain.space.material_service import SpaceMaterialService
+from app.domain.space.material_service import (
+    SpaceMaterialService,
+    member_readable_material_ids,
+)
 from app.domain.task.inheritance import TaskInheritance, for_task
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
-#: 「会被带上的资料」只列这一档 —— 名字取自
-#: ``app.domain.space.models.SpaceMaterialVisibility``。管理员看得到「仅管理员」
-#: 那一档的行，但那几行**不会**跟着项目走（项目成员打不开），把它们列进「会被
-#: 带上」是骗人（符露夀 2026-10-02 定：这一档不进清单）。
-_MEMBERS_VISIBILITY = "members"
 
-
-def _teaching_to_api(teaching, source: str | None) -> dict:
+def _teaching_to_api(
+    teaching, source: str | None, material_ids: list[int]
+) -> dict:
     """合成后的教学指导摆成接口形状 —— 字段名与 ``TeachingRequest`` 同一套
-    camelCase，前端读回来的一份和它写进去的一份因此长得一样。"""
+    camelCase，前端读回来的一份和它写进去的一份因此长得一样。
+
+    ``material_ids`` 由调用方过滤后传入（见 ``get_task_inheritance``）：指导里
+    点名、但只在「仅管理员」档里的课件，不该出现在这份「会继承什么」的预览里 ——
+    否则点名的 id 说会继承、下面的清单里却没有，同一份响应自相矛盾。
+    """
     return {
         "systemPrompt": teaching.system_prompt,
         "currentWeek": teaching.current_week,
         "allowedTopics": list(teaching.allowed_topics),
         "avoidInCode": list(teaching.avoid_in_code),
-        "materialIds": list(teaching.material_ids),
+        "materialIds": list(material_ids),
         "knowledgeIds": list(teaching.knowledge_ids),
         # 这一份来自哪一层：space / category / task / project，或 null（四层都没
         # 说）。界面据此写「来自项目集」，不是一个只有结果的字符串。
@@ -55,12 +59,16 @@ def _teaching_to_api(teaching, source: str | None) -> dict:
     }
 
 
-def _to_api(found: TaskInheritance, materials: list[dict]) -> dict:
+def _to_api(
+    found: TaskInheritance, materials: list[dict], material_ids: list[int]
+) -> dict:
     return {
         "taskId": found.task_id,
         "spaceId": found.space_id,
         "resourcePack": found.resource_pack,
-        "teaching": _teaching_to_api(found.teaching, found.teaching_source),
+        "teaching": _teaching_to_api(
+            found.teaching, found.teaching_source, material_ids
+        ),
         "materials": materials,
     }
 
@@ -97,9 +105,7 @@ async def get_task_inheritance(
 
     try:
         # ``list_for_space`` 答的是 ``{"materials": [...], "canManage": bool}`` ——
-        # 它自己按档位过滤：非管理员拿不到「仅管理员」那一档。这里再收一道到
-        # 「所有成员」档：这份清单是**这道题会给出去的东西**，板子上的管理员档
-        # 素材不属于任何一个成员建出来的项目。
+        # 它自己按档位过滤：非管理员拿不到「仅管理员」那一档。
         listed = (
             await SpaceMaterialService(
                 session=db, storage=get_storage_backend()
@@ -107,11 +113,20 @@ async def get_task_inheritance(
         )["materials"]
     except NotFoundError:
         listed = []
-    materials = [
-        item for item in listed if item.get("visibility") == _MEMBERS_VISIBILITY
-    ]
+
+    # One judgement decides both conclusions, so they cannot diverge: a 课件 that
+    # lives only in a board's「仅管理员」tier is neither one the guidance may name
+    # (`teaching.materialIds`) nor one that will be brought along (`materials`).
+    # The criterion is the shared `member_readable_material_ids` — the same one
+    # `for_project` filters through on the read path.
+    readable = await member_readable_material_ids(
+        db,
+        material_ids=[*found.teaching.material_ids, *(m["id"] for m in listed)],
+    )
+    material_ids = [mid for mid in found.teaching.material_ids if mid in readable]
+    materials = [item for item in listed if item["id"] in readable]
 
     # 裸响应体，不套 ``{"code", "message", "data"}`` —— ``/tasks`` 这一族
     # （详情、附件清单、参与）都是裸的，``TasksApi`` 也是这样读的。同一个
     # router 前缀下两种信封会让 `result.data.…` 有时对有时错。
-    return _to_api(found, materials)
+    return _to_api(found, materials, material_ids)
