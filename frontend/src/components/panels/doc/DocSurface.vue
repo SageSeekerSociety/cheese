@@ -749,6 +749,11 @@ const emptyPlaceholder = computed(() => JSON.stringify(t('work.room.doc.emptyPla
 .doc-editor :deep(strong) {
   font-weight: 600;
 }
+.doc-editor :deep(mark) {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--signal-yellow) 32%, transparent);
+  color: inherit;
+}
 /* 任务列表 (GFM `- [ ]`): checkbox row, marker-less. Checked items fade —
    done work goes quiet, not struck through. */
 .doc-editor :deep(ul[data-type='taskList']) {
