@@ -1,8 +1,6 @@
 """Install and start a project-scoped runner on the central session machine."""
 
-import base64
 import fcntl
-import hashlib
 import json
 import os
 import socket
@@ -94,11 +92,8 @@ def configure(payload: dict) -> dict:
         config_path = state / "runner.json"
         config_path.write_text(json.dumps(config))
         config_path.chmod(0o600)
-        archive = base64.b64decode(payload["archive"], validate=True)
-        # A new deployment never overwrites modules used by an existing process.
-        artifact = state / f"runner-{hashlib.sha256(archive).hexdigest()}.pyz"
-        if not artifact.exists():
-            artifact.write_bytes(archive)
+        # Placed under its digest by the launch (`launch.script`).
+        artifact = Path(payload["artifact"])
         env = {
             "PATH": os.environ["PATH"],
             **payload["env"],

@@ -399,7 +399,6 @@ async def test_a_record_of_the_runners_own_is_news_once(tmp_path):
         activity,
     )
     mirror.path.parent.mkdir()
-    mirror.waits = True
     try:
         await call(
             runner.state,

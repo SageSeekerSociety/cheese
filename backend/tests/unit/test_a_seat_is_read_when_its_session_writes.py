@@ -12,7 +12,10 @@ import dataclasses
 import time
 import uuid
 
+import pytest
+
 from app.domain.agent.harness.driven import runtime as driven_runtime
+from app.domain.agent.harness.driven.runtime import RunnerUnsupported
 from app.domain.agent.service import AgentMessage, AgentToolUse
 from tests.unit.test_driven_liveness import Room, Scripted, _until
 
@@ -37,8 +40,7 @@ class Counting(Scripted):
 
 
 class OldRunners(Counting):
-    """Runners started before runners could hold a read: they say nothing of
-    it when greeted."""
+    """Runners that say nothing, when greeted, of holding a read."""
 
     async def ensure(self, session, opening, live=None):
         handle = await super().ensure(session, opening, live)
@@ -109,28 +111,15 @@ async def test_an_agent_process_that_dies_writing_nothing_ends_the_turn_at_once(
         await room.close()
 
 
-async def test_an_old_runner_is_read_at_a_fixed_rate_and_never_asked_to_wait():
+async def test_a_runner_that_cannot_hold_a_read_is_refused_with_a_clear_error():
     channel = OldRunners()
     room = Room(channel)
     try:
-        await room.send("fix the login page")
-        await _until(lambda: _said(room) == ["on it"])
-
-        before = len(channel.asked)
-        await _REAL_SLEEP(1.0)
-        reads = [call for call in channel.asked[before:] if call[0] == "events"]
-        # Read at the old floor while its turn is open: not a spin.
-        assert 3 <= len(reads) <= 15, len(reads)
-
-        channel.stops(room.topic, "done")
-        await _until(lambda: room.results())
-        await _REAL_SLEEP(0.3)
-        before = len(channel.asked)
-        await _REAL_SLEEP(1.5)
-        # And far more slowly once nothing is open.
-        assert len(channel.asked) - before <= 1
-
-        assert not any("wait" in params for _, params in channel.asked)
+        with pytest.raises(RunnerUnsupported, match="long_poll"):
+            await room.send("fix the login page")
+        # Refused before it is read or given anything to do.
+        assert not any(method in ("events", "send") for method, _ in channel.asked)
+        assert room.runtime.subscriptions == {}
     finally:
         await room.close()
 

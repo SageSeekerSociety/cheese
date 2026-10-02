@@ -18,6 +18,7 @@ import pytest
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.driven import runtime as driven_runtime
+from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
 from tests.support.hang import HANG_S
@@ -49,10 +50,16 @@ class Runner:
         if method == "entries":
             self.reads += 1
             since = params.get("since")
-            if since is None:
-                return {"entries": list(self.produced)}
             ids = [entry["id"] for entry in self.produced]
-            return {"entries": self.produced[ids.index(since) + 1 :]}
+            after = 0 if since is None else ids.index(since) + 1
+            # Held, as a runner holds a read, until there is something past it.
+            deadline = asyncio.get_running_loop().time() + params.get("wait", 0)
+            while (
+                len(self.produced) <= after
+                and asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(0.01)
+            return {"entries": self.produced[after:]}
         if method == "ping":
             return {"alive": True, "working": self.working, "work_id": self.work_id}
         if method == "abort":
@@ -80,6 +87,7 @@ def wire(tmp_path):
         "pi-session",
         "teammate",
         tmp_path / "mirror" / "entries.sqlite",
+        frozenset({LONG_POLL}),
     )
     runner = Runner()
     channel = AsyncMock()
@@ -177,6 +185,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
         "dead",
         "other",
         tmp_path / "dead" / "entries.sqlite",
+        frozenset({LONG_POLL}),
     )
     channel.discover.return_value = [dead, retained]
 
@@ -256,15 +265,14 @@ async def test_a_quiet_room_reads_slower(tmp_path):
 @pytest.mark.anyio
 async def test_a_new_turn_is_read_at_once_in_a_quiet_room(tmp_path, monkeypatch):
     """The room still has to answer the moment someone sends into it, however
-    far its reads have backed off.
+    long its runner holds a read.
 
-    Both read intervals are an hour here, so the reader's next read on its own
-    is an hour away: a turn's entries can only land within the wait below if
-    sending cut that interval short. A deadline shorter than the interval would
-    measure how fast the machine running the suite is instead.
+    A read is held for an hour here, so a turn's entries can only land within
+    the wait below if what the session wrote answered the held read. A
+    deadline shorter than the hold would measure how fast the machine running
+    the suite is instead.
     """
-    monkeypatch.setattr(driven_runtime, "OLD_RUNNER_TURN_READ_S", 3600.0)
-    monkeypatch.setattr(driven_runtime, "OLD_RUNNER_IDLE_READ_S", 3600.0)
+    monkeypatch.setattr(driven_runtime, "READ_WAIT_S", 3600.0)
     session, runtime, runner = wire(tmp_path)
     consumer = AsyncMock()
     runtime.bind_events(consumer)

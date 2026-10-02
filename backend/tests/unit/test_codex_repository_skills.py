@@ -13,7 +13,6 @@ machine that holds it.
 """
 
 import asyncio
-import base64
 import json
 import os
 import re
@@ -201,6 +200,8 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     endpoint = f"http://127.0.0.1:{server.server_port}"
     state = tmp_path / "session host/runner"
+    artifact = tmp_path / "runner.pyz"
+    artifact.write_bytes(build())
     launch = {
         "state": str(state),
         "config": {
@@ -216,7 +217,7 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
             'env_key = "CHEESE_TOKEN"\nrequires_openai_auth = false\n'
             "[analytics]\nenabled = false\n"
         ),
-        "archive": base64.b64encode(build()).decode(),
+        "artifact": str(artifact),
         "env": {"CHEESE_TOKEN": "fixture", "NO_PROXY": "127.0.0.1"},
     }
     await asyncio.to_thread(configure, launch)

@@ -3,12 +3,10 @@
 The real runtime, runner and reads against a scripted session
 (``StubChannel``). A runner that holds reads says on every answer whether its
 agent process is still there, so a send that follows one can skip asking the
-machine again — and must not, once a read has said otherwise or failed, or for
-a runner that never says.
+machine again — and must not, once a read has said otherwise or failed.
 """
 
 import asyncio
-import dataclasses
 import time
 import uuid
 
@@ -35,14 +33,6 @@ class Remembering(Scripted):
     async def ensure(self, session, opening, live=None):
         self.given.append(live)
         return await super().ensure(session, opening, live)
-
-
-class OldRunners(Remembering):
-    """Runners started before runners could hold a read."""
-
-    async def ensure(self, session, opening, live=None):
-        handle = await super().ensure(session, opening, live)
-        return dataclasses.replace(handle, capabilities=frozenset())
 
 
 async def _send(room: Room, text: str) -> None:
@@ -100,17 +90,6 @@ async def test_a_seat_whose_runner_is_gone_is_ensured_again():
         await _first_turn(room)
         channel.drop_session(room.topic)
         await _REAL_SLEEP(0.3)
-        await _send(room, "and the signup page")
-        assert channel.given == [None, None]
-    finally:
-        await room.close()
-
-
-async def test_a_runner_that_cannot_hold_a_read_is_ensured_on_every_send():
-    channel = OldRunners()
-    room = Room(channel)
-    try:
-        await _first_turn(room)
         await _send(room, "and the signup page")
         assert channel.given == [None, None]
     finally:
