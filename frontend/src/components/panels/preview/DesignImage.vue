@@ -8,13 +8,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect
 
 import { clearAnnotationGuard, setAnnotationGuard } from './annotationDiscard'
 import DesignRasterRegion from './DesignRasterRegion.vue'
-import { composeSketch, isShapeStroke, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
+import { composeSketch, sampleImage, SKETCH_COLORS, strokeWidth } from './designSketch'
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
 import DesignSketchOverlay from './DesignSketchOverlay.vue'
-import { isSelectableStroke } from './designSketchSelection'
-import DesignSketchSelection from './DesignSketchSelection.vue'
 import DesignSketchToolbar from './DesignSketchToolbar.vue'
 import { blockAt, contentProfile } from './designSnap'
+import { useSketchObjectEdit } from './useSketchObjectEdit'
 
 import { t } from '@/i18n'
 
@@ -79,10 +78,58 @@ const standaloneRegion = ref<RasterRegion | null>(null)
 
 const tool = ref<SketchTool>('select')
 const color = ref<string>(SKETCH_COLORS[0])
-const strokes = ref<SketchStroke[]>([])
-const undone = ref<SketchStroke[]>([])
-/** 选中的是哪一条（按索引）；只有块状标注能被选中、改框。 */
-const selectedStroke = ref<number | null>(null)
+
+const scale = computed(() => {
+  if (!fitted.value) return zoom.value
+  const width = natural.value.width
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
+  return Math.min(1, Math.max(0, (available.value - 32) / width))
+})
+
+/**
+ * 对象级编辑整块（选中、拖动/缩放、改色、删除、文字编辑、撤销历史）在
+ * `useSketchObjectEdit` 里：这个组件本来就贴着 file-size 闸门的边，再摊在这里就过不
+ * 去了（见 .claude/rules/architecture.md）。那边只管数据，屏幕上怎么画还是这里的事；
+ * 显示像素换算成原图像素靠 `imageGeometry` 传进去。
+ */
+const {
+  strokes,
+  selectedStroke,
+  editingText,
+  textEditing: editingExistingText,
+  editField,
+  canUndo,
+  canRedo,
+  busy,
+  editStyle,
+  addStroke,
+  undo,
+  redo,
+  clearStrokes,
+  dropAnnotations,
+  reset: resetStrokes,
+  recolor,
+  deleteSelected,
+  cancelGesture,
+  commitTextEdit,
+  cancelTextEdit,
+  openTextEditor,
+  onEditEnter,
+  onEditEscape,
+  sheetDown,
+  sheetMove,
+  sheetUp,
+  sheetCancel,
+  sheetDoubleClick,
+} = useSketchObjectEdit({
+  geometry: imageGeometry,
+  natural,
+  scale,
+  tool,
+  color,
+  canvasBusy: () => canvas.value?.busy === true,
+})
+
 /**
  * 有没有「画了但还没发出去」的笔画。
  *
@@ -91,8 +138,8 @@ const selectedStroke = ref<number | null>(null)
  * `annotationDiscard`）。
  *
  * 判据是「上一次发出去时的那几笔」，不是一个开关：发过之后撤销再重做，屏上又跟发
- * 出去时一样了，不该再被当成欠着谁。撤销/重做拿回来的是同一个笔画对象（`undone`
- * 里存的就是引用），所以逐条按引用比就够，不必深比较。
+ * 出去时一样了，不该再被当成欠着谁。撤销/重做拿回来的是同一批笔画对象（快照只换外
+ * 层数组，笔画对象本身是引用），所以逐条按引用比就够，不必深比较。
  */
 const sentStrokes = ref<SketchStroke[] | null>(null)
 function matchesSent(current: SketchStroke[]): boolean {
@@ -120,7 +167,15 @@ const discardOrigin = ref<HTMLElement | null>(null)
 /** 图上画得下箭头，说不清「改成什么」，所以那一句是必填的。 */
 const note = ref('')
 const profile = ref<ContentProfile | null>(null)
-const textEditing = ref(false)
+/** 画布自带的那个输入框开着（正在**新画**一条文字；改已有的那条走 editingExistingText）。 */
+const drawingText = ref(false)
+/**
+ * 图上有没有正在打字的输入框：新画的（画布自己那个）或改已有的（`editingExistingText`）。
+ *
+ * 两条路各有一个开关，但对外只该有一个说法——发消息要拦住、Esc 要先收输入框、改文字
+ * 期间区域选择器要整个不挂，这三处都只关心「有没有在打字」，不关心是哪条路进来的。
+ */
+const textEditing = computed(() => drawingText.value || editingExistingText.value)
 const exporting = ref(false)
 /** 合成失败时的那一句：它发生在这里（画布在这一层），上传失败那句在外面。 */
 const sendError = ref('')
@@ -131,22 +186,12 @@ const panning = ref(false)
 const selecting = computed(() => tool.value === 'select')
 const drawing = computed(() => tool.value !== 'select')
 const penWidth = computed(() => strokeWidth(natural.value.width))
-const canUndo = computed(() => strokes.value.length > 0)
-const canRedo = computed(() => undone.value.length > 0)
 const canSend = computed(() => strokes.value.length > 0 && note.value.trim().length > 0 && !textEditing.value)
-/** 有没有能选中、改框的标注：没有就不挂选中层（免得它挡住区域选择）。 */
-const selectable = computed(() => strokes.value.some(isSelectableStroke))
 /** 真会丢掉东西的时候（画了、且还没发），才值得拦一道。 */
 const wouldLoseStrokes = computed(() => strokes.value.length > 0 && unsent.value)
 
 const selectedRegion = computed(() => (props.activeRegion === undefined ? standaloneRegion.value : props.activeRegion))
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
-const scale = computed(() => {
-  if (!fitted.value) return zoom.value
-  const width = natural.value.width
-  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
-  return Math.min(1, Math.max(0, (available.value - 32) / width))
-})
 const dimensions = computed(() =>
   natural.value.width
     ? {
@@ -264,18 +309,20 @@ watch(
     standaloneRegion.value = null
     geometry.value = null
     fitted.value = true
-    strokes.value = []
-    undone.value = []
-    selectedStroke.value = null
+    resetStrokes()
     sentStrokes.value = null
     note.value = ''
     profile.value = null
   },
   { flush: 'sync' }
 )
-// 换工具就放下选中的那一条：切到会画的工具时，那块选中层不该再盖在画布上抢指针。
-watch(tool, () => {
-  selectedStroke.value = null
+// 换到会画的工具就放下选中的那一条：那块把手不该再盖在画布上抢指针。
+// 切回 select（含「画完自动选中」那一下）时留着选中——那是刚画完的那一笔。
+watch(tool, (next) => {
+  if (next !== 'select') {
+    if (editingText.value) commitTextEdit()
+    selectedStroke.value = null
+  }
 })
 watch(
   () => props.selectionEnabled,
@@ -372,40 +419,19 @@ function selected(selection: RasterSelection) {
   if (props.activeRegion === undefined) standaloneRegion.value = selection.region
   emit('region', { ...selection, identity: props.identity })
 }
-function addStroke(stroke: SketchStroke) {
-  strokes.value = [...strokes.value, stroke]
-  // 画了新的一笔，原来撤销掉的那些就不该再回来了。
-  undone.value = []
+/** 图片当前在屏幕上的几何：命中测试与手势都拿它把显示像素换算成原图像素。 */
+function imageGeometry() {
+  const element = image.value
+  if (!element || !natural.value.width || !natural.value.height) return null
+  const rect = element.getBoundingClientRect()
+  if (!rect.width || !rect.height) return null
+  return {
+    left: rect.left,
+    top: rect.top,
+    scale: rect.width / natural.value.width,
+  }
 }
-function undo() {
-  const last = strokes.value.at(-1)
-  if (!last) return
-  strokes.value = strokes.value.slice(0, -1)
-  undone.value = [last, ...undone.value]
-  selectedStroke.value = null
-}
-function redo() {
-  const [next, ...rest] = undone.value
-  if (!next) return
-  undone.value = rest
-  strokes.value = [...strokes.value, next]
-  selectedStroke.value = null
-}
-function clearStrokes() {
-  strokes.value = []
-  undone.value = []
-  selectedStroke.value = null
-}
-/** 拖把手改框：只有带 region 的标注改自己的框，文字改的是锚点（它本来就没有框）。 */
-function resizeStroke(payload: { index: number; box: RasterRegion }) {
-  const stroke = strokes.value[payload.index]
-  if (!stroke || !isSelectableStroke(stroke)) return
-  const next: SketchStroke = isShapeStroke(stroke)
-    ? { ...stroke, region: payload.box }
-    : { ...stroke, at: { x: payload.box.x, y: payload.box.y } }
-  strokes.value = strokes.value.map((current, index) => (index === payload.index ? next : current))
-  undone.value = []
-}
+
 /** 点一下内容块：不画东西，直接把那一块框出来并编上号。 */
 function pickBlock(point: Point) {
   const bounds = profile.value
@@ -466,10 +492,18 @@ function isTyping(target: EventTarget | null) {
  */
 function exitCurrent(): boolean {
   if (textEditing.value) {
-    canvas.value?.cancel()
+    if (editingText.value) cancelTextEdit()
+    else canvas.value?.cancel()
     return true
   }
-  if (tool.value === 'select') return false
+  if (tool.value === 'select') {
+    // select 工具下手里还挑着一笔：Esc 放下它。
+    if (selectedStroke.value !== null) {
+      selectedStroke.value = null
+      return true
+    }
+    return false
+  }
   canvas.value?.cancel()
   cancelSelection()
   return true
@@ -488,6 +522,8 @@ function keyDown(event: KeyboardEvent) {
   const mod = event.metaKey || event.ctrlKey
   // ⌘/Ctrl+Z 撤销；⇧⌘/Ctrl+Z 与 Ctrl+Y 重做。认 key 不认 code：撤销绑的是 Z 这个字母。
   if (mod && event.key.toLowerCase() === 'z') {
+    // 正在画、正在拖的时候，撤销/重做一律拒绝：手上这一笔还没落定，历史不好动。
+    if (busy.value) return
     if (event.shiftKey ? canRedo.value : canUndo.value) {
       event.preventDefault()
       if (event.shiftKey) redo()
@@ -496,9 +532,21 @@ function keyDown(event: KeyboardEvent) {
     return
   }
   if (mod && event.key.toLowerCase() === 'y') {
+    if (busy.value) return
     if (canRedo.value) {
       event.preventDefault()
       redo()
+    }
+    return
+  }
+  // Backspace / Delete 删掉选中的那一笔。
+  if (event.key === 'Backspace' || event.key === 'Delete') {
+    // 手上还按着拖动时，先把这个手势收掉再删。不收就直接删，松手时 sheetUp 会拿着
+    // 已经不存在的 index 再记一条历史，撤销栈错位；而删除是明确的意图，不该被拖动作废。
+    cancelGesture()
+    if (selectedStroke.value !== null) {
+      event.preventDefault()
+      deleteSelected()
     }
     return
   }
@@ -547,7 +595,7 @@ function answerDiscard(go: boolean) {
   // 关掉之后把焦点还回原来那个地方（还在的话）。
   if (origin?.isConnected) origin.focus({ preventScroll: true })
   if (go) {
-    clearStrokes()
+    dropAnnotations()
     clearAnnotationGuard(discardGuard)
   }
   resolve?.(go)
@@ -638,7 +686,7 @@ onBeforeUnmount(() => {
       :busy="exporting"
       :text-editing="textEditing"
       @pick="tool = $event"
-      @recolor="color = $event"
+      @recolor="recolor"
       @undo="undo"
       @redo="redo"
       @clear="clearStrokes"
@@ -658,9 +706,25 @@ onBeforeUnmount(() => {
       @pointercancel.capture="panEnd"
     >
       <div ref="pane" class="design-image__pane" @wheel="wheel">
-        <div class="design-image__sheet" :style="dimensions">
+        <div
+          class="design-image__sheet"
+          :style="dimensions"
+          @pointerdown.capture="sheetDown"
+          @pointermove.capture="sheetMove"
+          @pointerup.capture="sheetUp"
+          @pointercancel.capture="sheetCancel"
+          @lostpointercapture.capture="sheetCancel"
+          @dblclick.capture="sheetDoubleClick"
+        >
           <img :key="`${identity}:${src}`" ref="image" :src="src" :alt="alt" draggable="false" @load="loaded" />
-          <DesignSketchOverlay v-if="strokes.length" :strokes="strokes" :scale="scale" :natural-width="natural.width" />
+          <DesignSketchOverlay
+            v-if="strokes.length"
+            :strokes="strokes"
+            :scale="scale"
+            :natural-width="natural.width"
+            :selected="selectedStroke"
+            :editing="editingText ? editingText.index : null"
+          />
           <div
             v-if="selectedRegion"
             ref="selectedBox"
@@ -670,23 +734,26 @@ onBeforeUnmount(() => {
           />
           <DesignRasterRegion
             :image="image"
-            :enabled="selecting && selectionEnabled"
+            :enabled="selecting && selectionEnabled && !textEditing"
             :identity="regionIdentity"
             :profile="profile"
             @select="selected"
             @cancel="cancelSelection"
           />
-          <!-- 选中层盖在区域选择器上面：有块状标注可点时，点它就是选中它，改它的框；
-               没点中框（或没得选）时指针照旧落到下面的区域选择器上。 -->
-          <DesignSketchSelection
-            v-if="selecting && selectable"
-            :strokes="strokes"
-            :selected="selectedStroke"
-            :scale="scale"
-            :natural-width="natural.width"
-            @select="selectedStroke = $event"
-            @deselect="selectedStroke = null"
-            @resize="resizeStroke"
+          <!-- 对象级编辑的命中判定在 sheet 的 capture 这一层做（见 sheetDown）：
+               点中笔画就进入编辑，点在空白处就把指针让给下面的区域选择器。 -->
+          <input
+            v-if="editingText"
+            ref="editField"
+            v-model="editingText.value"
+            class="design-image__text"
+            autocomplete="off"
+            :style="editStyle"
+            :placeholder="t('design.textPlaceholder')"
+            @keydown.enter="onEditEnter"
+            @keydown.esc="onEditEscape"
+            @blur="commitTextEdit"
+            @pointerdown.stop
           />
           <DesignSketchCanvas
             v-if="drawing"
@@ -697,9 +764,11 @@ onBeforeUnmount(() => {
             :color="color"
             :width="penWidth"
             :profile="profile"
+            :strokes="strokes"
             @stroke="addStroke"
             @pick-block="pickBlock"
-            @text-editing="textEditing = $event"
+            @edit-text="openTextEditor"
+            @text-editing="drawingText = $event"
           />
         </div>
       </div>
@@ -813,6 +882,15 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   border: 2px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* 图上正在编辑的那条文字：虚线框的输入框，位置和字号跟着文字锚点走。 */
+.design-image__text {
+  position: absolute;
+  min-width: 80px;
+  border: 1px dashed var(--accent);
+  background: var(--surface);
+  font: inherit;
+  padding: 1px 2px;
 }
 /* 丢弃确认：盖住这一格的一小块，不抢整页。 */
 .design-image__discard {
