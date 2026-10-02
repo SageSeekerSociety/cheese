@@ -109,7 +109,13 @@ async def _wake(factory, initial, origin, group_id, version):
 
 @pytest.mark.parametrize(
     "boundary",
-    ["unproven-origin", "completed-origin", "other-work-holder", "shared-wake"],
+    [
+        "unproven-origin",
+        "completed-origin",
+        "other-work-holder",
+        "shared-wake",
+        "unproven-continuation",
+    ],
 )
 def test_question_sharing_refuses_unproven_or_conflicting_batches(client, boundary):
     project = uuid.UUID(_project(client, "Ask sharing safety"))
@@ -172,10 +178,30 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
                 [ClaudeCodeRuntime(SimpleNamespace(name="unused"))], "unused"
             ),
         )
+        if boundary == "unproven-continuation":
+            # The asking work genuinely ended. Its echoed prompt cannot prove
+            # that a different continuation execution read an accepted answer.
+            async with factory() as session:
+                await complete_work_inputs(
+                    session,
+                    project_id=project,
+                    topic_id=topic,
+                    recipient_handle=seat,
+                    harness=initial.harness,
+                    native_session_id=initial.native_session_id,
+                    work_id=initial.work_id,
+                    require_registered=True,
+                    input_ids=(initial.input_id,),
+                )
+                await session.commit()
         first = replace(initial, input_id=uuid.uuid4())
         if boundary == "other-work-holder":
             # Another work in this original session is a legal first registration.
             # Its target work is only a reservation hint, not an execution owner.
+            first = replace(first, work_id=uuid.uuid4())
+        elif boundary == "unproven-continuation":
+            # V1 and V2 target the same new work in the pinned original session.
+            # V1 will be accepted below but never acquire native echo proof.
             first = replace(first, work_id=uuid.uuid4())
         wake1, delivery1, attempt1 = await _wake(factory, initial, origin, group_id, 1)
         await chat._input_registrar(
@@ -210,6 +236,8 @@ def test_question_sharing_refuses_unproven_or_conflicting_batches(client, bounda
                 await session.commit()
         wake2, delivery2, attempt2 = await _wake(factory, initial, origin, group_id, 2)
         correction = replace(initial, input_id=uuid.uuid4())
+        if boundary == "unproven-continuation":
+            correction = replace(correction, work_id=first.work_id)
         held = (wake2, wake1) if boundary == "shared-wake" else (wake2,)
         registrar = chat._input_registrar(
             InputEffects(

@@ -888,7 +888,13 @@ class AgentWorkRunner:
             work = run_with_answer_offer(
                 self, chat_service, topic_id, delivery_id, turn_id, content, work
             )
-            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
+            work = run_attempt(
+                chat_service.session_factory,
+                delivery_id,
+                turn_id,
+                work,
+                chat=chat_service,
+            )
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",

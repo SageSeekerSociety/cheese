@@ -16,6 +16,7 @@ from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
 from app.domain.block.models import Block
 from app.domain.delivery.ask_inputs import guard_ask_inputs
+from app.domain.delivery.ask_receipt_wait import AskReceiptPending
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 
@@ -378,6 +379,13 @@ async def _shared_ask_continuation(
             and prior.settled_at is not None
         )
         remaining.difference_update(held.intersection(overlap))
+    if not proven and not remaining:
+        raise AskReceiptPending(
+            identity,
+            delivery_id=delivery.id,
+            attempt_id=delivery.attempt_id,
+            group_id=group_id,
+        )
     return proven and not remaining
 
 

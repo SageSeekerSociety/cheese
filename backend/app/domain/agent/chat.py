@@ -1357,6 +1357,10 @@ class ChatService:
             await session.commit()
         if receipt.evidence != "native_echo":
             return
+        from app.domain.delivery.ask_receipt_wait import nudge_ask_receipts
+
+        # Echo commits before a waiting correction re-enters normal admission.
+        nudge_ask_receipts(self, receipt.identity)
         pending = self._unread_inputs.get(receipt.identity.topic_id)
         if pending is not None:
             pending.pop(receipt.identity.input_id, None)

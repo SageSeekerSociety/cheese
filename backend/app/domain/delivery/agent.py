@@ -17,6 +17,11 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.delivery.ask_receipt_wait import (
+    ASK_RECEIPT_WAIT,
+    AskReceiptPending,
+    nudge_ask_receipts,
+)
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
@@ -102,7 +107,7 @@ async def record_task_instruction(
     )
 
 
-async def dispatch_pending(sessions, *, chat, runner, limit=100):
+async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
     """Claim committed intent; expired sending attempts require reconciliation."""
     stamp = now()
     claimed = []
@@ -115,6 +120,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100):
                         Delivery.agent_instance_id.is_not(None),
                         Delivery.task_id.is_not(None),
                     ),
+                    Delivery.id.in_(delivery_ids) if delivery_ids is not None else True,
                     Delivery.sent_at.is_(None),
                     Delivery.state.in_(("pending", "claimed", "sending")),
                     or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
@@ -179,6 +185,12 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100):
                 row.state = "failed"
                 row.last_error = "Recipient no longer has an active seat in this room"
                 continue
+            # A new attempt must not reuse an earlier receipt-wait marker.
+            row.payload = {
+                key: value
+                for key, value in row.payload.items()
+                if key != ASK_RECEIPT_WAIT
+            }
             row.state = "claimed"
             row.attempt_id = uuid.uuid4()
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
@@ -220,7 +232,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100):
     return len(claimed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work):
+async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat=None):
     """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
@@ -239,8 +251,11 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                 await session.commit()
 
     heartbeat = asyncio.create_task(renew())
+    waiting = None
     try:
         await work
+    except AskReceiptPending as exc:
+        waiting = exc
     finally:
         heartbeat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -262,6 +277,28 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                         "Input was not dispatched; "
                         "admission or preparation did not complete"
                     )
+                    if (
+                        waiting is not None
+                        and waiting.delivery_id == row.id
+                        and waiting.attempt_id == row.attempt_id
+                        and waiting.identity.topic_id == row.topic_id
+                        and waiting.identity.recipient_handle == row.recipient_handle
+                        and waiting.group_id == row.payload.get("ask_group")
+                        and all(
+                            (row.payload.get("ask_origin") or {}).get(field)
+                            == getattr(waiting.identity, field)
+                            for field in (
+                                "recipient_handle",
+                                "harness",
+                                "native_session_id",
+                            )
+                        )
+                    ):
+                        row.payload = {
+                            **row.payload,
+                            ASK_RECEIPT_WAIT: waiting.marker(),
+                        }
+                        row.last_error = "Waiting for this group's native receipt"
                 elif row.state == "sending":
                     row.state = "uncertain"
                     row.last_error = (
@@ -270,6 +307,10 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                     )
                 row.lease_until = None
             await session.commit()
+
+    if waiting is not None and chat is not None:
+        # Covers the receipt that committed before the wait marker was stored.
+        nudge_ask_receipts(chat, waiting.identity)
 
 
 async def begin_send(sessions, delivery_id, attempt_id, *, parent_session_id=None):
