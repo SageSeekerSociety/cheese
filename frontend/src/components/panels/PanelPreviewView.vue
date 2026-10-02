@@ -10,11 +10,12 @@
 // 留在这里的是「画」和「只和这一格有关的手势」：全屏（它要的就是这个 DOM 节点）、
 // 指哪里说哪句话的那个输入框、在线编辑器和草稿历史那两个对话框的状态。这些没有一件
 // 需要问后端。
+import type { AnnotateDraft, UploadAnnotation } from '../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../composables/usePreviewFrames'
-import type { FileContent } from '../../cx_types'
+import type { ChatAttachment, FileContent } from '../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../lib/documentBytes'
 import type { FileKind } from '../../lib/fileKind'
-import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
+import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 import type { RasterSelection } from './preview/designRegion'
 import type { SlidePageContext, SlideSource } from './preview/slidesContext'
 
@@ -45,6 +46,10 @@ const props = withDefaults(
   defineProps<{
     topicId: string | null
     submitQuestion?: SubmitPreviewQuestion
+    /** 标注图的上传：取数那一层给的能力。这一格只调它，自己不碰 fetch。 */
+    uploadAnnotation?: UploadAnnotation
+    /** 这一格是不是正显示着的那一页：收起来的那几页不接全局键（见 DesignImage）。 */
+    active?: boolean
     projectId: string | null
     /**
      * 这一格看的是房间里指定的哪一份文件（工作面板自由区的一个页签）。不给就是
@@ -86,6 +91,8 @@ const props = withDefaults(
   }>(),
   {
     submitQuestion: undefined,
+    uploadAnnotation: undefined,
+    active: true,
     path: null,
     frames: undefined,
     displayedFrame: null,
@@ -106,7 +113,7 @@ const emit = defineEmits<{
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
   (e: 'document-changed'): void
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
-  (e: 'locate', message: string): void
+  (e: 'locate', payload: PreviewLocate): void
   /** 「这个房间里的东西」里点开了一份：开成自由区的一个页签。 */
   (e: 'open-file', path: string): void
 }>()
@@ -118,6 +125,8 @@ const {
   toggle: toggleFullscreen,
 } = useFullscreen(panelElement)
 const fullscreenError = ref('')
+/** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
+const annotateError = ref('')
 
 /** 在新标签页打开这一格看着的东西。
  *
@@ -290,7 +299,7 @@ function sendLocator() {
   if (imageRegion.target.value) {
     const message = imageRegion.message(note)
     if (!message) return
-    emit('locate', message)
+    emit('locate', { message })
     clearLocator()
     return
   }
@@ -314,16 +323,47 @@ function sendLocator() {
     if (accepted) clearLocator()
     return
   }
-  emit(
-    'locate',
-    t('work.room.preview.locateMessage', {
+  emit('locate', {
+    message: t('work.room.preview.locateMessage', {
       path: props.previewFile?.path ?? '',
       address: target.address,
       quote: target.quote,
       note,
-    })
-  )
+    }),
+  })
   clearLocator()
+}
+
+/** 图上画完、按了「加入对话」：把那张合成图交出去传进房间，再发那一句连同附件。
+ *
+ * 上传是外面递进来的能力（`uploadAnnotation`），消息要等它回来才拼得出来。发之前再
+ * 核一次版本：合成的是屏幕上那张图，版本在画的过程中被人换掉时宁可不发，也不能配着
+ * 一张说的不是它的图发出去。 */
+async function onAnnotate(payload: AnnotateDraft) {
+  const topicId = props.topicId
+  const identity = props.docIdentity
+  const upload = props.uploadAnnotation
+  if (!topicId || !identity || !upload || !imageRegion.selectionEnabled.value) return
+  let attachment: ChatAttachment
+  try {
+    attachment = await upload(topicId, payload)
+  } catch (error) {
+    annotateError.value = error instanceof Error ? error.message : String(error)
+    return
+  }
+  if (props.topicId !== topicId) return
+  annotateError.value = ''
+  emit('locate', {
+    message: t('design.sketchMessage', {
+      ...identity,
+      task: identity.taskId ?? '',
+      naturalWidth: payload.naturalWidth,
+      naturalHeight: payload.naturalHeight,
+      count: payload.count,
+      note: payload.note,
+    }),
+    attachments: [attachment],
+  })
 }
 </script>
 
@@ -354,8 +394,10 @@ function sendLocator() {
           :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
           @click="openPreviewInNewTab()"
         />
+        <!-- 图片也要全屏：它正是那种「放大才画得准」的东西，而滚轮缩放只在全屏里
+             开着（见 DesignImage 的 zoomOnWheel）。 -->
         <v-btn
-          v-if="fullscreenSupported && previewUrl"
+          v-if="fullscreenSupported && (previewUrl || isImageArtifact)"
           :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
           size="small"
           variant="text"
@@ -648,7 +690,10 @@ function sendLocator() {
         :identity="imageRegion.imageIdentity.value"
         :selection-enabled="imageRegion.selectionEnabled.value"
         :active-region="imageRegion.target.value?.selection.region ?? null"
+        :active="active"
+        :zoom-on-wheel="previewFull"
         @region="onImageRegion"
+        @annotate="onAnnotate"
       >
         <template #region-note="{ geometry, restoreFocus, focusOrigin }">
           <DesignRegionNote
@@ -673,6 +718,7 @@ function sendLocator() {
         <span v-if="docError">{{ docError }}</span>
         <v-progress-circular v-else indeterminate color="primary" size="24" />
       </div>
+      <p v-if="annotateError" class="file-image__error" role="alert">{{ annotateError }}</p>
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -739,6 +785,12 @@ function sendLocator() {
   flex-direction: column;
   min-width: 0;
   min-height: var(--preview-min);
+}
+.file-image__error {
+  padding: 6px 8px;
+  color: var(--danger-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .image-open {
   padding: 4px 8px;

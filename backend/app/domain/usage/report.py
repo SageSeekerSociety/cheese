@@ -1,11 +1,12 @@
 """What a team's or a person's credits went to this month, as members see it
 (#2397, #2233).
 
-Everything here is a ratio: how much of this month's plan pack is used, how
-full each time window is, what share of the month's spend each day, project or
-product line took. No credit amounts and no tokens leave this module, and
-nothing is split by person: spend inside a team's projects belongs to the team
-(#394). A person's own page reads only their personal team's spend.
+Everything here is a ratio: how much of this month's plan pack is used, or how
+full each of a windowed plan's time windows is, and what share of the month's
+spend each day, project or product line took. No credit amounts and no tokens
+leave this module, and nothing is split by person: spend inside a team's
+projects belongs to the team (#394). A person's own page reads only their
+personal team's spend.
 """
 
 import uuid
@@ -18,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.usage.ledger import (
     _TZ,
     Ledger,
+    Payer,
     Terms,
+    WindowUse,
     month_end,
     month_of,
     terms_of,
@@ -51,6 +54,12 @@ def _ratio(part: float, whole: float) -> float:
     return 0.0 if whole <= 0 else min(1.0, max(0.0, part / whole))
 
 
+def _used(use: WindowUse) -> float:
+    return (
+        _ratio(use.credits_used, use.window.credits) if use.window.credits > 0 else 1.0
+    )
+
+
 def _shares(parts: dict, total: float) -> dict:
     return {key: (value / total if total > 0 else 0.0) for key, value in parts.items()}
 
@@ -62,10 +71,15 @@ class UsageReport:
     async def _plan(self, key: str) -> Plan | None:
         return await self._session.get(Plan, key)
 
-    def _period(self, terms: Terms, packs: list[ComputeGrant], month: date) -> dict:
+    def _period(
+        self, terms: Terms, packs: list[ComputeGrant], month: date
+    ) -> dict | None:
         """This month's plan pack: used and remaining as ratios, and when it
         resets. Before the month's first charge writes the pack it counts as
-        issued and unused, as it does in the ledger's balance."""
+        issued and unused, as it does in the ledger's balance. None for a
+        windowed plan, which issues no pack."""
+        if terms.windowed:
+            return None
         if terms.unlimited:
             return {
                 "unlimited": True,
@@ -98,26 +112,19 @@ class UsageReport:
             "resets_at": month_end(month).isoformat(),
         }
 
-    async def _windows(self, team_id: int, terms: Terms) -> list[dict]:
-        now = datetime.now(UTC)
-        repo = UsageRepository(self._session)
-        out = []
-        for hours, cap in terms.windows:
-            used, oldest = await repo.team_window(
-                team_id, since=now - timedelta(hours=hours)
-            )
-            out.append(
-                {
-                    "hours": hours,
-                    "used_ratio": _ratio(used, cap) if cap > 0 else 1.0,
-                    "reopens_at": (
-                        (oldest + timedelta(hours=hours)).isoformat()
-                        if oldest is not None and used >= cap
-                        else None
-                    ),
-                }
-            )
-        return out
+    @staticmethod
+    def _windows(uses: tuple[WindowUse, ...]) -> list[dict]:
+        """Each window: how full it is and when it resets; an hours window no
+        call has started has no reset yet."""
+        return [
+            {
+                "hours": u.window.hours,
+                "calendar": u.window.calendar,
+                "used_ratio": _used(u),
+                "resets_at": u.resets_at.isoformat() if u.resets_at else None,
+            }
+            for u in uses
+        ]
 
     @staticmethod
     def _packs(packs: list[ComputeGrant]) -> list[dict]:
@@ -181,12 +188,14 @@ class UsageReport:
         month = month_of(datetime.now(UTC))
         terms = (await terms_of(self._session, [plan_key]))[plan_key]
         plan = await self._plan(plan_key)
-        packs = await Ledger(self._session).team_packs(team_id)
+        ledger = Ledger(self._session)
+        packs = await ledger.team_packs(team_id)
+        uses = await ledger.window_uses([Payer(team_id=team_id, terms=terms)])
         days, projects, by_line = await self._month(team_id, month, lines=lines)
         out = {
             "plan": {"key": plan_key, "name": plan.name if plan else plan_key},
             "period": self._period(terms, packs, month),
-            "windows": await self._windows(team_id, terms),
+            "windows": self._windows(uses.get(team_id, ())),
             "packs": self._packs(packs),
             "days": days,
             "projects": [
@@ -213,10 +222,18 @@ class UsageReport:
                 )
             ).scalars()
         }
-        packs = await Ledger(self._session).live_packs([t.id for t in teams])
+        ledger = Ledger(self._session)
+        packs = await ledger.live_packs([t.id for t in teams])
+        uses = await ledger.window_uses(
+            Payer(team_id=t.id, terms=terms[t.plan_key]) for t in teams
+        )
         out = []
         for team in teams:
             period = self._period(terms[team.plan_key], packs.get(team.id, []), month)
+            if period is None:
+                # A windowed plan: what its fullest window has left.
+                left = 1.0 - max((_used(u) for u in uses.get(team.id, ())), default=0.0)
+                period = {"unlimited": False, "remaining_ratio": left}
             plan = plans.get(team.plan_key)
             out.append(
                 {

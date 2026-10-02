@@ -23,10 +23,12 @@ function days(): CreditUsage['days'] {
   }))
 }
 
+const PERIOD = { unlimited: false, used_ratio: 0.58, remaining_ratio: 0.42, resets_at: '2026-10-31T16:00:00+00:00' }
+
 function usage(over: Partial<CreditUsage> = {}): CreditUsage {
   return {
     plan: { key: 'free', name: 'Free' },
-    period: { unlimited: false, used_ratio: 0.58, remaining_ratio: 0.42, resets_at: '2026-10-31T16:00:00+00:00' },
+    period: PERIOD,
     windows: [],
     packs: [],
     days: days(),
@@ -67,11 +69,29 @@ afterEach(cleanup)
 
 describe('芝士额度', () => {
   it('a used-up month says so and when it resets', async () => {
-    const view = show(usage({ period: { ...usage().period, used_ratio: 1, remaining_ratio: 0 } }))
+    const view = show(usage({ period: { ...PERIOD, used_ratio: 1, remaining_ratio: 0 } }))
 
     expect(await view.findAllByText('本月已用完')).not.toHaveLength(0)
     expect(view.getByText(/重置/)).toBeTruthy()
     expect(view.queryByText(/还剩/)).toBeNull()
+  })
+
+  it('a plan limited by time windows is never shown as unlimited', async () => {
+    const view = show(
+      usage({
+        period: null,
+        windows: [
+          { hours: 5, calendar: null, used_ratio: 0.4, resets_at: '2026-10-03T10:00:00+00:00' },
+          { hours: null, calendar: 'month', used_ratio: 0.1, resets_at: '2026-10-31T16:00:00+00:00' },
+        ],
+      })
+    )
+
+    const plan = await view.findByRole('region', { name: '使用上限' })
+    expect(within(plan).queryByText('不限')).toBeNull()
+    expect(within(plan).getByText('5 小时内已用 40%')).toBeTruthy()
+    expect(within(plan).getByText('本月已用 10%')).toBeTruthy()
+    expect(within(plan).getAllByText(/重置/)).toHaveLength(2)
   })
 
   it("the legend's three lines add up to the month's used share", async () => {

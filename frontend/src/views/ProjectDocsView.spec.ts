@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 // 这一页的数据源是缓存的，每个用例先摆好它看到的那一份，再渲染。
 const state = vi.hoisted(() => ({ payload: {} as Record<string, unknown> }))

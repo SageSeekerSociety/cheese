@@ -43,8 +43,8 @@ class RewriteIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    #: The Markdown of the top-level block holding the selection, as the
-    #: editor serializes it.
+    #: The Markdown of the top-level blocks holding the selection (a run of
+    #: them when it spans paragraphs), as the editor serializes it.
     block: str = Field(min_length=1, max_length=20000)
     #: The selection, as offsets into ``block``.
     start: int = Field(ge=0)

@@ -23,6 +23,11 @@ import i18n, { setLocale } from '@/i18n'
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
 beforeEach(() => setLocale('zh-CN'))
 
+// The document's version history: the last edit is read on open; none here.
+vi.mock('../../api/docHistory', () => ({
+  getDocVersions: async () => ({ versions: [], cursor: null }),
+  restoreDocVersion: async () => ({}),
+}))
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',

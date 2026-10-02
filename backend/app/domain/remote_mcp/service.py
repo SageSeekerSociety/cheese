@@ -196,8 +196,15 @@ def _when(value: datetime | None) -> str | None:
 
 
 async def settings_view(db: AsyncSession, project_id: uuid.UUID) -> dict:
-    """The settings page's list: one row per remote server, never a credential."""
+    """The settings page's list: one row per remote server, never a credential.
+
+    Each row says where the server comes from: ``declared_by`` is None for the
+    project's `.mcp.json`, or the teammates' types that define it.
+    """
+    from app.domain.agent_instance.services import project_types
+
     found: Declared = await _project_declared(db, project_id, fresh=True)
+    types = await project_types(db, project_id)
     connections = await _connections(db, project_id)
     secret_rows = await _secret_rows(db, project_id)
     values = _secret_values(project_id, secret_rows)
@@ -212,6 +219,16 @@ async def settings_view(db: AsyncSession, project_id: uuid.UUID) -> dict:
                 "host": _host(server.url),
                 "auth": "oauth" if server.uses_oauth else "headers",
                 "status": state,
+                "declared_by": None
+                if server.name in found.names
+                else [
+                    {"name": agent_type.name, "title": agent_type.title}
+                    for agent_type in types
+                    if isinstance(
+                        agent_type.inline_servers().get(server.name, {}).get("url"),
+                        str,
+                    )
+                ],
                 "authorized_by": connection.authorized_by
                 if connection and server.uses_oauth
                 else None,
@@ -247,6 +264,7 @@ async def room_view(db: AsyncSession, project_id: uuid.UUID) -> list[dict]:
                 "host",
                 "auth",
                 "status",
+                "declared_by",
                 "authorized_by",
                 "authorized_at",
             )
