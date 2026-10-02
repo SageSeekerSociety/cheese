@@ -175,6 +175,14 @@
   --agent-tone-3: #36294a;
   --agent-tone-4: #46292a;
 
+  /* ---- Credit usage by product line ----
+     The three segments of the personal usage bar and its daily chart: 协作
+     (amber, the product's own colour), 问答 and 写作. Two cool tones that stay
+     apart from amber and from each other in both themes. */
+  --usage-collab: #f57f17;
+  --usage-ask: #2a9d8f;
+  --usage-write: #3d5a80;
+
   /* ---- Radius ladder ----
      Theme-independent (a corner does not change shape in the dark), so these
      live only here and are NOT repeated in the dark block below.
@@ -386,6 +394,10 @@
   --agent-tone-2: #2e5047;
   --agent-tone-3: #4a3c61;
   --agent-tone-4: #5e3a36;
+
+  --usage-collab: #f59a3c;
+  --usage-ask: #4fb8aa;
+  --usage-write: #7d9cc4;
 }
 
 /* Paint the root element itself, so the gap between "HTML parsed" and "Vue has

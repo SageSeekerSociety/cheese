@@ -1,0 +1,52 @@
+{
+  "title": "芝士额度",
+  "loadFailed": "无法读取额度",
+  "retry": "重试",
+  "viewUsage": "查看用量",
+  "line": {
+    "collab": "协作",
+    "ask": "问答",
+    "write": "写作"
+  },
+  "period": {
+    "label": "本月",
+    "used": "{month}已用",
+    "remaining": "还剩 {pct}",
+    "resets": "{at} 重置",
+    "usedUp": "本月已用完",
+    "unlimited": "不限",
+    "usedAria": "本月已用 {pct}"
+  },
+  "windows": {
+    "used": "{hours} 小时内已用 {pct}",
+    "reopens": "{at} 恢复"
+  },
+  "packs": {
+    "title": "其他额度",
+    "grant": "管理员发放",
+    "purchase": "购买",
+    "task": "题目「{task}」",
+    "taskUnknown": "题目额度",
+    "other": "其他额度",
+    "remaining": "剩余 {pct}",
+    "expires": "{date}到期",
+    "noExpiry": "不过期",
+    "project": "仅限项目「{project}」"
+  },
+  "daily": {
+    "title": "每天用量",
+    "aria": "{date} 占本月用量 {pct}"
+  },
+  "projects": {
+    "mine": "我的项目",
+    "byProject": "按项目",
+    "empty": "暂无用量",
+    "unnamed": "已删除的项目"
+  },
+  "teams": {
+    "title": "我所在的团队",
+    "remaining": "剩余 {pct}",
+    "usedUp": "已用完",
+    "unlimited": "不限"
+  }
+}

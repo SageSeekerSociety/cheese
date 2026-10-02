@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     NotFoundError,
@@ -28,8 +27,6 @@ from app.domain.team.repositories import (
 )
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
-from app.domain.usage.repositories import UsageRepository
-from app.domain.usage.services import UsageService
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 # Number of admin / member examples to surface alongside the count, mirroring
@@ -633,10 +630,7 @@ async def get_team_resource_quotas(
     ):
         raise NotFoundError("Resource team not found")
     machines = await MachineService(db).quota_machines(team_id)
-    grants = await UsageService(db).team_packs(team_id)
-    pool = await UsageService(db).team_credits(team_id)
     projects = await ProjectService(db).list_for_team(team_id)
-    usage = UsageRepository(db)
     return {
         "code": 200,
         "message": "OK",
@@ -646,24 +640,11 @@ async def get_team_resource_quotas(
                 "used": len(machines),
                 "limit": await get_machine_limit(db, team_id),
             },
-            "credits": {
-                "unlimited": pool["unlimited"],
-                "credits_total": pool["credits_total"],
-                "credits_used": pool["credits_used"],
-                "credits_remaining": pool["credits_remaining"],
-                "tokens_per_credit": settings.compute_credit_tokens,
-            },
             "projects": [
                 {
                     "id": str(p.id),
                     "name": p.name,
                     "machines_used": sum(m.project_id == p.id for m in machines),
-                    "total_tokens": (await usage.for_project(p.id))["total_tokens"],
-                    "restricted_credits_remaining": sum(
-                        g.credits_total - g.credits_used
-                        for g in grants
-                        if g.project_id == p.id
-                    ),
                 }
                 for p in projects
             ],

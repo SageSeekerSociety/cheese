@@ -232,7 +232,9 @@ async function ask(q) {
     if (!res.ok || !res.body) {
       const err = await res.json().catch(() => ({}))
       const msg = res.status === 429 ? (err.message || '提问太频繁了，稍后再试。') : res.status === 401 ? '登录已过期，请重新登录。' : (err.message || '芝士暂时答不上来，稍后再试。')
-      body.innerHTML = `<p>${esc(msg)}</p>`
+      // Refused for credits: say where the month's usage is.
+      const credits = /^credits/.test((err.error && err.error.i18n && err.error.i18n.key) || '')
+      body.innerHTML = `<p>${esc(msg)}${credits ? ` <a href="/users/settings/usage">查看用量</a>` : ''}</p>`
       return
     }
     const reader = res.body.getReader(), dec = new TextDecoder()

@@ -44,6 +44,12 @@ export default {
           name: 'TeamsDetailCompute',
           component: () => import('@/views/teams/detail/Compute.vue'),
         },
+        {
+          // 团队本月的额度用了多少；个人团队没有这一页，个人的在个人设置里。
+          path: 'credits',
+          name: 'TeamsDetailCredits',
+          component: () => import('@/views/teams/detail/Credits.vue'),
+        },
       ],
     },
   ],

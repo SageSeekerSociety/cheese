@@ -82,7 +82,12 @@
         </div>
       </div>
 
-      <p v-if="notice" class="ap__notice" role="status">{{ notice }}</p>
+      <p v-if="notice" class="ap__notice" role="status">
+        {{ notice }}
+        <NavLink v-if="creditRefused" :to="{ name: 'UserSettingsUsage' }" class="ap__usage">{{
+          t('usage.viewUsage')
+        }}</NavLink>
+      </p>
     </div>
 
     <footer class="ap__foot">
@@ -126,6 +131,7 @@ import dayjs from 'dayjs'
 
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import NavLink from '@/components/common/NavLink.vue'
 
 export interface PanelConversation {
   id: string
@@ -150,6 +156,8 @@ const props = defineProps<{
   /** 芝士此刻在用的工具。 */
   tool: string | null
   notice: string | null
+  /** 被拒是因为额度不够：提示旁给「查看用量」。 */
+  creditRefused?: boolean
   busy: boolean
 }>()
 
@@ -368,6 +376,17 @@ watch(
 
 .ap__starter:hover {
   background: var(--fill);
+}
+
+.ap__usage {
+  margin-left: 8px;
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.ap__usage:hover {
+  text-decoration: underline;
 }
 
 .ap__notice {

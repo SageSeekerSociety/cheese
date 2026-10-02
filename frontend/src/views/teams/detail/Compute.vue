@@ -311,47 +311,18 @@ onBeforeUnmount(stopResync)
               <div class="text-caption text-medium-emphasis">{{ t('teams.compute.machinesSharedHint') }}</div>
             </v-card>
           </v-col>
-          <v-col cols="12" md="6">
-            <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">{{ t(`teams.compute.${scope}.creditsTitle`) }}</div>
-              <div v-if="quotas.credits.unlimited" class="text-h6">{{ t('teams.compute.creditsUnlimited') }}</div>
-              <template v-else>
-                <div class="text-h6">
-                  {{
-                    t('teams.compute.creditsRemaining', { count: quotas.credits.credits_remaining.toLocaleString() })
-                  }}
-                </div>
-                <div class="text-body-2 my-2">
-                  {{
-                    t('teams.compute.creditsUsed', {
-                      used: quotas.credits.credits_used.toLocaleString(),
-                      total: quotas.credits.credits_total.toLocaleString(),
-                    })
-                  }}
-                </div>
-              </template>
-              <div class="text-caption text-medium-emphasis mt-2">
-                {{ t('teams.compute.creditsSharedHint', { per: quotas.credits.tokens_per_credit.toLocaleString() }) }}
-              </div>
-            </v-card>
-          </v-col>
         </v-row>
-        <p class="text-caption text-medium-emphasis mt-3 mb-2">{{ t('teams.compute.creditsFootnote') }}</p>
         <v-table v-if="quotas.projects.length" density="comfortable">
           <thead>
             <tr>
               <th>{{ t('teams.compute.projectCol') }}</th>
               <th>{{ t('teams.compute.machinesUsedCol') }}</th>
-              <th>{{ t('teams.compute.tokensUsedCol') }}</th>
-              <th>{{ t('teams.compute.restrictedCreditsCol') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="project in quotas.projects" :key="project.id">
               <td>{{ project.name }}</td>
               <td>{{ t('teams.compute.machinesUsed', project.machines_used) }}</td>
-              <td>{{ project.total_tokens.toLocaleString() }}</td>
-              <td>{{ project.restricted_credits_remaining.toLocaleString() }}</td>
             </tr>
           </tbody>
         </v-table>

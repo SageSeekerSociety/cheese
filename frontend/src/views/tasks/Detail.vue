@@ -407,6 +407,7 @@ onMounted(() => {
       :streaming="assistant.streaming.value"
       :tool="assistant.tool.value"
       :notice="assistant.notice.value"
+      :credit-refused="assistant.creditRefused.value"
       :busy="assistant.busy.value"
       @send="askAssistant"
       @new="assistant.startNew"

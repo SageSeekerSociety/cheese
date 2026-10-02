@@ -20,8 +20,8 @@
 </template>
 
 <script setup lang="ts">
-// 团队详情外框：页头（团队名 / 这一页）+ 当前这一页。团队的四样东西（项目、成员、
-// 知识库、工作电脑）列在首页侧栏里这个团队的下面，这里不再自己画一条侧栏。
+// 团队详情外框：页头（团队名 / 这一页）+ 当前这一页。团队的几样东西（项目、成员、
+// 知识库、工作电脑、额度）列在首页侧栏里这个团队的下面，这里不再自己画一条侧栏。
 import type { Team } from '@/types'
 
 import { computed, provide, ref, watch } from 'vue'
@@ -49,6 +49,7 @@ const PAGE_TITLES: Record<string, string> = {
   TeamsDetailMembers: 'home.nav.teamMembers',
   TeamsDetailKnowledge: 'home.nav.teamKnowledge',
   TeamsDetailCompute: 'home.nav.teamCompute',
+  TeamsDetailCredits: 'home.nav.teamCredits',
 }
 const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects'))
 

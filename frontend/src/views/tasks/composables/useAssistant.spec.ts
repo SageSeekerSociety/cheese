@@ -74,5 +74,35 @@ describe('题目页上问芝士', () => {
     expect(a.notice.value).toBe('本月的芝士额度已用完，11月1日重置。')
     expect(a.messages.value).toEqual([])
     expect(a.busy.value).toBe(false)
+    expect(a.creditRefused.value).toBe(false)
+  })
+
+  it('a refusal for credits is flagged so the panel can point to the usage page', async () => {
+    serve(
+      () =>
+        new Response(
+          JSON.stringify({
+            code: 429,
+            message: '本月额度已用完，11月1日重置。',
+            error: {
+              message: '本月额度已用完，11月1日重置。',
+              i18n: { key: 'creditsMonthSpent', params: { month: 11, day: 1 } },
+            },
+          }),
+          { status: 429, headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const a = useAssistant(() => 7)
+    await a.load()
+
+    await a.ask('要先会什么？', '答不上来')
+
+    expect(a.creditRefused.value).toBe(true)
+    expect(a.notice.value).toBeTruthy()
+
+    // The next question that is not refused for credits drops the pointer.
+    serve(() => events(['delta', { text: '好。' }], ['done', {}]))
+    await a.ask('再问一次', '答不上来')
+    expect(a.creditRefused.value).toBe(false)
   })
 })

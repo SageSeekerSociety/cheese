@@ -4,7 +4,7 @@
 // 桌面上它是首页侧栏的正文（HomeSidebar），手机上是底栏「首页」那一格的整页
 // （HomeHub）——同一份目录，两端不各写一份。
 //
-// 团队在原地展开：一个团队只有四样东西（项目、成员、知识库、工作电脑），点哪样
+// 团队在原地展开：一个团队有五样东西（项目、成员、知识库、工作电脑、额度），点哪样
 // 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
 // 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
 import type { MenuAction } from '@/components/common/menuAction'
@@ -108,10 +108,13 @@ const TEAM_PAGES = [
   { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers', exact: false },
   { name: 'TeamsDetailKnowledge', label: 'home.nav.teamKnowledge', exact: false },
   { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
+  { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits', exact: false },
 ] as const
-// 自己名下谁也加不进来（后端拒），「成员」一页就不列。
+// 自己名下谁也加不进来（后端拒），「成员」一页就不列；自己的额度在个人设置里，「额度」
+// 一页也不列。
+const PERSONAL_HIDDEN: readonly string[] = ['TeamsDetailMembers', 'TeamsDetailCredits']
 const pagesOf = (team: Team) =>
-  team.personal ? TEAM_PAGES.filter((page) => page.name !== 'TeamsDetailMembers') : TEAM_PAGES
+  team.personal ? TEAM_PAGES.filter((page) => !PERSONAL_HIDDEN.includes(page.name)) : TEAM_PAGES
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 

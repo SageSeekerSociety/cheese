@@ -40,16 +40,9 @@ vi.mock('@/api', () => ({
   getTeamResourceQuotas: vi.fn(async () => ({
     team_id: 1,
     machines: { used: 50, limit: 50 },
-    credits: {
-      unlimited: false,
-      credits_total: 100,
-      credits_used: 30,
-      credits_remaining: 70,
-      tokens_per_credit: 10000,
-    },
     projects: [
-      { id: 'p1', name: 'Full', machines_used: 49, total_tokens: 200000, restricted_credits_remaining: 0 },
-      { id: 'p2', name: 'Available', machines_used: 1, total_tokens: 100000, restricted_credits_remaining: 0 },
+      { id: 'p1', name: 'Full', machines_used: 49 },
+      { id: 'p2', name: 'Available', machines_used: 1 },
     ],
   })),
   registerDeviceForTeam: vi.fn(),

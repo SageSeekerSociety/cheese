@@ -111,6 +111,28 @@ class UsageRepository:
         ).one()
         return float(row[0]), row[1]
 
+    async def team_spend_by_day(
+        self, team_id: int, *, since: datetime, until: datetime, tz: str
+    ) -> list[tuple[date, uuid.UUID | None, str, float]]:
+        """Credits ``team_id`` was charged in ``[since, until)``, summed per
+        local day in ``tz``, project and kind — the grouping done in SQL."""
+        day = func.date(func.timezone(tz, ResourceUsage.created_at))
+        rows = await self._session.execute(
+            select(
+                day,
+                ResourceUsage.project_id,
+                ResourceUsage.kind,
+                func.sum(ResourceUsage.credits),
+            )
+            .where(
+                ResourceUsage.team_id == team_id,
+                ResourceUsage.created_at >= since,
+                ResourceUsage.created_at < until,
+            )
+            .group_by(day, ResourceUsage.project_id, ResourceUsage.kind)
+        )
+        return [(d, p, k, float(c or 0.0)) for d, p, k, c in rows.all()]
+
     async def gateway_spend(self, project_ids: list[uuid.UUID]) -> dict:
         """Project → USD its gateway key has been recorded spending, ever."""
         if not project_ids:

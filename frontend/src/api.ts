@@ -926,19 +926,10 @@ export interface MachineQuota {
 export interface TeamResourceQuotas {
   team_id: number
   machines: { used: number; limit: number }
-  credits: {
-    unlimited: boolean
-    credits_total: number
-    credits_used: number
-    credits_remaining: number
-    tokens_per_credit: number
-  }
   projects: {
     id: string
     name: string
     machines_used: number
-    total_tokens: number
-    restricted_credits_remaining: number
   }[]
 }
 
